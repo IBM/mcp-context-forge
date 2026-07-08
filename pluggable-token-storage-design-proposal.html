@@ -1,0 +1,405 @@
+
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Pluggable Token Storage — Design Proposal</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, "Segoe UI", system-ui, sans-serif; font-size: 14px; line-height: 1.6; background: #fff; color: #1f2328; max-width: 760px; margin: 0 auto; padding: 32px 24px 64px; }
+  h1 { font-size: 22px; font-weight: 700; margin-bottom: 4px; }
+  h2 { font-size: 16px; font-weight: 700; margin: 32px 0 10px; border-bottom: 1px solid #e5e7eb; padding-bottom: 6px; }
+  h3 { font-size: 14px; font-weight: 700; margin: 20px 0 6px; color: #1f2328; }
+  p  { margin-bottom: 10px; color: #1f2328; }
+  .subtitle { color: #57606a; font-size: 13px; margin-bottom: 28px; }
+  .tag { display: inline-block; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 4px; margin-right: 4px; }
+  .tag-new     { background: #dbeafe; color: #1e40af; }
+  .tag-changed { background: #fef3c7; color: #92400e; }
+  .tag-removed { background: #fee2e2; color: #991b1b; }
+  .tag-keep    { background: #f0fdf4; color: #166534; }
+
+  /* Section boxes */
+  .box { background: #f7f8fa; border: 1px solid #e5e7eb; border-radius: 6px; padding: 16px 18px; margin-bottom: 16px; }
+  .box-warn { background: #fffbeb; border-color: #fcd34d; }
+  .box-info  { background: #eff6ff; border-color: #bfdbfe; }
+
+  /* Tables */
+  table { width: 100%; border-collapse: collapse; margin-bottom: 16px; font-size: 13px; }
+  th { background: #f7f8fa; text-align: left; padding: 7px 10px; border: 1px solid #e5e7eb; font-weight: 600; color: #57606a; font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
+  td { padding: 7px 10px; border: 1px solid #e5e7eb; vertical-align: top; }
+  tr:nth-child(even) td { background: #fafafa; }
+
+  /* File tree */
+  .tree { font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; font-size: 12px; line-height: 1.8; background: #f7f8fa; border: 1px solid #e5e7eb; border-radius: 6px; padding: 14px 16px; margin-bottom: 16px; }
+  .tree .dir  { color: #3b82d4; font-weight: 600; }
+  .tree .file { color: #1f2328; }
+  .tree .new  { color: #166534; font-weight: 600; }
+  .tree .note { color: #57606a; font-style: italic; }
+
+  /* Sequence / flow */
+  .flow { display: flex; flex-direction: column; gap: 0; margin-bottom: 16px; }
+  .flow-step { display: flex; align-items: flex-start; gap: 10px; padding: 8px 12px; border-left: 3px solid #e5e7eb; margin-left: 10px; position: relative; }
+  .flow-step::before { content: attr(data-n); position: absolute; left: -14px; top: 8px; width: 20px; height: 20px; background: #3b82d4; color: #fff; border-radius: 50%; font-size: 11px; font-weight: 700; display: flex; align-items: center; justify-content: center; }
+  .flow-step:last-child { border-color: transparent; }
+  .flow-label { font-weight: 600; font-size: 13px; min-width: 180px; }
+  .flow-desc  { color: #57606a; font-size: 13px; }
+
+  /* Interface box */
+  .iface { font-family: "SFMono-Regular", Consolas, monospace; font-size: 12px; line-height: 1.7; background: #f7f8fa; border: 1px solid #e5e7eb; border-radius: 6px; padding: 14px 16px; margin-bottom: 16px; }
+  .iface .kw   { color: #8250df; }
+  .iface .fn   { color: #0550ae; }
+  .iface .cm   { color: #57606a; font-style: italic; }
+  .iface .ty   { color: #cf222e; }
+
+  /* Env var table */
+  code { font-family: "SFMono-Regular", Consolas, monospace; font-size: 12px; background: #f6f8fa; border: 1px solid #e5e7eb; border-radius: 3px; padding: 1px 5px; }
+
+  /* Decision table highlights */
+  .accept { color: #166534; font-weight: 600; }
+  .reject { color: #991b1b; font-weight: 600; }
+
+  footer { margin-top: 48px; padding-top: 14px; border-top: 1px solid #e5e7eb; text-align: center; font-size: 11px; color: #57606a; }
+</style>
+</head>
+<body>
+
+<h1>Pluggable OAuth Token Storage — Design Proposal</h1>
+<p class="subtitle">ContextForge · Feature #5402 · Credential-Store Abstraction</p>
+
+
+<h2>1. Motivation &amp; Product Owner Goal</h2>
+<div class="box box-info">
+  <p><strong>Product Owner:</strong> "Break credentials storage into a module so we can plug-and-play different underlying storage classes (database, vault, etc.). Refactor database storage into independent table(s) if not already."</p>
+</div>
+<p>Today every OAuth <code>access_token</code> and <code>refresh_token</code> issued through the Authorization Code flow is hardwired into a single <code>oauth_tokens</code> DB table via <code>TokenStorageService</code>. The service directly imports SQLAlchemy models, runs queries, and drives encryption — all in one class with no seam to swap the storage layer. Clients who run HashiCorp Vault (or any future secret store) cannot use it without forking the core service.</p>
+
+
+<h2>2. Scope</h2>
+<table>
+  <tr><th>In scope</th><th>Out of scope</th></tr>
+  <tr><td>Abstract <code>AbstractTokenBackend</code> protocol</td><td>Changing the OAuth flow itself (RFC 6749)</td></tr>
+  <tr><td>Refactor existing DB logic into <code>DatabaseTokenBackend</code></td><td>Redis / AWS Secrets Manager backends (future work)</td></tr>
+  <tr><td>New <code>VaultTokenBackend</code> (HashiCorp Vault KV v2)</td><td>Alembic migration changes (DB table is unchanged)</td></tr>
+  <tr><td>Config switches to select backend at deploy time</td><td>UI changes in the Admin panel</td></tr>
+  <tr><td><code>TokenStorageService</code> becomes a thin façade</td><td>Changes to gateway_service / tool_service call sites</td></tr>
+  <tr><td>Unit tests for both backends</td><td>Integration tests against a live Vault cluster</td></tr>
+</table>
+
+
+<h2>3. Current State (what exists today)</h2>
+<div class="tree">
+  <span class="dir">mcpgateway/services/</span><br />
+    <span class="file">token_storage_service.py</span>  <span class="note">← monolith: DB queries + encryption + refresh logic all in one class</span><br />
+  <br />
+  <span class="dir">mcpgateway/db.py</span><br />
+    <span class="note">class OAuthToken  ← the single storage table, EncryptedText columns</span><br />
+  <br />
+  <span class="dir">Call sites (all import TokenStorageService directly):</span><br />
+    <span class="file">routers/oauth_router.py</span>  <span class="note">store + retrieve at OAuth callback</span><br />
+    <span class="file">services/gateway_service.py</span>  <span class="note">get_user_token at tool-fetch &amp; health-check</span><br />
+    <span class="file">services/tool_service.py</span>  <span class="note">get_user_token at every tool invocation</span><br />
+    <span class="file">services/resource_service.py</span>  <span class="note">get_user_token at resource read</span><br />
+    <span class="file">admin.py</span>  <span class="note">get_user_token at gateway test</span><br />
+</div>
+<p><strong>Problem:</strong> All five call sites instantiate <code>TokenStorageService(db)</code> and call <code>get_user_token()</code> or <code>store_tokens()</code> directly against the DB. There is no seam to insert a different storage backend.</p>
+
+
+<h2>4. Target State (after refactor)</h2>
+<div class="tree">
+  <span class="dir">mcpgateway/services/</span><br />
+    <span class="file">token_storage_service.py</span>  <span class="note">← thin façade; delegates 100% to self._backend</span><br />
+    <span class="new">token_backends/</span><br />
+      <span class="new">__init__.py</span>  <span class="note">re-exports AbstractTokenBackend, DatabaseTokenBackend, VaultTokenBackend</span><br />
+      <span class="new">base.py</span>  <span class="note">AbstractTokenBackend ABC + TokenRecord dataclass</span><br />
+      <span class="new">db_backend.py</span>  <span class="note">DatabaseTokenBackend — exact DB logic extracted from today's service</span><br />
+      <span class="new">vault_backend.py</span>  <span class="note">VaultTokenBackend — HashiCorp Vault KV v2 via httpx</span><br />
+</div>
+<p>All five call sites remain <strong>unchanged</strong>. They still do <code>TokenStorageService(db)</code> and call the same methods. The façade reads one env-var to select the backend and wires everything internally.</p>
+
+
+<h2>5. Package Layout &amp; Responsibilities</h2>
+<table>
+  <tr><th>File</th><th>Responsibility</th><th>Tag</th></tr>
+  <tr>
+    <td><code>token_backends/base.py</code></td>
+    <td>Defines <code>AbstractTokenBackend</code> (Python ABC) and the portable <code>TokenRecord</code> dataclass. No imports from <code>db.py</code> or SQLAlchemy.</td>
+    <td><span class="tag tag-new">NEW</span></td>
+  </tr>
+  <tr>
+    <td><code>token_backends/db_backend.py</code></td>
+    <td>Exact extraction of all DB + EncryptionService logic from today's <code>TokenStorageService</code>. Zero behaviour change. Implements <code>AbstractTokenBackend</code>.</td>
+    <td><span class="tag tag-new">NEW</span></td>
+  </tr>
+  <tr>
+    <td><code>token_backends/vault_backend.py</code></td>
+    <td>New HashiCorp Vault KV v2 backend. Uses <code>httpx</code> (already a runtime dep). Stores tokens as Vault secrets. No application-layer encryption (Vault encrypts at rest).</td>
+    <td><span class="tag tag-new">NEW</span></td>
+  </tr>
+  <tr>
+    <td><code>token_backends/__init__.py</code></td>
+    <td>Re-exports all three symbols. One import for callers who need the protocol.</td>
+    <td><span class="tag tag-new">NEW</span></td>
+  </tr>
+  <tr>
+    <td><code>token_storage_service.py</code></td>
+    <td>Becomes a thin façade. Constructor reads <code>settings.oauth_token_backend</code>, instantiates the right backend, stores it as <code>self._backend</code>. All public methods delegate to <code>self._backend</code>.</td>
+    <td><span class="tag tag-changed">CHANGED</span></td>
+  </tr>
+  <tr>
+    <td><code>mcpgateway/config.py</code></td>
+    <td>Add 7 new env-var fields (see §8). No existing field is removed or renamed.</td>
+    <td><span class="tag tag-changed">CHANGED</span></td>
+  </tr>
+  <tr>
+    <td><code>pyproject.toml</code></td>
+    <td>Add optional extra <code>[vault]</code> = <code>hvac&gt;=2.3.0</code>. Core runtime does not require it.</td>
+    <td><span class="tag tag-changed">CHANGED</span></td>
+  </tr>
+  <tr>
+    <td><code>mcpgateway/db.py</code> · <code>OAuthToken</code></td>
+    <td>No changes. Table remains exactly as today. DB backend continues to own it.</td>
+    <td><span class="tag tag-keep">UNCHANGED</span></td>
+  </tr>
+  <tr>
+    <td>All 5 call sites</td>
+    <td>No changes. <code>TokenStorageService(db)</code> constructor signature is preserved.</td>
+    <td><span class="tag tag-keep">UNCHANGED</span></td>
+  </tr>
+</table>
+
+
+<h2>6. AbstractTokenBackend Interface</h2>
+<div class="iface">
+  <span class="kw">class</span> <span class="fn">AbstractTokenBackend</span>(ABC):<br />
+  <br />
+    <span class="cm"># ── Write ──────────────────────────────────────────────────────────</span><br />
+    <span class="kw">@abstractmethod</span><br />
+    <span class="kw">async def</span> <span class="fn">store_tokens</span>(<br />
+        <span class="ty">gateway_id</span>: str, <span class="ty">user_id</span>: str, <span class="ty">app_user_email</span>: str,<br />
+        <span class="ty">access_token</span>: str, <span class="ty">refresh_token</span>: Optional[str],<br />
+        <span class="ty">expires_in</span>: Optional[int], <span class="ty">scopes</span>: List[str],<br />
+    ) -&gt; <span class="ty">TokenRecord</span>: ...<br />
+  <br />
+    <span class="cm"># ── Read ───────────────────────────────────────────────────────────</span><br />
+    <span class="kw">@abstractmethod</span><br />
+    <span class="kw">async def</span> <span class="fn">get_user_token</span>(<br />
+        <span class="ty">gateway_id</span>: str, <span class="ty">app_user_email</span>: str,<br />
+        <span class="ty">threshold_seconds</span>: int = 300,<br />
+    ) -&gt; Optional[str]: ...<br />
+  <br />
+    <span class="cm"># ── Metadata ───────────────────────────────────────────────────────</span><br />
+    <span class="kw">@abstractmethod</span><br />
+    <span class="kw">async def</span> <span class="fn">get_token_info</span>(<br />
+        <span class="ty">gateway_id</span>: str, <span class="ty">app_user_email</span>: str,<br />
+    ) -&gt; Optional[Dict[str, Any]]: ...<br />
+  <br />
+    <span class="cm"># ── Revocation ─────────────────────────────────────────────────────</span><br />
+    <span class="kw">@abstractmethod</span><br />
+    <span class="kw">async def</span> <span class="fn">revoke_user_tokens</span>(<br />
+        <span class="ty">gateway_id</span>: str, <span class="ty">app_user_email</span>: str,<br />
+    ) -&gt; bool: ...<br />
+  <br />
+    <span class="cm"># ── Maintenance ────────────────────────────────────────────────────</span><br />
+    <span class="kw">@abstractmethod</span><br />
+    <span class="kw">async def</span> <span class="fn">cleanup_expired_tokens</span>(<br />
+        <span class="ty">max_age_days</span>: int = 30,<br />
+    ) -&gt; int: ...<br />
+</div>
+<p><strong>TokenRecord</strong> is a plain Python <code>@dataclass</code> (no SQLAlchemy dependency) returned by <code>store_tokens</code>. It carries: <code>gateway_id</code>, <code>user_id</code>, <code>app_user_email</code>, <code>access_token</code>, <code>refresh_token</code>, <code>expires_at</code>, <code>scopes</code>, <code>token_type</code>, <code>created_at</code>, <code>updated_at</code>.</p>
+
+
+<h2>7. TokenStorageService Façade — Constructor Change</h2>
+<div class="iface">
+  <span class="kw">class</span> <span class="fn">TokenStorageService</span>:<br />
+  <br />
+    <span class="kw">def</span> <span class="fn">__init__</span>(self, db: Session):<br />
+      settings = get_settings()<br />
+      backend_name = settings.oauth_token_backend  <span class="cm"># "database" | "vault"</span><br />
+  <br />
+      <span class="kw">if</span> backend_name == <span class="ty">"vault"</span>:<br />
+        self._backend = <span class="fn">VaultTokenBackend</span>(settings)<br />
+      <span class="kw">else</span>:<br />
+        self._backend = <span class="fn">DatabaseTokenBackend</span>(db, settings)<br />
+  <br />
+    <span class="cm"># All public methods are one-liner delegates:</span><br />
+    <span class="kw">async def</span> <span class="fn">store_tokens</span>(self, ...) -&gt; TokenRecord:<br />
+      <span class="kw">return await</span> self._backend.store_tokens(...)<br />
+  <br />
+    <span class="kw">async def</span> <span class="fn">get_user_token</span>(self, ...) -&gt; Optional[str]:<br />
+      <span class="kw">return await</span> self._backend.get_user_token(...)<br />
+    <span class="cm"># ... and so on for all 5 methods</span><br />
+</div>
+<p>The <code>db: Session</code> argument is still accepted so all five call sites compile unchanged. When <code>vault</code> is selected the <code>db</code> is simply not forwarded to the backend — the Vault backend receives only the settings object.</p>
+
+
+<h2>8. New Configuration Fields</h2>
+<table>
+  <tr><th>Env var</th><th>Default</th><th>Description</th></tr>
+  <tr>
+    <td><code>OAUTH_TOKEN_BACKEND</code></td>
+    <td><code>database</code></td>
+    <td>Active backend. Valid: <code>database</code> · <code>vault</code>. Unknown values raise <code>ValueError</code> at startup.</td>
+  </tr>
+  <tr>
+    <td><code>VAULT_ADDR</code></td>
+    <td><code>http://127.0.0.1:8200</code></td>
+    <td>Vault server URL. Required when backend = vault.</td>
+  </tr>
+  <tr>
+    <td><code>VAULT_TOKEN</code></td>
+    <td>—</td>
+    <td>Static Vault token. Required when backend = vault and no AppRole is configured.</td>
+  </tr>
+  <tr>
+    <td><code>VAULT_NAMESPACE</code></td>
+    <td>—</td>
+    <td>Vault Enterprise namespace (e.g. <code>admin/acme</code>). Omit for CE/HCP.</td>
+  </tr>
+  <tr>
+    <td><code>VAULT_KV_MOUNT</code></td>
+    <td><code>secret</code></td>
+    <td>KV v2 secrets engine mount path.</td>
+  </tr>
+  <tr>
+    <td><code>VAULT_KV_PATH_PREFIX</code></td>
+    <td><code>contextforge/oauth</code></td>
+    <td>Prefix for secret paths. Full path = <code>&lt;mount&gt;/data/&lt;prefix&gt;/&lt;gateway_id&gt;/&lt;email&gt;</code>.</td>
+  </tr>
+  <tr>
+    <td><code>VAULT_TLS_VERIFY</code></td>
+    <td><code>true</code></td>
+    <td>Verify Vault server TLS certificate. Set <code>false</code> only for dev.</td>
+  </tr>
+</table>
+
+
+<h2>9. VaultTokenBackend — Secret Schema</h2>
+<p>Each token pair is stored as a single Vault KV v2 secret at the path:</p>
+<div class="box">
+  <code>&lt;VAULT_KV_MOUNT&gt;/data/&lt;VAULT_KV_PATH_PREFIX&gt;/&lt;gateway_id&gt;/&lt;url-encoded app_user_email&gt;</code><br /><br />
+  <strong>Example:</strong> <code>secret/data/contextforge/oauth/gw-github/alice%40acme.com</code>
+</div>
+<p>Secret payload (Vault <code>data</code> field):</p>
+<table>
+  <tr><th>Key</th><th>Type</th><th>Notes</th></tr>
+  <tr><td><code>access_token</code></td><td>string</td><td>Plain-text. Vault encrypts at rest.</td></tr>
+  <tr><td><code>refresh_token</code></td><td>string | null</td><td>Plain-text. Omitted if not issued.</td></tr>
+  <tr><td><code>user_id</code></td><td>string</td><td>OAuth provider user identifier.</td></tr>
+  <tr><td><code>token_type</code></td><td>string</td><td>Always <code>"Bearer"</code>.</td></tr>
+  <tr><td><code>expires_at</code></td><td>ISO-8601 string | null</td><td>UTC expiry, or null.</td></tr>
+  <tr><td><code>scopes</code></td><td>JSON array string</td><td>e.g. <code>["repo","read:user"]</code>.</td></tr>
+  <tr><td><code>created_at</code></td><td>ISO-8601 string</td><td>First issuance time.</td></tr>
+  <tr><td><code>updated_at</code></td><td>ISO-8601 string</td><td>Last write time.</td></tr>
+</table>
+<p><strong>No double-encryption.</strong> The DB backend encrypts because the <code>oauth_tokens</code> table stores ciphertext in a general-purpose relational DB. The Vault backend writes plain-text into Vault; Vault's own AES-256-GCM encryption provides at-rest protection, so adding a second Fernet layer would be redundant and would increase token size.</p>
+
+
+<h2>10. Token Refresh Strategy per Backend</h2>
+<table>
+  <tr><th>Behaviour</th><th>DatabaseTokenBackend</th><th>VaultTokenBackend</th></tr>
+  <tr>
+    <td>Where refresh logic lives</td>
+    <td>Extracted verbatim from today's <code>_refresh_access_token()</code> inside the backend class. Needs the DB session to read <code>Gateway.oauth_config</code>.</td>
+    <td>Same refresh logic; reads <code>Gateway.oauth_config</code> via a separate DB lookup (Vault stores tokens only, not gateway config).</td>
+  </tr>
+  <tr>
+    <td>Updated token write-back</td>
+    <td><code>UPDATE oauth_tokens</code> SQL row.</td>
+    <td>Vault KV <code>PUT</code> to the same path (creates a new version; KV v2 preserves history).</td>
+  </tr>
+  <tr>
+    <td>Cleanup</td>
+    <td>SQL <code>DELETE</code> on expired rows (existing logic, unchanged).</td>
+    <td>No-op + debug log. Vault lease TTLs or operator <code>vault kv delete</code> handle cleanup. Returns <code>0</code>.</td>
+  </tr>
+</table>
+
+
+<h2>11. Encryption-at-Rest Responsibility Matrix</h2>
+<table>
+  <tr><th>Backend</th><th>Encryption mechanism</th><th>Application layer?</th><th>Key owner</th></tr>
+  <tr>
+    <td>DatabaseTokenBackend</td>
+    <td><code>EncryptedText</code> SQLAlchemy column type (Argon2id-derived Fernet v2)</td>
+    <td class="accept">Yes — same as today</td>
+    <td>ContextForge (<code>AUTH_ENCRYPTION_SECRET</code>)</td>
+  </tr>
+  <tr>
+    <td>VaultTokenBackend</td>
+    <td>Vault server-side AES-256-GCM (transparent)</td>
+    <td class="reject">No — Vault handles it</td>
+    <td>Vault seal key (auto-unseal or Shamir)</td>
+  </tr>
+</table>
+
+
+<h2>12. Dependency Strategy</h2>
+<div class="box">
+  <strong>No new mandatory runtime dependency.</strong><br />
+  The Vault backend uses <code>httpx</code>, which is already a runtime dependency (<code>pyproject.toml:83</code>).<br /><br />
+  An optional extra <code>[vault]</code> will add <code>hvac&gt;=2.3.0</code> for teams that prefer the official Python client. The backend detects <code>hvac</code> availability at import time; if absent it falls back to raw <code>httpx</code> calls to the Vault HTTP API. Either way the binary install is optional.
+</div>
+<table>
+  <tr><th>Install command</th><th>Result</th></tr>
+  <tr><td><code>pip install mcpgateway</code></td><td>Database backend only. Vault backend loads but will warn if enabled without Vault reachable.</td></tr>
+  <tr><td><code>pip install mcpgateway[vault]</code></td><td>Adds <code>hvac</code>. Vault backend uses the official client.</td></tr>
+</table>
+
+
+<h2>13. Migration &amp; Backward Compatibility</h2>
+<div class="flow">
+  <div class="flow-step" data-n="1">
+    <span class="flow-label">Default unchanged</span>
+    <span class="flow-desc">With <code>OAUTH_TOKEN_BACKEND=database</code> (the default), behaviour is <em>identical</em> to today. No operator action required.</span>
+  </div>
+  <div class="flow-step" data-n="2">
+    <span class="flow-label">Opt-in to Vault</span>
+    <span class="flow-desc">Operator sets <code>OAUTH_TOKEN_BACKEND=vault</code> plus <code>VAULT_ADDR</code> / <code>VAULT_TOKEN</code>. Gateway starts routing new tokens to Vault immediately.</span>
+  </div>
+  <div class="flow-step" data-n="3">
+    <span class="flow-label">Migrate existing DB tokens</span>
+    <span class="flow-desc">Existing rows in <code>oauth_tokens</code> are <em>not</em> automatically migrated. Users who already authorised will need to re-authorise once (OAuth callback will write the new token to Vault). A one-time migration script can be provided separately.</span>
+  </div>
+  <div class="flow-step" data-n="4">
+    <span class="flow-label">No Alembic migration needed</span>
+    <span class="flow-desc">The <code>oauth_tokens</code> table is untouched. If the operator later switches back to <code>database</code>, old DB rows are still present.</span>
+  </div>
+</div>
+
+
+<h2>14. Vault Authentication Methods Supported</h2>
+<table>
+  <tr><th>Method</th><th>Config</th><th>Phase</th></tr>
+  <tr><td>Static token</td><td><code>VAULT_TOKEN=hvs.xxx</code></td><td>Phase 1 (this PR)</td></tr>
+  <tr><td>AppRole</td><td><code>VAULT_ROLE_ID</code> + <code>VAULT_SECRET_ID</code></td><td>Phase 2 (follow-up)</td></tr>
+  <tr><td>Kubernetes SA</td><td><code>VAULT_ROLE</code> + mounted SA token</td><td>Phase 2 (follow-up)</td></tr>
+</table>
+
+
+<h2>15. Open Questions for Product Owner</h2>
+<table>
+  <tr><th>#</th><th>Question</th><th>Impact on design</th></tr>
+  <tr>
+    <td>Q1</td>
+    <td>Should switching from <code>database</code> → <code>vault</code> silently invalidate existing DB-stored tokens (forcing re-auth), or should we provide an automated migration script?</td>
+    <td>If migration script required, add a CLI command in Phase 2.</td>
+  </tr>
+  <tr>
+    <td>Q2</td>
+    <td>Should the Vault backend also store the OAuth state (<code>OAuthState</code> table) in Vault, or keep that in DB?</td>
+    <td>OAuth state is short-lived (10 min). Keeping it in DB is simpler; moving it to Vault is a separate concern.</td>
+  </tr>
+  <tr>
+    <td>Q3</td>
+    <td>Is AppRole auth (Phase 2) a blocker for the initial Vault backend, or is static token sufficient for the first release?</td>
+    <td>Determines whether Phase 1 is usable in hardened production environments.</td>
+  </tr>
+  <tr>
+    <td>Q4</td>
+    <td>Should the <code>cleanup_expired_tokens</code> no-op for the Vault backend surface a warning, or be completely silent?</td>
+    <td>Operators need to know that TTL management is now their responsibility when using Vault.</td>
+  </tr>
+</table>
+
+<footer>Made with IBM Bob</footer>
+</body>
+</html>

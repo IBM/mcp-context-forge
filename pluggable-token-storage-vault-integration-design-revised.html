@@ -1,0 +1,592 @@
+
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Pluggable Token Storage — Vault Integration Design (Revised)</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, "Segoe UI", system-ui, sans-serif; font-size: 14px; line-height: 1.6; background: #fff; color: #1f2328; max-width: 780px; margin: 0 auto; padding: 32px 24px 64px; }
+  h1 { font-size: 22px; font-weight: 700; margin-bottom: 4px; }
+  h2 { font-size: 16px; font-weight: 700; margin: 32px 0 10px; border-bottom: 1px solid #e5e7eb; padding-bottom: 6px; }
+  h3 { font-size: 14px; font-weight: 700; margin: 20px 0 6px; }
+  p  { margin-bottom: 10px; }
+  ul { margin: 0 0 12px 20px; }
+  li { margin-bottom: 4px; }
+  .subtitle { color: #57606a; font-size: 13px; margin-bottom: 28px; }
+
+  .tag { display: inline-block; font-size: 11px; font-weight: 600; padding: 2px 7px; border-radius: 4px; margin-right: 4px; vertical-align: middle; }
+  .tag-new     { background: #dcfce7; color: #166534; }
+  .tag-changed { background: #fef3c7; color: #92400e; }
+  .tag-keep    { background: #f0f9ff; color: #0369a1; }
+  .tag-vault   { background: #f3e8ff; color: #6b21a8; }
+  .tag-db      { background: #fff7ed; color: #9a3412; }
+
+  .box      { background: #f7f8fa; border: 1px solid #e5e7eb; border-radius: 6px; padding: 14px 18px; margin-bottom: 16px; }
+  .box-warn { background: #fffbeb; border-color: #fcd34d; }
+  .box-info { background: #eff6ff; border-color: #bfdbfe; }
+  .box-vault{ background: #faf5ff; border-color: #d8b4fe; }
+  .box-ok   { background: #f0fdf4; border-color: #bbf7d0; }
+
+  table { width: 100%; border-collapse: collapse; margin-bottom: 16px; font-size: 13px; }
+  th { background: #f7f8fa; text-align: left; padding: 7px 10px; border: 1px solid #e5e7eb; font-weight: 600; color: #57606a; font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; }
+  td { padding: 7px 10px; border: 1px solid #e5e7eb; vertical-align: top; }
+  tr:nth-child(even) td { background: #fafafa; }
+
+  code { font-family: "SFMono-Regular", Consolas, monospace; font-size: 12px; background: #f6f8fa; border: 1px solid #e5e7eb; border-radius: 3px; padding: 1px 5px; }
+  pre  { font-family: "SFMono-Regular", Consolas, monospace; font-size: 12px; background: #f7f8fa; border: 1px solid #e5e7eb; border-radius: 6px; padding: 14px 16px; margin-bottom: 14px; overflow-x: auto; line-height: 1.7; white-space: pre-wrap; }
+  pre .c  { color: #57606a; font-style: italic; }
+  pre .k  { color: #8250df; }
+  pre .s  { color: #0a3069; }
+  pre .v  { color: #cf222e; }
+  pre .vault { color: #7c3aed; font-weight: 600; }
+  pre .db    { color: #b45309; font-weight: 600; }
+  pre .hi    { background: #fef9c3; border-radius: 2px; padding: 0 2px; }
+
+  .tree { font-family: "SFMono-Regular", Consolas, monospace; font-size: 12px; line-height: 1.9; background: #f7f8fa; border: 1px solid #e5e7eb; border-radius: 6px; padding: 14px 16px; margin-bottom: 16px; }
+  .tree .dir  { color: #0550ae; font-weight: 600; }
+  .tree .new  { color: #166534; font-weight: 600; }
+  .tree .note { color: #57606a; font-style: italic; }
+
+  .scenario { display: flex; flex-direction: column; gap: 0; margin-bottom: 16px; }
+  .step {
+    display: grid;
+    grid-template-columns: 36px 1fr;
+    gap: 0 12px;
+    padding: 10px 0 10px 0;
+    border-left: 3px solid #e5e7eb;
+    margin-left: 14px;
+    padding-left: 16px;
+    position: relative;
+  }
+  .step::before {
+    content: attr(data-n);
+    position: absolute; left: -20px; top: 10px;
+    width: 24px; height: 24px;
+    background: #3b82d4; color: #fff;
+    border-radius: 50%; font-size: 11px; font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .step.vault-step { border-color: #c4b5fd; }
+  .step.vault-step::before { background: #7c3aed; }
+  .step.db-step { border-color: #fdba74; }
+  .step.db-step::before { background: #ea580c; }
+  .step:last-child { border-color: transparent; }
+  .step-head { font-weight: 600; font-size: 13px; margin-bottom: 3px; }
+  .step-body { color: #374151; font-size: 13px; }
+
+  .split { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px; }
+  .split-box { border: 1px solid #e5e7eb; border-radius: 6px; padding: 12px 14px; }
+  .split-box.vault-box { border-color: #d8b4fe; background: #faf5ff; }
+  .split-box.db-box    { border-color: #fed7aa; background: #fff7ed; }
+  .split-title { font-weight: 700; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px; }
+  .split-title.v { color: #7c3aed; }
+  .split-title.d { color: #c2410c; }
+
+  .chain { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 12px 0 16px; font-size: 13px; font-family: "SFMono-Regular", Consolas, monospace; }
+  .chain-box { background: #f7f8fa; border: 1px solid #e5e7eb; border-radius: 5px; padding: 5px 10px; white-space: nowrap; }
+  .chain-box.c-server { border-color: #bfdbfe; background: #eff6ff; color: #1d4ed8; }
+  .chain-box.c-assoc  { border-color: #e5e7eb; background: #f7f8fa; color: #57606a; font-style: italic; }
+  .chain-box.c-gw     { border-color: #d8b4fe; background: #faf5ff; color: #6b21a8; }
+  .chain-box.c-url    { border-color: #bbf7d0; background: #f0fdf4; color: #166534; font-weight: 600; }
+  .chain-arrow { color: #9ca3af; font-size: 16px; }
+
+  .method-badge { display: inline-block; font-size: 11px; font-weight: 700; padding: 2px 6px; border-radius: 3px; margin-right: 6px; font-family: "SFMono-Regular", Consolas, monospace; }
+  .get  { background: #dcfce7; color: #166534; }
+  .post { background: #dbeafe; color: #1d4ed8; }
+
+  footer { margin-top: 48px; padding-top: 14px; border-top: 1px solid #e5e7eb; text-align: center; font-size: 11px; color: #57606a; }
+</style>
+</head>
+<body>
+
+<h1>Pluggable Token Storage — Vault Integration Design</h1>
+<p class="subtitle">ContextForge · Feature #5402 · Revised: MCP URL as Vault key · Client-callable /vault/authorize · server_tool_association resolution</p>
+
+
+
+<h2>1. What Changed from the Original Design</h2>
+
+<div class="box box-info">
+  <p><strong>Three revisions from the original draft:</strong></p>
+  <ol style="margin-left:18px">
+    <li style="margin-bottom:6px"><strong>Vault path key = MCP URL, not gateway_id.</strong> Clients connect exclusively via virtual server URL (<code>http://host:4444/servers/{server_id}/mcp</code>). They never know a <code>gateway_id</code>. The Vault secret path now uses the upstream gateway URL resolved from the DB — which is the actual MCP endpoint the credential is for — as a human-readable, stable identifier.</li>
+    <li style="margin-bottom:6px"><strong>Resolution chain is explicit.</strong> <code>server_id</code> → <code>server_tool_association</code> → <code>tool.gateway_id</code> → <code>gateways.url</code>. This is how ContextForge finds the real upstream MCP URL without the client ever exposing or knowing a gateway ID.</li>
+    <li style="margin-bottom:0"><strong>New client-callable Vault auth endpoints.</strong> <code>GET /vault/authorize/{server_id}</code> and <code>GET /vault/callback</code> mirror the existing <code>/oauth/authorize</code> / <code>/oauth/callback</code> pair, but are scoped to the virtual server URL the client already has.</li>
+  </ol>
+</div>
+
+
+
+<h2>2. Client Access Model — Why gateway_id Is Never Exposed</h2>
+
+<p>A client's MCP configuration looks like this — it knows only the virtual server URL:</p>
+<pre>
+<span class="c"># Client MCP config (claude_desktop_config.json, cursor settings, etc.)</span>
+{
+  <span class="s">"servers"</span>: {
+    <span class="s">"git-server"</span>: {
+      <span class="s">"type"</span>: <span class="s">"streamable-http"</span>,
+      <span class="s">"url"</span>: <span class="s">"http://localhost:4444/servers/<span class="hi">647ad7b348044bce8fa27a2157b00a0d</span>/mcp"</span>,
+      <span class="s">"headers"</span>: { <span class="s">"Authorization"</span>: <span class="s">"Bearer your-token-here"</span> }
+    }
+  }
+}
+</pre>
+<p>The <code>server_id</code> (<code>647ad7b3…</code>) is the virtual server's primary key in the <code>servers</code> table. The underlying <code>gateway_id</code> values are internal — they never appear in client config and clients must not need to supply them.</p>
+
+<h3>Resolution Chain: server_id → upstream MCP URL</h3>
+<div class="chain">
+  <div class="chain-box c-server">servers.id<br /><small>server_id from URL</small></div>
+  <span class="chain-arrow">→</span>
+  <div class="chain-box c-assoc">server_tool_association<br /><small>server_id ↔ tool_id</small></div>
+  <span class="chain-arrow">→</span>
+  <div class="chain-box c-gw">tools.gateway_id<br /><small>first OAuth gateway</small></div>
+  <span class="chain-arrow">→</span>
+  <div class="chain-box c-gw">gateways.id<br /><small>gateway record</small></div>
+  <span class="chain-arrow">→</span>
+  <div class="chain-box c-url">gateways.url<br /><small>upstream MCP URL used as Vault key</small></div>
+</div>
+
+<p>For a virtual server with tools from multiple gateways (e.g. <code>gw-github</code> and <code>gw-jira</code>), this resolution finds <strong>all distinct gateway URLs</strong>. Each gets its own Vault secret path. The client only ever presents the single virtual server URL and their ContextForge Bearer token.</p>
+
+
+
+<h2>3. Vault Secret Schema — MCP URL as the Path Key</h2>
+
+
+<div class="box box-vault">
+  <strong>Vault secret path pattern (revised):</strong><br /><br />
+  <code>&lt;VAULT_KV_MOUNT&gt;/data/&lt;VAULT_KV_PATH_PREFIX&gt;/<strong>&lt;url-encoded upstream MCP URL&gt;</strong>/<strong>&lt;url-encoded email&gt;</strong></code><br /><br />
+  The first path segment is the <strong>upstream gateway URL</strong> fetched from <code>gateways.url</code> via the resolution chain above — not the <code>gateway_id</code> UUID, not the virtual server URL. This makes secrets human-readable and stable across gateway ID changes.
+</div>
+
+<table>
+  <tr><th>User</th><th>Virtual Server (client sees)</th><th>Resolved upstream MCP URL</th><th>Vault secret path</th></tr>
+  <tr>
+    <td><code>alice@acme.com</code></td>
+    <td><code>/servers/647ad7b3…/mcp</code></td>
+    <td><code>https://mcp.github.acme.com</code></td>
+    <td><code>secret/data/contextforge/oauth/https%3A%2F%2Fmcp.github.acme.com/alice%40acme.com</code></td>
+  </tr>
+  <tr>
+    <td><code>bob@acme.com</code></td>
+    <td><code>/servers/647ad7b3…/mcp</code></td>
+    <td><code>https://mcp.jira.acme.com</code></td>
+    <td><code>secret/data/contextforge/oauth/https%3A%2F%2Fmcp.jira.acme.com/bob%40acme.com</code></td>
+  </tr>
+</table>
+
+<p><strong>Vault secret payload</strong> — mirrors the <code>oauth_tokens</code> DB table columns exactly, with <code>mcp_url</code> replacing <code>gateway_id</code> as the system identifier (matching the <em>System</em> column visible in the token management UI):</p>
+<pre>
+{
+  <span class="s">"mcp_url"</span>:       <span class="s">"https://mcp.github.acme.com"</span>,   <span class="c">// replaces gateway_id — the upstream MCP URL</span>
+  <span class="s">"access_token"</span>:  <span class="s">"gho_Aa1Bb2..."</span>,                  <span class="c">// plain-text — Vault encrypts at rest</span>
+  <span class="s">"refresh_token"</span>: <span class="s">"ghr_Rr9Ss8..."</span>,                  <span class="c">// plain-text, nullable</span>
+  <span class="s">"user_id"</span>:       <span class="s">"github_uid_44712"</span>,              <span class="c">// OAuth provider identifier</span>
+  <span class="s">"token_type"</span>:    <span class="s">"Bearer"</span>,
+  <span class="s">"expires_at"</span>:    <span class="s">"2025-06-10T18:00:00Z"</span>,          <span class="c">// ISO-8601 UTC, or null</span>
+  <span class="s">"scopes"</span>:        <span class="s">'["repo","read:user"]'</span>,          <span class="c">// JSON-encoded list</span>
+  <span class="s">"created_at"</span>:    <span class="s">"2025-06-10T10:00:00Z"</span>,
+  <span class="s">"updated_at"</span>:    <span class="s">"2025-06-10T10:00:00Z"</span>
+}
+</pre>
+<div class="box">
+  <strong>Why mcp_url and not gateway_id?</strong> The <code>gateway_id</code> is an internal UUID opaque to clients and operators. The upstream MCP URL (<code>gateways.url</code>) is what the secret actually protects access to — it maps directly to what the UI's <em>System</em> column should display, and it is stable and meaningful for audit purposes (e.g. <em>"alice's token for https://mcp.github.acme.com"</em>).
+</div>
+
+<h3>DB-to-Vault Field Mapping</h3>
+<table>
+  <tr><th>oauth_tokens DB column</th><th>Vault secret field</th><th>Note</th></tr>
+  <tr><td><code>gateway_id</code> (FK → gateways)</td><td><code>mcp_url</code></td><td><strong>Changed.</strong> Resolved via server_tool_association → gateways.url</td></tr>
+  <tr><td><code>user_id</code></td><td><code>user_id</code></td><td>Same — OAuth provider's user identifier</td></tr>
+  <tr><td><code>app_user_email</code></td><td>path segment + payload</td><td>URL-encoded in path; also stored in payload for readability</td></tr>
+  <tr><td><code>access_token</code></td><td><code>access_token</code></td><td>Plain-text (Vault encrypts at rest)</td></tr>
+  <tr><td><code>refresh_token</code></td><td><code>refresh_token</code></td><td>Plain-text, nullable</td></tr>
+  <tr><td><code>token_type</code></td><td><code>token_type</code></td><td>Same</td></tr>
+  <tr><td><code>expires_at</code></td><td><code>expires_at</code></td><td>ISO-8601 UTC string</td></tr>
+  <tr><td><code>scopes</code></td><td><code>scopes</code></td><td>JSON-encoded list</td></tr>
+  <tr><td><code>created_at</code></td><td><code>created_at</code></td><td>Same</td></tr>
+  <tr><td><code>updated_at</code></td><td><code>updated_at</code></td><td>Same</td></tr>
+  <tr><td><code>id</code> (PK)</td><td>—</td><td>Not needed; path is the unique key</td></tr>
+</table>
+
+
+
+<h2>4. New Client-Callable Vault Authorization Endpoints</h2>
+
+
+<p>These two endpoints let a client trigger the full Vault credential exchange using only the virtual server URL they already have — no gateway knowledge required. They mirror the existing <code>/oauth/authorize</code> / <code>/oauth/callback</code> pair.</p>
+
+<div class="box box-vault">
+  <strong>New router:</strong> <code>mcpgateway/routers/vault_router.py</code> — prefix <code>/vault</code>, tag <code>vault</code><br />
+  Registered in <code>main.py</code> alongside <code>oauth_router</code>. Enabled only when <code>OAUTH_TOKEN_BACKEND=vault</code>.
+</div>
+
+<h3>Endpoint 1 — Initiate Vault Auth Flow</h3>
+<p><span class="method-badge get">GET</span><code>/vault/authorize/{server_id}</code></p>
+<table>
+  <tr><th>Aspect</th><th>Detail</th></tr>
+  <tr><td>Auth required</td><td>Yes — same ContextForge Bearer token the client already uses for MCP calls</td></tr>
+  <tr><td>Path param</td><td><code>server_id</code> — the ID from the client's virtual server URL (<code>/servers/{server_id}/mcp</code>)</td></tr>
+  <tr><td>What it does</td>
+    <td>
+      1. Looks up <code>servers</code> table by <code>server_id</code>.<br />
+      2. Walks <code>server_tool_association → tools.gateway_id → gateways</code> to find all OAuth gateways.<br />
+      3. If multiple OAuth gateways, accepts optional <code>?gateway_url=…</code> to select one; otherwise selects the first.<br />
+      4. Reads <code>gateway.oauth_config</code>, builds PKCE + HMAC state (same as <code>/oauth/authorize</code>).<br />
+      5. Stores state in <code>oauth_states</code> table with the resolved <code>gateway_id</code>.<br />
+      6. Redirects to the IdP authorization URL.
+    </td>
+  </tr>
+  <tr><td>Response</td><td><code>302 Redirect</code> → IdP authorization URL (same as <code>/oauth/authorize/{gateway_id}</code>)</td></tr>
+  <tr><td>Errors</td><td><code>404</code> server not found · <code>400</code> no OAuth-enabled gateways on this server · <code>403</code> caller lacks access to server</td></tr>
+</table>
+
+<pre>
+<span class="c"># Pseudocode — vault_router.py</span>
+<span class="k">@vault_router.get</span>(<span class="s">"/authorize/{server_id}"</span>)
+<span class="k">async def</span> initiate_vault_auth(server_id: str, request: Request,
+                               gateway_url: str | None = None,
+                               current_user = Depends(get_current_user_with_permissions),
+                               db: Session = Depends(get_db)):
+
+    <span class="c"># 1. Resolve server → gateways via server_tool_association</span>
+    server = db.get(Server, server_id)              <span class="c"># 404 if missing</span>
+    gateway = <span class="vault">_resolve_oauth_gateway(server, db, preferred_url=gateway_url)</span>
+
+    <span class="c"># 2. Reuse existing OAuth flow initiation (no duplication)</span>
+    oauth_manager = OAuthManager(token_storage=TokenStorageService(db))
+    auth_data = <span class="k">await</span> oauth_manager.initiate_authorization_code_flow(
+        gateway.id, gateway.oauth_config,
+        app_user_email=requester_email
+    )
+    <span class="k">return</span> RedirectResponse(url=auth_data[<span class="s">"authorization_url"</span>])
+</pre>
+
+<h3>Endpoint 2 — Vault Auth Callback</h3>
+<p><span class="method-badge get">GET</span><code>/vault/callback</code></p>
+<table>
+  <tr><th>Aspect</th><th>Detail</th></tr>
+  <tr><td>Auth required</td><td>No — IdP redirects here with <code>code</code> + <code>state</code>; state carries the session</td></tr>
+  <tr><td>Query params</td><td><code>code</code>, <code>state</code>, <code>error</code>, <code>error_description</code> — identical to <code>/oauth/callback</code></td></tr>
+  <tr><td>What it does</td>
+    <td>
+      1. Validates HMAC state, resolves <code>gateway_id</code> from <code>oauth_states</code> table (identical to <code>/oauth/callback</code>).<br />
+      2. Exchanges code for tokens via IdP.<br />
+      3. Resolves <code>mcp_url = gateways.url</code> from the gateway record.<br />
+      4. Calls <code>VaultTokenBackend.store_tokens(mcp_url, user_id, email, access_token, …)</code> — writes to Vault path <code>…/&lt;encoded mcp_url&gt;/&lt;encoded email&gt;</code>.<br />
+      5. Returns success HTML page (same UX as <code>/oauth/callback</code>).
+    </td>
+  </tr>
+  <tr><td>Response</td><td><code>200 HTMLResponse</code> — success or error page with link back to client</td></tr>
+  <tr><td>Key difference from /oauth/callback</td><td>Step 4 always writes to <strong>Vault</strong> regardless of <code>OAUTH_TOKEN_BACKEND</code> setting — this endpoint is only registered when <code>OAUTH_TOKEN_BACKEND=vault</code>.</td></tr>
+</table>
+
+<h3>Helper: _resolve_oauth_gateway</h3>
+<pre>
+<span class="k">def</span> _resolve_oauth_gateway(server: Server, db: Session,
+                            preferred_url: str | None = None) -&gt; Gateway:
+    <span class="c">"""Walk server_tool_association → tools.gateway_id → gateways.
+    Returns the first active OAuth gateway on this virtual server."""</span>
+
+    <span class="c"># Pull distinct gateway_ids from tools linked to this server</span>
+    rows = db.execute(
+        select(Tool.gateway_id)
+        .join(server_tool_association,
+              server_tool_association.c.tool_id == Tool.id)
+        .where(server_tool_association.c.server_id == server.id)
+        .where(Tool.gateway_id.isnot(<span class="k">None</span>))
+        .distinct()
+    ).scalars().all()
+
+    <span class="k">if not</span> rows:
+        <span class="k">raise</span> HTTPException(<span class="v">400</span>, <span class="s">"No gateways associated with this server"</span>)
+
+    gateways = db.scalars(select(Gateway)
+        .where(Gateway.id.in_(rows))
+        .where(Gateway.auth_type == <span class="s">"oauth"</span>)).all()
+
+    <span class="k">if not</span> gateways:
+        <span class="k">raise</span> HTTPException(<span class="v">400</span>, <span class="s">"No OAuth-enabled gateways on this server"</span>)
+
+    <span class="k">if</span> preferred_url:
+        match = next((g <span class="k">for</span> g <span class="k">in</span> gateways <span class="k">if</span> g.url == preferred_url), <span class="k">None</span>)
+        <span class="k">if not</span> match:
+            <span class="k">raise</span> HTTPException(<span class="v">400</span>, <span class="s">"Requested gateway_url not found on this server"</span>)
+        <span class="k">return</span> match
+
+    <span class="k">return</span> gateways[<span class="v">0</span>]   <span class="c"># first OAuth gateway wins</span>
+</pre>
+
+
+
+<h2>5. End-to-End Flow: Alice Authorizes via /vault/authorize</h2>
+
+
+<p>Alice's MCP client knows only: <code>http://localhost:4444/servers/647ad7b3…/mcp</code></p>
+
+<div class="scenario">
+  <div class="step" data-n="1">
+    <div>
+      <div class="step-head">Alice → <code>GET /vault/authorize/647ad7b3…</code></div>
+      <div class="step-body">
+        ContextForge resolves: <code>server_id=647ad7b3…</code> → <code>server_tool_association</code> → <code>tools.gateway_id=gw-github</code> → <code>gateways.url=https://mcp.github.acme.com</code>.<br />
+        Reads <code>gw-github.oauth_config</code>, builds PKCE + HMAC state, saves to <code>oauth_states</code> table (stays in DB — short-lived).
+      </div>
+    </div>
+  </div>
+  <div class="step" data-n="2">
+    <div>
+      <div class="step-head">302 Redirect → GitHub IdP authorization URL</div>
+      <div class="step-body">Alice is redirected to GitHub to approve access. Identical UX to existing <code>/oauth/authorize</code> flow.</div>
+    </div>
+  </div>
+  <div class="step" data-n="3">
+    <div>
+      <div class="step-head">GitHub → <code>GET /vault/callback?code=abc&amp;state=…</code></div>
+      <div class="step-body">ContextForge validates HMAC state. Resolves <code>gateway_id</code> from <code>oauth_states</code> table. Fetches gateway record → <code>gateways.url = https://mcp.github.acme.com</code>. Exchanges code for tokens with GitHub IdP.</div>
+    </div>
+  </div>
+  <div class="step vault-step" data-n="4">
+    <div>
+      <div class="step-head"><span class="tag tag-vault">VAULT</span> <code>VaultTokenBackend.store_tokens(mcp_url, …)</code></div>
+      <div class="step-body">
+        <code>mcp_url = "https://mcp.github.acme.com"</code> (from <code>gateways.url</code>)<br />
+        Vault path: <code>PUT secret/data/contextforge/oauth/https%3A%2F%2Fmcp.github.acme.com/alice%40acme.com</code><br />
+        Payload stores <code>mcp_url</code> (what the <em>System</em> column shows in the UI), <code>access_token</code>, <code>refresh_token</code>, <code>expires_at</code>, <code>scopes</code>, etc.<br />
+        No row written to <code>oauth_tokens</code> DB table. Vault's AES-256-GCM seal protects at rest.
+      </div>
+    </div>
+  </div>
+  <div class="step" data-n="5">
+    <div>
+      <div class="step-head">Success page returned to Alice's browser</div>
+      <div class="step-body">HTML success page with link back. Alice's MCP client can now call tools through <code>/servers/647ad7b3…/mcp</code> — ContextForge will fetch her token from Vault on each tool call.</div>
+    </div>
+  </div>
+</div>
+
+
+
+<h2>6. Tool Call Flow: Alice Calls a Tool (Token Lookup)</h2>
+
+
+<div class="scenario">
+  <div class="step" data-n="1">
+    <div>
+      <div class="step-head">Alice → <code>POST /servers/647ad7b3…/mcp</code> — tool call <code>github__search_code</code></div>
+      <div class="step-body"><code>tool_service</code> resolves tool → <code>tools.gateway_id = gw-github</code> → fetches <code>gateways.url = https://mcp.github.acme.com</code>.</div>
+    </div>
+  </div>
+  <div class="step vault-step" data-n="2">
+    <div>
+      <div class="step-head"><span class="tag tag-vault">VAULT</span> <code>VaultTokenBackend.get_user_token(mcp_url, alice@acme.com)</code></div>
+      <div class="step-body">
+        <code>GET secret/data/contextforge/oauth/https%3A%2F%2Fmcp.github.acme.com/alice%40acme.com</code><br />
+        Reads <code>expires_at</code> — token fresh → returns <code>"gho_Aa1Bb2..."</code>. No DB query. No decryption step.
+      </div>
+    </div>
+  </div>
+  <div class="step" data-n="3">
+    <div>
+      <div class="step-head">ContextForge forwards to upstream with Alice's token</div>
+      <div class="step-body"><code>POST https://mcp.github.acme.com/sse</code> with <code>Authorization: Bearer gho_Aa1Bb2…</code>. GitHub sees Alice's identity.</div>
+    </div>
+  </div>
+</div>
+
+
+
+<h2>7. Multi-Gateway Virtual Server (Alice + Bob, GitHub + Jira)</h2>
+
+
+<p>Same virtual server <code>647ad7b3…</code> exposes tools from both <code>gw-github</code> and <code>gw-jira</code>. Each user authorizes each gateway separately using the same <code>server_id</code> plus the optional <code>?gateway_url=</code> discriminator.</p>
+
+<table>
+  <tr><th>User</th><th>Authorize call</th><th>Vault secret path written</th></tr>
+  <tr>
+    <td><code>alice@acme.com</code></td>
+    <td><code>GET /vault/authorize/647ad7b3…?gateway_url=https://mcp.github.acme.com</code></td>
+    <td><code>…/https%3A%2F%2Fmcp.github.acme.com/alice%40acme.com</code></td>
+  </tr>
+  <tr>
+    <td><code>alice@acme.com</code></td>
+    <td><code>GET /vault/authorize/647ad7b3…?gateway_url=https://mcp.jira.acme.com</code></td>
+    <td><code>…/https%3A%2F%2Fmcp.jira.acme.com/alice%40acme.com</code></td>
+  </tr>
+  <tr>
+    <td><code>bob@acme.com</code></td>
+    <td><code>GET /vault/authorize/647ad7b3…?gateway_url=https://mcp.jira.acme.com</code></td>
+    <td><code>…/https%3A%2F%2Fmcp.jira.acme.com/bob%40acme.com</code></td>
+  </tr>
+</table>
+
+<p>When <code>?gateway_url</code> is omitted and the server has only one OAuth gateway, that gateway is chosen automatically — no extra query param needed for the simple single-gateway case.</p>
+
+
+
+<h2>8. UI Token Management Table (System Column)</h2>
+
+
+<p>The token management table (screenshot below the original request) maps directly to Vault secrets. The <em>System</em> column now shows <code>mcp_url</code> from the Vault payload — the upstream MCP endpoint — which is more meaningful to operators than an opaque UUID.</p>
+
+<table>
+  <tr><th>System</th><th>Type</th><th>Name</th><th>Secret value</th><th>Expiration</th><th>Action date</th></tr>
+  <tr>
+    <td><code>https://mcp.github.acme.com</code></td>
+    <td>OAUTH2</td>
+    <td>TOKEN</td>
+    <td><code>gho_*****WqX</code></td>
+    <td>7/7/2026</td>
+    <td>7/7/2025</td>
+  </tr>
+  <tr>
+    <td><code>https://mcp.jira.acme.com</code></td>
+    <td>OAUTH2</td>
+    <td>TOKEN</td>
+    <td><code>jira_****xYz</code></td>
+    <td>7/7/2026</td>
+    <td>7/7/2025</td>
+  </tr>
+</table>
+
+<p>The UI reads these records by listing Vault paths under <code>&lt;prefix&gt;/&lt;encoded email&gt;</code> and rendering <code>mcp_url</code> in the System column. All other columns (<em>Type</em>, <em>Name</em>, <em>Secret value</em>, <em>Expiration</em>, <em>Action date</em>) map 1-to-1 to Vault payload fields.</p>
+
+
+
+<h2>9. Updated File Map</h2>
+
+<div class="tree">
+  <span class="dir">mcpgateway/services/</span><br />
+    <span class="dir">token_storage_service.py</span>  <span class="tag tag-changed">CHANGED</span>  <span class="note">thin façade — reads config, delegates all methods</span><br />
+    <span class="new">token_backends/</span>  <span class="tag tag-new">NEW PACKAGE</span><br />
+      <span class="new">__init__.py</span><br />
+      <span class="new">base.py</span>  <span class="note">AbstractTokenBackend + TokenRecord (mcp_url field, not gateway_id)</span><br />
+      <span class="new">db_backend.py</span>  <span class="note">DatabaseTokenBackend — existing behaviour, uses gateway_id internally</span><br />
+      <span class="new">vault_backend.py</span>  <span class="note">VaultTokenBackend — path built from mcp_url via gateways.url</span><br />
+  <br />
+  <span class="new">mcpgateway/routers/vault_router.py</span>  <span class="tag tag-new">NEW</span>  <span class="note">GET /vault/authorize/{server_id} · GET /vault/callback</span><br />
+  <span class="dir">mcpgateway/routers/oauth_router.py</span>  <span class="tag tag-keep">UNCHANGED</span>  <span class="note">existing /oauth/* endpoints untouched</span><br />
+  <br />
+  <span class="dir">mcpgateway/config.py</span>  <span class="tag tag-changed">CHANGED</span>  <span class="note">7 new Vault env-var fields; no existing field touched</span><br />
+  <span class="dir">mcpgateway/main.py</span>  <span class="tag tag-changed">CHANGED</span>  <span class="note">register vault_router when OAUTH_TOKEN_BACKEND=vault</span><br />
+  <span class="dir">pyproject.toml</span>  <span class="tag tag-changed">CHANGED</span>  <span class="note">optional extra [vault] = hvac&gt;=2.3.0</span><br />
+  <br />
+  <span class="dir">mcpgateway/db.py OAuthToken</span>  <span class="tag tag-keep">UNCHANGED</span>  <span class="note">DB table stays; DB backend still owns it</span><br />
+  <span class="dir">services/tool_service.py</span>  <span class="tag tag-keep">UNCHANGED</span>  <span class="note">calls TokenStorageService(db) identically</span><br />
+  <span class="dir">services/gateway_service.py</span>  <span class="tag tag-keep">UNCHANGED</span>  <span class="note">calls TokenStorageService(db) identically</span><br />
+</div>
+
+
+
+<h2>10. AbstractTokenBackend — Revised Signature</h2>
+
+<p>The interface now takes <code>mcp_url</code> instead of <code>gateway_id</code> as the resource discriminator. The <code>DatabaseTokenBackend</code> resolves <code>mcp_url → gateway_id</code> internally via a DB lookup so the existing <code>oauth_tokens</code> table is unchanged.</p>
+<pre>
+<span class="k">class</span> AbstractTokenBackend(ABC):
+
+    <span class="k">@abstractmethod</span>
+    <span class="k">async def</span> store_tokens(
+        mcp_url: str,          <span class="c"># gateways.url — replaces gateway_id in the public API</span>
+        user_id: str,          <span class="c"># OAuth provider user ID</span>
+        app_user_email: str,   <span class="c"># ContextForge user email</span>
+        access_token: str,
+        refresh_token: str | None,
+        expires_in: int | None,
+        scopes: list[str]
+    ) → TokenRecord
+
+    <span class="k">@abstractmethod</span>
+    <span class="k">async def</span> get_user_token(
+        mcp_url: str,
+        app_user_email: str,
+        threshold_seconds: int = 300
+    ) → str | None
+
+    <span class="k">@abstractmethod</span>
+    <span class="k">async def</span> get_token_info(mcp_url: str, app_user_email: str) → dict | None
+
+    <span class="k">@abstractmethod</span>
+    <span class="k">async def</span> revoke_user_tokens(mcp_url: str, app_user_email: str) → bool
+
+    <span class="k">@abstractmethod</span>
+    <span class="k">async def</span> cleanup_expired_tokens(max_age_days: int = 30) → int
+</pre>
+
+<div class="box box-warn">
+  <strong>DatabaseTokenBackend compatibility note.</strong> The existing call sites pass <code>gateway_id</code> (a UUID). The DB backend resolves <code>mcp_url → gateway_id</code> with a single <code>SELECT id FROM gateways WHERE url = :mcp_url</code> lookup before each operation. This is a single extra DB round-trip per token operation — acceptable given token ops are infrequent relative to tool calls.
+</div>
+
+
+
+<h2>11. Vault Policy (unchanged from original)</h2>
+
+<pre>
+path <span class="s">"secret/data/contextforge/oauth/*"</span> {
+  capabilities = [<span class="s">"create"</span>, <span class="s">"update"</span>, <span class="s">"read"</span>, <span class="s">"delete"</span>]
+}
+path <span class="s">"secret/metadata/contextforge/oauth/*"</span> {
+  capabilities = [<span class="s">"delete"</span>, <span class="s">"list"</span>]
+}
+</pre>
+
+
+
+<h2>12. New Configuration Fields</h2>
+
+<table>
+  <tr><th>Env var</th><th>Default</th><th>Required when</th><th>Description</th></tr>
+  <tr><td><code>OAUTH_TOKEN_BACKEND</code></td><td><code>database</code></td><td>always</td><td><code>database</code> or <code>vault</code>. Activates vault_router when set to <code>vault</code>.</td></tr>
+  <tr><td><code>VAULT_ADDR</code></td><td><code>http://127.0.0.1:8200</code></td><td>backend=vault</td><td>Vault server URL.</td></tr>
+  <tr><td><code>VAULT_TOKEN</code></td><td>—</td><td>backend=vault, Phase 1</td><td>Static Vault token (SecretStr). AppRole in Phase 2.</td></tr>
+  <tr><td><code>VAULT_NAMESPACE</code></td><td>—</td><td>Enterprise/HCP only</td><td>Vault namespace (e.g. <code>admin/acme</code>).</td></tr>
+  <tr><td><code>VAULT_KV_MOUNT</code></td><td><code>secret</code></td><td>backend=vault</td><td>KV v2 mount path.</td></tr>
+  <tr><td><code>VAULT_KV_PATH_PREFIX</code></td><td><code>contextforge/oauth</code></td><td>backend=vault</td><td>Prefix within mount. Full path = <code>&lt;mount&gt;/data/&lt;prefix&gt;/&lt;encoded_mcp_url&gt;/&lt;encoded_email&gt;</code>.</td></tr>
+  <tr><td><code>VAULT_TLS_VERIFY</code></td><td><code>true</code></td><td>backend=vault</td><td>Verify Vault TLS cert.</td></tr>
+</table>
+
+
+
+<h2>13. Delivery Phases</h2>
+
+<table>
+  <tr><th>Phase</th><th>Deliverable</th><th>Scope</th></tr>
+  <tr>
+    <td><strong>Phase 1</strong></td>
+    <td>AbstractTokenBackend (mcp_url API) + DatabaseTokenBackend + VaultTokenBackend + vault_router</td>
+    <td>Full flow: store, retrieve, refresh, revoke. <code>/vault/authorize/{server_id}</code> + <code>/vault/callback</code> callable by clients.</td>
+  </tr>
+  <tr>
+    <td><strong>Phase 2</strong></td>
+    <td>AppRole + Kubernetes SA auth for Vault</td>
+    <td>Production-grade Vault auth. No endpoint or scenario changes.</td>
+  </tr>
+  <tr>
+    <td><strong>Phase 3</strong></td>
+    <td>DB → Vault migration script</td>
+    <td>CLI: reads <code>oauth_tokens</code>, decrypts, resolves <code>gateway_id → gateways.url</code>, writes to Vault, deletes DB rows.</td>
+  </tr>
+  <tr>
+    <td><strong>Future</strong></td>
+    <td>AWS Secrets Manager, Azure Key Vault backends</td>
+    <td>Implement <code>AbstractTokenBackend</code>. Zero changes to call sites, router, or vault_router.</td>
+  </tr>
+</table>
+
+
+
+<h2>14. Security Properties</h2>
+
+<table>
+  <tr><th>Property</th><th>DB Backend</th><th>Vault Backend</th></tr>
+  <tr><td>Client sees gateway internals</td><td>No — gateway_id never in client config</td><td>No — client uses server_id only; mcp_url is resolved server-side</td></tr>
+  <tr><td>Tokens encrypted at rest</td><td>Fernet AES-128 (app-layer)</td><td>AES-256-GCM (Vault seal)</td></tr>
+  <tr><td>Per-user isolation</td><td>UNIQUE (gateway_id, app_user_email)</td><td>Unique Vault path per (mcp_url, email)</td></tr>
+  <tr><td>Cross-user access</td><td>Query always filters by email</td><td>Path always includes email — other users' paths physically unreachable</td></tr>
+  <tr><td>Audit trail</td><td>CF audit log + DB timestamps</td><td>CF audit log + Vault audit log (every read AND write) + KV version history</td></tr>
+  <tr><td>Vault authorize endpoint auth</td><td>N/A</td><td>Requires ContextForge Bearer token — same as all other /servers/* calls</td></tr>
+</table>
+
+<footer>Made with IBM Bob</footer>
+</body>
+</html>

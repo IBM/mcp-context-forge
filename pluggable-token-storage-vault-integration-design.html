@@ -1,0 +1,568 @@
+
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Pluggable Token Storage — Vault Integration Design</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, "Segoe UI", system-ui, sans-serif; font-size: 14px; line-height: 1.6; background: #fff; color: #1f2328; max-width: 780px; margin: 0 auto; padding: 32px 24px 64px; }
+  h1 { font-size: 22px; font-weight: 700; margin-bottom: 4px; }
+  h2 { font-size: 16px; font-weight: 700; margin: 32px 0 10px; border-bottom: 1px solid #e5e7eb; padding-bottom: 6px; }
+  h3 { font-size: 14px; font-weight: 700; margin: 20px 0 6px; }
+  p  { margin-bottom: 10px; }
+  ul { margin: 0 0 12px 20px; }
+  li { margin-bottom: 4px; }
+  .subtitle { color: #57606a; font-size: 13px; margin-bottom: 28px; }
+
+  .tag { display: inline-block; font-size: 11px; font-weight: 600; padding: 2px 7px; border-radius: 4px; margin-right: 4px; vertical-align: middle; }
+  .tag-new     { background: #dcfce7; color: #166534; }
+  .tag-changed { background: #fef3c7; color: #92400e; }
+  .tag-keep    { background: #f0f9ff; color: #0369a1; }
+  .tag-vault   { background: #f3e8ff; color: #6b21a8; }
+  .tag-db      { background: #fff7ed; color: #9a3412; }
+
+  .box      { background: #f7f8fa; border: 1px solid #e5e7eb; border-radius: 6px; padding: 14px 18px; margin-bottom: 16px; }
+  .box-warn { background: #fffbeb; border-color: #fcd34d; }
+  .box-info { background: #eff6ff; border-color: #bfdbfe; }
+  .box-vault{ background: #faf5ff; border-color: #d8b4fe; }
+  .box-ok   { background: #f0fdf4; border-color: #bbf7d0; }
+
+  table { width: 100%; border-collapse: collapse; margin-bottom: 16px; font-size: 13px; }
+  th { background: #f7f8fa; text-align: left; padding: 7px 10px; border: 1px solid #e5e7eb; font-weight: 600; color: #57606a; font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; }
+  td { padding: 7px 10px; border: 1px solid #e5e7eb; vertical-align: top; }
+  tr:nth-child(even) td { background: #fafafa; }
+
+  code { font-family: "SFMono-Regular", Consolas, monospace; font-size: 12px; background: #f6f8fa; border: 1px solid #e5e7eb; border-radius: 3px; padding: 1px 5px; }
+  pre  { font-family: "SFMono-Regular", Consolas, monospace; font-size: 12px; background: #f7f8fa; border: 1px solid #e5e7eb; border-radius: 6px; padding: 14px 16px; margin-bottom: 14px; overflow-x: auto; line-height: 1.7; white-space: pre-wrap; }
+  pre .c  { color: #57606a; font-style: italic; }
+  pre .k  { color: #8250df; }
+  pre .s  { color: #0a3069; }
+  pre .v  { color: #cf222e; }
+  pre .vault { color: #7c3aed; font-weight: 600; }
+  pre .db    { color: #b45309; font-weight: 600; }
+  pre .hi    { background: #fef9c3; border-radius: 2px; padding: 0 2px; }
+
+  .tree { font-family: "SFMono-Regular", Consolas, monospace; font-size: 12px; line-height: 1.9; background: #f7f8fa; border: 1px solid #e5e7eb; border-radius: 6px; padding: 14px 16px; margin-bottom: 16px; }
+  .tree .dir  { color: #0550ae; font-weight: 600; }
+  .tree .new  { color: #166534; font-weight: 600; }
+  .tree .note { color: #57606a; font-style: italic; }
+
+  /* Scenario steps */
+  .scenario { display: flex; flex-direction: column; gap: 0; margin-bottom: 16px; }
+  .step {
+    display: grid;
+    grid-template-columns: 36px 1fr;
+    gap: 0 12px;
+    padding: 10px 0 10px 0;
+    border-left: 3px solid #e5e7eb;
+    margin-left: 14px;
+    padding-left: 16px;
+    position: relative;
+  }
+  .step::before {
+    content: attr(data-n);
+    position: absolute; left: -20px; top: 10px;
+    width: 24px; height: 24px;
+    background: #3b82d4; color: #fff;
+    border-radius: 50%; font-size: 11px; font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .step.vault-step { border-color: #c4b5fd; }
+  .step.vault-step::before { background: #7c3aed; }
+  .step.db-step { border-color: #fdba74; }
+  .step.db-step::before { background: #ea580c; }
+  .step:last-child { border-color: transparent; }
+  .step-head { font-weight: 600; font-size: 13px; margin-bottom: 3px; }
+  .step-body { color: #374151; font-size: 13px; }
+
+  /* Split compare */
+  .split { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px; }
+  .split-box { border: 1px solid #e5e7eb; border-radius: 6px; padding: 12px 14px; }
+  .split-box.vault-box { border-color: #d8b4fe; background: #faf5ff; }
+  .split-box.db-box    { border-color: #fed7aa; background: #fff7ed; }
+  .split-title { font-weight: 700; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px; }
+  .split-title.v { color: #7c3aed; }
+  .split-title.d { color: #c2410c; }
+
+  footer { margin-top: 48px; padding-top: 14px; border-top: 1px solid #e5e7eb; text-align: center; font-size: 11px; color: #57606a; }
+</style>
+</head>
+<body>
+
+<h1>Pluggable Token Storage — Vault Integration Design</h1>
+<p class="subtitle">ContextForge · Feature #5402 · Grounded in: Alice (GitHub) + Bob (Jira) Multi-User Virtual Server Scenario</p>
+
+
+<h2>1. Business Problem (from scenario)</h2>
+<div class="box box-info">
+  <p>A client runs ContextForge to host all their MCP servers. They register <strong>GitHub MCP</strong> and <strong>Jira MCP</strong> as OAuth gateways, then expose them together as a single virtual server <code>vs-engineering</code>. Multiple users — <strong>Alice</strong> and <strong>Bob</strong> — authenticate against different gateways and invoke tools through that virtual server.</p>
+  <p style="margin-bottom:0"><strong>The client's requirement:</strong> They operate HashiCorp Vault as their enterprise secret store. They do not want OAuth tokens (Alice's GitHub token, Bob's Jira token) to ever land in the ContextForge application database. All credentials must live in Vault, managed under their existing Vault policies, audited via Vault audit logs, and rotated via Vault leases.</p>
+</div>
+
+<p>Today, <code>store_tokens()</code> always writes to the <code>oauth_tokens</code> DB table. There is no seam to redirect that write to Vault. The design below introduces that seam.</p>
+
+
+<h2>2. The Setup (unchanged by this design)</h2>
+<pre>
+<span class="c"># Admin registers two OAuth gateways (one-time)</span>
+<span class="v">gw-github</span>  →  https://mcp.github.acme.com   auth_type: oauth  grant: authorization_code
+<span class="v">gw-jira</span>    →  https://mcp.jira.acme.com     auth_type: oauth  grant: authorization_code
+
+<span class="c"># Admin creates a virtual server aggregating both</span>
+<span class="v">vs-engineering</span>  gateways: [gw-github, gw-jira]
+
+<span class="c"># Users</span>
+<span class="v">alice@acme.com</span>  — will use GitHub tools
+<span class="v">bob@acme.com</span>    — will use Jira tools
+</pre>
+
+
+<h2>3. What Changes — File Map</h2>
+<div class="tree">
+  <span class="dir">mcpgateway/services/</span><br />
+    <span class="dir">token_storage_service.py</span>  <span class="tag tag-changed">CHANGED</span>  <span class="note">thin façade — reads config, builds backend, delegates all methods</span><br />
+    <span class="new">token_backends/</span>  <span class="tag tag-new">NEW PACKAGE</span><br />
+      <span class="new">__init__.py</span>  <span class="note">re-exports AbstractTokenBackend, DatabaseTokenBackend, VaultTokenBackend</span><br />
+      <span class="new">base.py</span>  <span class="note">AbstractTokenBackend ABC + TokenRecord dataclass (no SQLAlchemy)</span><br />
+      <span class="new">db_backend.py</span>  <span class="note">DatabaseTokenBackend — exact extraction of today's DB logic, zero behaviour change</span><br />
+      <span class="new">vault_backend.py</span>  <span class="note">VaultTokenBackend — HashiCorp Vault KV v2 via httpx (already a runtime dep)</span><br />
+  <br />
+  <span class="dir">mcpgateway/config.py</span>  <span class="tag tag-changed">CHANGED</span>  <span class="note">7 new env-var fields; no existing field touched</span><br />
+  <span class="dir">pyproject.toml</span>  <span class="tag tag-changed">CHANGED</span>  <span class="note">new optional extra [vault] = hvac&gt;=2.3.0</span><br />
+  <br />
+  <span class="dir">mcpgateway/db.py  OAuthToken</span>  <span class="tag tag-keep">UNCHANGED</span>  <span class="note">table stays; DB backend still owns it</span><br />
+  <span class="dir">routers/oauth_router.py</span>  <span class="tag tag-keep">UNCHANGED</span>  <span class="note">still does TokenStorageService(db)</span><br />
+  <span class="dir">services/gateway_service.py</span>  <span class="tag tag-keep">UNCHANGED</span>  <span class="note">still does TokenStorageService(token_db)</span><br />
+  <span class="dir">services/tool_service.py</span>  <span class="tag tag-keep">UNCHANGED</span>  <span class="note">still does TokenStorageService(token_db)</span><br />
+  <span class="dir">services/resource_service.py</span>  <span class="tag tag-keep">UNCHANGED</span>  <span class="note">still does TokenStorageService(token_db)</span><br />
+  <span class="dir">admin.py</span>  <span class="tag tag-keep">UNCHANGED</span>  <span class="note">still does TokenStorageService(db)</span><br />
+</div>
+
+
+<h2>4. TokenStorageService as a Thin Façade</h2>
+<p>The constructor is the only thing that changes. All five call sites continue to call <code>TokenStorageService(db)</code> identically — the <code>db</code> argument is accepted for backward compatibility and forwarded to the DB backend only when the database backend is active.</p>
+<pre>
+<span class="k">class</span> TokenStorageService:
+    <span class="k">def</span> __init__(self, db: Session):
+        settings = get_settings()
+        backend  = settings.oauth_token_backend   <span class="c"># "database" (default) | "vault"</span>
+
+        <span class="k">if</span> backend == <span class="s">"vault"</span>:
+            self._backend = <span class="vault">VaultTokenBackend(settings)</span>   <span class="c"># db ignored for Vault</span>
+        <span class="k">else</span>:
+            self._backend = <span class="db">DatabaseTokenBackend(db, settings)</span>  <span class="c"># existing behaviour</span>
+
+    <span class="c"># Every public method is a one-line delegate — no logic here</span>
+    <span class="k">async def</span> store_tokens(self, ...)   → self._backend.store_tokens(...)
+    <span class="k">async def</span> get_user_token(self, ...) → self._backend.get_user_token(...)
+    <span class="k">async def</span> get_token_info(self, ...) → self._backend.get_token_info(...)
+    <span class="k">async def</span> revoke_user_tokens(self, ...) → self._backend.revoke_user_tokens(...)
+    <span class="k">async def</span> cleanup_expired_tokens(self, ...) → self._backend.cleanup_expired_tokens(...)
+</pre>
+
+
+<h2>5. AbstractTokenBackend — The Contract Both Backends Satisfy</h2>
+<pre>
+<span class="k">class</span> AbstractTokenBackend(ABC):
+
+    <span class="c"># Write — called at OAuth callback after IdP returns code + tokens</span>
+    <span class="k">@abstractmethod</span>
+    <span class="k">async def</span> store_tokens(gateway_id, user_id, app_user_email,
+                           access_token, refresh_token, expires_in, scopes) → TokenRecord
+
+    <span class="c"># Read — called on every tool call / health-check / resource fetch</span>
+    <span class="k">@abstractmethod</span>
+    <span class="k">async def</span> get_user_token(gateway_id, app_user_email,
+                             threshold_seconds=300) → Optional[str]
+
+    <span class="c"># Metadata — called by admin status API</span>
+    <span class="k">@abstractmethod</span>
+    <span class="k">async def</span> get_token_info(gateway_id, app_user_email) → Optional[Dict]
+
+    <span class="c"># Revocation — called at user logout or admin revoke</span>
+    <span class="k">@abstractmethod</span>
+    <span class="k">async def</span> revoke_user_tokens(gateway_id, app_user_email) → bool
+
+    <span class="c"># Maintenance — called by scheduled cleanup job</span>
+    <span class="k">@abstractmethod</span>
+    <span class="k">async def</span> cleanup_expired_tokens(max_age_days=30) → int
+</pre>
+<p><code>TokenRecord</code> is a plain <code>@dataclass</code> (no SQLAlchemy). It carries <code>gateway_id</code>, <code>user_id</code>, <code>app_user_email</code>, <code>access_token</code>, <code>refresh_token</code>, <code>expires_at</code>, <code>scopes</code>, <code>token_type</code>, <code>created_at</code>, <code>updated_at</code>. Returned by <code>store_tokens()</code> so callers never touch a SQLAlchemy ORM object directly.</p>
+
+
+<h2>6. Vault Secret Schema — Where Alice's and Bob's Tokens Live</h2>
+
+<div class="box box-vault">
+  <strong>Vault secret path pattern:</strong><br /><br />
+  <code>&lt;VAULT_KV_MOUNT&gt;/data/&lt;VAULT_KV_PATH_PREFIX&gt;/<strong>&lt;gateway_id&gt;</strong>/<strong>&lt;url-encoded email&gt;</strong></code><br /><br />
+  One secret per <code>(gateway_id, user_email)</code> — identical isolation model to the DB's <code>UNIQUE (gateway_id, app_user_email)</code> constraint.
+</div>
+
+<table>
+  <tr><th>User</th><th>Gateway</th><th>Vault secret path</th></tr>
+  <tr>
+    <td><code>alice@acme.com</code></td>
+    <td><code>gw-github</code></td>
+    <td><code>secret/data/contextforge/oauth/gw-github/alice%40acme.com</code></td>
+  </tr>
+  <tr>
+    <td><code>bob@acme.com</code></td>
+    <td><code>gw-jira</code></td>
+    <td><code>secret/data/contextforge/oauth/gw-jira/bob%40acme.com</code></td>
+  </tr>
+</table>
+
+<p><strong>Vault secret payload</strong> (the <code>data</code> field inside the KV v2 secret):</p>
+<pre>
+{
+  <span class="s">"access_token"</span>:  <span class="s">"gho_Aa1Bb2..."</span>,        <span class="c">// plain-text — Vault encrypts at rest</span>
+  <span class="s">"refresh_token"</span>: <span class="s">"ghr_Rr9Ss8..."</span>,        <span class="c">// plain-text, nullable</span>
+  <span class="s">"user_id"</span>:       <span class="s">"github_uid_44712"</span>,     <span class="c">// OAuth provider identifier</span>
+  <span class="s">"token_type"</span>:    <span class="s">"Bearer"</span>,
+  <span class="s">"expires_at"</span>:    <span class="s">"2025-06-10T18:00:00Z"</span>, <span class="c">// ISO-8601 UTC, or null</span>
+  <span class="s">"scopes"</span>:        <span class="s">'["repo","read:user"]'</span>, <span class="c">// JSON-encoded list</span>
+  <span class="s">"created_at"</span>:    <span class="s">"2025-06-10T10:00:00Z"</span>,
+  <span class="s">"updated_at"</span>:    <span class="s">"2025-06-10T10:00:00Z"</span>
+}
+</pre>
+
+
+<h2>7. Scenario Walkthrough — Every Step with Vault Backend Active</h2>
+
+<p>The operator has set <code>OAUTH_TOKEN_BACKEND=vault</code>. All other steps (gateway registration, virtual server creation, PKCE flow) are identical.</p>
+
+<h3>Step 1 — Admin registers gw-github and gw-jira</h3>
+<div class="box">No change. OAuth config (client_id, client_secret, URLs) stays in the <code>gateways</code> DB table, encrypted by <code>EncryptionService</code> as before. Vault stores <em>user tokens</em> only — not gateway config.</div>
+
+<h3>Step 2 — Alice authenticates with GitHub (OAuth callback writes to Vault)</h3>
+<div class="scenario">
+  <div class="step" data-n="1">
+    <div>
+      <div class="step-head">Alice → <code>GET /oauth/authorize/gw-github</code></div>
+      <div class="step-body">Unchanged. ContextForge builds PKCE + HMAC state, saves state to <code>oauth_states</code> table (short-lived, stays in DB), redirects to GitHub.</div>
+    </div>
+  </div>
+  <div class="step" data-n="2">
+    <div>
+      <div class="step-head">GitHub redirects back → <code>GET /oauth/callback?code=abc&amp;state=…</code></div>
+      <div class="step-body">Unchanged. ContextForge validates HMAC state, exchanges code for tokens with GitHub IdP. Receives <code>{ access_token, refresh_token, expires_in: 28800 }</code>.</div>
+    </div>
+  </div>
+  <div class="step vault-step" data-n="3">
+    <div>
+      <div class="step-head"><span class="tag tag-vault">VAULT</span> <code>store_tokens()</code> writes to Vault instead of DB</div>
+      <div class="step-body">
+        <code>VaultTokenBackend.store_tokens("gw-github", "github_uid_44712", "alice@acme.com", "gho_Aa1Bb2...", "ghr_Rr9Ss8...", 28800, ["repo","read:user"])</code><br /><br />
+        Internally: <code>PUT secret/data/contextforge/oauth/gw-github/alice%40acme.com</code> with payload above.<br />
+        <strong>No application-layer encryption</strong> — tokens are plain-text to Vault; Vault's AES-256-GCM seal protects them at rest.<br />
+        No row is written to <code>oauth_tokens</code> DB table.
+      </div>
+    </div>
+  </div>
+  <div class="step vault-step" data-n="4">
+    <div>
+      <div class="step-head"><span class="tag tag-vault">VAULT</span> "Fetch Tools" triggers <code>get_user_token()</code> from Vault</div>
+      <div class="step-body">
+        <code>GET secret/data/contextforge/oauth/gw-github/alice%40acme.com</code><br />
+        Checks <code>expires_at</code> from the Vault payload — token is fresh → returns <code>"gho_Aa1Bb2..."</code> plain-text.<br />
+        Gateway service uses it as <code>Authorization: Bearer gho_Aa1Bb2...</code> to sync tool list from GitHub MCP.
+      </div>
+    </div>
+  </div>
+</div>
+
+<h3>Step 3 — Bob authenticates with Jira</h3>
+<div class="scenario">
+  <div class="step vault-step" data-n="1">
+    <div>
+      <div class="step-head"><span class="tag tag-vault">VAULT</span> <code>store_tokens()</code> writes Bob's Jira token to Vault</div>
+      <div class="step-body">
+        <code>PUT secret/data/contextforge/oauth/gw-jira/bob%40acme.com</code><br /><br />
+        <strong>Vault now contains two isolated secrets:</strong>
+        <pre style="margin-top:8px;margin-bottom:0">
+secret/data/contextforge/oauth/gw-github/alice%40acme.com  → Alice's GitHub token
+secret/data/contextforge/oauth/gw-jira/bob%40acme.com      → Bob's Jira token</pre>
+      </div>
+    </div>
+  </div>
+</div>
+
+<h3>Step 4 — Alice calls <code>github__search_code</code> via vs-engineering</h3>
+<div class="scenario">
+  <div class="step" data-n="1">
+    <div>
+      <div class="step-head">tool_service resolves tool → belongs to gw-github, grant_type = authorization_code</div>
+      <div class="step-body">Code path unchanged: <code>TokenStorageService(token_db).get_user_token("gw-github", "alice@acme.com")</code></div>
+    </div>
+  </div>
+  <div class="step vault-step" data-n="2">
+    <div>
+      <div class="step-head"><span class="tag tag-vault">VAULT</span> VaultTokenBackend fetches from Vault</div>
+      <div class="step-body">
+        <code>GET secret/data/contextforge/oauth/gw-github/alice%40acme.com</code><br />
+        Reads <code>expires_at</code> → not expired → returns <code>"gho_Aa1Bb2..."</code><br />
+        No DB query. No decryption step (token was stored plain-text).
+      </div>
+    </div>
+  </div>
+  <div class="step" data-n="3">
+    <div>
+      <div class="step-head">ContextForge forwards request with Alice's token</div>
+      <div class="step-body"><code>POST https://mcp.github.acme.com/sse</code> with <code>Authorization: Bearer gho_Aa1Bb2...</code>. GitHub sees Alice's identity.</div>
+    </div>
+  </div>
+</div>
+
+<h3>Step 5 — Bob calls <code>jira__create_issue</code> via vs-engineering</h3>
+<div class="scenario">
+  <div class="step vault-step" data-n="1">
+    <div>
+      <div class="step-head"><span class="tag tag-vault">VAULT</span> VaultTokenBackend fetches Bob's Jira token</div>
+      <div class="step-body">
+        <code>GET secret/data/contextforge/oauth/gw-jira/bob%40acme.com</code><br />
+        Returns Bob's Jira access token. Alice's path is never queried — strict path-per-user isolation.
+      </div>
+    </div>
+  </div>
+  <div class="step" data-n="2">
+    <div>
+      <div class="step-head">ContextForge forwards with Bob's token</div>
+      <div class="step-body"><code>POST https://mcp.jira.acme.com/…</code> with Bob's Bearer token. Jira creates the issue under Bob's account.</div>
+    </div>
+  </div>
+</div>
+
+<h3>Step 6 — Transparent Token Refresh (Alice's token nears expiry)</h3>
+<div class="scenario">
+  <div class="step vault-step" data-n="1">
+    <div>
+      <div class="step-head"><span class="tag tag-vault">VAULT</span> <code>get_user_token()</code> detects near-expiry from Vault metadata</div>
+      <div class="step-body">
+        Reads <code>expires_at</code> from Vault payload.<br />
+        <code>now + 300s &gt;= expires_at</code> → True → triggers refresh.
+      </div>
+    </div>
+  </div>
+  <div class="step" data-n="2">
+    <div>
+      <div class="step-head">Refresh call to GitHub IdP</div>
+      <div class="step-body">
+        VaultTokenBackend reads <code>gateway.oauth_config</code> from DB (gateway config stays in DB — only user tokens move to Vault).<br />
+        Calls <code>OAuthManager.refresh_token(refresh_token, oauth_config)</code> → GitHub issues new <code>{ access_token, expires_in }</code>.
+      </div>
+    </div>
+  </div>
+  <div class="step vault-step" data-n="3">
+    <div>
+      <div class="step-head"><span class="tag tag-vault">VAULT</span> Write-back: updated tokens saved as a new Vault KV version</div>
+      <div class="step-body">
+        <code>PUT secret/data/contextforge/oauth/gw-github/alice%40acme.com</code> with new <code>access_token</code> and updated <code>expires_at</code>.<br />
+        Vault KV v2 automatically keeps the previous version — full audit history retained without any extra work.
+      </div>
+    </div>
+  </div>
+</div>
+
+<h3>Step 7 — Cross-User Isolation (Alice tries Jira without authorising)</h3>
+<div class="scenario">
+  <div class="step vault-step" data-n="1">
+    <div>
+      <div class="step-head"><span class="tag tag-vault">VAULT</span> <code>GET secret/data/contextforge/oauth/gw-jira/alice%40acme.com</code> → 404</div>
+      <div class="step-body">
+        Path does not exist in Vault. VaultTokenBackend returns <code>None</code>.<br />
+        ContextForge raises: <em>"No OAuth tokens found for user alice@acme.com on gateway Jira MCP. Visit /oauth/authorize/gw-jira"</em>.<br />
+        Alice cannot access Bob's path — Vault policies can enforce this at the Vault layer too (see §9).
+      </div>
+    </div>
+  </div>
+</div>
+
+<h3>Step 8 — Revocation (Bob logs out)</h3>
+<div class="scenario">
+  <div class="step vault-step" data-n="1">
+    <div>
+      <div class="step-head"><span class="tag tag-vault">VAULT</span> <code>revoke_user_tokens()</code> deletes the Vault secret</div>
+      <div class="step-body">
+        <code>DELETE secret/data/contextforge/oauth/gw-jira/bob%40acme.com</code><br />
+        (Vault KV v2 soft-delete; hard-delete available via metadata endpoint.)<br />
+        Alice's GitHub path is untouched.
+      </div>
+    </div>
+  </div>
+</div>
+
+<h3>Step 9 — Cleanup (scheduled job)</h3>
+<div class="box box-warn">
+  <strong>cleanup_expired_tokens() is a no-op for the Vault backend.</strong><br />
+  Vault does not support "list all secrets older than N days" without iterating the entire tree — that is expensive and not idiomatic. Instead, operators configure <strong>Vault KV lease TTLs</strong> to auto-expire stale secrets, or use <code>vault kv delete</code> in a Vault agent policy. The method returns <code>0</code> and logs a <code>DEBUG</code> message. The existing DB-backend cleanup job continues working unchanged for teams on the database backend.
+</div>
+
+
+<h2>8. Side-by-Side: DB Backend vs Vault Backend at Each Step</h2>
+<table>
+  <tr><th>Scenario step</th><th>DatabaseTokenBackend (today)</th><th>VaultTokenBackend (new)</th></tr>
+  <tr>
+    <td><strong>store_tokens()</strong><br />after OAuth callback</td>
+    <td>Encrypts tokens with Fernet.<br />UPSERTs row in <code>oauth_tokens</code> table.</td>
+    <td>Writes plain-text to Vault KV v2.<br />No DB row. Vault encrypts at rest.</td>
+  </tr>
+  <tr>
+    <td><strong>get_user_token()</strong><br />on tool call</td>
+    <td>SQL SELECT on <code>oauth_tokens</code>.<br />Decrypts Fernet ciphertext.<br />If near-expiry: refresh + UPDATE row.</td>
+    <td>Vault GET on KV path.<br />Token is already plain-text.<br />If near-expiry: refresh + Vault PUT (new version).</td>
+  </tr>
+  <tr>
+    <td><strong>Token isolation</strong></td>
+    <td><code>UNIQUE (gateway_id, app_user_email)</code> DB constraint.</td>
+    <td>Unique Vault path per <code>(gateway_id, email)</code>. Vault ACL policies can additionally restrict read access per path prefix.</td>
+  </tr>
+  <tr>
+    <td><strong>Encryption</strong></td>
+    <td>ContextForge-owned Fernet key (<code>AUTH_ENCRYPTION_SECRET</code>).</td>
+    <td>Vault-owned AES-256-GCM seal key. ContextForge has no key material.</td>
+  </tr>
+  <tr>
+    <td><strong>Audit trail</strong></td>
+    <td>ContextForge audit log + DB <code>updated_at</code>.</td>
+    <td>Vault audit log (every read AND write) + KV v2 version history.</td>
+  </tr>
+  <tr>
+    <td><strong>revoke_user_tokens()</strong></td>
+    <td>SQL DELETE on matching row.</td>
+    <td>Vault KV soft-delete (hard-delete via metadata endpoint).</td>
+  </tr>
+  <tr>
+    <td><strong>cleanup_expired_tokens()</strong></td>
+    <td>SQL DELETE WHERE expires_at &lt; cutoff OR (expires_at IS NULL AND updated_at &lt; cutoff).</td>
+    <td>No-op, returns 0. Operator sets Vault KV TTL or runs vault-agent cleanup.</td>
+  </tr>
+</table>
+
+
+<h2>9. Vault Policy — What ContextForge Needs</h2>
+<p>The ContextForge application token needs exactly these capabilities on the KV mount:</p>
+<pre>
+path <span class="s">"secret/data/contextforge/oauth/*"</span> {
+  capabilities = [<span class="s">"create"</span>, <span class="s">"update"</span>, <span class="s">"read"</span>, <span class="s">"delete"</span>]
+}
+
+path <span class="s">"secret/metadata/contextforge/oauth/*"</span> {
+  capabilities = [<span class="s">"delete"</span>, <span class="s">"list"</span>]   <span class="c">// needed for hard-delete and future list</span>
+}
+</pre>
+<p><strong>No wildcard admin access.</strong> ContextForge only touches secrets under its own prefix. Gateway config, other application secrets, and infra secrets are unreachable with this policy.</p>
+
+
+<h2>10. New Configuration Fields</h2>
+<table>
+  <tr><th>Env var</th><th>Default</th><th>Required when</th><th>Description</th></tr>
+  <tr>
+    <td><code>OAUTH_TOKEN_BACKEND</code></td>
+    <td><code>database</code></td>
+    <td>always</td>
+    <td><code>database</code> (default, existing behaviour) or <code>vault</code>. Validated at startup.</td>
+  </tr>
+  <tr>
+    <td><code>VAULT_ADDR</code></td>
+    <td><code>http://127.0.0.1:8200</code></td>
+    <td>backend=vault</td>
+    <td>Vault server URL (e.g. <code>https://vault.acme.com:8200</code>).</td>
+  </tr>
+  <tr>
+    <td><code>VAULT_TOKEN</code></td>
+    <td>—</td>
+    <td>backend=vault, Phase 1</td>
+    <td>Static Vault token. Stored as <code>SecretStr</code>. AppRole support in Phase 2.</td>
+  </tr>
+  <tr>
+    <td><code>VAULT_NAMESPACE</code></td>
+    <td>—</td>
+    <td>Vault Enterprise / HCP only</td>
+    <td>Vault namespace (e.g. <code>admin/acme</code>). Omit for CE.</td>
+  </tr>
+  <tr>
+    <td><code>VAULT_KV_MOUNT</code></td>
+    <td><code>secret</code></td>
+    <td>backend=vault</td>
+    <td>KV v2 secrets engine mount path.</td>
+  </tr>
+  <tr>
+    <td><code>VAULT_KV_PATH_PREFIX</code></td>
+    <td><code>contextforge/oauth</code></td>
+    <td>backend=vault</td>
+    <td>Prefix within the mount. Full path = <code>&lt;mount&gt;/data/&lt;prefix&gt;/&lt;gw_id&gt;/&lt;email&gt;</code>.</td>
+  </tr>
+  <tr>
+    <td><code>VAULT_TLS_VERIFY</code></td>
+    <td><code>true</code></td>
+    <td>backend=vault</td>
+    <td>Verify Vault TLS cert. <code>false</code> only for dev environments.</td>
+  </tr>
+</table>
+
+
+<h2>11. Migration Path for Existing Deployments</h2>
+<div class="split">
+  <div class="split-box db-box">
+    <div class="split-title d">Keep Database Backend</div>
+    <ul>
+      <li>Do nothing. Default is <code>database</code>.</li>
+      <li>All existing Alice/Bob tokens continue to work.</li>
+      <li>No Alembic migration. No config change.</li>
+    </ul>
+  </div>
+  <div class="split-box vault-box">
+    <div class="split-title v">Switch to Vault Backend</div>
+    <ul>
+      <li>Set <code>OAUTH_TOKEN_BACKEND=vault</code> + Vault env vars.</li>
+      <li>Existing DB tokens are not auto-migrated.</li>
+      <li>Users re-authorise once — new tokens go to Vault.</li>
+      <li>Old <code>oauth_tokens</code> rows can be manually purged after migration.</li>
+    </ul>
+  </div>
+</div>
+<div class="box box-warn">
+  <strong>No dual-backend mode in Phase 1.</strong> When Vault is active, the DB backend is not consulted as a fallback. The operator must plan the migration window. A one-time migration script (reads DB rows, writes to Vault, deletes DB rows) is a Phase 2 deliverable.
+</div>
+
+
+<h2>12. Delivery Phases</h2>
+<table>
+  <tr><th>Phase</th><th>Deliverable</th><th>Scope</th></tr>
+  <tr>
+    <td><strong>Phase 1</strong> (this feature)</td>
+    <td>AbstractTokenBackend + DatabaseTokenBackend + VaultTokenBackend (static token auth)</td>
+    <td>Full scenario coverage: store, retrieve, refresh, revoke, metadata. Static <code>VAULT_TOKEN</code> only.</td>
+  </tr>
+  <tr>
+    <td><strong>Phase 2</strong></td>
+    <td>AppRole + Kubernetes SA auth for Vault</td>
+    <td>Production-grade auth for Vault. No API or scenario changes.</td>
+  </tr>
+  <tr>
+    <td><strong>Phase 3</strong></td>
+    <td>Migration script (DB → Vault)</td>
+    <td>CLI command to read existing <code>oauth_tokens</code> rows, decrypt, write to Vault, delete DB rows.</td>
+  </tr>
+  <tr>
+    <td><strong>Future</strong></td>
+    <td>Additional backends (AWS Secrets Manager, Azure Key Vault, Redis)</td>
+    <td>Implement <code>AbstractTokenBackend</code>. Zero changes to call sites or façade.</td>
+  </tr>
+</table>
+
+
+<h2>13. Security Properties Preserved</h2>
+<table>
+  <tr><th>Property</th><th>DB Backend</th><th>Vault Backend</th></tr>
+  <tr><td>Tokens encrypted at rest</td><td>Fernet AES-128 (app-layer)</td><td>AES-256-GCM (Vault seal)</td></tr>
+  <tr><td>Per-user isolation</td><td>UNIQUE DB constraint</td><td>Unique Vault path + optional ACL policy</td></tr>
+  <tr><td>No cross-user token sharing</td><td>Query always filters by email</td><td>Path always includes email</td></tr>
+  <tr><td>Private-gateway guard</td><td>Checked in _refresh_access_token()</td><td>Same check — logic lives in VaultTokenBackend</td></tr>
+  <tr><td>Proactive expiry check</td><td>Compares DB expires_at</td><td>Compares expires_at from Vault payload</td></tr>
+  <tr><td>Audit trail</td><td>CF audit log + DB timestamps</td><td>CF audit log + Vault audit log + KV version history</td></tr>
+</table>
+
+<footer>Made with IBM Bob</footer>
+</body>
+</html>
