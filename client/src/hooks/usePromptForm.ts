@@ -21,6 +21,7 @@ interface PromptFormValues {
 export interface UsePromptFormReturn {
   name: string;
   visibility: Visibility;
+  teamId?: string;
   template: string;
   arguments: string;
   description: string;
@@ -210,6 +211,7 @@ export function usePromptForm(): UsePromptFormReturn {
   const [description, setDescriptionState] = useState(initialState.description);
   const [tags, setTagsState] = useState(initialState.tags);
   const [errors, setErrors] = useState<PromptFormErrors>({});
+  const teamId = visibility === "team" ? (selectedTeamId ?? undefined) : undefined;
   const { execute: createPrompt, isLoading: isSubmitting } = useQuery<
     Prompt,
     ReturnType<typeof buildCreatePromptPayload>
@@ -226,18 +228,26 @@ export function usePromptForm(): UsePromptFormReturn {
       arguments: argumentsValue,
       description,
       tags,
-      teamId: visibility === "team" ? (selectedTeamId ?? undefined) : undefined,
+      teamId,
     }),
-    [name, visibility, template, argumentsValue, description, tags, selectedTeamId],
+    [name, visibility, template, argumentsValue, description, tags, teamId],
   );
 
   const validateField = useCallback(
     (field: keyof PromptFormErrors, value: string) => {
       if (field === "submit") return;
 
-      const result = schema.safeParse({
+      const nextValues = {
         ...getFormValues(),
         [field]: value,
+      };
+
+      if (field === "visibility") {
+        nextValues.teamId = value === "team" ? (selectedTeamId ?? undefined) : undefined;
+      }
+
+      const result = schema.safeParse({
+        ...nextValues,
       });
 
       if (result.success) {
@@ -260,7 +270,7 @@ export function usePromptForm(): UsePromptFormReturn {
         return nextErrors;
       });
     },
-    [getFormValues, schema],
+    [getFormValues, schema, selectedTeamId],
   );
 
   const updateField = useCallback(
@@ -349,9 +359,9 @@ export function usePromptForm(): UsePromptFormReturn {
       arguments: parsed.arguments,
       description: parsed.description ?? "",
       tags: parsed.tags ?? "",
-      teamId: parsed.visibility === "team" ? (selectedTeamId ?? undefined) : undefined,
+      teamId: parsed.visibility === "team" ? teamId : undefined,
     };
-  }, [getFormValues, schema, selectedTeamId]);
+  }, [getFormValues, schema, teamId]);
 
   const handleSubmit = useCallback(
     async (event: FormEvent<HTMLFormElement>, onSuccess?: () => void) => {
@@ -388,6 +398,7 @@ export function usePromptForm(): UsePromptFormReturn {
   return {
     name,
     visibility,
+    teamId,
     template,
     arguments: argumentsValue,
     description,
