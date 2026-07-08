@@ -94,7 +94,6 @@ export function ToolForm({ isOpen, onToggle, onSuccess, tool }: ToolFormProps) {
     showSpecUrlInput,
     generatedSpecUrl,
     errors,
-    isValid,
     isSubmitting,
     setName,
     setUrl,

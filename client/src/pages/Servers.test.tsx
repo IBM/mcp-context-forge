@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { screen, waitFor, within, fireEvent } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { render } from "@testing-library/react";
 import { toast } from "sonner";
@@ -401,7 +401,7 @@ describe("Servers", () => {
     });
 
     vi.mocked(api.post).mockResolvedValueOnce({});
-    
+
     // api.get should be called again for refetch
     vi.mocked(api.get).mockResolvedValueOnce({
       gateways: createMockServers(0, 1),
@@ -417,7 +417,7 @@ describe("Servers", () => {
     await waitFor(() => {
       expect(api.post).toHaveBeenCalledWith(expect.stringContaining("activate=false"));
     });
-    
+
     await waitFor(() => {
       expect(api.get).toHaveBeenCalledTimes(2); // Initial fetch + refetch
     });
@@ -446,7 +446,6 @@ describe("Servers", () => {
     const dialog = await screen.findByRole("dialog");
     expect(within(dialog).getByRole("heading", { name: /test connection/i })).toBeInTheDocument();
   });
-
 
   it("optimistically removes server from list immediately on delete confirmation", async () => {
     const user = userEvent.setup();
@@ -725,12 +724,15 @@ describe("Servers", () => {
 
     // Mock a slow API response for the next page
     let resolveSecondPage!: (value: any) => void;
-    vi.mocked(api.get).mockImplementationOnce(() => new Promise((resolve) => {
-      resolveSecondPage = resolve;
-    }));
+    vi.mocked(api.get).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveSecondPage = resolve;
+        }),
+    );
 
     const loadMoreButton = screen.getByRole("button", { name: /load more/i });
-    
+
     // Click twice quickly
     await user.click(loadMoreButton);
     await user.click(loadMoreButton);
@@ -863,7 +865,7 @@ describe("Servers", () => {
 
     // We can simulate a successful submit since the API call in MCPServerForm will use our mock
     vi.mocked(api.put).mockResolvedValueOnce({});
-    
+
     // Fill the required URL field (it uses URL format)
     const urlInput = screen.getByLabelText(/^URL/i);
     await user.clear(urlInput);
