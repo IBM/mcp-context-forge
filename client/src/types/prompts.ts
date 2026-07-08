@@ -37,4 +37,4 @@ export interface PromptFormData {
   teamId?: string;
 }
 
-export type PromptFormErrors = Partial<Record<keyof PromptFormData, string>>;
+export type PromptFormErrors = Partial<Record<keyof PromptFormData | "submit", string>>;
