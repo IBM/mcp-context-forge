@@ -1,17 +1,24 @@
+import { useEffect, useRef, useState } from "react";
 import { Highlight, themes, type Language } from "prism-react-renderer";
 import { Copy } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { copyToClipboard } from "@/lib/clipboard";
 import { cn } from "@/lib/utils";
+
+const COPY_FEEDBACK_DURATION_MS = 1500;
 
 export type CodeBlockLanguage = "bash" | "json" | "python" | "tsx" | "typescript";
 
 export interface CodeBlockProps {
   code: string;
   language: CodeBlockLanguage;
-  /** aria-label for the Copy button; also referenced by callers wiring toasts. */
+  /** aria-label for the Copy button. */
   copyLabel?: string;
-  /** Invoked when the user clicks Copy. Callers own the clipboard write and any feedback toast. */
+  /** When set, clicking Copy writes to the clipboard and shows this label in a tooltip. */
+  copiedLabel?: string;
+  /** Invoked when the user clicks Copy. Ignored when `copiedLabel` is set. */
   onCopy?: (code: string) => void;
   /** Hide the built-in Copy affordance. */
   hideCopy?: boolean;
@@ -39,21 +46,48 @@ const TOKEN_LANGUAGE: Record<CodeBlockLanguage, Language> = {
  * Token coloring comes from the `vsDark` theme; that pairs reasonably well
  * with the rewrite's neutral-900/950 backgrounds without per-token overrides.
  *
- * This component is intentionally i18n-free — callers own the copy-feedback
- * toast so the message can match the caller's domain (prompt, tool, resource).
+ * This component is intentionally i18n-free — callers pass a translated
+ * `copiedLabel` when they want tooltip feedback on copy.
  */
 export function CodeBlock({
   code,
   language,
   copyLabel,
+  copiedLabel,
   onCopy,
   hideCopy = false,
   copyAriaLabel,
   className,
   padding = "p-4",
 }: CodeBlockProps) {
+  const [copied, setCopied] = useState(false);
+  const timeoutRef = useRef<number | null>(null);
   const prismLanguage = TOKEN_LANGUAGE[language];
   const ariaLabel = copyLabel ?? copyAriaLabel ?? "Copy code";
+
+  useEffect(() => {
+    return () => {
+      if (timeoutRef.current) {
+        window.clearTimeout(timeoutRef.current);
+      }
+    };
+  }, []);
+
+  const handleCopy = () => {
+    if (copiedLabel) {
+      copyToClipboard(code);
+      setCopied(true);
+      if (timeoutRef.current) {
+        window.clearTimeout(timeoutRef.current);
+      }
+      timeoutRef.current = window.setTimeout(() => {
+        setCopied(false);
+        timeoutRef.current = null;
+      }, COPY_FEEDBACK_DURATION_MS);
+      return;
+    }
+    onCopy?.(code);
+  };
 
   return (
     <div className={cn("relative", className)}>
@@ -87,16 +121,38 @@ export function CodeBlock({
         )}
       </Highlight>
       {!hideCopy && (
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-xs"
-          className="absolute right-2 top-2 size-7 text-neutral-400 hover:bg-neutral-800 hover:text-neutral-100"
-          aria-label={ariaLabel}
-          onClick={() => onCopy?.(code)}
-        >
-          <Copy className="size-3.5" />
-        </Button>
+        <div className="absolute right-2 top-2">
+          {copiedLabel ? (
+            <TooltipProvider delayDuration={0}>
+              <Tooltip open={copied}>
+                <TooltipTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-xs"
+                    className="size-7 text-neutral-400 hover:bg-neutral-800 hover:text-neutral-100"
+                    aria-label={ariaLabel}
+                    onClick={handleCopy}
+                  >
+                    <Copy className="size-3.5" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="top">{copiedLabel}</TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          ) : (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-xs"
+              className="size-7 text-neutral-400 hover:bg-neutral-800 hover:text-neutral-100"
+              aria-label={ariaLabel}
+              onClick={handleCopy}
+            >
+              <Copy className="size-3.5" />
+            </Button>
+          )}
+        </div>
       )}
     </div>
   );

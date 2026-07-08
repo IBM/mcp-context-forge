@@ -33,11 +33,7 @@ export function PromptArgsForm({ args, schema, onChange }: PromptArgsFormProps) 
   );
 
   if (declared.length === 0) {
-    return (
-      <p className="text-sm text-muted-foreground">
-        {intl.formatMessage({ id: "prompts.details.code.args.empty" })}
-      </p>
-    );
+    return null;
   }
 
   return (

@@ -92,9 +92,10 @@ describe("PromptCodeTab", () => {
     expect((screen.getByLabelText(/user_name/) as HTMLInputElement).value).toBe("");
   });
 
-  it("renders the empty-args message when the prompt declares no arguments", () => {
+  it("omits the args form when the prompt declares no arguments", () => {
     render(<PromptCodeTab prompt={mockPrompt({ arguments: [] })} />);
-    expect(screen.getByText(/no arguments/i)).toBeInTheDocument();
+    expect(screen.queryByText(/no arguments/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: /^arguments$/i })).not.toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "curl" })).toBeInTheDocument();
   });
 });

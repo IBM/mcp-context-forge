@@ -4,10 +4,6 @@ import userEvent from "@testing-library/user-event";
 import { renderWithProviders as render } from "@/test/test-utils";
 import { PromptSnippetTabs } from "./PromptSnippetTabs";
 
-vi.mock("sonner", () => ({
-  toast: { success: vi.fn(), error: vi.fn() },
-}));
-
 // prism-react-renderer breaks the snippet across many <span> tokens, so
 // getByText against the rendered string won't match — read the code
 // element's full textContent instead.
@@ -51,6 +47,7 @@ describe("PromptSnippetTabs", () => {
     expect(writeText).toHaveBeenCalledTimes(1);
     expect(writeText.mock.calls[0][0]).toContain("curl -X POST");
     expect(writeText.mock.calls[0][0]).toContain('"user":"Alice"');
+    expect(screen.getByRole("tooltip")).toHaveTextContent("Copied!");
   });
 
   it("rebuilds the snippet when args change", () => {

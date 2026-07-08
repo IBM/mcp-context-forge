@@ -10,7 +10,7 @@
   "prompts.details.code.tab.typescript": "TypeScript",
   "prompts.details.code.copy": "Copy snippet",
   "prompts.details.code.copyAriaLabel": "Copy {language} snippet",
-  "prompts.details.code.copySuccess": "Copied {language} snippet",
+  "prompts.details.code.copySuccess": "Copied!",
   "prompts.details.preview.run": "Preview",
   "prompts.details.preview.rerun": "Re-run",
   "prompts.details.preview.running": "Rendering...",
