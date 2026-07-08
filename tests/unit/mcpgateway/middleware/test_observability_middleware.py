@@ -111,6 +111,31 @@ async def test_dispatch_trace_setup_failure(mock_request, mock_call_next):
 
 
 @pytest.mark.asyncio
+async def test_dispatch_trace_setup_failure_after_trace_id_set_resets_both_tokens(mock_request, mock_call_next):
+    """If trace setup fails AFTER trace_id/plugins_trace_id ContextVars are already set
+    (here: start_span raises, before span_id_token is set), both of those tokens must be
+    reset in the except block -- not just skipped because they're None -- so stale trace
+    context never bleeds into a later request reusing the same task/context.
+    """
+    middleware = ObservabilityMiddleware(app=None, enabled=True)
+    with (
+        patch.object(middleware.service, "start_trace", return_value="trace123"),
+        patch.object(middleware.service, "start_span", side_effect=Exception("span setup fail")),
+        patch("mcpgateway.middleware.observability_middleware.attach_trace_to_session"),
+        patch("mcpgateway.middleware.observability_middleware.parse_traceparent", return_value=("traceX", "spanY", "flags")),
+        patch("mcpgateway.middleware.observability_middleware.should_skip_observability", return_value=False),
+        patch("mcpgateway.middleware.observability_middleware.current_trace_id") as mock_trace_id_var,
+        patch("mcpgateway.middleware.observability_middleware.plugins_trace_id") as mock_plugins_trace_id_var,
+    ):
+        mock_trace_id_var.set.return_value = "trace-token"
+        mock_plugins_trace_id_var.set.return_value = "plugins-token"
+        response = await middleware.dispatch(mock_request, mock_call_next)
+        assert response.status_code == 200
+        mock_trace_id_var.reset.assert_called_once_with("trace-token")
+        mock_plugins_trace_id_var.reset.assert_called_once_with("plugins-token")
+
+
+@pytest.mark.asyncio
 async def test_dispatch_exception_during_request(mock_request):
     async def failing_call_next(request):
         raise RuntimeError("Request failed")

@@ -127,6 +127,14 @@ class TestRecordPluginMetricsNoOp:
             record_plugin_metrics("trace-1", "not-a-dict")  # type: ignore[arg-type]
         mock_cls.assert_not_called()
 
+    def test_noop_when_every_plugin_yields_nothing_sanitized(self):
+        """If every plugin namespace's metadata is dropped in full (no surviving keys), the
+        overall call is a no-op: ObservabilityService is never even constructed.
+        """
+        with patch("mcpgateway.services.observability_service.ObservabilityService") as mock_cls:
+            record_plugin_metrics("trace-1", {"some_plugin": {"bad key!": "x"}})
+        mock_cls.assert_not_called()
+
 
 class TestRecordPluginMetricsPrimarySpanPath:
     """Primary path: validated metrics attached as attributes on a dedicated span per plugin."""
@@ -225,6 +233,30 @@ class TestRecordPluginMetricsSecondaryMetricPath:
             assert call.kwargs["trace_id"] == "trace-1"
             assert isinstance(call.kwargs["value"], float)
 
+    def test_per_call_numeric_cap_stops_before_a_later_plugin_is_even_examined(self):
+        """Once the per-call numeric-row cap is already reached by an earlier plugin, a
+        later plugin's fields are never examined at all -- the outer per-plugin loop
+        breaks immediately rather than relying solely on the inner per-field cap check.
+        """
+        mock_service = _make_observability_service_mock()
+        mock_session = MagicMock()
+
+        # plugin_a alone exhausts the default cap (16); plugin_b's field must never be reached.
+        metadata = {
+            "plugin_a": {f"field_{i}": i for i in range(16)},
+            "plugin_b": {"count": 999},
+        }
+
+        with (
+            patch("mcpgateway.services.observability_service.ObservabilityService", return_value=mock_service),
+            patch("mcpgateway.db.SessionLocal", return_value=mock_session),
+        ):
+            record_plugin_metrics("trace-1", metadata)
+
+        assert mock_service.record_metric.call_count == 16
+        recorded_plugins = {call.kwargs["resource_id"] for call in mock_service.record_metric.call_args_list}
+        assert recorded_plugins == {"plugin_a"}
+
 
 class TestRecordPluginMetricsS4Validation:
     """S4: untrusted plugin output must be validated/bounded before it reaches observability."""
@@ -286,6 +318,90 @@ class TestRecordPluginMetricsS4Validation:
         assert any("huge_field" in msg for msg in dropped_records)
         for msg in dropped_records:
             assert huge not in msg
+
+    def test_string_value_with_disallowed_characters_is_rejected(self, caplog):
+        """A short string value that simply isn't in the safe low-cardinality charset
+        (e.g. contains a space) is rejected on the charset check, independent of length.
+        """
+        mock_service = _make_observability_service_mock()
+        mock_session = MagicMock()
+
+        metadata = {"some_plugin": {"bad_char_field": "has a space", "ok_field": "fine"}}
+
+        with (
+            patch("mcpgateway.services.observability_service.ObservabilityService", return_value=mock_service),
+            patch("mcpgateway.db.SessionLocal", return_value=mock_session),
+            caplog.at_level(logging.DEBUG),
+        ):
+            record_plugin_metrics("trace-1", metadata)
+
+        attrs = mock_service.start_span.call_args.kwargs["attributes"]
+        assert "bad_char_field" not in attrs
+        assert attrs["ok_field"] == "fine"
+        dropped_records = [r.getMessage() for r in caplog.records if "Dropped" in r.getMessage()]
+        assert any("bad_char_field" in msg for msg in dropped_records)
+
+    def test_non_dict_per_plugin_metadata_is_dropped(self):
+        """A plugin namespace whose value isn't itself a dict is dropped; other,
+        well-formed plugin namespaces in the same call are unaffected.
+        """
+        mock_service = _make_observability_service_mock()
+        mock_session = MagicMock()
+
+        metadata = {"bad_plugin": "not-a-dict", "good_plugin": {"count": 1}}
+
+        with (
+            patch("mcpgateway.services.observability_service.ObservabilityService", return_value=mock_service),
+            patch("mcpgateway.db.SessionLocal", return_value=mock_session),
+        ):
+            record_plugin_metrics("trace-1", metadata)
+
+        span_names = {call.kwargs["name"] for call in mock_service.start_span.call_args_list}
+        assert span_names == {"plugin.metrics.good_plugin"}
+
+    def test_invalid_plugin_name_identifier_is_dropped(self, caplog):
+        """A plugin namespace key that isn't a valid identifier is dropped before its
+        metadata is even sanitized; other plugin namespaces are unaffected.
+        """
+        mock_service = _make_observability_service_mock()
+        mock_session = MagicMock()
+
+        metadata = {"bad plugin name!": {"count": 1}, "good_plugin": {"count": 2}}
+
+        with (
+            patch("mcpgateway.services.observability_service.ObservabilityService", return_value=mock_service),
+            patch("mcpgateway.db.SessionLocal", return_value=mock_session),
+            caplog.at_level(logging.DEBUG),
+        ):
+            record_plugin_metrics("trace-1", metadata)
+
+        span_names = {call.kwargs["name"] for call in mock_service.start_span.call_args_list}
+        assert span_names == {"plugin.metrics.good_plugin"}
+        dropped_records = [r.getMessage() for r in caplog.records if "Dropped" in r.getMessage()]
+        assert any("plugin name is not a valid identifier" in msg for msg in dropped_records)
+
+    def test_joined_list_value_with_disallowed_characters_is_rejected(self, caplog):
+        """A list value whose joined string contains a character outside the safe
+        low-cardinality charset (e.g. '@') is rejected by the same value contract as
+        any other string, even though every individual item was within the size bound.
+        """
+        mock_service = _make_observability_service_mock()
+        mock_session = MagicMock()
+
+        metadata = {"some_plugin": {"tags": ["ok", "bad@char"], "ok_field": "fine"}}
+
+        with (
+            patch("mcpgateway.services.observability_service.ObservabilityService", return_value=mock_service),
+            patch("mcpgateway.db.SessionLocal", return_value=mock_session),
+            caplog.at_level(logging.DEBUG),
+        ):
+            record_plugin_metrics("trace-1", metadata)
+
+        attrs = mock_service.start_span.call_args.kwargs["attributes"]
+        assert "tags" not in attrs
+        assert attrs["ok_field"] == "fine"
+        dropped_records = [r.getMessage() for r in caplog.records if "Dropped" in r.getMessage()]
+        assert any("tags" in msg and "joined list value" in msg for msg in dropped_records)
 
     def test_oversized_list_item_is_rejected_before_join(self, caplog):
         """A list item longer than _MAX_STRING_LENGTH is rejected before the list is
@@ -429,6 +545,27 @@ class TestRecordPluginMetricsL4Swallow:
 
         mock_session.close.assert_called_once()
 
+    def test_swallows_exception_from_commit_rollback_and_close(self):
+        """If db.commit() fails, the resulting rollback() is also best-effort -- and if
+        THAT fails too, it's swallowed. Same for the final db.close() in the ``finally``
+        block: none of these secondary failures may propagate out of the call.
+        """
+        mock_service = _make_observability_service_mock()
+        mock_session = MagicMock()
+        mock_session.commit.side_effect = RuntimeError("commit failed")
+        mock_session.rollback.side_effect = RuntimeError("rollback also failed")
+        mock_session.close.side_effect = RuntimeError("close also failed")
+
+        with (
+            patch("mcpgateway.services.observability_service.ObservabilityService", return_value=mock_service),
+            patch("mcpgateway.db.SessionLocal", return_value=mock_session),
+        ):
+            record_plugin_metrics("trace-1", {"pii_filter": {"total_detections": 1}})  # should not raise
+
+        mock_session.commit.assert_called_once()
+        mock_session.rollback.assert_called_once()
+        mock_session.close.assert_called_once()
+
     def test_swallows_exception_from_record_metric(self):
         """If record_metric() raises for one field, other fields/plugins still get processed
         and the exception never propagates.
@@ -547,6 +684,28 @@ class TestRecordPluginMetricsG2OTelExport:
         mock_service.end_span.assert_called_once()
         mock_session.commit.assert_called_once()
         mock_session.close.assert_called_once()
+
+    def test_otel_export_sink_failure_outside_the_per_plugin_loop_does_not_break_db_sink(self):
+        """If the OTel sink fails before/outside the per-plugin loop (e.g. checking
+        whether tracing is enabled raises), that's swallowed by the sink's own outer
+        try/except -- distinct from the per-plugin try/except -- and the DB sink,
+        which already completed earlier in the call, is unaffected.
+        """
+        mock_service = _make_observability_service_mock()
+        mock_session = MagicMock()
+
+        metadata = {"pii_filter": {"total_detections": 2}}
+
+        with (
+            patch("mcpgateway.services.observability_service.ObservabilityService", return_value=mock_service),
+            patch("mcpgateway.db.SessionLocal", return_value=mock_session),
+            patch("mcpgateway.observability.otel_tracing_enabled", side_effect=RuntimeError("boom")),
+        ):
+            record_plugin_metrics("trace-1", metadata)  # should not raise
+
+        mock_service.start_span.assert_called_once()
+        mock_service.end_span.assert_called_once()
+        mock_session.commit.assert_called_once()
 
     def test_otel_export_failure_for_one_plugin_does_not_affect_others(self):
         """When create_span fails for one plugin, the export for other plugins still runs."""
