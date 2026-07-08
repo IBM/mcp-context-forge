@@ -178,6 +178,11 @@ describe("CreateServer", () => {
       });
     });
 
+    // Wait a tick to ensure the useEffect that sets selectedComponents has run
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
     await act(async () => {
       componentMockState.capturedProps?.onSuccess({
         name: "Updated GH repo tasks",

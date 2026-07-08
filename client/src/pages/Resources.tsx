@@ -16,6 +16,7 @@ import { ResourceReadVisibility } from "@/generated/types";
 import type { ResourceGroup } from "@/types/resource";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { CardTag } from "@/components/ui/card-tag";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -139,24 +140,24 @@ const ResourceGroupCard = memo(function ResourceGroupCard({
       <CardContent>
         <div className="flex flex-wrap gap-1">
           {visibleResources.map((resource) => (
-            <span
+            <CardTag
               key={resource.id}
-              className="inline-flex items-center rounded bg-tool-badge-bg px-1.5 py-1 text-[10px] font-medium leading-none text-white"
-              title={resource.description ?? undefined}
+              variant="neutral"
+              tooltip={resource.description ?? undefined}
             >
               {resource.name}
-            </span>
+            </CardTag>
           ))}
           {remainingCount > 0 && (
-            <span
-              className="inline-flex items-center rounded bg-tool-badge-bg px-1.5 py-1 text-[10px] font-medium leading-none text-white"
-              title={intl.formatMessage(
+            <CardTag
+              variant="neutral"
+              tooltip={intl.formatMessage(
                 { id: "resources.card.moreResources" },
                 { count: remainingCount },
               )}
             >
               +{remainingCount}
-            </span>
+            </CardTag>
           )}
         </div>
       </CardContent>
