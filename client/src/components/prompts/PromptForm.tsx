@@ -26,6 +26,11 @@ export function PromptForm({ isOpen, onToggle, onSuccess }: PromptFormProps) {
 
   if (!isOpen) return null;
 
+  const visibilityHintId = form.visibility === "team" ? "prompt-visibility-team-hint" : undefined;
+  const visibilityErrorId = form.errors.visibility ? "prompt-visibility-error" : undefined;
+  const visibilityDescribedBy =
+    [visibilityHintId, visibilityErrorId].filter(Boolean).join(" ") || undefined;
+
   return (
     <div className="mx-auto mt-6 w-full max-w-3xl rounded-xl border border-neutral-200 bg-inherit p-0 shadow-[0_12px_40px_rgba(15,23,42,0.12)] dark:border-neutral-800">
       <div className="flex flex-col gap-6 p-6 sm:p-8">
@@ -95,7 +100,7 @@ export function PromptForm({ isOpen, onToggle, onSuccess }: PromptFormProps) {
               <SelectTrigger
                 id="visibility"
                 aria-invalid={!!form.errors.visibility}
-                aria-describedby={form.errors.visibility ? "prompt-visibility-error" : undefined}
+                aria-describedby={visibilityDescribedBy}
                 className="h-10 w-full"
               >
                 <SelectValue />
@@ -112,6 +117,15 @@ export function PromptForm({ isOpen, onToggle, onSuccess }: PromptFormProps) {
                 </SelectItem>
               </SelectContent>
             </Select>
+            {form.visibility === "team" && (
+              <p id="prompt-visibility-team-hint" className="text-sm text-muted-foreground">
+                {intl.formatMessage({
+                  id: form.teamId
+                    ? "prompts.add.visibility.team.selectedHint"
+                    : "prompts.add.visibility.team.selectFromSidebarHint",
+                })}
+              </p>
+            )}
             {form.errors.visibility && (
               <p id="prompt-visibility-error" className="text-sm text-destructive">
                 {form.errors.visibility}

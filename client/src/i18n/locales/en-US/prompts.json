@@ -24,6 +24,8 @@
   "prompts.add.placeholder.tags": "e.g., greeting,template,conversation (comma-separated)",
   "prompts.add.visibility.public": "Public",
   "prompts.add.visibility.team": "Team",
+  "prompts.add.visibility.team.selectedHint": "This prompt will be scoped to your currently selected team",
+  "prompts.add.visibility.team.selectFromSidebarHint": "Please select a team using the team switcher in the sidebar",
   "prompts.add.visibility.private": "Private",
   "prompts.add.button.submit": "Add prompt",
   "prompts.add.required": "*",
