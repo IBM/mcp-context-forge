@@ -18,6 +18,12 @@ export default defineConfig({
     setupFiles: "./src/test/setup.ts",
     css: true,
     testTimeout: 15000,
+    pool: "forks",
+    poolOptions: {
+      forks: {
+        singleFork: true,
+      },
+    },
     // Vitest runs Testing-Library specs under src/; Playwright specs live
     // under e2e/ and must not be picked up here (they use @playwright/test).
     include: ["src/**/*.{test,spec}.{ts,tsx}"],
@@ -28,6 +34,7 @@ export default defineConfig({
     coverage: {
       provider: "v8",
       reporter: ["text", "json", "html"],
+      reportsDirectory: "./coverage",
       exclude: [
         "node_modules/",
         "e2e/",

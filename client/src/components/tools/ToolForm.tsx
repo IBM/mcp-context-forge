@@ -535,7 +535,7 @@ export function ToolForm({ isOpen, onToggle, onSuccess, tool }: ToolFormProps) {
                 </Button>
                 <Button
                   type="submit"
-                  disabled={!isValid || isSubmitting}
+                  disabled={isSubmitting}
                   className="h-10 rounded-md bg-neutral-950 px-4 text-sm font-medium text-white hover:enabled:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-neutral-100 dark:text-neutral-950 dark:hover:enabled:bg-neutral-200"
                 >
                   {isSubmitting

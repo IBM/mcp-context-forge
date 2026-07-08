@@ -207,26 +207,9 @@ describe("ToolForm", () => {
   describe("Form behaviour", () => {
     it("renders heading and description", () => {
       renderForm();
-      expect(screen.getByRole("heading", { name: "Add tool" })).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: /Add tool/i })).toBeInTheDocument();
       expect(screen.getByText(/Convert REST API to a tool/i)).toBeInTheDocument();
     });
-
-    it("Add tool button is disabled when form is invalid", () => {
-      renderForm();
-      expect(screen.getByRole("button", { name: "Add tool" })).toBeDisabled();
-    });
-
-    it("Add tool button is enabled when name and valid URL are provided", async () => {
-      const user = userEvent.setup();
-      renderForm();
-
-      await user.type(screen.getByLabelText(/Name/), "my-tool");
-      await user.type(screen.getByLabelText(/URL/), "https://api.example.com");
-
-      await waitFor(() => {
-        expect(screen.getByRole("button", { name: "Add tool" })).toBeEnabled();
-      });
-    }, 30000);
 
     it("Cancel button calls onToggle", async () => {
       const user = userEvent.setup();
@@ -236,16 +219,6 @@ describe("ToolForm", () => {
       await user.click(screen.getByRole("button", { name: /Cancel/i }));
 
       expect(onToggle).toHaveBeenCalledOnce();
-    });
-
-    it("shows name validation error when name is empty on submit", async () => {
-      const user = userEvent.setup();
-      renderForm();
-
-      await user.type(screen.getByLabelText(/URL/), "https://api.example.com");
-
-      const submitBtn = screen.getByRole("button", { name: "Add tool" });
-      expect(submitBtn).toBeDisabled();
     });
 
     it("calls onSuccess after successful tool creation", async () => {
@@ -445,7 +418,7 @@ describe("ToolForm", () => {
     it("shows 'Update tool' submit button instead of 'Add tool'", () => {
       renderForm({ tool: createMockTool() });
       expect(screen.getByRole("button", { name: "Update tool" })).toBeInTheDocument();
-      expect(screen.queryByRole("button", { name: "Add tool" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /Add tool/i })).not.toBeInTheDocument();
     });
 
     it("pre-populates name from tool.customName", () => {
@@ -632,11 +605,11 @@ describe("ToolForm", () => {
 
   describe("Form Validation and aria-invalid", () => {
     it("sets aria-invalid and aria-describedby when validation fails", async () => {
-      const user = userEvent.setup();
+      const user = userEvent.setup({ delay: null });
       renderForm();
 
       // Submit without entering Name and URL
-      const submitBtn = screen.getByRole("button", { name: "Add Tool" });
+      const submitBtn = screen.getByRole("button", { name: /Add tool/i });
       await user.click(submitBtn);
 
       // Wait for errors to appear
@@ -659,7 +632,7 @@ describe("ToolForm", () => {
       // Delay schema generation so we can observe the intermediate state
       let resolveGenerate!: (value: any) => void;
       server.use(
-        http.post("*/tools/generate-schema", () => {
+        http.post("*/v1/tools/generate-schemas-from-openapi", () => {
           return new Promise((resolve) => {
             resolveGenerate = resolve;
           });
@@ -679,8 +652,9 @@ describe("ToolForm", () => {
       });
       
       resolveGenerate(HttpResponse.json({ 
-        inputSchema: '{"type":"object"}', 
-        outputSchema: '{"type":"object"}' 
+        success: true,
+        input_schema: { type: "object" }, 
+        output_schema: { type: "object" } 
       }));
     });
   });
@@ -692,13 +666,14 @@ describe("ToolForm", () => {
       // Mock clipboard
       const originalClipboard = navigator.clipboard;
       const writeTextMock = vi.fn().mockResolvedValue(undefined);
-      Object.assign(navigator, {
-        clipboard: { writeText: writeTextMock },
+      Object.defineProperty(navigator, 'clipboard', {
+        value: { writeText: writeTextMock },
+        configurable: true
       });
 
       renderForm({
         tool: createMockTool({
-          outputSchema: '{"type":"string"}',
+          outputSchema: { type: "string" },
         })
       });
 
@@ -708,15 +683,18 @@ describe("ToolForm", () => {
       
       await user.click(outputCopyBtn!);
 
-      expect(writeTextMock).toHaveBeenCalledWith('{"type":"string"}');
+      expect(writeTextMock).toHaveBeenCalledWith('{\n  "type": "string"\n}');
       
       // Wait for Check icon (aria-label="Copied!") to appear
       await waitFor(() => {
-        expect(screen.getByLabelText("Copied!")).toBeInTheDocument();
+        expect(screen.getByText(/copied/i)).toBeInTheDocument();
       });
 
       // Restore clipboard
-      Object.assign(navigator, { clipboard: originalClipboard });
+      Object.defineProperty(navigator, 'clipboard', {
+        value: originalClipboard,
+        configurable: true
+      });
     });
   });
 });

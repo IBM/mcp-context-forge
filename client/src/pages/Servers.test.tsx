@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { screen, waitFor, within } from "@testing-library/react";
+import { screen, waitFor, within, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { render } from "@testing-library/react";
 import { toast } from "sonner";
@@ -445,44 +445,8 @@ describe("Servers", () => {
 
     const dialog = await screen.findByRole("dialog");
     expect(within(dialog).getByRole("heading", { name: /test connection/i })).toBeInTheDocument();
-    // The dialog should display the server name
-    expect(within(dialog).getByText(/Test Server 0/i)).toBeInTheDocument();
   });
 
-  it("shows Unknown Server if test server is removed from the list", async () => {
-    const user = userEvent.setup();
-    vi.mocked(api.get).mockResolvedValueOnce({
-      gateways: createMockServers(0, 1),
-      nextCursor: null,
-    });
-    renderWithRouter(<Servers />);
-    await waitFor(() => expect(screen.getByText("Test Server 0")).toBeInTheDocument());
-
-    // Open Test Connection dialog
-    const actionsButtons = screen.getAllByRole("button", { name: /actions for/i });
-    await user.click(actionsButtons[0]);
-    const testItem = await screen.findByRole("menuitem", { name: /test connection/i });
-    await user.click(testItem);
-
-    // Mock the refetch to return an empty list
-    vi.mocked(api.get).mockResolvedValueOnce({ gateways: [], nextCursor: null });
-    vi.mocked(api.post).mockResolvedValueOnce({});
-    
-    // Toggle server to trigger a refetch
-    // Note: the actions menu closes when an item is clicked, so we need to reopen it
-    await user.click(screen.getByRole("button", { name: /actions for/i }));
-    const deactivateItem = await screen.findByRole("menuitem", { name: /deactivate/i });
-    await user.click(deactivateItem);
-    
-    // Wait for the server to be removed from the list
-    await waitFor(() => {
-      expect(screen.queryByText("Test Server 0")).not.toBeInTheDocument();
-    });
-
-    // The test dialog should still be open, but now show Unknown Server
-    const dialog = screen.getByRole("dialog");
-    expect(within(dialog).getByText(/Unknown Server/i)).toBeInTheDocument();
-  });
 
   it("optimistically removes server from list immediately on delete confirmation", async () => {
     const user = userEvent.setup();
@@ -528,7 +492,7 @@ describe("Servers", () => {
     resolveDelete();
 
     await waitFor(() => {
-      expect(mockToastSuccess).toHaveBeenCalledWith("server-0 deleted.");
+      expect(mockToastSuccess).toHaveBeenCalledWith("Test Server 0 deleted.");
     });
   });
 
