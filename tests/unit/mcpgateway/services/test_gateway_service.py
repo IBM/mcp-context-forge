@@ -6029,7 +6029,12 @@ class TestCheckSingleGatewayHealth:
 
     @pytest.mark.asyncio
     async def test_health_check_oauth_auth_code_no_user(self, gateway_service, monkeypatch):
-        """Auth code OAuth without user_email → marks gateway unhealthy."""
+        """Auth code OAuth without user_email → unauthenticated liveness probe.
+
+        Forterro behaviour: missing system token is no longer fatal; we emit
+        an unauthenticated probe and treat 401/403 as proof of liveness.  The
+        gateway is only marked unhealthy on real network errors.
+        """
         gw = _make_gateway(
             id="gw-1",
             name="oauth-authcode-gw",
@@ -6046,7 +6051,14 @@ class TestCheckSingleGatewayHealth:
             last_refresh_at=None,
             refresh_interval_seconds=None,
         )
+
+        # SSE probe: client.stream("GET", ...) returns a 401 — proves liveness.
+        response_mock = MagicMock(status_code=401)
+        stream_ctx = AsyncMock()
+        stream_ctx.__aenter__ = AsyncMock(return_value=response_mock)
+        stream_ctx.__aexit__ = AsyncMock(return_value=False)
         mock_client = MagicMock()
+        mock_client.stream = MagicMock(return_value=stream_ctx)
         mock_ctx = AsyncMock()
         mock_ctx.__aenter__ = AsyncMock(return_value=mock_client)
         mock_ctx.__aexit__ = AsyncMock(return_value=False)
@@ -6065,7 +6077,7 @@ class TestCheckSingleGatewayHealth:
         gateway_service._handle_gateway_failure = AsyncMock()
 
         await gateway_service._check_single_gateway_health(gw, user_email=None)
-        gateway_service._handle_gateway_failure.assert_awaited_once()
+        gateway_service._handle_gateway_failure.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_health_check_query_param_auth(self, gateway_service, monkeypatch):
