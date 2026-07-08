@@ -425,16 +425,18 @@ test.describe("Resources page", () => {
 
     test("card group disappears from grid when its only resource is deleted", async ({ page }) => {
       const SOLO = makeResource("lone_resource", "lone-gateway");
+      let resourceDeleted = false;
 
       await page.route("**/resources?*", async (route) => {
         await route.fulfill({
           status: 200,
           contentType: "application/json",
-          body: JSON.stringify([SOLO, RESOURCE_A1]),
+          body: JSON.stringify(resourceDeleted ? [RESOURCE_A1] : [SOLO, RESOURCE_A1]),
         });
       });
       await page.route(`**/resources/${SOLO.id}`, async (route) => {
         if (route.request().method() === "DELETE") {
+          resourceDeleted = true;
           await route.fulfill({ status: 204 });
         } else {
           await route.fallback();
