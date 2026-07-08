@@ -233,18 +233,25 @@ class TestRBACOwnershipHTTP:
         # Cleanup
         app.dependency_overrides.clear()
 
-    @patch("mcpgateway.main.server_service.delete_server", new_callable=AsyncMock)
     @patch("mcpgateway.middleware.rbac.PermissionService", MockPermissionService)
     def test_delete_server_owner_succeeds(
         self,
-        mock_delete_server: AsyncMock,
         test_db_and_client,
     ):
         """Test that owner can successfully delete their own server."""
         TestSessionLocal, _ = test_db_and_client
 
-        # Mock service to succeed
-        mock_delete_server.return_value = None
+        # Create a server in the database
+        with TestSessionLocal() as db:
+            from mcpgateway.db import Server
+            server = Server(
+                id="server-123",
+                name="Test Server",
+                owner_email="owner@example.com",
+                team_id="public",
+            )
+            db.add(server)
+            db.commit()
 
         # Set up user context as owner
         mock_user = MagicMock()
@@ -298,18 +305,27 @@ class TestRBACOwnershipHTTP:
         # Cleanup
         app.dependency_overrides.clear()
 
-    @patch("mcpgateway.main.gateway_service.delete_gateway", new_callable=AsyncMock)
     @patch("mcpgateway.middleware.rbac.PermissionService", MockPermissionService)
     def test_delete_gateway_team_admin_succeeds(
         self,
-        mock_delete_gateway: AsyncMock,
         test_db_and_client,
     ):
         """Test that team admin can delete team member's gateway."""
         TestSessionLocal, _ = test_db_and_client
 
-        # Mock service to succeed (team admin has permission)
-        mock_delete_gateway.return_value = None
+        # Create a gateway in the database
+        with TestSessionLocal() as db:
+            from mcpgateway.db import Gateway
+            gateway = Gateway(
+                id="gateway-123",
+                name="Test Gateway",
+                url="http://test.example.com",
+                owner_email="member@example.com",
+                team_id="public",
+                capabilities={},  # Required field
+            )
+            db.add(gateway)
+            db.commit()
 
         # Set up user context as team admin
         mock_user = MagicMock()
