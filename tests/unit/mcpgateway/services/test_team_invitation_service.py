@@ -747,6 +747,47 @@ class TestTeamInvitationService:
         MockTMS.return_value.log_team_member_action.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_accept_invitation_lock_observes_already_reactivated_row(self, service, mock_invitation, mock_team, mock_db):
+        """Test the Postgres-only guard: with_for_update() blocked us until a concurrent accept committed
+        its own reactivation, so the row we now observe is already active. Must reject immediately
+        without attempting the compare-and-swap UPDATE or the commit (issue #5524 follow-up)."""
+        already_reactivated_member = MagicMock(spec=EmailTeamMember)
+        already_reactivated_member.is_active = True
+
+        def query_side_effect(model):
+            mock_query = MagicMock()
+            if model == EmailTeam:
+                mock_query.filter.return_value.first.return_value = mock_team
+            elif model == EmailTeamMember:
+                if not hasattr(query_side_effect, "call_count"):
+                    query_side_effect.call_count = 0
+                query_side_effect.call_count += 1
+
+                if query_side_effect.call_count == 1:
+                    mock_query.filter.return_value.first.return_value = None
+                elif query_side_effect.call_count == 2:
+                    mock_query.filter.return_value.count.return_value = 0
+                elif query_side_effect.call_count == 3:
+                    # Lock acquired only after the other transaction committed; row is now active.
+                    mock_query.filter.return_value.with_for_update.return_value.first.return_value = already_reactivated_member
+                else:
+                    pytest.fail("compare-and-swap UPDATE must not run once the row is already observed as active")
+            return mock_query
+
+        mock_db.query.side_effect = query_side_effect
+
+        with (
+            patch.object(service, "get_invitation_by_token", return_value=mock_invitation),
+            patch("mcpgateway.services.team_invitation_service.TeamManagementService") as MockTMS,
+        ):
+            with pytest.raises(ValueError, match="already a member of this team"):
+                await service.accept_invitation("token")
+
+        mock_db.rollback.assert_called()
+        mock_db.commit.assert_not_called()
+        MockTMS.return_value.log_team_member_action.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_accept_invitation_inserts_new_member_when_no_prior_row(self, service, mock_invitation, mock_team, mock_db):
         """Test accepting invitation inserts a brand-new membership row when no prior row exists at all (issue #5524)."""
 
@@ -805,6 +846,7 @@ class TestTeamInvitationService:
                 # No active member found, and no stale row found either (both first() calls return None)
                 mock_query.filter.return_value.first.return_value = None
                 mock_query.filter.return_value.count.return_value = 0
+                mock_query.filter.return_value.with_for_update.return_value.first.return_value = None
             return mock_query
 
         mock_db.query.side_effect = query_side_effect
