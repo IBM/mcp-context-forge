@@ -82,6 +82,11 @@ describe("PromptForm", () => {
 
     renderPromptForm({ onSuccess });
     const user = await fillRequiredFields();
+    fireEvent.blur(screen.getByLabelText(/template/i));
+    fireEvent.change(screen.getByLabelText("Description"), {
+      target: { value: "Greets a person" },
+    });
+    await user.type(screen.getByLabelText(/tags/i), "greeting, example");
     await user.click(screen.getByRole("button", { name: "Add prompt" }));
 
     await waitFor(() => {
@@ -90,10 +95,10 @@ describe("PromptForm", () => {
         {
           prompt: {
             name: "Greeting prompt",
-            description: undefined,
+            description: "Greets a person",
             template: "Hello {{ name }}",
             arguments: [],
-            tags: undefined,
+            tags: ["greeting", "example"],
             visibility: "public",
             team_id: null,
           },
@@ -104,6 +109,16 @@ describe("PromptForm", () => {
       );
     });
     expect(onSuccess).toHaveBeenCalled();
+  });
+
+  it("renders required field errors after submit", async () => {
+    renderPromptForm();
+
+    await userEvent.setup().click(screen.getByRole("button", { name: "Add prompt" }));
+
+    expect(screen.getByText("Name is required")).toBeInTheDocument();
+    expect(screen.getByText("Template is required")).toBeInTheDocument();
+    expect(mockPost).not.toHaveBeenCalled();
   });
 
   it("requires an active team when visibility is set to team", async () => {
