@@ -324,32 +324,6 @@ class Settings(BaseSettings):
         default="http://127.0.0.1:8787",
         description=("Upstream URL the 'public' MCP ingress shape forwards to. Defaults to the loopback address that matches docker-entrypoint.sh's MCP_RUST_PUBLIC_LISTEN_HTTP=0.0.0.0:8787 default."),
     )
-    experimental_rust_a2a_runtime_enabled: bool = Field(
-        default=False,
-        description="Deprecated. Enable the experimental Rust A2A runtime sidecar for registered A2A agent invocations.",
-    )
-    experimental_rust_a2a_runtime_delegate_enabled: bool = Field(
-        default=False,
-        description="Deprecated. Delegate registered A2A agent invocations to the experimental Rust A2A runtime sidecar.",
-    )
-    experimental_rust_a2a_runtime_managed: bool = Field(
-        default=True,
-        description="Deprecated. Whether the gateway should launch and supervise the experimental Rust A2A runtime sidecar locally.",
-    )
-    experimental_rust_a2a_runtime_url: str = Field(
-        default="http://127.0.0.1:8788",
-        description="Deprecated. Base URL for the experimental Rust A2A runtime sidecar.",
-    )
-    experimental_rust_a2a_runtime_uds: Optional[str] = Field(
-        default=None,
-        description="Deprecated. Optional Unix domain socket path for the experimental Rust A2A runtime sidecar.",
-    )
-    experimental_rust_a2a_runtime_timeout_seconds: int = Field(
-        default=30,
-        ge=1,
-        le=300,
-        description="Deprecated. Timeout in seconds for Python-to-Rust A2A runtime proxy requests.",
-    )
 
     # Authentication
     auth_header_name: str = Field(
@@ -2938,7 +2912,7 @@ Disallow: /
             return bool(info.data["well_known_security_txt"].strip())
         return bool(v)
 
-    @field_validator("experimental_rust_mcp_runtime_uds", "experimental_rust_a2a_runtime_uds", mode="after")
+    @field_validator("experimental_rust_mcp_runtime_uds", mode="after")
     @classmethod
     def _validate_experimental_rust_runtime_uds(cls, value: Optional[str], info: ValidationInfo) -> Optional[str]:
         """Validate the optional UDS path used for a Rust sidecar runtime.

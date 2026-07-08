@@ -16,6 +16,9 @@ SHELL := /bin/bash
 # Read values from .env.make
 -include .env.make
 
+# Prevent included sub-makefiles from overriding the default target
+.DEFAULT_GOAL := help
+
 # Plugin integration test targets (self-contained: boots gateway + fast-time-server)
 -include tests/live_gateway/plugins/Makefile.plugin-integration
 
@@ -260,7 +263,7 @@ export UV_BIN
 # targets (which use these pins via uvx) stay aligned.
 BLACK_VERSION           ?= 26.3.1
 ISORT_VERSION           ?= 6.1.0
-RUFF_VERSION            ?= 0.15.1
+RUFF_VERSION            ?= 0.15.20
 PYLINT_VERSION          ?= 3.3.9
 PYLINT_PYDANTIC_VERSION ?= 0.3.5
 VULTURE_VERSION         ?= 2.14
@@ -2094,85 +2097,6 @@ embedded-logs:                             ## Show embedded stack logs
 	$(EMBEDDED_COMPOSE) logs -f --tail=100
 
 # =============================================================================
-# 🚀 PERFORMANCE TESTING STACK - High-capacity configuration
-# =============================================================================
-# help: 🚀 PERFORMANCE TESTING STACK
-# help: performance-up         - Start performance stack (7 gateways, PostgreSQL replica, monitoring)
-# help: performance-down       - Stop performance stack
-# help: performance-clean      - Stop and remove all performance data (volumes)
-# help: performance-logs       - Show performance stack logs
-
-# Compose command for performance testing (uses docker-compose-performance.yml)
-COMPOSE_CMD_PERF := $(shell \
-	if command -v docker &>/dev/null && docker compose version &>/dev/null 2>&1; then \
-		echo "docker compose -f docker-compose-performance.yml"; \
-	elif command -v podman &>/dev/null && podman compose version &>/dev/null 2>&1; then \
-		echo "podman compose -f docker-compose-performance.yml"; \
-	else \
-		echo "docker-compose -f docker-compose-performance.yml"; \
-	fi)
-
-.PHONY: performance-up
-performance-up:                            ## Start performance stack (7 gateways, PostgreSQL replica, monitoring)
-	@echo "🚀 Starting performance testing stack..."
-	@echo "   • 7 gateway replicas"
-	@echo "   • PostgreSQL primary + read replica (streaming replication)"
-	@echo "   • PgBouncer with load balancing"
-	@echo "   • Full monitoring stack"
-	@echo ""
-	# Enable OTEL tracing + JSON console logs for the monitoring profile (Tempo + Loki correlation)
-	LOG_FORMAT=json \
-	OTEL_ENABLE_OBSERVABILITY=true \
-	OTEL_TRACES_EXPORTER=otlp \
-	OTEL_EXPORTER_OTLP_ENDPOINT=http://tempo:4317 \
-	$(COMPOSE_CMD_PERF) --profile monitoring --profile replica up -d
-	@echo "⏳ Waiting for Grafana to be ready..."
-	@for i in 1 2 3 4 5 6 7 8 9 10 11 12; do \
-		if curl -s -o /dev/null -w '' http://localhost:3000/api/health 2>/dev/null; then break; fi; \
-		sleep 3; \
-	done
-	@# Configure Grafana: star dashboard and set as home
-	@curl -s -X POST -u admin:changeme 'http://localhost:3000/api/user/stars/dashboard/uid/mcp-gateway-overview' >/dev/null 2>&1 || true
-	@curl -s -X PUT -u admin:changeme -H "Content-Type: application/json" -d '{"homeDashboardUID": "mcp-gateway-overview"}' 'http://localhost:3000/api/org/preferences' >/dev/null 2>&1 || true
-	@curl -s -X PUT -u admin:changeme -H "Content-Type: application/json" -d '{"homeDashboardUID": "mcp-gateway-overview"}' 'http://localhost:3000/api/user/preferences' >/dev/null 2>&1 || true
-	@echo ""
-	@echo "✅ Performance stack started!"
-	@echo ""
-	@echo "   🌐 Grafana:    http://localhost:3000 (admin/changeme)"
-	@echo "   🔥 Prometheus: http://localhost:9090"
-	@echo "   🧵 Tempo:      http://localhost:3200 (OTLP: 4317 gRPC, 4318 HTTP)"
-	@echo "   🐘 PostgreSQL: Primary + Read Replica (load balanced via PgBouncer)"
-	@echo ""
-	@echo "   📊 Key Dashboards:"
-	@echo "      • ContextForge Overview - main dashboard (set as home)"
-	@echo "      • PostgreSQL Replication - primary/replica stats, lag, distribution"
-	@echo "      • PostgreSQL Database - detailed DB metrics"
-	@echo "      • PgBouncer - connection pool stats"
-	@echo ""
-	@echo "   🏋️ Configuration:"
-	@echo "      • 7 gateway replicas (vs 3 in standard)"
-	@echo "      • PostgreSQL read replica for read scaling"
-	@echo "      • PgBouncer round-robin across primary + replica"
-	@echo ""
-	@echo "   Run load test: make load-test-ui"
-
-.PHONY: performance-down
-performance-down:                          ## Stop performance stack
-	@echo "🚀 Stopping performance stack..."
-	$(COMPOSE_CMD_PERF) --profile monitoring --profile replica down --remove-orphans
-	@echo "✅ Performance stack stopped."
-
-.PHONY: performance-logs
-performance-logs:                          ## Show performance stack logs
-	$(COMPOSE_CMD_PERF) --profile monitoring --profile replica logs -f --tail=100
-
-.PHONY: performance-clean
-performance-clean:                         ## Stop and remove all performance data (volumes)
-	@echo "🚀 Stopping and cleaning performance stack..."
-	$(COMPOSE_CMD_PERF) --profile monitoring --profile replica down -v
-	@echo "✅ Performance stack stopped and volumes removed."
-
-# =============================================================================
 # 🔥 HTTP LOAD TESTING - Locust-based traffic generation
 # =============================================================================
 # help: 🔥 HTTP LOAD TESTING (Locust)
@@ -3329,8 +3253,6 @@ images:
 # help: linting-helm-lint            - Run Helm chart lint
 # help: linting-helm-chart-testing   - Run chart-testing lint (ct) for Helm chart
 # help: linting-helm-unittest        - Run Helm chart unit tests via helm-unittest plugin
-# help: linting-go-gosec             - Run gosec on discovered Go modules
-# help: linting-go-govulncheck       - Run govulncheck on discovered Go modules
 # help: linting-security-checkov     - Run Checkov IaC security scan
 # help: linting-security-kube-linter - Run kube-linter against Kubernetes/Helm manifests
 # help: linting-coverage-diff-cover  - Run diff-cover against changed lines
@@ -3370,7 +3292,6 @@ FILE_AWARE_LINTERS := isort black pylint mypy bandit pydocstyle \
 	linting-python-fixit linting-python-xenon linting-python-refurb \
 	linting-docs-codespell linting-docs-markdown-links linting-web-depcheck \
 	linting-helm-lint linting-helm-chart-testing linting-helm-unittest \
-	linting-go-gosec linting-go-govulncheck \
 	linting-security-checkov linting-security-kube-linter \
 	linting-coverage-diff-cover linting-full
 
@@ -3509,11 +3430,10 @@ lint-smart:
 
 # Temporary roots for ad-hoc linting tools
 LINT_TMP_ROOT ?= /tmp/mcp-context-forge-lint
-LINT_GO_ROOT ?= $(LINT_TMP_ROOT)/go
+
 LINT_HELM_ROOT ?= $(LINT_TMP_ROOT)/helm
 LINT_NODE_ROOT ?= $(LINT_TMP_ROOT)/node
 LINT_PY_VENV ?= $(LINT_TMP_ROOT)/py-venv
-LINT_GO_TOOLCHAIN ?= go1.26.4
 
 # Tool target defaults
 LINT_ZIZMOR_TARGET ?= .github/workflows
@@ -3526,10 +3446,9 @@ LINT_MARKDOWN_LINKS_TARGET ?= README.md
 LINT_DEPCHECK_TARGET ?= .
 LINT_CHECKOV_TARGET ?= .
 LINT_KUBE_LINTER_TARGET ?= charts/mcp-stack
-LINT_GO_MODULE_SEARCH_DIRS ?= mcp-servers a2a-agents
 
 # Passing gates only (used by CI workflow linting-full).
-LINTING_FULL_TARGETS := linting-workflow-actionlint linting-workflow-commitlint linting-helm-lint linting-helm-chart-testing linting-helm-unittest linting-go-gosec linting-go-govulncheck
+LINTING_FULL_TARGETS := linting-workflow-actionlint linting-workflow-commitlint linting-helm-lint linting-helm-chart-testing linting-helm-unittest
 
 # Tools requiring auth/login (e.g. safety, OSSF scorecard) are intentionally excluded.
 
@@ -3544,12 +3463,7 @@ linting-python-env:
 linting-workflow-actionlint:         ## 🧭  GitHub Actions workflow linting
 	@echo "🧭 actionlint ($(LINT_ZIZMOR_TARGET); shellcheck integration disabled)..."
 	@command -v go >/dev/null 2>&1 || { echo "❌ go not found"; exit 1; }
-	@/bin/bash -c "set -euo pipefail; \
-		export GOPATH='$(LINT_GO_ROOT)/gopath'; \
-		export GOMODCACHE='$(LINT_GO_ROOT)/gopath/pkg/mod'; \
-		export GOCACHE='$(LINT_GO_ROOT)/gocache'; \
-		mkdir -p '$(LINT_GO_ROOT)/gopath' '$(LINT_GO_ROOT)/gopath/pkg/mod' '$(LINT_GO_ROOT)/gocache'; \
-		go run github.com/rhysd/actionlint/cmd/actionlint@latest -shellcheck="
+	@go run github.com/rhysd/actionlint/cmd/actionlint@latest -shellcheck="
 
 .PHONY: linting-workflow-zizmor
 linting-workflow-zizmor:             ## 🔐  GitHub Actions security linting
@@ -3563,14 +3477,9 @@ linting-workflow-reviewdog:          ## 🐶  reviewdog in local reporter mode
 	@echo "🐶 reviewdog local run (input: actionlint)..."
 	@command -v go >/dev/null 2>&1 || { echo "❌ go not found"; exit 1; }
 	@/bin/bash -c "set -euo pipefail; \
-		export GOPATH='$(LINT_GO_ROOT)/gopath'; \
-		export GOMODCACHE='$(LINT_GO_ROOT)/gopath/pkg/mod'; \
-		export GOCACHE='$(LINT_GO_ROOT)/gocache'; \
-		export GOBIN='$(LINT_GO_ROOT)/bin'; \
-		mkdir -p '$(LINT_GO_ROOT)/gopath' '$(LINT_GO_ROOT)/gopath/pkg/mod' '$(LINT_GO_ROOT)/gocache' '$(LINT_GO_ROOT)/bin'; \
 		go install github.com/reviewdog/reviewdog/cmd/reviewdog@latest >/dev/null; \
 		go run github.com/rhysd/actionlint/cmd/actionlint@latest -shellcheck= -oneline | \
-			'$(LINT_GO_ROOT)/bin/reviewdog' -name=actionlint -efm='%f:%l:%c: %m' -reporter=local"
+			reviewdog -name=actionlint -efm='%f:%l:%c: %m' -reporter=local"
 
 .PHONY: linting-python-fixit
 linting-python-fixit:                ## 🧪  Fixit Python linting
@@ -3632,17 +3541,12 @@ linting-helm-lint:                   ## ⎈  Helm lint wrapper
 linting-helm-chart-testing:          ## ⎈  chart-testing lint (relaxed local defaults)
 	@echo "⎈ chart-testing lint..."
 	@command -v go >/dev/null 2>&1 || { echo "❌ go not found"; exit 1; }
-	@/bin/bash -c "set -euo pipefail; \
-		export GOPATH='$(LINT_GO_ROOT)/gopath'; \
-		export GOMODCACHE='$(LINT_GO_ROOT)/gopath/pkg/mod'; \
-		export GOCACHE='$(LINT_GO_ROOT)/gocache'; \
-		mkdir -p '$(LINT_GO_ROOT)/gopath' '$(LINT_GO_ROOT)/gopath/pkg/mod' '$(LINT_GO_ROOT)/gocache'; \
-		go run github.com/helm/chart-testing/v3/ct@latest lint \
-			--charts $(CHART_DIR) \
-			--validate-chart-schema=false \
-			--validate-yaml=false \
-			--validate-maintainers=false \
-			--check-version-increment=false"
+	@go run github.com/helm/chart-testing/v3/ct@latest lint \
+		--charts $(CHART_DIR) \
+		--validate-chart-schema=false \
+		--validate-yaml=false \
+		--validate-maintainers=false \
+		--check-version-increment=false
 
 .PHONY: linting-helm-unittest
 linting-helm-unittest:               ## 🧪  Helm template unit tests
@@ -3659,43 +3563,7 @@ linting-helm-unittest:               ## 🧪  Helm template unit tests
 		fi; \
 		helm unittest $(CHART_DIR)"
 
-.PHONY: linting-go-gosec
-linting-go-gosec:                    ## 🔒  Go security static analysis
-	@echo "🔒 gosec scan of discovered Go modules..."
-	@command -v go >/dev/null 2>&1 || { echo "❌ go not found"; exit 1; }
-	@export GOPATH='$(LINT_GO_ROOT)/gopath'; \
-		export GOMODCACHE='$(LINT_GO_ROOT)/gopath/pkg/mod'; \
-		export GOCACHE='$(LINT_GO_ROOT)/gocache'; \
-		export GOBIN='$(LINT_GO_ROOT)/bin'; \
-		export GOTOOLCHAIN='$(LINT_GO_TOOLCHAIN)'; \
-		mkdir -p '$(LINT_GO_ROOT)/gopath' '$(LINT_GO_ROOT)/gopath/pkg/mod' '$(LINT_GO_ROOT)/gocache' '$(LINT_GO_ROOT)/bin'; \
-		go install github.com/securego/gosec/v2/cmd/gosec@latest >/dev/null; \
-		mods="$$( { find $(LINT_GO_MODULE_SEARCH_DIRS) -name go.mod -not -path '*/templates/*' -exec dirname {} ';' 2>/dev/null || true; } | sort -u )"; \
-		if [ -z "$$mods" ]; then echo 'ℹ️  No Go modules found'; exit 0; fi; \
-		while IFS= read -r d; do \
-			[ -n "$$d" ] || continue; \
-			echo "→ gosec $$d"; \
-			(cd "$$d" && "$(LINT_GO_ROOT)/bin/gosec" ./...); \
-		done <<< "$$mods"
 
-.PHONY: linting-go-govulncheck
-linting-go-govulncheck:              ## 🔎  Go vulnerability checks
-	@echo "🔎 govulncheck scan of discovered Go modules..."
-	@command -v go >/dev/null 2>&1 || { echo "❌ go not found"; exit 1; }
-	@export GOPATH='$(LINT_GO_ROOT)/gopath'; \
-		export GOMODCACHE='$(LINT_GO_ROOT)/gopath/pkg/mod'; \
-		export GOCACHE='$(LINT_GO_ROOT)/gocache'; \
-		export GOBIN='$(LINT_GO_ROOT)/bin'; \
-		export GOTOOLCHAIN='$(LINT_GO_TOOLCHAIN)'; \
-		mkdir -p '$(LINT_GO_ROOT)/gopath' '$(LINT_GO_ROOT)/gopath/pkg/mod' '$(LINT_GO_ROOT)/gocache' '$(LINT_GO_ROOT)/bin'; \
-		go install golang.org/x/vuln/cmd/govulncheck@latest >/dev/null; \
-		mods="$$( { find $(LINT_GO_MODULE_SEARCH_DIRS) -name go.mod -not -path '*/templates/*' -exec dirname {} ';' 2>/dev/null || true; } | sort -u )"; \
-		if [ -z "$$mods" ]; then echo 'ℹ️  No Go modules found'; exit 0; fi; \
-		while IFS= read -r d; do \
-			[ -n "$$d" ] || continue; \
-			echo "→ govulncheck $$d"; \
-			(cd "$$d" && "$(LINT_GO_ROOT)/bin/govulncheck" ./...); \
-		done <<< "$$mods"
 
 .PHONY: linting-security-checkov
 linting-security-checkov:            ## 🛡️  IaC security scanning with Checkov
@@ -3709,14 +3577,8 @@ linting-security-kube-linter:        ## 🧱  Kubernetes best-practice linting
 	@echo "🧱 kube-linter scan of $(LINT_KUBE_LINTER_TARGET)..."
 	@command -v go >/dev/null 2>&1 || { echo "❌ go not found"; exit 1; }
 	@/bin/bash -c "set -euo pipefail; \
-		export GOPATH='$(LINT_GO_ROOT)/gopath'; \
-		export GOMODCACHE='$(LINT_GO_ROOT)/gopath/pkg/mod'; \
-		export GOCACHE='$(LINT_GO_ROOT)/gocache'; \
-		export GOBIN='$(LINT_GO_ROOT)/bin'; \
-		export GOTOOLCHAIN='$(LINT_GO_TOOLCHAIN)'; \
-		mkdir -p '$(LINT_GO_ROOT)/gopath' '$(LINT_GO_ROOT)/gopath/pkg/mod' '$(LINT_GO_ROOT)/gocache' '$(LINT_GO_ROOT)/bin'; \
 		go install golang.stackrox.io/kube-linter/cmd/kube-linter@latest >/dev/null; \
-		'$(LINT_GO_ROOT)/bin/kube-linter' lint '$(LINT_KUBE_LINTER_TARGET)'"
+		kube-linter lint '$(LINT_KUBE_LINTER_TARGET)'"
 
 .PHONY: linting-coverage-diff-cover
 linting-coverage-diff-cover:         ## 📊  Changed-lines coverage gate
@@ -8386,9 +8248,6 @@ upgrade-validate:                         ## Validate fresh + upgrade + roundtri
 # Intentional broad scan under crates/: workspace-owned crates live here and CI
 # should pick up new maturin crates automatically rather than curating a short list.
 RUST_MATURIN_CRATES := $(shell find crates -type d 2>/dev/null | while read d; do [ -f "$$d/Cargo.toml" ] && [ -f "$$d/pyproject.toml" ] && echo "$$d"; done | sort)
-# Keep rust server helpers discoverable even when samples are managed outside
-# the shared workspace commands.
-RUST_MCP_DIRS := $(shell find mcp-servers/rust -maxdepth 2 -name Cargo.toml -exec dirname {} \; 2>/dev/null | sort -u)
 
 rust-ensure-deps:                       ## Ensure Rust toolchain and maturin are available
 	@if ! command -v rustup > /dev/null 2>&1; then \
@@ -8609,18 +8468,6 @@ rust-mcp-runtime-test:                  ## Run tests for the experimental Rust M
 rust-mcp-runtime-run:                   ## Run the experimental Rust MCP runtime against local gateway /rpc
 	@echo "🚀 Starting Rust MCP runtime on http://127.0.0.1:8787 with backend http://127.0.0.1:4444/rpc"
 	@cd crates/mcp_runtime && cargo run --release -- --backend-rpc-url http://127.0.0.1:4444/rpc --listen-http 127.0.0.1:8787
-
-rust-a2a-runtime-build:                    ## Build the experimental Rust A2A runtime
-	@echo "🦀 Building experimental Rust A2A runtime..."
-	@cd crates/a2a_runtime && cargo build --release
-
-rust-a2a-runtime-test:                     ## Run tests for the experimental Rust A2A runtime
-	@echo "🧪 Running Rust A2A runtime tests..."
-	@cd crates/a2a_runtime && cargo test --release
-
-rust-a2a-runtime-run:                      ## Run the experimental Rust A2A runtime on http://127.0.0.1:8788
-	@echo "🚀 Starting Rust A2A runtime on http://127.0.0.1:8788"
-	@cd crates/a2a_runtime && cargo run --release -- --listen-http 127.0.0.1:8788
 
 .PHONY: conc-02-gateways
 conc-02-gateways:                    ## Run CONC-02 gateways read-during-write check (manual env/token setup required)

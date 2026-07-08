@@ -6351,6 +6351,42 @@ async def create_resource(
         raise HTTPException(status_code=415, detail={"error": "Unsupported Media Type", "message": str(e), "mime_type": e.mime_type, "allowed_types": e.allowed_types})
 
 
+@resource_router.get("/test/{resource_uri:path}")
+@require_permission("resources.read", allow_admin_bypass=False)
+async def test_resource_by_uri(
+    resource_uri: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> Dict[str, Any]:
+    """Read a resource by URI and return its content.
+
+    Args:
+        resource_uri (str): URI of the resource to read.
+        request (Request): FastAPI request object for context.
+        db (Session): Database session.
+        user: Authenticated user with permissions.
+
+    Returns:
+        Dict[str, Any]: Dictionary with a ``content`` key containing the resolved resource content.
+
+    Raises:
+        HTTPException: 404 if the resource is not found or not accessible to the caller.
+    """
+    logger.debug("Reading resource by URI %s for user %s", resource_uri, safe_log_user(user))
+    auth_user_email, auth_token_teams = get_scoped_resource_access_context(request, user)
+    try:
+        resource_content = await resource_service.read_resource(db, resource_uri=resource_uri, user=auth_user_email, token_teams=auth_token_teams)
+        db.commit()
+        db.close()
+        return {"content": resource_content}
+    except ResourceNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error("Error reading resource by URI %s: %s", resource_uri, e)
+        raise
+
+
 @resource_router.get("/{resource_id}")
 @require_permission("resources.read")
 async def read_resource(resource_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Any:
@@ -12534,6 +12570,16 @@ try:
     logger.info("A2A agent plugin bindings router included")
 except ImportError as e:
     logger.error(f"A2A agent plugin bindings router not available: {e}")
+
+# MCP servers REST API router (provides POST /v1/mcp-servers/test for React UI)
+try:
+    # First-Party
+    from mcpgateway.routers.mcp_servers_router import router as mcp_servers_router  # pylint: disable=import-outside-toplevel
+
+    app.include_router(mcp_servers_router)
+    logger.info("MCP servers router included")
+except ImportError as e:
+    logger.error(f"MCP servers router not available: {e}")
 
 # Include log search router if structured logging is enabled
 if getattr(settings, "structured_logging_enabled", True):

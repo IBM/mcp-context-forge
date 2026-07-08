@@ -24,21 +24,6 @@ Runtime signals:
 - Rust MCP runtime responses include `Deprecation`, `Sunset`, and
   `Link: <...>; rel="deprecation"` headers.
 
-## Rust A2A runtime sidecar
-
-Deprecated controls include `RUST_A2A_MODE`, `EXPERIMENTAL_RUST_A2A_*`, and
-`A2A_RUST_*` settings that enable or configure the Rust A2A sidecar.
-
-Use the default Python A2A invocation path by leaving `RUST_A2A_MODE=off`,
-`EXPERIMENTAL_RUST_A2A_RUNTIME_ENABLED=false`, and
-`EXPERIMENTAL_RUST_A2A_RUNTIME_DELEGATE_ENABLED=false`.
-
-Runtime signals:
-
-- Gateway A2A delegation logs include a deprecation warning when an invocation
-  uses the Rust A2A runtime.
-- The Rust A2A binary logs a deprecation warning at startup.
-
 ## ValidationMiddleware
 
 `mcpgateway.middleware.validation_middleware.ValidationMiddleware` is

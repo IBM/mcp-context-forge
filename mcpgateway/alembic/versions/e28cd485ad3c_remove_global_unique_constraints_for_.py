@@ -1,4 +1,9 @@
-"""remove_global_unique_constraints_for_multitenancy
+# -*- coding: utf-8 -*-
+"""Location: ./mcpgateway/alembic/versions/e28cd485ad3c_remove_global_unique_constraints_for_.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+
+remove_global_unique_constraints_for_multitenancy
 
 Revision ID: e28cd485ad3c
 Revises: 0a089912b5f0
@@ -109,10 +114,7 @@ def upgrade() -> None:
                 "Run 'alembic downgrade -1' to roll back this migration manually."
             )
         else:
-            raise RuntimeError(
-                f"Migration failed with {len(failures)} error(s):\n  - {error_summary}\n\n"
-                "PostgreSQL will automatically roll back all changes in this transaction."
-            )
+            raise RuntimeError(f"Migration failed with {len(failures)} error(s):\n  - {error_summary}\n\n" "PostgreSQL will automatically roll back all changes in this transaction.")
 
 
 def downgrade() -> None:
@@ -194,7 +196,4 @@ def downgrade() -> None:
                 "Run 'alembic downgrade -1' again or manually inspect schema state."
             )
         else:
-            raise RuntimeError(
-                f"Migration downgrade failed with {len(failures)} error(s):\n  - {error_summary}\n\n"
-                "PostgreSQL will automatically roll back all changes in this transaction."
-            )
+            raise RuntimeError(f"Migration downgrade failed with {len(failures)} error(s):\n  - {error_summary}\n\n" "PostgreSQL will automatically roll back all changes in this transaction.")

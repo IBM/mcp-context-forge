@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Tests for gateway lifecycle Alembic migration."""
+"""Location: ./tests/unit/mcpgateway/db/test_gateway_lifecycle_migration.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+
+Tests for gateway lifecycle Alembic migration.
+"""
 
 # Standard
 import importlib
