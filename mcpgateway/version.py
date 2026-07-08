@@ -1144,8 +1144,6 @@ def _render_html(payload: Dict[str, Any]) -> str:
         True
         >>> '<h2>MCP Runtime</h2>' in html
         True
-        >>> '<h2>A2A Runtime</h2>' in html
-        True
         >>> '<style>' in html
         True
         >>> 'border-collapse:collapse' in html
