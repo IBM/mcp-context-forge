@@ -1,4 +1,3 @@
-import { useState } from "react";
 import { useIntl } from "react-intl";
 import { CircleAlert, MessageSquareCode } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -12,32 +11,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { promptsApi } from "@/api/prompts";
-import { ApiError } from "@/api/client";
-import { useAuthContext } from "@/auth/AuthContext";
-import { validateTemplateContent } from "@/lib/validateTemplate";
-import type { PromptFormData, PromptFormErrors } from "@/types/prompts";
-
-function getPromptCreateError(error: unknown, fallbackMessage: string): string {
-  if (error instanceof ApiError) {
-    const body = error.body as { message?: string; detail?: unknown } | null;
-    if (body?.message) return body.message;
-    if (typeof body?.detail === "string") return body.detail;
-    if (Array.isArray(body?.detail) && body.detail.length > 0) {
-      return body.detail
-        .map((item) => {
-          if (item && typeof item === "object" && "msg" in item) {
-            return String((item as { msg?: unknown }).msg);
-          }
-          return String(item);
-        })
-        .join("; ");
-    }
-  }
-
-  if (error instanceof Error) return error.message;
-  return fallbackMessage;
-}
+import { usePromptForm } from "@/hooks/usePromptForm";
+import type { Visibility } from "@/types/server";
 
 interface PromptFormProps {
   isOpen: boolean;
@@ -47,111 +22,7 @@ interface PromptFormProps {
 
 export function PromptForm({ isOpen, onToggle, onSuccess }: PromptFormProps) {
   const intl = useIntl();
-  const { selectedTeamId } = useAuthContext();
-
-  const [formData, setFormData] = useState<PromptFormData>({
-    name: "",
-    visibility: "public",
-    template: "",
-    arguments: "",
-    description: "",
-    tags: "",
-  });
-
-  const [errors, setErrors] = useState<PromptFormErrors>({});
-  const [submitError, setSubmitError] = useState<string | null>(null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-
-  const validateField = (field: keyof PromptFormData, value: string): string | undefined => {
-    if (field === "name" && !value.trim()) {
-      return intl.formatMessage({ id: "prompts.add.error.nameRequired" });
-    }
-
-    if (field === "template") {
-      if (!value.trim()) return intl.formatMessage({ id: "prompts.add.error.templateRequired" });
-      const templateError = validateTemplateContent(value);
-      if (templateError) return intl.formatMessage({ id: `prompts.add.error.${templateError}` });
-    }
-
-    if (field === "arguments" && value.trim()) {
-      try {
-        const parsedArguments = JSON.parse(value);
-        if (!Array.isArray(parsedArguments)) {
-          return intl.formatMessage({ id: "prompts.add.error.argumentsArrayRequired" });
-        }
-      } catch {
-        return intl.formatMessage({ id: "prompts.add.error.argumentsInvalidJson" });
-      }
-    }
-
-    return undefined;
-  };
-
-  const setFieldError = (field: keyof PromptFormData, error: string | undefined) => {
-    setErrors((current) => {
-      const nextErrors = { ...current };
-      if (error) {
-        nextErrors[field] = error;
-      } else {
-        delete nextErrors[field];
-      }
-      return nextErrors;
-    });
-  };
-
-  const handleInputChange = (field: keyof PromptFormData, value: string) => {
-    setFormData((prev) => ({ ...prev, [field]: value }));
-    setSubmitError(null);
-    if (errors[field]) {
-      setFieldError(field, validateField(field, value));
-    }
-  };
-
-  const validateForm = (): boolean => {
-    const newErrors: PromptFormErrors = {};
-    const fields: Array<keyof PromptFormData> = ["name", "template", "arguments"];
-
-    for (const field of fields) {
-      const fieldError = validateField(field, formData[field] ?? "");
-      if (fieldError) newErrors[field] = fieldError;
-    }
-
-    setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!validateForm()) return;
-
-    setIsSubmitting(true);
-    setSubmitError(null);
-    try {
-      await promptsApi.create({
-        ...formData,
-        teamId: selectedTeamId ?? undefined,
-      });
-      onSuccess();
-    } catch (error) {
-      if (error instanceof ApiError) {
-        const body = error.body as { message?: string; field?: string } | null;
-        if (body?.field && body?.message) {
-          setErrors({ [body.field as keyof PromptFormData]: body.message });
-          return;
-        } else {
-          setSubmitError(
-            getPromptCreateError(error, intl.formatMessage({ id: "prompts.add.error" })),
-          );
-        }
-      } else {
-        setSubmitError(
-          getPromptCreateError(error, intl.formatMessage({ id: "prompts.add.error" })),
-        );
-      }
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
+  const form = usePromptForm();
 
   if (!isOpen) return null;
 
@@ -171,15 +42,15 @@ export function PromptForm({ isOpen, onToggle, onSuccess }: PromptFormProps) {
           {intl.formatMessage({ id: "prompts.add.subtitle" })}
         </p>
 
-        <form onSubmit={handleSubmit} className="space-y-6">
-          {submitError && (
+        <form onSubmit={(event) => form.handleSubmit(event, onSuccess)} className="space-y-6">
+          {form.errors.submit && (
             <div
               className="flex gap-3 rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive"
               role="alert"
               aria-live="assertive"
             >
               <CircleAlert className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
-              <p>{submitError}</p>
+              <p>{form.errors.submit}</p>
             </div>
           )}
 
@@ -192,17 +63,17 @@ export function PromptForm({ isOpen, onToggle, onSuccess }: PromptFormProps) {
             </Label>
             <Input
               id="name"
-              value={formData.name}
-              onChange={(e) => handleInputChange("name", e.target.value)}
-              onBlur={(e) => setFieldError("name", validateField("name", e.target.value))}
+              value={form.name}
+              onChange={(e) => form.setName(e.target.value)}
+              onBlur={(e) => form.validateField("name", e.target.value)}
               placeholder="Name"
-              aria-invalid={!!errors.name}
-              aria-describedby={errors.name ? "prompt-name-error" : undefined}
+              aria-invalid={!!form.errors.name}
+              aria-describedby={form.errors.name ? "prompt-name-error" : undefined}
               className="h-10"
             />
-            {errors.name && (
+            {form.errors.name && (
               <p id="prompt-name-error" className="text-sm text-destructive">
-                {errors.name}
+                {form.errors.name}
               </p>
             )}
           </div>
@@ -218,10 +89,15 @@ export function PromptForm({ isOpen, onToggle, onSuccess }: PromptFormProps) {
               </span>
             </Label>
             <Select
-              value={formData.visibility}
-              onValueChange={(value) => handleInputChange("visibility", value)}
+              value={form.visibility}
+              onValueChange={(value) => form.setVisibility(value as Visibility)}
             >
-              <SelectTrigger id="visibility" className="h-10 w-full">
+              <SelectTrigger
+                id="visibility"
+                aria-invalid={!!form.errors.visibility}
+                aria-describedby={form.errors.visibility ? "prompt-visibility-error" : undefined}
+                className="h-10 w-full"
+              >
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -236,6 +112,11 @@ export function PromptForm({ isOpen, onToggle, onSuccess }: PromptFormProps) {
                 </SelectItem>
               </SelectContent>
             </Select>
+            {form.errors.visibility && (
+              <p id="prompt-visibility-error" className="text-sm text-destructive">
+                {form.errors.visibility}
+              </p>
+            )}
           </div>
 
           <div className="space-y-2.5">
@@ -247,17 +128,17 @@ export function PromptForm({ isOpen, onToggle, onSuccess }: PromptFormProps) {
             </Label>
             <Textarea
               id="template"
-              value={formData.template}
-              onChange={(e) => handleInputChange("template", e.target.value)}
-              onBlur={(e) => setFieldError("template", validateField("template", e.target.value))}
+              value={form.template}
+              onChange={(e) => form.setTemplate(e.target.value)}
+              onBlur={(e) => form.validateField("template", e.target.value)}
               placeholder={intl.formatMessage({ id: "prompts.add.placeholder.template" })}
-              aria-invalid={!!errors.template}
-              aria-describedby={errors.template ? "prompt-template-error" : undefined}
+              aria-invalid={!!form.errors.template}
+              aria-describedby={form.errors.template ? "prompt-template-error" : undefined}
               className="min-h-[96px] resize-y"
             />
-            {errors.template && (
+            {form.errors.template && (
               <p id="prompt-template-error" className="text-sm text-destructive">
-                {errors.template}
+                {form.errors.template}
               </p>
             )}
           </div>
@@ -268,17 +149,17 @@ export function PromptForm({ isOpen, onToggle, onSuccess }: PromptFormProps) {
             </Label>
             <Textarea
               id="arguments"
-              value={formData.arguments}
-              onChange={(e) => handleInputChange("arguments", e.target.value)}
-              onBlur={(e) => setFieldError("arguments", validateField("arguments", e.target.value))}
+              value={form.arguments}
+              onChange={(e) => form.setArguments(e.target.value)}
+              onBlur={(e) => form.validateField("arguments", e.target.value)}
               placeholder={intl.formatMessage({ id: "prompts.add.placeholder.arguments" })}
-              aria-invalid={!!errors.arguments}
-              aria-describedby={errors.arguments ? "prompt-arguments-error" : undefined}
+              aria-invalid={!!form.errors.arguments}
+              aria-describedby={form.errors.arguments ? "prompt-arguments-error" : undefined}
               className="min-h-[116px] resize-y font-mono text-sm"
             />
-            {errors.arguments && (
+            {form.errors.arguments && (
               <p id="prompt-arguments-error" className="text-sm text-destructive">
-                {errors.arguments}
+                {form.errors.arguments}
               </p>
             )}
           </div>
@@ -292,8 +173,8 @@ export function PromptForm({ isOpen, onToggle, onSuccess }: PromptFormProps) {
             </Label>
             <Textarea
               id="description"
-              value={formData.description}
-              onChange={(e) => handleInputChange("description", e.target.value)}
+              value={form.description}
+              onChange={(e) => form.setDescription(e.target.value)}
               placeholder={intl.formatMessage({ id: "prompts.add.placeholder.description" })}
               className="min-h-[60px] resize-y"
             />
@@ -305,8 +186,8 @@ export function PromptForm({ isOpen, onToggle, onSuccess }: PromptFormProps) {
             </Label>
             <Input
               id="tags"
-              value={formData.tags}
-              onChange={(e) => handleInputChange("tags", e.target.value)}
+              value={form.tags}
+              onChange={(e) => form.setTags(e.target.value)}
               placeholder={intl.formatMessage({ id: "prompts.add.placeholder.tags" })}
               className="h-10"
             />
@@ -318,12 +199,17 @@ export function PromptForm({ isOpen, onToggle, onSuccess }: PromptFormProps) {
               variant="ghost"
               onClick={onToggle}
               className="h-7 px-2"
-              disabled={isSubmitting}
+              disabled={form.isSubmitting}
             >
               {intl.formatMessage({ id: "common.button.cancel" })}
             </Button>
-            <Button type="submit" variant="default" className="h-7 px-2" disabled={isSubmitting}>
-              {isSubmitting
+            <Button
+              type="submit"
+              variant="default"
+              className="h-7 px-2"
+              disabled={form.isSubmitting}
+            >
+              {form.isSubmitting
                 ? intl.formatMessage({ id: "common.button.submitting" })
                 : intl.formatMessage({ id: "prompts.add.button.submit" })}
             </Button>
