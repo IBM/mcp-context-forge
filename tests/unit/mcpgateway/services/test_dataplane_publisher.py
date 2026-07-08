@@ -177,6 +177,7 @@ async def test_full_payload_generation_with_mock_db():
 
     gateway1 = Mock()
     gateway1.id = "g1"
+    gateway1.slug = "gateway-1"
     gateway1.name = "Gateway 1"
     gateway1.url = "http://localhost:9000"
     gateway1.transport = "STREAMABLEHTTP"
@@ -272,9 +273,9 @@ async def test_full_payload_generation_with_mock_db():
         # Verify backend configuration
         server1 = user1_config["virtual_hosts"]["s1"]
         assert "backends" in server1
-        assert "g1" in server1["backends"]
+        assert "gateway-1" in server1["backends"], "backends must be keyed by gateway slug"
 
-        backend = server1["backends"]["g1"]
+        backend = server1["backends"]["gateway-1"]
         assert backend["name"] == "Gateway 1"
         assert backend["url"] == "http://localhost:9000"
         assert backend["transport"] == "STREAMABLEHTTP"
@@ -289,14 +290,14 @@ async def test_full_payload_generation_with_mock_db():
         # Own private server exists but has no backend associations, so it
         # is omitted from the payload (no publishable backends).
         assert "s2" not in user2_config["virtual_hosts"]
-        user2_backend = user2_config["virtual_hosts"]["s1"]["backends"]["g1"]
+        user2_backend = user2_config["virtual_hosts"]["s1"]["backends"]["gateway-1"]
         assert user2_backend["allowed_tool_names"] == ["public_tool", "team2_tool"]
 
         # Verify active users with no team membership still get public-only config.
         user3_config = payload["user3@example.com"]
         assert "s1" in user3_config["virtual_hosts"]
         assert "s2" not in user3_config["virtual_hosts"]
-        user3_backend = user3_config["virtual_hosts"]["s1"]["backends"]["g1"]
+        user3_backend = user3_config["virtual_hosts"]["s1"]["backends"]["gateway-1"]
         assert user3_backend["allowed_tool_names"] == ["public_tool"]
 
 

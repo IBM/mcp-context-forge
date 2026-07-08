@@ -228,8 +228,12 @@ class DataplanePublisherService:
             # The dataplane proxies streamable-HTTP upstreams only. Legacy
             # HTTP+SSE gateways are excluded so the published config never
             # advertises a backend the dataplane cannot serve.
+            # Backends are keyed by the gateway slug, not the id: the dataplane
+            # uses the key as the namespace prefix for federated tool names, so
+            # slug keys make it advertise the same names the control plane does
+            # (e.g. "fast-time-echo" instead of "<gateway-uuid>-echo").
             gateway_base = {
-                gateway["id"]: {
+                (gateway.get("slug") or gateway["id"]): {
                     "name": gateway["name"],
                     "url": gateway["url"],
                     "transport": gateway["transport"],
@@ -238,6 +242,7 @@ class DataplanePublisherService:
                 for gateway in gateways
                 if (gateway["transport"] or "").upper() == "STREAMABLEHTTP"
             }
+            gateway_key_by_id = {gateway["id"]: (gateway.get("slug") or gateway["id"]) for gateway in gateways}
 
             virtual_hosts: dict[str, VirtualHostConfig] = {}
 
@@ -245,7 +250,8 @@ class DataplanePublisherService:
                 backends: dict[str, BackendConfig] = {}
 
                 for gateway_id, backend_items in server["backend_items"].items():
-                    gateway_config = gateway_base.get(gateway_id)
+                    gateway_key = gateway_key_by_id.get(gateway_id)
+                    gateway_config = gateway_base.get(gateway_key) if gateway_key else None
                     if gateway_config is None:
                         continue
 
@@ -254,7 +260,7 @@ class DataplanePublisherService:
                     if not backend_items["tools"] and not allowed_resource_names and not allowed_prompt_names:
                         continue
 
-                    backends[gateway_id] = {
+                    backends[gateway_key] = {
                         **gateway_config,
                         "allowed_tool_names": backend_items["tools"],
                         "allowed_resource_names": allowed_resource_names,
@@ -298,6 +304,7 @@ class DataplanePublisherService:
                 gateway_rows = db.execute(
                     select(
                         DbGateway.id,
+                        DbGateway.slug,
                         DbGateway.name,
                         DbGateway.url,
                         DbGateway.transport,
@@ -363,6 +370,7 @@ class DataplanePublisherService:
             "gateways": [
                 {
                     "id": gateway.id,
+                    "slug": gateway.slug,
                     "name": gateway.name,
                     "url": gateway.url,
                     "transport": gateway.transport,
