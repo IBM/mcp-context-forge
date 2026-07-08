@@ -100,6 +100,9 @@ from pathlib import Path
 import secrets
 from unittest.mock import AsyncMock
 
+# Third-Party
+import yaml
+
 # Make sure the plugin subsystem and observability feature flags are on
 # BEFORE mcpgateway.main is first imported below: both
 # ``if settings.plugins.enabled: enable_plugins(True)`` and
@@ -202,7 +205,7 @@ def _new_traceparent() -> tuple[str, str]:
 
 
 @pytest_asyncio.fixture
-async def traced_app(monkeypatch):
+async def traced_app(monkeypatch, tmp_path):
     """Wire a real temp-DB, dedicated FastAPI app with plugins + observability live.
 
     Deliberately does NOT reuse the process-wide ``mcpgateway.main.app``
@@ -268,11 +271,23 @@ async def traced_app(monkeypatch):
         finally:
             db.close()
 
-    # --- Real plugin manager factory, pointed at plugins/config.yaml (with our pii_filter entry) ---
+    # --- Real plugin manager factory, pointed at a private copy of plugins/config.yaml with
+    # PIIFilter forced active. The shipped config.yaml disables PIIFilter by default (like every
+    # other bundled cpex-* plugin -- opt-in, not opt-out, so upgrading doesn't silently start
+    # masking tool responses); this test needs it active to exercise the real G0/G1/G2 chain
+    # end-to-end, so it patches a scratch copy rather than depending on (or dictating) the
+    # shipped default. ---
+    real_config = yaml.safe_load((_REPO_ROOT / "plugins" / "config.yaml").read_text())
+    for plugin_entry in real_config.get("plugins", []):
+        if plugin_entry.get("name") == "PIIFilter":
+            plugin_entry["mode"] = "sequential"
+    patched_config_path = tmp_path / "plugins_config_pii_filter_enabled.yaml"
+    patched_config_path.write_text(yaml.safe_dump(real_config, sort_keys=False))
+
     await shutdown_plugin_manager_factory()
     enable_plugins(True)
     init_plugin_manager_factory(
-        yaml_path=str(_REPO_ROOT / "plugins" / "config.yaml"),
+        yaml_path=str(patched_config_path),
         timeout=30,
         hook_policies=HOOK_PAYLOAD_POLICIES,
         observability=None,
