@@ -2287,6 +2287,7 @@ async def get_overview_partial(
             "redis_reachable": redis_reachable,
             "uptime_seconds": uptime_seconds,
             "mcp_runtime": version_module.mcp_runtime_status_payload(),
+            "llm_gateway": version_module.llm_gateway_status_payload(),
         }
 
         return request.app.state.templates.TemplateResponse(request, "overview_partial.html", context)

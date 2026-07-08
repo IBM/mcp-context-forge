@@ -6249,6 +6249,7 @@ class LLMProviderType:
     WATSONX = "watsonx"
     OLLAMA = "ollama"
     OPENAI_COMPATIBLE = "openai_compatible"
+    PORTKEY = "portkey"
     COHERE = "cohere"
     MISTRAL = "mistral"
     GROQ = "groq"
@@ -6270,6 +6271,7 @@ class LLMProviderType:
             cls.WATSONX,
             cls.OLLAMA,
             cls.OPENAI_COMPATIBLE,
+            cls.PORTKEY,
             cls.COHERE,
             cls.MISTRAL,
             cls.GROQ,
@@ -6321,6 +6323,14 @@ class LLMProviderType:
                 "models_endpoint": "/models",
                 "requires_api_key": False,
                 "description": "Any OpenAI-compatible API server",
+            },
+            cls.PORTKEY: {
+                "api_base": "http://localhost:8787/v1",
+                "default_model": "",
+                "supports_model_list": True,
+                "models_endpoint": "/models",
+                "requires_api_key": False,
+                "description": "Portkey AI Gateway (hosted or self-hosted)",
             },
             cls.COHERE: {
                 "api_base": "https://api.cohere.ai/v1",

@@ -1584,6 +1584,43 @@ def test_gateway_provider_openai_default_headers_from_config(monkeypatch):
     assert llm is not None
 
 
+def test_gateway_provider_full_mode_routes_openai_through_portkey(monkeypatch):
+    """GatewayProvider should use Portkey in full mode for supported providers."""
+    _patch_gateway_llms(monkeypatch)
+    model, provider = _make_model_and_provider("openai", api_base="https://api.openai.com/v1")
+    _patch_gateway_session(monkeypatch, model, provider)
+    monkeypatch.setattr(svc.settings, "llm_gateway_mode", "full", raising=False)
+    monkeypatch.setattr(svc.settings, "llm_gateway_url", "http://portkey:8787/v1", raising=False)
+    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})
+    monkeypatch.setattr("mcpgateway.services.llm_provider_service.decode_auth", lambda _v: {"api_key": "decoded"})
+
+    gateway = svc.GatewayProvider(svc.GatewayConfig(model="gpt-4"))
+    llm = gateway.get_llm(model_type="chat")
+
+    assert llm.kwargs["base_url"] == "http://portkey:8787/v1"
+    assert llm.kwargs["api_key"] == ""
+    assert llm.kwargs["default_headers"]["x-portkey-provider"] == "openai"
+    assert llm.kwargs["default_headers"]["Authorization"] == "Bearer decoded"
+
+
+def test_gateway_provider_portkey_managed_provider_omits_authorization(monkeypatch):
+    """GatewayProvider should preserve Portkey managed-provider semantics."""
+    _patch_gateway_llms(monkeypatch)
+    model, provider = _make_model_and_provider("portkey", config={"provider": "@team-openai", "virtual_key": "vk-live"}, api_base="http://portkey:8787/v1")
+    _patch_gateway_session(monkeypatch, model, provider)
+    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})
+    monkeypatch.setattr("mcpgateway.services.llm_provider_service.decode_auth", lambda _v: {"api_key": "decoded"})
+
+    gateway = svc.GatewayProvider(svc.GatewayConfig(model="gpt-4"))
+    llm = gateway.get_llm(model_type="chat")
+
+    assert llm.kwargs["base_url"] == "http://portkey:8787/v1"
+    assert llm.kwargs["api_key"] == ""
+    assert llm.kwargs["default_headers"]["x-portkey-provider"] == "@team-openai"
+    assert llm.kwargs["default_headers"]["x-portkey-virtual-key"] == "vk-live"
+    assert "Authorization" not in llm.kwargs["default_headers"]
+
+
 def test_gateway_provider_openai_no_api_key(monkeypatch):
     """GatewayProvider with no api_key in provider → api_key=None."""
     _patch_gateway_llms(monkeypatch)

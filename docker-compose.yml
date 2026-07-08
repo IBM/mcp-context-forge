@@ -532,6 +532,16 @@ services:
       - TOOL_DESCRIPTION_FORBIDDEN_PATTERNS=${TOOL_DESCRIPTION_FORBIDDEN_PATTERNS:-["&&", ";", "||", "$(", "> ", "< "]}
       - CORRELATION_ID_ENABLED=false
       - LLMCHAT_ENABLED=true
+      # Optional external LLM gateway sidecar. Enable with:
+      #   docker compose --profile llm-gateway up
+      #   LLM_GATEWAY_MODE=edge   -> public /v1 LLM proxy traffic routes through Portkey
+      #   LLM_GATEWAY_MODE=full   -> edge + admin model sync/health + internal GatewayProvider clients use Portkey
+      - LLM_GATEWAY_MODE=${LLM_GATEWAY_MODE:-direct}
+      - LLM_GATEWAY_PROVIDER=${LLM_GATEWAY_PROVIDER:-portkey}
+      - LLM_GATEWAY_URL=${LLM_GATEWAY_URL:-http://portkey:8787/v1}
+      - LLM_GATEWAY_MANAGED=${LLM_GATEWAY_MANAGED:-false}
+      - LLM_GATEWAY_PORTKEY_API_KEY=${LLM_GATEWAY_PORTKEY_API_KEY:-}
+      - LLM_GATEWAY_PORTKEY_CONFIG=${LLM_GATEWAY_PORTKEY_CONFIG:-}
       - OBSERVABILITY_ENABLED=false
       # ═══════════════════════════════════════════════════════════════════════════
       # Database Connection Pool Configuration
@@ -847,6 +857,20 @@ services:
     # 1. Generate keys: make certs-jwt
     # 2. Uncomment volumes mount above
     # 3. Switch JWT_ALGORITHM to RS256 and uncomment JWT_*_KEY_PATH variables
+
+  # ──────────────────────────────────────────────────────────────────────
+  # Portkey - Optional external LLM gateway sidecar
+  # Enable with: docker compose --profile llm-gateway up
+  # ──────────────────────────────────────────────────────────────────────
+  portkey:
+    image: portkeyai/gateway:latest
+    restart: unless-stopped
+    profiles: ["llm-gateway"]
+    networks: [mcpnet]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "${PORTKEY_PORT:-8787}:8787"
 
   # ──────────────────────────────────────────────────────────────────────
   # Keycloak - Local Identity Provider for SSO development/testing

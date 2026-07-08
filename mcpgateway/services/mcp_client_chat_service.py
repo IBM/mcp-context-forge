@@ -1501,7 +1501,12 @@ class GatewayProvider:
         # Import here to avoid circular imports
         # First-Party
         from mcpgateway.db import LLMModel, LLMProvider, SessionLocal  # pylint: disable=import-outside-toplevel
-        from mcpgateway.services.llm_provider_service import decrypt_provider_config_for_runtime  # pylint: disable=import-outside-toplevel
+        from mcpgateway.services.llm_provider_service import (  # pylint: disable=import-outside-toplevel
+            build_portkey_headers,
+            decrypt_provider_config_for_runtime,
+            get_portkey_api_base,
+            should_use_llm_gateway_for_internal_provider,
+        )
         from mcpgateway.utils.services_auth import decode_auth  # pylint: disable=import-outside-toplevel
 
         model_id = self.config.model
@@ -1552,7 +1557,24 @@ class GatewayProvider:
                 "timeout": self.config.timeout,
             }
 
-            if provider_type == "openai":
+            if should_use_llm_gateway_for_internal_provider(provider):
+                gateway_kwargs = {
+                    **kwargs,
+                    "api_key": "",
+                    "model": model.model_id,
+                    "base_url": get_portkey_api_base(provider),
+                    "max_tokens": max_tokens,
+                }
+                default_headers = build_portkey_headers(provider, model=model, include_authorization=True)
+                if default_headers:
+                    gateway_kwargs["default_headers"] = default_headers
+
+                if model_type == "chat":
+                    self.llm = ChatOpenAI(**gateway_kwargs)
+                else:
+                    self.llm = OpenAI(**gateway_kwargs)
+
+            elif provider_type == "openai":
                 kwargs.update(
                     {
                         "api_key": api_key,

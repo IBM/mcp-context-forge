@@ -1310,6 +1310,30 @@ class Settings(BaseSettings):
     llm_request_timeout: int = Field(default=120, description="Request timeout in seconds for LLM API calls")
     llm_streaming_enabled: bool = Field(default=True, description="Enable streaming responses for LLM Chat")
     llm_health_check_interval: int = Field(default=300, description="Provider health check interval in seconds")
+    llm_gateway_mode: str = Field(
+        default="direct",
+        description="LLM gateway mode: direct, shadow, edge, or full. Portkey is used when the mode is not direct.",
+    )
+    llm_gateway_provider: str = Field(
+        default="portkey",
+        description="External LLM gateway provider implementation. Only Portkey is currently supported.",
+    )
+    llm_gateway_url: str = Field(
+        default="http://127.0.0.1:8787/v1",
+        description="Base URL for the external LLM gateway runtime.",
+    )
+    llm_gateway_managed: bool = Field(
+        default=True,
+        description="Whether ContextForge expects to manage a colocated external LLM gateway sidecar.",
+    )
+    llm_gateway_portkey_api_key: SecretStr = Field(
+        default=SecretStr(""),
+        description="Optional Portkey API key used when routed requests go through the external LLM gateway.",
+    )
+    llm_gateway_portkey_config: str = Field(
+        default="",
+        description="Optional Portkey config ID or inline JSON applied to externally routed LLM requests.",
+    )
 
     @field_validator("allowed_roots", mode="before")
     @classmethod
@@ -1338,6 +1362,45 @@ class Settings(BaseSettings):
             # Fallback to comma-split
             return [x.strip() for x in v.split(",") if x.strip()]
         return v
+
+    @field_validator("llm_gateway_mode", mode="before")
+    @classmethod
+    def _validate_llm_gateway_mode(cls, value: Any) -> str:
+        """Normalize the LLM gateway runtime mode.
+
+        Args:
+            value: Candidate mode value from config or env.
+
+        Returns:
+            Normalized mode string.
+
+        Raises:
+            ValueError: If the mode is not supported.
+        """
+        normalized = str(value or "direct").strip().lower()
+        if normalized in {"", "off"}:
+            return "direct"
+        if normalized not in {"direct", "shadow", "edge", "full"}:
+            raise ValueError("llm_gateway_mode must be one of: direct, shadow, edge, full")
+        return normalized
+
+    @field_validator("llm_gateway_provider", mode="before")
+    @classmethod
+    def _validate_llm_gateway_provider(cls, value: Any) -> str:
+        """Validate the configured external LLM gateway provider."""
+        normalized = str(value or "portkey").strip().lower()
+        if normalized != "portkey":
+            raise ValueError("llm_gateway_provider currently only supports 'portkey'")
+        return normalized
+
+    @field_validator("llm_gateway_url")
+    @classmethod
+    def _validate_llm_gateway_url(cls, value: str) -> str:
+        """Validate the external LLM gateway base URL."""
+        parsed = urlparse(value)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise ValueError("LLM gateway base URL must be an absolute HTTP or HTTPS URL")
+        return value.rstrip("/")
 
     @field_validator("jwt_secret_key", "auth_encryption_secret")
     @classmethod
