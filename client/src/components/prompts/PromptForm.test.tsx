@@ -1,15 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { ApiError } from "@/api/client";
-import { promptsApi } from "@/api/prompts";
+import { api } from "@/api/client";
 import { useAuthContext } from "@/auth/AuthContext";
 import { renderWithProviders } from "@/test/test-utils";
 import { PromptForm } from "./PromptForm";
 
-vi.mock("@/api/prompts", () => ({
-  promptsApi: {
-    create: vi.fn(),
+vi.mock("@/api/client", () => ({
+  api: {
+    post: vi.fn(),
   },
 }));
 
@@ -17,7 +16,7 @@ vi.mock("@/auth/AuthContext", () => ({
   useAuthContext: vi.fn(),
 }));
 
-const mockCreatePrompt = vi.mocked(promptsApi.create);
+const mockPost = vi.mocked(api.post);
 const mockUseAuthContext = vi.mocked(useAuthContext);
 
 function renderPromptForm(props?: { onToggle?: () => void; onSuccess?: () => void }) {
@@ -42,6 +41,7 @@ async function fillRequiredFields() {
 describe("PromptForm", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockPost.mockReset();
     mockUseAuthContext.mockReturnValue({
       selectedTeamId: null,
       user: null,
@@ -75,7 +75,7 @@ describe("PromptForm", () => {
       logout: vi.fn(),
       setSelectedTeamId: vi.fn(),
     });
-    mockCreatePrompt.mockResolvedValue({
+    mockPost.mockResolvedValue({
       id: "prompt-1",
       name: "Greeting prompt",
     });
@@ -85,17 +85,41 @@ describe("PromptForm", () => {
     await user.click(screen.getByRole("button", { name: "Add prompt" }));
 
     await waitFor(() => {
-      expect(mockCreatePrompt).toHaveBeenCalledWith({
-        name: "Greeting prompt",
-        visibility: "public",
-        template: "Hello {{ name }}",
-        arguments: "",
-        description: "",
-        tags: "",
-        teamId: "team-123",
-      });
+      expect(mockPost).toHaveBeenCalledWith(
+        "/prompts",
+        {
+          prompt: {
+            name: "Greeting prompt",
+            description: undefined,
+            template: "Hello {{ name }}",
+            arguments: [],
+            tags: undefined,
+            visibility: "public",
+            team_id: null,
+          },
+          team_id: null,
+          visibility: "public",
+        },
+        expect.objectContaining({ signal: expect.any(Object) }),
+      );
     });
     expect(onSuccess).toHaveBeenCalled();
+  });
+
+  it("requires an active team when visibility is set to team", async () => {
+    renderPromptForm();
+    const user = await fillRequiredFields();
+
+    await user.click(screen.getByRole("combobox", { name: /visibility/i }));
+    await user.click(screen.getByRole("option", { name: /^Team$/i }));
+
+    expect(
+      screen.getByText("Team selection is required when visibility is set to team"),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Add prompt" }));
+
+    expect(mockPost).not.toHaveBeenCalled();
   });
 
   it("calls onToggle when cancel is clicked", async () => {
@@ -108,9 +132,10 @@ describe("PromptForm", () => {
   });
 
   it("renders create failures inline in the form", async () => {
-    mockCreatePrompt.mockRejectedValue(
-      new ApiError(400, { detail: "Prompt name already exists" }, "HTTP 400"),
-    );
+    const error = new Error("HTTP 400") as Error & { body?: unknown; status?: number };
+    error.status = 400;
+    error.body = { detail: "Prompt name already exists" };
+    mockPost.mockRejectedValue(error);
 
     renderPromptForm();
     const user = await fillRequiredFields();
