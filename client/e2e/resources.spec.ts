@@ -2,43 +2,30 @@ import { test, expect } from "./fixtures/api-mock";
 import { APP } from "./utils/paths";
 import type { ResourceRead } from "../src/generated/types";
 
-const MOCK_RESOURCE: NonNullable<ResourceRead> = {
-  id: "res-123abc456def789", // pragma: allowlist secret
-  uri: "resource://test/document.txt",
-  name: "Test Document",
-  description: "A test resource for E2E testing",
-  mimeType: "text/plain",
-  size: 1024,
-  tags: ["test", "document"],
-  enabled: true,
-  createdAt: "2026-04-28T15:41:31.233166",
-  updatedAt: "2026-04-28T15:41:31.233168",
-  createdBy: "admin@example.com",
-  teamId: "0a9b06bd22974fe386dcacb18548ed61", // pragma: allowlist secret
-  team: "Platform Administrator's Team",
-  ownerEmail: "admin@example.com",
-  visibility: "public",
-  gatewayId: "gw-123",
-};
+type Resource = NonNullable<ResourceRead>;
 
-const MOCK_RESOURCE_JSON: NonNullable<ResourceRead> = {
-  id: "res-json-789xyz", // pragma: allowlist secret
-  uri: "resource://api/config.json",
-  name: "API Configuration",
-  description: "JSON configuration for API endpoints",
-  mimeType: "application/json",
-  size: 2048,
-  tags: ["config", "api"],
-  enabled: true,
-  createdAt: "2026-04-28T16:00:00.000000",
-  updatedAt: "2026-04-28T16:00:00.000000",
-  createdBy: "admin@example.com",
-  teamId: "0a9b06bd22974fe386dcacb18548ed61", // pragma: allowlist secret
-  team: "Platform Administrator's Team",
-  ownerEmail: "admin@example.com",
-  visibility: "team",
-  gatewayId: "gw-456",
-};
+function makeResource(id: string, gatewayId: string, overrides: Partial<Resource> = {}): Resource {
+  return {
+    id,
+    uri: `resource://test/${id}`,
+    name: id,
+    description: `Description for ${id}`,
+    mimeType: "text/plain",
+    size: 1024,
+    tags: [],
+    enabled: true,
+    createdAt: "2026-04-28T15:41:31.233166",
+    updatedAt: "2026-04-28T15:41:31.233168",
+    createdBy: "admin@example.com",
+    visibility: "public",
+    gatewayId,
+    ...overrides,
+  };
+}
+
+const RESOURCE_A1 = makeResource("document-txt", "github-server");
+const RESOURCE_A2 = makeResource("config-json", "github-server", { mimeType: "application/json" });
+const RESOURCE_B1 = makeResource("readme-md", "slack-server");
 
 test.describe("Resources page", () => {
   test.beforeEach(async ({ page, apiMock }) => {
@@ -52,7 +39,6 @@ test.describe("Resources page", () => {
   });
 
   test("shows add resources card when no resources exist", async ({ page }) => {
-    // Mock empty resources response
     await page.route("**/resources?*", async (route) => {
       await route.fulfill({
         status: 200,
@@ -64,53 +50,10 @@ test.describe("Resources page", () => {
     await page.goto(APP.RESOURCES);
     await page.waitForLoadState("networkidle");
 
-    // Check for "Add resources" card (first card in grid)
     await expect(page.getByText("Add resources")).toBeVisible();
     await expect(
       page.getByText(/Resources will appear automatically when you connect a MCP server/),
     ).toBeVisible();
-  });
-
-  test("shows individual resource cards when resources exist", async ({ page }) => {
-    // Mock resources response with data
-    await page.route("**/resources?*", async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify([MOCK_RESOURCE]),
-      });
-    });
-
-    await page.goto(APP.RESOURCES);
-    await page.waitForLoadState("networkidle");
-
-    // Check for resources heading
-    await expect(page.getByRole("heading", { name: "Resources" })).toBeVisible();
-
-    // Check for "Add resources" card
-    await expect(page.getByText("Add resources")).toBeVisible();
-
-    // Check for individual resource card with resource name
-    await expect(page.getByText("Test Document")).toBeVisible();
-  });
-
-  test("displays resource card with metadata badges", async ({ page }) => {
-    await page.route("**/resources?*", async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify([MOCK_RESOURCE]),
-      });
-    });
-
-    await page.goto(APP.RESOURCES);
-    await page.waitForLoadState("networkidle");
-
-    // Check for resource name in card header
-    await expect(page.getByText("Test Document")).toBeVisible();
-
-    // Check for MIME type badge
-    await expect(page.getByText("text/plain")).toBeVisible();
   });
 
   test("clicking add resources card opens form", async ({ page }) => {
@@ -125,10 +68,8 @@ test.describe("Resources page", () => {
     await page.goto(APP.RESOURCES);
     await page.waitForLoadState("networkidle");
 
-    // Click the "Add resources" card
     await page.getByText("Add resources").click();
 
-    // Check form is visible
     await expect(page.getByLabel("URI")).toBeVisible();
     await expect(page.getByLabel("Name")).toBeVisible();
   });
@@ -149,69 +90,118 @@ test.describe("Resources page", () => {
     await expect(page.getByText("Error loading resources")).toBeVisible();
   });
 
-  test("displays multiple individual resource cards correctly", async ({ page }) => {
+  test("shows resources grouped by gateway slug", async ({ page }) => {
     await page.route("**/resources?*", async (route) => {
       await route.fulfill({
         status: 200,
         contentType: "application/json",
-        body: JSON.stringify([MOCK_RESOURCE, MOCK_RESOURCE_JSON]),
+        body: JSON.stringify([RESOURCE_A1, RESOURCE_A2, RESOURCE_B1]),
       });
     });
 
     await page.goto(APP.RESOURCES);
     await page.waitForLoadState("networkidle");
 
-    // Check for both individual resource cards
-    await expect(page.getByText("Test Document")).toBeVisible();
-    await expect(page.getByText("API Configuration")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Resources" })).toBeVisible();
 
-    // Should have 3 cards total (2 resources + 1 add card)
-    const cards = page.locator('[data-slot="card"]');
-    await expect(cards).toHaveCount(3);
+    await expect(page.getByText("github-server")).toBeVisible();
+    await expect(page.getByText("slack-server")).toBeVisible();
+
+    await expect(page.getByText("document-txt")).toBeVisible();
+    await expect(page.getByText("config-json")).toBeVisible();
+    await expect(page.getByText("readme-md")).toBeVisible();
+
+    await expect(page.getByText("2 resources")).toBeVisible();
+    await expect(page.getByText("1 resource")).toBeVisible();
   });
 
-  test("displays resources from different gateways as individual cards", async ({ page }) => {
-    const resource1 = { ...MOCK_RESOURCE, gatewayId: "gateway-a", name: "Resource A" };
-    const resource2 = { ...MOCK_RESOURCE_JSON, gatewayId: "gateway-b", name: "Resource B" };
+  test("caps badge display at 8 and shows +N overflow tag", async ({ page }) => {
+    const manyResources: Resource[] = Array.from({ length: 10 }, (_, i) =>
+      makeResource(`resource_${i + 1}`, "big-gateway"),
+    );
 
     await page.route("**/resources?*", async (route) => {
       await route.fulfill({
         status: 200,
         contentType: "application/json",
-        body: JSON.stringify([resource1, resource2]),
+        body: JSON.stringify(manyResources),
       });
     });
 
     await page.goto(APP.RESOURCES);
     await page.waitForLoadState("networkidle");
 
-    // Check for individual resource cards (not grouped by gateway)
-    await expect(page.getByText("Resource A")).toBeVisible();
-    await expect(page.getByText("Resource B")).toBeVisible();
+    await expect(page.getByText("big-gateway")).toBeVisible();
+    await expect(page.getByText("10 resources")).toBeVisible();
+
+    await expect(page.getByText("resource_1")).toBeVisible();
+    await expect(page.getByText("resource_8")).toBeVisible();
+
+    await expect(page.getByText("resource_9")).not.toBeVisible();
+    await expect(page.getByText("resource_10")).not.toBeVisible();
+    await expect(page.getByText("+2")).toBeVisible();
   });
 
-  test("shows all resources as individual cards", async ({ page }) => {
-    const resource1 = { ...MOCK_RESOURCE, id: "res-1", name: "Resource 1" };
-    const resource2 = { ...MOCK_RESOURCE, id: "res-2", name: "Resource 2" };
-
+  test("opens more options dropdown and shows View Details item", async ({ page }) => {
     await page.route("**/resources?*", async (route) => {
       await route.fulfill({
         status: 200,
         contentType: "application/json",
-        body: JSON.stringify([resource1, resource2]),
+        body: JSON.stringify([RESOURCE_A1]),
       });
     });
 
     await page.goto(APP.RESOURCES);
     await page.waitForLoadState("networkidle");
 
-    // Check for individual resource cards
-    await expect(page.getByText("Resource 1")).toBeVisible();
-    await expect(page.getByText("Resource 2")).toBeVisible();
+    await page.getByRole("button", { name: "More options for github-server" }).click();
 
-    // Should have 3 cards total (2 resources + 1 add card)
-    const cards = page.locator('[data-slot="card"]');
-    await expect(cards).toHaveCount(3);
+    await expect(page.getByRole("menuitem", { name: "View Details" })).toBeVisible();
+  });
+
+  test("opens details panel when View Details is clicked", async ({ page }) => {
+    await page.route("**/resources?*", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify([RESOURCE_A1, RESOURCE_A2]),
+      });
+    });
+
+    await page.goto(APP.RESOURCES);
+    await page.waitForLoadState("networkidle");
+
+    await page.getByRole("button", { name: "More options for github-server" }).click();
+    await page.getByRole("menuitem", { name: "View Details" }).click();
+
+    const panel = page.getByRole("region", { name: /Resources for github-server/i });
+    await expect(panel).toBeVisible();
+
+    await expect(panel.getByText("document-txt").first()).toBeVisible();
+    await expect(panel.getByText("config-json").first()).toBeVisible();
+  });
+
+  test("closes details panel via close button", async ({ page }) => {
+    await page.route("**/resources?*", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify([RESOURCE_A1]),
+      });
+    });
+
+    await page.goto(APP.RESOURCES);
+    await page.waitForLoadState("networkidle");
+
+    await page.getByRole("button", { name: "More options for github-server" }).click();
+    await page.getByRole("menuitem", { name: "View Details" }).click();
+
+    const panel = page.getByRole("region", { name: /Resources for github-server/i });
+    await expect(panel).toBeVisible();
+
+    await page.getByLabel("Close resource details").click();
+
+    await expect(panel).not.toBeVisible();
   });
 
   test.describe("Delete resource", () => {
@@ -220,123 +210,258 @@ test.describe("Resources page", () => {
         await route.fulfill({
           status: 200,
           contentType: "application/json",
-          body: JSON.stringify([MOCK_RESOURCE]),
+          body: JSON.stringify([RESOURCE_A1]),
         });
       });
 
       await page.goto(APP.RESOURCES);
       await page.waitForLoadState("networkidle");
 
-      await expect(page.getByText("Test Document", { exact: true })).toBeVisible();
+      await page.getByRole("button", { name: "More options for github-server" }).click();
+      await page.getByRole("menuitem", { name: "View Details" }).click();
 
-      // Open card dropdown
-      await page.getByLabel("More options for Test Document").click();
-      await page.getByText("Delete").click();
+      const panel = page.getByRole("region", { name: /Resources for github-server/i });
+      await panel.getByRole("button", { name: "More options" }).first().click();
+      await page.getByRole("menuitem", { name: "Delete" }).click();
 
-      // Confirm dialog should appear
-      await expect(page.getByText("Delete resource")).toBeVisible();
-      await expect(page.getByText(/Are you sure you want to delete "Test Document"/)).toBeVisible();
+      const dialog = page.getByRole("dialog", { name: "Delete resource" });
+      await expect(dialog).toBeVisible();
+      await expect(
+        dialog.getByText(/Are you sure you want to delete "document-txt"/i),
+      ).toBeVisible();
 
-      // Cancel
-      await page.getByRole("button", { name: "Cancel" }).click();
+      await dialog.getByRole("button", { name: "Cancel" }).click();
 
-      // Resource should still be visible
-      await expect(page.getByText("Test Document", { exact: true })).toBeVisible();
+      await expect(dialog).not.toBeVisible();
+      await expect(panel.getByText("document-txt").first()).toBeVisible();
     });
 
-    test("confirming delete removes resource from grid", async ({ page }) => {
-      await page.route("**/resources?*", async (route) => {
-        await route.fulfill({
-          status: 200,
-          contentType: "application/json",
-          body: JSON.stringify([MOCK_RESOURCE]),
-        });
-      });
-
-      await page.route("**/resources/res-123abc456def789", async (route) => {
-        await route.fulfill({ status: 204 });
-      });
-
-      await page.goto(APP.RESOURCES);
-      await page.waitForLoadState("networkidle");
-
-      await expect(page.getByText("Test Document", { exact: true })).toBeVisible();
-
-      await page.getByLabel("More options for Test Document").click();
-      await page.getByText("Delete").click();
-
-      await expect(page.getByText("Delete resource")).toBeVisible();
-      await page.getByRole("button", { name: /^delete$/i }).click();
-
-      // Resource should disappear from grid
-      await expect(page.getByText("Test Document", { exact: true })).not.toBeVisible();
-    });
-
-    test("resource disappears immediately before DELETE responds (optimistic)", async ({
+    test("optimistically removes resource on delete confirmation and shows success toast", async ({
       page,
     }) => {
-      let resolveDelete!: () => void;
+      let deleteRequestCount = 0;
 
       await page.route("**/resources?*", async (route) => {
         await route.fulfill({
           status: 200,
           contentType: "application/json",
-          body: JSON.stringify([MOCK_RESOURCE]),
+          body: JSON.stringify([RESOURCE_A1, RESOURCE_A2]),
         });
       });
-
-      await page.route("**/resources/res-123abc456def789", async (route) => {
-        await new Promise<void>((res) => {
-          resolveDelete = res;
-        });
-        await route.fulfill({ status: 204 });
+      await page.route(`**/resources/${RESOURCE_A1.id}`, async (route) => {
+        if (route.request().method() === "DELETE") {
+          deleteRequestCount += 1;
+          await route.fulfill({ status: 204 });
+        } else {
+          await route.fallback();
+        }
       });
 
       await page.goto(APP.RESOURCES);
       await page.waitForLoadState("networkidle");
 
-      await expect(page.getByText("Test Document", { exact: true })).toBeVisible();
+      await page.getByRole("button", { name: "More options for github-server" }).click();
+      await page.getByRole("menuitem", { name: "View Details" }).click();
 
-      await page.getByLabel("More options for Test Document").click();
-      await page.getByText("Delete").click();
-      await expect(page.getByText("Delete resource")).toBeVisible();
-      await page.getByRole("button", { name: /^delete$/i }).click();
+      const panel = page.getByRole("region", { name: /Resources for github-server/i });
+      await expect(panel).toBeVisible();
+      await expect(panel.getByText("document-txt").first()).toBeVisible();
 
-      // Should disappear immediately (optimistic), before API resolves
-      await expect(page.getByText("Test Document", { exact: true })).not.toBeVisible();
+      await panel.getByRole("button", { name: "More options" }).first().click();
+      await page.getByRole("menuitem", { name: "Delete" }).click();
 
-      resolveDelete();
+      const dialog = page.getByRole("dialog", { name: "Delete resource" });
+      await expect(dialog).toBeVisible();
+      await dialog.getByRole("button", { name: "Delete" }).click();
+
+      await expect.poll(() => deleteRequestCount).toBe(1);
+      await expect(
+        page.locator("[data-sonner-toast]").filter({ hasText: /document-txt.*deleted/i }),
+      ).toBeVisible();
     });
 
-    test("resource reappears when DELETE API returns error (rollback)", async ({ page }) => {
+    test("rolls back optimistic delete and shows error toast when delete API fails", async ({
+      page,
+    }) => {
+      let deleteRequestCount = 0;
+
       await page.route("**/resources?*", async (route) => {
         await route.fulfill({
           status: 200,
           contentType: "application/json",
-          body: JSON.stringify([MOCK_RESOURCE]),
+          body: JSON.stringify([RESOURCE_A1, RESOURCE_A2]),
         });
       });
-
-      await page.route("**/resources/res-123abc456def789", async (route) => {
-        await route.fulfill({
-          status: 409,
-          contentType: "application/json",
-          body: JSON.stringify({ detail: "Cannot delete: resource in use" }),
-        });
+      await page.route(`**/resources/${RESOURCE_A1.id}`, async (route) => {
+        if (route.request().method() === "DELETE") {
+          deleteRequestCount += 1;
+          await route.fulfill({
+            status: 403,
+            contentType: "application/json",
+            body: JSON.stringify({ detail: "Forbidden" }),
+          });
+        } else {
+          await route.fallback();
+        }
       });
 
       await page.goto(APP.RESOURCES);
       await page.waitForLoadState("networkidle");
 
-      await expect(page.getByText("Test Document", { exact: true })).toBeVisible();
+      await page.getByRole("button", { name: "More options for github-server" }).click();
+      await page.getByRole("menuitem", { name: "View Details" }).click();
 
-      await page.getByLabel("More options for Test Document").click();
-      await page.getByText("Delete").click();
-      await expect(page.getByText("Delete resource")).toBeVisible();
-      await page.getByRole("button", { name: /^delete$/i }).click();
+      const panel = page.getByRole("region", { name: /Resources for github-server/i });
+      await expect(panel).toBeVisible();
 
-      // After rollback resource should reappear
-      await expect(page.getByText("Test Document", { exact: true })).toBeVisible();
+      await panel.getByRole("button", { name: "More options" }).first().click();
+      await page.getByRole("menuitem", { name: "Delete" }).click();
+
+      const dialog = page.getByRole("dialog", { name: "Delete resource" });
+      await dialog.getByRole("button", { name: "Delete" }).click();
+
+      await expect.poll(() => deleteRequestCount).toBe(1);
+
+      await expect(
+        page.locator("[data-sonner-toast]").filter({ hasText: /Forbidden/i }),
+      ).toBeVisible();
+
+      await expect(panel.getByText("document-txt").first()).toBeVisible();
+    });
+
+    test("details panel closes immediately when the only resource in a group is deleted", async ({
+      page,
+    }) => {
+      const SOLO = makeResource("solo_resource", "solo-gateway");
+
+      await page.route("**/resources?*", async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify([SOLO]),
+        });
+      });
+      await page.route(`**/resources/${SOLO.id}`, async (route) => {
+        if (route.request().method() === "DELETE") {
+          await route.fulfill({ status: 204 });
+        } else {
+          await route.fallback();
+        }
+      });
+
+      await page.goto(APP.RESOURCES);
+      await page.waitForLoadState("networkidle");
+
+      await page.getByRole("button", { name: "More options for solo-gateway" }).click();
+      await page.getByRole("menuitem", { name: "View Details" }).click();
+
+      const panel = page.getByRole("region", { name: /Resources for solo-gateway/i });
+      await expect(panel).toBeVisible();
+
+      await panel.getByRole("button", { name: "More options" }).first().click();
+      await page.getByRole("menuitem", { name: "Delete" }).click();
+
+      await page
+        .getByRole("dialog", { name: "Delete resource" })
+        .getByRole("button", { name: "Delete" })
+        .click();
+
+      await expect(panel).not.toBeVisible();
+    });
+
+    test("details panel stays open and deleted row is gone while remaining resource stays visible", async ({
+      page,
+    }) => {
+      const RESOURCE_1 = makeResource("alpha_resource", "multi-gw");
+      const RESOURCE_2 = makeResource("beta_resource", "multi-gw");
+
+      let resolveDelete!: () => void;
+      const deleteHeld = new Promise<void>((res) => {
+        resolveDelete = res;
+      });
+
+      await page.route("**/resources?*", async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify([RESOURCE_1, RESOURCE_2]),
+        });
+      });
+      await page.route(`**/resources/${RESOURCE_1.id}`, async (route) => {
+        if (route.request().method() === "DELETE") {
+          await deleteHeld;
+          await route.fulfill({ status: 204 });
+        } else {
+          await route.fallback();
+        }
+      });
+
+      await page.goto(APP.RESOURCES);
+      await page.waitForLoadState("networkidle");
+
+      await page.getByRole("button", { name: "More options for multi-gw" }).click();
+      await page.getByRole("menuitem", { name: "View Details" }).click();
+
+      const panel = page.getByRole("region", { name: /Resources for multi-gw/i });
+      await expect(panel).toBeVisible();
+      await expect(panel.getByText("alpha_resource").first()).toBeVisible();
+      await expect(panel.getByText("beta_resource").first()).toBeVisible();
+
+      await panel.getByRole("button", { name: "More options" }).first().click();
+      await page.getByRole("menuitem", { name: "Delete" }).click();
+      await page
+        .getByRole("dialog", { name: "Delete resource" })
+        .getByRole("button", { name: "Delete" })
+        .click();
+
+      await expect(panel.getByText("alpha_resource")).not.toBeVisible();
+      await expect(panel.getByText("beta_resource").first()).toBeVisible();
+
+      resolveDelete();
+      await expect(
+        page.locator("[data-sonner-toast]").filter({ hasText: /alpha_resource/i }),
+      ).toBeVisible();
+    });
+
+    test("card group disappears from grid when its only resource is deleted", async ({ page }) => {
+      const SOLO = makeResource("lone_resource", "lone-gateway");
+
+      await page.route("**/resources?*", async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify([SOLO, RESOURCE_A1]),
+        });
+      });
+      await page.route(`**/resources/${SOLO.id}`, async (route) => {
+        if (route.request().method() === "DELETE") {
+          await route.fulfill({ status: 204 });
+        } else {
+          await route.fallback();
+        }
+      });
+
+      await page.goto(APP.RESOURCES);
+      await page.waitForLoadState("networkidle");
+
+      await expect(page.getByText("lone-gateway")).toBeVisible();
+      await expect(page.getByText("github-server")).toBeVisible();
+
+      await page.getByRole("button", { name: "More options for lone-gateway" }).click();
+      await page.getByRole("menuitem", { name: "View Details" }).click();
+
+      const panel = page.getByRole("region", { name: /Resources for lone-gateway/i });
+      await expect(panel).toBeVisible();
+
+      await panel.getByRole("button", { name: "More options" }).first().click();
+      await page.getByRole("menuitem", { name: "Delete" }).click();
+      await page
+        .getByRole("dialog", { name: "Delete resource" })
+        .getByRole("button", { name: "Delete" })
+        .click();
+
+      await expect(page.getByText("lone-gateway")).not.toBeVisible();
+      await expect(page.getByText("github-server")).toBeVisible();
     });
   });
 });

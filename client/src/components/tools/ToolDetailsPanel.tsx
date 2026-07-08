@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { Tool } from "@/types/tool";
 import { copyToClipboard, truncateMiddle } from "@/components/gateways/utils";
+import { formatDateTime } from "@/utils/format";
 import { ToolsTable } from "@/components/tools/ToolsTable";
 
 function DetailRow({
@@ -43,12 +44,6 @@ function CopyValue({ label, value }: { label: string; value: string }) {
       </Button>
     </div>
   );
-}
-
-function formatDateTime(value?: string, emptyLabel = "Not available") {
-  if (!value) return emptyLabel;
-  // Strip milliseconds and trailing timezone marker to match ISO display style
-  return value.replace(/\.\d+Z?$/, "");
 }
 
 export function ToolDetailsPanel({
@@ -162,6 +157,7 @@ export function ToolDetailsPanel({
         role="region"
         aria-labelledby={headingId}
         aria-hidden={!open}
+        inert={!open}
         data-state={open ? "open" : "closed"}
         className={cn(
           "absolute inset-y-0 right-0 z-20 flex w-[min(1236px,calc(100%-2rem))] border-l border-border bg-popover text-[13px] shadow-lg",
