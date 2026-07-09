@@ -654,6 +654,20 @@ class TestPassthroughMergeOutcome:
         assert auth == "Bearer exch-tok"
         assert _FAKE_JWT not in auth
 
+    def test_x_upstream_authorization_cannot_override_exchanged_token(self):
+        # The X-Upstream-Authorization rename runs before the allow-list check, so
+        # _sanitize_passthrough_for_token_exchange() (which only strips "authorization"
+        # from the allow-list) never reaches it. Without is_token_exchange=True, a
+        # caller-supplied X-Upstream-Authorization would silently replace the
+        # resolver's exchanged Authorization header.
+        # First-Party
+        from mcpgateway.services.tool_service import compute_passthrough_headers_cached
+
+        inbound = {"x-upstream-authorization": "Bearer attacker"}
+        base = {"Authorization": "Bearer exchanged"}  # set by _resolve_token_exchange_header
+        merged = compute_passthrough_headers_cached(inbound, base, [], gateway_auth_type="oauth", gateway_passthrough_headers=None, is_token_exchange=True)
+        assert merged["Authorization"] == "Bearer exchanged"
+
 
 @pytest.mark.asyncio
 class TestUnauthorizedRetryOnce:
