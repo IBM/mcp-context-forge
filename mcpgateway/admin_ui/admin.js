@@ -19,9 +19,8 @@ import 'codemirror/lib/codemirror.css';
 import 'codemirror/theme/monokai.css';
 window.CodeMirror = CodeMirror;
 
-import { Chart, registerables } from 'chart.js';
-Chart.register(...registerables);
-window.Chart = Chart;
+// Chart.js is only used by the admin-only observability dashboards; loaded on-demand
+// by lazy-loader.js (TAB_FEATURE_MAP['observability'] -> 'charts') so non-admins never fetch it.
 
 import { marked } from 'marked';
 window.marked = marked;
@@ -194,24 +193,8 @@ Admin.refreshToolsForSelectedGateways = refreshToolsForSelectedGateways;
 Admin.testGateway = testGateway;
 Admin.viewGateway = viewGateway;
 
-// LLM Chat
-import {
-  connectLLMChat,
-  disconnectLLMChat,
-  handleChatInputKeydown,
-  handleLLMModelChange,
-  loadVirtualServersForChat,
-  selectServerForChat,
-  sendChatMessage,
-} from "./llmChat.js";
-
-Admin.connectLLMChat = connectLLMChat;
-Admin.disconnectLLMChat = disconnectLLMChat;
-Admin.handleChatInputKeydown = handleChatInputKeydown;
-Admin.handleLLMModelChange = handleLLMModelChange;
-Admin.loadVirtualServersForChat = loadVirtualServersForChat;
-Admin.selectServerForChat = selectServerForChat;
-Admin.sendChatMessage = sendChatMessage;
+// LLM Chat is loaded on-demand by lazy-loader.js (see TAB_FEATURE_MAP in tabs.js);
+// it is deliberately not statically imported here so Rollup can split it into its own chunk.
 
 // LLM Models
 import {
@@ -313,20 +296,8 @@ Admin.showPerformanceMetrics = showPerformanceMetrics;
 Admin.showSecurityEvents = showSecurityEvents;
 Admin.testMCPSearchManually = testMCPSearchManually;
 
-// Metrics
-import {
-  retryLoadMetrics,
-  switchTopPerformersTab,
-  showMetricsError,
-  displayMetrics,
-  loadAggregatedMetrics,
-} from "./metrics.js";
-
-Admin.retryLoadMetrics = retryLoadMetrics;
-Admin.switchTopPerformersTab = switchTopPerformersTab;
-Admin.showMetricsError = showMetricsError;
-Admin.displayMetrics = displayMetrics;
-Admin.loadAggregatedMetrics = loadAggregatedMetrics;
+// Metrics is loaded on-demand by lazy-loader.js (see TAB_FEATURE_MAP in tabs.js);
+// it is deliberately not statically imported here so Rollup can split it into its own chunk.
 
 // Modals
 import {

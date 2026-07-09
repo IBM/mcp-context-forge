@@ -165,9 +165,10 @@
     <script defer src="{{ root_path }}/static/gantt-chart.js?v=3"></script>
     <script defer src="{{ root_path }}/static/flame-graph.js?v=1"></script>
     {% endif %}
-    <!-- CodeMirror CSS is now bundled in the main CSS bundle via Vite -->
-    <!-- Font Awesome (local vendor files) -->
-    <link rel="stylesheet" href="{{ root_path }}/static/vendor/fontawesome/css/all.min.css" />
+    <!-- Font Awesome + CodeMirror CSS are bundled via Vite (imported in admin_ui/admin.js) -->
+    {% for css_file in bundle_css %}
+    <link rel="stylesheet" href="{{ root_path }}/static/{{ css_file }}" />
+    {% endfor %}
     <link href="{{ root_path }}/static/admin.css" rel="stylesheet" />
     <link href="{{ root_path }}/static/gantt-chart.css" rel="stylesheet" />
     <link href="{{ root_path }}/static/flame-graph.css" rel="stylesheet" />

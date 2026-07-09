@@ -3,10 +3,8 @@
 
 import { loadRecentImports } from "./fileTransfer.js";
 import { initializeExportImport } from "./initialization.js";
-import { initializeLLMChat } from "./llmChat.js";
 import { loadFeature } from "./lazy-loader.js";
 import { searchStructuredLogs } from "./logging.js";
-import { loadAggregatedMetrics } from "./metrics.js";
 import { dispatchPluginAction, filterPlugins, populatePluginFilters } from "./plugins.js";
 import { getPanelSearchConfig, getPanelSearchStateFromUrl, queueSearchablePanelReload } from "./search.js";
 import { escapeHtml, safeReplaceState, safeSetInnerHTML } from "./security.js";
@@ -175,7 +173,8 @@ const TAB_FEATURE_MAP = {
   'metrics': 'metrics',
   'llm-chat': 'llmChat',
   'llm-models': 'llmModels',
-  'plugins': 'plugins'
+  'plugins': 'plugins',
+  'observability': 'charts'
 };
 
 /**
@@ -460,12 +459,14 @@ export const showTab = function (tabName) {
 
         if (tabName === "metrics") {
           // Only load if we're still on the metrics tab
+          // metrics.js is lazy-loaded above; loadFeature() populates window.Admin with its exports
           if (!panel.classList.contains("hidden")) {
-            loadAggregatedMetrics();
+            window.Admin.loadAggregatedMetrics();
           }
         }
         if (tabName === "llm-chat") {
-          initializeLLMChat();
+          // llmChat.js is lazy-loaded above; loadFeature() populates window.Admin with its exports
+          window.Admin.initializeLLMChat();
         }
 
         if (tabName === "logs") {

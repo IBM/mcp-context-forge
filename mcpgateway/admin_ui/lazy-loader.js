@@ -13,7 +13,9 @@ const featureModules = {
   metrics: () => import('./metrics.js'),
   llmChat: () => import('./llmChat.js'),
   llmModels: () => import('./llmModels.js'),
-  plugins: () => import('./plugins.js')
+  plugins: () => import('./plugins.js'),
+  // chart.js exports { Chart, registerables } rather than self-registering on window.Admin
+  charts: () => import('chart.js')
 };
 
 // Track loaded modules to avoid duplicate loads
@@ -53,8 +55,13 @@ export async function loadFeature(featureName) {
     try {
       const module = await loader();
 
-      // Merge module exports into window.Admin
-      if (module && typeof module === 'object') {
+      if (featureName === 'charts') {
+        // chart.js exports { Chart, registerables } directly instead of self-registering
+        const { Chart, registerables } = module;
+        Chart.register(...registerables);
+        window.Chart = Chart;
+      } else if (module && typeof module === 'object') {
+        // Merge module exports into window.Admin
         Object.assign(window.Admin, module);
       }
 

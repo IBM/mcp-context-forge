@@ -40,14 +40,8 @@ vi.mock("../../../mcpgateway/admin_ui/fileTransfer.js", () => ({
 vi.mock("../../../mcpgateway/admin_ui/initialization.js", () => ({
   initializeExportImport: vi.fn(),
 }));
-vi.mock("../../../mcpgateway/admin_ui/llmChat.js", () => ({
-  initializeLLMChat: vi.fn(),
-}));
 vi.mock("../../../mcpgateway/admin_ui/logging.js", () => ({
   searchStructuredLogs: vi.fn(),
-}));
-vi.mock("../../../mcpgateway/admin_ui/metrics.js", () => ({
-  loadAggregatedMetrics: vi.fn(),
 }));
 vi.mock("../../../mcpgateway/admin_ui/plugins.js", () => ({
   populatePluginFilters: vi.fn(),
@@ -714,8 +708,9 @@ describe("showTab", () => {
   });
 
   test("loads metrics tab", async () => {
-    const { loadAggregatedMetrics } =
-      await import("../../../mcpgateway/admin_ui/metrics.js");
+    // metrics.js is lazy-loaded (see TAB_FEATURE_MAP); loadFeature() is mocked above and
+    // tabs.js calls the loaded feature via window.Admin rather than a static import.
+    window.Admin = { loadAggregatedMetrics: vi.fn() };
 
     const panel = document.createElement("div");
     panel.id = "metrics-panel";
@@ -730,13 +725,14 @@ describe("showTab", () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     showTab("metrics");
     vi.runAllTimers();
-    await vi.waitFor(() => expect(loadAggregatedMetrics).toHaveBeenCalled());
+    await vi.waitFor(() => expect(window.Admin.loadAggregatedMetrics).toHaveBeenCalled());
     logSpy.mockRestore();
   });
 
   test("initializes llm-chat tab", async () => {
-    const { initializeLLMChat } =
-      await import("../../../mcpgateway/admin_ui/llmChat.js");
+    // llmChat.js is lazy-loaded (see TAB_FEATURE_MAP); loadFeature() is mocked above and
+    // tabs.js calls the loaded feature via window.Admin rather than a static import.
+    window.Admin = { initializeLLMChat: vi.fn() };
 
     const panel = document.createElement("div");
     panel.id = "llm-chat-panel";
@@ -751,7 +747,7 @@ describe("showTab", () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     showTab("llm-chat");
     vi.runAllTimers();
-    await vi.waitFor(() => expect(initializeLLMChat).toHaveBeenCalled());
+    await vi.waitFor(() => expect(window.Admin.initializeLLMChat).toHaveBeenCalled());
     logSpy.mockRestore();
   });
 
