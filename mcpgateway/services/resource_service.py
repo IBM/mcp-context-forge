@@ -2460,7 +2460,9 @@ class ResourceService(BaseService):
                         # it internally checks which uri matches the pattern of modified uri and fetches
                         # the one which matches else raises ResourceNotFoundError
                         try:
-                            template_user_email = user.get("email") if isinstance(user, dict) else user
+                            from mcpgateway.auth_context import get_user_email  # pylint: disable=import-outside-toplevel
+
+                            template_user_email = None if user is None else get_user_email(user)
                             content = (
                                 await self._read_template_resource(
                                     db,
@@ -2469,7 +2471,7 @@ class ResourceService(BaseService):
                                     user_email=template_user_email,
                                     token_teams=token_teams,
                                     server_id=server_id,
-                                    use_cache=False,
+                                    use_cache=True,
                                 )
                                 or None
                             )
@@ -2562,6 +2564,12 @@ class ResourceService(BaseService):
                     placeholder = getattr(content_obj, attr_name, None)
                     content_uri = getattr(content_obj, "uri", None)
                     if template_uri and requested_uri and placeholder is not None and content_uri is not None and str(placeholder) == str(requested_uri) and str(content_uri) == str(template_uri):
+                        logger.warning(
+                            "Resource template proxy read returned no content for requested URI '%s' from template '%s' via gateway '%s'",
+                            requested_uri,
+                            template_uri,
+                            getattr(resource_db_gateway, "id", None) or getattr(resource_db, "gateway_id", None),
+                        )
                         raise ResourceError(f"Resource template '{template_uri}' did not resolve URI '{requested_uri}'")
 
                 if isinstance(content, (ResourceContent, ResourceContents, TextContent)):

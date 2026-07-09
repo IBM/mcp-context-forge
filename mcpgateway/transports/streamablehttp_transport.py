@@ -85,7 +85,7 @@ from mcpgateway.services.metrics import (
 from mcpgateway.services.oauth_manager import OAuthEnforcementUnavailableError, OAuthRequiredError
 from mcpgateway.services.permission_service import PermissionService
 from mcpgateway.services.prompt_service import PromptService
-from mcpgateway.services.resource_service import ResourceService
+from mcpgateway.services.resource_service import ResourceError, ResourceNotFoundError, ResourceService
 from mcpgateway.services.tool_service import ToolService
 from mcpgateway.transports.context import UserContext
 from mcpgateway.transports.redis_event_store import RedisEventStore
@@ -2652,6 +2652,8 @@ async def read_resource(resource_uri: str) -> Union[str, bytes]:
                     token_teams=token_teams,
                     meta_data=meta_data,
                 )
+            except (ResourceError, ResourceNotFoundError):
+                raise
             except Exception as e:
                 logger.exception("Error reading resource '%s': %s", resource_uri, e)
                 return ""
@@ -2667,6 +2669,8 @@ async def read_resource(resource_uri: str) -> Union[str, bytes]:
             # No content found
             logger.warning("No content returned by resource: %s", resource_uri)
             return ""
+    except (ResourceError, ResourceNotFoundError):
+        raise
     except Exception as e:
         logger.exception("Error reading resource '%s': %s", resource_uri, e)
         return ""
