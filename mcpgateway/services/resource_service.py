@@ -2460,7 +2460,19 @@ class ResourceService(BaseService):
                         # it internally checks which uri matches the pattern of modified uri and fetches
                         # the one which matches else raises ResourceNotFoundError
                         try:
-                            content = await self._read_template_resource(db, uri) or None
+                            template_user_email = user.get("email") if isinstance(user, dict) else user
+                            content = (
+                                await self._read_template_resource(
+                                    db,
+                                    uri,
+                                    include_inactive=include_inactive,
+                                    user_email=template_user_email,
+                                    token_teams=token_teams,
+                                    server_id=server_id,
+                                    use_cache=False,
+                                )
+                                or None
+                            )
                             # ═══════════════════════════════════════════════════════════════════════════
                             # SECURITY: Fetch the template's DbResource record for access checking
                             # _read_template_resource returns ResourceContent with the template's ID
@@ -2539,6 +2551,19 @@ class ResourceService(BaseService):
                 # ResourceContents covers TextResourceContents and BlobResourceContents (MCP-compliant)
                 # ResourceContent is the legacy model for backwards compatibility
 
+                def _set_gateway_content(content_obj: Any, attr_name: str, resource_response: Any) -> None:
+                    """Apply gateway content or reject unresolved template placeholders."""
+                    if resource_response is not None:
+                        setattr(content_obj, attr_name, resource_response)
+                        return
+
+                    template_uri = getattr(resource_db, "uri_template", None) if resource_db else None
+                    requested_uri = uri if uri is not None else original_uri
+                    placeholder = getattr(content_obj, attr_name, None)
+                    content_uri = getattr(content_obj, "uri", None)
+                    if template_uri and requested_uri and placeholder is not None and content_uri is not None and str(placeholder) == str(requested_uri) and str(content_uri) == str(template_uri):
+                        raise ResourceError(f"Resource template '{template_uri}' did not resolve URI '{requested_uri}'")
+
                 if isinstance(content, (ResourceContent, ResourceContents, TextContent)):
                     # Metrics are recorded in read_resource finally block for all resources
                     resource_response = await self.invoke_resource(
@@ -2552,8 +2577,7 @@ class ResourceService(BaseService):
                         gateway_obj=resource_db_gateway,
                         server_id=server_id,
                     )
-                    if resource_response:
-                        setattr(content, "text", resource_response)
+                    _set_gateway_content(content, "text", resource_response)
                 # If content is any object that quacks like content
                 elif hasattr(content, "text") or hasattr(content, "blob"):
                     # Metrics are recorded in read_resource finally block for all resources
@@ -2569,8 +2593,7 @@ class ResourceService(BaseService):
                             gateway_obj=resource_db_gateway,
                             server_id=server_id,
                         )
-                        if resource_response:
-                            setattr(content, "blob", resource_response)
+                        _set_gateway_content(content, "blob", resource_response)
                     elif hasattr(content, "text"):
                         resource_response = await self.invoke_resource(
                             db,
@@ -2583,8 +2606,7 @@ class ResourceService(BaseService):
                             gateway_obj=resource_db_gateway,
                             server_id=server_id,
                         )
-                        if resource_response:
-                            setattr(content, "text", resource_response)
+                        _set_gateway_content(content, "text", resource_response)
                 # Normalize primitive types to ResourceContent
                 elif isinstance(content, bytes):
                     content = ResourceContent(type="resource", id=str(resource_id), uri=original_uri, blob=content)
@@ -3757,7 +3779,16 @@ class ResourceService(BaseService):
 
         return "application/octet-stream"
 
-    async def _read_template_resource(self, db: Session, uri: str, include_inactive: Optional[bool] = False) -> ResourceContent:
+    async def _read_template_resource(
+        self,
+        db: Session,
+        uri: str,
+        include_inactive: Optional[bool] = False,
+        user_email: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,
+        server_id: Optional[str] = None,
+        use_cache: bool = True,
+    ) -> ResourceContent:
         """
         Read a templated resource.
 
@@ -3765,6 +3796,10 @@ class ResourceService(BaseService):
             db: Database session.
             uri: Template URI with parameters.
             include_inactive: Whether to include inactive resources in DB lookups.
+            user_email: Email of the requesting user for scoped template lookup.
+            token_teams: Teams from the request token for scoped template lookup.
+            server_id: Optional virtual server ID for scoped template lookup.
+            use_cache: Whether to reuse the unscoped template cache.
 
         Returns:
             ResourceContent: The resolved content from the matching template.
@@ -3776,12 +3811,22 @@ class ResourceService(BaseService):
         """
         # Find matching template # DRT BREAKPOINT
         template = None
-        if not self._template_cache:
-            logger.info("_template_cache is empty, fetching exisitng resource templates")
-            resource_templates = await self.list_resource_templates(db=db, include_inactive=include_inactive)
-            for i in resource_templates:
-                self._template_cache[i.name] = i
-        for cached in self._template_cache.values():
+        scoped_lookup = server_id is not None or user_email is not None or token_teams is not None
+        if not use_cache or scoped_lookup or not self._template_cache:
+            logger.info("Fetching resource templates for template URI resolution")
+            resource_templates = await self.list_resource_templates(
+                db=db,
+                include_inactive=include_inactive,
+                user_email=user_email,
+                token_teams=token_teams,
+                server_id=server_id,
+            )
+            if use_cache and not scoped_lookup:
+                for i in resource_templates:
+                    self._template_cache[i.name] = i
+        else:
+            resource_templates = list(self._template_cache.values())
+        for cached in resource_templates:
             if self._uri_matches_template(uri, cached.uri_template):
                 template = cached
                 break
