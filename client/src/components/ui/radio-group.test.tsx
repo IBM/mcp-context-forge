@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import React from "react";
 import { RadioGroup, RadioGroupItem } from "./radio-group";
@@ -342,11 +342,14 @@ describe("RadioGroup", () => {
       );
 
       const firstItem = container.querySelector('[role="radio"]') as HTMLElement;
-      firstItem.focus();
+      act(() => firstItem.focus());
 
       await user.keyboard("{ArrowRight}");
-      const itemsAfter = container.querySelectorAll('[role="radio"]');
-      expect(itemsAfter[1]).toHaveFocus();
+
+      await waitFor(() => {
+        const itemsAfter = container.querySelectorAll('[role="radio"]');
+        expect(itemsAfter[1]).toHaveFocus();
+      });
     });
 
     it("should support tab navigation", async () => {
@@ -377,10 +380,13 @@ describe("RadioGroup", () => {
       );
 
       const firstItem = container.querySelector('[role="radio"]') as HTMLElement;
-      firstItem.focus();
+      act(() => firstItem.focus());
 
       await user.keyboard(" ");
-      expect(onChange).toHaveBeenCalled();
+
+      await waitFor(() => {
+        expect(onChange).toHaveBeenCalled();
+      });
     });
   });
 
