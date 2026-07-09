@@ -81,12 +81,11 @@ class TestUIResourceSecurity:
     def _policy(self) -> dict:
         return {MCP_UI_EXTENSION: {"csp": {"resourceDomains": ["'self'"]}, "sandbox": ["allow-scripts"]}}
 
-    def test_unauthorized_ui_resource_read_when_disabled(self, monkeypatch):
-        """ui:// resources should be rejected when MCP Apps are disabled."""
+    def test_ui_resource_validation_is_skipped_when_disabled(self, monkeypatch):
+        """ui:// resources should remain backward-compatible when MCP Apps are disabled."""
         monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", False)
 
-        with pytest.raises(MCPAppsValidationError, match="MCP Apps UI resources are disabled"):
-            validate_ui_resource("ui://widgets/example", "text/html;profile=mcp-app", self._policy())
+        validate_ui_resource("ui://widgets/example", "text/plain", None)
 
     def test_ui_resource_requires_text_html_mime(self, monkeypatch):
         """ui:// resources must use MCP App HTML MIME type."""
@@ -176,6 +175,42 @@ class FakeRequest:
 class TestAppBridgeEndpoints:
     """Endpoint-level AppBridge security tests."""
 
+    def test_appbridge_routes_registered_on_real_app_before_mcp_mount(self, monkeypatch):
+        """Real app routing should reach AppBridge endpoints instead of the /mcp transport mount."""
+        # First-Party
+        from mcpgateway import main as main_mod
+
+        monkeypatch.setattr(main_mod.settings, "auth_required", True)
+        monkeypatch.setattr(main_mod.settings, "mcp_client_auth_enabled", True)
+        monkeypatch.setattr(main_mod.settings, "mcpgateway_mcp_apps_enabled", True)
+        monkeypatch.setattr("mcpgateway.middleware.rbac.settings.auth_required", True)
+        monkeypatch.setattr("mcpgateway.middleware.rbac.settings.mcp_client_auth_enabled", True)
+        monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", True)
+
+        client = TestClient(main_mod.app, raise_server_exceptions=False)
+        with (
+            patch.object(main_mod.resource_service, "read_resource", new=AsyncMock()) as read_resource_mock,
+            patch.object(main_mod.tool_service, "invoke_tool", new=AsyncMock()) as invoke_tool_mock,
+        ):
+            create_response = client.post(
+                "/appbridge/sessions",
+                json={"resourceUri": "ui://widgets/example", "serverId": "server-1"},
+                headers={"mcp-session-id": "mcp-session-1"},
+            )
+            rpc_response = client.post(
+                "/appbridge/sessions/app-session-1/rpc",
+                json={"jsonrpc": "2.0", "id": "1", "method": "tools/call", "params": {"name": "helper"}},
+                headers={"mcp-session-id": "mcp-session-1"},
+            )
+        client.close()
+
+        assert create_response.status_code in {401, 403}
+        assert rpc_response.status_code in {401, 403}
+        assert create_response.status_code != 404
+        assert rpc_response.status_code != 404
+        read_resource_mock.assert_not_awaited()
+        invoke_tool_mock.assert_not_awaited()
+
     def test_appbridge_routes_reject_unauthenticated_before_execution(self, monkeypatch):
         """Unauthenticated AppBridge requests should fail before resource or tool execution."""
         # First-Party
@@ -196,12 +231,12 @@ class TestAppBridgeEndpoints:
             patch.object(main_mod.tool_service, "invoke_tool", new=AsyncMock()) as invoke_tool_mock,
         ):
             create_response = client.post(
-                "/mcp/apps/sessions",
+                "/appbridge/sessions",
                 json={"resourceUri": "ui://widgets/example", "serverId": "server-1"},
                 headers={"mcp-session-id": "mcp-session-1"},
             )
             rpc_response = client.post(
-                "/mcp/apps/sessions/app-session-1/rpc",
+                "/appbridge/sessions/app-session-1/rpc",
                 json={"jsonrpc": "2.0", "id": "1", "method": "tools/call", "params": {"name": "helper"}},
                 headers={"mcp-session-id": "mcp-session-1"},
             )
@@ -1039,6 +1074,52 @@ class TestAppOnlyToolSecurity:
 
         with pytest.raises(ToolNotFoundError):
             await service.invoke_tool(mock_db, "helper", {}, user_email="user@example.com", server_id="server-1", require_model_visible=True)
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_require_client_visible_rejects_hidden_tool(self, monkeypatch, mock_db):
+        """Service-layer client gate denies tools hidden from both models and MCP Apps UIs."""
+        monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", True)
+        service = ToolService()
+        hidden_tool = SimpleNamespace(
+            id="tool-1",
+            name="helper",
+            original_name="helper",
+            url=None,
+            description="",
+            original_description="",
+            integration_type="MCP",
+            request_type="SSE",
+            headers={},
+            input_schema={"type": "object"},
+            output_schema=None,
+            annotations={},
+            extension_metadata={MCP_UI_EXTENSION: {"visibility": []}},
+            auth_type=None,
+            jsonpath_filter=None,
+            custom_name=None,
+            custom_name_slug=None,
+            display_name=None,
+            gateway_id=None,
+            grpc_service_id=None,
+            enabled=True,
+            deprecated=False,
+            reachable=True,
+            tags=[],
+            team_id=None,
+            owner_email="user@example.com",
+            visibility="public",
+            query_mapping=None,
+            header_mapping=None,
+            gateway=None,
+        )
+        cache = SimpleNamespace(enabled=False, set=AsyncMock(), set_negative=AsyncMock())
+
+        monkeypatch.setattr("mcpgateway.services.tool_service._get_tool_lookup_cache", lambda: cache)
+        monkeypatch.setattr(service, "_load_invocable_tools", lambda db, name, server_id=None: [hidden_tool])
+        monkeypatch.setattr(service, "_check_tool_access", AsyncMock(return_value=True))
+
+        with pytest.raises(ToolNotFoundError):
+            await service.invoke_tool(mock_db, "helper", {}, user_email="user@example.com", server_id="server-1", require_client_visible=True)
 
     @pytest.mark.asyncio
     async def test_app_only_tool_visibility_split_end_to_end(self, monkeypatch, mock_db, valid_app_session):

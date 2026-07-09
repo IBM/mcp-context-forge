@@ -53,6 +53,6 @@ def test_appbridge_paths_use_high_rate_limit_tier(monkeypatch):
 
     middleware = RateLimitMiddleware(Starlette())
 
-    assert middleware.get_endpoint_tier("/mcp/apps/sessions") == {"pattern": r"^/mcp/apps/sessions(/|$)", "limit": 30, "burst": 5}
-    assert middleware.get_endpoint_tier("/mcp/apps/sessions/app-session/rpc") == {"pattern": r"^/mcp/apps/sessions(/|$)", "limit": 30, "burst": 5}
+    assert middleware.get_endpoint_tier("/appbridge/sessions") == {"pattern": r"^/appbridge/sessions(/|$)", "limit": 30, "burst": 5}
+    assert middleware.get_endpoint_tier("/appbridge/sessions/app-session/rpc") == {"pattern": r"^/appbridge/sessions(/|$)", "limit": 30, "burst": 5}
     assert middleware.get_endpoint_tier("/mcp")["limit"] == 100

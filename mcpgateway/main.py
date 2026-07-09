@@ -10490,7 +10490,7 @@ async def _execute_rpc_tools_call(
             await cancellation_service.unregister_run(run_id)
 
 
-@utility_router.post("/mcp/apps/sessions")
+@utility_router.post("/appbridge/sessions")
 @require_permission("resources.read")
 async def create_mcp_app_session(request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)):
     """Create a short-lived AppBridge session for an authorized UI resource."""
@@ -10554,7 +10554,7 @@ async def create_mcp_app_session(request: Request, db: Session = Depends(get_db)
     )
 
 
-@utility_router.post("/mcp/apps/sessions/{app_session_id}/rpc")
+@utility_router.post("/appbridge/sessions/{app_session_id}/rpc")
 @require_permission("tools.execute")
 async def handle_mcp_app_session_rpc(app_session_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)):
     """Execute an app-visible tool through a validated AppBridge session."""

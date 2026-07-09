@@ -1748,6 +1748,7 @@ async def call_tool(
         <class 'dict'>
     """
     server_id, request_headers, user_context = await _get_request_context_or_default()
+    apps_client = _request_context_client_supports_mcp_apps()
 
     meta_data = None
     # Extract _meta from request context if available
@@ -1950,7 +1951,8 @@ async def call_tool(
                 token_teams=token_teams,
                 server_id=server_id,
                 meta_data=meta_data,
-                require_model_visible=True,
+                require_model_visible=not apps_client,
+                require_client_visible=apps_client,
             )
             if not result or not result.content:
                 logger.warning("No content returned by tool: %s", name)

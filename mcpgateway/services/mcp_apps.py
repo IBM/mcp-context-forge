@@ -251,7 +251,7 @@ def validate_ui_resource(resource_uri: str, mime_type: Optional[str], extension_
     if not resource_uri.startswith("ui://"):
         return
     if not mcp_apps_enabled():
-        raise MCPAppsValidationError("MCP Apps UI resources are disabled")
+        return
     if not _is_mcp_app_mime_type(mime_type):
         raise MCPAppsValidationError("ui:// resources must use text/html;profile=mcp-app MIME type")
     ui = mcp_ui_metadata(extension_metadata)

@@ -123,7 +123,7 @@ MCP Apps UI resources use the `ui://` URI scheme and must be HTML:
   "uri": "ui://widgets/customer-search",
   "name": "Customer search widget",
   "mimeType": "text/html;profile=mcp-app",
-  "content": "<!doctype html><html>...</html>",
+  "content": "<div id=\"customer-search-root\"></div>",
   "extensionMetadata": {
     "io.modelcontextprotocol/ui": {
       "csp": {
@@ -209,11 +209,11 @@ sequenceDiagram
     Host->>Gateway: resources/read ui://widget
     Gateway-->>Host: HTML + _meta.ui policy
     Host->>App: render sandboxed iframe
-    Host->>Gateway: POST /mcp/apps/sessions
+    Host->>Gateway: POST /appbridge/sessions
     Gateway->>DB: verify resource visibility and store AppBridge session
     Gateway-->>Host: appSessionId, serverId, expiresAt
     App->>Host: postMessage JSON-RPC tools/call
-    Host->>Gateway: POST /mcp/apps/sessions/{id}/rpc tools/call
+    Host->>Gateway: POST /appbridge/sessions/{id}/rpc tools/call
     Gateway->>DB: validate session owner, MCP session, server binding
     Gateway->>Gateway: invoke app-visible tool
     Gateway-->>Host: JSON-RPC result
@@ -227,7 +227,7 @@ Host's authenticated gateway connection and must not be injected into the
 sandboxed View.
 
 ```http
-POST /mcp/apps/sessions
+POST /appbridge/sessions
 Authorization: Bearer <token>
 Mcp-Session-Id: <mcp-session-id>
 Content-Type: application/json
@@ -260,7 +260,7 @@ the Host through AppBridge/postMessage; the Host forwards approved calls to the
 gateway endpoint below.
 
 ```http
-POST /mcp/apps/sessions/5a51a7f8-4aa5-48d9-9aa1-3f4b5f07ed76/rpc
+POST /appbridge/sessions/5a51a7f84aa548d99aa13f4b5f07ed76/rpc
 Authorization: Bearer <token>
 Mcp-Session-Id: <mcp-session-id>
 Content-Type: application/json
@@ -291,7 +291,7 @@ The gateway enforces:
 
 - **Feature flag deny-by-default:** all MCP Apps routes and `ui://` resources
   are unavailable unless `MCPGATEWAY_MCP_APPS_ENABLED=true`.
-- **AppBridge rate limiting:** `/mcp/apps/sessions` and session RPC calls use
+- **AppBridge rate limiting:** `/appbridge/sessions` and session RPC calls use
   the high-risk rate limit tier when gateway rate limiting is enabled.
 - **Session ownership before bridge creation:** AppBridge sessions require an
   existing MCP session owned by the same user, unless the requester has admin

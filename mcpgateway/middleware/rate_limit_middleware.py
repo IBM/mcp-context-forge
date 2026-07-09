@@ -112,7 +112,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                 "burst": settings.rate_limit_high_burst,
             },
             "HIGH_APPBRIDGE": {
-                "pattern": r"^/mcp/apps/sessions(/|$)",
+                "pattern": r"^/appbridge/sessions(/|$)",
                 "limit": settings.rate_limit_high_rpm,
                 "burst": settings.rate_limit_high_burst,
             },
