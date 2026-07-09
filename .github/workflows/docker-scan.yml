@@ -27,7 +27,6 @@ on:
     paths:
       - 'Containerfile'
       - 'infra/nginx/**'
-      - 'a2a-agents/rust/a2a-echo-agent/**'
       - 'mcp-servers/python/python_sandbox_server/**'
       - 'mcpgateway/**'
       - 'plugins/**'
@@ -100,10 +99,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: a2a-echo-agent
-            context: .
-            file: a2a-agents/rust/a2a-echo-agent/Dockerfile
-            tag: mcp-context-forge-a2a-echo-agent:scan
           - name: python-sandbox
             context: mcp-servers/python/python_sandbox_server
             file: mcp-servers/python/python_sandbox_server/docker/Dockerfile.sandbox
