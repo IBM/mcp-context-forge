@@ -44,6 +44,7 @@ describe("Sheet Components", () => {
       <Sheet open={true}>
         <SheetContent>
           <SheetTitle>My Title</SheetTitle>
+          <SheetDescription>Test description</SheetDescription>
         </SheetContent>
       </Sheet>,
     );
@@ -77,6 +78,7 @@ describe("Sheet Components", () => {
       <Sheet open={true}>
         <SheetContent>
           <SheetTitle className="custom-title">Title</SheetTitle>
+          <SheetDescription>Test description</SheetDescription>
         </SheetContent>
       </Sheet>,
     );
@@ -116,6 +118,7 @@ describe("Sheet Components", () => {
       <Sheet open={true}>
         <SheetContent side="left">
           <SheetTitle>Title</SheetTitle>
+          <SheetDescription>Test description</SheetDescription>
         </SheetContent>
       </Sheet>,
     );
@@ -127,6 +130,7 @@ describe("Sheet Components", () => {
       <Sheet open={true}>
         <SheetContent side="right">
           <SheetTitle>Title</SheetTitle>
+          <SheetDescription>Test description</SheetDescription>
         </SheetContent>
       </Sheet>,
     );
@@ -138,6 +142,7 @@ describe("Sheet Components", () => {
       <Sheet open={true}>
         <SheetContent side="top">
           <SheetTitle>Title</SheetTitle>
+          <SheetDescription>Test description</SheetDescription>
         </SheetContent>
       </Sheet>,
     );
@@ -149,6 +154,7 @@ describe("Sheet Components", () => {
       <Sheet open={true}>
         <SheetContent side="bottom">
           <SheetTitle>Title</SheetTitle>
+          <SheetDescription>Test description</SheetDescription>
         </SheetContent>
       </Sheet>,
     );
@@ -160,6 +166,7 @@ describe("Sheet Components", () => {
       <Sheet open={true}>
         <SheetContent>
           <SheetTitle>Title</SheetTitle>
+          <SheetDescription>Test description</SheetDescription>
           <SheetClose>Close</SheetClose>
         </SheetContent>
       </Sheet>,

@@ -142,7 +142,7 @@ describe("UsersTable", () => {
 
   it("catches exception during date formatting", () => {
     const originalDate = global.Date;
-    const mockDate = vi.fn(() => {
+    const mockDate = vi.fn(function () {
       throw new Error("Date error");
     }) as unknown as typeof global.Date;
     mockDate.now = originalDate.now;

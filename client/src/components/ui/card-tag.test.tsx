@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { CardTag } from "./card-tag";
 
 describe("CardTag", () => {
@@ -25,7 +25,10 @@ describe("CardTag", () => {
     expect(trigger).not.toBeNull();
 
     // Radix opens the tooltip on focus, giving keyboard users the hint.
-    trigger!.focus();
-    expect(await screen.findByRole("tooltip")).toHaveTextContent("More info");
+    await waitFor(async () => {
+      trigger!.focus();
+      const tooltip = await screen.findByRole("tooltip");
+      expect(tooltip).toHaveTextContent("More info");
+    });
   });
 });
