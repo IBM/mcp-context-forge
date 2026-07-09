@@ -31,11 +31,18 @@ function mockPrompt(overrides?: Partial<NonNullable<PromptRead>>): NonNullable<P
 }
 
 describe("PromptDetailsPanel", () => {
-  it("renders the first prompt's name and Code tab when open", () => {
-    render(<PromptDetailsPanel prompts={[mockPrompt()]} open={true} onClose={vi.fn()} />);
+  it("renders the group title and the first prompt's Code tab when open", () => {
+    render(
+      <PromptDetailsPanel
+        prompts={[mockPrompt()]}
+        title="hugging-face"
+        open={true}
+        onClose={vi.fn()}
+      />,
+    );
 
     expect(
-      screen.getByRole("heading", { name: /prompt details: greet_user/i }),
+      screen.getByRole("heading", { name: /prompt details: hugging-face/i }),
     ).toBeInTheDocument();
     expect(screen.getByText("Greets the user")).toBeInTheDocument();
     expect(screen.getByLabelText(/user_name/)).toBeInTheDocument();
@@ -43,7 +50,14 @@ describe("PromptDetailsPanel", () => {
   });
 
   it("marks the region as hidden when closed", () => {
-    render(<PromptDetailsPanel prompts={[mockPrompt()]} open={false} onClose={vi.fn()} />);
+    render(
+      <PromptDetailsPanel
+        prompts={[mockPrompt()]}
+        title="hugging-face"
+        open={false}
+        onClose={vi.fn()}
+      />,
+    );
 
     const region = screen.getByRole("region", { hidden: true });
     expect(region).toHaveAttribute("aria-hidden", "true");
@@ -53,7 +67,14 @@ describe("PromptDetailsPanel", () => {
   it("fires onClose when Escape is pressed", async () => {
     const onClose = vi.fn();
     const user = userEvent.setup();
-    render(<PromptDetailsPanel prompts={[mockPrompt()]} open={true} onClose={onClose} />);
+    render(
+      <PromptDetailsPanel
+        prompts={[mockPrompt()]}
+        title="hugging-face"
+        open={true}
+        onClose={onClose}
+      />,
+    );
 
     await user.keyboard("{Escape}");
     expect(onClose).toHaveBeenCalledTimes(1);
@@ -62,7 +83,14 @@ describe("PromptDetailsPanel", () => {
   it("fires onClose when the backdrop is clicked", async () => {
     const onClose = vi.fn();
     const user = userEvent.setup();
-    render(<PromptDetailsPanel prompts={[mockPrompt()]} open={true} onClose={onClose} />);
+    render(
+      <PromptDetailsPanel
+        prompts={[mockPrompt()]}
+        title="hugging-face"
+        open={true}
+        onClose={onClose}
+      />,
+    );
 
     // The overlay is the aria-hidden sibling behind the aside.
     const overlay = document.querySelector('[data-state="open"][aria-hidden="true"]');
@@ -74,13 +102,20 @@ describe("PromptDetailsPanel", () => {
   it("fires onClose when the close button is activated", async () => {
     const onClose = vi.fn();
     const user = userEvent.setup();
-    render(<PromptDetailsPanel prompts={[mockPrompt()]} open={true} onClose={onClose} />);
+    render(
+      <PromptDetailsPanel
+        prompts={[mockPrompt()]}
+        title="hugging-face"
+        open={true}
+        onClose={onClose}
+      />,
+    );
 
     await user.click(screen.getByRole("button", { name: /close prompt details/i }));
     expect(onClose).toHaveBeenCalled();
   });
 
-  it("switches the Code tab when a different prompt pill is picked", async () => {
+  it("keeps the group title in the heading and swaps the Code tab when a pill is picked", async () => {
     const user = userEvent.setup();
     const promptA = mockPrompt({ id: "a", name: "prompt_a", description: "First" });
     const promptB = mockPrompt({
@@ -89,28 +124,49 @@ describe("PromptDetailsPanel", () => {
       description: "Second",
       arguments: [{ name: "topic", description: "Topic", required: true }],
     });
-    render(<PromptDetailsPanel prompts={[promptA, promptB]} open={true} onClose={vi.fn()} />);
+    render(
+      <PromptDetailsPanel
+        prompts={[promptA, promptB]}
+        title="hugging-face"
+        open={true}
+        onClose={vi.fn()}
+      />,
+    );
 
-    expect(screen.getByRole("heading", { name: /prompt details: prompt_a/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: /prompt details: hugging-face/i }),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText(/user_name/)).toBeInTheDocument();
 
     await user.click(screen.getByRole("tab", { name: "prompt_b" }));
 
-    expect(screen.getByRole("heading", { name: /prompt details: prompt_b/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: /prompt details: hugging-face/i }),
+    ).toBeInTheDocument();
     expect(screen.getByLabelText(/topic/)).toBeInTheDocument();
   });
 
   it("honors initialPromptId when opening", () => {
     const promptA = mockPrompt({ id: "a", name: "prompt_a" });
-    const promptB = mockPrompt({ id: "b", name: "prompt_b", description: "Second" });
+    const promptB = mockPrompt({
+      id: "b",
+      name: "prompt_b",
+      description: "Second",
+      arguments: [{ name: "topic", description: "Topic", required: true }],
+    });
     render(
       <PromptDetailsPanel
         prompts={[promptA, promptB]}
+        title="hugging-face"
         initialPromptId="b"
         open={true}
         onClose={vi.fn()}
       />,
     );
 
-    expect(screen.getByRole("heading", { name: /prompt details: prompt_b/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: /prompt details: hugging-face/i }),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText(/topic/)).toBeInTheDocument();
   });
 });

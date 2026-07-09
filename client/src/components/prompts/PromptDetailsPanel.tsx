@@ -22,6 +22,7 @@ function DetailRow({ label, children }: { label: string; children: ReactNode }) 
 
 export interface PromptDetailsPanelProps {
   prompts: NonNullable<PromptRead>[];
+  title: string;
   initialPromptId?: string;
   open: boolean;
   onClose: () => void;
@@ -39,6 +40,7 @@ export interface PromptDetailsPanelProps {
  */
 export function PromptDetailsPanel({
   prompts,
+  title,
   initialPromptId,
   open,
   onClose,
@@ -110,7 +112,7 @@ export function PromptDetailsPanel({
         <div className="grid min-h-0 flex-1 grid-cols-1 overflow-hidden lg:grid-cols-[minmax(0,1fr)_320px]">
           <div className="min-w-0 overflow-y-auto bg-background px-6 py-8 dark:bg-neutral-900 lg:px-12">
             <h2 id={headingId} className="sr-only">
-              Prompt details: {selected?.name ?? "Prompt"}
+              Prompt details: {title}
             </h2>
 
             <div className="flex items-start justify-between gap-4">
@@ -124,7 +126,7 @@ export function PromptDetailsPanel({
                       aria-hidden="true"
                       className="truncate text-xl font-semibold text-foreground"
                     >
-                      {selected?.name ?? "Prompt"}
+                      {title}
                     </span>
                   </div>
                 </div>

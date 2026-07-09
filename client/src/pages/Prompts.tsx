@@ -220,6 +220,7 @@ export function Prompts() {
 
       <PromptDetailsPanel
         prompts={activeGroup?.prompts ?? []}
+        title={activeGroup?.label ?? ""}
         open={activeGroup !== null}
         onClose={() => setActiveGroup(null)}
       />
