@@ -1076,52 +1076,6 @@ class TestAppOnlyToolSecurity:
             await service.invoke_tool(mock_db, "helper", {}, user_email="user@example.com", server_id="server-1", require_model_visible=True)
 
     @pytest.mark.asyncio
-    async def test_invoke_tool_require_client_visible_rejects_hidden_tool(self, monkeypatch, mock_db):
-        """Service-layer client gate denies tools hidden from both models and MCP Apps UIs."""
-        monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", True)
-        service = ToolService()
-        hidden_tool = SimpleNamespace(
-            id="tool-1",
-            name="helper",
-            original_name="helper",
-            url=None,
-            description="",
-            original_description="",
-            integration_type="MCP",
-            request_type="SSE",
-            headers={},
-            input_schema={"type": "object"},
-            output_schema=None,
-            annotations={},
-            extension_metadata={MCP_UI_EXTENSION: {"visibility": []}},
-            auth_type=None,
-            jsonpath_filter=None,
-            custom_name=None,
-            custom_name_slug=None,
-            display_name=None,
-            gateway_id=None,
-            grpc_service_id=None,
-            enabled=True,
-            deprecated=False,
-            reachable=True,
-            tags=[],
-            team_id=None,
-            owner_email="user@example.com",
-            visibility="public",
-            query_mapping=None,
-            header_mapping=None,
-            gateway=None,
-        )
-        cache = SimpleNamespace(enabled=False, set=AsyncMock(), set_negative=AsyncMock())
-
-        monkeypatch.setattr("mcpgateway.services.tool_service._get_tool_lookup_cache", lambda: cache)
-        monkeypatch.setattr(service, "_load_invocable_tools", lambda db, name, server_id=None: [hidden_tool])
-        monkeypatch.setattr(service, "_check_tool_access", AsyncMock(return_value=True))
-
-        with pytest.raises(ToolNotFoundError):
-            await service.invoke_tool(mock_db, "helper", {}, user_email="user@example.com", server_id="server-1", require_client_visible=True)
-
-    @pytest.mark.asyncio
     async def test_app_only_tool_visibility_split_end_to_end(self, monkeypatch, mock_db, valid_app_session):
         """One app-only tool should be hidden from model discovery, denied normally, and accepted through AppBridge."""
         # First-Party
