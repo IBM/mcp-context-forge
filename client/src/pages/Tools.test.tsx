@@ -7,7 +7,7 @@ vi.mock("sonner", () => ({
   },
 }));
 
-import { screen, waitFor, within } from "@testing-library/react";
+import { screen, waitFor, within, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { render } from "@testing-library/react";
 import { http, HttpResponse } from "msw";
@@ -325,7 +325,7 @@ describe("Tools", () => {
     const trigger = screen.getByText("Tool 1").closest("button");
     expect(trigger).not.toBeNull();
     // Radix opens the tooltip on focus, giving keyboard users the description.
-    trigger?.focus();
+    fireEvent.focus(trigger as HTMLElement);
     expect(await screen.findByRole("tooltip")).toHaveTextContent("Description for tool 1");
   });
 
@@ -511,7 +511,7 @@ describe("Tools", () => {
     // Should show +4 tag, with the remaining count exposed as an accessible tooltip
     const overflow = screen.getByText("+4");
     expect(overflow).toBeInTheDocument();
-    overflow.closest("button")?.focus();
+    fireEvent.focus(overflow.closest("button") as HTMLElement);
     expect(await screen.findByRole("tooltip")).toHaveTextContent("4 more tools");
   });
 
@@ -552,7 +552,7 @@ describe("Tools", () => {
     // Should show +1 tag, with the singular "tool" wording in the tooltip
     const overflow = screen.getByText("+1");
     expect(overflow).toBeInTheDocument();
-    overflow.closest("button")?.focus();
+    fireEvent.focus(overflow.closest("button") as HTMLElement);
     expect(await screen.findByRole("tooltip")).toHaveTextContent("1 more tool");
   });
 

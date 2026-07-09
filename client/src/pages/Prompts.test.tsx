@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { screen, waitFor, within } from "@testing-library/react";
+import { screen, waitFor, within, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { server } from "@/test/mocks/server";
@@ -173,8 +173,12 @@ describe("Prompts", () => {
     const describedTrigger = within(card).getByText("Prompt 0").closest("button");
     expect(describedTrigger).not.toBeNull();
     // Radix opens the tooltip on focus, giving keyboard users the description.
-    describedTrigger?.focus();
-    expect(await screen.findByRole("tooltip")).toHaveTextContent("First prompt description.");
+    fireEvent.focus(describedTrigger as HTMLElement);
+
+    await waitFor(async () => {
+      const tooltip = await screen.findByRole("tooltip");
+      expect(tooltip).toHaveTextContent("First prompt description.");
+    });
 
     // "Prompt 1" has description "None", so it renders as a plain tag with no tooltip trigger.
     expect(within(card).getByText("Prompt 1").closest("button")).toBeNull();

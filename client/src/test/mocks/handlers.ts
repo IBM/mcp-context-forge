@@ -111,4 +111,13 @@ export const handlers = [
       updated_at: new Date().toISOString(),
     });
   }),
+
+  // Default empty collections so page smoke tests that render these pages without
+  // an explicit override don't hit unhandled requests. Specific tests still
+  // override these via server.use(...).
+  http.get("*/prompts", () => HttpResponse.json([])),
+
+  http.get("*/resources", () => HttpResponse.json([])),
+
+  http.get("*/teams", () => HttpResponse.json({ teams: [] })),
 ];

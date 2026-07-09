@@ -223,10 +223,10 @@ describe("useTeamMembersForm", () => {
     expect(addTeamMember).not.toHaveBeenCalled();
   });
 
-  it("does not load members while the dialog is closed", () => {
+  it("does not load members while the dialog is closed", async () => {
     vi.mocked(listTeamMembers).mockResolvedValue([]);
 
-    renderHook(
+    const { result } = renderHook(
       () =>
         useTeamMembersForm({
           open: false,
@@ -236,6 +236,11 @@ describe("useTeamMembersForm", () => {
         }),
       { wrapper },
     );
+
+    // Wait for any potential state updates to settle
+    await waitFor(() => {
+      expect(result.current).toBeDefined();
+    });
 
     expect(listTeamMembers).not.toHaveBeenCalled();
   });

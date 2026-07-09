@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { screen, waitFor } from "@testing-library/react";
+import { screen, waitFor, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { toast } from "sonner";
 import { renderWithProviders } from "@/test/test-utils";
@@ -702,8 +702,12 @@ describe("Gateways", () => {
     await user.click(screen.getByRole("button", { name: "Delete" }));
 
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
-    // API promise is still pending at this point — resolve to unblock the test
-    resolveDelete();
+    // API promise is still pending at this point — resolve and flush the resulting
+    // state update inside act(...) so React doesn't warn about an unwrapped update.
+    await act(async () => {
+      resolveDelete();
+      await deletePromise;
+    });
   });
 
   it("blocks repeated delete requests while a deletion is pending", async () => {
