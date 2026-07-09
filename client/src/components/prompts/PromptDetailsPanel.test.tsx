@@ -169,4 +169,48 @@ describe("PromptDetailsPanel", () => {
     ).toBeInTheDocument();
     expect(screen.getByLabelText(/topic/)).toBeInTheDocument();
   });
+
+  it("renders a local subheader with source, visibility, and argument count for prompts without a gateway", () => {
+    const local = mockPrompt({
+      visibility: "public",
+      arguments: [
+        { name: "topic", description: "", required: true },
+        { name: "audience", description: "", required: false },
+        { name: "tone", description: "", required: false },
+      ],
+    });
+    render(
+      <PromptDetailsPanel prompts={[local]} title="REST prompts" open={true} onClose={vi.fn()} />,
+    );
+
+    expect(screen.getByText("Local prompt · public · 3 arguments")).toBeInTheDocument();
+    expect(screen.queryByText(/connected MCP server/i)).not.toBeInTheDocument();
+  });
+
+  it("renders the connected-MCP-server subheader for federated prompts", () => {
+    const federated = mockPrompt({ gatewaySlug: "hugging-face" });
+    render(
+      <PromptDetailsPanel
+        prompts={[federated]}
+        title="hugging-face"
+        open={true}
+        onClose={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("Prompts added from connected MCP server")).toBeInTheDocument();
+    expect(screen.queryByText(/local prompt/i)).not.toBeInTheDocument();
+  });
+
+  it("singularizes the local subheader when the prompt has exactly one argument", () => {
+    const local = mockPrompt({
+      visibility: "private",
+      arguments: [{ name: "topic", description: "", required: true }],
+    });
+    render(
+      <PromptDetailsPanel prompts={[local]} title="REST prompts" open={true} onClose={vi.fn()} />,
+    );
+
+    expect(screen.getByText("Local prompt · private · 1 argument")).toBeInTheDocument();
+  });
 });

@@ -133,10 +133,25 @@ export function PromptDetailsPanel({
               </div>
             </div>
 
-            {/* TODO(#5323): Make this dynamic + i18n (source gateway / server context). */}
-            <p className="mt-7 max-w-4xl text-[15px] leading-6 text-muted-foreground">
-              Prompts added from connected MCP server
-            </p>
+            {/* TODO(#5563): i18n pass and full local-prompt drawer variant (Try it / Definition tabs). */}
+            {selected && (
+              <p className="mt-7 max-w-4xl text-[15px] leading-6 text-muted-foreground">
+                {selected.gatewayId || selected.gatewaySlug ? (
+                  "Prompts added from connected MCP server"
+                ) : (
+                  <>
+                    Local prompt
+                    {" · "}
+                    {(selected.visibility ?? "unknown").toLowerCase()}
+                    {" · "}
+                    {(selected.arguments ?? []).filter(Boolean).length}{" "}
+                    {(selected.arguments ?? []).filter(Boolean).length === 1
+                      ? "argument"
+                      : "arguments"}
+                  </>
+                )}
+              </p>
+            )}
 
             <div className="my-8 h-px bg-border" />
 
