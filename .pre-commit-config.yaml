@@ -154,6 +154,7 @@ repos:
       - id: fix-smartquotes
         name: 📝 Normalize Smart Quotes
         description: Replaces smart/curly quotes with standard ASCII quotes.
+        exclude: ^client/src/components/prompts/snippets/builders\.test\.ts$
       - id: fix-ligatures
         name: 🔡 Normalize Ligatures
         description: Replaces typographic ligatures with standard characters.

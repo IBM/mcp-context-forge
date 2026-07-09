@@ -156,14 +156,34 @@ describe("snippet builders — escape-safety matrix", () => {
     expect(snippet).toContain('\'{"dollarVar":"${INJECTED}"}\'');
   });
 
-  it("never emits smart quotes — straight ASCII only", () => {
-    const all = [
-      buildCurl({ promptName: NAME, args: TRICKY_ARGS }),
-      buildJsonRpc({ promptName: NAME, args: TRICKY_ARGS }),
-      buildPython({ promptName: NAME, args: TRICKY_ARGS }),
-      buildTypescript({ promptName: NAME, args: TRICKY_ARGS }),
-    ].join("\n");
-    expect(all).not.toMatch(/[''""]/);
+  it("smart-quote values round-trip through JSON parsing without mangling", () => {
+    const SMART_QUOTE_ARGS: Record<string, string> = {
+      curlyDouble: "she said “hi”",
+      curlySingle: "it’s mine",
+    };
+
+    expect(
+      JSON.parse(extractCurlBody(buildCurl({ promptName: NAME, args: SMART_QUOTE_ARGS }))),
+    ).toEqual(SMART_QUOTE_ARGS);
+
+    expect(
+      JSON.parse(buildJsonRpc({ promptName: NAME, args: SMART_QUOTE_ARGS })).params.arguments,
+    ).toEqual(SMART_QUOTE_ARGS);
+
+    expect(
+      JSON.parse(
+        extractBracedLiteral(buildPython({ promptName: NAME, args: SMART_QUOTE_ARGS }), "json="),
+      ),
+    ).toEqual(SMART_QUOTE_ARGS);
+
+    expect(
+      JSON.parse(
+        extractBracedLiteral(
+          buildTypescript({ promptName: NAME, args: SMART_QUOTE_ARGS }),
+          "JSON.stringify(",
+        ),
+      ),
+    ).toEqual(SMART_QUOTE_ARGS);
   });
 
   it("uses the literal env var names, not interpolated values", () => {
