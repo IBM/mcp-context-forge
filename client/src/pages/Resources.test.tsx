@@ -30,7 +30,7 @@ vi.mock("@/auth/AuthContext", () => ({
 import { toast } from "sonner";
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { render } from "@testing-library/react";
+import { render, act } from "@testing-library/react";
 import { http, HttpResponse } from "msw";
 import { server } from "@/test/mocks/server";
 import { Resources } from "./Resources";
@@ -273,7 +273,9 @@ describe("Resources", () => {
     expect(resourceBadge).not.toBeNull();
 
     // Focus the badge to trigger tooltip (Radix UI behavior)
-    resourceBadge!.focus();
+    await act(async () => {
+      resourceBadge!.focus();
+    });
     expect(await screen.findByRole("tooltip")).toHaveTextContent("Description for resource 1");
   });
 
@@ -374,7 +376,9 @@ describe("Resources", () => {
     expect(badgeButton).not.toBeNull();
 
     // Focus to trigger tooltip
-    badgeButton!.focus();
+    await act(async () => {
+      badgeButton!.focus();
+    });
     expect(await screen.findByRole("tooltip")).toHaveTextContent("4 more resources");
   });
 
@@ -419,7 +423,9 @@ describe("Resources", () => {
     expect(badgeButton).not.toBeNull();
 
     // Focus to trigger tooltip
-    badgeButton!.focus();
+    await act(async () => {
+      badgeButton!.focus();
+    });
     expect(await screen.findByRole("tooltip")).toHaveTextContent("1 more resource");
   });
 
