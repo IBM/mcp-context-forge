@@ -198,13 +198,11 @@ the documented operator model is the high-level mode switch above.
 ## Addendum (2026-04): Runtime mode override
 
 We additionally allow an authenticated admin to flip the public `/mcp` ingress
-(and the registered-A2A invocation path) between `shadow` and `edge` at
-runtime via `PATCH /admin/runtime/mcp-mode` and
-`PATCH /admin/runtime/a2a-mode` (`admin.system_config` permission). The
-override is in-memory only — there is no new Postgres persistence surface,
-and a process restart re-reads `RUST_MCP_MODE` / `RUST_A2A_MODE`. Flips
-require `boot_mode=edge` so that the existing session-auth-reuse /
-delegate-enabled safety invariant is met; `off`, `shadow`, and `full` boot
+between `shadow` and `edge` at runtime via `PATCH /admin/runtime/mcp-mode`
+(`admin.system_config` permission). The override is in-memory only — there is
+no new Postgres persistence surface, and a process restart re-reads
+`RUST_MCP_MODE`. Flips require `boot_mode=edge` so that the existing
+session-auth-reuse safety invariant is met; `off`, `shadow`, and `full` boot
 modes are intentionally not flippable (`off` has no sidecar; `shadow` did
 not opt into the safety flags; `full` would require live session/
 event-store/resume migration).
