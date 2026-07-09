@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { Activity, Globe, MessageSquareCode, PanelRightClose } from "lucide-react";
+import { Activity, Globe, MessageSquareCode, PanelRightClose, Plus } from "lucide-react";
 
 import type { PromptRead } from "@/generated/types";
 import { Badge } from "@/components/ui/badge";
@@ -218,22 +218,27 @@ export function PromptDetailsPanel({
                     </DetailRow>
                     <DetailRow label="Tags">
                       <div className="flex min-w-0 flex-wrap items-center gap-2">
-                        {(selected.tags || []).length > 0 ? (
-                          (selected.tags || []).map((tag, index) => {
-                            const { key, label } = getTagDisplay(tag, index);
-                            return (
-                              <Badge
-                                key={key}
-                                variant="outline"
-                                className="rounded-full px-2 py-0 text-[11px] font-medium text-muted-foreground"
-                              >
-                                {label}
-                              </Badge>
-                            );
-                          })
-                        ) : (
-                          <span className="text-muted-foreground">Not available</span>
-                        )}
+                        {(selected.tags || []).map((tag, index) => {
+                          const { key, label } = getTagDisplay(tag, index);
+                          return (
+                            <Badge
+                              key={key}
+                              variant="outline"
+                              className="rounded-full px-2 py-0 text-[11px] font-medium text-muted-foreground"
+                            >
+                              {label}
+                            </Badge>
+                          );
+                        })}
+                        <button
+                          type="button"
+                          tabIndex={-1}
+                          aria-hidden="true"
+                          className="flex items-center gap-1 text-[12px] text-muted-foreground hover:text-foreground"
+                        >
+                          <Plus className="size-3" aria-hidden="true" />
+                          add
+                        </button>
                       </div>
                     </DetailRow>
                   </dl>
