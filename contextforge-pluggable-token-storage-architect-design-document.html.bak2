@@ -1,0 +1,1316 @@
+
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>ContextForge — Pluggable Token Storage: Architect Design Document</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,"Segoe UI",system-ui,sans-serif;font-size:14px;line-height:1.65;background:#fff;color:#1f2328;max-width:800px;margin:0 auto;padding:32px 24px 64px}
+h1{font-size:22px;font-weight:700;margin-bottom:4px}
+h2{font-size:16px;font-weight:700;margin:36px 0 10px;border-bottom:2px solid #e5e7eb;padding-bottom:6px;color:#1f2328}
+h3{font-size:13px;font-weight:700;margin:18px 0 6px;color:#374151}
+p{margin-bottom:10px}
+ul,ol{margin:0 0 12px 20px}
+li{margin-bottom:3px}
+.subtitle{color:#57606a;font-size:13px;margin-bottom:6px}
+.meta{color:#57606a;font-size:12px;margin-bottom:28px;border-bottom:1px solid #e5e7eb;padding-bottom:14px}
+
+/* Tags */
+.tag{display:inline-block;font-size:11px;font-weight:600;padding:2px 7px;border-radius:4px;margin-right:3px;vertical-align:middle}
+.tnew{background:#dcfce7;color:#166534}
+.tchg{background:#fef3c7;color:#92400e}
+.tkeep{background:#eff6ff;color:#1d4ed8}
+.tvault{background:#f3e8ff;color:#6b21a8}
+.tdb{background:#fff7ed;color:#9a3412}
+.tp1{background:#fce7f3;color:#9d174d}
+.tp2{background:#e0e7ff;color:#3730a3}
+.tp3{background:#d1fae5;color:#065f46}
+
+/* Boxes */
+.box{background:#f7f8fa;border:1px solid #e5e7eb;border-radius:6px;padding:14px 18px;margin-bottom:14px}
+.bwarn{background:#fffbeb;border-color:#fcd34d}
+.binfo{background:#eff6ff;border-color:#bfdbfe}
+.bvault{background:#faf5ff;border-color:#d8b4fe}
+.bok{background:#f0fdf4;border-color:#bbf7d0}
+.bdanger{background:#fef2f2;border-color:#fecaca}
+
+/* Tables */
+table{width:100%;border-collapse:collapse;margin-bottom:14px;font-size:13px}
+th{background:#f7f8fa;text-align:left;padding:7px 10px;border:1px solid #e5e7eb;font-weight:600;color:#57606a;font-size:11px;text-transform:uppercase;letter-spacing:.04em}
+td{padding:7px 10px;border:1px solid #e5e7eb;vertical-align:top}
+tr:nth-child(even) td{background:#fafafa}
+
+/* Code */
+code{font-family:"SFMono-Regular",Consolas,monospace;font-size:12px;background:#f6f8fa;border:1px solid #e5e7eb;border-radius:3px;padding:1px 5px}
+pre{font-family:"SFMono-Regular",Consolas,monospace;font-size:12px;background:#f7f8fa;border:1px solid #e5e7eb;border-radius:6px;padding:14px 16px;margin-bottom:14px;overflow-x:auto;line-height:1.75;white-space:pre-wrap}
+pre .c{color:#57606a;font-style:italic}
+pre .k{color:#8250df}
+pre .s{color:#0a3069}
+pre .v{color:#cf222e}
+pre .g{color:#166534;font-weight:600}
+pre .p{color:#7c3aed;font-weight:600}
+pre .hi{background:#fef9c3;border-radius:2px;padding:0 2px}
+
+/* File tree */
+.tree{font-family:"SFMono-Regular",Consolas,monospace;font-size:12px;line-height:1.9;background:#f7f8fa;border:1px solid #e5e7eb;border-radius:6px;padding:14px 16px;margin-bottom:14px}
+.tree .dir{color:#0550ae;font-weight:600}
+.tree .new{color:#166534;font-weight:600}
+.tree .note{color:#57606a;font-style:italic}
+
+/* Scenario steps */
+.steps{display:flex;flex-direction:column;margin-bottom:14px}
+.step{border-left:3px solid #e5e7eb;margin-left:14px;padding:8px 0 8px 16px;position:relative}
+.step::before{content:attr(data-n);position:absolute;left:-20px;top:8px;width:24px;height:24px;background:#3b82d4;color:#fff;border-radius:50%;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center}
+.step.sv{border-color:#c4b5fd}.step.sv::before{background:#7c3aed}
+.step.sdb{border-color:#fdba74}.step.sdb::before{background:#ea580c}
+.step.sok{border-color:#86efac}.step.sok::before{background:#16a34a}
+.step:last-child{border-color:transparent}
+.sh{font-weight:600;font-size:13px;margin-bottom:2px}
+.sb{color:#374151;font-size:13px}
+
+/* Chain */
+.chain{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:10px 0 14px;font-size:12px;font-family:"SFMono-Regular",Consolas,monospace}
+.cbox{border:1px solid #e5e7eb;border-radius:5px;padding:4px 10px;white-space:nowrap}
+.cs{border-color:#bfdbfe;background:#eff6ff;color:#1d4ed8}
+.ca{border-color:#e5e7eb;background:#f7f8fa;color:#57606a;font-style:italic}
+.cg{border-color:#d8b4fe;background:#faf5ff;color:#6b21a8}
+.cu{border-color:#bbf7d0;background:#f0fdf4;color:#166534;font-weight:600}
+.arr{color:#9ca3af;font-size:15px}
+
+/* Method badges */
+.mb{display:inline-block;font-size:11px;font-weight:700;padding:2px 6px;border-radius:3px;margin-right:5px;font-family:"SFMono-Regular",Consolas,monospace}
+.mget{background:#dcfce7;color:#166534}
+.mpost{background:#dbeafe;color:#1d4ed8}
+
+/* Section number pill */
+.sn{display:inline-block;background:#1f2328;color:#fff;font-size:11px;font-weight:700;border-radius:3px;padding:1px 6px;margin-right:8px;vertical-align:middle}
+
+/* Divider */
+.divider{border:none;border-top:1px solid #e5e7eb;margin:32px 0}
+
+footer{margin-top:48px;padding-top:14px;border-top:1px solid #e5e7eb;text-align:center;font-size:11px;color:#57606a}
+</style>
+</head>
+<body>
+
+<h1>ContextForge — Pluggable Token Storage</h1>
+<p class="subtitle">Architect Design Document · Feature #5402</p>
+<div class="meta">
+  Status: <strong>Pending Architect Approval</strong>  | 
+  Prepared for: Architect Review  | 
+  Environments: Local Dev (Vault + PostgreSQL) · Production (Vault + PostgreSQL HA)
+</div>
+
+
+<h2><span class="sn">1</span>Executive Summary</h2>
+
+<div class="box binfo">
+  <p><strong>Problem.</strong> Every OAuth <code>access_token</code> and <code>refresh_token</code> issued through ContextForge's Authorization Code flow is hardwired into a single <code>oauth_tokens</code> database table. Enterprise clients operating HashiCorp Vault cannot redirect credential storage without forking the core service.</p>
+  <p><strong>Solution.</strong> Implement <code>VaultTokenBackend</code> as a new token storage option alongside the existing database implementation. The backend is selected via <code>OAUTH_TOKEN_BACKEND</code> environment variable. The existing database code remains completely untouched — no refactoring, no interface extraction. This is a parallel implementation, not a replacement.</p>
+  <p style="margin-bottom:0"><strong>Vault-specific features.</strong> (1) Two new client-callable endpoints — <code>GET /vault/authorize/{server_id}</code> and <code>GET /vault/callback</code> — let clients initiate the Vault credential flow using only their virtual server URL. (2) Vault secrets are stored at path <code>team_id/server_id/email</code> where <code>server_id</code> is derived from the <strong>upstream MCP URL</strong> (from <code>gateways.url</code>). (3) An optional in-memory token cache with configurable TTL mitigates Vault API latency for high-throughput deployments. <strong>Note:</strong> The existing database OAuth flow is not modified — these features only apply when <code>OAUTH_TOKEN_BACKEND=vault</code>.</p>
+</div>
+
+
+<h2><span class="sn">2</span>Scope</h2>
+
+<div class="box bok">
+  <strong>🎯 Implementation Focus: Vault + Minimal Database Extraction.</strong> This design implements full <code>VaultTokenBackend</code> plus minimal <code>DatabaseTokenBackend</code> extraction (copy-paste, zero behavior changes) to enable the required façade pattern. The database extraction accepts <code>team_id</code> as a parameter but <strong>ignores it completely</strong> — no database schema changes, no SQL query changes, no behavior changes. This is purely code reorganization to enable backend selection. Full <code>team_id</code> support in the database will be added in Phase 2.
+</div>
+
+<div class="box binfo">
+  <strong>Database Extraction Approach:</strong> Phase 1 includes minimal <code>DatabaseTokenBackend</code> extraction (copy-paste existing code) to enable the façade pattern, but with <strong>zero behavior changes</strong>:
+  <ul style="margin-top: 8px; margin-bottom: 0;">
+    <li>✅ Extract existing code → <code>DatabaseTokenBackend</code> class</li>
+    <li>✅ Accept <code>team_id</code> parameter (for interface consistency) but <strong>completely ignore it</strong></li>
+    <li>❌ NO database schema changes (no <code>team_id</code> column added)</li>
+    <li>❌ NO SQL query changes (continue using <code>(gateway_id, app_user_email)</code> as unique key)</li>
+    <li>❌ NO behavior changes (UPSERT, encryption, refresh logic all unchanged)</li>
+  </ul>
+  Phase 2 will add <code>team_id</code> column and update SQL queries to use it.
+</div>
+
+<table>
+  <tr><th>✅ In scope (Phase 1)</th><th>⛔ Out of scope (Phase 2 or Never)</th></tr>
+  <tr><td>New <code>VaultTokenBackend</code> implementation</td><td>Changing the OAuth 2.0 / PKCE flow (RFC 6749)</td></tr>
+  <tr><td>New <code>/vault/authorize</code> + <code>/vault/callback</code> endpoints</td><td><strong>Changes to existing database OAuth behavior</strong></td></tr>
+  <tr><td>Vault secret schema (path: <code>{team_id}/{server_id}/{email}</code>)</td><td><strong>Adding <code>team_id</code> column to <code>oauth_tokens</code> table (Phase 2)</strong></td></tr>
+  <tr><td>Token caching layer (optional, Vault-specific)</td><td><strong>Using <code>team_id</code> in database SQL queries (Phase 2)</strong></td></tr>
+  <tr><td>Configuration: <code>OAUTH_TOKEN_BACKEND=vault</code></td><td><strong>Changing database schema or SQL logic (Phase 2)</strong></td></tr>
+  <tr><td><strong>Minimal <code>DatabaseTokenBackend</code> extraction (copy-paste, no behavior change)</strong></td><td>Redis / AWS Secrets Manager / Azure Key Vault backends</td></tr>
+  <tr><td><strong><code>AbstractTokenBackend</code> ABC + <code>TokenRecord</code> dataclass</strong></td><td>Vault cluster HA / DR configuration details</td></tr>
+  <tr><td><code>TokenStorageService</code> façade (backend selector)</td><td>Admin UI changes (works as-is for Vault backend)</td></tr>
+  <tr><td>Local Vault + PostgreSQL setup guide</td><td>—</td></tr>
+  <tr><td>Production Vault + PostgreSQL storage backend</td><td>—</td></tr>
+  <tr><td>Vault policy, token rotation, monitoring</td><td>—</td></tr>
+</table>
+
+
+<h2><span class="sn">3</span>Client Access Model — Why gateway_id Is Never Exposed</h2>
+
+<p>A client's MCP configuration references only the virtual server URL:</p>
+<pre>
+<span class="c">// Client MCP config (claude_desktop_config.json, Cursor settings, etc.)</span>
+{
+  <span class="s">"servers"</span>: {
+    <span class="s">"git-server"</span>: {
+      <span class="s">"type"</span>: <span class="s">"streamable-http"</span>,
+      <span class="s">"url"</span>:  <span class="s">"http://localhost:4444/servers/<span class="hi">647ad7b348044bce8fa27a2157b00a0d</span>/mcp"</span>,
+      <span class="s">"headers"</span>: { <span class="s">"Authorization"</span>: <span class="s">"Bearer your-token-here"</span> }
+    }
+  }
+}
+</pre>
+<p>The <code>server_id</code> (<code>647ad7b3…</code>) is the virtual server primary key in the <code>servers</code> table. Underlying <code>gateway_id</code> values are internal — clients must not need to know them.</p>
+
+<h3>Resolution chain: server_id → upstream MCP URL</h3>
+<div class="chain">
+  <div class="cbox cs">servers.id<br /><small>from client URL</small></div>
+  <span class="arr">→</span>
+  <div class="cbox ca">server_tool_association<br /><small>server_id ↔ tool_id</small></div>
+  <span class="arr">→</span>
+  <div class="cbox cg">tools.gateway_id</div>
+  <span class="arr">→</span>
+  <div class="cbox cg">gateways.id</div>
+  <span class="arr">→</span>
+  <div class="cbox cu">gateways.url<br /><small>used as Vault path key</small></div>
+</div>
+<p>For virtual servers with tools from multiple gateways (e.g. GitHub MCP + Jira MCP), all distinct gateway URLs are resolved. Each gets its own Vault secret path. The client uses one virtual server URL and their ContextForge Bearer token throughout.</p>
+
+
+<h2><span class="sn">4</span>Architecture: File Map &amp; Component Changes</h2>
+
+<div class="tree">
+  <span class="dir">mcpgateway/services/</span><br />
+    <span class="dir">token_storage_service.py</span>  <span class="tag tchg">CHANGED</span>  <span class="note">thin façade — reads OAUTH_TOKEN_BACKEND, delegates all 5 methods</span><br />
+    <span class="new">token_backends/</span>  <span class="tag tnew">NEW PACKAGE</span><br />
+      <span class="new">__init__.py</span>              <span class="note">re-exports AbstractTokenBackend, DatabaseTokenBackend, VaultTokenBackend</span><br />
+      <span class="new">base.py</span>                 <span class="note">AbstractTokenBackend ABC + TokenRecord dataclass (no SQLAlchemy)</span><br />
+      <span class="new">db_backend.py</span>           <span class="note">DatabaseTokenBackend — exact extraction of today's DB logic, zero behaviour change</span><br />
+      <span class="new">vault_backend.py</span>         <span class="note">VaultTokenBackend — Vault KV v2 via httpx; path built from gateways.url</span><br />
+  <br />
+  <span class="new">mcpgateway/routers/vault_router.py</span>  <span class="tag tnew">NEW</span>  <span class="note">GET /vault/authorize/{server_id} · GET /vault/callback</span><br />
+  <span class="dir">mcpgateway/routers/oauth_router.py</span>  <span class="tag tkeep">UNCHANGED</span>  <span class="note">existing /oauth/* endpoints untouched</span><br />
+  <br />
+  <span class="dir">mcpgateway/config.py</span>  <span class="tag tchg">CHANGED</span>  <span class="note">7 new Vault env-var fields; no existing field touched</span><br />
+  <span class="dir">mcpgateway/main.py</span>  <span class="tag tchg">CHANGED</span>  <span class="note">register vault_router when OAUTH_TOKEN_BACKEND=vault</span><br />
+  <span class="dir">pyproject.toml</span>  <span class="tag tchg">CHANGED</span>  <span class="note">optional extra [vault] = hvac&gt;=2.3.0 (not mandatory)</span><br />
+  <br />
+  <span class="dir">mcpgateway/db.py · OAuthToken</span>  <span class="tag tkeep">UNCHANGED</span>  <span class="note">table stays; no team_id column yet (Phase 2)</span><br />
+  <span class="dir">services/tool_service.py</span>  <span class="tag tkeep">UNCHANGED</span>  <span class="note">calls TokenStorageService(db) identically</span><br />
+  <span class="dir">services/gateway_service.py</span>  <span class="tag tkeep">UNCHANGED</span>  <span class="note">calls TokenStorageService(db) identically</span><br />
+  <span class="dir">services/resource_service.py</span>  <span class="tag tkeep">UNCHANGED</span>  <span class="note">calls TokenStorageService(db) identically</span><br />
+  <span class="dir">routers/oauth_router.py</span>  <span class="tag tkeep">UNCHANGED</span>  <span class="note">calls TokenStorageService(db) identically</span><br />
+  <span class="dir">admin.py</span>  <span class="tag tkeep">UNCHANGED</span>  <span class="note">calls TokenStorageService(db) identically</span><br />
+</div>
+
+
+<h2><span class="sn">5</span>AbstractTokenBackend Interface</h2>
+
+<div class="box binfo">
+  <strong>Key Design Decision — gateway_id + team_id as interface parameters.</strong><br/>
+  All five call sites (<code>oauth_router.py</code>, <code>tool_service.py</code>, <code>gateway_service.py</code>, <code>resource_service.py</code>, <code>admin.py</code>) already hold a <code>gateway_id</code> and pass it to <code>TokenStorageService</code>. The interface adds <code>team_id</code> (extracted from authenticated user context) as a second parameter — minimal changes to call sites (only service instantiation adds <code>user_context</code>).<br/><br/>
+  <strong>The client never supplies gateway_id or team_id.</strong> The client only knows the virtual server URL (<code>/servers/{server_id}/mcp</code>). The service layer extracts <code>team_id</code> from JWT claims or session data, and resolves <code>gateway_id</code> from the chain <code>server_id → server_tool_association → tools.gateway_id</code>.<br/><br/>
+  <strong>Vault path uses three keys:</strong> <code>team_id</code> (from user context), <code>server_id</code> (derived from <code>gateways.url</code>), and <code>email</code> (from <code>app_user_email</code>). <code>VaultTokenBackend</code> receives both <code>gateway_id</code> and <code>team_id</code>, resolves <code>gateway_id → gateways.url → server_id</code> via <code>_resolve_mcp_url()</code>, and constructs the full path. <code>DatabaseTokenBackend</code> accepts <code>team_id</code> for interface consistency but ignores it (no DB column yet) — it uses <code>gateway_id</code> directly as FK.
+</div>
+
+<pre>
+<span class="k">from</span> abc <span class="k">import</span> ABC, abstractmethod
+<span class="k">from</span> dataclasses <span class="k">import</span> dataclass
+<span class="k">from</span> datetime <span class="k">import</span> datetime
+
+<span class="k">@dataclass</span>
+<span class="k">class</span> TokenRecord:
+    <span class="c">"""Plain dataclass — no SQLAlchemy dependencies."""</span>
+    gateway_id: str           <span class="c"># gateways.id (UUID) — used by DB backend</span>
+    mcp_url: str              <span class="c"># gateways.url — resolved by VaultTokenBackend; used as Vault path key</span>
+    team_id: str              <span class="c"># Team identifier — extracted from user context; required for Vault path</span>
+    user_id: str              <span class="c"># OAuth provider user ID</span>
+    app_user_email: str       <span class="c"># ContextForge user identity</span>
+    access_token: str         <span class="c"># Plain-text (each backend handles encryption differently)</span>
+    refresh_token: str | None
+    token_type: str           <span class="c"># Always "Bearer"</span>
+    expires_at: datetime | None
+    scopes: list[str]
+    created_at: datetime
+    updated_at: datetime
+
+
+<span class="k">class</span> AbstractTokenBackend(ABC):
+    <span class="c">"""
+    Backend-agnostic token storage interface.
+
+    All methods receive gateway_id and team_id. Each backend uses them appropriately:
+      DatabaseTokenBackend  → uses gateway_id directly as FK; team_id ignored (no DB column yet)
+      VaultTokenBackend     → uses team_id in path; resolves gateway_id → mcp_url → server_id
+
+    The CLIENT never passes gateway_id or team_id. It only knows server_id (virtual server URL).
+    The service layer extracts team_id from authenticated user context (JWT/session), and
+    resolves gateway_id from: server_id → server_tool_association → tools.gateway_id.
+    """</span>
+
+    <span class="c"># Write — called at OAuth callback after IdP returns tokens</span>
+    <span class="k">@abstractmethod</span>
+    <span class="k">async def</span> store_tokens(
+        self,
+        gateway_id: str,        <span class="c"># UUID from gateways.id — passed by all existing call sites</span>
+        team_id: str,           <span class="c"># Team identifier from user context (JWT/session)</span>
+        user_id: str,           <span class="c"># OAuth provider user ID</span>
+        app_user_email: str,    <span class="c"># ContextForge user email</span>
+        access_token: str,
+        refresh_token: str | None,
+        expires_in: int | None,
+        scopes: list[str],
+    ) → TokenRecord: ...
+
+    <span class="c"># Read — called on every tool call / health-check / resource fetch</span>
+    <span class="k">@abstractmethod</span>
+    <span class="k">async def</span> get_user_token(
+        self,
+        gateway_id: str,
+        team_id: str,           <span class="c"># Team identifier from user context</span>
+        app_user_email: str,
+        threshold_seconds: int = 300,
+    ) → str | None: ...       <span class="c"># Auto-refreshes if within threshold_seconds of expiry</span>
+
+    <span class="c"># Metadata — called by admin status API</span>
+    <span class="k">@abstractmethod</span>
+    <span class="k">async def</span> get_token_info(
+        self, gateway_id: str, team_id: str, app_user_email: str,
+    ) → dict | None: ...      <span class="c"># Returns non-sensitive metadata (scopes, expiry, status)</span>
+
+    <span class="c"># Revocation — called at user logout or admin revoke</span>
+    <span class="k">@abstractmethod</span>
+    <span class="k">async def</span> revoke_user_tokens(
+        self, gateway_id: str, team_id: str, app_user_email: str,
+    ) → bool: ...             <span class="c"># Returns True if deleted, False if not found</span>
+
+    <span class="c"># Maintenance — called by scheduled cleanup job</span>
+    <span class="k">@abstractmethod</span>
+    <span class="k">async def</span> cleanup_expired_tokens(
+        self, max_age_days: int = 30,
+    ) → int: ...
+    <span class="c"># DatabaseTokenBackend: deletes expired DB rows.
+    # VaultTokenBackend:    returns 0 — Vault KV TTL handles cleanup.</span>
+</pre>
+
+
+<h2><span class="sn">6</span>TokenStorageService Façade</h2>
+
+<p>The façade extracts <code>team_id</code> from authenticated user context and passes it to the backend along with <code>gateway_id</code>. Both backends receive <code>db</code> session for their specific needs: <code>VaultTokenBackend</code> resolves <code>gateway_id → gateways.url</code> via <code>_resolve_mcp_url()</code>, while <code>DatabaseTokenBackend</code> uses it directly as an FK.</p>
+<pre>
+<span class="k">from</span> mcpgateway.auth_context <span class="k">import</span> get_user_teams  <span class="c"># Helper to extract teams from JWT/session</span>
+
+<span class="k">class</span> TokenStorageService:
+    <span class="k">def</span> __init__(self, db: Session, user_context: dict | None = None):
+        self.db = db
+        self.user_context = user_context  <span class="c"># JWT claims or session data</span>
+        settings = get_settings()
+        <span class="k">if</span> settings.oauth_token_backend == <span class="s">"vault"</span>:
+            self._backend = <span class="p">VaultTokenBackend(db, settings)</span>
+        <span class="k">elif</span> settings.oauth_token_backend == <span class="s">"database"</span>:
+            self._backend = <span class="g">DatabaseTokenBackend(db, settings)</span>  <span class="c"># next phase</span>
+        <span class="k">else</span>:
+            <span class="k">raise</span> ValueError(
+                <span class="s">f"Unknown OAUTH_TOKEN_BACKEND: {settings.oauth_token_backend}. "</span>
+                <span class="s">f"Expected 'database' or 'vault'."</span>
+            )
+
+    <span class="k">def</span> _get_team_id(self, app_user_email: str) → str:
+        <span class="c">"""Extract team_id from authenticated user context.
+        Precedence: JWT claims → session data → fallback 'default'."""</span>
+        <span class="k">if</span> self.user_context:
+            teams = get_user_teams(self.user_context)
+            <span class="k">return</span> teams[0] <span class="k">if</span> teams <span class="k">else</span> <span class="s">"default"</span>
+        <span class="k">return</span> <span class="s">"default"</span>
+
+    <span class="c"># All public methods delegate to backend, extracting team_id internally</span>
+    <span class="k">async def</span> store_tokens(self, gateway_id, user_id, app_user_email,
+                            access_token, refresh_token, expires_in, scopes):
+        team_id = self._get_team_id(app_user_email)
+        <span class="k">return await</span> self._backend.store_tokens(
+            gateway_id, team_id, user_id, app_user_email,
+            access_token, refresh_token, expires_in, scopes)
+
+    <span class="k">async def</span> get_user_token(self, gateway_id, app_user_email, threshold_seconds=300):
+        team_id = self._get_team_id(app_user_email)
+        <span class="k">return await</span> self._backend.get_user_token(
+            gateway_id, team_id, app_user_email, threshold_seconds)
+
+    <span class="k">async def</span> get_token_info(self, gateway_id, app_user_email):
+        team_id = self._get_team_id(app_user_email)
+        <span class="k">return await</span> self._backend.get_token_info(gateway_id, team_id, app_user_email)
+
+    <span class="k">async def</span> revoke_user_tokens(self, gateway_id, app_user_email):
+        team_id = self._get_team_id(app_user_email)
+        <span class="k">return await</span> self._backend.revoke_user_tokens(gateway_id, team_id, app_user_email)
+
+    <span class="k">async def</span> cleanup_expired_tokens(self, max_age_days=30):
+        <span class="k">return await</span> self._backend.cleanup_expired_tokens(max_age_days)
+
+
+<span class="c"># ── VaultTokenBackend: internal gateway_id → mcp_url resolution ─────────────</span>
+<span class="k">class</span> VaultTokenBackend(AbstractTokenBackend):
+    <span class="k">def</span> __init__(self, db: Session, settings):
+        self.db = db
+        self.settings = settings
+        <span class="c"># ... Vault client init (httpx or hvac) ...</span>
+
+    <span class="k">def</span> _resolve_mcp_url(self, gateway_id: str) → str:
+        <span class="c">"""Resolve gateway_id → gateways.url. Used as Vault path key.
+        Called once per operation — result is NOT cached (secrets may rotate)."""</span>
+        gateway = self.db.get(Gateway, gateway_id)
+        <span class="k">if not</span> gateway:
+            <span class="k">raise</span> ValueError(<span class="s">f"Gateway {gateway_id} not found"</span>)
+        <span class="k">return</span> gateway.url   <span class="c"># e.g. "https://mcp.github.acme.com"</span>
+
+    <span class="k">async def</span> store_tokens(self, gateway_id: str, team_id: str, user_id: str, app_user_email: str, ...):
+        mcp_url = self._resolve_mcp_url(gateway_id)  <span class="c"># ← resolution happens HERE, inside VaultTokenBackend</span>
+        server_id = self._hash_server_id(mcp_url)   <span class="c"># map mcp_url to stable path segment</span>
+        path = <span class="s">f"{self.mount}/data/{self.prefix}/{team_id}/{server_id}/{quote(app_user_email)}"</span>
+        <span class="c"># ... Vault KV v2 PUT ...</span>
+
+    <span class="k">async def</span> get_user_token(self, gateway_id: str, team_id: str, app_user_email: str, ...):
+        mcp_url = self._resolve_mcp_url(gateway_id)
+        server_id = self._hash_server_id(mcp_url)
+        path = <span class="s">f"{self.mount}/data/{self.prefix}/{team_id}/{server_id}/{quote(app_user_email)}"</span>
+        <span class="c"># ... Vault KV v2 GET on resolved path ...</span>
+</pre>
+
+<div class="box bok">
+  <strong>Why this is correct:</strong>
+  <ul style="margin-top:6px">
+    <li><strong>Call sites minimally changed</strong> — existing call sites pass <code>gateway_id</code> exactly as today; only the <code>TokenStorageService</code> instantiation adds <code>user_context</code> parameter.</li>
+    <li><strong>Client never supplies gateway_id or team_id</strong> — the service layer extracts <code>team_id</code> from authenticated user context (JWT/session) and resolves <code>gateway_id</code> from <code>server_id → server_tool_association → tools.gateway_id</code>.</li>
+    <li><strong>Vault path uses all three keys</strong> — <code>team_id</code> (from user context), <code>server_id</code> (from <code>mcp_url</code> hash), and <code>email</code> (from <code>app_user_email</code>).</li>
+    <li><strong>DatabaseTokenBackend accepts but ignores team_id</strong> — it uses <code>gateway_id</code> directly as FK; <code>team_id</code> parameter required for interface consistency but not used (no DB column yet).</li>
+  </ul>
+</div>
+
+
+<h2><span class="sn">7</span>Vault Secret Schema</h2>
+
+<div class="box bvault">
+  <strong>Path pattern:</strong><br /><br />
+  <code>&lt;VAULT_KV_MOUNT&gt;/data/&lt;VAULT_KV_PATH_PREFIX&gt;/<strong>&lt;team_id&gt;</strong>/<strong>&lt;server_id&gt;</strong>/<strong>&lt;url-encoded email&gt;</strong></code><br /><br />
+  The path includes all three lookup keys: <code>team_id</code> (from user context), <code>server_id</code> (derived from <code>mcp_url</code>), and <code>email</code> (user identifier). This enables efficient lookup by any combination of these fields and provides natural isolation by team.
+</div>
+
+<table>
+  <tr><th>User</th><th>Team</th><th>Resolved mcp_url</th><th>server_id</th><th>Vault path</th></tr>
+  <tr><td><code>alice@acme.com</code></td><td><code>engineering</code></td><td><code>https://mcp.github.acme.com</code></td><td><code>647ad7b3</code></td><td><code>secret/data/contextforge/oauth/engineering/647ad7b3/alice%40acme.com</code></td></tr>
+  <tr><td><code>bob@acme.com</code></td><td><code>sales</code></td><td><code>https://mcp.jira.acme.com</code></td><td><code>8f2c91e5</code></td><td><code>secret/data/contextforge/oauth/sales/8f2c91e5/bob%40acme.com</code></td></tr>
+</table>
+
+<div class="box binfo">
+  <strong>Path segment derivation:</strong>
+  <ul style="margin-top: 8px; margin-bottom: 0;">
+    <li><code>team_id</code> — extracted from authenticated user context (JWT claims or session data)</li>
+    <li><code>server_id</code> — derived from gateway UUID or hashed from <code>mcp_url</code> for stable, human-friendly identifiers</li>
+    <li><code>email</code> — URL-encoded user email from authentication context</li>
+  </ul>
+</div>
+
+<p><strong>Secret payload</strong> — mirrors <code>oauth_tokens</code> DB columns with lookup keys included for self-documentation:</p>
+<pre>
+{
+  <span class="s">"email"</span>:         <span class="s">"alice@acme.com"</span>,               <span class="c">// Lookup key (also in path)</span>
+  <span class="s">"team_id"</span>:       <span class="s">"engineering"</span>,                  <span class="c">// Lookup key (also in path)</span>
+  <span class="s">"mcp_url"</span>:       <span class="s">"https://mcp.github.acme.com"</span>,   <span class="c">// Lookup key + UI display</span>
+  <span class="s">"token"</span>:         {                                 <span class="c">// Nested OAuth token data</span>
+    <span class="s">"access_token"</span>:  <span class="s">"gho_Aa1Bb2..."</span>,            <span class="c">// plain-text (Vault encrypts)</span>
+    <span class="s">"refresh_token"</span>: <span class="s">"ghr_Rr9Ss8..."</span>,            <span class="c">// nullable</span>
+    <span class="s">"scopes"</span>:        [<span class="s">"repo"</span>, <span class="s">"read:user"</span>]      <span class="c">// Array (not JSON string)</span>
+  },
+  <span class="s">"user_id"</span>:       <span class="s">"github_uid_44712"</span>,
+  <span class="s">"token_type"</span>:    <span class="s">"Bearer"</span>,
+  <span class="s">"expires_at"</span>:    <span class="s">"2026-07-07T18:00:00Z"</span>,
+  <span class="s">"created_at"</span>:    <span class="s">"2025-07-07T10:00:00Z"</span>,
+  <span class="s">"updated_at"</span>:    <span class="s">"2025-07-07T10:00:00Z"</span>
+}
+</pre>
+
+<h3>DB-to-Vault field mapping</h3>
+<table>
+  <tr><th>oauth_tokens column</th><th>Vault location</th><th>Note</th></tr>
+  <tr><td><code>gateway_id</code> (FK → gateways)</td><td><code>mcp_url</code> (payload) + path segment</td><td><strong>Changed.</strong> Resolved to <code>mcp_url</code> via gateways.url; hashed/mapped to <code>server_id</code> for path</td></tr>
+  <tr><td><code>team_id</code> (if exists)</td><td><code>team_id</code> (payload) + path segment</td><td><strong>New.</strong> Extracted from user context; enables team-scoped lookups</td></tr>
+  <tr><td><code>app_user_email</code></td><td><code>email</code> (payload) + path segment</td><td>URL-encoded in path; also in payload for self-documentation</td></tr>
+  <tr><td><code>user_id</code></td><td><code>user_id</code> (payload)</td><td>Same</td></tr>
+  <tr><td><code>access_token</code></td><td><code>token.access_token</code> (payload)</td><td><strong>Changed.</strong> Nested under <code>token</code> object</td></tr>
+  <tr><td><code>refresh_token</code></td><td><code>token.refresh_token</code> (payload)</td><td><strong>Changed.</strong> Nested under <code>token</code> object; nullable</td></tr>
+  <tr><td><code>scopes</code></td><td><code>token.scopes</code> (payload)</td><td><strong>Changed.</strong> Nested under <code>token</code> object; stored as array (not JSON string)</td></tr>
+  <tr><td><code>token_type</code></td><td><code>token_type</code> (payload)</td><td>Same</td></tr>
+  <tr><td><code>expires_at</code></td><td><code>expires_at</code> (payload)</td><td>ISO-8601 UTC string</td></tr>
+  <tr><td><code>created_at</code>, <code>updated_at</code></td><td><code>created_at</code>, <code>updated_at</code> (payload)</td><td>Same</td></tr>
+  <tr><td><code>id</code> (PK)</td><td>—</td><td>Not needed; Vault path (<code>team_id/server_id/email</code>) is the unique key</td></tr>
+</table>
+
+<div class="box bwarn">
+  <strong>Lookup implementation:</strong> Vault tokens are retrieved using the composite key <code>(team_id, mcp_url, email)</code>. The service layer must:
+  <ol style="margin-top: 8px; margin-bottom: 0;">
+    <li>Extract <code>team_id</code> from authenticated user context (JWT claims or session)</li>
+    <li>Convert <code>mcp_url</code> to <code>server_id</code> (hash or gateway UUID lookup)</li>
+    <li>Construct Vault path: <code>secret/contextforge/oauth/{team_id}/{server_id}/{email}</code></li>
+    <li>Verify returned payload fields match the lookup keys</li>
+  </ol>
+</div>
+
+
+<h2><span class="sn">7.5</span>DatabaseTokenBackend — Phased Implementation</h2>
+
+<div class="box binfo">
+  <strong>Two-Phase Database Backend Implementation</strong><br/>
+  <strong>Phase 1:</strong> Minimal extraction (copy-paste) to enable façade pattern — accepts <code>team_id</code> but ignores it (no DB schema changes).<br/>
+  <strong>Phase 2:</strong> Add <code>team_id</code> column to <code>oauth_tokens</code> table and update SQL queries to use it.
+</div>
+
+<h3>Phase 1: Minimal Extraction (Behavior-Preserving)</h3>
+<p>The <code>DatabaseTokenBackend</code> in Phase 1 is a thin wrapper around existing database code — <strong>zero behavior changes</strong>:</p>
+<ul>
+  <li>Copy existing logic from current <code>TokenStorageService</code> (lines 119-620 in <code>mcpgateway/services/token_storage_service.py</code>)</li>
+  <li>Accept <code>team_id</code> parameter (for interface compliance) but <strong>completely ignore it</strong> in all SQL queries</li>
+  <li><strong>No database schema changes</strong> — no <code>team_id</code> column added yet</li>
+  <li><strong>No changes to SQL queries</strong> — continue using <code>(gateway_id, app_user_email)</code> as unique key</li>
+  <li>Preserve all existing behavior including:
+    <ul style="margin-top: 6px">
+      <li>UPSERT logic on <code>(gateway_id, app_user_email)</code> unique key</li>
+      <li>Encryption via <code>EncryptionService</code></li>
+      <li>Auto-refresh logic with RFC 8707 resource parameter</li>
+      <li>NULL expiry handling (tokens without <code>expires_in</code>)</li>
+      <li>Private gateway ownership security check (PR #4341)</li>
+    </ul>
+  </li>
+</ul>
+
+<h3>Phase 2: Add team_id Support (Future)</h3>
+<p>Once the Vault implementation is complete and proven, Phase 2 will add team-scoped token storage to the database backend:</p>
+<ul style="margin-top: 6px">
+  <li>Alembic migration: add <code>team_id</code> column to <code>oauth_tokens</code> table (nullable, default <code>"default"</code>)</li>
+  <li>Update SQL queries: change unique constraint from <code>(gateway_id, app_user_email)</code> to <code>(team_id, gateway_id, app_user_email)</code></li>
+  <li>Update UPSERT logic to include <code>team_id</code> in WHERE clause</li>
+  <li>Backfill existing rows with <code>team_id="default"</code></li>
+</ul>
+
+<h3>Interface Implementation Sketch</h3>
+<pre>
+<span class="k">class</span> DatabaseTokenBackend(AbstractTokenBackend):
+    <span class="k">def</span> __init__(self, db: Session, settings):
+        self.db = db
+        self.settings = settings
+        self.encryption = get_encryption_service(settings.auth_encryption_secret)
+
+    <span class="k">async def</span> store_tokens(
+        self,
+        gateway_id: str,
+        team_id: str,           <span class="c"># ← Accepted but NOT stored (no DB column yet)</span>
+        user_id: str,
+        app_user_email: str,
+        access_token: str,
+        refresh_token: str | None,
+        expires_in: int | None,
+        scopes: list[str],
+    ) → TokenRecord:
+        <span class="c"># Encrypt tokens</span>
+        encrypted_access = <span class="k">await</span> self.encryption.encrypt_secret_async(access_token)
+        encrypted_refresh = <span class="k">await</span> self.encryption.encrypt_secret_async(refresh_token) <span class="k">if</span> refresh_token <span class="k">else</span> None
+
+        <span class="c"># Calculate expiry</span>
+        expires_at = datetime.now(timezone.utc) + timedelta(seconds=expires_in) <span class="k">if</span> expires_in <span class="k">else</span> None
+
+        <span class="c"># UPSERT: query by (gateway_id, app_user_email) — team_id ignored</span>
+        token_record = self.db.execute(
+            select(OAuthToken).where(
+                OAuthToken.gateway_id == gateway_id,
+                OAuthToken.app_user_email == app_user_email
+            )
+        ).scalar_one_or_none()
+
+        <span class="k">if</span> token_record:
+            token_record.user_id = user_id
+            token_record.access_token = encrypted_access
+            token_record.refresh_token = encrypted_refresh
+            token_record.expires_at = expires_at
+            token_record.scopes = scopes
+            token_record.updated_at = datetime.now(timezone.utc)
+        <span class="k">else</span>:
+            token_record = OAuthToken(
+                gateway_id=gateway_id, user_id=user_id, app_user_email=app_user_email,
+                access_token=encrypted_access, refresh_token=encrypted_refresh,
+                expires_at=expires_at, scopes=scopes,
+            )
+            self.db.add(token_record)
+
+        self.db.commit()
+
+        <span class="c"># Convert ORM → TokenRecord dataclass</span>
+        <span class="k">return</span> TokenRecord(
+            gateway_id=token_record.gateway_id,
+            mcp_url=self._resolve_mcp_url(gateway_id),
+            team_id=<span class="s">"default"</span>,  <span class="c"># ← Fallback (no DB source)</span>
+            user_id=token_record.user_id,
+            app_user_email=token_record.app_user_email,
+            access_token=access_token,  <span class="c"># Plain-text in return value</span>
+            refresh_token=refresh_token,
+            token_type=token_record.token_type,
+            expires_at=token_record.expires_at,
+            scopes=token_record.scopes,
+            created_at=token_record.created_at,
+            updated_at=token_record.updated_at,
+        )
+
+    <span class="k">async def</span> get_user_token(
+        self,
+        gateway_id: str,
+        team_id: str,           <span class="c"># ← Accepted but ignored</span>
+        app_user_email: str,
+        threshold_seconds: int = 300,
+    ) → str | None:
+        <span class="c"># Query by (gateway_id, app_user_email) — same as today</span>
+        token_record = self.db.execute(
+            select(OAuthToken).where(
+                OAuthToken.gateway_id == gateway_id,
+                OAuthToken.app_user_email == app_user_email
+            )
+        ).scalar_one_or_none()
+
+        <span class="k">if not</span> token_record:
+            <span class="k">return</span> None
+
+        <span class="c"># Check expiry + auto-refresh (same logic as today)</span>
+        <span class="k">if</span> self._is_token_expired(token_record, threshold_seconds):
+            <span class="k">if</span> token_record.refresh_token:
+                new_token = <span class="k">await</span> self._refresh_access_token(token_record)
+                <span class="k">if</span> new_token:
+                    <span class="k">return</span> new_token
+            <span class="k">return</span> None
+
+        <span class="c"># Decrypt and return</span>
+        <span class="k">if</span> self.encryption:
+            <span class="k">return await</span> self.encryption.decrypt_secret_async(token_record.access_token)
+        <span class="k">return</span> token_record.access_token
+</pre>
+
+<h3>Database Schema (No Changes)</h3>
+<p>The <code>oauth_tokens</code> table schema remains unchanged — no <code>team_id</code> column yet:</p>
+<table>
+  <tr><th>Column</th><th>Type</th><th>Note</th></tr>
+  <tr><td><code>id</code></td><td>VARCHAR(36) PK</td><td>UUID hex</td></tr>
+  <tr><td><code>gateway_id</code></td><td>VARCHAR(36) FK</td><td>→ gateways.id (CASCADE)</td></tr>
+  <tr><td><code>user_id</code></td><td>VARCHAR(255)</td><td>OAuth provider user ID</td></tr>
+  <tr><td><code>app_user_email</code></td><td>VARCHAR(255) FK</td><td>→ email_users.email (CASCADE)</td></tr>
+  <tr><td><code>access_token</code></td><td>TEXT (encrypted)</td><td>EncryptedText() column type</td></tr>
+  <tr><td><code>refresh_token</code></td><td>TEXT (encrypted)</td><td>Nullable</td></tr>
+  <tr><td><code>token_type</code></td><td>VARCHAR(50)</td><td>Default "Bearer"</td></tr>
+  <tr><td><code>expires_at</code></td><td>TIMESTAMP</td><td>Nullable (providers may omit)</td></tr>
+  <tr><td><code>scopes</code></td><td>JSON</td><td>Array of strings</td></tr>
+  <tr><td><code>created_at</code></td><td>TIMESTAMP</td><td>Auto-populated</td></tr>
+  <tr><td><code>updated_at</code></td><td>TIMESTAMP</td><td>Auto-populated</td></tr>
+  <tr><td colspan="3"><strong>Unique constraint:</strong> <code>(gateway_id, app_user_email)</code></td></tr>
+</table>
+
+<h3>Why Two Phases?</h3>
+<div class="box binfo">
+  <strong>Phase 1 Rationale:</strong> Cannot implement façade pattern (required for Vault) without <code>DatabaseTokenBackend</code> class. Minimal extraction enables the façade while deferring database schema changes until Vault is proven in production.
+</div>
+
+<p><strong>Benefits of phased approach:</strong></p>
+<ul style="margin-bottom: 14px">
+  <li><strong>Phase 1:</strong> Minimal risk — extraction is copy-paste with no behavior changes, no schema changes, no SQL query changes</li>
+  <li><strong>Phase 1:</strong> Enables façade pattern required for <code>VaultTokenBackend</code></li>
+  <li><strong>Phase 2:</strong> Database <code>team_id</code> support can be designed and tested after Vault path is proven</li>
+  <li><strong>Phase 2:</strong> Schema migration for <code>team_id</code> column can be planned with real production data</li>
+</ul>
+
+<p style="margin-bottom: 24px"><strong>Phase 1 focus:</strong> Implement minimal <code>DatabaseTokenBackend</code> wrapper (no changes to database logic) + full <code>VaultTokenBackend</code> implementation.</p>
+
+
+<h2><span class="sn">8</span>New Client-Callable Vault Authorization Endpoints</h2>
+
+<p>These endpoints let a client trigger credential exchange using only the virtual server URL. They mirror the existing <code>/oauth/authorize</code> / <code>/oauth/callback</code> pair and are registered only when <code>OAUTH_TOKEN_BACKEND=vault</code>.</p>
+
+<h3><span class="mb mget">GET</span><code>/vault/authorize/{server_id}</code></h3>
+<table>
+  <tr><th>Aspect</th><th>Detail</th></tr>
+  <tr><td>Auth required</td><td>Yes — same ContextForge Bearer token used for MCP calls</td></tr>
+  <tr><td>Path param</td><td><code>server_id</code> — the ID from the client's virtual server URL</td></tr>
+  <tr><td>Optional query param</td><td><code>?gateway_url=https://mcp.github.acme.com</code> — selects one gateway when the virtual server has multiple OAuth gateways; omit for single-gateway servers</td></tr>
+  <tr><td>What it does</td><td>
+    1. Looks up <code>servers</code> by <code>server_id</code><br />
+    2. Walks <code>server_tool_association → tools.gateway_id → gateways</code><br />
+    3. Reads <code>gateway.oauth_config</code>, builds PKCE + HMAC state, saves to <code>oauth_states</code> table<br />
+    4. Redirects to IdP authorization URL
+  </td></tr>
+  <tr><td>Response</td><td><code>302 Redirect</code> → IdP authorization URL</td></tr>
+  <tr><td>Errors</td><td><code>404</code> server not found · <code>400</code> no OAuth gateways · <code>403</code> caller lacks access</td></tr>
+</table>
+
+<h3><span class="mb mget">GET</span><code>/vault/callback</code></h3>
+<table>
+  <tr><th>Aspect</th><th>Detail</th></tr>
+  <tr><td>Auth required</td><td>No — IdP redirects here with <code>code</code> + <code>state</code></td></tr>
+  <tr><td>Query params</td><td><code>code</code>, <code>state</code>, <code>error</code>, <code>error_description</code></td></tr>
+  <tr><td>What it does</td><td>
+    1. Validates HMAC state → resolves <code>gateway_id</code> from <code>oauth_states</code><br />
+    2. Exchanges code for tokens with IdP<br />
+    3. Extracts <code>team_id</code> from user context (JWT/session)<br />
+    4. Calls <code>TokenStorageService.store_tokens(gateway_id, …)</code> → <code>VaultTokenBackend</code> resolves <code>gateway_id → mcp_url</code> and writes to Vault<br />
+    5. Returns HTML success page
+  </td></tr>
+  <tr><td>Key difference vs /oauth/callback</td><td>Step 4 always writes to <strong>Vault</strong> regardless of <code>OAUTH_TOKEN_BACKEND</code>. Endpoint only active when <code>OAUTH_TOKEN_BACKEND=vault</code>.</td></tr>
+</table>
+
+<h3>Gateway resolution helper</h3>
+<pre>
+<span class="k">def</span> _resolve_oauth_gateway(server: Server, db: Session,
+                            preferred_url: str | None = None) → Gateway:
+    rows = db.execute(
+        select(Tool.gateway_id)
+        .join(server_tool_association,
+              server_tool_association.c.tool_id == Tool.id)
+        .where(server_tool_association.c.server_id == server.id)
+        .where(Tool.gateway_id.isnot(<span class="k">None</span>))
+        .distinct()
+    ).scalars().all()                         <span class="c"># all gateway_ids on this server</span>
+
+    gateways = db.scalars(
+        select(Gateway)
+        .where(Gateway.id.in_(rows))
+        .where(Gateway.auth_type == <span class="s">"oauth"</span>)
+    ).all()
+
+    <span class="k">if</span> preferred_url:                         <span class="c"># ?gateway_url= supplied</span>
+        <span class="k">return</span> next(g <span class="k">for</span> g <span class="k">in</span> gateways <span class="k">if</span> g.url == preferred_url)
+    <span class="k">return</span> gateways[<span class="v">0</span>]                        <span class="c"># first OAuth gateway</span>
+</pre>
+
+
+<h2><span class="sn">9</span>Local Development — HashiCorp Vault Setup</h2>
+
+<div class="box bok">
+  <strong>✅ Complete tested guide available:</strong> <a href="docs/vault-local-dev-postgresql.md"><code>docs/vault-local-dev-postgresql.md</code></a>
+</div>
+
+<div class="box binfo">
+  For local development, Vault is configured with <strong>PostgreSQL storage backend</strong> — secrets persist across restarts, matching production behavior. The complete guide includes:
+  <ul style="margin-top: 8px; margin-bottom: 0;">
+    <li>PostgreSQL database setup with proper permissions</li>
+    <li>Vault server configuration with PostgreSQL backend</li>
+    <li>Storage table creation and initialization</li>
+    <li>Policy creation and token generation</li>
+    <li>Comprehensive testing and verification steps</li>
+    <li>PostgreSQL storage verification commands</li>
+    <li>Daily workflow and troubleshooting guide</li>
+  </ul>
+</div>
+
+<h3>Quick Start</h3>
+<p>Follow the complete step-by-step guide in <code>docs/vault-local-dev-postgresql.md</code>. Key highlights:</p>
+
+<div class="steps">
+  <div class="step sdb" data-n="1">
+    <div class="sh">PostgreSQL Setup</div>
+    <div class="sb">Create <code>vault_dev</code> database and <code>vault_user</code> with proper schema permissions</div>
+  </div>
+  <div class="step sv" data-n="2">
+    <div class="sh">Vault Configuration</div>
+    <div class="sb">Create <code>~/.vault-config/config.hcl</code> with PostgreSQL connection URL</div>
+  </div>
+  <div class="step sdb" data-n="3">
+    <div class="sh">Storage Table Creation</div>
+    <div class="sb">Manually create <code>vault_kv_store</code> table to avoid initialization loops</div>
+  </div>
+  <div class="step sv" data-n="4">
+    <div class="sh">Initialize & Unseal</div>
+    <div class="sb">Run <code>vault operator init</code> and <code>vault operator unseal</code></div>
+  </div>
+  <div class="step sok" data-n="5">
+    <div class="sh">Configure & Test</div>
+    <div class="sb">Create policy, generate token, configure <code>.env</code>, and verify with test secrets</div>
+  </div>
+</div>
+
+<h3>Environment Variables</h3>
+<pre>
+<span class="c"># Add to your .env file (after completing setup guide)</span>
+OAUTH_TOKEN_BACKEND=vault
+VAULT_ADDR=http://127.0.0.1:8200
+VAULT_TOKEN=&lt;token-from-setup-guide&gt;     <span class="c"># pragma: allowlist secret</span>
+VAULT_KV_MOUNT=secret
+VAULT_KV_PATH_PREFIX=contextforge/oauth
+VAULT_TLS_VERIFY=false                   <span class="c"># local dev only — no TLS</span>
+</pre>
+
+<h3>Verification</h3>
+<p>The guide includes comprehensive testing steps to verify:</p>
+<ul>
+  <li>✅ Vault is properly configured and running</li>
+  <li>✅ Secrets can be written, read, listed, and deleted</li>
+  <li>✅ Data is persisted in PostgreSQL <code>vault_kv_store</code> table</li>
+  <li>✅ Token scoping and policies work correctly</li>
+  <li>✅ Secrets survive Vault restarts (PostgreSQL persistence)</li>
+</ul>
+
+<h3>Start ContextForge</h3>
+<pre>
+make dev
+<span class="c"># Look for startup log:
+#   INFO  oauth_token_backend=vault  vault_addr=http://127.0.0.1:8200  ✓ reachable</span>
+
+<span class="c"># Test the authorize endpoint</span>
+curl -H "Authorization: Bearer &lt;cf-token&gt;" \
+  "http://localhost:4444/vault/authorize/&lt;server_id&gt;"
+<span class="c"># Expect: 302 redirect to IdP (or 400 if no OAuth gateway on that server)</span>
+</pre>
+
+
+<h2><span class="sn">10</span>Production — Vault with PostgreSQL Storage Backend</h2>
+
+<div class="box bvault">
+  For production deployment, Vault uses <strong>PostgreSQL as its storage backend</strong> — secrets are persisted in a Postgres table (<code>vault_kv_store</code>). Vault encrypts all data before writing; Postgres stores only ciphertext. This provides high-availability, disaster recovery, and enterprise-grade persistence.
+</div>
+
+<div class="box binfo">
+  <strong>Note:</strong> The local development setup (<code>docs/vault-local-dev-postgresql.md</code>) also uses PostgreSQL backend for consistency with production. The main differences in production are: HA configuration, TLS encryption, auto-unseal with cloud KMS, and monitoring/alerting.
+</div>
+
+<h3>Step 1 — Prepare PostgreSQL</h3>
+<pre>
+<span class="c">-- Run as a Postgres superuser</span>
+CREATE DATABASE vault;
+CREATE USER vault WITH ENCRYPTED PASSWORD 'strong-vault-password';
+GRANT ALL PRIVILEGES ON DATABASE vault TO vault;
+
+<span class="c">-- Connect to vault DB and grant schema permissions</span>
+\c vault
+GRANT ALL ON SCHEMA public TO vault;
+</pre>
+
+<h3>Step 2 — Vault server configuration file (vault.hcl)</h3>
+<pre>
+<span class="c"># /etc/vault.d/vault.hcl</span>
+
+storage "postgresql" {
+  connection_url = "postgres://vault:strong-vault-password@db.acme.com:5432/vault?sslmode=require"
+  table          = "vault_kv_store"    <span class="c"># Vault creates this table on first start</span>
+  max_parallel   = "128"
+}
+
+listener "tcp" {
+  address     = "0.0.0.0:8200"
+  tls_cert_file = "/etc/vault.d/tls/vault.crt"
+  tls_key_file  = "/etc/vault.d/tls/vault.key"
+}
+
+api_addr     = "https://vault.acme.com:8200"
+cluster_addr = "https://vault.acme.com:8201"
+ui           = true
+log_level    = "warn"
+</pre>
+
+<h3>Step 3 — Start Vault and initialise</h3>
+<pre>
+<span class="c"># Start service</span>
+systemctl start vault
+
+<span class="c"># Initialise (one time only — produces unseal keys + root token)</span>
+vault operator init -key-shares=5 -key-threshold=3 \
+  -format=json &gt; /secure/vault-init.json
+
+<span class="c"># Unseal with 3 of the 5 key shards</span>
+vault operator unseal &lt;key-1&gt;
+vault operator unseal &lt;key-2&gt;
+vault operator unseal &lt;key-3&gt;
+
+vault status   <span class="c"># Sealed: false</span>
+</pre>
+
+<h3>Step 4 — Enable KV v2 and create policy (same as dev)</h3>
+<pre>
+export VAULT_ADDR="https://vault.acme.com:8200"
+export VAULT_TOKEN="&lt;root-token-from-init&gt;"  <span class="c"># pragma: allowlist secret</span>
+
+vault secrets enable -version=2 -path=secret kv
+
+vault policy write contextforge contextforge-policy.hcl  <span class="c"># same file as §9 Step 4</span>
+</pre>
+
+<h3>Step 5 — Create a long-lived production token (or use AppRole)</h3>
+<pre>
+<span class="c"># Static token (Phase 1)</span>
+vault token create \
+  -policy="contextforge" \
+  -display-name="contextforge-prod" \
+  -ttl="8760h" \    <span class="c"># 1 year; rotate via CI/CD</span>
+  -format=json | jq -r '.auth.client_token'
+
+<span class="c"># Phase 2: AppRole (more secure — no long-lived token)</span>
+vault auth enable approle
+vault write auth/approle/role/contextforge \
+  token_policies="contextforge" \
+  secret_id_ttl="720h" \
+  token_ttl="1h" \
+  token_max_ttl="4h"
+vault read auth/approle/role/contextforge/role-id   <span class="c"># → VAULT_ROLE_ID</span>
+vault write -f auth/approle/role/contextforge/secret-id  <span class="c"># → VAULT_SECRET_ID</span>
+</pre>
+
+<h3>Step 6 — ContextForge production .env</h3>
+<pre>
+OAUTH_TOKEN_BACKEND=vault
+VAULT_ADDR=https://vault.acme.com:8200
+VAULT_TOKEN=&lt;token-from-step-5&gt;          <span class="c"># pragma: allowlist secret</span>
+VAULT_NAMESPACE=                          <span class="c"># leave blank for CE; set for Enterprise</span>
+VAULT_KV_MOUNT=secret
+VAULT_KV_PATH_PREFIX=contextforge/oauth
+VAULT_TLS_VERIFY=true                     <span class="c"># always true in production</span>
+</pre>
+
+<h3>Step 7 — Verify Postgres is storing Vault data</h3>
+<pre>
+<span class="c">-- In Postgres — Vault writes encrypted blobs, not plaintext</span>
+SELECT parent_path, path, left(value::text, 60) AS preview
+FROM vault_kv_store
+LIMIT 5;
+
+<span class="c">-- Expected output: encrypted binary, NOT readable tokens</span>
+<span class="c">-- logical/ | sys/policies/...  | \x0102030405...  (ciphertext)</span>
+</pre>
+
+
+<h3>§10.8 — High Availability &amp; Disaster Recovery (Required for Production)</h3>
+
+<h3>Vault HA Cluster (3-node minimum)</h3>
+<pre>
+<span class="c"># /etc/vault.d/vault.hcl — HA configuration</span>
+storage <span class="s">"postgresql"</span> {
+  connection_url = <span class="s">"postgres://vault:password@postgres-ha.acme.com:5432/vault?sslmode=require"</span>
+  ha_enabled     = <span class="s">"true"</span>
+  ha_table       = <span class="s">"vault_ha_locks"</span>   <span class="c"># Vault creates this table automatically</span>
+  max_parallel   = <span class="s">"256"</span>
+}
+listener <span class="s">"tcp"</span> {
+  address       = <span class="s">"0.0.0.0:8200"</span>
+  tls_cert_file = <span class="s">"/etc/vault.d/tls/vault.crt"</span>
+  tls_key_file  = <span class="s">"/etc/vault.d/tls/vault.key"</span>
+}
+api_addr     = <span class="s">"https://vault.acme.com:8200"</span>
+cluster_addr = <span class="s">"https://vault-node1.internal:8201"</span>
+</pre>
+<p>Deploy 3 Vault nodes behind a load balancer (active/standby/standby). Only one node is active at a time; standbys forward requests to the active node. If the active fails, a standby promotes automatically using the HA lock stored in PostgreSQL.</p>
+
+<h3>PostgreSQL High Availability</h3>
+<table>
+  <tr><th>Option</th><th>Recommendation</th><th>Details</th></tr>
+  <tr><td><strong>A — Managed (recommended)</strong></td><td>AWS RDS Multi-AZ, Azure DB for PostgreSQL HA, Google Cloud SQL regional HA</td><td>Automatic failover, no operator intervention required.</td></tr>
+  <tr><td><strong>B — Self-managed</strong></td><td>Patroni + etcd leader election + streaming replication</td><td>Add pgBouncer for connection pooling.</td></tr>
+</table>
+<pre>
+<span class="c">-- Connection pool tuning: 3 Vault nodes × ~10 conns/node = 30 minimum</span>
+ALTER SYSTEM SET max_connections = 200;
+ALTER SYSTEM SET shared_buffers = <span class="s">'1GB'</span>;
+</pre>
+
+<h3>Auto-Unseal — Phase 2 Requirement</h3>
+<div class="box bwarn">Without auto-unseal, every Vault restart requires manual input of 3/5 unseal key shards — causing downtime during incidents. Auto-unseal is required for production SLA &gt; 99.9%.</div>
+<pre>
+<span class="c"># vault.hcl — AWS KMS auto-unseal</span>
+seal <span class="s">"awskms"</span> {
+  region     = <span class="s">"us-west-2"</span>
+  kms_key_id = <span class="s">"arn:aws:kms:us-west-2:123456789012:key/vault-unseal"</span>
+}
+
+<span class="c"># Create the KMS key and grant Vault IAM role access</span>
+aws kms create-key --description <span class="s">"Vault auto-unseal key"</span>
+aws kms create-grant \
+  --key-id &lt;key-id&gt; \
+  --grantee-principal arn:aws:iam::123456789012:role/vault-role \
+  --operations Encrypt Decrypt DescribeKey
+</pre>
+
+<h3>Backup &amp; Disaster Recovery</h3>
+<pre>
+<span class="c">#!/bin/bash  — /etc/cron.daily/vault-postgres-backup</span>
+pg_dump -h postgres-ha.acme.com -U vault \
+  --format=custom \
+  --file=/backups/vault-$(date +%Y%m%d-%H%M%S).dump vault
+
+<span class="c"># Upload to S3 with 90-day retention</span>
+aws s3 cp /backups/vault-$(date +%Y%m%d)*.dump s3://acme-backups/vault/ \
+  --storage-class GLACIER
+
+<span class="c"># Restore procedure</span>
+systemctl stop vault
+pg_restore -h postgres-ha.acme.com -U vault --dbname=vault --clean \
+  /backups/vault-20260707-140000.dump
+systemctl start vault   <span class="c"># auto-unseal kicks in automatically</span>
+</pre>
+<table>
+  <tr><th>RTO (Recovery Time Objective)</th><td>15 minutes</td></tr>
+  <tr><th>RPO (Recovery Point Objective)</th><td>24 hours (daily backups); &lt;1 min with continuous WAL archiving</td></tr>
+</table>
+
+
+<h2><span class="sn">11</span>Vault Policy</h2>
+
+<pre>
+<span class="c"># contextforge-policy.hcl</span>
+path <span class="s">"secret/data/contextforge/oauth/*"</span> {
+  capabilities = [<span class="s">"create"</span>, <span class="s">"update"</span>, <span class="s">"read"</span>, <span class="s">"delete"</span>]
+}
+path <span class="s">"secret/metadata/contextforge/oauth/*"</span> {
+  capabilities = [<span class="s">"delete"</span>, <span class="s">"list"</span>]   <span class="c">// hard-delete + UI list</span>
+}
+</pre>
+<p><strong>No wildcard admin access.</strong> ContextForge only touches its own prefix. Gateway config, infra secrets, and other application secrets are unreachable with this policy.</p>
+
+
+<h2><span class="sn">12</span>Token Caching Strategy</h2>
+
+<div class="box binfo">
+  To mitigate Vault API latency and reduce load on high-traffic deployments, ContextForge implements an <strong>optional in-memory token cache</strong> with configurable TTL. This cache is transparent to application code — <code>TokenStorageService</code> remains the single interface.
+</div>
+
+<h3>Cache Behavior</h3>
+<table>
+  <tr><th>Operation</th><th>Cache Strategy</th><th>Rationale</th></tr>
+  <tr><td><code>get_token()</code></td><td>Check cache → hit? return · miss? fetch from Vault + cache</td><td>Read-heavy workloads benefit most; tokens rarely change within TTL window</td></tr>
+  <tr><td><code>store_token()</code></td><td>Write to Vault → invalidate cache entry</td><td>Ensures fresh write is visible immediately on next read</td></tr>
+  <tr><td><code>refresh_token()</code></td><td>Write to Vault → invalidate cache entry</td><td>New access token must be visible to ongoing calls</td></tr>
+  <tr><td><code>revoke_user_tokens()</code></td><td>Delete from Vault → flush all matching cache entries</td><td>Revocation must propagate immediately</td></tr>
+</table>
+
+<h3>Configuration</h3>
+<pre>
+<span class="c"># Enable token caching (default: false)</span>
+VAULT_TOKEN_CACHE_ENABLED=true
+
+<span class="c"># Cache TTL in seconds (default: 300 = 5 minutes)</span>
+VAULT_TOKEN_CACHE_TTL=300
+
+<span class="c"># Max cache entries (default: 10000)</span>
+VAULT_TOKEN_CACHE_MAX_SIZE=10000
+</pre>
+
+<h3>Implementation Notes</h3>
+<ul>
+  <li><strong>Cache key:</strong> <code>(team_id, server_id, email)</code> — same composite key used for Vault lookups</li>
+  <li><strong>Expiry:</strong> TTL-based eviction (default 5 min) + size-based LRU eviction at max capacity</li>
+  <li><strong>Consistency:</strong> Write-through (write to Vault first, then cache) with immediate invalidation on update/delete</li>
+  <li><strong>Thread safety:</strong> Cache implementation must be thread-safe for concurrent FastAPI workers</li>
+  <li><strong>Metrics:</strong> Expose <code>vault_token_cache_hit_total</code>, <code>vault_token_cache_miss_total</code>, <code>vault_token_cache_eviction_total</code></li>
+</ul>
+
+<div class="box bwarn">
+  <strong>Trade-offs:</strong>
+  <ul style="margin-top: 8px; margin-bottom: 0;">
+    <li>✅ <strong>Pros:</strong> 10-50x read latency reduction (Vault ~10-20ms → in-memory ~0.5ms); reduces Vault API load; improves P99 latency for tool calls</li>
+    <li>⚠️ <strong>Cons:</strong> Stale reads within TTL window if token rotated externally; increased memory footprint (~1KB per cached token); cache invalidation complexity</li>
+    <li>📋 <strong>Recommendation:</strong> Enable for production deployments with &gt;100 concurrent users or &gt;500 tool calls/sec</li>
+  </ul>
+</div>
+
+<h3>Comparison with Database Backend</h3>
+<table>
+  <tr><th>Aspect</th><th>Database Backend</th><th>Vault Backend (no cache)</th><th>Vault Backend (with cache)</th></tr>
+  <tr><td>Read latency</td><td>~2-5ms (connection pool)</td><td>~10-20ms (HTTP + encryption)</td><td>~0.5ms (memory hit) / ~10-20ms (miss)</td></tr>
+  <tr><td>Caching</td><td>DB query cache (transparent)</td><td>None (every read hits Vault)</td><td>Application-layer TTL cache</td></tr>
+  <tr><td>Consistency</td><td>Immediate (same DB transaction)</td><td>Immediate (no cache)</td><td>Eventual within TTL window</td></tr>
+  <tr><td>Memory overhead</td><td>~0 (DB handles)</td><td>~0 (Vault handles)</td><td>~1KB × cache size (10MB for 10k tokens)</td></tr>
+</table>
+
+
+<h2><span class="sn">13</span>Configuration Reference</h2>
+
+<table>
+  <tr><th>Env var</th><th>Default</th><th>Dev value</th><th>Prod value</th><th>Description</th></tr>
+  <tr><td><code>OAUTH_TOKEN_BACKEND</code></td><td><code>database</code></td><td><code>vault</code></td><td><code>vault</code></td><td>Backend selector. Unknown values raise ValueError at startup.</td></tr>
+  <tr><td><code>VAULT_ADDR</code></td><td><code>http://127.0.0.1:8200</code></td><td><code>http://127.0.0.1:8200</code></td><td><code>https://vault.acme.com:8200</code></td><td>Vault server URL.</td></tr>
+  <tr><td><code>VAULT_TOKEN</code></td><td>—</td><td><code>root</code></td><td>Scoped token (SecretStr)</td><td>Static Vault token. Phase 1.</td></tr>
+  <tr><td><code>VAULT_NAMESPACE</code></td><td>—</td><td>—</td><td>Enterprise only</td><td>Vault namespace (e.g. <code>admin/acme</code>). Omit for CE.</td></tr>
+  <tr><td><code>VAULT_KV_MOUNT</code></td><td><code>secret</code></td><td><code>secret</code></td><td><code>secret</code></td><td>KV v2 mount path.</td></tr>
+  <tr><td><code>VAULT_KV_PATH_PREFIX</code></td><td><code>contextforge/oauth</code></td><td><code>contextforge/oauth</code></td><td><code>contextforge/oauth</code></td><td>Full path = <code>&lt;mount&gt;/data/&lt;prefix&gt;/&lt;team_id&gt;/&lt;server_id&gt;/&lt;encoded_email&gt;</code>.</td></tr>
+  <tr><td><code>VAULT_TLS_VERIFY</code></td><td><code>true</code></td><td><code>false</code></td><td><code>true</code></td><td>Verify Vault TLS cert. Always true in production.</td></tr>
+</table>
+
+
+<h2><span class="sn">14</span>Backend Comparison</h2>
+
+<table>
+  <tr><th>Aspect</th><th>DatabaseTokenBackend (default)</th><th>VaultTokenBackend (new)</th></tr>
+  <tr><td><strong>store_tokens()</strong></td><td>Encrypts with Fernet. UPSERTs row in <code>oauth_tokens</code> table.</td><td>Writes plain-text to Vault KV v2. No DB row. Vault encrypts at rest.</td></tr>
+  <tr><td><strong>get_user_token()</strong></td><td>SQL SELECT → Fernet decrypt → refresh if near-expiry → UPDATE row.</td><td>Vault GET → plain-text → refresh if near-expiry → Vault PUT (new KV version).</td></tr>
+  <tr><td><strong>Path key</strong></td><td>UNIQUE (gateway_id, app_user_email) DB constraint.</td><td>Unique Vault path per (team_id, server_id, email). Vault ACL enforces additionally.</td></tr>
+  <tr><td><strong>Encryption</strong></td><td>ContextForge Fernet key (AUTH_ENCRYPTION_SECRET).</td><td>Vault AES-256-GCM seal. ContextForge holds no key material.</td></tr>
+  <tr><td><strong>Audit trail</strong></td><td>CF audit log + DB updated_at timestamp.</td><td>CF audit log + Vault audit log (every read AND write) + KV version history.</td></tr>
+  <tr><td><strong>revoke_user_tokens()</strong></td><td>SQL DELETE on matching row.</td><td>Vault KV soft-delete (hard-delete via metadata endpoint).</td></tr>
+  <tr><td><strong>cleanup_expired_tokens()</strong></td><td>SQL DELETE WHERE expires_at &lt; cutoff.</td><td>No-op → returns 0. Operator configures Vault KV TTL or vault-agent policy.</td></tr>
+  <tr><td><strong>Storage backend</strong></td><td>ContextForge application DB (SQLite/PostgreSQL).</td><td>Vault server storage — PostgreSQL backend (both dev and production).</td></tr>
+</table>
+
+
+<h2><span class="sn">15</span>End-to-End Flow: Alice Authorizes &amp; Calls a Tool</h2>
+
+<div class="steps">
+  <div class="step" data-n="1"><div class="sh">Alice → <code>GET /vault/authorize/647ad7b3…</code></div><div class="sb">ContextForge resolves: <code>server_id</code> → <code>server_tool_association</code> → <code>tools.gateway_id=a1b2c3d4e5f6...</code> → <code>gateways.url=https://mcp.github.acme.com</code>. Builds PKCE + HMAC state, saves to <code>oauth_states</code> table.</div></div>
+  <div class="step" data-n="2"><div class="sh">302 Redirect → GitHub IdP authorization URL</div><div class="sb">Alice approves in browser. Identical UX to existing <code>/oauth/authorize</code> flow.</div></div>
+  <div class="step" data-n="3"><div class="sh">GitHub → <code>GET /vault/callback?code=abc&amp;state=…</code></div><div class="sb">ContextForge validates HMAC state. Resolves <code>gateway_id</code> from <code>oauth_states</code>. Fetches <code>gateways.url = https://mcp.github.acme.com</code>. Exchanges code for tokens with GitHub.</div></div>
+  <div class="step sv" data-n="4"><div class="sh"><span class="tag tvault">VAULT</span> <code>TokenStorageService.store_tokens(gateway_id, …)</code> → <code>VaultTokenBackend</code></div><div class="sb">Backend resolves <code>gateway_id → gateways.url</code>, extracts <code>team_id="engineering"</code>, hashes URL to <code>server_id="647ad7b3"</code>.<br /><code>PUT secret/data/contextforge/oauth/engineering/647ad7b3/alice%40acme.com</code><br />Payload: <code>team_id</code>, <code>mcp_url</code>, <code>access_token</code>, <code>refresh_token</code>, <code>expires_at</code>, <code>scopes</code>…<br />No row written to <code>oauth_tokens</code> DB table.</div></div>
+  <div class="step sok" data-n="5"><div class="sh">Alice's MCP client calls <code>POST /servers/647ad7b3…/mcp</code> — tool <code>github__search_code</code></div><div class="sb"><code>tool_service</code> resolves tool → <code>gateway_id=a1b2c3d4e5f6...</code> → <code>gateways.url=https://mcp.github.acme.com</code>.</div></div>
+  <div class="step sv" data-n="6"><div class="sh"><span class="tag tvault">VAULT</span> <code>TokenStorageService.get_user_token(gateway_id, "alice@acme.com")</code> → <code>VaultTokenBackend</code></div><div class="sb">Backend resolves <code>gateway_id → gateways.url</code>, extracts <code>team_id="engineering"</code>, hashes to <code>server_id="647ad7b3"</code>.<br /><code>GET secret/data/contextforge/oauth/engineering/647ad7b3/alice%40acme.com</code><br />Token fresh → returns <code>"gho_Aa1Bb2…"</code>. No DB query. No decryption (Vault handles it).</div></div>
+  <div class="step" data-n="7"><div class="sh">ContextForge forwards to upstream</div><div class="sb"><code>POST https://mcp.github.acme.com</code> with <code>Authorization: Bearer gho_Aa1Bb2…</code>. GitHub sees Alice's identity.</div></div>
+</div>
+
+
+<h2><span class="sn">16</span>Migration Path</h2>
+
+<table>
+  <tr><th>Scenario</th><th>Action required</th></tr>
+  <tr><td>Keep database backend</td><td>Do nothing. <code>OAUTH_TOKEN_BACKEND=database</code> is the default. Zero code change.</td></tr>
+  <tr><td>New deployment with Vault</td><td>Set <code>OAUTH_TOKEN_BACKEND=vault</code> + Vault env vars. Follow §9 (dev) or §10 (prod).</td></tr>
+  <tr><td>Existing deployment switching to Vault</td><td>Existing DB tokens are not auto-migrated. Users re-authorise once — new tokens go to Vault. Old <code>oauth_tokens</code> rows can be manually purged after migration window.</td></tr>
+  <tr><td>Phase 3 migration script</td><td>CLI command: reads <code>oauth_tokens</code> rows → decrypts with Fernet → resolves <code>gateway_id → gateways.url</code> → writes to Vault → deletes DB rows. Planned deliverable.</td></tr>
+</table>
+<div class="box bwarn"><strong>No dual-backend mode in Phase 1.</strong> When Vault is active, the DB backend is not consulted as a fallback. Plan the migration window accordingly.</div>
+
+
+<h2><span class="sn">17</span>Delivery Phases</h2>
+
+<div class="box binfo">
+  <strong>Current Focus: Vault + Minimal Database Extraction.</strong> This phase delivers full Vault storage capability plus minimal <code>DatabaseTokenBackend</code> extraction (copy-paste, no behavior changes) to enable the façade pattern. Future phases (database team_id support, migration tooling) are deferred.
+</div>
+
+<table>
+  <tr><th>Phase</th><th>Deliverable</th><th>Scope</th></tr>
+  <tr><td><span class="tag tp1">Phase 1</span> (this feature)<br/><strong>CURRENT FOCUS</strong></td><td><code>VaultTokenBackend</code> + <code>/vault/*</code> endpoints + minimal <code>DatabaseTokenBackend</code> extraction</td><td><strong>Vault:</strong> Full flow (store, retrieve, refresh, revoke). New endpoints: <code>/vault/authorize/{server_id}</code> + <code>/vault/callback</code>. Static <code>VAULT_TOKEN</code> auth. Token caching (optional). Uses <code>team_id</code> in Vault paths.<br/><strong>Database:</strong> Copy existing code → <code>DatabaseTokenBackend</code> class. Accept <code>team_id</code> parameter but <strong>ignore it completely</strong>. ❌ NO database schema changes. ❌ NO SQL query changes. ❌ NO behavior changes. This is <strong>purely code reorganization</strong> to enable the façade pattern.<br/><strong>Façade:</strong> <code>TokenStorageService</code> becomes backend selector.</td></tr>
+  <tr><td><span class="tag tp2">Phase 2</span><br/>(future)</td><td>Database <code>team_id</code> support + Vault AppRole auth</td><td><strong>Database:</strong> ✅ Add <code>team_id</code> column to <code>oauth_tokens</code> table (Alembic migration). ✅ Update SQL queries to use <code>team_id</code> in WHERE clauses. ✅ Change unique constraint from <code>(gateway_id, app_user_email)</code> to <code>(team_id, gateway_id, app_user_email)</code>. Backfill existing rows with <code>team_id="default"</code>.<br/><strong>Vault:</strong> Replace static <code>VAULT_TOKEN</code> with AppRole or Kubernetes ServiceAccount auth.</td></tr>
+  <tr><td><span class="tag tp3">Phase 3</span><br/>(future, if needed)</td><td>DB → Vault migration script</td><td>CLI command to read existing <code>oauth_tokens</code>, decrypt, resolve <code>gateway_id → gateways.url</code>, write to Vault, delete DB rows. <strong>Only needed if customers migrate.</strong></td></tr>
+  <tr><td>Future</td><td>AWS Secrets Manager, Azure Key Vault, Redis backends</td><td>Additional storage backends. Requires abstract interface.</td></tr>
+</table>
+
+<div class="box bwarn">
+  <strong>No dual-backend mode.</strong> When <code>OAUTH_TOKEN_BACKEND=vault</code>, only Vault is used. When <code>OAUTH_TOKEN_BACKEND=database</code>, only database is used. No fallback between them. Choose one at deployment time.
+</div>
+
+
+<h2><span class="sn">18</span>Security Properties</h2>
+
+<table>
+  <tr><th>Property</th><th>DB Backend</th><th>Vault Backend</th></tr>
+  <tr><td>Client ever sees gateway internals</td><td>No</td><td>No — client uses server_id only; mcp_url resolved server-side</td></tr>
+  <tr><td>Tokens encrypted at rest</td><td>Fernet AES-128 (app-layer)</td><td>AES-256-GCM (Vault seal — Postgres stores only ciphertext)</td></tr>
+  <tr><td>Per-user isolation</td><td>UNIQUE (gateway_id, app_user_email) constraint</td><td>Unique Vault path per (team_id, server_id, email) + optional Vault ACL policy</td></tr>
+  <tr><td>Key ownership</td><td>ContextForge (AUTH_ENCRYPTION_SECRET)</td><td>Vault seal key — ContextForge holds no key material</td></tr>
+  <tr><td>Audit trail</td><td>CF audit log + DB timestamps</td><td>CF audit log + Vault audit log (every read AND write) + KV version history</td></tr>
+  <tr><td>Vault auth endpoint</td><td>N/A</td><td>Requires ContextForge Bearer token — same auth as all /servers/* calls</td></tr>
+  <tr><td>Vault state (oauth_states)</td><td>DB table (short-lived, 10 min)</td><td>Remains in DB — short-lived, no benefit to moving to Vault</td></tr>
+</table>
+
+
+<h2><span class="sn">19</span>Architect Decisions &amp; Rationale</h2>
+
+<table>
+  <tr><th>ID</th><th>Question</th><th>Decision</th><th>Rationale</th></tr>
+  <tr>
+    <td><strong>D1</strong></td>
+    <td>Should switching <code>database → vault</code> force users to re-authorise?</td>
+    <td><strong>Phase 1:</strong> Manual re-authorisation. <strong>Phase 3:</strong> Automated migration script.</td>
+    <td>Automated migration requires decrypt + <code>gateway_id</code> resolution logic. Building in Phase 1 delays release. Manual re-auth UX: user clicks link on next tool call → redirects to OAuth.</td>
+  </tr>
+  <tr>
+    <td><strong>D2</strong></td>
+    <td>Is static <code>VAULT_TOKEN</code> acceptable before Phase 2 AppRole?</td>
+    <td><strong>Dev/staging only.</strong> Production requires AppRole or Kubernetes SA auth (Phase 2 blocker for hardened environments).</td>
+    <td>Static tokens simplify early testing. Enterprise compliance mandates dynamic auth. Allow for non-prod; document limitation clearly.</td>
+  </tr>
+  <tr>
+    <td><strong>D3</strong></td>
+    <td>Should <code>cleanup_expired_tokens()</code> log <code>WARNING</code> or <code>DEBUG</code> for Vault no-op?</td>
+    <td><strong>WARNING level, logged once per process start.</strong></td>
+    <td>Operators expect cleanup jobs to act. WARNING educates: "Vault KV TTL is your responsibility." Log once to avoid spam on every scheduler tick.</td>
+  </tr>
+  <tr>
+    <td><strong>D4</strong></td>
+    <td>Multi-gateway servers: UI prompt or auto-select?</td>
+    <td><strong>Auto-redirect if 1 gateway; selection page if N &gt; 1.</strong></td>
+    <td>80% case is single gateway — zero-click UX. 20% case is multi-gateway — user selects. API clients use <code>?gateway_url=…</code> param directly.</td>
+  </tr>
+</table>
+
+
+<h2><span class="sn">20</span>Failure Modes &amp; Recovery</h2>
+
+<h3>Vault Backend Failure Scenarios</h3>
+<table>
+  <tr><th>Failure</th><th>Detection</th><th>User Impact</th><th>Recovery</th><th>Alert Severity</th></tr>
+  <tr><td><strong>Vault unreachable (network)</strong></td><td><code>httpx.ConnectTimeout</code> after 5s</td><td>503 on tool calls</td><td>Retry 3× with exponential backoff (1s, 2s, 4s)</td><td>Critical if &gt;5% requests fail for &gt;5 min</td></tr>
+  <tr><td><strong>VAULT_TOKEN invalid / expired</strong></td><td><code>403 Forbidden</code></td><td>All OAuth operations fail</td><td>Rotate token per §20.4 runbook</td><td>Critical immediately</td></tr>
+  <tr><td><strong>Token not found in Vault</strong></td><td><code>404 Not Found</code> on GET</td><td>"OAuth authorization required"</td><td>Redirect to <code>/vault/authorize/{server_id}</code></td><td>INFO only (expected after revocation)</td></tr>
+  <tr><td><strong>Vault write timeout at callback</strong></td><td>Timeout after 10s</td><td>Error page after IdP redirect</td><td>Idempotent retry safe (same path PUT)</td><td>Warning if p99 &gt; 1s</td></tr>
+  <tr><td><strong>Refresh succeeds at IdP, Vault write fails</strong></td><td>IdP 200, Vault 5xx</td><td>Tool call fails; next call retries refresh</td><td>Keep old token in 5-min memory cache as fallback</td><td>Error log + metric spike</td></tr>
+  <tr><td><strong>Vault sealed after restart</strong></td><td><code>503</code> with <code>"sealed":true</code></td><td>All operations fail</td><td>Auto-unseal (KMS) or manual unseal with 3/5 keys</td><td>Critical page</td></tr>
+  <tr><td><strong>Postgres backend down</strong></td><td>Vault returns 500</td><td>All Vault operations fail</td><td>Postgres HA failover (automatic with managed service)</td><td>Critical</td></tr>
+</table>
+
+<h3>Error Response Format</h3>
+<p>When Vault backend fails, return a user-friendly error with actionable guidance. <strong>Never expose</strong> internal Vault URLs, secret paths, or raw Vault responses to end users.</p>
+<pre>
+{
+  <span class="s">"error"</span>: {
+    <span class="s">"code"</span>:    <span class="s">"OAUTH_TOKEN_UNAVAILABLE"</span>,
+    <span class="s">"message"</span>: <span class="s">"Could not retrieve your OAuth credentials. Please re-authorize."</span>,
+    <span class="s">"details"</span>: <span class="s">"The credential storage system is temporarily unavailable."</span>,
+    <span class="s">"action"</span>:  { <span class="s">"text"</span>: <span class="s">"Click here to re-authorize"</span>,
+                  <span class="s">"url"</span>:  <span class="s">"/vault/authorize/647ad7b348044bce8fa27a2157b00a0d"</span> }
+  }
+}
+</pre>
+
+<h3>Retry Logic (VaultTokenBackend)</h3>
+<pre>
+<span class="k">async def</span> get_user_token(self, gateway_id: str, team_id: str, app_user_email: str, ...):
+    mcp_url = self._resolve_mcp_url(gateway_id)
+    server_id = self._hash_server_id(mcp_url)
+    path = <span class="s">f"{self.mount}/data/{self.prefix}/{team_id}/{server_id}/{quote(app_user_email)}"</span>
+    <span class="k">for</span> attempt <span class="k">in</span> range(3):
+        <span class="k">try</span>:
+            <span class="k">return await</span> self._vault_get(path)
+        <span class="k">except</span> httpx.ConnectTimeout:
+            <span class="k">if</span> attempt &lt; 2:
+                <span class="k">await</span> asyncio.sleep(2 ** attempt)   <span class="c"># 1s, 2s</span>
+                <span class="k">continue</span>
+            logger.error(<span class="s">"Vault unreachable after 3 attempts"</span>, extra={<span class="s">"gateway_id"</span>: gateway_id})
+            <span class="k">raise</span> GatewayConnectionError(<span class="s">"Credential storage unavailable"</span>)
+        <span class="k">except</span> httpx.HTTPStatusError <span class="k">as</span> e:
+            <span class="k">if</span> e.response.status_code == 403:
+                logger.critical(<span class="s">"Vault auth failure — VAULT_TOKEN invalid or expired"</span>)
+                <span class="k">raise</span>
+            <span class="k">elif</span> e.response.status_code == 404:
+                <span class="k">return None</span>   <span class="c"># No token stored — expected, caller redirects to /vault/authorize</span>
+            <span class="k">raise</span>
+</pre>
+
+
+<h2><span class="sn">21</span>Observability &amp; Operations</h2>
+
+<h3>§20.1 Metrics (Prometheus format)</h3>
+<pre>
+<span class="c"># Counter: total backend operations</span>
+contextforge_token_backend_operations_total{backend="vault", operation="store",   status="success"} 1234
+contextforge_token_backend_operations_total{backend="vault", operation="get",     status="success"} 98765
+contextforge_token_backend_operations_total{backend="vault", operation="refresh", status="failure"} 3
+
+<span class="c"># Histogram: operation latency (seconds)</span>
+contextforge_token_backend_latency_seconds{backend="vault", operation="get"} 0.047
+
+<span class="c"># Counter: Vault-specific errors</span>
+contextforge_vault_errors_total{error_type="timeout"}       5
+contextforge_vault_errors_total{error_type="auth_failure"}  0
+contextforge_vault_errors_total{error_type="not_found"}    12
+
+<span class="c"># Gauge: Vault health (1=healthy, 0=unhealthy)</span>
+contextforge_vault_healthy{vault_addr="https://vault.acme.com:8200"} 1
+
+<span class="c"># Counter: OAuth refresh operations</span>
+contextforge_oauth_refresh_total{gateway_id="a1b2c3d4e5f6", status="success"} 42
+</pre>
+
+<h3>§20.2 Structured Logging</h3>
+<pre>
+<span class="c">// SUCCESS — INFO level</span>
+{ "timestamp": "2026-07-07T14:35:22.123Z", "level": "info",
+  "component": "vault_backend", "operation": "store_tokens",
+  "gateway_id": "a1b2c3d4e5f6", "mcp_url": "https://mcp.github.acme.com",
+  "user_email": "alice@acme.com", "duration_ms": 47 }
+
+<span class="c">// ERROR — ERROR level</span>
+{ "timestamp": "2026-07-07T14:35:22.456Z", "level": "error",
+  "component": "vault_backend", "operation": "get_user_token",
+  "gateway_id": "8f2c91e5d4a3", "user_email": "bob@acme.com",
+  "error_type": "VaultConnectionTimeout", "retry_count": 3 }
+</pre>
+<div class="box bdanger"><strong>NEVER log:</strong> <code>access_token</code>, <code>refresh_token</code>, <code>VAULT_TOKEN</code> value, or any raw Vault response containing secret data.</div>
+
+<h3>§20.3 Alerting Rules</h3>
+<table>
+  <tr><th>Alert</th><th>Condition</th><th>Severity</th><th>Action</th></tr>
+  <tr><td><code>VaultBackendErrorRate</code></td><td><code>rate(contextforge_vault_errors_total[5m]) &gt; 0.05</code></td><td>Critical</td><td>Check Vault health, network, VAULT_TOKEN validity</td></tr>
+  <tr><td><code>VaultLatencyHigh</code></td><td><code>p99(contextforge_token_backend_latency_seconds) &gt; 0.5s</code></td><td>Warning</td><td>Check Vault or Postgres load, network latency</td></tr>
+  <tr><td><code>VaultTokenExpiring</code></td><td>Token TTL &lt; 48h</td><td>Warning</td><td>Rotate VAULT_TOKEN per §20.4 runbook</td></tr>
+  <tr><td><code>OAuthRefreshFailure</code></td><td><code>rate(contextforge_oauth_refresh_total{status="failure"}[5m]) &gt; 0.1</code></td><td>Warning</td><td>Check IdP (GitHub/Jira) availability</td></tr>
+  <tr><td><code>VaultUnhealthy</code></td><td><code>contextforge_vault_healthy == 0</code></td><td>Critical</td><td>Check Vault service status, unseal state, Postgres backend</td></tr>
+</table>
+
+<h3>§20.4 Operational Runbook — Rotate VAULT_TOKEN</h3>
+<p><strong>When:</strong> Token TTL &lt; 48 hours, or on suspected compromise. <strong>Expected duration:</strong> 15 min. <strong>Downtime:</strong> 0 (rolling restart).</p>
+<pre>
+export VAULT_ADDR=https://vault.acme.com:8200
+export VAULT_TOKEN=&lt;current-admin-token&gt;  <span class="c"># pragma: allowlist secret</span>
+
+<span class="c"># 1. Create new scoped token</span>
+NEW_TOKEN=$(vault token create \
+  -policy="contextforge" \
+  -display-name="contextforge-prod-$(date +%Y%m%d)" \
+  -ttl="720h" \
+  -format=json | jq -r '.auth.client_token')
+
+<span class="c"># 2a. Bare-metal: update .env on all nodes</span>
+sed -i.bak "s/VAULT_TOKEN=.*/VAULT_TOKEN=$NEW_TOKEN/" /etc/contextforge/.env
+
+<span class="c"># 2b. Kubernetes: update secret</span>
+kubectl create secret generic contextforge-vault \
+  --from-literal=token=$NEW_TOKEN \
+  --dry-run=client -o yaml | kubectl apply -f -
+
+<span class="c"># 3. Rolling restart (zero downtime)</span>
+kubectl rollout restart deployment/contextforge
+
+<span class="c"># 4. Verify, then revoke old token</span>
+curl -H "Authorization: Bearer &lt;cf-user-token&gt;" https://contextforge.acme.com/health
+vault token revoke &lt;old-token&gt;
+</pre>
+
+<h3>§20.4 Emergency Fallback: Vault → Database</h3>
+<p><strong>When:</strong> Vault unavailable for &gt;2 hours and cannot be restored quickly.</p>
+<pre>
+<span class="c"># Switch all instances to DB backend immediately</span>
+export OAUTH_TOKEN_BACKEND=database
+systemctl restart contextforge
+<span class="c"># Users re-authorise on next tool call → tokens written to DB
+# When Vault restored: run Phase 3 migration script to sync DB → Vault</span>
+python -m mcpgateway.scripts.migrate_tokens_to_vault
+</pre>
+
+
+<h2><span class="sn">22</span>Performance Considerations</h2>
+
+<h3>Expected Latency Impact</h3>
+<table>
+  <tr><th>Operation</th><th>DatabaseTokenBackend</th><th>VaultTokenBackend</th><th>Overhead</th></tr>
+  <tr><td><code>store_tokens()</code></td><td>~5ms (local Postgres)</td><td>~35ms (CF → Vault → Postgres)</td><td>+30ms (7×)</td></tr>
+  <tr><td><code>get_user_token()</code></td><td>~3ms (SELECT + Fernet decrypt)</td><td>~25ms (CF → Vault GET)</td><td>+22ms (8×)</td></tr>
+  <tr><td><code>get_user_token()</code> with refresh</td><td>~150ms (IdP call + DB update)</td><td>~180ms (IdP call + Vault PUT)</td><td>+30ms</td></tr>
+</table>
+<p><strong>Network hops:</strong> DatabaseTokenBackend = 1 hop (CF → Postgres). VaultTokenBackend = 2 hops (CF → Vault → Postgres). Token operations are infrequent relative to tool call throughput, so the added latency is acceptable for most deployments.</p>
+
+<h3>Throughput Considerations</h3>
+<table>
+  <tr><th>Backend</th><th>Bottleneck</th><th>Approximate max token ops/sec</th></tr>
+  <tr><td>DatabaseTokenBackend</td><td>CF connection pool (default 200 conns)</td><td>~66,000 (theoretical)</td></tr>
+  <tr><td>VaultTokenBackend (single node)</td><td>Vault API rate limit + Postgres pool</td><td>~1,000 per node</td></tr>
+  <tr><td>VaultTokenBackend (3-node cluster)</td><td>Vault cluster aggregate</td><td>~3,000</td></tr>
+</table>
+<p><strong>For high-traffic deployments (&gt;500 tool calls/sec):</strong> increase Vault <code>max_parallel</code> to 256 in <code>vault.hcl</code>, scale to 5+ Vault nodes, and consider a short-lived in-memory token cache in ContextForge (future optimisation).</p>
+
+<h3>When to Choose Each Backend</h3>
+<table>
+  <tr><th>Scenario</th><th>Recommended</th><th>Reason</th></tr>
+  <tr><td>Development / Testing</td><td>Either (Vault + PostgreSQL setup available)</td><td>Both backends provide persistence for local dev</td></tr>
+  <tr><td>Small deployment (&lt;100 users)</td><td>Database</td><td>Lower latency, simpler ops</td></tr>
+  <tr><td>Enterprise / Regulated industry</td><td>Vault</td><td>Compliance, centralised audit trail, secret lifecycle management</td></tr>
+  <tr><td>Multi-region deployment</td><td>Vault + Enterprise Replication</td><td>Vault handles geo-distribution natively</td></tr>
+  <tr><td>High throughput (&gt;1,000 req/sec)</td><td>Database or Vault + caching</td><td>Vault adds latency; in-memory cache mitigates for read-heavy workloads</td></tr>
+</table>
+
+<footer>Made with IBM Bob</footer>
+</body>
+</html>
