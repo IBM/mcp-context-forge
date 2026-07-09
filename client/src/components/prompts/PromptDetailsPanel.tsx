@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { Activity, Globe, MessageSquareCode, PanelRightClose, Plus } from "lucide-react";
+import { useIntl } from "react-intl";
 
 import type { PromptRead } from "@/generated/types";
 import { Badge } from "@/components/ui/badge";
@@ -45,6 +46,7 @@ export function PromptDetailsPanel({
   open,
   onClose,
 }: PromptDetailsPanelProps) {
+  const intl = useIntl();
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
   const [selectedId, setSelectedId] = useState<string | undefined>(
@@ -133,23 +135,23 @@ export function PromptDetailsPanel({
               </div>
             </div>
 
-            {/* TODO(#5563): i18n pass and full local-prompt drawer variant (Try it / Definition tabs). */}
+            {/* TODO(#5563): full local-prompt drawer variant (Try it / Definition tabs). */}
             {selected && (
               <p className="mt-7 max-w-4xl text-[15px] leading-6 text-muted-foreground">
-                {selected.gatewayId || selected.gatewaySlug ? (
-                  "Prompts added from connected MCP server"
-                ) : (
-                  <>
-                    Local prompt
-                    {" · "}
-                    {(selected.visibility ?? "unknown").toLowerCase()}
-                    {" · "}
-                    {(selected.arguments ?? []).filter(Boolean).length}{" "}
-                    {(selected.arguments ?? []).filter(Boolean).length === 1
-                      ? "argument"
-                      : "arguments"}
-                  </>
-                )}
+                {selected.gatewayId || selected.gatewaySlug
+                  ? intl.formatMessage({
+                      id:
+                        prompts.length === 1
+                          ? "prompts.details.federatedSubheader.one"
+                          : "prompts.details.federatedSubheader.other",
+                    })
+                  : intl.formatMessage(
+                      { id: "prompts.details.localSubheader" },
+                      {
+                        visibility: (selected.visibility ?? "unknown").toLowerCase(),
+                        argCount: (selected.arguments ?? []).filter(Boolean).length,
+                      },
+                    )}
               </p>
             )}
 
@@ -159,7 +161,7 @@ export function PromptDetailsPanel({
               <h3 className="text-sm font-semibold text-foreground">Prompt preview</h3>
             </div>
 
-            {prompts.length > 0 && (
+            {prompts.length > 1 && (
               <div className="mt-8 flex flex-wrap gap-2" role="tablist" aria-label="Select prompt">
                 {prompts.map((p) => {
                   const isSelected = p.id === selected?.id;
@@ -185,7 +187,7 @@ export function PromptDetailsPanel({
             )}
 
             {selected?.description && (
-              <p className="mt-4 max-w-4xl whitespace-normal break-words text-[13px] leading-4 text-[color:var(--placeholder-foreground)]">
+              <p className="mt-4 max-w-4xl whitespace-normal break-words text-[13px] leading-4 text-muted-foreground">
                 {selected.description}
               </p>
             )}
@@ -247,6 +249,9 @@ export function PromptDetailsPanel({
                             </Badge>
                           );
                         })}
+                        {/* TODO: wire tag add-flow. Placeholder pending the
+                            per-prompt actions menu design (tracked with the
+                            same #5563 follow-up as the drawer variants). */}
                         <button
                           type="button"
                           tabIndex={-1}

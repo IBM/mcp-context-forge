@@ -27,5 +27,8 @@
   "prompts.details.preview.statusOk": "{status} OK",
   "prompts.details.preview.statusError": "Falha na renderização",
   "prompts.details.preview.statusErrorWithCode": "{status} — falha na renderização",
-  "prompts.details.preview.error": "Falha ao renderizar o prompt"
+  "prompts.details.preview.error": "Falha ao renderizar o prompt",
+  "prompts.details.federatedSubheader.one": "Prompt adicionado de um servidor MCP conectado",
+  "prompts.details.federatedSubheader.other": "Prompts adicionados de um servidor MCP conectado",
+  "prompts.details.localSubheader": "Prompt local · {visibility} · {argCount, plural, one {# argumento} other {# argumentos}}"
 }

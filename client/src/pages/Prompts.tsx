@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { MessageSquareCode, MoreHorizontal, Plus } from "lucide-react";
 import { useIntl } from "react-intl";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -164,6 +164,12 @@ function AddPromptsCard() {
 export function Prompts() {
   const intl = useIntl();
   const [activeGroup, setActiveGroup] = useState<PromptGroup<NonNullable<PromptRead>> | null>(null);
+  // Keep the last-shown group populated through the drawer's slide-out
+  // transition; clearing `activeGroup` immediately would otherwise blank the
+  // drawer body before the exit animation finishes.
+  const [displayGroup, setDisplayGroup] = useState<PromptGroup<NonNullable<PromptRead>> | null>(
+    null,
+  );
 
   const {
     data: promptsData,
@@ -171,12 +177,15 @@ export function Prompts() {
     isLoading,
   } = useQuery<(PromptRead | null)[]>("/prompts?limit=1000&include_inactive=true");
 
-  const prompts = getPromptItems(promptsData ?? []);
   const restPromptsLabel = intl.formatMessage({ id: "prompts.restPromptsGroup" });
   const groups = useMemo(
-    () => buildPromptGroups(prompts, restPromptsLabel),
-    [prompts, restPromptsLabel],
+    () => buildPromptGroups(getPromptItems(promptsData ?? []), restPromptsLabel),
+    [promptsData, restPromptsLabel],
   );
+
+  useEffect(() => {
+    if (activeGroup) setDisplayGroup(activeGroup);
+  }, [activeGroup]);
 
   return (
     <div className="p-6">
@@ -219,8 +228,8 @@ export function Prompts() {
       )}
 
       <PromptDetailsPanel
-        prompts={activeGroup?.prompts ?? []}
-        title={activeGroup?.label ?? ""}
+        prompts={displayGroup?.prompts ?? []}
+        title={displayGroup?.label ?? ""}
         open={activeGroup !== null}
         onClose={() => setActiveGroup(null)}
       />

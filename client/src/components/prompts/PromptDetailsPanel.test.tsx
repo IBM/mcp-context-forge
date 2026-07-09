@@ -187,7 +187,7 @@ describe("PromptDetailsPanel", () => {
     expect(screen.queryByText(/connected MCP server/i)).not.toBeInTheDocument();
   });
 
-  it("renders the connected-MCP-server subheader for federated prompts", () => {
+  it("renders the singular federated subheader when the group has exactly one prompt", () => {
     const federated = mockPrompt({ gatewaySlug: "hugging-face" });
     render(
       <PromptDetailsPanel
@@ -198,8 +198,41 @@ describe("PromptDetailsPanel", () => {
       />,
     );
 
-    expect(screen.getByText("Prompts added from connected MCP server")).toBeInTheDocument();
+    expect(screen.getByText("Prompt added from connected MCP server")).toBeInTheDocument();
     expect(screen.queryByText(/local prompt/i)).not.toBeInTheDocument();
+  });
+
+  it("renders the plural federated subheader when the group has more than one prompt", () => {
+    const a = mockPrompt({ id: "a", name: "prompt_a", gatewaySlug: "hugging-face" });
+    const b = mockPrompt({ id: "b", name: "prompt_b", gatewaySlug: "hugging-face" });
+    render(
+      <PromptDetailsPanel prompts={[a, b]} title="hugging-face" open={true} onClose={vi.fn()} />,
+    );
+
+    expect(screen.getByText("Prompts added from connected MCP server")).toBeInTheDocument();
+  });
+
+  it("hides the prompt-picker pill row when the group has exactly one prompt", () => {
+    render(
+      <PromptDetailsPanel
+        prompts={[mockPrompt()]}
+        title="hugging-face"
+        open={true}
+        onClose={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByRole("tablist", { name: /select prompt/i })).not.toBeInTheDocument();
+  });
+
+  it("shows the prompt-picker pill row when the group has more than one prompt", () => {
+    const a = mockPrompt({ id: "a", name: "prompt_a" });
+    const b = mockPrompt({ id: "b", name: "prompt_b" });
+    render(<PromptDetailsPanel prompts={[a, b]} title="group" open={true} onClose={vi.fn()} />);
+
+    expect(screen.getByRole("tablist", { name: /select prompt/i })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "prompt_a" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "prompt_b" })).toBeInTheDocument();
   });
 
   it("singularizes the local subheader when the prompt has exactly one argument", () => {

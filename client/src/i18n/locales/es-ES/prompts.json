@@ -27,5 +27,8 @@
   "prompts.details.preview.statusOk": "{status} OK",
   "prompts.details.preview.statusError": "Error de renderizado",
   "prompts.details.preview.statusErrorWithCode": "{status} — error de renderizado",
-  "prompts.details.preview.error": "Error al renderizar el prompt"
+  "prompts.details.preview.error": "Error al renderizar el prompt",
+  "prompts.details.federatedSubheader.one": "Prompt añadido desde un servidor MCP conectado",
+  "prompts.details.federatedSubheader.other": "Prompts añadidos desde un servidor MCP conectado",
+  "prompts.details.localSubheader": "Prompt local · {visibility} · {argCount, plural, one {# argumento} other {# argumentos}}"
 }

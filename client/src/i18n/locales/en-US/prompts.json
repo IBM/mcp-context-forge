@@ -25,5 +25,8 @@
   "prompts.details.preview.statusOk": "{status} OK",
   "prompts.details.preview.statusError": "Render failed",
   "prompts.details.preview.statusErrorWithCode": "{status} — render failed",
-  "prompts.details.preview.error": "Failed to render prompt"
+  "prompts.details.preview.error": "Failed to render prompt",
+  "prompts.details.federatedSubheader.one": "Prompt added from connected MCP server",
+  "prompts.details.federatedSubheader.other": "Prompts added from connected MCP server",
+  "prompts.details.localSubheader": "Local prompt · {visibility} · {argCount, plural, one {# argument} other {# arguments}}"
 }

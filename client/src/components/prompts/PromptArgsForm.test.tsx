@@ -74,9 +74,7 @@ describe("PromptArgsForm", () => {
       />,
     );
     expect(screen.getByPlaceholderText("e.g. report, RFC, memo")).toBeInTheDocument();
-    expect(
-      screen.queryByPlaceholderText(/Kind of document/),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByPlaceholderText(/Kind of document/)).not.toBeInTheDocument();
   });
 
   it("lowercases a leading capital E.g. so the placeholder reads as lowercase", () => {

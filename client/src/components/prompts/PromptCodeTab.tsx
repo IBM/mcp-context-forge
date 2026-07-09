@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 import type { PromptRead } from "@/generated/types";
 import { PromptArgsForm } from "./PromptArgsForm";
@@ -18,7 +18,9 @@ export interface PromptCodeTabProps {
  *
  * Public seam for #5323: the drawer engineer drops this into the Code tab
  * content slot with `<PromptCodeTab prompt={selected} />` — it owns its own
- * args state and exposes no callbacks.
+ * args state and exposes no callbacks. `PromptDetailsPanel` remounts this
+ * subtree with `key={selected.id}` on prompt switch, which is what resets
+ * args state; this component does not need its own reset effect.
  */
 export function PromptCodeTab({ prompt }: PromptCodeTabProps) {
   const [args, setArgs] = useState<Record<string, string>>(() => seedArgs(prompt));
@@ -26,12 +28,6 @@ export function PromptCodeTab({ prompt }: PromptCodeTabProps) {
   // MCP-spec clients use on the wire. See `promptsApi.render` for the full
   // rationale and the tracked "server-scoped MCP transport" follow-up.
   const preview = usePromptPreview(prompt.name, args);
-
-  // Reset args when the user switches to a different prompt within the same
-  // drawer instance. Keyed on id so renames don't wipe in-progress input.
-  useEffect(() => {
-    setArgs(seedArgs(prompt));
-  }, [prompt.id]);
 
   return (
     <div className="space-y-6">
