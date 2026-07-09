@@ -34,8 +34,8 @@ describe("usePromptPreview", () => {
     });
   });
 
-  it("captures a successful render with a measured renderTimeMs", async () => {
-    vi.mocked(promptsApi.render).mockResolvedValue({ messages: [] });
+  it("captures a successful render with a measured renderTimeMs and the HTTP status", async () => {
+    vi.mocked(promptsApi.render).mockResolvedValue({ rendered: { messages: [] }, status: 200 });
     const { result } = setup("greet", { user: "Alice" });
 
     await act(async () => {
@@ -45,11 +45,12 @@ describe("usePromptPreview", () => {
     expect(promptsApi.render).toHaveBeenCalledWith("greet", { user: "Alice" });
     expect(result.current.result).not.toBeNull();
     expect(result.current.result?.renderTimeMs).toBeGreaterThanOrEqual(0);
+    expect(result.current.result?.status).toBe(200);
     expect(result.current.hasRun).toBe(true);
     expect(result.current.error).toBeNull();
   });
 
-  it("unwraps ApiError.detail into a readable failure message and toasts", async () => {
+  it("unwraps ApiError.detail into a readable failure message, captures the status, and toasts", async () => {
     const { toast } = await import("sonner");
     vi.mocked(promptsApi.render).mockRejectedValue(
       new ApiError(422, { detail: "missing required arg `user`" }, "Unprocessable"),
@@ -61,13 +62,26 @@ describe("usePromptPreview", () => {
     });
 
     expect(result.current.error?.message).toBe("missing required arg `user`");
+    expect(result.current.error?.status).toBe(422);
     expect(result.current.result).toBeNull();
     expect(result.current.hasRun).toBe(true);
     expect(toast.error).toHaveBeenCalledTimes(1);
   });
 
+  it("leaves error.status as null for non-Api errors (e.g. network failures)", async () => {
+    vi.mocked(promptsApi.render).mockRejectedValue(new Error("network offline"));
+    const { result } = setup();
+
+    await act(async () => {
+      await result.current.run();
+    });
+
+    expect(result.current.error?.message).toBe("network offline");
+    expect(result.current.error?.status).toBeNull();
+  });
+
   it("clears result and error when promptName changes", async () => {
-    vi.mocked(promptsApi.render).mockResolvedValue({ messages: [] });
+    vi.mocked(promptsApi.render).mockResolvedValue({ rendered: { messages: [] }, status: 200 });
     const { result, rerender } = renderHook(
       ({ name }: { name: string }) => usePromptPreview(name, {}),
       {
@@ -88,7 +102,7 @@ describe("usePromptPreview", () => {
   });
 
   it("flips isLoading while the request is in flight", async () => {
-    let resolve: ((value: { messages: never[] }) => void) | undefined;
+    let resolve: ((value: { rendered: { messages: never[] }; status: number }) => void) | undefined;
     vi.mocked(promptsApi.render).mockReturnValue(
       new Promise((r) => {
         resolve = r;
@@ -101,7 +115,7 @@ describe("usePromptPreview", () => {
       pending = result.current.run();
     });
     await waitFor(() => expect(result.current.isLoading).toBe(true));
-    resolve?.({ messages: [] });
+    resolve?.({ rendered: { messages: [] }, status: 200 });
     await act(async () => {
       await pending!;
     });

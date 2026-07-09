@@ -87,7 +87,15 @@ interface RequestOptions {
   signal?: AbortSignal;
 }
 
-async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
+export interface ResponseWithMeta<T> {
+  data: T;
+  status: number;
+}
+
+async function requestWithMeta<T>(
+  path: string,
+  options: RequestOptions = {},
+): Promise<ResponseWithMeta<T>> {
   const {
     method = "GET",
     body,
@@ -144,10 +152,16 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
 
   // 204 No Content
   if (response.status === 204) {
-    return undefined as T;
+    return { data: undefined as T, status: response.status };
   }
 
-  return response.json() as Promise<T>;
+  const data = (await response.json()) as T;
+  return { data, status: response.status };
+}
+
+async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
+  const { data } = await requestWithMeta<T>(path, options);
+  return data;
 }
 
 // ---------------------------------------------------------------------------
@@ -165,6 +179,14 @@ export const api = {
     opts?: Omit<RequestOptions, "method" | "body">,
   ): Promise<T> {
     return request<T>(path, { method: "POST", body, ...opts });
+  },
+
+  postWithMeta<T>(
+    path: string,
+    body?: unknown,
+    opts?: Omit<RequestOptions, "method" | "body">,
+  ): Promise<ResponseWithMeta<T>> {
+    return requestWithMeta<T>(path, { method: "POST", body, ...opts });
   },
 
   put<T>(path: string, body?: unknown, opts?: Omit<RequestOptions, "method" | "body">): Promise<T> {

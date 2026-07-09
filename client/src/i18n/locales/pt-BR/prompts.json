@@ -24,7 +24,8 @@
   "prompts.details.preview.rerun": "Executar novamente",
   "prompts.details.preview.running": "Renderizando...",
   "prompts.details.preview.renderMs": "Render {ms} ms",
-  "prompts.details.preview.statusOk": "200 OK",
+  "prompts.details.preview.statusOk": "{status} OK",
   "prompts.details.preview.statusError": "Falha na renderização",
+  "prompts.details.preview.statusErrorWithCode": "{status} — falha na renderização",
   "prompts.details.preview.error": "Falha ao renderizar o prompt"
 }

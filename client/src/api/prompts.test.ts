@@ -18,7 +18,7 @@ describe("promptsApi", () => {
   });
 
   describe("render", () => {
-    it("POSTs args to /prompts/:name and returns the rendered prompt", async () => {
+    it("POSTs args to /prompts/:name and returns the rendered prompt with the real HTTP status", async () => {
       const rendered = {
         messages: [{ role: "user", content: { type: "text", text: "Hello Alice" } }],
       };
@@ -38,7 +38,20 @@ describe("promptsApi", () => {
           body: JSON.stringify({ name: "Alice" }),
         }),
       );
-      expect(result).toEqual(rendered);
+      expect(result).toEqual({ rendered, status: 200 });
+    });
+
+    it("propagates non-200 success codes (e.g. 202) through", async () => {
+      mockFetch.mockResolvedValueOnce(
+        new Response(JSON.stringify({ messages: [] }), {
+          status: 202,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+
+      const result = await promptsApi.render("greet_user");
+
+      expect(result.status).toBe(202);
     });
 
     it("defaults args to an empty object when omitted", async () => {

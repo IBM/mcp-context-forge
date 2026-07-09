@@ -21,6 +21,15 @@ export function PromptPreviewResult({ preview }: PromptPreviewResultProps) {
 
   const renderTimeMs = result?.renderTimeMs ?? error?.renderTimeMs ?? 0;
   const succeeded = result !== null;
+  const statusCode = result?.status ?? error?.status ?? null;
+  const statusLabel = succeeded
+    ? intl.formatMessage({ id: "prompts.details.preview.statusOk" }, { status: statusCode ?? 200 })
+    : statusCode !== null
+      ? intl.formatMessage(
+          { id: "prompts.details.preview.statusErrorWithCode" },
+          { status: statusCode },
+        )
+      : intl.formatMessage({ id: "prompts.details.preview.statusError" });
 
   return (
     <div className="space-y-3">
@@ -35,11 +44,7 @@ export function PromptPreviewResult({ preview }: PromptPreviewResultProps) {
           <AlertCircle className="size-4 text-destructive" />
         )}
         <span className={cn("font-medium", succeeded ? "text-foreground" : "text-destructive")}>
-          {intl.formatMessage({
-            id: succeeded
-              ? "prompts.details.preview.statusOk"
-              : "prompts.details.preview.statusError",
-          })}
+          {statusLabel}
         </span>
         <span className="text-muted-foreground" aria-hidden="true">
           ·

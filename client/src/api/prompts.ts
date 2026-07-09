@@ -24,8 +24,15 @@ export interface RenderedPrompt {
   description?: string | null;
 }
 
-// Mirrors the backend `SecurityValidator.NAME_PATTERN` — the same characters
-// the gateway accepts for a prompt name (space, dot, dash allowed).
+export interface RenderResult {
+  rendered: RenderedPrompt;
+  status: number;
+}
+
+// Mirrors the backend `SecurityValidator.NAME_PATTERN` in
+// `mcpgateway/utils/security_validator.py` — the same characters the gateway
+// accepts for a prompt name (space, dot, dash allowed). If the backend widens
+// the pattern, update here in lockstep.
 const PROMPT_NAME_PATTERN = /^[a-zA-Z0-9_.\- ]+$/;
 
 function validatePromptName(value: string): string {
@@ -64,8 +71,13 @@ export const promptsApi = {
    *     clients address prompts. Depends on the Prompts page carrying a
    *     server context, which is not the case today.
    */
-  render: (name: string, args: Record<string, string> = {}): Promise<RenderedPrompt> => {
+  render: (name: string, args: Record<string, string> = {}): Promise<RenderResult> => {
+    // Validate outside the async chain so bad names reject the *caller* before
+    // any network I/O and preserve the synchronous-throw contract exercised by
+    // `prompts.test.ts`.
     const validName = validatePromptName(name);
-    return api.post<RenderedPrompt>(`/prompts/${encodeURIComponent(validName)}`, args);
+    return api
+      .postWithMeta<RenderedPrompt>(`/prompts/${encodeURIComponent(validName)}`, args)
+      .then(({ data, status }) => ({ rendered: data, status }));
   },
 };

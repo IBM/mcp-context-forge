@@ -65,7 +65,7 @@ describe("PromptCodeTab", () => {
   });
 
   it("passes the typed args to the render API on Preview", async () => {
-    vi.mocked(promptsApi.render).mockResolvedValue({ messages: [] });
+    vi.mocked(promptsApi.render).mockResolvedValue({ rendered: { messages: [] }, status: 200 });
     const user = userEvent.setup();
     render(<PromptCodeTab prompt={mockPrompt()} />);
 

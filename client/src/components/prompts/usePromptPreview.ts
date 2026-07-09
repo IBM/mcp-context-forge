@@ -8,11 +8,13 @@ import { promptsApi, type RenderedPrompt } from "@/api/prompts";
 export interface PreviewSuccess {
   rendered: RenderedPrompt;
   renderTimeMs: number;
+  status: number;
 }
 
 export interface PreviewFailure {
   message: string;
   renderTimeMs: number;
+  status: number | null;
 }
 
 export interface PromptPreviewState {
@@ -53,11 +55,12 @@ export function usePromptPreview(
     setError(null);
     const startedAt = performance.now();
     try {
-      const rendered = await promptsApi.render(promptName, args);
+      const { rendered, status } = await promptsApi.render(promptName, args);
       const renderTimeMs = Math.round(performance.now() - startedAt);
-      setResult({ rendered, renderTimeMs });
+      setResult({ rendered, renderTimeMs, status });
     } catch (err) {
       const renderTimeMs = Math.round(performance.now() - startedAt);
+      const status = err instanceof ApiError ? err.status : null;
       const message =
         err instanceof ApiError
           ? typeof err.body === "object" && err.body !== null && "detail" in err.body
@@ -66,7 +69,7 @@ export function usePromptPreview(
           : err instanceof Error
             ? err.message
             : "Unknown error";
-      setError({ message, renderTimeMs });
+      setError({ message, renderTimeMs, status });
       setResult(null);
       toast.error(intl.formatMessage({ id: "prompts.details.preview.error" }));
     } finally {
