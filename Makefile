@@ -3463,7 +3463,7 @@ linting-python-env:
 linting-workflow-actionlint:         ## 🧭  GitHub Actions workflow linting
 	@echo "🧭 actionlint ($(LINT_ZIZMOR_TARGET); shellcheck integration disabled)..."
 	@command -v go >/dev/null 2>&1 || { echo "❌ go not found"; exit 1; }
-	@go run github.com/rhysd/actionlint/cmd/actionlint@latest -shellcheck="
+	@go run github.com/rhysd/actionlint/cmd/actionlint@latest -shellcheck=""
 
 .PHONY: linting-workflow-zizmor
 linting-workflow-zizmor:             ## 🔐  GitHub Actions security linting
