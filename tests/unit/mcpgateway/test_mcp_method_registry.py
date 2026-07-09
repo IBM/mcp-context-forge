@@ -10,8 +10,8 @@ import orjson
 import pytest
 
 # First-Party
-from mcpgateway.services.mcp_method_registry import mcp_method_registry, MCPMethodRegistry
 from mcpgateway.services.mcp_apps import MCP_UI_EXTENSION
+from mcpgateway.services.mcp_method_registry import mcp_method_registry, MCPMethodRegistry
 
 
 class FakeRequest:
@@ -49,16 +49,6 @@ class TestMCPMethodRegistry:
         assert not registry.is_core_method("extensions/custom")
         assert not registry.is_known_method("io.example/custom")
 
-    def test_mcp_apps_methods_registered(self, monkeypatch):
-        """MCP Apps methods should be registered for the UI capability."""
-        monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", True)
-        registry = MCPMethodRegistry()
-
-        methods = registry.get_mcp_apps_methods(MCP_UI_EXTENSION)
-        assert methods is not None
-        assert "tools/call" in methods
-        assert registry.is_mcp_apps_method("tools/call", MCP_UI_EXTENSION)
-
     def test_non_core_mcp_apps_method_recognition_when_enabled(self, monkeypatch):
         """Enabled MCP Apps can make non-core AppBridge methods known."""
         monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", True)
@@ -82,7 +72,6 @@ class TestMCPMethodRegistry:
 
         # Core methods still recognized
         assert registry.is_known_method("tools/call")
-        assert not registry.is_mcp_apps_method("tools/call", MCP_UI_EXTENSION)
 
         # Currently MCP Apps only uses tools/call, which is also core.
 
@@ -94,15 +83,6 @@ class TestMCPMethodRegistry:
         assert registry.is_core_method("tools/call")
 
         assert registry.is_known_method("tools/call")
-
-    def test_unknown_capability_id(self):
-        """Unknown capability IDs should return None for methods."""
-        registry = MCPMethodRegistry()
-
-        methods = registry.get_mcp_apps_methods("io.example/unknown")
-        assert methods is None
-
-        assert not registry.is_mcp_apps_method("tools/call", "io.example/unknown")
 
     def test_global_registry_instance(self):
         """Global mcp_method_registry instance should be available."""

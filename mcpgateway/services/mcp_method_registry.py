@@ -6,7 +6,7 @@ while allowing feature-gated MCP Apps AppBridge methods to pass validation.
 """
 
 # Standard
-from typing import Dict, FrozenSet, Optional
+from typing import Dict, FrozenSet
 
 # First-Party
 from mcpgateway.services.mcp_apps import mcp_apps_enabled, MCP_UI_EXTENSION
@@ -55,14 +55,6 @@ class MCPMethodRegistry:
         """Return whether a method is a core MCP method."""
         return method in _CORE_MCP_METHODS
 
-    def is_mcp_apps_method(self, method: str, capability_id: str) -> bool:
-        """Return whether a method is supported by the MCP Apps capability."""
-        if not mcp_apps_enabled():
-            return False
-        if capability_id not in self._mcp_apps_methods:
-            return False
-        return method in self._mcp_apps_methods[capability_id]
-
     def is_known_method(self, method: str) -> bool:
         """Return whether a method is known for core MCP or enabled MCP Apps."""
         if self.is_core_method(method):
@@ -70,10 +62,6 @@ class MCPMethodRegistry:
         if mcp_apps_enabled() and method in self._mcp_apps_methods.get(MCP_UI_EXTENSION, frozenset()):
             return True
         return False
-
-    def get_mcp_apps_methods(self, capability_id: str) -> Optional[FrozenSet[str]]:
-        """Return the set of methods supported by an MCP Apps capability."""
-        return self._mcp_apps_methods.get(capability_id)
 
 
 # Global MCP method registry instance.
