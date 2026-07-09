@@ -4,12 +4,11 @@ Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
-Runtime-mutable mode state for the public ``/mcp`` and A2A ingress paths.
+Runtime-mutable mode state for the public ``/mcp`` ingress path.
 
-Boot-time env vars (``RUST_MCP_MODE``, ``RUST_A2A_MODE``) still select the
-initial transport at process start. This module layers an optional in-memory
-override on top so an authorized admin can flip ``shadow ↔ edge`` for either
-runtime without restarting the process.
+Boot-time env var (``RUST_MCP_MODE``) still selects the initial transport at
+process start. This module layers an optional in-memory override on top so an
+authorized admin can flip ``shadow ↔ edge`` without restarting the process.
 
 Each runtime kind (``mcp``, ``a2a``) has its own override slot, monotonic
 version counter, and last-change record. Overrides are not persisted to the
@@ -116,10 +115,9 @@ class BootReconcileStatus(StrEnum):
       Full-boot mounts a plain Rust proxy with no dispatcher, so the
       override would strand. Operator action: boot with ``RUST_MCP_MODE=edge``.
     - ``INCOMPATIBLE_SAFETY_FLAG``: hint requested ``edge`` but the
-      deployment did not opt into the session-auth-reuse (MCP) or
-      delegate-enabled (A2A) safety flag at boot. Operator action:
-      enable the corresponding flag (typically by booting with
-      ``RUST_MCP_MODE=edge`` / ``RUST_A2A_MODE=edge``).
+      deployment did not opt into the session-auth-reuse (MCP) safety
+      flag at boot. Operator action: enable the corresponding flag
+      (typically by booting with ``RUST_MCP_MODE=edge``).
     - ``PUBSUB_UNAVAILABLE``: pub/sub subscribe failed during start; this pod
       will not receive remote overrides until restart.
     - ``COORDINATOR_OFFLINE``: coordinator was never started (e.g. test mode

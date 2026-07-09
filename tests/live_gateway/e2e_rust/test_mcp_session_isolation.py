@@ -285,7 +285,7 @@ def _select_time_gateway(gateways: list[dict[str, Any]], tools: list[dict[str, A
 
     for candidate in gateways:
         url = str(candidate.get("url", ""))
-        if candidate.get("transport") == "STREAMABLEHTTP" and tool_counts_by_gateway.get(candidate.get("id"), 0) > 0 and ("fast_time_server:8080/http" in url or "fast_test_server:8880/mcp" in url):
+        if candidate.get("transport") == "STREAMABLEHTTP" and tool_counts_by_gateway.get(candidate.get("id"), 0) > 0 and ("fast_time_server:9080/mcp" in url or "fast_test_server:8880/mcp" in url):
             return candidate
 
     raise AssertionError("No compose-backed time-capable STREAMABLEHTTP gateway with synced tools found")

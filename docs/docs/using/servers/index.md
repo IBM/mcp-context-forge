@@ -6,33 +6,6 @@ The **ContextForge Gateway** includes a collection of **high-performance sample 
 
 ---
 
-## 🌟 Available Servers
-
-### 🦀 Fast Time Server (Rust)
-**`mcp-servers/rust/fast-time-server`** - Ultra-fast timezone and time conversion tools
-
-- **Language:** Rust
-- **Performance:** Sub-millisecond response times
-- **Transport:** stdio, HTTP, SSE, dual-mode
-- **Tools:** `get_system_time`, timezone conversions with DST support
-- **Container:** `ghcr.io/ibm/fast-time-server:latest`
-
-**[📖 Source README →](https://github.com/IBM/mcp-context-forge/tree/main/mcp-servers/rust/fast-time-server)**
-
-#### Quick Start
-```bash
-# Docker (recommended)
-docker run --rm -it -p 8888:8080 \
-  ghcr.io/ibm/fast-time-server:latest \
-  -transport=dual -log-level=debug
-
-# From source
-cd mcp-servers/rust/fast-time-server
-make build && make run
-```
-
----
-
 ## 🚀 Planned Samples
 
 ### 🐍 Python Samples
@@ -216,10 +189,4 @@ We're particularly interested in:
 
 ---
 
-## 🔗 Quick Links
-
-- [🦀 **Fast Time Server (Rust)** →](https://github.com/IBM/mcp-context-forge/tree/main/mcp-servers/rust/fast-time-server)
-
----
-
-*Want to add a new sample server? [Open an issue](https://github.com/ibm/mcp-context-forge/issues) or submit a pull request!*
+*Want to add a new sample server? [Open an issue](https://github.com/ibm/contextforge-examples/issues) or [submit a pull request](https://github.com/ibm/contextforge-examples/pulls)!*

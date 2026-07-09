@@ -42,7 +42,7 @@ services:
 
   pgbouncer:
     # Substrate: edoburu/pgbouncer:latest — same image as the repository's
-    # root docker-compose.yml (and the docker-compose-debug.yml /
+    # root docker-compose.yml (and the
     # -performance.yml / -verbose-logging.yml variants alongside it, plus
     # the helm chart's pgbouncer.image.tag default in
     # charts/mcp-stack/values.yaml).

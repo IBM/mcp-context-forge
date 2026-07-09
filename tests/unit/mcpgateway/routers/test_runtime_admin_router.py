@@ -119,7 +119,6 @@ def edge_boot(monkeypatch: pytest.MonkeyPatch):
     _set_mcp_settings(monkeypatch, runtime=True, session_auth=True, all_cores=False)
     _set_a2a_settings(monkeypatch, runtime=True, delegate=True)
     monkeypatch.setattr(router_module.version_module, "current_mcp_transport_mount", lambda: "rust")
-    monkeypatch.setattr(router_module.version_module, "should_delegate_a2a_to_rust", lambda: True)
 
 
 @pytest.fixture
@@ -128,7 +127,6 @@ def off_boot(monkeypatch: pytest.MonkeyPatch):
     _set_mcp_settings(monkeypatch, runtime=False)
     _set_a2a_settings(monkeypatch, runtime=False)
     monkeypatch.setattr(router_module.version_module, "current_mcp_transport_mount", lambda: "python")
-    monkeypatch.setattr(router_module.version_module, "should_delegate_a2a_to_rust", lambda: False)
 
 
 @pytest.fixture
@@ -137,7 +135,6 @@ def full_boot(monkeypatch: pytest.MonkeyPatch):
     _set_mcp_settings(monkeypatch, runtime=True, session_auth=True, all_cores=True)
     _set_a2a_settings(monkeypatch, runtime=True, delegate=True)
     monkeypatch.setattr(router_module.version_module, "current_mcp_transport_mount", lambda: "rust")
-    monkeypatch.setattr(router_module.version_module, "should_delegate_a2a_to_rust", lambda: True)
 
 
 @pytest.fixture
@@ -151,7 +148,6 @@ def shadow_boot(monkeypatch: pytest.MonkeyPatch):
     _set_mcp_settings(monkeypatch, runtime=True, session_auth=False, all_cores=False)
     _set_a2a_settings(monkeypatch, runtime=True, delegate=False)
     monkeypatch.setattr(router_module.version_module, "current_mcp_transport_mount", lambda: "python")
-    monkeypatch.setattr(router_module.version_module, "should_delegate_a2a_to_rust", lambda: False)
 
 
 # ---------------------------------------------------------------------------
@@ -169,14 +165,6 @@ async def test_get_mcp_mode_returns_state(allow_admin, edge_boot, admin_user):
     assert payload["mounted"] == "rust"
     assert payload["supported_override_modes"] == ["edge", "shadow"]
 
-
-@pytest.mark.asyncio
-async def test_get_a2a_mode_returns_state(allow_admin, edge_boot, admin_user):
-    payload = await router_module.get_a2a_mode(user=admin_user)
-    assert payload["runtime"] == "a2a"
-    assert payload["boot_mode"] == "edge"
-    assert payload["invoke_mode"] == "rust"
-    assert payload["override_active"] is False
 
 
 # ---------------------------------------------------------------------------
@@ -200,14 +188,6 @@ async def test_patch_mcp_mode_flips_to_shadow(allow_admin, edge_boot, admin_user
     assert call["resource_id"] == "mcp_mode"
     assert call["new_values"]["mode"] == "shadow"
 
-
-@pytest.mark.asyncio
-async def test_patch_a2a_mode_flips_to_shadow(allow_admin, edge_boot, admin_user, db_session, request_no_proxy, monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(router_module, "get_security_logger", MagicMock)
-    body = router_module.RuntimeModeUpdate(mode="shadow")
-    payload = await router_module.patch_a2a_mode(body, request=request_no_proxy, user=admin_user, db=db_session)
-    assert payload["effective_mode"] == "shadow"
-    assert payload["override_active"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -234,17 +214,6 @@ async def test_patch_mcp_mode_409_when_boot_mode_off(allow_admin, off_boot, admi
     assert "'shadow' or 'edge'" in exc.value.detail
     assert "'full'" not in exc.value.detail
 
-
-@pytest.mark.asyncio
-async def test_patch_a2a_mode_409_when_boot_mode_off(allow_admin, off_boot, admin_user, db_session, request_no_proxy, monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(router_module, "get_security_logger", MagicMock)
-    body = router_module.RuntimeModeUpdate(mode="edge")
-    with pytest.raises(HTTPException) as exc:
-        await router_module.patch_a2a_mode(body, request=request_no_proxy, user=admin_user, db=db_session)
-    assert exc.value.status_code == 409
-    # A2A has no 'full' mode at all — the recommendation must not mention it.
-    assert "'shadow' or 'edge'" in exc.value.detail
-    assert "'full'" not in exc.value.detail
 
 
 @pytest.mark.asyncio
@@ -281,16 +250,6 @@ async def test_patch_mcp_mode_409_when_boot_mode_shadow(allow_admin, shadow_boot
     assert "shadow" in exc.value.detail
     assert "experimental_rust_mcp_session_auth_reuse_enabled" in exc.value.detail
 
-
-@pytest.mark.asyncio
-async def test_patch_a2a_mode_409_when_boot_mode_shadow(allow_admin, shadow_boot, admin_user, db_session, request_no_proxy, monkeypatch: pytest.MonkeyPatch):
-    """Safety invariant (A2A): boot=shadow didn't opt into delegate-enabled."""
-    monkeypatch.setattr(router_module, "get_security_logger", MagicMock)
-    body = router_module.RuntimeModeUpdate(mode="edge")
-    with pytest.raises(HTTPException) as exc:
-        await router_module.patch_a2a_mode(body, request=request_no_proxy, user=admin_user, db=db_session)
-    assert exc.value.status_code == 409
-    assert "shadow" in exc.value.detail
 
 
 @pytest.mark.asyncio

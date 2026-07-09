@@ -137,15 +137,6 @@ def _rust_runtime_managed() -> bool:
     return _env_flag("EXPERIMENTAL_RUST_MCP_RUNTIME_MANAGED", default=True)
 
 
-def _rust_a2a_runtime_managed() -> bool:
-    """Return whether the gateway expects to manage the Rust A2A sidecar locally.
-
-    Returns:
-        ``True`` when the ``EXPERIMENTAL_RUST_A2A_RUNTIME_MANAGED`` env var is unset or truthy.
-    """
-    return _env_flag("EXPERIMENTAL_RUST_A2A_RUNTIME_MANAGED", default=True)
-
-
 def _runtime_override_mode(runtime: str) -> Optional[str]:
     """Return the active override for ``runtime`` (``shadow`` or ``edge``) when one is set.
 
@@ -387,54 +378,6 @@ def _mcp_runtime_status_payload() -> Dict[str, Any]:
     return payload
 
 
-def _current_a2a_runtime_mode() -> str:
-    """Return the current A2A runtime mode label used for diagnostics.
-
-    Returns:
-        One of ``"python"``, ``"python-rust-built-disabled"``, ``"rust-managed"``, or ``"rust-external"``.
-    """
-    if settings.experimental_rust_a2a_runtime_enabled:
-        return "rust-managed" if _rust_a2a_runtime_managed() else "rust-external"
-    if _rust_build_included():
-        return "python-rust-built-disabled"
-    return "python"
-
-
-def _boot_a2a_runtime_mode() -> str:
-    """Return the boot-time A2A runtime mode label derived from settings.
-
-    Returns:
-        One of ``"off"``, ``"shadow"``, or ``"edge"`` (``edge`` and ``full`` collapse to the same flag set).
-    """
-    if not settings.experimental_rust_a2a_runtime_enabled:
-        return "off"
-    if not settings.experimental_rust_a2a_runtime_delegate_enabled:
-        return "shadow"
-    return "edge"
-
-
-def _should_delegate_a2a_to_rust() -> bool:
-    """Return whether registered A2A invocations should be delegated to the Rust runtime.
-
-    Returns:
-        ``True`` when the Rust A2A runtime should service invocations.
-
-    **Safety invariant (must remain invariant under runtime override):**
-    A2A delegation requires BOTH ``experimental_rust_a2a_runtime_enabled``
-    AND ``experimental_rust_a2a_runtime_delegate_enabled``. Mirroring the
-    MCP contract: a runtime override can toggle between the two modes the
-    invariant permits (``shadow`` forces Python; ``edge`` matches the
-    default), but cannot loosen the invariant — an override to ``edge`` on
-    a deployment that did not opt into delegate mode at boot stays on
-    Python. The router rejects such PATCHes at the API boundary.
-    """
-    a2a_safe_for_delegate = bool(settings.experimental_rust_a2a_runtime_enabled and settings.experimental_rust_a2a_runtime_delegate_enabled)
-    override = _runtime_override_mode("a2a")
-    if override == "shadow":
-        return False
-    return a2a_safe_for_delegate
-
-
 def _deployment_allows_override_mode(runtime, mode):
     """Return a ``MoveCompatibility`` for whether ``mode`` can take effect on this deployment.
 
@@ -497,15 +440,9 @@ def _deployment_allows_override_mode(runtime, mode):
             return MoveCompatibility.EDGE_NEEDS_SAFETY_FLAG
         return MoveCompatibility.OK
 
+    # A2A runtime removed - always return NO_DISPATCHER for A2A
     if kind == RuntimeKind.A2A:
-        if not settings.experimental_rust_a2a_runtime_enabled:
-            return MoveCompatibility.NO_DISPATCHER
-        if target == OverrideMode.SHADOW:
-            return MoveCompatibility.OK
-        # target == OverrideMode.EDGE
-        if not settings.experimental_rust_a2a_runtime_delegate_enabled:
-            return MoveCompatibility.EDGE_NEEDS_SAFETY_FLAG
-        return MoveCompatibility.OK
+        return MoveCompatibility.NO_DISPATCHER
 
     return MoveCompatibility.NO_DISPATCHER  # pragma: no cover — _coerce_runtime rejects unknown kinds upstream
 
@@ -521,62 +458,6 @@ def deployment_allows_override_mode(runtime, mode):
         A ``MoveCompatibility`` member.
     """
     return _deployment_allows_override_mode(runtime, mode)
-
-
-def _current_a2a_invoke_mode() -> str:
-    """Return which runtime currently owns registered A2A agent invocation.
-
-    Returns:
-        ``"rust"`` when delegation is enabled (or overridden to ``edge``), otherwise ``"python"``.
-    """
-    return "rust" if _should_delegate_a2a_to_rust() else "python"
-
-
-def _a2a_runtime_status_payload() -> Dict[str, Any]:
-    """Return A2A runtime diagnostics for version and UI surfaces.
-
-    Returns:
-        Dict with mode, invoke_mode, flags, override state, and optional sidecar transport details.
-    """
-    # First-Party
-    from mcpgateway.runtime_state import get_runtime_state  # pylint: disable=import-outside-toplevel
-
-    state = get_runtime_state()
-    a2a_override = state.override_mode("a2a")
-    payload: Dict[str, Any] = {
-        "mode": _current_a2a_runtime_mode(),
-        "invoke_mode": _current_a2a_invoke_mode(),
-        "boot_mode": _boot_a2a_runtime_mode(),
-        "effective_mode": a2a_override or _boot_a2a_runtime_mode(),
-        "override_active": a2a_override is not None,
-        "override_version": state.version("a2a"),
-        "cluster_propagation": str(state.cluster_propagation),
-        "boot_reconcile_status": str(state.boot_reconcile_status("a2a")),
-        "pod_id": state.pod_id,
-        "rust_runtime_enabled": settings.experimental_rust_a2a_runtime_enabled,
-        "rust_delegate_enabled": _should_delegate_a2a_to_rust(),
-    }
-
-    if settings.experimental_rust_a2a_runtime_enabled:
-        payload["rust_runtime_managed"] = _rust_a2a_runtime_managed()
-        if settings.experimental_rust_a2a_runtime_uds:
-            payload["sidecar_transport"] = "uds"
-            payload["sidecar_target"] = settings.experimental_rust_a2a_runtime_uds
-        else:
-            payload["sidecar_transport"] = "http"
-            payload["sidecar_target"] = settings.experimental_rust_a2a_runtime_url
-
-    last_change = state.last_change("a2a")
-    if last_change is not None:
-        payload["last_change"] = {
-            "version": last_change.version,
-            "mode": last_change.mode,
-            "initiator_user": last_change.initiator_user,
-            "initiator_pod": last_change.initiator_pod,
-            "timestamp": last_change.timestamp,
-        }
-
-    return payload
 
 
 def rust_build_included() -> bool:
@@ -622,33 +503,6 @@ def boot_mcp_transport_mount() -> str:
         ``"rust"`` when boot settings select Rust ingress, otherwise ``"python"``.
     """
     return _boot_mcp_transport_mount()
-
-
-def boot_a2a_runtime_mode() -> str:
-    """Return the boot-time A2A runtime mode label derived from settings.
-
-    Returns:
-        One of ``"off"``, ``"shadow"``, or ``"edge"``.
-    """
-    return _boot_a2a_runtime_mode()
-
-
-def should_delegate_a2a_to_rust() -> bool:
-    """Return whether registered A2A invocations should be delegated to the Rust runtime.
-
-    Returns:
-        ``True`` when the Rust A2A runtime should service invocations.
-    """
-    return _should_delegate_a2a_to_rust()
-
-
-def a2a_runtime_status_payload() -> Dict[str, Any]:
-    """Return A2A runtime diagnostics for version, health, and UI surfaces.
-
-    Returns:
-        Diagnostic payload describing the active A2A runtime configuration.
-    """
-    return _a2a_runtime_status_payload()
 
 
 def should_mount_public_rust_transport() -> bool:
@@ -1203,7 +1057,6 @@ def _build_payload(
             "metrics_rollup_enabled": getattr(settings, "metrics_rollup_enabled", True),
         },
         "mcp_runtime": _mcp_runtime_status_payload(),
-        "a2a_runtime": _a2a_runtime_status_payload(),
         "env": _public_env(),
         "system": _system_metrics(),
     }
@@ -1291,8 +1144,6 @@ def _render_html(payload: Dict[str, Any]) -> str:
         True
         >>> '<h2>MCP Runtime</h2>' in html
         True
-        >>> '<h2>A2A Runtime</h2>' in html
-        True
         >>> '<style>' in html
         True
         >>> 'border-collapse:collapse' in html
@@ -1315,7 +1166,6 @@ def _render_html(payload: Dict[str, Any]) -> str:
         ("Redis", "redis"),
         ("Settings", "settings"),
         ("MCP Runtime", "mcp_runtime"),
-        ("A2A Runtime", "a2a_runtime"),
         ("System", "system"),
     ):
         sections += f"<h2>{title}</h2>{_html_table(payload[key])}"

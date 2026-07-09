@@ -43,7 +43,6 @@ from mcpgateway.services.encryption_service import protect_oauth_config_for_stor
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batches, pause_rollup_during_purge
 from mcpgateway.services.observability_service import ObservabilityService
-from mcpgateway.services.rust_a2a_runtime import get_rust_a2a_runtime_client, RustA2ARuntimeError
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.utils.admin_check import is_user_admin
@@ -58,21 +57,6 @@ from mcpgateway.utils.trace_redaction import is_input_capture_enabled, is_output
 # Cache import (lazy to avoid circular dependencies)
 _REGISTRY_CACHE = None
 _TOOL_LOOKUP_CACHE = None
-
-
-def _should_delegate_a2a_to_rust() -> bool:
-    """Return whether A2A invocations should be delegated to the Rust runtime.
-
-    Lazy import of ``mcpgateway.version`` avoids the circular import between
-    ``mcpgateway.services`` package init and ``mcpgateway.version``.
-
-    Returns:
-        ``True`` when the Rust A2A runtime should service invocations.
-    """
-    # First-Party
-    from mcpgateway.version import should_delegate_a2a_to_rust  # pylint: disable=import-outside-toplevel
-
-    return should_delegate_a2a_to_rust()
 
 
 def _get_registry_cache():
@@ -2385,21 +2369,7 @@ class A2AAgentService(BaseService):
         # First-Party
         from mcpgateway.utils import uaid as uaid_utils  # pylint: disable=import-outside-toplevel
 
-        # Use `_should_delegate_a2a_to_rust()` (not the raw settings flags)
-        # so this branch stays in lockstep with the dispatch decision below
-        # (`if _should_delegate_a2a_to_rust(): ...`).  The helper also
-        # honors the runtime-mutable `A2A_MODE` override introduced by
-        # `mcpgateway.version`; reading raw flags here would desync the
-        # hop-stamp contract from the dispatch contract when an operator
-        # flips the mode at runtime (e.g., `PATCH /admin/runtime/a2a-mode
-        # {mode: "shadow"}` while delegate flags are boot-true).  That
-        # desync would let Python emit the HTTP POST while the header
-        # was stamped for the Rust-delegate path — downstream gateways
-        # would then trip the guard at half the configured depth.
-        if _should_delegate_a2a_to_rust():
-            prepared.headers[uaid_utils.HOP_HEADER] = str(hop_count)
-        else:
-            uaid_utils.stamp_hop(prepared.headers, hop_count)
+        uaid_utils.stamp_hop(prepared.headers, hop_count)
 
         with create_span("a2a.invoke", span_attributes) as span:
             try:
@@ -2419,28 +2389,19 @@ class A2AAgentService(BaseService):
                         "endpoint_url": prepared.sanitized_endpoint_url,
                         "interaction_type": interaction_type,
                         "protocol_version": agent_protocol_version,
-                        "runtime": "rust" if _should_delegate_a2a_to_rust() else "python",
+                        "runtime": "python",
                     },
                 )
 
-                if _should_delegate_a2a_to_rust():
-                    runtime_response = await get_rust_a2a_runtime_client().invoke(
-                        prepared,
-                        timeout_seconds=int(settings.mcpgateway_a2a_default_timeout),
-                    )
-                    status_code = int(runtime_response.get("status_code", 200))
-                    response_json = runtime_response.get("json")
-                    response_text = str(runtime_response.get("text") or "")
-                else:
-                    # Make HTTP request to the agent endpoint using shared HTTP client
-                    # First-Party
-                    from mcpgateway.services.http_client_service import get_http_client  # pylint: disable=import-outside-toplevel
+                # Make HTTP request to the agent endpoint using shared HTTP client
+                # First-Party
+                from mcpgateway.services.http_client_service import get_http_client  # pylint: disable=import-outside-toplevel
 
-                    client = await get_http_client()
-                    http_response = await client.post(prepared.endpoint_url, json=prepared.request_data, headers=prepared.headers)
-                    status_code = http_response.status_code
-                    response_json = http_response.json() if status_code == 200 else None
-                    response_text = http_response.text
+                client = await get_http_client()
+                http_response = await client.post(prepared.endpoint_url, json=prepared.request_data, headers=prepared.headers)
+                status_code = http_response.status_code
+                response_json = http_response.json() if status_code == 200 else None
+                response_text = http_response.text
 
                 call_duration_ms = (datetime.now(timezone.utc) - call_start_time).total_seconds() * 1000
 
@@ -2508,28 +2469,6 @@ class A2AAgentService(BaseService):
                         metadata={"event": "a2a_call_completed", "agent_name": agent_name, "agent_id": agent_id, "status_code": status_code, "success": True},
                     )
 
-                    # ═══════════════════════════════════════════════════════════════════════════
-                    # SHADOW MODE: log that the Rust runtime is available for this agent.
-                    # Previous versions dispatched a second live invoke through the Rust
-                    # sidecar for comparison, but that creates duplicate side effects for
-                    # non-idempotent agents.  Shadow mode now only logs readiness; use
-                    # delegate mode (experimental_rust_a2a_runtime_delegate_enabled=true)
-                    # for full Rust-path execution.
-                    # ═══════════════════════════════════════════════════════════════════════════
-                    if settings.experimental_rust_a2a_runtime_enabled and not _should_delegate_a2a_to_rust():
-                        structured_logger.log(
-                            level="INFO",
-                            message=f"A2A shadow mode active (observe-only): {agent_name}",
-                            component="a2a_service",
-                            user_id=user_id,
-                            user_email=user_email,
-                            correlation_id=correlation_id,
-                            metadata={
-                                "event": "a2a_shadow_active",
-                                "agent_name": agent_name,
-                                "python_status": status_code,
-                            },
-                        )
                 else:
                     # Sanitize error message to prevent URL secrets from leaking in logs
                     raw_error = f"HTTP {status_code}: {response_text}"
@@ -2554,12 +2493,6 @@ class A2AAgentService(BaseService):
                 if span and error_message:
                     set_span_error(span, error_message)
                 raise
-            except RustA2ARuntimeError as e:
-                error_message = sanitize_exception_message(str(e), prepared.sensitive_query_param_names)
-                logger.error("Rust A2A runtime failed for agent '%s': %s", agent_name, error_message)
-                if span:
-                    set_span_error(span, error_message)
-                raise A2AAgentError(f"Failed to invoke A2A agent: {error_message}") from e
             except Exception as e:
                 # Sanitize error message to prevent URL secrets from leaking in logs
                 error_message = sanitize_exception_message(str(e), prepared.sensitive_query_param_names)

@@ -337,32 +337,6 @@ def test_deployment_allows_override_mode_mcp_table(monkeypatch: pytest.MonkeyPat
     assert result == MoveCompatibility(expected_label)
 
 
-@pytest.mark.parametrize(
-    ("runtime_enabled", "delegate_enabled", "mode", "expected_label"),
-    [
-        # boot=off (runtime disabled): every mode NO_DISPATCHER
-        (False, False, "shadow", "no_dispatcher"),
-        (False, False, "edge", "no_dispatcher"),
-        # boot=shadow (runtime, no delegate): shadow OK; edge needs delegate
-        (True, False, "shadow", "ok"),
-        (True, False, "edge", "edge_needs_safety_flag"),
-        # boot=edge (runtime + delegate): both modes OK
-        (True, True, "shadow", "ok"),
-        (True, True, "edge", "ok"),
-    ],
-    ids=["off-shadow", "off-edge", "shadow-shadow", "shadow-edge", "edge-shadow", "edge-edge"],
-)
-def test_deployment_allows_override_mode_a2a_table(monkeypatch: pytest.MonkeyPatch, runtime_enabled, delegate_enabled, mode, expected_label):
-    """Pin every (boot config × target mode) → MoveCompatibility outcome for A2A."""
-    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_a2a_runtime_enabled", runtime_enabled, raising=False)
-    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_a2a_runtime_delegate_enabled", delegate_enabled, raising=False)
-
-    from mcpgateway.runtime_state import MoveCompatibility
-    from mcpgateway.version import deployment_allows_override_mode
-
-    result = deployment_allows_override_mode("a2a", mode)
-    assert result == MoveCompatibility(expected_label)
-
 
 @pytest.mark.asyncio
 async def test_override_edge_cannot_bypass_session_auth_reuse_invariant(monkeypatch: pytest.MonkeyPatch):
@@ -643,19 +617,6 @@ async def test_reconcile_from_hint_accepts_shadow_mode_on_shadow_boot(monkeypatc
         await coord.stop()
 
 
-@pytest.mark.asyncio
-async def test_override_edge_cannot_bypass_delegate_enabled_invariant(monkeypatch: pytest.MonkeyPatch):
-    """Same invariant for A2A: edge override cannot bypass the delegate_enabled requirement."""
-    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_a2a_runtime_enabled", True, raising=False)
-    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_a2a_runtime_delegate_enabled", False, raising=False)
-
-    state = get_runtime_state()
-    await state.apply_local("a2a", "edge", initiator_user="replay", version=1)
-
-    from mcpgateway.version import should_delegate_a2a_to_rust
-
-    assert should_delegate_a2a_to_rust() is False
-
 
 # ---------------------------------------------------------------------------
 # Block 1+2 follow-up coverage
@@ -820,57 +781,6 @@ async def test_reconcile_from_hint_does_not_clobber_higher_local_version(monkeyp
         await coord.stop()
 
 
-@pytest.mark.asyncio
-async def test_listen_loop_applies_remote_pubsub_message(monkeypatch: pytest.MonkeyPatch):
-    """End-to-end pub/sub message should round-trip through the listen loop into RuntimeState."""
-    # Make the deployment compatible with the incoming a2a/shadow payload —
-    # otherwise _listen_loop will (correctly) discard the message.
-    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_a2a_runtime_enabled", True, raising=False)
-    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_a2a_runtime_delegate_enabled", True, raising=False)
-
-    redis = _make_redis_mock()
-    pubsub = redis.pubsub.return_value
-    payload = orjson.dumps({"runtime": "a2a", "mode": "shadow", "version": 11, "initiator_pod": "remote-pod", "initiator_user": "carol", "timestamp": 1.0})
-    delivered = {"yielded": False}
-
-    async def fake_get_message(*args, **kwargs):
-        if delivered["yielded"]:
-            # After the first delivery, behave like a normal idle pubsub.
-            await __import__("asyncio").sleep(0.05)
-            return None
-        delivered["yielded"] = True
-        return {"type": "message", "channel": RUNTIME_STATE_CHANNEL.encode(), "data": payload}
-
-    pubsub.get_message = AsyncMock(side_effect=fake_get_message)
-    monkeypatch.setattr("mcpgateway.utils.redis_client.get_redis_client", AsyncMock(return_value=redis))
-
-    coord = RuntimeStateCoordinator()
-    await coord.start()
-    try:
-        # Give the listen loop a brief window to consume the queued message.
-        for _ in range(20):
-            if get_runtime_state().override_mode("a2a") == "shadow":
-                break
-            await __import__("asyncio").sleep(0.05)
-        assert get_runtime_state().override_mode("a2a") == "shadow"
-        assert get_runtime_state().version("a2a") == 11
-    finally:
-        await coord.stop()
-
-
-@pytest.mark.asyncio
-async def test_cluster_propagation_surfaces_in_runtime_status_payload(monkeypatch: pytest.MonkeyPatch):
-    """The /health-bound payload must include cluster_propagation so dashboards can alert on degraded."""
-    from mcpgateway import version as version_module
-
-    state = get_runtime_state()
-    state.set_cluster_propagation(PROPAGATION_DEGRADED)
-
-    mcp_payload = version_module.mcp_runtime_status_payload()
-    a2a_payload = version_module.a2a_runtime_status_payload()
-
-    assert mcp_payload["cluster_propagation"] == PROPAGATION_DEGRADED
-    assert a2a_payload["cluster_propagation"] == PROPAGATION_DEGRADED
 
 
 @pytest.mark.asyncio
@@ -1320,38 +1230,6 @@ async def test_mcp_runtime_status_payload_includes_last_change_after_override(mo
     assert payload["last_change"]["initiator_user"] == "alice@example.com"
 
 
-@pytest.mark.asyncio
-async def test_a2a_runtime_status_payload_includes_last_change_after_override(monkeypatch):
-    """After an A2A override is applied, _a2a_runtime_status_payload exposes a last_change block."""
-    # First-Party
-    from mcpgateway.config import settings as _settings
-    from mcpgateway.version import _a2a_runtime_status_payload
-
-    monkeypatch.setattr(_settings, "experimental_rust_a2a_runtime_enabled", True, raising=False)
-
-    state = get_runtime_state()
-    await state.apply_local("a2a", "shadow", initiator_user="bob@example.com", version=7)
-
-    payload = _a2a_runtime_status_payload()
-    assert "last_change" in payload
-    assert payload["last_change"]["version"] == 7
-    assert payload["last_change"]["mode"] == "shadow"
-
-
-@pytest.mark.asyncio
-async def test_should_delegate_a2a_to_rust_returns_false_under_shadow_override(monkeypatch):
-    """An A2A shadow override forces _should_delegate_a2a_to_rust to False even when boot flags allow delegation."""
-    # First-Party
-    from mcpgateway.config import settings as _settings
-    from mcpgateway.version import _should_delegate_a2a_to_rust
-
-    monkeypatch.setattr(_settings, "experimental_rust_a2a_runtime_enabled", True, raising=False)
-    monkeypatch.setattr(_settings, "experimental_rust_a2a_runtime_delegate_enabled", True, raising=False)
-
-    state = get_runtime_state()
-    await state.apply_local("a2a", "shadow", initiator_user=None, version=1)
-
-    assert _should_delegate_a2a_to_rust() is False
 
 
 def test_boot_mcp_transport_mount_returns_underlying_value():
