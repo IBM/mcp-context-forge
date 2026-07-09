@@ -4306,7 +4306,7 @@ class TestInvokeResourceCoverage:
         gateway = self._make_gateway(transport="sse", auth_type="oauth")
         gateway.oauth_config = {"grant_type": "token-exchange", "target_audience": "aud"}
 
-        inbound_jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1QGUifQ.sig"
+        inbound_jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1QGUifQ.sig"  # pragma: allowlist secret
         resource_service.oauth_manager.get_access_token = AsyncMock(return_value="exchanged-tok")
 
         db = MagicMock()
