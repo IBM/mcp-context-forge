@@ -20,7 +20,7 @@ describe("PromptArgsForm", () => {
     expect(container).toBeEmptyDOMElement();
   });
 
-  it("renders one input per declared arg with required/optional badge", () => {
+  it("renders one input per declared arg and marks required ones with an asterisk", () => {
     render(
       <PromptArgsForm
         args={{}}
@@ -28,10 +28,15 @@ describe("PromptArgsForm", () => {
         onChange={vi.fn()}
       />,
     );
-    expect(screen.getByLabelText(/user_name/)).toBeInTheDocument();
-    expect(screen.getByLabelText(/tone/)).toBeInTheDocument();
-    expect(screen.getByText("Required")).toBeInTheDocument();
-    expect(screen.getByText("Optional")).toBeInTheDocument();
+    const requiredInput = screen.getByLabelText(/user_name/);
+    const optionalInput = screen.getByLabelText(/tone/);
+    expect(requiredInput).toBeInTheDocument();
+    expect(optionalInput).toBeInTheDocument();
+
+    expect(requiredInput).toHaveAccessibleName(/user_name.*required/i);
+    expect(optionalInput).toHaveAccessibleName(/^tone$/);
+
+    expect(screen.queryByText("Optional")).not.toBeInTheDocument();
   });
 
   it("emits the full args record on every change", async () => {
@@ -48,7 +53,7 @@ describe("PromptArgsForm", () => {
     expect(onChange).toHaveBeenCalledWith({ user_name: "Al", tone: "f" });
   });
 
-  it("displays the arg description when present", () => {
+  it("uses the description as the placeholder (lowercased, no e.g. prefix) when no examples are present", () => {
     render(
       <PromptArgsForm
         args={{}}
@@ -56,7 +61,33 @@ describe("PromptArgsForm", () => {
         onChange={vi.fn()}
       />,
     );
-    expect(screen.getByText("The user to greet")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("the user to greet")).toBeInTheDocument();
+    expect(screen.queryByText("The user to greet")).not.toBeInTheDocument();
+  });
+
+  it("extracts only the e.g. portion of the description when present", () => {
+    render(
+      <PromptArgsForm
+        args={{}}
+        schema={[arg("document_type", true, "Kind of document - e.g. report, RFC, memo")]}
+        onChange={vi.fn()}
+      />,
+    );
+    expect(screen.getByPlaceholderText("e.g. report, RFC, memo")).toBeInTheDocument();
+    expect(
+      screen.queryByPlaceholderText(/Kind of document/),
+    ).not.toBeInTheDocument();
+  });
+
+  it("lowercases a leading capital E.g. so the placeholder reads as lowercase", () => {
+    render(
+      <PromptArgsForm
+        args={{}}
+        schema={[arg("audience", true, "E.g. executives, engineers")]}
+        onChange={vi.fn()}
+      />,
+    );
+    expect(screen.getByPlaceholderText("e.g. executives, engineers")).toBeInTheDocument();
   });
 
   it("marks required inputs with aria-required", () => {

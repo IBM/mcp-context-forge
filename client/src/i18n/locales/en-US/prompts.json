@@ -10,8 +10,6 @@
   "prompts.card.morePromptsTitle": "{count, plural, one {# more prompt} other {# more prompts}}",
   "prompts.details.code.args.heading": "Arguments",
   "prompts.details.code.args.required": "Required",
-  "prompts.details.code.args.optional": "Optional",
-  "prompts.details.code.args.placeholder": "Enter value",
   "prompts.details.code.args.empty": "This prompt takes no arguments.",
   "prompts.details.code.tab.curl": "curl",
   "prompts.details.code.tab.jsonRpc": "JSON-RPC",
