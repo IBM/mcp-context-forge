@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { AuthGuard, RouterProvider, Route, Redirect, useRouter } from ".";
 import { I18nProvider } from "../i18n";
@@ -195,8 +195,10 @@ describe("RouterProvider and useRouter", () => {
     renderWithRouter(<TestComponent />, "/app/test");
     expect(screen.getByText(/path: \/app\/test/)).toBeInTheDocument();
 
-    window.history.pushState({}, "", "/app/other");
-    window.dispatchEvent(new PopStateEvent("popstate"));
+    act(() => {
+      window.history.pushState({}, "", "/app/other");
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    });
 
     await waitFor(() => {
       expect(screen.getByText(/path: \/app\/other/)).toBeInTheDocument();
