@@ -67,8 +67,6 @@ const initialState: PromptFormValues = {
 const TEMPLATE_MAX_LENGTH = 65536;
 const DANGEROUS_HTML_TAGS_RE = /<(script|iframe|object|embed|link|meta|base|form)\b/i;
 const EVENT_HANDLER_RE = /on\w+\s*=/i;
-// Best-effort client mirror for instant feedback; the server is the source of truth.
-// Keep aligned with mcpgateway/services/content_security.py validate_prompt_template.
 const SSTI_SIMPLE_PREFIXES = ["${", "#{", "%{"];
 const SSTI_DANGEROUS_SUBSTRINGS = [
   "__",
@@ -109,6 +107,9 @@ function iterTemplateExpressions(value: string, start: string, end: string): str
 }
 
 function validateTemplateContent(value: string): string | null {
+  // Best-effort mirror for instant feedback; server validation remains the source of truth.
+  // Keep aligned with SecurityValidator.validate_template in mcpgateway/common/validators.py.
+  // Prompt creation also runs mcpgateway/services/content_security.py validate_prompt_template.
   if (value.length > TEMPLATE_MAX_LENGTH) return "templateTooLong";
   if (DANGEROUS_HTML_TAGS_RE.test(value)) return "templateHtmlTags";
   if (EVENT_HANDLER_RE.test(value)) return "templateEventHandlers";
