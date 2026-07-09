@@ -243,13 +243,13 @@ fi
 echo "✅ Authorization URL is browser-accessible"
 
 echo "🔍 Verifying pre-seeded Keycloak users and role claims..."
-assert_user_role "admin@example.com" "gateway-admin"
+assert_user_role "admincf@example.com" "gateway-admin"
 assert_user_role "developer@example.com" "gateway-developer"
 assert_user_role "viewer@example.com" "gateway-viewer"
 assert_user_has_no_gateway_roles "newuser@example.com"
 
 echo "🔍 Verifying browser callback flow..."
-assert_browser_callback_login "admin@example.com" "changeme"
+assert_browser_callback_login "admincf@example.com" "changeme"
 
 echo ""
 echo "✅ SSO smoke checks passed."
