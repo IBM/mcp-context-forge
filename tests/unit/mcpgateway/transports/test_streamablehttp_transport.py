@@ -1818,6 +1818,30 @@ async def test_read_resource_service_exception(monkeypatch, caplog):
 
 
 @pytest.mark.asyncio
+async def test_read_resource_service_resource_error_propagates(monkeypatch):
+    """Resource service failures propagate as MCP-level resource errors."""
+    # Third-Party
+    from pydantic import AnyUrl
+
+    # First-Party
+    from mcpgateway.services.resource_service import ResourceError
+    from mcpgateway.transports.streamablehttp_transport import read_resource, resource_service
+
+    mock_db = MagicMock()
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield mock_db
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+    monkeypatch.setattr(resource_service, "read_resource", AsyncMock(side_effect=ResourceError("template did not resolve")))
+
+    test_uri = AnyUrl("file:///template.txt")
+    with pytest.raises(ResourceError, match="template did not resolve"):
+        await read_resource(test_uri)
+
+
+@pytest.mark.asyncio
 async def test_read_resource_outer_exception(monkeypatch, caplog):
     """Test read_resource returns empty string and logs exception from outer try-catch."""
     # Standard

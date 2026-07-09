@@ -5664,6 +5664,51 @@ class TestReadResourceCoverageEdges:
         assert out.text == '{"user_id":"7","name":"User 7"}'
 
     @pytest.mark.asyncio
+    async def test_read_resource_template_unscoped_lookup_uses_existing_cache(self):
+        """Unscoped template reads reuse cached templates."""
+        # First-Party
+        from mcpgateway.common.models import ResourceTemplate
+        from mcpgateway.services.resource_service import ResourceService
+
+        svc = ResourceService()
+        cached_template = ResourceTemplate(
+            id="cached-tmpl",
+            uriTemplate="reference://users/{user_id}",
+            name="users",
+            description=None,
+            mime_type="text/plain",
+        )
+        svc._template_cache = {"users": cached_template}
+
+        db = MagicMock()
+        db.commit = MagicMock()
+
+        template_db = MagicMock()
+        template_db.id = "cached-tmpl"
+        template_db.uri = "reference://users/{user_id}"
+        template_db.uri_template = "reference://users/{user_id}"
+        template_db.enabled = True
+        template_db.visibility = "public"
+        template_db.owner_email = None
+        template_db.team_id = None
+        template_db.gateway_id = "gateway-1"
+
+        # 1) URI lookup miss, 2) inactivity check miss, 3) cached-template inactivity check miss, 4) template access-check fetch
+        db.execute.return_value.scalar_one_or_none.side_effect = [None, None, None, template_db]
+
+        with (
+            patch.object(svc, "list_resource_templates", new_callable=AsyncMock, return_value=[]) as list_templates,
+            patch.object(svc, "_check_resource_access", new_callable=AsyncMock, return_value=True),
+            patch.object(svc, "invoke_resource", new_callable=AsyncMock, return_value='{"user_id":"7","name":"Cached User"}'),
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=MagicMock()),
+        ):
+            out = await svc.read_resource(db, resource_uri="reference://users/7")
+
+        list_templates.assert_not_awaited()
+        assert out.id == "cached-tmpl"
+        assert out.text == '{"user_id":"7","name":"Cached User"}'
+
+    @pytest.mark.asyncio
     async def test_read_resource_template_proxy_none_response_raises(self):
         """Templated proxy reads fail when gateway resolution returns no content."""
         # First-Party
@@ -5729,6 +5774,80 @@ class TestReadResourceCoverageEdges:
             out = await svc.read_resource(db, resource_uri="reference://users/7")
 
         assert out.text == ""
+
+    @pytest.mark.asyncio
+    async def test_read_resource_template_proxy_blob_none_response_raises(self, caplog):
+        """Templated proxy blob reads fail when gateway resolution returns no content."""
+        # Standard
+        from types import SimpleNamespace
+
+        # First-Party
+        from mcpgateway.services.resource_service import ResourceError, ResourceService
+
+        svc = ResourceService()
+        db = MagicMock()
+        db.commit = MagicMock()
+
+        template_db = MagicMock()
+        template_db.id = "tmpl-1"
+        template_db.uri = "reference://users/{user_id}"
+        template_db.uri_template = "reference://users/{user_id}"
+        template_db.enabled = True
+        template_db.visibility = "public"
+        template_db.owner_email = None
+        template_db.team_id = None
+        template_db.gateway_id = "gateway-1"
+
+        db.execute.return_value.scalar_one_or_none.side_effect = [None, None, template_db]
+        content = SimpleNamespace(id="tmpl-1", uri="reference://users/{user_id}", blob="reference://users/7")
+
+        with (
+            patch.object(svc, "_read_template_resource", new_callable=AsyncMock, return_value=content),
+            patch.object(svc, "_check_resource_access", new_callable=AsyncMock, return_value=True),
+            patch.object(svc, "invoke_resource", new_callable=AsyncMock, return_value=None),
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=MagicMock()),
+            caplog.at_level("WARNING", logger="mcpgateway.services.resource_service"),
+        ):
+            with pytest.raises(ResourceError, match="did not resolve URI"):
+                await svc.read_resource(db, resource_uri="reference://users/7")
+
+        assert "Resource template proxy read returned no content" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_read_resource_template_proxy_allows_empty_blob_response(self):
+        """Templated proxy blob reads preserve an intentionally empty response."""
+        # Standard
+        from types import SimpleNamespace
+
+        # First-Party
+        from mcpgateway.services.resource_service import ResourceService
+
+        svc = ResourceService()
+        db = MagicMock()
+        db.commit = MagicMock()
+
+        template_db = MagicMock()
+        template_db.id = "tmpl-1"
+        template_db.uri = "reference://users/{user_id}"
+        template_db.uri_template = "reference://users/{user_id}"
+        template_db.enabled = True
+        template_db.visibility = "public"
+        template_db.owner_email = None
+        template_db.team_id = None
+        template_db.gateway_id = "gateway-1"
+
+        db.execute.return_value.scalar_one_or_none.side_effect = [None, None, template_db]
+        content = SimpleNamespace(id="tmpl-1", uri="reference://users/{user_id}", blob="reference://users/7")
+
+        with (
+            patch.object(svc, "_read_template_resource", new_callable=AsyncMock, return_value=content),
+            patch.object(svc, "_check_resource_access", new_callable=AsyncMock, return_value=True),
+            patch.object(svc, "invoke_resource", new_callable=AsyncMock, return_value=b""),
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=MagicMock()),
+        ):
+            out = await svc.read_resource(db, resource_uri="reference://users/7")
+
+        assert out.blob == b""
 
     @pytest.mark.asyncio
     async def test_read_resource_resource_id_fallback_include_inactive_true_bytes_content_records_metric_failure(self):
