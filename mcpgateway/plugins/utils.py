@@ -146,9 +146,16 @@ def _validate_numeric_value(value: Any) -> Optional[Any]:
     Returns:
         ``value`` unchanged if it is a finite number, otherwise ``None`` (reject).
         ``NaN``/``inf``/``-inf`` are rejected outright since they can't be compared or
-        aggregated meaningfully once exported as a metric/span attribute.
+        aggregated meaningfully once exported as a metric/span attribute. Arbitrary-
+        precision Python ints too large to convert to ``float`` (e.g. ``10**100000``)
+        raise ``OverflowError`` from ``math.isfinite()`` -- also rejected, since the
+        caller is untrusted plugin metadata and one such value must not abort
+        validation of the rest of the hook's metrics.
     """
-    if not math.isfinite(value):
+    try:
+        if not math.isfinite(value):
+            return None
+    except (OverflowError, TypeError):
         return None
     return value
 

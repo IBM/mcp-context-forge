@@ -161,20 +161,25 @@ class TestRecordPluginMetricsIntegration:
 
         secrets_span = next(s for s in spans if s.name == "plugin.metrics.secrets_detection")
         assert secrets_span.attributes["total_detections"] == 7
-        assert secrets_span.attributes["severity"] == "high"
+        # "severity" is not in the string field allowlist (_SAFE_STRING_FIELD_NAMES),
+        # so it is dropped rather than persisted -- deny-by-default.
+        assert "severity" not in secrets_span.attributes
 
         observability_service.end_trace(trace_id)
 
     def test_s4_untrusted_metadata_is_sanitized_before_persisting(self, db_session, observability_service: ObservabilityService):
-        """Untrusted/malformed plugin metadata (nested dict, oversized string, non-scalar
-        list) is bounded/dropped by the S4 validator before anything reaches the DB --
-        the persisted span only contains the sanitized, bounded attributes.
+        """Untrusted/malformed plugin metadata (non-allowlisted field, oversized string,
+        nested dict, non-scalar list) is bounded/dropped by the S4 validator before
+        anything reaches the DB -- the persisted span only contains the sanitized,
+        allowlisted attributes. Non-allowlisted string fields are dropped outright
+        (deny-by-default), and overlong values are rejected rather than truncated.
         """
         trace_id = observability_service.start_trace(name="test_trace_g1_s4")
 
         huge_value = "y" * 5000
         result_metadata = {
             "custom_plugin": {
+                "stage": "tool_post_invoke",
                 "good_field": "keep-me",
                 "huge_field": huge_value,
                 "nested_dict": {"should": "be-dropped"},
@@ -185,8 +190,9 @@ class TestRecordPluginMetricsIntegration:
         record_plugin_metrics(trace_id, result_metadata)
 
         span = db_session.query(ObservabilitySpan).filter_by(trace_id=trace_id, name="plugin.metrics.custom_plugin").one()
-        assert span.attributes["good_field"] == "keep-me"
-        assert len(span.attributes["huge_field"]) == 256
+        assert span.attributes["stage"] == "tool_post_invoke"
+        assert "good_field" not in span.attributes  # not in the string field allowlist
+        assert "huge_field" not in span.attributes  # overlong values are rejected, not truncated
         assert "nested_dict" not in span.attributes
         assert "mixed_list" not in span.attributes
 

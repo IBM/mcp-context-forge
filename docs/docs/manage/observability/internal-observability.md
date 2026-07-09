@@ -819,9 +819,10 @@ loosening its defaults:
 | Element | Contract |
 |---|---|
 | Plugin name / field name (dict key) | Must match `^[A-Za-z0-9_.-]{1,64}$`; otherwise dropped |
-| `bool` / `int` / `float` value | Recorded as-is |
-| `str` value | Must match the low-cardinality charset `^[A-Za-z0-9_.,:=/-]*$` and be ≤ 64 chars (truncated if longer, dropped if the charset doesn't match) — this is intentionally **not** a free-text channel |
-| `list[str]` value | Joined into a single comma-separated string, then subject to the same `str` contract; only the first 32 items are considered |
+| `bool` value | Recorded as-is |
+| `int` / `float` value | Recorded as-is, but only for field names in a deny-by-default allowlist (currently `total_detections`, `total_masked`); every other numeric field name is dropped regardless of value. Non-finite values (`NaN`/`inf`/`-inf`) are always rejected |
+| `str` value | Recorded as-is, but only for field names in a deny-by-default allowlist (currently `stage`, `detection_types`); every other string field name is dropped regardless of value. Accepted values must match the low-cardinality charset `^[A-Za-z0-9_.,:=/-]*$` and be ≤ 64 chars — overlong values are **rejected outright, not truncated** — this is intentionally **not** a free-text channel |
+| `list[str]` value | Joined into a single comma-separated string, then subject to the same allowlisted `str` contract; only the first 32 items are considered |
 | Any other type (`dict`, mixed list, `None`, etc.) | Dropped |
 | Keys per plugin | Capped at 32 |
 | Plugins per call | Capped at 16 |
