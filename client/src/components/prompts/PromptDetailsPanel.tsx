@@ -1,11 +1,24 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { MessageSquareCode, PanelRightClose } from "lucide-react";
+import type { ReactNode } from "react";
+import { Activity, Globe, MessageSquareCode, PanelRightClose } from "lucide-react";
 
 import type { PromptRead } from "@/generated/types";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { getTagDisplay } from "@/components/gateways/utils";
+import { formatDateTime } from "@/utils/format";
 
 import { PromptCodeTab } from "./PromptCodeTab";
+
+function DetailRow({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="grid grid-cols-[96px_minmax(0,1fr)] items-start gap-4">
+      <dt className="text-muted-foreground">{label}</dt>
+      <dd className="min-w-0 text-foreground">{children}</dd>
+    </div>
+  );
+}
 
 export interface PromptDetailsPanelProps {
   prompts: NonNullable<PromptRead>[];
@@ -165,7 +178,7 @@ export function PromptDetailsPanel({
             </div>
           </div>
 
-          <aside className="relative border-t border-border bg-background lg:border-l lg:border-t-0 dark:bg-neutral-900">
+          <aside className="relative overflow-y-auto border-t border-border bg-background lg:border-l lg:border-t-0 dark:bg-neutral-900">
             <Button
               ref={closeButtonRef}
               type="button"
@@ -177,6 +190,66 @@ export function PromptDetailsPanel({
             >
               <PanelRightClose className="size-4" />
             </Button>
+
+            {selected && (
+              <>
+                <div className="border-b border-border p-4 pt-8">
+                  <h3 className="mb-7 text-sm font-semibold text-foreground">Prompt details</h3>
+
+                  <dl className="space-y-4">
+                    <DetailRow label="Status">
+                      <span className="flex items-center gap-2">
+                        <Activity
+                          className={`size-3.5 ${
+                            selected.enabled ? "text-emerald-400" : "text-gray-400"
+                          }`}
+                        />
+                        {selected.enabled ? "Active" : "Inactive"}
+                      </span>
+                    </DetailRow>
+                    <DetailRow label="Visibility">
+                      <span className="flex items-center gap-2">
+                        <Globe className="size-3.5 text-muted-foreground" />
+                        {selected.visibility
+                          ? selected.visibility.charAt(0).toUpperCase() +
+                            selected.visibility.slice(1)
+                          : "Not available"}
+                      </span>
+                    </DetailRow>
+                    <DetailRow label="Tags">
+                      <div className="flex min-w-0 flex-wrap items-center gap-2">
+                        {(selected.tags || []).length > 0 ? (
+                          (selected.tags || []).map((tag, index) => {
+                            const { key, label } = getTagDisplay(tag, index);
+                            return (
+                              <Badge
+                                key={key}
+                                variant="outline"
+                                className="rounded-full px-2 py-0 text-[11px] font-medium text-muted-foreground"
+                              >
+                                {label}
+                              </Badge>
+                            );
+                          })
+                        ) : (
+                          <span className="text-muted-foreground">Not available</span>
+                        )}
+                      </div>
+                    </DetailRow>
+                  </dl>
+                </div>
+
+                <div className="p-4">
+                  <h3 className="mb-7 text-sm font-semibold text-foreground">Activity</h3>
+                  <dl className="space-y-4">
+                    <DetailRow label="Created">{formatDateTime(selected.createdAt)}</DetailRow>
+                    <DetailRow label="Last modified">
+                      {formatDateTime(selected.updatedAt)}
+                    </DetailRow>
+                  </dl>
+                </div>
+              </>
+            )}
           </aside>
         </div>
       </aside>

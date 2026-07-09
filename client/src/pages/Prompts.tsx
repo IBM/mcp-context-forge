@@ -11,18 +11,18 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import type { CursorPaginatedPromptsResponse, PromptRead } from "@/generated/types";
+import type { PromptRead } from "@/generated/types";
 import type { PromptGroup } from "@/types/prompts";
 import { PromptDetailsPanel } from "@/components/prompts";
 
 const MAX_VISIBLE_PROMPTS = 8;
 
-function getPromptItems(data: CursorPaginatedPromptsResponse): NonNullable<PromptRead>[] {
-  return (data?.prompts ?? []).filter((p): p is NonNullable<PromptRead> => p !== null);
+function getPromptItems(data: (PromptRead | null)[]): NonNullable<PromptRead>[] {
+  return (data ?? []).filter((p): p is NonNullable<PromptRead> => p !== null);
 }
 
 function getPromptLabel(prompt: NonNullable<PromptRead>): string {
-  return prompt.displayName ?? prompt.originalName ?? prompt.name ?? "";
+  return prompt.displayName || prompt.originalName || prompt.name || "";
 }
 
 function getPromptDescription(prompt: NonNullable<PromptRead>): string | null {
@@ -65,7 +65,13 @@ function buildPromptGroups(
   return Array.from(map.values());
 }
 
-function PromptGroupCard({ group }: { group: PromptGroup<NonNullable<PromptRead>> }) {
+function PromptGroupCard({
+  group,
+  onViewDetails,
+}: {
+  group: PromptGroup<NonNullable<PromptRead>>;
+  onViewDetails: (group: PromptGroup<NonNullable<PromptRead>>) => void;
+}) {
   const intl = useIntl();
   const visiblePrompts = group.prompts.slice(0, MAX_VISIBLE_PROMPTS);
   const remainingCount = group.prompts.length - MAX_VISIBLE_PROMPTS;
@@ -100,7 +106,7 @@ function PromptGroupCard({ group }: { group: PromptGroup<NonNullable<PromptRead>
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
-              <DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => onViewDetails(group)}>
                 {intl.formatMessage({ id: "prompts.card.viewDetails" })}
               </DropdownMenuItem>
             </DropdownMenuContent>
@@ -157,15 +163,15 @@ function AddPromptsCard() {
 
 export function Prompts() {
   const intl = useIntl();
-  const [open, setOpen] = useState(false);
+  const [activeGroup, setActiveGroup] = useState<PromptGroup<NonNullable<PromptRead>> | null>(null);
 
   const {
     data: promptsData,
     error,
     isLoading,
-  } = useQuery<CursorPaginatedPromptsResponse>("/prompts?limit=1000&include_inactive=true");
+  } = useQuery<(PromptRead | null)[]>("/prompts?limit=1000&include_inactive=true");
 
-  const prompts = getPromptItems(promptsData ?? { prompts: [] });
+  const prompts = getPromptItems(promptsData ?? []);
   const restPromptsLabel = intl.formatMessage({ id: "prompts.restPromptsGroup" });
   const groups = useMemo(
     () => buildPromptGroups(prompts, restPromptsLabel),
@@ -207,28 +213,16 @@ export function Prompts() {
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-2 2xl:grid-cols-3">
           <AddPromptsCard />
           {groups.map((group) => (
-            <PromptGroupCard key={group.key} group={group} />
+            <PromptGroupCard key={group.key} group={group} onViewDetails={setActiveGroup} />
           ))}
         </div>
       )}
 
-      <div className="flex items-center gap-3">
-        <Button
-          type="button"
-          onClick={() => setOpen(true)}
-          disabled={isLoading || prompts.length === 0}
-        >
-          {isLoading
-            ? "Loading prompts..."
-            : prompts.length === 0
-              ? "No prompts available"
-              : "Open prompt details"}
-        </Button>
-        {error && (
-          <p className="text-[12px] text-destructive">Failed to load prompts: {error.message}</p>
-        )}
-      </div>
-      <PromptDetailsPanel prompts={prompts} open={open} onClose={() => setOpen(false)} />
+      <PromptDetailsPanel
+        prompts={activeGroup?.prompts ?? []}
+        open={activeGroup !== null}
+        onClose={() => setActiveGroup(null)}
+      />
     </div>
   );
 }

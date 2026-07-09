@@ -83,7 +83,7 @@ describe("Prompts", () => {
       }),
     ];
 
-    server.use(http.get("/prompts", () => HttpResponse.json({ prompts })));
+    server.use(http.get("/prompts", () => HttpResponse.json(prompts)));
 
     renderWithProviders(<Prompts />);
 
@@ -123,7 +123,7 @@ describe("Prompts", () => {
       }),
     ];
 
-    server.use(http.get("/prompts", () => HttpResponse.json({ prompts })));
+    server.use(http.get("/prompts", () => HttpResponse.json(prompts)));
 
     renderWithProviders(<Prompts />);
 
@@ -154,7 +154,7 @@ describe("Prompts", () => {
       }),
     );
 
-    server.use(http.get("/prompts", () => HttpResponse.json({ prompts })));
+    server.use(http.get("/prompts", () => HttpResponse.json(prompts)));
 
     renderWithProviders(<Prompts />);
 
