@@ -557,11 +557,6 @@ describe("Teams", () => {
         return Promise.resolve({ users: [] });
       }
       return Promise.resolve({ teams: createMockTeams(0, 1), nextCursor: null });
-  it("handles dummy Create Team click in list state", async () => {
-    const user = userEvent.setup();
-    vi.mocked(api.get).mockResolvedValueOnce({
-      teams: createMockTeams(0, 1),
-      nextCursor: null,
     });
 
     renderWithRouter(<Teams />);
@@ -576,6 +571,21 @@ describe("Teams", () => {
     expect(await screen.findByRole("heading", { name: /edit team/i })).toBeInTheDocument();
     expect(screen.getByPlaceholderText(/add team name/i)).toHaveValue("Team 0");
     expect(screen.getByRole("button", { name: /^save changes$/i })).toBeInTheDocument();
+  });
+
+  it("handles dummy Create Team click in list state", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.get).mockResolvedValueOnce({
+      teams: createMockTeams(0, 1),
+      nextCursor: null,
+    });
+
+    renderWithRouter(<Teams />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Team 0")).toBeInTheDocument();
+    });
+
     const createButton = screen.getByRole("button", { name: /Create team/i });
     await user.click(createButton);
     // Dummy click, just ensuring coverage for the inline function

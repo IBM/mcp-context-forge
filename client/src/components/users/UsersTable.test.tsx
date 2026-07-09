@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { IntlProvider } from "react-intl";
@@ -183,7 +183,7 @@ describe("UsersTable", () => {
   });
 
   it("does not trigger delete if user email is not found", async () => {
-    const user = userEvent.setup();
+
     renderWithIntl(
       <UsersTable
         users={[baseUser]}

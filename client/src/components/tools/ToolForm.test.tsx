@@ -523,7 +523,7 @@ describe("ToolForm", () => {
         requestType: "GET",
         enabled: true,
         reachable: true,
-        tags: undefined,
+        tags: [],
         createdAt: "2026-01-01T00:00:00",
         updatedAt: "2026-01-02T00:00:00",
         url: undefined as any,

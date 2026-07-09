@@ -10,7 +10,7 @@ import type {
   ResourceRead,
   GatewayRead,
   CursorPaginatedGatewaysResponse,
-  BodyCreateResourceV1ResourcesPost,
+  BodyCreateResourceResourcesPost,
 } from "@/generated/types";
 import { ResourceReadVisibility } from "@/generated/types";
 import type { ResourceGroup } from "@/types/resource";
@@ -256,7 +256,7 @@ export function Resources() {
   );
 
   const gatewayNameById = useMemo(() => {
-    const gateways: NonNullable<GatewayRead>[] = (gatewaysData?.gateways ?? []).filter(
+    const gateways: NonNullable<GatewayRead>[] = (gatewaysData?.items ?? []).filter(
       (g): g is NonNullable<GatewayRead> => g !== null,
     );
     const entries: [string, string][] = [];
@@ -292,7 +292,7 @@ export function Resources() {
   );
 
   const handleOptimisticAdd = useCallback(
-    (formData: BodyCreateResourceV1ResourcesPost) => {
+    (formData: BodyCreateResourceResourcesPost) => {
       const { resource } = formData;
       const optimistic: NonNullable<ResourceRead> = {
         id: OPTIMISTIC_RESOURCE_ID,
@@ -300,13 +300,11 @@ export function Resources() {
         name: resource.name,
         description: resource.description ?? null,
         mimeType: resource.mimeType ?? null,
-        size: null,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
         enabled: true,
-        tags: resource.tags ?? [],
         visibility:
-          (resource.visibility as ResourceReadVisibility) ?? ResourceReadVisibility.public,
+          (resource.visibility as ResourceReadVisibility) ?? ResourceReadVisibility.Public,
       };
       setResourcesData((prev) => [optimistic, ...(prev ?? [])]);
     },

@@ -59,7 +59,7 @@ describe("ConnectSourceCard", () => {
 // VirtualServerCard tests
 // ─────────────────────────────────────────────
 
-const mockServer: VirtualServer = {
+const mockServer = {
   id: "vs-1",
   name: "My Test Server",
   enabled: true,
@@ -72,9 +72,9 @@ const mockServer: VirtualServer = {
   associatedPrompts: [],
   createdAt: "2024-01-01T00:00:00Z",
   updatedAt: "2024-06-01T00:00:00Z",
-};
+} as unknown as VirtualServer;
 
-const emptyServer: VirtualServer = {
+const emptyServer = {
   ...mockServer,
   id: "vs-empty",
   name: "Empty Server",
@@ -84,7 +84,7 @@ const emptyServer: VirtualServer = {
   associatedResources: [],
   associatedPrompts: [],
   tags: [],
-};
+} as unknown as VirtualServer;
 
 describe("VirtualServerCard", () => {
   it("renders the server name", () => {

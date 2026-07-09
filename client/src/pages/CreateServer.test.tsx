@@ -579,11 +579,10 @@ describe("CreateServer", () => {
     it("renders loading state initially in edit mode", () => {
       routerMock.path = "/app/gateways/create-server?editServerId=gateway-1";
 
-      let resolvePromise: (value: any) => void;
       server.use(
         http.get("*/servers/gateway-1", () => {
-          return new Promise((resolve) => {
-            resolvePromise = resolve;
+          return new Promise(() => {
+            // never resolves
           });
         }),
       );

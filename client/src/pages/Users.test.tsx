@@ -944,7 +944,7 @@ describe("DeleteUserDialog", () => {
           isDeleting={true}
           userName="testuser"
           userEmail="testuser@example.com"
-          onClose={vi.fn()}
+          onCancel={vi.fn()}
           onConfirm={vi.fn()}
         />
       </I18nProvider>,

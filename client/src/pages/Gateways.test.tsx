@@ -1007,6 +1007,7 @@ describe("Gateways", () => {
       isLoading: false,
       execute: vi.fn(),
       refetch: vi.fn(),
+      setData: vi.fn(),
     });
 
     renderWithProviders(<Gateways />);
@@ -1058,6 +1059,7 @@ describe("Gateways", () => {
       isLoading: false,
       execute: vi.fn(),
       refetch: vi.fn(),
+      setData: vi.fn(),
     });
 
     renderWithProviders(<Gateways />);

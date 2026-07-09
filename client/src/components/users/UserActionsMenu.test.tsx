@@ -3,16 +3,11 @@ import { renderWithProviders } from "@/test/test-utils";
 import { screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { UserActionsMenu } from "./UserActionsMenu";
-import type { User } from "@/types/user";
-
-const mockUser: User = {
+const mockUser = {
   email: "alice@example.com",
-  username: "alice",
   is_admin: false,
   is_active: true,
-  role: "developer",
-  teams: [],
-};
+} as unknown as User;
 
 describe("UserActionsMenu", () => {
   it("renders trigger button with aria-label", () => {

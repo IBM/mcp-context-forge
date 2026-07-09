@@ -1,12 +1,12 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { screen, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderWithProviders } from "@/test/test-utils";
 import { VirtualServerCard } from "./VirtualServerCard";
 import { ConnectSourceCard } from "./ConnectSourceCard";
 import type { VirtualServer } from "@/types/server";
 
-const makeServer = (overrides: Partial<VirtualServer> = {}): VirtualServer => ({
+const makeServer = (overrides: Partial<VirtualServer> = {}) => ({
   id: "vs-1",
   name: "My Server",
   enabled: true,
@@ -19,7 +19,7 @@ const makeServer = (overrides: Partial<VirtualServer> = {}): VirtualServer => ({
   createdAt: "2024-01-01T00:00:00Z",
   updatedAt: "2024-06-01T00:00:00Z",
   ...overrides,
-});
+} as unknown as VirtualServer);
 
 // ─── ConnectSourceCard ────────────────────────────────────────────────────────
 describe("ConnectSourceCard", () => {
