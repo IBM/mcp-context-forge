@@ -10,6 +10,7 @@ Gateway-side plugin utilities.
 # Standard
 import itertools
 import logging
+import math
 import re
 from typing import Any, Dict, Optional
 
@@ -38,6 +39,13 @@ logger = logging.getLogger(__name__)
 #     enum/status/type data. Overlong values are rejected outright, not truncated --
 #     truncation alone would bound size but not the sensitivity of what's exported
 #     (e.g. a truncated secret/token fragment is still a secret/token fragment).
+#   - Numeric (int/float, excluding bool) values are subject to the same
+#     deny-by-default field-name allowlist (_SAFE_NUMERIC_FIELD_NAMES): a field
+#     name valid as an identifier is not proof it's non-sensitive -- {"ssn":
+#     123456789} or {"account_id": 123456789012} would otherwise sail through
+#     under any plugin-chosen key. Only fields known in advance to carry
+#     non-sensitive counters (e.g. total_detections, total_masked) are accepted,
+#     and the value must additionally be a finite number (NaN/inf rejected).
 #   - A list[str] value (e.g. ["email", "ssn"]) is special-cased: joined into
 #     a single comma-separated string (OTel span attributes don't nest), then
 #     subject to the same field-name-allowlisted string-value validation as any
@@ -83,6 +91,18 @@ _SAFE_STRING_VALUE_RE = re.compile(r"^[A-Za-z0-9_.,:=/-]*$")
 # https://github.com/IBM/cpex-plugins/issues/129 for plugins still to be wired up.
 _SAFE_STRING_FIELD_NAMES = frozenset({"stage", "detection_types"})
 
+# Deny-by-default field-name allowlist for numeric (int/float, excluding bool) values:
+# a field name matching _IDENTIFIER_RE is bounded/charset-safe but not proof the *value*
+# is non-sensitive -- a plugin could report {"ssn": 123456789} or {"account_id":
+# 123456789012} under any identifier it chooses, and that value would otherwise flow
+# unchecked into DB span attributes, metric rows, and the OTel export sink. A numeric
+# value is therefore only accepted when its field name is already known to carry a
+# non-sensitive counter; every other field name carrying a number is dropped regardless
+# of its value. New plugins that add a numeric-valued metadata field must extend this
+# set explicitly -- see https://github.com/IBM/mcp-context-forge/issues/5554 and
+# https://github.com/IBM/cpex-plugins/issues/129 for plugins still to be wired up.
+_SAFE_NUMERIC_FIELD_NAMES = frozenset({"total_detections", "total_masked"})
+
 
 def _is_valid_identifier(name: Any) -> bool:
     """Check whether a plugin name or metric field name is safe to use as an identifier.
@@ -117,14 +137,31 @@ def _validate_string_value(value: str) -> Optional[str]:
     return value
 
 
+def _validate_numeric_value(value: Any) -> Optional[Any]:
+    """Validate a single numeric metadata value (S4).
+
+    Args:
+        value: Candidate ``int``/``float`` value (never ``bool`` -- callers check that first).
+
+    Returns:
+        ``value`` unchanged if it is a finite number, otherwise ``None`` (reject).
+        ``NaN``/``inf``/``-inf`` are rejected outright since they can't be compared or
+        aggregated meaningfully once exported as a metric/span attribute.
+    """
+    if not math.isfinite(value):
+        return None
+    return value
+
+
 def _sanitize_plugin_metrics(plugin_name: str, raw_metrics: Any) -> Dict[str, Any]:
     """Validate and bound a single plugin's ``result.metadata[<plugin>]`` dict (S4).
 
     Untrusted plugin output: only scalar (``str``/``int``/``float``/``bool``) values
-    survive as-is; a ``list[str]`` value is joined into a single bounded string;
-    everything else is dropped. Key names, key count, and string values are all
-    validated/capped. Dropped values are never logged -- only the key name and a
-    short reason.
+    survive, and only when explicitly allowlisted -- ``bool`` is always accepted as-is;
+    ``int``/``float`` and ``str`` (plus joined ``list[str]``) each require the field name
+    to be in their respective deny-by-default allowlist. Everything else is dropped. Key
+    names, key count, numeric values, and string values are all validated/capped. Dropped
+    values are never logged -- only the key name and a short reason.
 
     Args:
         plugin_name: Namespacing key this metadata was reported under (e.g. "pii_filter").
@@ -151,7 +188,14 @@ def _sanitize_plugin_metrics(plugin_name: str, raw_metrics: Any) -> Dict[str, An
         if isinstance(value, bool):
             sanitized[key] = value
         elif isinstance(value, (int, float)):
-            sanitized[key] = value
+            if key not in _SAFE_NUMERIC_FIELD_NAMES:
+                logger.debug("Dropped plugin metric %r for %r: field name not in the explicit numeric allowlist", key, plugin_name)
+            else:
+                validated = _validate_numeric_value(value)
+                if validated is not None:
+                    sanitized[key] = validated
+                else:
+                    logger.debug("Dropped plugin metric %r for %r: numeric value is not finite", key, plugin_name)
         elif isinstance(value, str):
             if key not in _SAFE_STRING_FIELD_NAMES:
                 logger.debug("Dropped plugin metric %r for %r: field name not in the explicit string allowlist", key, plugin_name)

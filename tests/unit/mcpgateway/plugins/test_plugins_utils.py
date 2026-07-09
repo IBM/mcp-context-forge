@@ -234,18 +234,19 @@ class TestRecordPluginMetricsSecondaryMetricPath:
             assert isinstance(call.kwargs["value"], float)
 
     def test_per_call_numeric_cap_stops_before_a_later_plugin_is_even_examined(self):
-        """Once the per-call numeric-row cap is already reached by an earlier plugin, a
+        """Once the per-call numeric-row cap is already reached by earlier plugins, a
         later plugin's fields are never examined at all -- the outer per-plugin loop
         breaks immediately rather than relying solely on the inner per-field cap check.
         """
         mock_service = _make_observability_service_mock()
         mock_session = MagicMock()
 
-        # plugin_a alone exhausts the default cap (16); plugin_b's field must never be reached.
-        metadata = {
-            "plugin_a": {f"field_{i}": i for i in range(16)},
-            "plugin_b": {"count": 999},
-        }
+        # Only total_detections/total_masked are numeric-allowlisted, so a single plugin
+        # namespace can contribute at most 2 numeric fields; 8 earlier namespaces (16
+        # fields total) exhaust the default cap (16), so plugin_last's field must never
+        # be reached.
+        metadata = {f"plugin_{i}": {"total_detections": i, "total_masked": i} for i in range(8)}
+        metadata["plugin_last"] = {"total_detections": 999}
 
         with (
             patch("mcpgateway.services.observability_service.ObservabilityService", return_value=mock_service),
@@ -255,7 +256,7 @@ class TestRecordPluginMetricsSecondaryMetricPath:
 
         assert mock_service.record_metric.call_count == 16
         recorded_plugins = {call.kwargs["resource_id"] for call in mock_service.record_metric.call_args_list}
-        assert recorded_plugins == {"plugin_a"}
+        assert recorded_plugins == {f"plugin_{i}" for i in range(8)}
 
 
 class TestRecordPluginMetricsS4Validation:
@@ -383,7 +384,7 @@ class TestRecordPluginMetricsS4Validation:
         mock_service = _make_observability_service_mock()
         mock_session = MagicMock()
 
-        metadata = {"bad_plugin": "not-a-dict", "good_plugin": {"count": 1}}
+        metadata = {"bad_plugin": "not-a-dict", "good_plugin": {"total_detections": 1}}
 
         with (
             patch("mcpgateway.services.observability_service.ObservabilityService", return_value=mock_service),
@@ -401,7 +402,7 @@ class TestRecordPluginMetricsS4Validation:
         mock_service = _make_observability_service_mock()
         mock_session = MagicMock()
 
-        metadata = {"bad plugin name!": {"count": 1}, "good_plugin": {"count": 2}}
+        metadata = {"bad plugin name!": {"total_detections": 1}, "good_plugin": {"total_detections": 2}}
 
         with (
             patch("mcpgateway.services.observability_service.ObservabilityService", return_value=mock_service),
@@ -493,11 +494,12 @@ class TestRecordPluginMetricsS4Validation:
         mock_service = _make_observability_service_mock()
         mock_session = MagicMock()
 
-        # First 32 items: one valid key, then 31 invalid keys. A 33rd item (valid) follows
-        # but sits outside the inspected window and must never be reached.
-        raw = {"early_valid_key": 1}
+        # First 32 items: one valid (numeric-allowlisted) key, then 31 invalid keys. A 33rd
+        # item (also numeric-allowlisted) follows but sits outside the inspected window and
+        # must never be reached.
+        raw = {"total_detections": 1}
         raw.update({f"bad key {i}": i for i in range(31)})
-        raw["late_valid_key"] = 1
+        raw["total_masked"] = 1
         assert len(raw) == 33
         metadata = {"some_plugin": raw}
 
@@ -508,15 +510,19 @@ class TestRecordPluginMetricsS4Validation:
             record_plugin_metrics("trace-1", metadata)
 
         attrs = mock_service.start_span.call_args.kwargs["attributes"]
-        assert attrs.get("early_valid_key") == 1
-        assert "late_valid_key" not in attrs
+        assert attrs.get("total_detections") == 1
+        assert "total_masked" not in attrs
 
     def test_key_count_is_capped(self):
-        """A plugin dict with more than the max allowed keys is truncated to the cap."""
+        """A plugin dict with more than the max allowed keys is truncated to the cap.
+
+        Uses bool values (accepted unconditionally, no field-name allowlist) so the test
+        isolates key-count capping from the separate numeric field-name allowlist check.
+        """
         mock_service = _make_observability_service_mock()
         mock_session = MagicMock()
 
-        metadata = {"some_plugin": {f"key_{i}": i for i in range(100)}}
+        metadata = {"some_plugin": {f"key_{i}": True for i in range(100)}}
 
         with (
             patch("mcpgateway.services.observability_service.ObservabilityService", return_value=mock_service),
@@ -532,7 +538,7 @@ class TestRecordPluginMetricsS4Validation:
         mock_service = _make_observability_service_mock()
         mock_session = MagicMock()
 
-        metadata = {f"plugin_{i}": {"count": i} for i in range(40)}
+        metadata = {f"plugin_{i}": {"total_detections": i} for i in range(40)}
 
         with (
             patch("mcpgateway.services.observability_service.ObservabilityService", return_value=mock_service),
@@ -576,8 +582,8 @@ class TestRecordPluginMetricsL4Swallow:
         mock_service.start_span.side_effect = [RuntimeError("boom"), "span-2"]
 
         metadata = {
-            "plugin_a": {"count": 1},
-            "plugin_b": {"count": 2},
+            "plugin_a": {"total_detections": 1},
+            "plugin_b": {"total_detections": 2},
         }
 
         with (
@@ -662,7 +668,7 @@ class TestRecordPluginMetricsG2OTelExport:
                 "stage": "tool_post_invoke",
             },
             "secrets_detection": {
-                "found_secrets": 1,
+                "total_detections": 1,
             },
         }
 
@@ -689,7 +695,7 @@ class TestRecordPluginMetricsG2OTelExport:
 
         # Verify attributes for secrets_detection
         secrets_call = [c for c in calls if c[0][0] == "plugin.metrics.secrets_detection"][0]
-        assert secrets_call[0][1] == {"found_secrets": 1}
+        assert secrets_call[0][1] == {"total_detections": 1}
 
         # Verify the context manager was used (entered and exited)
         assert mock_context_manager.__enter__.call_count == 2
@@ -774,8 +780,8 @@ class TestRecordPluginMetricsG2OTelExport:
         mock_create_span = MagicMock(side_effect=[RuntimeError("boom"), None])
 
         metadata = {
-            "plugin_a": {"count": 1},
-            "plugin_b": {"count": 2},
+            "plugin_a": {"total_detections": 1},
+            "plugin_b": {"total_detections": 2},
         }
 
         with (
