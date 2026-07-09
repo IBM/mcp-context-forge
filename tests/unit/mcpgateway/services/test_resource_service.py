@@ -1846,7 +1846,13 @@ class TestResourceTemplates:
 
         # Create a valid ResourceTemplate object
         template_obj = ResourceTemplate(
-            id="1", uriTemplate="test://template/{id}", name="template", description="Test template", mime_type="text/plain", annotations=None, _meta=None  # alias for uri_template
+            id="1",
+            uriTemplate="test://template/{id}",
+            name="template",
+            description="Test template",
+            mime_type="text/plain",
+            annotations=None,
+            _meta=None,  # alias for uri_template
         )
 
         # Pre-load template cache
@@ -1857,7 +1863,6 @@ class TestResourceTemplates:
 
         # Patch match + extraction to force an error
         with patch.object(service, "_uri_matches_template", return_value=True), patch.object(service, "_extract_template_params", side_effect=Exception("Template error")):
-
             # Assert failure path
             with pytest.raises(ResourceError) as exc_info:
                 await service._read_template_resource(db, uri)
@@ -1892,7 +1897,6 @@ class TestResourceTemplates:
         service._template_cache = {"binary": template}
 
         with patch.object(service, "_uri_matches_template", return_value=True), patch.object(service, "_extract_template_params", return_value={"id": "123"}):
-
             with pytest.raises(ResourceError) as exc_info:
                 await service._read_template_resource(db, uri)
 
@@ -5592,10 +5596,96 @@ class TestReadResourceCoverageEdges:
         template_db.owner_email = None
         template_db.team_id = None
 
-        # 1) URI lookup miss, 2) inactivity check miss, 3) template access-check fetch
-        db.execute.return_value.scalar_one_or_none.side_effect = [None, None, template_db]
+        # 1) URI lookup miss, 2) inactivity check miss, 3) inactive template miss, 4) template access-check fetch
+        db.execute.return_value.scalar_one_or_none.side_effect = [None, None, None, template_db]
 
         content = ResourceContent(type="resource", id="tmpl-1", uri="greetme://morning/{name}", text="greetme://morning/John")
+
+        with (
+            patch.object(svc, "_read_template_resource", new_callable=AsyncMock, return_value=content),
+            patch.object(svc, "_check_resource_access", new_callable=AsyncMock, return_value=True),
+            patch.object(svc, "invoke_resource", new_callable=AsyncMock, return_value="resolved template"),
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=MagicMock()),
+        ):
+            out = await svc.read_resource(db, resource_uri="greetme://morning/John", include_inactive=True)
+        assert out.id == "tmpl-1"
+        assert out.text == "resolved template"
+
+    @pytest.mark.asyncio
+    async def test_read_resource_template_scoped_lookup_ignores_stale_cache(self):
+        """Scoped template reads fetch fresh templates instead of using stale cache entries."""
+        # First-Party
+        from mcpgateway.common.models import ResourceTemplate
+        from mcpgateway.services.resource_service import ResourceService
+
+        svc = ResourceService()
+        stale_template = ResourceTemplate(
+            id="stale-tmpl",
+            uriTemplate="reference://users/{user_id}",
+            name="users",
+            description=None,
+            mime_type="text/plain",
+        )
+        fresh_template = ResourceTemplate(
+            id="fresh-tmpl",
+            uriTemplate="reference://users/{user_id}",
+            name="users",
+            description=None,
+            mime_type="text/plain",
+        )
+        svc._template_cache = {"users": stale_template}
+
+        db = MagicMock()
+        db.commit = MagicMock()
+
+        template_db = MagicMock()
+        template_db.id = "fresh-tmpl"
+        template_db.uri = "reference://users/{user_id}"
+        template_db.uri_template = "reference://users/{user_id}"
+        template_db.enabled = True
+        template_db.visibility = "public"
+        template_db.owner_email = None
+        template_db.team_id = None
+        template_db.gateway_id = "gateway-1"
+
+        # 1) URI lookup miss, 2) inactivity check miss, 3) inactive template miss, 4) template access-check fetch
+        db.execute.return_value.scalar_one_or_none.side_effect = [None, None, None, template_db]
+
+        with (
+            patch.object(svc, "list_resource_templates", new_callable=AsyncMock, return_value=[fresh_template]) as list_templates,
+            patch.object(svc, "_check_resource_access", new_callable=AsyncMock, return_value=True),
+            patch.object(svc, "invoke_resource", new_callable=AsyncMock, return_value='{"user_id":"7","name":"User 7"}'),
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=MagicMock()),
+        ):
+            out = await svc.read_resource(db, resource_uri="reference://users/7", user="user@example.com", token_teams=[])
+
+        list_templates.assert_awaited_once()
+        assert out.id == "fresh-tmpl"
+        assert out.text == '{"user_id":"7","name":"User 7"}'
+
+    @pytest.mark.asyncio
+    async def test_read_resource_template_proxy_none_response_raises(self):
+        """Templated proxy reads fail when gateway resolution returns no content."""
+        # First-Party
+        from mcpgateway.common.models import ResourceContent
+        from mcpgateway.services.resource_service import ResourceError, ResourceService
+
+        svc = ResourceService()
+        db = MagicMock()
+        db.commit = MagicMock()
+
+        template_db = MagicMock()
+        template_db.id = "tmpl-1"
+        template_db.uri = "reference://users/{user_id}"
+        template_db.uri_template = "reference://users/{user_id}"
+        template_db.enabled = True
+        template_db.visibility = "public"
+        template_db.owner_email = None
+        template_db.team_id = None
+        template_db.gateway_id = "gateway-1"
+
+        db.execute.return_value.scalar_one_or_none.side_effect = [None, None, template_db]
+        content = ResourceContent(type="resource", id="tmpl-1", uri="reference://users/{user_id}", text="reference://users/7")
 
         with (
             patch.object(svc, "_read_template_resource", new_callable=AsyncMock, return_value=content),
@@ -5603,8 +5693,42 @@ class TestReadResourceCoverageEdges:
             patch.object(svc, "invoke_resource", new_callable=AsyncMock, return_value=None),
             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=MagicMock()),
         ):
-            out = await svc.read_resource(db, resource_uri="greetme://morning/John", include_inactive=True)
-        assert out.id == "tmpl-1"
+            with pytest.raises(ResourceError, match="did not resolve URI"):
+                await svc.read_resource(db, resource_uri="reference://users/7")
+
+    @pytest.mark.asyncio
+    async def test_read_resource_template_proxy_allows_empty_text_response(self):
+        """Templated proxy reads preserve an intentionally empty text response."""
+        # First-Party
+        from mcpgateway.common.models import ResourceContent
+        from mcpgateway.services.resource_service import ResourceService
+
+        svc = ResourceService()
+        db = MagicMock()
+        db.commit = MagicMock()
+
+        template_db = MagicMock()
+        template_db.id = "tmpl-1"
+        template_db.uri = "reference://users/{user_id}"
+        template_db.uri_template = "reference://users/{user_id}"
+        template_db.enabled = True
+        template_db.visibility = "public"
+        template_db.owner_email = None
+        template_db.team_id = None
+        template_db.gateway_id = "gateway-1"
+
+        db.execute.return_value.scalar_one_or_none.side_effect = [None, None, template_db]
+        content = ResourceContent(type="resource", id="tmpl-1", uri="reference://users/{user_id}", text="reference://users/7")
+
+        with (
+            patch.object(svc, "_read_template_resource", new_callable=AsyncMock, return_value=content),
+            patch.object(svc, "_check_resource_access", new_callable=AsyncMock, return_value=True),
+            patch.object(svc, "invoke_resource", new_callable=AsyncMock, return_value=""),
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=MagicMock()),
+        ):
+            out = await svc.read_resource(db, resource_uri="reference://users/7")
+
+        assert out.text == ""
 
     @pytest.mark.asyncio
     async def test_read_resource_resource_id_fallback_include_inactive_true_bytes_content_records_metric_failure(self):
