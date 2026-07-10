@@ -11,7 +11,7 @@ export interface PromptArgsFormProps {
   onChange: (next: Record<string, string>) => void;
 }
 
-function toPlaceholder(description?: string): string {
+function toPlaceholder(description?: string | null): string {
   if (!description) return "";
   const trimmed = description.trim();
   if (!trimmed) return "";
