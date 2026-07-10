@@ -77,6 +77,9 @@ describe("Prompts", () => {
     await user.click(addPromptsButton);
 
     expect(screen.getByRole("heading", { name: "Add prompt" })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByLabelText(/name/i)).toHaveFocus();
+    });
   });
 
   it("shows the prompt form when the add card is activated by keyboard", async () => {
@@ -90,6 +93,9 @@ describe("Prompts", () => {
     await user.keyboard("{Enter}");
 
     expect(screen.getByRole("heading", { name: "Add prompt" })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByLabelText(/name/i)).toHaveFocus();
+    });
   });
 
   it("ignores non-activation keys on the add prompts card", async () => {
@@ -116,6 +122,10 @@ describe("Prompts", () => {
     await user.click(screen.getByRole("button", { name: "Cancel" }));
 
     expect(screen.getByRole("button", { name: "Add prompts" })).toBeInTheDocument();
+    const heading = screen.getByRole("heading", { name: "Prompts" });
+    await waitFor(() => {
+      expect(heading).toHaveFocus();
+    });
   });
 
   it("hides the prompt form and refetches prompts after a successful create", async () => {
@@ -147,7 +157,12 @@ describe("Prompts", () => {
     await waitFor(() => {
       expect(screen.queryByRole("heading", { name: "Add prompt" })).not.toBeInTheDocument();
     });
-    expect(screen.getByRole("button", { name: "Add prompts" })).toBeInTheDocument();
+    const addPromptsButtonAfterSubmit = screen.getByRole("button", { name: "Add prompts" });
+    expect(addPromptsButtonAfterSubmit).toBeInTheDocument();
+    const heading = screen.getByRole("heading", { name: "Prompts" });
+    await waitFor(() => {
+      expect(heading).toHaveFocus();
+    });
     expect(promptListRequests).toBeGreaterThan(1);
   });
 
