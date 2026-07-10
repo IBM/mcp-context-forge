@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type Ref } from "react";
 import { MessageSquareCode, MoreHorizontal, Plus } from "lucide-react";
 import { useIntl } from "react-intl";
 import { PromptForm } from "@/components/prompts/PromptForm";
@@ -128,11 +128,18 @@ function PromptGroupCard({ group }: { group: PromptGroup }) {
   );
 }
 
-function AddPromptsCard({ onActivate }: { onActivate: () => void }) {
+function AddPromptsCard({
+  onActivate,
+  cardRef,
+}: {
+  onActivate: () => void;
+  cardRef?: Ref<HTMLDivElement>;
+}) {
   const intl = useIntl();
 
   return (
     <Card
+      ref={cardRef}
       size="sm"
       role="button"
       tabIndex={0}
@@ -167,7 +174,7 @@ function AddPromptsCard({ onActivate }: { onActivate: () => void }) {
 
 export function Prompts() {
   const intl = useIntl();
-  const headingRef = useRef<HTMLHeadingElement>(null);
+  const addPromptsCardRef = useRef<HTMLDivElement>(null);
   const [showForm, setShowForm] = useState(false);
   const [shouldRestoreFormCloseFocus, setShouldRestoreFormCloseFocus] = useState(false);
   const {
@@ -185,7 +192,7 @@ export function Prompts() {
 
   useEffect(() => {
     if (!showForm && shouldRestoreFormCloseFocus) {
-      headingRef.current?.focus();
+      addPromptsCardRef.current?.focus();
       setShouldRestoreFormCloseFocus(false);
     }
   }, [showForm, shouldRestoreFormCloseFocus]);
@@ -212,11 +219,7 @@ export function Prompts() {
         <PromptForm isOpen={showForm} onToggle={handleFormCancel} onSuccess={handleFormSuccess} />
       ) : (
         <>
-          <h1
-            ref={headingRef}
-            tabIndex={-1}
-            className="mb-6 text-base font-semibold text-neutral-900 dark:text-white"
-          >
+          <h1 className="mb-6 text-base font-semibold text-neutral-900 dark:text-white">
             {intl.formatMessage({ id: "prompts.title" })}
           </h1>
 
@@ -247,7 +250,7 @@ export function Prompts() {
 
           {!isLoading && (
             <div className="grid grid-cols-1 gap-6 lg:grid-cols-2 2xl:grid-cols-3">
-              <AddPromptsCard onActivate={handleAddPrompt} />
+              <AddPromptsCard onActivate={handleAddPrompt} cardRef={addPromptsCardRef} />
               {groups.map((group) => (
                 <PromptGroupCard key={group.key} group={group} />
               ))}

@@ -121,10 +121,10 @@ describe("Prompts", () => {
     await user.click(await screen.findByRole("button", { name: "Add prompts" }));
     await user.click(screen.getByRole("button", { name: "Cancel" }));
 
-    expect(screen.getByRole("button", { name: "Add prompts" })).toBeInTheDocument();
-    const heading = screen.getByRole("heading", { name: "Prompts" });
+    const addPromptsButton = screen.getByRole("button", { name: "Add prompts" });
+    expect(addPromptsButton).toBeInTheDocument();
     await waitFor(() => {
-      expect(heading).toHaveFocus();
+      expect(addPromptsButton).toHaveFocus();
     });
   });
 
@@ -159,9 +159,8 @@ describe("Prompts", () => {
     });
     const addPromptsButtonAfterSubmit = screen.getByRole("button", { name: "Add prompts" });
     expect(addPromptsButtonAfterSubmit).toBeInTheDocument();
-    const heading = screen.getByRole("heading", { name: "Prompts" });
     await waitFor(() => {
-      expect(heading).toHaveFocus();
+      expect(addPromptsButtonAfterSubmit).toHaveFocus();
     });
     expect(promptListRequests).toBeGreaterThan(1);
   });
