@@ -218,9 +218,8 @@ class DataplanePublisherService:
 
             prompt_map = {prompt["id"]: prompt["name"] for prompt in prompts}
 
-            # The dataplane proxies streamable-HTTP upstreams only; other
-            # transports (e.g. SSE, deprecated and removed in the 2026-07-28
-            # MCP protocol update) are excluded so the published config never
+            # The dataplane proxies streamable-HTTP upstreams only. Legacy
+            # HTTP+SSE gateways are excluded so the published config never
             # advertises a backend the dataplane cannot serve.
             gateway_base = {
                 gateway["id"]: {
