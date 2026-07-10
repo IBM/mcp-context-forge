@@ -64,6 +64,20 @@ describe("PromptForm", () => {
     expect(screen.getByLabelText("Description")).toBeInTheDocument();
   });
 
+  it("programmatically marks required fields", () => {
+    renderPromptForm();
+
+    expect(screen.getByLabelText(/name/i)).toHaveAttribute("aria-required", "true");
+    expect(screen.getByRole("combobox", { name: /visibility/i })).toHaveAttribute(
+      "aria-required",
+      "true",
+    );
+    expect(screen.getByLabelText(/template/i)).toHaveAttribute("aria-required", "true");
+    expect(screen.getByLabelText(/description/i)).not.toHaveAttribute("aria-required");
+    expect(screen.getByLabelText(/arguments/i)).not.toHaveAttribute("aria-required");
+    expect(screen.getByLabelText(/tags/i)).not.toHaveAttribute("aria-required");
+  });
+
   it("submits valid prompt data and calls onSuccess", async () => {
     const onSuccess = vi.fn();
     mockUseAuthContext.mockReturnValue({

@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { MessageSquareCode, MoreHorizontal, Plus } from "lucide-react";
 import { useIntl } from "react-intl";
 import { PromptForm } from "@/components/prompts/PromptForm";
@@ -167,7 +167,9 @@ function AddPromptsCard({ onActivate }: { onActivate: () => void }) {
 
 export function Prompts() {
   const intl = useIntl();
+  const headingRef = useRef<HTMLHeadingElement>(null);
   const [showForm, setShowForm] = useState(false);
+  const [shouldRestoreFormCloseFocus, setShouldRestoreFormCloseFocus] = useState(false);
   const {
     data: promptsData,
     error,
@@ -181,7 +183,25 @@ export function Prompts() {
     [promptsData, restPromptsLabel],
   );
 
+  useEffect(() => {
+    if (!showForm && shouldRestoreFormCloseFocus) {
+      headingRef.current?.focus();
+      setShouldRestoreFormCloseFocus(false);
+    }
+  }, [showForm, shouldRestoreFormCloseFocus]);
+
+  const handleAddPrompt = () => {
+    setShouldRestoreFormCloseFocus(false);
+    setShowForm(true);
+  };
+
+  const handleFormCancel = () => {
+    setShouldRestoreFormCloseFocus(true);
+    setShowForm(false);
+  };
+
   const handleFormSuccess = async () => {
+    setShouldRestoreFormCloseFocus(true);
     setShowForm(false);
     await refetch();
   };
@@ -189,14 +209,14 @@ export function Prompts() {
   return (
     <div className="p-6">
       {showForm ? (
-        <PromptForm
-          isOpen={showForm}
-          onToggle={() => setShowForm(false)}
-          onSuccess={handleFormSuccess}
-        />
+        <PromptForm isOpen={showForm} onToggle={handleFormCancel} onSuccess={handleFormSuccess} />
       ) : (
         <>
-          <h1 className="mb-6 text-base font-semibold text-neutral-900 dark:text-white">
+          <h1
+            ref={headingRef}
+            tabIndex={-1}
+            className="mb-6 text-base font-semibold text-neutral-900 dark:text-white"
+          >
             {intl.formatMessage({ id: "prompts.title" })}
           </h1>
 
@@ -227,7 +247,7 @@ export function Prompts() {
 
           {!isLoading && (
             <div className="grid grid-cols-1 gap-6 lg:grid-cols-2 2xl:grid-cols-3">
-              <AddPromptsCard onActivate={() => setShowForm(true)} />
+              <AddPromptsCard onActivate={handleAddPrompt} />
               {groups.map((group) => (
                 <PromptGroupCard key={group.key} group={group} />
               ))}
