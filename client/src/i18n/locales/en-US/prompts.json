@@ -32,9 +32,5 @@
   "prompts.add.error.templateRequired": "Template is required",
   "prompts.add.error.teamRequired": "Team selection is required when visibility is set to team",
   "prompts.add.error.argumentsInvalidJson": "Invalid JSON format",
-  "prompts.add.error.argumentsArrayRequired": "Arguments must be a JSON array",
-  "prompts.add.error.templateTooLong": "Template must be 65,536 characters or fewer",
-  "prompts.add.error.templateHtmlTags": "Template must not contain HTML tags (e.g. <script>, <form>)",
-  "prompts.add.error.templateEventHandlers": "Template must not contain event handlers (e.g. onclick=)",
-  "prompts.add.error.templateDangerousExpression": "Template expressions may only contain simple variable names — no operators, dot access, or built-in keywords"
+  "prompts.add.error.argumentsArrayRequired": "Arguments must be a JSON array"
 }
