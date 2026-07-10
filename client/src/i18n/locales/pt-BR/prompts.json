@@ -32,9 +32,5 @@
   "prompts.add.error.templateRequired": "O modelo é obrigatório",
   "prompts.add.error.teamRequired": "A seleção de equipe é obrigatória quando a visibilidade está definida como equipe",
   "prompts.add.error.argumentsInvalidJson": "Formato JSON inválido",
-  "prompts.add.error.argumentsArrayRequired": "Os argumentos devem ser um array JSON",
-  "prompts.add.error.templateTooLong": "O modelo deve ter 65.536 caracteres ou menos",
-  "prompts.add.error.templateHtmlTags": "O modelo não deve conter tags HTML (ex. <script>, <form>)",
-  "prompts.add.error.templateEventHandlers": "O modelo não deve conter manipuladores de eventos (ex. onclick=)",
-  "prompts.add.error.templateDangerousExpression": "As expressões de modelo só podem conter nomes de variáveis simples — sem operadores, acesso por ponto ou palavras-chave integradas"
+  "prompts.add.error.argumentsArrayRequired": "Os argumentos devem ser um array JSON"
 }
