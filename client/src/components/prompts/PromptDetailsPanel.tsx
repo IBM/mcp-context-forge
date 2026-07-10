@@ -103,6 +103,7 @@ export function PromptDetailsPanel({
         role="region"
         aria-labelledby={headingId}
         aria-hidden={!open}
+        inert={!open}
         data-state={open ? "open" : "closed"}
         className={cn(
           "absolute inset-y-0 right-0 z-20 flex w-[min(1236px,calc(100%-2rem))] border-l border-border bg-popover text-[13px] shadow-lg",
@@ -162,25 +163,26 @@ export function PromptDetailsPanel({
             </div>
 
             {prompts.length > 1 && (
-              <div className="mt-8 flex flex-wrap gap-2" role="tablist" aria-label="Select prompt">
+              <div className="mt-8 flex flex-wrap gap-2" role="group" aria-label="Select prompt">
                 {prompts.map((p) => {
                   const isSelected = p.id === selected?.id;
                   return (
-                    <button
+                    <Button
                       key={p.id}
                       type="button"
-                      role="tab"
-                      aria-selected={isSelected}
+                      variant={isSelected ? "secondary" : "outline"}
+                      size="sm"
+                      aria-pressed={isSelected}
                       onClick={() => setSelectedId(p.id)}
                       className={cn(
-                        "rounded-full border px-3 py-1.5 font-mono text-[12px] transition-colors",
+                        "rounded-full font-mono text-[12px]",
                         isSelected
                           ? "border-transparent bg-muted text-foreground"
-                          : "border-border bg-transparent text-muted-foreground hover:bg-muted/50 hover:text-foreground",
+                          : "text-muted-foreground",
                       )}
                     >
                       {p.name}
-                    </button>
+                    </Button>
                   );
                 })}
               </div>
@@ -252,15 +254,17 @@ export function PromptDetailsPanel({
                         {/* TODO: wire tag add-flow. Placeholder pending the
                             per-prompt actions menu design (tracked with the
                             same #5563 follow-up as the drawer variants). */}
-                        <button
+                        <Button
                           type="button"
+                          variant="ghost"
+                          size="sm"
                           tabIndex={-1}
                           aria-hidden="true"
-                          className="flex items-center gap-1 text-[12px] text-muted-foreground hover:text-foreground"
+                          className="h-auto gap-1 p-0 text-[12px] font-normal text-muted-foreground hover:bg-transparent hover:text-foreground"
                         >
                           <Plus className="size-3" aria-hidden="true" />
                           add
-                        </button>
+                        </Button>
                       </div>
                     </DetailRow>
                   </dl>

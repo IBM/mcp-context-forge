@@ -49,7 +49,7 @@ describe("PromptDetailsPanel", () => {
     expect(screen.getByRole("button", { name: /^preview$/i })).toBeInTheDocument();
   });
 
-  it("marks the region as hidden when closed", () => {
+  it("marks the region as hidden and inert when closed", () => {
     render(
       <PromptDetailsPanel
         prompts={[mockPrompt()]}
@@ -61,6 +61,7 @@ describe("PromptDetailsPanel", () => {
 
     const region = screen.getByRole("region", { hidden: true });
     expect(region).toHaveAttribute("aria-hidden", "true");
+    expect(region).toHaveAttribute("inert");
     expect(region).toHaveAttribute("data-state", "closed");
   });
 
@@ -138,7 +139,7 @@ describe("PromptDetailsPanel", () => {
     ).toBeInTheDocument();
     expect(screen.getByLabelText(/user_name/)).toBeInTheDocument();
 
-    await user.click(screen.getByRole("tab", { name: "prompt_b" }));
+    await user.click(screen.getByRole("button", { name: "prompt_b" }));
 
     expect(
       screen.getByRole("heading", { name: /prompt details: hugging-face/i }),
@@ -222,7 +223,7 @@ describe("PromptDetailsPanel", () => {
       />,
     );
 
-    expect(screen.queryByRole("tablist", { name: /select prompt/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: /select prompt/i })).not.toBeInTheDocument();
   });
 
   it("shows the prompt-picker pill row when the group has more than one prompt", () => {
@@ -230,9 +231,9 @@ describe("PromptDetailsPanel", () => {
     const b = mockPrompt({ id: "b", name: "prompt_b" });
     render(<PromptDetailsPanel prompts={[a, b]} title="group" open={true} onClose={vi.fn()} />);
 
-    expect(screen.getByRole("tablist", { name: /select prompt/i })).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: "prompt_a" })).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: "prompt_b" })).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: /select prompt/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "prompt_a", pressed: true })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "prompt_b", pressed: false })).toBeInTheDocument();
   });
 
   it("singularizes the local subheader when the prompt has exactly one argument", () => {
