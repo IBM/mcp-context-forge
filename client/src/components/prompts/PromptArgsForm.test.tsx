@@ -77,6 +77,28 @@ describe("PromptArgsForm", () => {
     expect(screen.queryByPlaceholderText(/Kind of document/)).not.toBeInTheDocument();
   });
 
+  it("stops at the matching close-paren when e.g. is inside a parenthetical", () => {
+    render(
+      <PromptArgsForm
+        args={{}}
+        schema={[arg("model_id", true, "Model ID (e.g. 'openai/gpt-oss-120b'). Required.")]}
+        onChange={vi.fn()}
+      />,
+    );
+    expect(screen.getByPlaceholderText("e.g. 'openai/gpt-oss-120b'")).toBeInTheDocument();
+  });
+
+  it("handles nested parens inside the parenthetical without truncating early", () => {
+    render(
+      <PromptArgsForm
+        args={{}}
+        schema={[arg("scope", true, "Filter scope (e.g. 'kind(pod)' or 'ns(default)')")]}
+        onChange={vi.fn()}
+      />,
+    );
+    expect(screen.getByPlaceholderText("e.g. 'kind(pod)' or 'ns(default)'")).toBeInTheDocument();
+  });
+
   it("lowercases a leading capital E.g. so the placeholder reads as lowercase", () => {
     render(
       <PromptArgsForm

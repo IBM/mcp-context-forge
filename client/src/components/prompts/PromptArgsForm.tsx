@@ -16,7 +16,28 @@ function toPlaceholder(description?: string | null): string {
   const trimmed = description.trim();
   if (!trimmed) return "";
   const egMatch = trimmed.match(/\be\.g\..*/i);
-  const extracted = egMatch ? egMatch[0] : trimmed;
+  if (!egMatch) {
+    return trimmed.charAt(0).toLowerCase() + trimmed.slice(1);
+  }
+  const startIdx = egMatch.index ?? 0;
+  let extracted = egMatch[0];
+  // When "e.g." sits inside a parenthetical, extract only up to the matching
+  // close-paren so the closing bracket doesn't leak into the placeholder.
+  if (startIdx > 0 && trimmed[startIdx - 1] === "(") {
+    let depth = 1;
+    for (let i = startIdx; i < trimmed.length; i++) {
+      const ch = trimmed[i];
+      if (ch === "(") depth += 1;
+      else if (ch === ")") {
+        depth -= 1;
+        if (depth === 0) {
+          extracted = trimmed.slice(startIdx, i);
+          break;
+        }
+      }
+    }
+  }
+  extracted = extracted.trim();
   return extracted.charAt(0).toLowerCase() + extracted.slice(1);
 }
 
