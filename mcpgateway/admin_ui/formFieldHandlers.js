@@ -122,7 +122,7 @@ export const createParameterForm = function (parameterCount) {
   nameInput.name = `param_name_${parameterCount}`;
   nameInput.required = true;
   nameInput.className =
-  "mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring focus:ring-indigo-200";
+  "mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-600 shadow-sm focus:border-indigo-500 focus:ring focus:ring-indigo-200 dark:bg-gray-800 dark:text-gray-200 dark:placeholder-gray-400";
 
   // Add validation to name input
   nameInput.addEventListener("blur", function () {
@@ -149,7 +149,7 @@ export const createParameterForm = function (parameterCount) {
   const typeSelect = document.createElement("select");
   typeSelect.name = `param_type_${parameterCount}`;
   typeSelect.className =
-  "mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring focus:ring-indigo-200";
+  "mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-600 shadow-sm focus:border-indigo-500 focus:ring focus:ring-indigo-200 dark:bg-gray-800 dark:text-gray-200";
 
   const typeOptions = [
     { value: "string", text: "String" },
@@ -185,7 +185,7 @@ export const createParameterForm = function (parameterCount) {
   const descTextarea = document.createElement("textarea");
   descTextarea.name = `param_description_${parameterCount}`;
   descTextarea.className =
-  "mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring focus:ring-indigo-200";
+  "mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-600 shadow-sm focus:border-indigo-500 focus:ring focus:ring-indigo-200 dark:bg-gray-800 dark:text-gray-200 dark:placeholder-gray-400";
   descTextarea.rows = 2;
 
   descGroup.appendChild(descLabel);
@@ -233,6 +233,8 @@ export const handleAddParameter = function () {
       "mb-4",
       "rounded-md",
       "bg-gray-50",
+      "dark:bg-gray-700",
+      "dark:border-gray-600",
       "shadow-sm",
     );
 
