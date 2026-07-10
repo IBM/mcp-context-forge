@@ -9,7 +9,7 @@ import { cn } from "@/lib/utils";
 
 const COPY_FEEDBACK_DURATION_MS = 1500;
 
-export type CodeBlockLanguage = "bash" | "json" | "python" | "tsx" | "typescript";
+export type CodeBlockLanguage = "bash" | "json" | "python" | "tsx";
 
 export interface CodeBlockProps {
   code: string;
@@ -34,7 +34,6 @@ const TOKEN_LANGUAGE: Record<CodeBlockLanguage, Language> = {
   json: "json",
   python: "python",
   tsx: "tsx",
-  typescript: "tsx",
 };
 
 /**
@@ -122,36 +121,29 @@ export function CodeBlock({
       </Highlight>
       {!hideCopy && (
         <div className="absolute right-2 top-2">
-          {copiedLabel ? (
-            <TooltipProvider delayDuration={0}>
-              <Tooltip open={copied}>
-                <TooltipTrigger asChild>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon-xs"
-                    className="size-7 text-neutral-400 hover:bg-neutral-800 hover:text-neutral-100"
-                    aria-label={ariaLabel}
-                    onClick={handleCopy}
-                  >
-                    <Copy className="size-3.5" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent side="top">{copiedLabel}</TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-          ) : (
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-xs"
-              className="size-7 text-neutral-400 hover:bg-neutral-800 hover:text-neutral-100"
-              aria-label={ariaLabel}
-              onClick={handleCopy}
-            >
-              <Copy className="size-3.5" />
-            </Button>
-          )}
+          {(() => {
+            const copyButton = (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-xs"
+                className="size-7 text-neutral-400 hover:bg-neutral-800 hover:text-neutral-100"
+                aria-label={ariaLabel}
+                onClick={handleCopy}
+              >
+                <Copy className="size-3.5" />
+              </Button>
+            );
+            if (!copiedLabel) return copyButton;
+            return (
+              <TooltipProvider delayDuration={0}>
+                <Tooltip open={copied}>
+                  <TooltipTrigger asChild>{copyButton}</TooltipTrigger>
+                  <TooltipContent side="top">{copiedLabel}</TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            );
+          })()}
         </div>
       )}
     </div>
