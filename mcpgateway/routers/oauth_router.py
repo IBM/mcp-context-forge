@@ -24,7 +24,7 @@ from urllib.parse import urlparse, urlunparse
 # Third-Party
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
 
 # First-Party
@@ -927,6 +927,151 @@ async def get_oauth_status(
     except Exception as e:
         logger.error(f"Failed to get OAuth status: {str(e)}")
         raise HTTPException(status_code=500, detail="Failed to get OAuth status")
+
+
+async def _resolve_user_team_ids(user_email: str, current_user: EmailUserResponse | dict, db: Session) -> list[str]:
+    """Return the team IDs used for gateway visibility filtering.
+
+    Explicit ``token_teams`` scope (API tokens) takes precedence so a
+    team-scoped token cannot list gateways outside its restrictions;
+    otherwise the user's active team memberships are looked up.
+
+    Args:
+        user_email: Lowercased email of the requesting user.
+        current_user: Authenticated user context.
+        db: Active database session.
+
+    Returns:
+        Team ID list for the requester.
+    """
+    if isinstance(current_user, dict) and current_user.get("token_teams") is not None:
+        team_ids: list[str] = []
+        for team in current_user["token_teams"]:
+            if isinstance(team, dict):
+                team_id = team.get("id")
+                if isinstance(team_id, str) and team_id:
+                    team_ids.append(team_id)
+            elif isinstance(team, str) and team:
+                team_ids.append(team)
+        return team_ids
+
+    # First-Party
+    from mcpgateway.services.team_management_service import TeamManagementService
+
+    team_service = TeamManagementService(db)
+    user_teams = await team_service.get_user_teams(user_email)
+    return [team.id for team in user_teams]
+
+
+async def build_user_oauth_connections(db: Session, user_email: str, is_admin: bool, team_ids: list[str], root_path: str) -> list[Dict[str, Any]]:
+    """Assemble the current user's OAuth connection entries.
+
+    Lists every OAuth gateway using the Authorization Code flow that the user
+    can see (owned, team-visible, or public; unrestricted admins see all),
+    merged with the user's own stored token status for each gateway. Entries
+    never contain token material — only connection metadata such as expiry
+    and scopes. Shared by the ``GET /oauth/connections`` endpoint and the
+    admin UI "OAuth Connections" partial.
+
+    Args:
+        db: Active database session.
+        user_email: Lowercased email of the requesting user.
+        is_admin: Whether the requester has unrestricted admin visibility.
+        team_ids: Team IDs the requester belongs to (or the token scope).
+        root_path: Application root path used to mint authorize URLs.
+
+    Returns:
+        Connection entry dictionaries sorted by gateway name.
+    """
+    query = select(Gateway).where(Gateway.auth_type == "oauth")
+    if not is_admin:
+        access_conditions = [
+            Gateway.owner_email == user_email,
+            Gateway.visibility == "public",
+        ]
+        if team_ids:
+            access_conditions.append(and_(Gateway.team_id.in_(team_ids), Gateway.visibility.in_(["team", "public"])))
+        query = query.where(or_(*access_conditions))
+
+    gateways = db.execute(query).scalars().all()
+
+    # oauth_config is a JSON column; filter the grant type in Python for
+    # portability across SQLite and PostgreSQL (gateway counts are small).
+    authorization_code_gateways = [gateway for gateway in gateways if (gateway.oauth_config or {}).get("grant_type") == "authorization_code"]
+
+    token_info_by_gateway = await TokenStorageService(db).list_user_token_info(user_email)
+
+    connections = []
+    for gateway in authorization_code_gateways:
+        token_info = token_info_by_gateway.get(gateway.id)
+        connections.append(
+            {
+                "gateway_id": gateway.id,
+                "name": gateway.name,
+                "url": gateway.url,
+                "description": gateway.description,
+                "connected": token_info is not None,
+                "expires_at": token_info.get("expires_at") if token_info else None,
+                "is_expired": token_info.get("is_expired", False) if token_info else False,
+                "scopes": token_info.get("scopes") if token_info else None,
+                "updated_at": token_info.get("updated_at") if token_info else None,
+                "authorize_url": f"{root_path}/oauth/authorize/{gateway.id}",
+            }
+        )
+
+    connections.sort(key=lambda connection: (connection["name"] or "").lower())
+    return connections
+
+
+@oauth_router.get("/connections")
+async def list_oauth_connections(
+    request: Request,
+    current_user: dict = Depends(get_current_user_with_permissions),
+    db: Session = Depends(get_db),
+) -> dict:
+    """List the current user's OAuth connections across accessible gateways.
+
+    Returns every OAuth gateway using the Authorization Code flow that the
+    requesting user can see, together with the user's own connection status
+    for each gateway (connected, expiry, scopes) and the authorize URL to
+    start or repeat the flow. Token material is never included.
+
+    Args:
+        request: The FastAPI request object (used for root path resolution).
+        current_user: Authenticated user (enforces authentication).
+        db: Database session.
+
+    Returns:
+        Dict with a ``connections`` list of per-gateway connection entries.
+
+    Raises:
+        HTTPException: If not authenticated or listing fails.
+
+    Examples:
+        >>> import asyncio
+        >>> asyncio.iscoroutinefunction(list_oauth_connections)
+        True
+    """
+    try:
+        user_email = _extract_user_email(current_user)
+        if not user_email:
+            raise HTTPException(status_code=401, detail="User authentication required")
+
+        is_admin = _extract_is_admin(current_user)
+        if isinstance(current_user, dict) and current_user.get("token_teams") is not None:
+            # Team-scoped API tokens must not widen visibility via admin status.
+            is_admin = False
+
+        team_ids = await _resolve_user_team_ids(user_email, current_user, db)
+        connections = await build_user_oauth_connections(db, user_email=user_email, is_admin=is_admin, team_ids=team_ids, root_path=resolve_root_path(request))
+
+        return {"connections": connections}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to list OAuth connections: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to list OAuth connections")
 
 
 @oauth_router.post("/fetch-tools/{gateway_id}")

@@ -144,6 +144,7 @@ from mcpgateway.admin import (  # admin_get_metrics,
     admin_logout_get,
     admin_logout_post,
     admin_metrics_partial_html,
+    admin_oauth_connections_partial_html,
     admin_prompts_partial_html,
     admin_revoke_token,
     admin_reject_join_request,
@@ -12251,6 +12252,49 @@ async def test_admin_gateways_partial_html_default_includes_inactive(monkeypatch
     assert isinstance(response, HTMLResponse)
     context = mock_request.app.state.templates.TemplateResponse.call_args[0][2]
     assert context["query_params"]["include_inactive"] == "true"
+
+
+@pytest.mark.asyncio
+async def test_admin_oauth_connections_partial_html_renders(monkeypatch, mock_request, mock_db):
+    """Render the per-user OAuth connections partial via the shared data assembly."""
+    setup_team_service(monkeypatch, ["team-1"])
+    connections = [{"gateway_id": "gw-1", "name": "Gateway 1", "connected": True}]
+    build_mock = AsyncMock(return_value=connections)
+    monkeypatch.setattr("mcpgateway.admin.build_user_oauth_connections", build_mock)
+
+    mock_request.headers = {}
+    response = await admin_oauth_connections_partial_html(
+        mock_request,
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db},
+    )
+    assert isinstance(response, HTMLResponse)
+    _args, kwargs = build_mock.call_args
+    assert kwargs["user_email"] == "user@example.com"
+    assert kwargs["is_admin"] is False
+    assert kwargs["team_ids"] == ["team-1"]
+    template_call = mock_request.app.state.templates.TemplateResponse.call_args
+    assert template_call[0][1] == "oauth_connections_partial.html"
+    assert template_call[0][2]["connections"] == connections
+
+
+@pytest.mark.asyncio
+async def test_admin_oauth_connections_partial_html_scoped_token_disables_admin_bypass(monkeypatch, mock_request, mock_db):
+    """A team-scoped token must not widen visibility via the admin flag."""
+    setup_team_service(monkeypatch, ["team-1"])
+    build_mock = AsyncMock(return_value=[])
+    monkeypatch.setattr("mcpgateway.admin.build_user_oauth_connections", build_mock)
+
+    mock_request.headers = {}
+    response = await admin_oauth_connections_partial_html(
+        mock_request,
+        db=mock_db,
+        user={"email": "admin@example.com", "db": mock_db, "is_admin": True, "token_teams": ["team-1"]},
+    )
+    assert isinstance(response, HTMLResponse)
+    _args, kwargs = build_mock.call_args
+    assert kwargs["is_admin"] is False
+    assert kwargs["team_ids"] == ["team-1"]
 
 
 @pytest.mark.asyncio

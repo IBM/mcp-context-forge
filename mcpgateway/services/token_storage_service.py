@@ -521,6 +521,66 @@ class TokenStorageService:
             logger.error("Failed to get token info: %s", str(e))
             return None
 
+    async def list_user_token_info(self, app_user_email: str) -> Dict[str, Dict[str, Any]]:
+        """List stored OAuth token information for a user across all gateways.
+
+        Uses a single query over ``oauth_tokens`` and returns the same
+        per-token info shape as :meth:`get_token_info`, keyed by gateway ID.
+        Token material (access/refresh tokens) is never included.
+
+        Args:
+            app_user_email: ContextForge user email
+
+        Returns:
+            Mapping of gateway ID to token information dictionaries. Empty
+            when the user has no stored tokens or the lookup fails.
+
+        Examples:
+            >>> from types import SimpleNamespace
+            >>> from datetime import datetime, timedelta
+            >>> svc = TokenStorageService(None)
+            >>> now = datetime.now(tz=timezone.utc)
+            >>> future = now + timedelta(seconds=60)
+            >>> rec = SimpleNamespace(gateway_id='g1', user_id='u1', app_user_email='u1@example.com', token_type='bearer', expires_at=future, scopes=['s1'], created_at=now, updated_at=now)
+            >>> class _Res:
+            ...     def scalars(self):
+            ...         return self
+            ...     def all(self):
+            ...         return [rec]
+            >>> class _DB:
+            ...     def execute(self, *_args, **_kw):
+            ...         return _Res()
+            >>> svc.db = _DB()
+            >>> import asyncio
+            >>> info = asyncio.run(svc.list_user_token_info('u1@example.com'))
+            >>> sorted(info)
+            ['g1']
+            >>> info['g1']['user_id']
+            'u1'
+            >>> isinstance(info['g1']['is_expired'], bool)
+            True
+        """
+        try:
+            token_records = self.db.execute(select(OAuthToken).where(OAuthToken.app_user_email == app_user_email)).scalars().all()
+
+            return {
+                token_record.gateway_id: {
+                    "user_id": token_record.user_id,  # OAuth provider user ID
+                    "app_user_email": token_record.app_user_email,  # ContextForge user
+                    "token_type": token_record.token_type,
+                    "expires_at": token_record.expires_at.isoformat() if token_record.expires_at else None,
+                    "scopes": token_record.scopes,
+                    "created_at": token_record.created_at.isoformat(),
+                    "updated_at": token_record.updated_at.isoformat(),
+                    "is_expired": self._is_token_expired(token_record, 0),
+                }
+                for token_record in token_records
+            }
+
+        except Exception as e:
+            logger.error("Failed to list token info for user: %s", str(e))
+            return {}
+
     async def revoke_user_tokens(self, gateway_id: str, app_user_email: str) -> bool:
         """Revoke OAuth tokens for a specific user.
 

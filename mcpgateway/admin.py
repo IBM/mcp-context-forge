@@ -104,6 +104,7 @@ from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import utc_now
 from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG, get_current_user_with_permissions, require_any_permission, require_permission
 from mcpgateway.routers.email_auth import create_access_token
+from mcpgateway.routers.oauth_router import build_user_oauth_connections
 from mcpgateway.schemas import (
     A2AAgentCreate,
     A2AAgentRead,
@@ -231,6 +232,7 @@ UI_SECTION_TO_TABS: Dict[str, tuple[str, ...]] = {
     "overview": ("overview",),
     "servers": ("catalog",),
     "gateways": ("gateways",),
+    "oauth-connections": ("oauth-connections",),
     "tools": ("tools", "tool-ops"),
     "prompts": ("prompts",),
     "resources": ("resources",),
@@ -273,6 +275,7 @@ SECTION_PERMISSIONS: Dict[str, Optional[str]] = {
     "resources": "resources.read",
     "prompts": "prompts.read",
     "gateways": "gateways.read",
+    "oauth-connections": "gateways.read",
     # Team management sections
     "teams": "teams.read",
     "tokens": "tokens.read",
@@ -307,6 +310,7 @@ _SECTION_TO_ROUTE_PATH: Dict[str, str] = {
     "resources": "/admin/resources/partial",
     "prompts": "/admin/prompts/partial",
     "gateways": "/admin/gateways/partial",
+    "oauth-connections": "/admin/oauth-connections/partial",
     "teams": "/admin/teams/partial",
     "tokens": "/admin/tokens/partial",
     "agents": "/admin/a2a/partial",
@@ -9679,6 +9683,52 @@ async def admin_gateways_partial_html(
             "current_user_email": user_email,
             "is_admin": _is_admin,
             "user_team_roles": _team_roles,
+        },
+    )
+
+
+@admin_router.get("/oauth-connections/partial", response_class=HTMLResponse)
+@require_permission("gateways.read", allow_admin_bypass=False)
+async def admin_oauth_connections_partial_html(
+    request: Request,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+):
+    """Return the OAuth connections HTML partial for the admin UI.
+
+    This HTMX endpoint lists every OAuth gateway using the Authorization Code
+    flow that the current user can see, together with the user's own
+    connection status (connected, expired, or not connected) and an authorize
+    link per row. The data assembly is shared with ``GET /oauth/connections``
+    via :func:`build_user_oauth_connections`.
+
+    Args:
+        request (Request): FastAPI request object used by the template engine.
+        db (Session): Database session (dependency-injected).
+        user: Authenticated user object from dependency injection.
+
+    Returns:
+        TemplateResponse: Rendered OAuth connections partial.
+    """
+    user_email = get_user_email(user)
+    is_admin = bool(user.get("is_admin", False) if isinstance(user, dict) else getattr(user, "is_admin", False))
+    if isinstance(user, dict) and user.get("token_teams") is not None:
+        # Team-scoped API tokens must not widen visibility via admin status.
+        is_admin = False
+    team_ids = await _get_user_team_ids(user, db)
+
+    root_path = _resolve_root_path(request)
+    connections = await build_user_oauth_connections(db, user_email=user_email, is_admin=is_admin, team_ids=team_ids, root_path=root_path)
+
+    LOGGER.debug(f"User {user_email} requested OAuth connections partial ({len(connections)} gateways)")
+
+    return request.app.state.templates.TemplateResponse(
+        request,
+        "oauth_connections_partial.html",
+        {
+            "request": request,
+            "connections": connections,
+            "root_path": root_path,
         },
     )
 

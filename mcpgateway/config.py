@@ -135,6 +135,7 @@ UI_HIDABLE_SECTIONS = frozenset(
         "overview",
         "servers",
         "gateways",
+        "oauth-connections",
         "tools",
         "prompts",
         "resources",

@@ -27,12 +27,13 @@ This document describes how the Admin UI initiates OAuth 2.0 Authorization Code 
 - Tokens are stored per gateway and app user (email) in `oauth_tokens`, encrypted with `AUTH_ENCRYPTION_SECRET`.
 - Refresh tokens are used when access tokens are near expiry; invalid refresh tokens are cleared.
 - DCR auto-registration can run during `/oauth/authorize/{gateway_id}` when `issuer` is set and `client_id` is missing.
+- Per-user token listing: the admin UI "OAuth Connections" tab and `GET /oauth/connections` show each user's own connection status (connected, expiry, scopes) per Authorization Code gateway, without exposing token material.
 
 ### Known gaps and constraints
 
 - `oauth_store_tokens` and `oauth_auto_refresh` checkboxes exist in the UI but are not persisted or enforced by the backend.
 - `OAUTH_PREFERRED_CODE_CHALLENGE_METHOD` is defined but PKCE is always S256 today.
-- No admin UI to list or revoke stored OAuth tokens per user.
+- No admin UI to revoke stored OAuth tokens per user (listing exists via the "OAuth Connections" tab; revocation is tracked in #5501).
 - Token cleanup is a helper method only; there is no scheduler invoking it.
 
 ## Architecture Overview
@@ -260,5 +261,5 @@ For user authentication and RBAC configuration, see [RBAC Configuration](../mana
 
 - Wire `oauth_store_tokens` and `oauth_auto_refresh` to backend behavior.
 - Make PKCE method configurable using `OAUTH_PREFERRED_CODE_CHALLENGE_METHOD`.
-- Add admin UI for token status and revocation.
+- Add token revocation to the OAuth Connections view (per-user status listing shipped; revocation is tracked in #5501).
 - Schedule periodic cleanup of expired OAuth tokens.

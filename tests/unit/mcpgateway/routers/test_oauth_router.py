@@ -1495,6 +1495,84 @@ class TestOAuthAccessHelpers:
         assert exc_info.value.status_code == 403
 
 
+class TestListOAuthConnections:
+    """Tests for the GET /oauth/connections endpoint."""
+
+    @pytest.mark.asyncio
+    async def test_list_oauth_connections_merges_token_status(self, mock_db, mock_request):
+        """Connected and not-connected gateways merge; non-authorization-code gateways are excluded."""
+        # First-Party
+        from mcpgateway.routers.oauth_router import list_oauth_connections
+
+        connected_gateway = SimpleNamespace(id="gw-a", name="Alpha MCP", url="https://alpha.example.com/mcp", description="Alpha tools", oauth_config={"grant_type": "authorization_code"})
+        unconnected_gateway = SimpleNamespace(id="gw-b", name="Beta MCP", url="https://beta.example.com/mcp", description=None, oauth_config={"grant_type": "authorization_code"})
+        client_credentials_gateway = SimpleNamespace(id="gw-c", name="Gamma MCP", url="https://gamma.example.com/mcp", description=None, oauth_config={"grant_type": "client_credentials"})
+        mock_db.execute.return_value.scalars.return_value.all.return_value = [unconnected_gateway, connected_gateway, client_credentials_gateway]
+
+        token_info = {
+            "gw-a": {
+                "user_id": "provider-user",
+                "app_user_email": "user@example.com",
+                "token_type": "Bearer",
+                "expires_at": "2026-07-11T00:00:00+00:00",
+                "scopes": ["read", "write"],
+                "created_at": "2026-07-10T00:00:00+00:00",
+                "updated_at": "2026-07-10T00:00:00+00:00",
+                "is_expired": False,
+            }
+        }
+
+        with patch("mcpgateway.routers.oauth_router.TokenStorageService") as mock_token_storage_class:
+            mock_token_storage_class.return_value.list_user_token_info = AsyncMock(return_value=token_info)
+
+            result = await list_oauth_connections(mock_request, {"email": "user@example.com", "is_admin": False, "token_teams": ["team-1"]}, mock_db)
+
+        connections = result["connections"]
+        # Sorted by name; the client_credentials gateway is excluded.
+        assert [connection["gateway_id"] for connection in connections] == ["gw-a", "gw-b"]
+
+        connected, unconnected = connections
+        assert connected["connected"] is True
+        assert connected["expires_at"] == "2026-07-11T00:00:00+00:00"
+        assert connected["is_expired"] is False
+        assert connected["scopes"] == ["read", "write"]
+        assert connected["updated_at"] == "2026-07-10T00:00:00+00:00"
+        assert connected["authorize_url"].endswith("/oauth/authorize/gw-a")
+        assert unconnected["connected"] is False
+        assert unconnected["expires_at"] is None
+        assert unconnected["is_expired"] is False
+        assert unconnected["scopes"] is None
+        # Token material must never appear in the response.
+        for connection in connections:
+            assert "access_token" not in connection
+            assert "refresh_token" not in connection
+
+    @pytest.mark.asyncio
+    async def test_list_oauth_connections_requires_authenticated_email(self, mock_db, mock_request):
+        """Requests without a resolvable user email are rejected with 401."""
+        # First-Party
+        from mcpgateway.routers.oauth_router import list_oauth_connections
+
+        with pytest.raises(HTTPException) as exc_info:
+            await list_oauth_connections(mock_request, {"is_admin": False}, mock_db)
+
+        assert exc_info.value.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_list_oauth_connections_wraps_unexpected_errors(self, mock_db, mock_request):
+        """Unexpected failures surface as a generic 500 without leaking details."""
+        # First-Party
+        from mcpgateway.routers.oauth_router import list_oauth_connections
+
+        mock_db.execute.side_effect = RuntimeError("boom")
+
+        with pytest.raises(HTTPException) as exc_info:
+            await list_oauth_connections(mock_request, {"email": "user@example.com", "is_admin": False, "token_teams": []}, mock_db)
+
+        assert exc_info.value.status_code == 500
+        assert "Failed to list OAuth connections" in str(exc_info.value.detail)
+
+
 class TestRFC8707ResourceNormalization:
     """Test cases for RFC 8707 resource URL normalization."""
 

@@ -185,6 +185,36 @@ OAuth tokens are stored per gateway and user for the Authorization Code flow to 
 
 ---
 
+## Viewing Your OAuth Connections
+
+Each user can review their own OAuth authorization status across every Authorization Code gateway they have access to:
+
+- **Admin UI**: the **OAuth Connections** tab lists each accessible OAuth gateway with a Connected / Expired / Not connected status pill and an Authorize (or Re-authorize) link per gateway.
+- **API**: `GET /oauth/connections` returns the same data for the authenticated user:
+
+```json
+{
+  "connections": [
+    {
+      "gateway_id": "abc123",
+      "name": "GitHub MCP",
+      "url": "https://github-mcp.example.com/mcp",
+      "description": "GitHub tools",
+      "connected": true,
+      "expires_at": "2026-07-11T00:00:00+00:00",
+      "is_expired": false,
+      "scopes": ["repo"],
+      "updated_at": "2026-07-10T00:00:00+00:00",
+      "authorize_url": "/oauth/authorize/abc123"
+    }
+  ]
+}
+```
+
+Only connection metadata is returned - token material never leaves the server.
+
+---
+
 ## Provider Examples
 
 ### GitHub (Authorization Code)
