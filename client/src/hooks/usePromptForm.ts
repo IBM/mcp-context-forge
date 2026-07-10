@@ -4,6 +4,7 @@ import { z } from "zod";
 import { useAuthContext } from "@/auth/AuthContext";
 import { useQuery } from "@/hooks/useQuery";
 import { parseApiError } from "@/lib/errorUtils";
+import { sanitizeString } from "@/lib/sanitize";
 import type { Prompt, PromptArgument, PromptFormErrors } from "@/types/prompts";
 import type { Visibility } from "@/types/server";
 
@@ -64,82 +65,10 @@ const initialState: PromptFormValues = {
   tags: "",
 };
 
-const TEMPLATE_MAX_LENGTH = 65536;
-const DANGEROUS_HTML_TAGS_RE = /<(script|iframe|object|embed|link|meta|base|form)\b/i;
-const EVENT_HANDLER_RE = /on\w+\s*=/i;
-const SSTI_SIMPLE_PREFIXES = ["${", "#{", "%{"];
-const SSTI_DANGEROUS_SUBSTRINGS = [
-  "__",
-  "config",
-  "self",
-  "request",
-  "application",
-  "globals",
-  "builtins",
-  "import",
-  "getattr",
-  "|attr",
-  "|selectattr",
-  "|sort",
-  "|map",
-  "attribute=",
-  "\\x",
-  "\\u",
-  "\\0",
-  "lipsum",
-  "cycler",
-  "joiner",
-];
-const SSTI_DANGEROUS_OPERATORS = ["*", "/", "+", "-", "~", "[", "%"];
-
-function iterTemplateExpressions(value: string, start: string, end: string): string[] {
-  const exprs: string[] = [];
-  let i = 0;
-  while (i < value.length) {
-    const startIdx = value.indexOf(start, i);
-    if (startIdx === -1) break;
-    const endIdx = value.indexOf(end, startIdx + start.length);
-    if (endIdx === -1) break;
-    exprs.push(value.slice(startIdx + start.length, endIdx));
-    i = endIdx + end.length;
-  }
-  return exprs;
-}
-
-function validateTemplateContent(value: string): string | null {
-  // Best-effort mirror for instant feedback; server validation remains the source of truth.
-  // Keep aligned with SecurityValidator.validate_template in mcpgateway/common/validators.py.
-  // Prompt creation also runs mcpgateway/services/content_security.py validate_prompt_template.
-  if (value.length > TEMPLATE_MAX_LENGTH) return "templateTooLong";
-  if (DANGEROUS_HTML_TAGS_RE.test(value)) return "templateHtmlTags";
-  if (EVENT_HANDLER_RE.test(value)) return "templateEventHandlers";
-  if (SSTI_SIMPLE_PREFIXES.some((prefix) => value.includes(prefix))) {
-    return "templateDangerousExpression";
-  }
-
-  for (const expr of [
-    ...iterTemplateExpressions(value, "{{", "}}"),
-    ...iterTemplateExpressions(value, "{%", "%}"),
-  ]) {
-    const lower = expr
-      .toLowerCase()
-      .replace(/\s*\|\s*/g, "|")
-      .replace(/\s*=\s*/g, "=");
-    if (SSTI_DANGEROUS_SUBSTRINGS.some((substring) => lower.includes(substring))) {
-      return "templateDangerousExpression";
-    }
-    if (lower.includes(".")) return "templateDangerousExpression";
-    if (SSTI_DANGEROUS_OPERATORS.some((operator) => expr.includes(operator))) {
-      return "templateDangerousExpression";
-    }
-  }
-  return null;
-}
-
 function parseTags(value?: string): string[] | undefined {
   const tags = value
     ?.split(",")
-    .map((tag) => tag.trim())
+    .map((tag) => sanitizeString(tag, 200))
     .filter(Boolean);
 
   return tags && tags.length > 0 ? tags : undefined;
@@ -148,20 +77,12 @@ function parseTags(value?: string): string[] | undefined {
 const createPromptFormSchema = (intl: ReturnType<typeof useIntl>) =>
   z
     .object({
-      name: z.string().min(1, intl.formatMessage({ id: "prompts.add.error.nameRequired" })),
-      visibility: z.enum(["public", "private", "team"]),
-      template: z
+      name: z
         .string()
-        .min(1, intl.formatMessage({ id: "prompts.add.error.templateRequired" }))
-        .superRefine((value, ctx) => {
-          const templateError = validateTemplateContent(value);
-          if (templateError) {
-            ctx.addIssue({
-              code: z.ZodIssueCode.custom,
-              message: intl.formatMessage({ id: `prompts.add.error.${templateError}` }),
-            });
-          }
-        }),
+        .transform((value) => sanitizeString(value, 100))
+        .pipe(z.string().min(1, intl.formatMessage({ id: "prompts.add.error.nameRequired" }))),
+      visibility: z.enum(["public", "private", "team"]),
+      template: z.string().min(1, intl.formatMessage({ id: "prompts.add.error.templateRequired" })),
       arguments: z.string().transform((value, ctx): PromptArgument[] => {
         if (!value.trim()) return [];
 
@@ -183,7 +104,10 @@ const createPromptFormSchema = (intl: ReturnType<typeof useIntl>) =>
           return z.NEVER;
         }
       }),
-      description: z.string().optional(),
+      description: z
+        .string()
+        .transform((value) => sanitizeString(value, 500))
+        .optional(),
       tags: z.string().optional().transform(parseTags),
       teamId: z.string().optional(),
     })
@@ -230,14 +154,7 @@ function getApiFieldError(error: unknown): PromptFormErrors | null {
   if (!body?.field || !body.message) return null;
 
   const field = body.field === "team_id" ? "visibility" : body.field;
-  if (
-    field === "name" ||
-    field === "visibility" ||
-    field === "template" ||
-    field === "arguments" ||
-    field === "description" ||
-    field === "tags"
-  ) {
+  if (field === "name" || field === "visibility" || field === "template" || field === "arguments") {
     return { [field]: body.message };
   }
 

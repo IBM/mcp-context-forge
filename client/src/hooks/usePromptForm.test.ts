@@ -108,80 +108,12 @@ describe("usePromptForm", () => {
     expect(result.current.errors.arguments).toBeUndefined();
   });
 
-  it("validates unsafe prompt templates with the zod schema", () => {
+  it("returns true when required fields are filled", () => {
     const { result } = renderHook(() => usePromptForm());
 
     act(() => {
-      result.current.setName("Unsafe prompt");
-      result.current.setTemplate("Hello {{ user.name }}");
-    });
-
-    act(() => {
-      result.current.validateForm();
-    });
-
-    expect(result.current.errors.template).toBe(
-      "Template expressions may only contain simple variable names — no operators, dot access, or built-in keywords",
-    );
-  });
-
-  it("rejects prompt template operators with the zod schema", () => {
-    const { result } = renderHook(() => usePromptForm());
-
-    act(() => {
-      result.current.setName("Unsafe prompt");
-      result.current.setTemplate("Hello {{ count + 1 }}");
-    });
-
-    act(() => {
-      result.current.validateForm();
-    });
-
-    expect(result.current.errors.template).toBe(
-      "Template expressions may only contain simple variable names — no operators, dot access, or built-in keywords",
-    );
-  });
-
-  it("rejects dangerous prompt template prefixes with the zod schema", () => {
-    const { result } = renderHook(() => usePromptForm());
-
-    act(() => {
-      result.current.setName("Unsafe prompt");
-      result.current.setTemplate("Hello ${name}");
-    });
-
-    act(() => {
-      result.current.validateForm();
-    });
-
-    expect(result.current.errors.template).toBe(
-      "Template expressions may only contain simple variable names — no operators, dot access, or built-in keywords",
-    );
-  });
-
-  it("rejects dangerous prompt template keywords with the zod schema", () => {
-    const { result } = renderHook(() => usePromptForm());
-
-    act(() => {
-      result.current.setName("Unsafe prompt");
-      result.current.setTemplate("Hello {{ config }}");
-    });
-
-    act(() => {
-      result.current.validateForm();
-    });
-
-    expect(result.current.errors.template).toBe(
-      "Template expressions may only contain simple variable names — no operators, dot access, or built-in keywords",
-    );
-  });
-
-  it("allows incomplete template expressions while drafting", () => {
-    const { result } = renderHook(() => usePromptForm());
-
-    act(() => {
-      result.current.setName("Draft prompt");
-      result.current.setTemplate("Hello {{ name");
+      result.current.setName("Greeting prompt");
+      result.current.setTemplate("Hello {{ name }}");
     });
 
     let valid: boolean;
@@ -190,7 +122,36 @@ describe("usePromptForm", () => {
     });
 
     expect(valid!).toBe(true);
-    expect(result.current.errors.template).toBeUndefined();
+    expect(result.current.errors).toEqual({});
+  });
+
+  it("sanitizes prompt metadata in the API payload", () => {
+    const { result } = renderHook(() => usePromptForm());
+
+    act(() => {
+      result.current.setName(" Greeting\x0B prompt ");
+      result.current.setTemplate("Hello {{ name }}");
+      result.current.setDescription("desc\x1Fription");
+      result.current.setTags(" greeting , ex\x00ample ");
+    });
+
+    const data = result.current.getFormData();
+    expect(data.prompt.name).toBe("Greeting prompt");
+    expect(data.prompt.description).toBe("description");
+    expect(data.prompt.tags).toEqual(["greeting", "example"]);
+  });
+
+  it("truncates description exceeding 500 characters in the API payload", () => {
+    const { result } = renderHook(() => usePromptForm());
+
+    act(() => {
+      result.current.setName("Greeting prompt");
+      result.current.setTemplate("Hello {{ name }}");
+      result.current.setDescription("a".repeat(501));
+    });
+
+    expect(result.current.isValid).toBe(true);
+    expect(result.current.getFormData().prompt.description).toHaveLength(500);
   });
 
   it("shows a team visibility error immediately when no team is selected", () => {
@@ -338,11 +299,15 @@ describe("usePromptForm", () => {
     });
   });
 
-  it("falls back to a submit error for unmapped API field errors", async () => {
+  it.each([
+    ["description", "Description rejected"],
+    ["tags", "Tags rejected"],
+    ["unknown_field", "Unknown field rejected"],
+  ])("falls back to a submit error for %s API field errors", async (field, message) => {
     const error = new Error("HTTP 422") as Error & {
       body?: { field?: string; message?: string };
     };
-    error.body = { field: "unknown_field", message: "Unknown field rejected" };
+    error.body = { field, message };
     mockPost.mockRejectedValue(error);
     const { result } = renderHook(() => usePromptForm());
 
@@ -355,7 +320,7 @@ describe("usePromptForm", () => {
       await result.current.handleSubmit(fakeSubmit());
     });
 
-    expect(result.current.errors.submit).toBe("Unknown field rejected");
+    expect(result.current.errors.submit).toBe(message);
   });
 
   it("clears submit errors when fields change", async () => {
