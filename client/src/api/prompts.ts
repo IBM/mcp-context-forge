@@ -71,13 +71,19 @@ export const promptsApi = {
    *     clients address prompts. Depends on the Prompts page carrying a
    *     server context, which is not the case today.
    */
-  render: (name: string, args: Record<string, string> = {}): Promise<RenderResult> => {
+  render: (
+    name: string,
+    args: Record<string, string> = {},
+    options: { signal?: AbortSignal } = {},
+  ): Promise<RenderResult> => {
     // Validate outside the async chain so bad names reject the *caller* before
     // any network I/O and preserve the synchronous-throw contract exercised by
     // `prompts.test.ts`.
     const validName = validatePromptName(name);
     return api
-      .postWithMeta<RenderedPrompt>(`/prompts/${encodeURIComponent(validName)}`, args)
+      .postWithMeta<RenderedPrompt>(`/prompts/${encodeURIComponent(validName)}`, args, {
+        signal: options.signal,
+      })
       .then(({ data, status }) => ({ rendered: data, status }));
   },
 };

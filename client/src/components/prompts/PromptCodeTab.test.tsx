@@ -76,6 +76,7 @@ describe("PromptCodeTab", () => {
       expect(promptsApi.render).toHaveBeenCalledWith(
         "greet_user",
         expect.objectContaining({ user_name: "Bob" }),
+        expect.objectContaining({ signal: expect.any(AbortSignal) }),
       ),
     );
   });

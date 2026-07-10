@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useIntl } from "react-intl";
 import { toast } from "sonner";
 
@@ -41,6 +41,7 @@ export function usePromptPreview(
   const [isLoading, setLoading] = useState(false);
   const [result, setResult] = useState<PreviewSuccess | null>(null);
   const [error, setError] = useState<PreviewFailure | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
 
   // Clear stale result/error when the caller switches to a different prompt.
   // Without this, a drawer that re-uses one instance across prompts would show
@@ -50,15 +51,32 @@ export function usePromptPreview(
     setError(null);
   }, [promptName]);
 
+  // Abort any in-flight preview when the hook unmounts. PromptCodeTab is keyed
+  // by prompt id, so this also fires on prompt switch — resolutions that arrive
+  // after the switch never touch state on the unmounted instance.
+  useEffect(() => {
+    return () => {
+      abortRef.current?.abort();
+    };
+  }, []);
+
   const run = useCallback(async () => {
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+
     setLoading(true);
     setError(null);
     const startedAt = performance.now();
     try {
-      const { rendered, status } = await promptsApi.render(promptName, args);
+      const { rendered, status } = await promptsApi.render(promptName, args, {
+        signal: controller.signal,
+      });
+      if (controller.signal.aborted) return;
       const renderTimeMs = Math.round(performance.now() - startedAt);
       setResult({ rendered, renderTimeMs, status });
     } catch (err) {
+      if (controller.signal.aborted) return;
       const renderTimeMs = Math.round(performance.now() - startedAt);
       const status = err instanceof ApiError ? err.status : null;
       const message =
@@ -73,7 +91,9 @@ export function usePromptPreview(
       setResult(null);
       toast.error(intl.formatMessage({ id: "prompts.details.preview.error" }));
     } finally {
-      setLoading(false);
+      if (!controller.signal.aborted) {
+        setLoading(false);
+      }
     }
   }, [promptName, args, intl]);
 

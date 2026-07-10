@@ -42,7 +42,11 @@ describe("usePromptPreview", () => {
       await result.current.run();
     });
 
-    expect(promptsApi.render).toHaveBeenCalledWith("greet", { user: "Alice" });
+    expect(promptsApi.render).toHaveBeenCalledWith(
+      "greet",
+      { user: "Alice" },
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
     expect(result.current.result).not.toBeNull();
     expect(result.current.result?.renderTimeMs).toBeGreaterThanOrEqual(0);
     expect(result.current.result?.status).toBe(200);
@@ -99,6 +103,33 @@ describe("usePromptPreview", () => {
     expect(result.current.result).toBeNull();
     expect(result.current.error).toBeNull();
     expect(result.current.hasRun).toBe(false);
+  });
+
+  it("aborts an in-flight preview when the hook unmounts and drops the late resolution", async () => {
+    let resolve: ((v: { rendered: { messages: never[] }; status: number }) => void) | undefined;
+    let capturedSignal: AbortSignal | undefined;
+    vi.mocked(promptsApi.render).mockImplementation((_name, _args, opts) => {
+      capturedSignal = opts?.signal;
+      return new Promise((r) => {
+        resolve = r;
+      });
+    });
+    const { toast } = await import("sonner");
+    const { result, unmount } = setup();
+
+    act(() => {
+      void result.current.run();
+    });
+    await waitFor(() => expect(result.current.isLoading).toBe(true));
+    expect(capturedSignal?.aborted).toBe(false);
+
+    unmount();
+    expect(capturedSignal?.aborted).toBe(true);
+
+    // Late resolution after unmount must not toast or otherwise surface.
+    resolve?.({ rendered: { messages: [] }, status: 200 });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(toast.error).not.toHaveBeenCalled();
   });
 
   it("flips isLoading while the request is in flight", async () => {
