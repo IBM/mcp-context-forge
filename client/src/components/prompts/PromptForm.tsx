@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { useIntl } from "react-intl";
 import { CircleAlert, MessageSquareCode } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -23,6 +24,13 @@ interface PromptFormProps {
 export function PromptForm({ isOpen, onToggle, onSuccess }: PromptFormProps) {
   const intl = useIntl();
   const form = usePromptForm();
+  const nameInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (isOpen) {
+      nameInputRef.current?.focus();
+    }
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
@@ -62,16 +70,18 @@ export function PromptForm({ isOpen, onToggle, onSuccess }: PromptFormProps) {
           <div className="space-y-2.5">
             <Label htmlFor="name" className="mb-2.5 block text-sm font-medium text-foreground">
               {intl.formatMessage({ id: "prompts.add.field.name" })}{" "}
-              <span className="text-destructive">
+              <span className="text-destructive" aria-hidden="true">
                 {intl.formatMessage({ id: "prompts.add.required" })}
               </span>
             </Label>
             <Input
               id="name"
+              ref={nameInputRef}
               value={form.name}
               onChange={(e) => form.setName(e.target.value)}
               onBlur={(e) => form.validateField("name", e.target.value)}
               placeholder="Name"
+              aria-required="true"
               aria-invalid={!!form.errors.name}
               aria-describedby={form.errors.name ? "prompt-name-error" : undefined}
               className="h-10"
@@ -89,7 +99,7 @@ export function PromptForm({ isOpen, onToggle, onSuccess }: PromptFormProps) {
               className="mb-2.5 block text-sm font-medium text-foreground"
             >
               {intl.formatMessage({ id: "prompts.add.field.visibility" })}{" "}
-              <span className="text-destructive">
+              <span className="text-destructive" aria-hidden="true">
                 {intl.formatMessage({ id: "prompts.add.required" })}
               </span>
             </Label>
@@ -99,6 +109,7 @@ export function PromptForm({ isOpen, onToggle, onSuccess }: PromptFormProps) {
             >
               <SelectTrigger
                 id="visibility"
+                aria-required="true"
                 aria-invalid={!!form.errors.visibility}
                 aria-describedby={visibilityDescribedBy}
                 className="h-10 w-full"
@@ -136,7 +147,7 @@ export function PromptForm({ isOpen, onToggle, onSuccess }: PromptFormProps) {
           <div className="space-y-2.5">
             <Label htmlFor="template" className="mb-2.5 block text-sm font-medium text-foreground">
               {intl.formatMessage({ id: "prompts.add.field.template" })}{" "}
-              <span className="text-destructive">
+              <span className="text-destructive" aria-hidden="true">
                 {intl.formatMessage({ id: "prompts.add.required" })}
               </span>
             </Label>
@@ -146,6 +157,7 @@ export function PromptForm({ isOpen, onToggle, onSuccess }: PromptFormProps) {
               onChange={(e) => form.setTemplate(e.target.value)}
               onBlur={(e) => form.validateField("template", e.target.value)}
               placeholder={intl.formatMessage({ id: "prompts.add.placeholder.template" })}
+              aria-required="true"
               aria-invalid={!!form.errors.template}
               aria-describedby={form.errors.template ? "prompt-template-error" : undefined}
               className="min-h-[96px] resize-y"
