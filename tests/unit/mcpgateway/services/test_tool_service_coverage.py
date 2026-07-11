@@ -32,7 +32,7 @@ from mcpgateway.config import settings
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.schemas import ToolMetrics, ToolRead, ToolUpdate
-from mcpgateway.services.rust_a2a_runtime import RustA2ARuntimeError
+
 from mcpgateway.services.tool_service import (
     _canonicalize_schema,
     _get_registry_cache,
@@ -6756,9 +6756,9 @@ class TestInvokeToolRestSuccess:
         # isError=true upstream responses, symmetric with the REST fix.
         assert metrics_record.called, "record_tool_metric was not invoked"
         recorded_success = metrics_record.call_args.kwargs.get("success")
-        assert (
-            recorded_success is False
-        ), f"Expected metrics success=False for MCP non-direct-proxy isError=true response, got {recorded_success}. This would silently inflate federated-tool success rates."
+        assert recorded_success is False, (
+            f"Expected metrics success=False for MCP non-direct-proxy isError=true response, got {recorded_success}. This would silently inflate federated-tool success rates."
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -7839,76 +7839,6 @@ class TestInvokeToolA2A:
         assert parsed[1]["active"] is False
         assert "True" not in result.content[0].text
         assert "False" not in result.content[0].text
-
-    @pytest.mark.asyncio
-    async def test_a2a_invoke_tool_rust_runtime_text_fallback(self, tool_service):
-        tp = _make_tool_payload(
-            integration_type="A2A",
-            request_type="POST",
-            annotations={"a2a_agent_id": "agent-uuid-1"},
-        )
-        db = MagicMock()
-        a2a_agent = _make_a2a_agent()
-        db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=a2a_agent)))
-
-        rust_runtime = MagicMock()
-        rust_runtime.invoke = AsyncMock(return_value={"status_code": 200, "json": None, "text": "text-only"})
-
-        with (
-            _setup_cache_for_invoke(tp),
-            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
-            patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc,
-            patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace,
-            patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
-            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
-            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
-            patch("mcpgateway.services.tool_service.get_rust_a2a_runtime_client", return_value=rust_runtime),
-        ):
-            mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
-            mock_trace.get = MagicMock(return_value=None)
-            mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
-            mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
-            mock_mbuf.return_value = MagicMock()
-            with patch.object(settings, "experimental_rust_a2a_runtime_enabled", True), patch.object(settings, "experimental_rust_a2a_runtime_delegate_enabled", True):
-                result = await tool_service.invoke_tool(db, "test_tool", {"query": "test"})
-
-        assert result.is_error is False
-        assert result.content[0].text == "text-only"
-
-    @pytest.mark.asyncio
-    async def test_a2a_invoke_tool_rust_runtime_error_response(self, tool_service):
-        tp = _make_tool_payload(
-            integration_type="A2A",
-            request_type="POST",
-            annotations={"a2a_agent_id": "agent-uuid-1"},
-        )
-        db = MagicMock()
-        a2a_agent = _make_a2a_agent()
-        db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=a2a_agent)))
-
-        rust_runtime = MagicMock()
-        rust_runtime.invoke = AsyncMock(side_effect=RustA2ARuntimeError("runtime failed"))
-
-        with (
-            _setup_cache_for_invoke(tp),
-            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
-            patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc,
-            patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace,
-            patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
-            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
-            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
-            patch("mcpgateway.services.tool_service.get_rust_a2a_runtime_client", return_value=rust_runtime),
-        ):
-            mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
-            mock_trace.get = MagicMock(return_value=None)
-            mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
-            mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
-            mock_mbuf.return_value = MagicMock()
-            with patch.object(settings, "experimental_rust_a2a_runtime_enabled", True), patch.object(settings, "experimental_rust_a2a_runtime_delegate_enabled", True):
-                result = await tool_service.invoke_tool(db, "test_tool", {"query": "test"})
-
-        assert result.is_error is True
-        assert "runtime failed" in result.content[0].text
 
     @pytest.mark.asyncio
     async def test_a2a_jsonrpc_success_no_query(self, tool_service):

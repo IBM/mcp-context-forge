@@ -35,9 +35,7 @@ services:
 
 These limits are applied across all deployment variants:
 - `docker-compose.yml` (production)
-- `docker-compose-debug.yml` (debugging)
 - `docker-compose-performance.yml` (high-load testing)
-- `docker-compose-verbose-logging.yml` (verbose logging)
 - `docker-compose-embedded.yml` (embedded mode)
 - `docker-compose.override.lite.yml` (resource-constrained)
 - `docker-compose.sso.yml` (SSO integration)

@@ -222,19 +222,6 @@ services:
       - MCP_RUST_TOOLS_CALL_PLAN_TTL_SECONDS=${MCP_RUST_TOOLS_CALL_PLAN_TTL_SECONDS:-30}
       - MCP_RUST_UPSTREAM_SESSION_TTL_SECONDS=${MCP_RUST_UPSTREAM_SESSION_TTL_SECONDS:-300}
       - MCP_RUST_USE_RMCP_UPSTREAM_CLIENT=${MCP_RUST_USE_RMCP_UPSTREAM_CLIENT:-}
-      # High-level Rust A2A UX (deprecated as of 2026-06-11 and sunsets on 2026-07-07; prefer RUST_A2A_MODE=off):
-      #   RUST_A2A_MODE=off    -> Python A2A client path
-      #   RUST_A2A_MODE=shadow -> Rust sidecar is present, but A2A invoke stays on Python
-      #   RUST_A2A_MODE=edge   -> A2A invoke delegates to the Rust sidecar
-      #   RUST_A2A_MODE=full   -> alias for edge until task/push cores move to Rust
-      - RUST_A2A_MODE=${RUST_A2A_MODE:-off}
-      - RUST_A2A_LOG=${RUST_A2A_LOG:-warn}
-      - EXPERIMENTAL_RUST_A2A_RUNTIME_ENABLED=${EXPERIMENTAL_RUST_A2A_RUNTIME_ENABLED:-}
-      - EXPERIMENTAL_RUST_A2A_RUNTIME_DELEGATE_ENABLED=${EXPERIMENTAL_RUST_A2A_RUNTIME_DELEGATE_ENABLED:-}
-      - EXPERIMENTAL_RUST_A2A_RUNTIME_MANAGED=${EXPERIMENTAL_RUST_A2A_RUNTIME_MANAGED:-}
-      - EXPERIMENTAL_RUST_A2A_RUNTIME_URL=${EXPERIMENTAL_RUST_A2A_RUNTIME_URL:-}
-      - EXPERIMENTAL_RUST_A2A_RUNTIME_UDS=${EXPERIMENTAL_RUST_A2A_RUNTIME_UDS:-}
-      - EXPERIMENTAL_RUST_A2A_RUNTIME_TIMEOUT_SECONDS=${EXPERIMENTAL_RUST_A2A_RUNTIME_TIMEOUT_SECONDS:-30}
       - A2A_RUST_LISTEN_HTTP=${A2A_RUST_LISTEN_HTTP:-}
       - A2A_RUST_LISTEN_UDS=${A2A_RUST_LISTEN_UDS:-}
       - A2A_RUST_LOG=${A2A_RUST_LOG:-}
@@ -1535,25 +1522,13 @@ services:
   #   FAST_TIME_IMAGE=mcpgateway/fast-time-server:local docker compose build fast_time_server
   ###############################################################################
   fast_time_server:
-    image: ${FAST_TIME_IMAGE:-ghcr.io/ibm/fast-time-server:latest}
-    build:
-      context: .
-      dockerfile: mcp-servers/rust/fast-time-server/Containerfile
+    image: ${FAST_TIME_IMAGE:-ghcr.io/ibm/cfex-mcp-fast-time-server:latest}
     restart: unless-stopped
     networks: [mcpnet]
     ports:
-      - "8888:8080"    # Map host port 8888 to container port 8080
-    environment:
-      - BIND_ADDRESS=0.0.0.0:8080
-      - RUST_LOG=info
+      - "8888:9080"    # Map host port 8888 to container port 9080 (server's default port)
     # Use dual mode for both SSE (/sse) and Streamable HTTP (/http) endpoints
-    command: ["-transport=dual", "-listen=0.0.0.0", "-port=8080", "-log-level=info"]
-    healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:8080/health"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
+    command: ["-transport=dual", "-listen=0.0.0.0:9080", "-log-level=info"]
 
   ###############################################################################
   # Auto-registration service - registers fast_time_server with gateway
@@ -1608,7 +1583,7 @@ services:
 
         for i in range(1, 31):
             try:
-                with urllib.request.urlopen('http://fast_time_server:8080/health', timeout=2) as response:
+                with urllib.request.urlopen('http://fast_time_server:9080/health', timeout=2) as response:
                     if response.status == 200:
                         print('✅ fast_time_server is healthy')
                         break
@@ -1720,7 +1695,7 @@ services:
             try:
                 result = api_request_with_retry('POST', '/gateways', {
                     'name': 'fast_time',
-                    'url': 'http://fast_time_server:8080/http',
+                    'url': 'http://fast_time_server:9080/mcp',
                     'transport': 'STREAMABLEHTTP'
                 })
                 print(f'Registration response: {result}')
@@ -1831,154 +1806,13 @@ services:
         echo "✅ Setup complete!"
 
   ###############################################################################
-  # Auto-registration service - registers fast_time_server SSE with gateway
-  # Provides always-available SSE transport for manual testing and E2E RBAC tests.
-  # RBAC tests (test_mcp_rbac_transport.py) create additional team/private servers
-  # dynamically; this service only registers the base public SSE gateway + server.
-  ###############################################################################
-  register_fast_time_sse:
-    image: ${IMAGE_LOCAL:-mcpgateway/mcpgateway:latest}
-    networks: [mcpnet]
-    depends_on:
-      register_fast_time:
-        condition: service_completed_successfully
-    environment:
-      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-my-test-key-but-now-longer-than-32-bytes}
-    restart: "no"
-    entrypoint: ["/bin/sh", "-c"]
-    command:
-      - |
-        set -e
-        echo "Registering fast_time_server SSE transport with gateway..."
-
-        # Generate JWT token
-        export MCPGATEWAY_BEARER_TOKEN=$$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --admin --exp 10080 --secret $$JWT_SECRET_KEY --algo HS256 2>/dev/null)
-
-        python3 -c "
-        import json
-        import os
-        import sys
-        import time
-        import urllib.request
-
-        token = os.environ.get('MCPGATEWAY_BEARER_TOKEN', '')
-
-        def api_request(method, path, data=None):
-            url = f'http://gateway:4444{path}'
-            req = urllib.request.Request(url, method=method)
-            req.add_header('Authorization', f'Bearer {token}')
-            req.add_header('Content-Type', 'application/json')
-            if data:
-                req.data = json.dumps(data).encode('utf-8')
-            with urllib.request.urlopen(req, timeout=60) as response:
-                return json.loads(response.read().decode('utf-8'))
-
-        # Delete existing SSE gateway if present
-        try:
-            gateways = api_request('GET', '/gateways')
-            for gw in gateways:
-                if gw.get('name') == 'fast_time_sse':
-                    print(f'Found existing SSE gateway {gw[\"id\"]}, deleting...')
-                    api_request('DELETE', f'/gateways/{gw[\"id\"]}')
-        except Exception as e:
-            print(f'Note: {e}')
-
-        # Delete existing SSE virtual server if present (using fixed ID)
-        SSE_VIRTUAL_SERVER_ID = 'a88e2c3f5d7b4a9e8f1c6d2e3b4a5f6e'
-        try:
-            api_request('DELETE', f'/servers/{SSE_VIRTUAL_SERVER_ID}')
-            print(f'Deleted existing SSE virtual server {SSE_VIRTUAL_SERVER_ID}')
-        except Exception as e:
-            print(f'Note: No existing SSE virtual server to delete (or error: {e})')
-
-        # Register SSE gateway
-        print('Registering SSE gateway...')
-        try:
-            result = api_request('POST', '/gateways', {
-                'name': 'fast_time_sse',
-                'url': 'http://fast_time_server:8080/sse',
-                'transport': 'SSE'
-            })
-            gateway_id = result.get('id')
-            print(f'SSE gateway registered (id: {gateway_id})')
-        except Exception as e:
-            print(f'Failed to register SSE gateway: {e}')
-            sys.exit(1)
-
-        # Wait for tool sync
-        print('Waiting for SSE tools to sync...')
-        for i in range(30):
-            time.sleep(1)
-            try:
-                tools = api_request('GET', '/tools')
-                sse_tools = [t for t in tools if t.get('gatewayId') == gateway_id]
-                if sse_tools:
-                    print(f'Found {len(sse_tools)} SSE tools')
-                    break
-            except Exception:
-                pass
-            print(f'Waiting for SSE sync... ({i+1}/30)')
-        else:
-            print('Warning: No SSE tools synced, continuing anyway...')
-
-        # Fetch SSE tools/resources/prompts
-        tool_ids = []
-        resource_ids = []
-        prompt_ids = []
-
-        try:
-            tools = api_request('GET', '/tools')
-            tool_ids = [t['id'] for t in tools if t.get('gatewayId') == gateway_id]
-            print(f'SSE tools: {[t[\"name\"] for t in tools if t.get(\"gatewayId\") == gateway_id]}')
-        except Exception as e:
-            print(f'Failed to fetch SSE tools: {e}')
-
-        try:
-            resources = api_request('GET', '/resources')
-            resource_ids = [r['id'] for r in resources if r.get('gatewayId') == gateway_id]
-        except Exception as e:
-            print(f'Failed to fetch SSE resources: {e}')
-
-        try:
-            prompts = api_request('GET', '/prompts')
-            prompt_ids = [p['id'] for p in prompts if p.get('gatewayId') == gateway_id]
-        except Exception as e:
-            print(f'Failed to fetch SSE prompts: {e}')
-
-        # Create virtual server
-        print('Creating SSE virtual server...')
-        try:
-            server_payload = {
-                'server': {
-                    'id': SSE_VIRTUAL_SERVER_ID,
-                    'name': 'Fast Time SSE Server',
-                    'description': 'Virtual server exposing Fast Time MCP tools via SSE transport',
-                    'associated_tools': tool_ids,
-                    'associated_resources': resource_ids,
-                    'associated_prompts': prompt_ids
-                }
-            }
-            result = api_request('POST', '/servers', server_payload)
-            print(f'SSE virtual server created: {result}')
-            print(f'Successfully created SSE virtual server with {len(tool_ids)} tools')
-        except Exception as e:
-            print(f'Failed to create SSE virtual server: {e}')
-            sys.exit(1)
-        "
-
-        echo "SSE registration complete!"
-
-  ###############################################################################
   # Slow Time Server - Configurable-latency MCP server for timeout/resilience testing
   # Introduces artificial latency on every tool call. Use for testing gateway
   # timeout enforcement, circuit breaker behaviour, and session pool resilience.
   # Usage: docker compose --profile resilience up -d
   ###############################################################################
   slow_time_server:
-    build:
-      context: .
-      dockerfile: mcp-servers/rust/slow-time-server/Containerfile
-    image: mcpgateway/slow-time-server:latest
+    image: ghcr.io/ibm/cfex-mcp-slow-time-server:latest
     restart: unless-stopped
     networks: [mcpnet]
     ports:
@@ -2075,11 +1909,7 @@ services:
   # Usage: docker compose --profile testing up -d
   ###############################################################################
   fast_test_server:
-    build:
-      # Context builds the renamed rust fast-time-server crate; image/service name kept as fast-test-server to avoid colliding with the Go fast_time_server.
-      context: .
-      dockerfile: mcp-servers/rust/fast-time-server/Containerfile
-    image: mcpgateway/fast-test-server:latest
+    image: ghcr.io/ibm/cfex-mcp-fast-time-server:latest
     restart: unless-stopped
     networks: [mcpnet]
     ports:
@@ -2275,10 +2105,7 @@ services:
   # Usage: docker compose --profile testing up -d
   ###############################################################################
   a2a_echo_agent:
-    build:
-      context: .
-      dockerfile: a2a-agents/rust/a2a-echo-agent/Dockerfile
-    image: mcpgateway/a2a-echo-agent:latest
+    image: ghcr.io/ibm/cfex-a2a-echo-agent:latest
     restart: unless-stopped
     networks: [mcpnet]
     ports:
@@ -2304,7 +2131,7 @@ services:
   # port + advertised version. One binary serves both 0.3.0 and 1.0.0.
   ###############################################################################
   a2a_echo_agent_v0_3_0:
-    image: mcpgateway/a2a-echo-agent:latest
+    image: ghcr.io/ibm/cfex-a2a-echo-agent:latest
     restart: unless-stopped
     networks: [mcpnet]
     ports:
@@ -2536,10 +2363,7 @@ services:
   #   BENCHMARK_START_PORT   - Starting port number (default: 9000)
   ###############################################################################
   benchmark_server:
-    build:
-      context: .
-      dockerfile: mcp-servers/rust/benchmark-server/Dockerfile
-    image: mcpgateway/benchmark-server:latest
+    image: ghcr.io/ibm/cfex-mcp-benchmark-server:latest
     restart: unless-stopped
     networks: [mcpnet]
     command:

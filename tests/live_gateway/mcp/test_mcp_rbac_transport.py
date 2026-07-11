@@ -7,7 +7,7 @@ Authors: Mihai Criveti
 RBAC + multi-transport MCP protocol tests using Playwright API + FastMCP Client.
 
 Exercises MCP JSON-RPC protocol behaviour across multiple users, RBAC roles, token
-scopes, server visibilities, and transports (Streamable HTTP + SSE). All user/team/role
+scopes, server visibilities, and transports (Streamable HTTP). All user/team/role
 setup is performed via real REST API calls (Playwright APIRequestContext) to cover the
 full auth code path rather than shortcutting with _create_jwt_token().
 
@@ -17,7 +17,7 @@ requests with HTTP 400 responses.
 
 Requirements:
     - ContextForge running with docker-compose (default: http://localhost:8080)
-    - fast_time_server registered as both Streamable HTTP and SSE gateways
+    - fast_time_server registered as Streamable HTTP gateway
     - FastMCP client dependencies installed
     - playwright installed: pip install playwright
 
@@ -64,7 +64,7 @@ pytestmark = [pytest.mark.e2e, skip_no_gateway]
 # Constants
 # ---------------------------------------------------------------------------
 RBAC_PREFIX = "mcp-rbac"
-SSE_GATEWAY_NAME = f"{RBAC_PREFIX}-sse-gw"
+STREAMABLE_HTTP_GATEWAY_NAME = f"{RBAC_PREFIX}-streamable-http-gw"
 # Must match docker-compose gateway JWT_SECRET_KEY
 _JWT_SECRET = os.getenv("JWT_SECRET_KEY", "my-test-key-but-now-longer-than-32-bytes")
 _CLIENT_TIMEOUT = float(os.getenv("MCP_E2E_CLIENT_TIMEOUT", "5.0"))
@@ -223,78 +223,78 @@ def rbac_team(admin_api: APIRequestContext) -> Generator[dict[str, Any], None, N
 
 
 @pytest.fixture(scope="module")
-def sse_gateway(admin_api: APIRequestContext) -> Generator[dict[str, Any], None, None]:
-    """Register fast_time_server via SSE transport and wait for tool sync."""
-    sse_url = "http://fast_time_server:8080/sse"
+def streamable_http_gateway(admin_api: APIRequestContext) -> Generator[dict[str, Any], None, None]:
+    """Register fast_time_server via Streamable HTTP transport and wait for tool sync."""
+    streamable_http_url = "http://fast_time_server:9080/mcp"
 
-    # Delete any pre-existing SSE gateway with same name or same URL
+    # Delete any pre-existing gateway with same name or same URL
     with suppress(Exception):
         gateways = admin_api.get("/gateways").json()
         for gw in gateways:
-            if gw.get("name") == SSE_GATEWAY_NAME or gw.get("url") == sse_url:
+            if gw.get("name") == STREAMABLE_HTTP_GATEWAY_NAME or gw.get("url") == streamable_http_url:
                 admin_api.delete(f"/gateways/{gw['id']}")
 
     resp = admin_api.post(
         "/gateways",
         data={
-            "name": SSE_GATEWAY_NAME,
-            "url": sse_url,
-            "transport": "SSE",
+            "name": STREAMABLE_HTTP_GATEWAY_NAME,
+            "url": streamable_http_url,
+            "transport": "STREAMABLEHTTP",
         },
     )
-    assert resp.status in (200, 201), f"Failed to register SSE gateway: {resp.status} {resp.text()}"
+    assert resp.status in (200, 201), f"Failed to register Streamable HTTP gateway: {resp.status} {resp.text()}"
     gw = resp.json()
     gw_id = gw["id"]
-    logger.info("Registered SSE gateway: %s (id=%s)", SSE_GATEWAY_NAME, gw_id)
+    logger.info("Registered Streamable HTTP gateway: %s (id=%s)", STREAMABLE_HTTP_GATEWAY_NAME, gw_id)
 
     # Poll for tool sync (up to 30s)
     for i in range(30):
         time.sleep(1)
         try:
             tools = admin_api.get("/tools").json()
-            sse_tools = [t for t in tools if t.get("gatewayId") == gw_id]
-            if sse_tools:
-                logger.info("SSE gateway synced: %d tools", len(sse_tools))
+            gateway_tools = [t for t in tools if t.get("gatewayId") == gw_id]
+            if gateway_tools:
+                logger.info("Streamable HTTP gateway synced: %d tools", len(gateway_tools))
                 break
         except Exception:
             pass
     else:
-        logger.warning("SSE gateway tool sync timed out, continuing anyway")
+        logger.warning("Streamable HTTP gateway tool sync timed out, continuing anyway")
 
-    yield {"id": gw_id, "name": SSE_GATEWAY_NAME}
+    yield {"id": gw_id, "name": STREAMABLE_HTTP_GATEWAY_NAME}
 
     with suppress(Exception):
         admin_api.delete(f"/gateways/{gw_id}")
 
 
 @pytest.fixture(scope="module")
-def visibility_servers(admin_api: APIRequestContext, rbac_team: dict, sse_gateway: dict) -> Generator[dict[str, Any], None, None]:
-    """Create 3 virtual servers (public, team, private) with SSE gateway tools."""
-    gw_id = sse_gateway["id"]
+def visibility_servers(admin_api: APIRequestContext, rbac_team: dict, streamable_http_gateway: dict) -> Generator[dict[str, Any], None, None]:
+    """Create 3 virtual servers (public, team, private) with Streamable HTTP gateway tools."""
+    gw_id = streamable_http_gateway["id"]
     team_id = rbac_team["id"]
 
-    # Fetch SSE tools for association
+    # Fetch Streamable HTTP tools for association
     tools = admin_api.get("/tools").json()
-    sse_tool_ids = [t["id"] for t in tools if t.get("gatewayId") == gw_id]
+    gateway_tool_ids = [t["id"] for t in tools if t.get("gatewayId") == gw_id]
 
     # Also fetch resources/prompts
     resources = admin_api.get("/resources").json()
-    sse_resource_ids = [r["id"] for r in resources if r.get("gatewayId") == gw_id] if resources else []
+    gateway_resource_ids = [r["id"] for r in resources if r.get("gatewayId") == gw_id] if resources else []
     prompts = admin_api.get("/prompts").json()
-    sse_prompt_ids = [p["id"] for p in prompts if p.get("gatewayId") == gw_id] if prompts else []
+    gateway_prompt_ids = [p["id"] for p in prompts if p.get("gatewayId") == gw_id] if prompts else []
 
     uid = uuid.uuid4().hex[:8]
     servers: dict[str, dict[str, Any]] = {}
 
     for vis, vis_team_id in [("public", None), ("team", team_id), ("private", team_id)]:
-        name = f"{RBAC_PREFIX}-{vis}-sse-{uid}"
+        name = f"{RBAC_PREFIX}-{vis}-streamable-http-{uid}"
         payload: dict[str, Any] = {
             "server": {
                 "name": name,
-                "description": f"RBAC test {vis} SSE server",
-                "associated_tools": sse_tool_ids,
-                "associated_resources": sse_resource_ids,
-                "associated_prompts": sse_prompt_ids,
+                "description": f"RBAC test {vis} Streamable HTTP server",
+                "associated_tools": gateway_tool_ids,
+                "associated_resources": gateway_resource_ids,
+                "associated_prompts": gateway_prompt_ids,
             },
             "visibility": vis,
         }
@@ -488,25 +488,25 @@ class TestServerVisibilityViaAPI:
     """Verify server visibility via REST API before MCP protocol tests."""
 
     def test_admin_sees_public_and_team_via_http(self, admin_api: APIRequestContext, visibility_servers: dict) -> None:
-        """Admin via HTTP sees public + team servers but NOT private — even own-private (PR #4341).
+        """Admin via HTTP sees public + team servers and their own private servers.
 
-        ``admin_api`` carries a JWT with ``is_admin=true`` and ``teams=null``. After
-        PR #4341 cycle-2 S3-b, ``get_scoped_resource_access_context`` deliberately
-        collapses this shape to ``(None, None)`` so HTTP cannot be a stealthy
-        escalation surface; the service layer then applies the anonymous-bypass
-        rule (public + team only, never private). Admins who need to read their
-        own private rows directly should use a ``team``-scoped token or operate
-        via owner-match workflows. The pre-#4341 ``test_admin_sees_all_servers``
-        assertion encoded the old "admin sees everything" semantics and is
-        superseded by this test plus the explicit not-in assertion below.
+        ``admin_api`` carries a JWT with ``is_admin=true`` and ``teams=null``.
+        ``get_scoped_resource_access_context`` keeps the requester email on the
+        admin-bypass path so the service layer can owner-match (issue #4694,
+        commit 8c186c5e0): the listing returns public rows, team rows, and the
+        caller's own private rows — never another user's private rows. The
+        fixture's private server is created by this same admin, so it appears
+        via owner matching. The earlier revision of this test asserted the
+        pre-#4694 collapse-to-anonymous semantics and failed once owner
+        matching landed.
         """
         resp = admin_api.get("/servers")
         assert resp.status == 200
         server_ids = {s["id"] for s in resp.json()}
         assert visibility_servers["public"]["id"] in server_ids, "Admin should see public server"
         assert visibility_servers["team"]["id"] in server_ids, "Admin should see team server"
-        assert visibility_servers["private"]["id"] not in server_ids, "PR #4341: admin via HTTP must NOT see private server (own-private collapsed by get_scoped_resource_access_context)"
-        print("    -> Admin sees public + team servers; private denied via HTTP collapse")
+        assert visibility_servers["private"]["id"] in server_ids, "Admin should see their own private server via owner matching (issue #4694)"
+        print("    -> Admin sees public + team servers and own private via owner matching")
 
     def test_team_member_sees_public_and_team(self, test_users: dict, playwright: Playwright, visibility_servers: dict) -> None:
         token = test_users["developer"]["access_token"]
@@ -580,25 +580,25 @@ class TestMcpToolsVisibilityByRole:
         tools = _mcp_tools_list(test_users["developer"]["access_token"])
         assert len(tools) > 0, "Developer should see at least public tools"
         tool_names = [t.name for t in tools]
-        # Developer should see fast-time-* (public Streamable HTTP) tools
-        has_public_tools = any("fast-time" in n for n in tool_names)
-        assert has_public_tools, f"Developer should see public fast-time tools, got: {tool_names}"
+        # Developer should see mcp-rbac-streamable-http-gw-* (public Streamable HTTP) tools
+        has_public_tools = any("mcp-rbac-streamable-http-gw-" in n for n in tool_names)
+        assert has_public_tools, f"Developer should see public streamable HTTP gateway tools, got: {tool_names}"
         print(f"    -> Developer sees {len(tools)} tools")
 
     def test_viewer_sees_public_and_team_tools(self, test_users: dict) -> None:
         tools = _mcp_tools_list(test_users["viewer"]["access_token"])
         assert len(tools) > 0, "Viewer should see at least public tools"
         tool_names = [t.name for t in tools]
-        has_public_tools = any("fast-time" in n for n in tool_names)
-        assert has_public_tools, f"Viewer should see public fast-time tools, got: {tool_names}"
+        has_public_tools = any("mcp-rbac-streamable-http-gw-" in n for n in tool_names)
+        assert has_public_tools, f"Viewer should see public streamable HTTP gateway tools, got: {tool_names}"
         print(f"    -> Viewer sees {len(tools)} tools")
 
     def test_outsider_sees_only_public_tools(self, outsider_user: dict) -> None:
         tools = _mcp_tools_list(outsider_user["access_token"])
         tool_names = [t.name for t in tools]
-        # Outsider should see public tools (fast-time-*) but not team-only
-        has_public_tools = any("fast-time" in n for n in tool_names)
-        assert has_public_tools, f"Outsider should see public fast-time tools, got: {tool_names}"
+        # Outsider should see public tools (mcp-rbac-streamable-http-gw-*) but not team-only
+        has_public_tools = any("mcp-rbac-streamable-http-gw-" in n for n in tool_names)
+        assert has_public_tools, f"Outsider should see public streamable HTTP gateway tools, got: {tool_names}"
         print(f"    -> Outsider sees {len(tools)} public tools")
 
     def test_team_admin_sees_public_and_team_tools(self, test_users: dict) -> None:
@@ -647,28 +647,28 @@ class TestMcpToolCallByRole:
     """
 
     def test_admin_calls_tool_success(self, test_users: dict) -> None:
-        result = _mcp_tool_call(test_users["admin"]["access_token"], "fast-time-get-system-time", {"timezone": "UTC"})
+        result = _mcp_tool_call(test_users["admin"]["access_token"], "mcp-rbac-streamable-http-gw-get-system-time", {"timezone": "UTC"})
         assert not result.is_error, f"Admin tool call should succeed: {result}"
         text = result.content[0].text
         assert len(text) > 0
-        print(f"    -> Admin call fast-time-get-system-time = {text}")
+        print(f"    -> Admin call mcp-rbac-streamable-http-gw-get-system-time = {text}")
 
     def test_developer_can_execute_on_default_endpoint(self, test_users: dict) -> None:
         """Developer has team-scoped tools.execute; check_any_team=True allows it on /mcp."""
-        result = _mcp_tool_call(test_users["developer"]["access_token"], "fast-time-get-system-time", {"timezone": "UTC"})
+        result = _mcp_tool_call(test_users["developer"]["access_token"], "mcp-rbac-streamable-http-gw-get-system-time", {"timezone": "UTC"})
         assert not result.is_error, f"Developer tool call should succeed (check_any_team): {result}"
         print(f"    -> Developer call succeeded: {result.content[0].text}")
 
     def test_team_admin_can_execute_on_default_endpoint(self, test_users: dict) -> None:
         """Team admin has team-scoped tools.execute; check_any_team=True allows it on /mcp."""
-        result = _mcp_tool_call(test_users["team_admin"]["access_token"], "fast-time-get-system-time", {"timezone": "UTC"})
+        result = _mcp_tool_call(test_users["team_admin"]["access_token"], "mcp-rbac-streamable-http-gw-get-system-time", {"timezone": "UTC"})
         assert not result.is_error, f"Team admin tool call should succeed (check_any_team): {result}"
         print(f"    -> Team admin call succeeded: {result.content[0].text}")
 
     def test_outsider_denied_tools_execute(self, outsider_user: dict) -> None:
         """Outsider has no team membership, so no tools.execute anywhere — denied."""
         try:
-            result = _mcp_tool_call(outsider_user["access_token"], "fast-time-get-system-time", {"timezone": "UTC"})
+            result = _mcp_tool_call(outsider_user["access_token"], "mcp-rbac-streamable-http-gw-get-system-time", {"timezone": "UTC"})
             assert result.is_error, f"Outsider should be denied tools.execute, got: {result}"
         except Exception:
             pass  # McpError or connection error — both valid denials
@@ -684,7 +684,7 @@ class TestMcpToolCallByRole:
 
     def test_viewer_can_execute_on_default_endpoint(self, test_users: dict) -> None:
         """Viewer has team-scoped tools.execute; check_any_team=True allows it on /mcp."""
-        result = _mcp_tool_call(test_users["viewer"]["access_token"], "fast-time-get-system-time", {"timezone": "UTC"})
+        result = _mcp_tool_call(test_users["viewer"]["access_token"], "mcp-rbac-streamable-http-gw-get-system-time", {"timezone": "UTC"})
         assert not result.is_error, f"Viewer tool call should succeed (check_any_team): {result}"
         print(f"    -> Viewer call succeeded: {result.content[0].text}")
 
@@ -721,7 +721,7 @@ class TestMcpScopedTokenPermissions:
 
     def test_unscoped_admin_token_can_call_tools(self, test_users: dict) -> None:
         """Admin token without custom scope (empty permissions = pass-through) can call tools."""
-        result = _mcp_tool_call(test_users["admin"]["access_token"], "fast-time-get-system-time", {"timezone": "UTC"})
+        result = _mcp_tool_call(test_users["admin"]["access_token"], "mcp-rbac-streamable-http-gw-get-system-time", {"timezone": "UTC"})
         assert not result.is_error, f"Unscoped admin token should succeed: {result}"
         text = result.content[0].text
         assert len(text) > 0
@@ -729,30 +729,30 @@ class TestMcpScopedTokenPermissions:
 
 
 # ---------------------------------------------------------------------------
-# Test: SSE transport
+# Test: Streamable HTTP transport
 # ---------------------------------------------------------------------------
 @pytest.mark.flaky(reruns=1, reruns_delay=2)
-class TestMcpSSETransport:
-    """SSE transport works end-to-end through MCP protocol."""
+class TestMcpStreamableHttpTransport:
+    """Streamable HTTP transport works end-to-end through MCP protocol."""
 
-    def test_sse_tools_discoverable(self, test_users: dict, sse_gateway: dict) -> None:
+    def test_streamable_http_tools_discoverable(self, test_users: dict, streamable_http_gateway: dict) -> None:
         tools = _mcp_tools_list(test_users["admin"]["access_token"])
-        # SSE tools should have a prefix from the SSE gateway
-        print(f"    -> {len(tools)} total tools visible to admin (SSE gateway id={sse_gateway['id']})")
-        assert len(tools) > 0, "Should discover at least one tool via SSE"
+        # Streamable HTTP tools should have a prefix from the gateway
+        print(f"    -> {len(tools)} total tools visible to admin (Streamable HTTP gateway id={streamable_http_gateway['id']})")
+        assert len(tools) > 0, "Should discover at least one tool via Streamable HTTP"
 
-    def test_sse_get_system_time(self, test_users: dict, sse_gateway: dict) -> None:
-        """Call an SSE-sourced tool: the tool name may have SSE gateway prefix."""
+    def test_streamable_http_get_system_time(self, test_users: dict, streamable_http_gateway: dict) -> None:
+        """Call a Streamable HTTP-sourced tool: the tool name may have gateway prefix."""
         tools = _mcp_tools_list(test_users["admin"]["access_token"])
-        # Find a get-system-time tool (either from SSE or Streamable HTTP)
+        # Find a get-system-time tool
         time_tools = [t.name for t in tools if "get-system-time" in t.name]
         assert len(time_tools) > 0, f"Expected at least one get-system-time tool, got: {[t.name for t in tools]}"
         # Call the first one found
         result = _mcp_tool_call(test_users["admin"]["access_token"], time_tools[0], {"timezone": "UTC"})
-        assert not result.is_error, f"SSE get-system-time failed: {result}"
-        print(f"    -> SSE {time_tools[0]} = {result.content[0].text}")
+        assert not result.is_error, f"Streamable HTTP get-system-time failed: {result}"
+        print(f"    -> Streamable HTTP {time_tools[0]} = {result.content[0].text}")
 
-    def test_sse_convert_time(self, test_users: dict) -> None:
+    def test_streamable_http_convert_time(self, test_users: dict) -> None:
         tools = _mcp_tools_list(test_users["admin"]["access_token"])
         convert_tools = [t.name for t in tools if "convert-time" in t.name]
         assert len(convert_tools) > 0, "Expected at least one convert-time tool"
@@ -761,16 +761,16 @@ class TestMcpSSETransport:
             convert_tools[0],
             {"time": "2025-06-01T10:00:00Z", "source_timezone": "UTC", "target_timezone": "Europe/London"},
         )
-        assert not result.is_error, f"SSE convert-time failed: {result}"
-        print(f"    -> SSE {convert_tools[0]}: OK")
+        assert not result.is_error, f"Streamable HTTP convert-time failed: {result}"
+        print(f"    -> Streamable HTTP {convert_tools[0]}: OK")
 
-    def test_sse_resources_discoverable(self, test_users: dict) -> None:
+    def test_streamable_http_resources_discoverable(self, test_users: dict) -> None:
         resources = _mcp_resources_list(test_users["admin"]["access_token"])
-        print(f"    -> Admin sees {len(resources)} resources (incl. SSE)")
+        print(f"    -> Admin sees {len(resources)} resources (incl. Streamable HTTP)")
 
-    def test_sse_prompts_discoverable(self, test_users: dict) -> None:
+    def test_streamable_http_prompts_discoverable(self, test_users: dict) -> None:
         prompts = _mcp_prompts_list(test_users["admin"]["access_token"])
-        print(f"    -> Admin sees {len(prompts)} prompts (incl. SSE)")
+        print(f"    -> Admin sees {len(prompts)} prompts (incl. Streamable HTTP)")
 
 
 # ---------------------------------------------------------------------------
@@ -899,10 +899,10 @@ class TestDenyPaths:
 # ---------------------------------------------------------------------------
 @pytest.mark.flaky(reruns=1, reruns_delay=2)
 class TestCrossTransportConsistency:
-    """Same tool produces consistent results across Streamable HTTP and SSE."""
+    """Same tool produces consistent results across different Streamable HTTP gateways."""
 
     def test_get_system_time_both_transports(self, test_users: dict) -> None:
-        """Both transports return valid timestamps for get-system-time."""
+        """Multiple gateway instances return valid timestamps for get-system-time."""
         tools = _mcp_tools_list(test_users["admin"]["access_token"])
         time_tools = [t.name for t in tools if "get-system-time" in t.name]
         assert len(time_tools) >= 1, f"Expected at least 1 get-system-time tool, got: {time_tools}"

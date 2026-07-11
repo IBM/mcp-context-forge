@@ -86,7 +86,6 @@ from mcpgateway.services.metrics_query_service import get_top_performers_combine
 from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.observability_service import current_trace_id, ObservabilityService
 from mcpgateway.services.performance_tracker import get_performance_tracker
-from mcpgateway.services.rust_a2a_runtime import get_rust_a2a_runtime_client, RustA2ARuntimeError
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.services.upstream_session_registry import downstream_session_id_from_request_context, get_upstream_session_registry, RegistryNotInitializedError, TransportType
@@ -155,6 +154,8 @@ def _get_tool_lookup_cache():
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
 
+_W3C_TRACEPARENT_RE = re.compile(r"^([0-9a-f]{2})-([0-9a-f]{32})-([0-9a-f]{16})-([0-9a-f]{2})$")
+
 
 def _extract_tenant_id_from_payload(team_id: Any) -> Optional[str]:
     """Extract a valid tenant id from a raw tool payload team_id value.
@@ -188,6 +189,41 @@ def _apply_tool_payload_to_global_context(
         global_context.user = app_user_email
     if not global_context.tenant_id and payload_tenant_id:
         global_context.tenant_id = payload_tenant_id
+
+
+def _is_valid_w3c_traceparent(traceparent: str) -> bool:
+    """Return whether a traceparent value is safe to propagate into MCP _meta."""
+    match = _W3C_TRACEPARENT_RE.fullmatch(traceparent)
+    if not match:
+        return False
+
+    version, trace_id, span_id, _trace_flags = match.groups()
+    if version != "00":
+        return False
+    if trace_id == "0" * 32 or span_id == "0" * 16:
+        return False
+    return True
+
+
+def _sync_meta_traceparent(
+    meta_data: Optional[Dict[str, Any]],
+    request_headers: Mapping[str, str],
+) -> Optional[Dict[str, Any]]:
+    """Return metadata whose traceparent matches the final outbound header."""
+    traceparent = request_headers.get("traceparent")
+    if not traceparent:
+        for key, value in request_headers.items():
+            if key.lower() == "traceparent" and value:
+                traceparent = value
+                break
+    if not traceparent:
+        return meta_data
+    if not _is_valid_w3c_traceparent(traceparent):
+        return meta_data
+
+    updated_meta = dict(meta_data or {})
+    updated_meta["traceparent"] = traceparent
+    return updated_meta
 
 
 # Initialize performance tracker, structured logger, audit trail, and metrics buffer for tool operations
@@ -3696,6 +3732,7 @@ class ToolService(BaseService):
                 },
             ):
                 traced_headers = inject_trace_context_headers(headers)
+                request_meta_data = _sync_meta_traceparent(meta_data, traced_headers)
                 async with streamablehttp_client(url=gateway_url, headers=traced_headers, timeout=settings.mcpgateway_direct_proxy_timeout) as (read_stream, write_stream, _get_session_id):
                     async with ClientSession(read_stream, write_stream) as session:
                         with create_span("mcp.client.initialize", {"contextforge.transport": "streamablehttp", "contextforge.runtime": "python"}):
@@ -3710,9 +3747,9 @@ class ToolService(BaseService):
                             },
                         ):
                             # Call tool with meta if provided
-                            if meta_data:
-                                logger.debug("Forwarding _meta to remote gateway: %s", meta_data)
-                                tool_result = await session.call_tool(name=remote_name, arguments=arguments, meta=meta_data)
+                            if request_meta_data:
+                                logger.debug("Forwarding _meta to remote gateway: %s", request_meta_data)
+                                tool_result = await session.call_tool(name=remote_name, arguments=arguments, meta=request_meta_data)
                             else:
                                 tool_result = await session.call_tool(name=remote_name, arguments=arguments)
                         with create_span(
@@ -5470,6 +5507,7 @@ class ToolService(BaseService):
                                     # Inject within the active client span so an upstream service
                                     # can attach beneath this span when it extracts traceparent.
                                     request_headers = inject_trace_context_headers(headers)
+                                    request_meta_data = _sync_meta_traceparent(meta_data, request_headers)
                                     if correlation_id and request_headers:
                                         request_headers["X-Correlation-ID"] = correlation_id
                                     async with sse_client(url=server_url, headers=request_headers, httpx_client_factory=get_httpx_client_factory) as streams:
@@ -5486,7 +5524,7 @@ class ToolService(BaseService):
                                                 },
                                             ):
                                                 with anyio.fail_after(effective_timeout):
-                                                    tool_call_result = await session.call_tool(tool_name_original, arguments, meta=meta_data)
+                                                    tool_call_result = await session.call_tool(tool_name_original, arguments, meta=request_meta_data)
                                             with create_span(
                                                 "mcp.client.response",
                                                 {
@@ -5652,6 +5690,7 @@ class ToolService(BaseService):
                                     # Inject within the active client span so an upstream service
                                     # can attach beneath this span when it extracts traceparent.
                                     request_headers = inject_trace_context_headers(headers)
+                                    request_meta_data = _sync_meta_traceparent(meta_data, request_headers)
                                     if correlation_id and request_headers:
                                         request_headers["X-Correlation-ID"] = correlation_id
                                     async with streamablehttp_client(url=server_url, headers=request_headers, httpx_client_factory=get_httpx_client_factory) as (
@@ -5672,7 +5711,7 @@ class ToolService(BaseService):
                                                 },
                                             ):
                                                 with anyio.fail_after(effective_timeout):
-                                                    tool_call_result = await session.call_tool(tool_name_original, arguments, meta=meta_data)
+                                                    tool_call_result = await session.call_tool(tool_name_original, arguments, meta=request_meta_data)
                                             with create_span(
                                                 "mcp.client.response",
                                                 {
@@ -5886,22 +5925,13 @@ class ToolService(BaseService):
                         logger.info("Calling A2A agent '%s' at %s", a2a_agent_name, prepared.sanitized_endpoint_url)
                         a2a_start_time = time.time()
                         try:
-                            # First-Party
-                            from mcpgateway.version import should_delegate_a2a_to_rust  # pylint: disable=import-outside-toplevel
-
-                            if should_delegate_a2a_to_rust():
-                                runtime_response = await get_rust_a2a_runtime_client().invoke(prepared, timeout_seconds=int(max(1, effective_timeout)))
-                                status_code = int(runtime_response.get("status_code", 200))
-                                response_data = runtime_response.get("json")
-                                response_text = str(runtime_response.get("text") or "")
-                            else:
-                                http_response = await asyncio.wait_for(
-                                    self._http_client.post(prepared.endpoint_url, json=prepared.request_data, headers=prepared.headers),
-                                    timeout=effective_timeout,
-                                )
-                                status_code = http_response.status_code
-                                response_data = http_response.json() if status_code == 200 else None
-                                response_text = http_response.text
+                            http_response = await asyncio.wait_for(
+                                self._http_client.post(prepared.endpoint_url, json=prepared.request_data, headers=prepared.headers),
+                                timeout=effective_timeout,
+                            )
+                            status_code = http_response.status_code
+                            response_data = http_response.json() if status_code == 200 else None
+                            response_text = http_response.text
                         except (asyncio.TimeoutError, httpx.TimeoutException):
                             a2a_elapsed_ms = (time.time() - a2a_start_time) * 1000
                             structured_logger.log(
@@ -5927,11 +5957,6 @@ class ToolService(BaseService):
                                 await self._run_timeout_post_invoke(name, effective_timeout, global_context, context_table, plugin_manager)
 
                             raise ToolTimeoutError(f"Tool invocation timed out after {effective_timeout}s")
-                        except RustA2ARuntimeError as e:
-                            status_code = 502
-                            response_data = None
-                            response_text = str(e)
-
                         if status_code == 200:
                             if isinstance(response_data, dict) and "response" in response_data:
                                 val = response_data["response"]
@@ -7141,18 +7166,6 @@ class ToolService(BaseService):
             correlation_id=get_correlation_id(),
         )
         logger.info("invoke tool request_data prepared: %s", prepared.request_data)
-
-        # First-Party
-        from mcpgateway.version import should_delegate_a2a_to_rust  # pylint: disable=import-outside-toplevel
-
-        if should_delegate_a2a_to_rust():
-            runtime_response = await get_rust_a2a_runtime_client().invoke(
-                prepared,
-                timeout_seconds=int(settings.mcpgateway_a2a_default_timeout),
-            )
-            if int(runtime_response.get("status_code", 200)) == 200:
-                return runtime_response.get("json") if runtime_response.get("json") is not None else runtime_response.get("text")
-            raise Exception(f"HTTP {runtime_response.get('status_code')}: {runtime_response.get('text')}")
 
         # Make HTTP request to the agent endpoint using shared HTTP client
         # First-Party

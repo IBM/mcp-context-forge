@@ -34,7 +34,7 @@ mkdir -p "${STATIC_DIR}/fontawesome/webfonts"
 echo "📦 Downloading CDN assets for airgapped deployment..."
 
 # Download Tailwind Play CDN (version-pinned v3 for window.tailwind.config compatibility)
-echo "  ⬇️  Tailwind CSS..."
+echo "  ⬇️  Tailwind CSS 3.4.17..."
 retry curl -fsSL "https://cdn.tailwindcss.com/3.4.17" \
   -o "${STATIC_DIR}/tailwindcss/tailwind.min.js"
 
@@ -57,16 +57,16 @@ echo "  ⬇️  Chart.js 4.5.1..."
 retry curl -fsSL "https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js" \
   -o "${STATIC_DIR}/chartjs/chart.umd.min.js"
 
-# Download Marked (Markdown parser, pinned to 18.0.2 for reproducibility)
+# Download Marked (Markdown parser, pinned to 18.0.5 for reproducibility)
 echo "  ⬇️  Marked 18.0.5..."
 mkdir -p "${STATIC_DIR}/marked"
 retry curl -fsSL "https://cdn.jsdelivr.net/npm/marked@18.0.5/lib/marked.umd.js" \
   -o "${STATIC_DIR}/marked/marked.min.js"
 
-# Download DOMPurify (XSS sanitizer, pinned to 3.4.1 for reproducibility)
-echo "  ⬇️  DOMPurify 3.4.8..."
+# Download DOMPurify (XSS sanitizer, pinned to 3.4.11 for reproducibility)
+echo "  ⬇️  DOMPurify 3.4.11..."
 mkdir -p "${STATIC_DIR}/dompurify"
-retry curl -fsSL "https://cdn.jsdelivr.net/npm/dompurify@3.4.8/dist/purify.min.js" \
+retry curl -fsSL "https://cdn.jsdelivr.net/npm/dompurify@3.4.11/dist/purify.min.js" \
   -o "${STATIC_DIR}/dompurify/purify.min.js"
 
 # Download Font Awesome (pinned to 7.0.1 for reproducibility)

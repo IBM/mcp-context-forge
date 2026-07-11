@@ -207,57 +207,6 @@ async def test_two_coordinators_converge_through_pubsub(monkeypatch: pytest.Monk
         await coord_b.stop()
 
 
-@pytest.mark.asyncio
-async def test_fresh_pod_reconciles_to_persisted_hint(monkeypatch: pytest.MonkeyPatch):
-    """A pod that boots after a flip on another pod must reconcile to the persisted hint."""
-    # Simulate an edge-boot deployment for both pods so the a2a hint's
-    # mode=edge is compatible with the safety invariant; without this the
-    # coordinator (correctly) discards the hint as INCOMPATIBLE_HINT.
-    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_a2a_runtime_enabled", True, raising=False)
-    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_a2a_runtime_delegate_enabled", True, raising=False)
-
-    broker = FakeRedisBroker()
-
-    state_a = RuntimeState()
-    state_b = RuntimeState()
-    state_a._pod_id = "pod-A"  # noqa: SLF001 — test fixture exposes internal id for cross-pod simulation
-    state_b._pod_id = "pod-B"  # noqa: SLF001 — test fixture exposes internal id for cross-pod simulation
-
-    coord_a = RuntimeStateCoordinator()
-    coord_b = RuntimeStateCoordinator()
-
-    import mcpgateway.runtime_state as runtime_state_module
-
-    # Bring up coordinator A and have it apply + publish a flip.
-    monkeypatch.setattr(runtime_state_module, "get_runtime_state", lambda: state_a)
-    monkeypatch.setattr("mcpgateway.utils.redis_client.get_redis_client", AsyncMock(return_value=FakeRedisClient(broker)))
-    await coord_a.start()
-
-    try:
-        version = await coord_a.next_version("a2a", state_a.version("a2a"))
-        change = await state_a.apply_local("a2a", "edge", initiator_user="bob@example.com", version=version)
-        assert change is not None
-        assert await coord_a.publish(change) is True
-
-        # The hint key must now hold the published payload.
-        assert _hint_key("a2a") in broker.kv
-        # Bring up coordinator B AFTER the publish; it should reconcile from the
-        # persisted hint at start time, not via pub/sub.
-        monkeypatch.setattr(runtime_state_module, "get_runtime_state", lambda: state_b)
-        monkeypatch.setattr("mcpgateway.utils.redis_client.get_redis_client", AsyncMock(return_value=FakeRedisClient(broker)))
-        await coord_b.start()
-        assert state_b.override_mode("a2a") == OverrideMode.EDGE
-        assert state_b.version("a2a") == version
-        # Boot reconciliation succeeded → OK.
-        assert state_b.boot_reconcile_status("a2a") == BootReconcileStatus.OK
-        # And the version-key counter survived B's start (no INCR happened).
-        assert broker.counters[_version_key("a2a")] == version
-    finally:
-        monkeypatch.setattr(runtime_state_module, "get_runtime_state", lambda: state_a)
-        await coord_a.stop()
-        monkeypatch.setattr(runtime_state_module, "get_runtime_state", lambda: state_b)
-        await coord_b.stop()
-
 
 @pytest.mark.asyncio
 async def test_concurrent_flips_allocate_distinct_versions_via_incr(monkeypatch: pytest.MonkeyPatch):

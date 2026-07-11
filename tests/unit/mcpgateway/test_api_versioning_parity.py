@@ -1,4 +1,9 @@
-"""Test parity between _LEGACY_PREFIXES and _assemble_routers.
+# -*- coding: utf-8 -*-
+"""Location: ./tests/unit/mcpgateway/test_api_versioning_parity.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+
+Test parity between _LEGACY_PREFIXES and _assemble_routers.
 
 This test ensures that the _LEGACY_PREFIXES set in deprecation middleware
 stays synchronized with the actual routers mounted by _assemble_routers.
@@ -11,7 +16,7 @@ to be missing on that router's legacy routes.
 import pytest
 from fastapi import APIRouter
 
-from mcpgateway.api.v1 import _assemble_routers
+from mcpgateway.api.v1 import _assemble_routers, build_legacy_router, build_v1_router
 from mcpgateway.config import settings
 from mcpgateway.middleware.deprecation import _LEGACY_PREFIXES
 from tests.helpers.router_helpers import collect_routes
@@ -99,10 +104,11 @@ def test_legacy_prefixes_match_assembled_routers():
 
     # Exclude permanently unversioned prefixes that should NOT have deprecation headers
     # These are intentionally not in _LEGACY_PREFIXES
+    # NOTE: "/v1" is deliberately NOT excluded — no assembled router may hardcode
+    # a /v1 prefix (it would double up as /v1/v1/** under build_v1_router).
     permanently_unversioned = {
         "/.well-known",  # RFC 9116 - permanently unversioned
         "/api",          # Internal API prefix (if present)
-        "/v1",           # Already-versioned routes (e.g. tool_plugin_bindings hardcodes /v1 prefix)
         "/version",      # Diagnostics endpoint — no deprecation headers (like /health)
     }
 
@@ -171,6 +177,59 @@ def test_core_prefixes_present(prefix: str):
         f"Core prefix {prefix} missing from _LEGACY_PREFIXES. "
         f"This would cause deprecation headers to be missing on legacy routes."
     )
+
+
+def _empty_router_kwargs() -> dict[str, APIRouter]:
+    """Return the full set of inline-router kwargs as empty APIRouters."""
+    names = [
+        "protocol_router",
+        "tool_router",
+        "resource_router",
+        "prompt_router",
+        "gateway_router",
+        "root_router",
+        "server_router",
+        "metrics_router",
+        "tag_router",
+        "export_import_router",
+        "a2a_router",
+    ]
+    return {name: APIRouter() for name in names}
+
+
+class TestPluginBindingsRoutePrefixes:
+    """Regression tests for the /v1/v1 double-prefix bug (tool_plugin_bindings).
+
+    The tool_plugin_bindings router must NOT hardcode a /v1 prefix: it is
+    dual-mounted via build_v1_router (prefix /v1) and build_legacy_router
+    (no prefix), so a hardcoded /v1 produced /v1/v1/tools/plugin_bindings/**
+    on the canonical mount and left the unversioned legacy alias missing.
+    """
+
+    def test_v1_router_serves_plugin_bindings_under_single_v1(self):
+        """Canonical routes live at /v1/tools/plugin_bindings/**."""
+        v1_router = build_v1_router(settings, **_empty_router_kwargs())
+        paths = [p for p, *_ in collect_routes(v1_router)]
+
+        assert "/v1/tools/plugin_bindings/" in paths
+        assert "/v1/tools/plugin_bindings/{team_id}" in paths
+        assert "/v1/tools/plugin_bindings/{binding_id}" in paths
+
+    def test_v1_router_has_no_double_v1_paths(self):
+        """No route on the v1 mount may start with /v1/v1."""
+        v1_router = build_v1_router(settings, **_empty_router_kwargs())
+        doubled = [p for p, *_ in collect_routes(v1_router) if p.startswith("/v1/v1")]
+        assert not doubled, f"Double /v1 prefix on routes: {doubled}"
+
+    def test_legacy_router_serves_unversioned_plugin_bindings(self):
+        """Legacy aliases live at /tools/plugin_bindings/** (no /v1 anywhere)."""
+        legacy_router = build_legacy_router(settings, **_empty_router_kwargs())
+        paths = [p for p, *_ in collect_routes(legacy_router)]
+
+        assert "/tools/plugin_bindings/" in paths
+        assert "/tools/plugin_bindings/{team_id}" in paths
+        assert "/tools/plugin_bindings/{binding_id}" in paths
+        assert not any(p.startswith("/v1") for p in paths), "Legacy mount must not contain /v1 paths"
 
 
 def test_llm_admin_router_csrf_dependency():

@@ -18,6 +18,19 @@ async def _wait_forever():
     await asyncio.Event().wait()
 
 
+def test_worker_id_is_computed_per_service_instance():
+    """Each publisher instance gets the current worker PID."""
+    from mcpgateway.services import dataplane_publisher
+
+    with patch.object(dataplane_publisher.os, "getpid", side_effect=[11111, 22222]):
+        first_service = dataplane_publisher.DataplanePublisherService()
+        second_service = dataplane_publisher.DataplanePublisherService()
+
+    assert first_service.worker_id != second_service.worker_id
+    assert first_service.worker_id.endswith(":11111")
+    assert second_service.worker_id.endswith(":22222")
+
+
 # ============================================================================
 # Lifecycle Management Tests
 # ============================================================================
@@ -191,7 +204,8 @@ async def test_full_payload_generation_with_mock_db():
 
     tool1 = Mock()
     tool1.id = "t1"
-    tool1.name = "public_tool"
+    tool1.name = "gw1-public_tool"
+    tool1.original_name = "public_tool"
     tool1.owner_email = "user1@example.com"
     tool1.team_id = "team1"
     tool1.visibility = "public"
@@ -199,7 +213,8 @@ async def test_full_payload_generation_with_mock_db():
 
     tool2 = Mock()
     tool2.id = "t2"
-    tool2.name = "private_tool"
+    tool2.name = "gw1-private_tool"
+    tool2.original_name = "private_tool"
     tool2.owner_email = "user1@example.com"
     tool2.team_id = "team1"
     tool2.visibility = "private"
@@ -207,7 +222,8 @@ async def test_full_payload_generation_with_mock_db():
 
     tool3 = Mock()
     tool3.id = "t3"
-    tool3.name = "team2_tool"
+    tool3.name = "gw1-team2_tool"
+    tool3.original_name = "team2_tool"
     tool3.owner_email = "user2@example.com"
     tool3.team_id = "team2"
     tool3.visibility = "team"
@@ -546,7 +562,7 @@ async def test_publish_writes_payload_releases_lock_and_exits_when_shutdown_wait
     """publish_to_redis() writes msgpack payloads and releases the worker lock."""
     import msgpack
 
-    from mcpgateway.services.dataplane_publisher import PUBLISHER_LOCK_KEY, PUBLISHER_TTL, USER_CONFIG_KEY, WORKER_ID, DataplanePublisherService
+    from mcpgateway.services.dataplane_publisher import PUBLISHER_LOCK_KEY, PUBLISHER_TTL, REDIS_PUBLISHER_TIME, USER_CONFIG_KEY, DataplanePublisherService
 
     service = DataplanePublisherService()
     payload = {"user@example.com": {"virtual_hosts": {"server1": {"backends": {}}}}}
@@ -577,8 +593,9 @@ async def test_publish_writes_payload_releases_lock_and_exits_when_shutdown_wait
     assert msgpack.unpackb(value_arg, raw=False) == payload["user@example.com"]
     assert pipe.set.call_args.kwargs == {"ex": PUBLISHER_TTL}
     pipe.execute.assert_awaited_once()
+    mock_redis.set.assert_awaited_once_with(PUBLISHER_LOCK_KEY, service.worker_id, nx=True, ex=REDIS_PUBLISHER_TIME + 30)
     mock_redis.eval.assert_awaited_once()
-    assert mock_redis.eval.await_args.args[1:] == (1, PUBLISHER_LOCK_KEY, WORKER_ID)
+    assert mock_redis.eval.await_args.args[1:] == (1, PUBLISHER_LOCK_KEY, service.worker_id)
     mock_wait_for.assert_awaited_once()
 
 

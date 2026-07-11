@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Per-environment JWT key derivation tests (GHSA-vgf8-3685-66j9)."""
+"""Location: ./tests/unit/mcpgateway/utils/test_jwt_env_isolation.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+
+Per-environment JWT key derivation tests (GHSA-vgf8-3685-66j9).
+"""
 
 # Standard
 import asyncio

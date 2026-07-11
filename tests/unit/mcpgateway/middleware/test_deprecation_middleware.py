@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""tests/unit/mcpgateway/middleware/test_deprecation_middleware.py
+"""Location: ./tests/unit/mcpgateway/middleware/test_deprecation_middleware.py
 Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 
@@ -34,6 +34,9 @@ class TestIsLegacyPath:
             "/tools",
             "/tools/123",
             "/tools/123/execute",
+            "/tools/plugin_bindings",
+            "/tools/plugin_bindings/team-1",
+            "/tools/plugin_bindings/8b6ff37b-0000-0000-0000-000000000000",
             "/servers",
             "/servers/abc/sse",
             "/resources",
@@ -72,6 +75,8 @@ class TestIsLegacyPath:
         [
             "/v1/tools",
             "/v1/tools/123",
+            "/v1/tools/plugin_bindings",
+            "/v1/tools/plugin_bindings/team-1",
             "/v1/servers",
             "/v1/admin",
             "/v1/a2a",
@@ -234,6 +239,26 @@ class TestDeprecationHeadersMiddlewareHeaders:
         mw = DeprecationHeadersMiddleware(_build_app("/servers/123"), sunset_date=SUNSET)
         _, headers = await _call(mw, "/servers/123")
         assert headers.get("link") == '</v1/servers/123>; rel="successor-version"'
+
+    @pytest.mark.asyncio
+    async def test_headers_on_legacy_plugin_bindings_path(self):
+        """Unversioned /tools/plugin_bindings/** gets full deprecation stamping."""
+        path = "/tools/plugin_bindings/team-1"
+        mw = DeprecationHeadersMiddleware(_build_app(path), sunset_date=SUNSET)
+        status, headers = await _call(mw, path)
+        assert status == 200
+        assert headers.get("sunset") == SUNSET
+        assert headers.get("deprecation") == "true"
+        assert headers.get("link") == '</v1/tools/plugin_bindings/team-1>; rel="successor-version"'
+
+    @pytest.mark.asyncio
+    async def test_no_headers_on_v1_plugin_bindings_path(self):
+        """Canonical /v1/tools/plugin_bindings must never be stamped."""
+        path = "/v1/tools/plugin_bindings"
+        mw = DeprecationHeadersMiddleware(_build_app(path), sunset_date=SUNSET)
+        _, headers = await _call(mw, path)
+        assert "sunset" not in headers
+        assert "deprecation" not in headers
 
     @pytest.mark.asyncio
     async def test_websocket_scope_passed_through_unchanged(self):

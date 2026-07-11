@@ -47,9 +47,9 @@ ARG ENABLE_PROFILING=false
 #     --build-arg NODEJS_IMAGE=<internal-registry>/ubi9/nodejs-20:latest \
 #     --build-arg UBI_MINIMAL=<internal-registry>/ubi9/ubi-minimal:latest \
 #     .
-ARG UBI_BASE=registry.access.redhat.com/ubi10:1781510254
-ARG NODEJS_IMAGE=registry.access.redhat.com/ubi10/nodejs-24:1781700998
-ARG UBI_MINIMAL=registry.access.redhat.com/ubi10/ubi-minimal:1781509581
+ARG UBI_BASE=registry.access.redhat.com/ubi10:1782798870
+ARG NODEJS_IMAGE=registry.access.redhat.com/ubi10/nodejs-24:1783326326
+ARG UBI_MINIMAL=registry.access.redhat.com/ubi10/ubi-minimal:1782799082
 # Wheel closure stage — used only for s390x and ppc64le where PyPI manylinux
 # binary wheels are unavailable (tiktoken/psycopg/cryptography require native
 # compilation, and psycopg-binary has no s390x wheel at all).
@@ -83,10 +83,7 @@ RUN if [ "$ENABLE_RUST" != "true" ]; then \
         printf 'echo "Rust MCP runtime not built into this image. Rebuild with --build-arg ENABLE_RUST=true." >&2\n' >> /build/target/release/contextforge-mcp-runtime; \
         printf 'exit 1\n' >> /build/target/release/contextforge-mcp-runtime; \
         chmod +x /build/target/release/contextforge-mcp-runtime; \
-        printf '#!/usr/bin/env sh\n' > /build/target/release/contextforge-a2a-runtime; \
-        printf 'echo "Rust A2A runtime not built into this image. Rebuild with --build-arg ENABLE_RUST=true." >&2\n' >> /build/target/release/contextforge-a2a-runtime; \
-        printf 'exit 1\n' >> /build/target/release/contextforge-a2a-runtime; \
-        chmod +x /build/target/release/contextforge-a2a-runtime; \
+
         exit 0; \
     fi
 
@@ -116,9 +113,6 @@ WORKDIR /build
 # Copy workspace and crates (only if ENABLE_RUST=true)
 COPY Cargo.toml Cargo.lock /build/
 COPY crates/ /build/crates/
-COPY mcp-servers/rust/benchmark-server/ /build/mcp-servers/rust/benchmark-server/
-COPY mcp-servers/rust/slow-time-server/ /build/mcp-servers/rust/slow-time-server/
-COPY a2a-agents/rust/a2a-echo-agent/ /build/a2a-agents/rust/a2a-echo-agent/
 
 # Build local native extensions from maturin crates under crates/
 # hadolint ignore=DL3013
@@ -154,7 +148,7 @@ RUN if [ "$ENABLE_RUST" = "true" ]; then \
         echo "⏭️  Skipping local native extension build"; \
     fi
 
-# Build MCP + A2A runtime binaries (MCP + A2A in the same RUN share /build/target)
+# Build MCP runtime binary
 RUN if [ "$ENABLE_RUST" = "true" ]; then \
         if [ "$ENABLE_RUST_MCP_RMCP" = "true" ]; then \
             cargo build --release -p contextforge_mcp_runtime --features rmcp-upstream-client; \
@@ -162,10 +156,9 @@ RUN if [ "$ENABLE_RUST" = "true" ]; then \
             cargo build --release -p contextforge_mcp_runtime; \
         fi && \
         cp /build/target/release/contextforge_mcp_runtime /build/target/release/contextforge-mcp-runtime && \
-        cargo build --release -p contextforge_a2a_runtime && \
-        echo "✅ Rust MCP + A2A runtimes built successfully"; \
+        echo "✅ Rust MCP runtime built successfully"; \
     else \
-        echo "⏭️  Skipping Rust MCP + A2A runtime builds"; \
+        echo "⏭️  Skipping Rust MCP runtime build"; \
     fi
 
 ###############################################################################
@@ -332,7 +325,7 @@ RUN set -euo pipefail \
 # dependency layer above.
 # ----------------------------------------------------------------------------
 COPY --from=rust-builder /build/target/release/contextforge-mcp-runtime /app/bin/contextforge-mcp-runtime
-COPY --from=rust-builder /build/target/release/contextforge-a2a-runtime /app/bin/contextforge-a2a-runtime
+
 COPY --from=frontend-builder /opt/app-root/src/mcpgateway/static/ /app/mcpgateway/static/
 
 # Copy pre-built Tailwind CSS from node-builder
@@ -392,7 +385,7 @@ LABEL maintainer="Mihai Criveti" \
     org.opencontainers.image.title="mcp/mcpgateway" \
     org.opencontainers.image.description="ContextForge: An enterprise-ready Model Context Protocol Gateway" \
     org.opencontainers.image.licenses="Apache-2.0" \
-    org.opencontainers.image.version="1.0.4"
+    org.opencontainers.image.version="1.0.5"
 
 # ----------------------------------------------------------------------------
 # Install minimal runtime dependencies

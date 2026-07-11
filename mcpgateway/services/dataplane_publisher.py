@@ -43,11 +43,13 @@ logger = logging.getLogger(__name__)
 
 USER_CONFIG_KEY = "UserConfig"
 REDIS_PUBLISHER_TIME = 60  # Publish interval in seconds
-# Keys are not deleted explicitly; stale configs expire via Redis TTL.
-PUBLISHER_TTL = 70
+# Keys are not deleted explicitly; stale configs expire via Redis TTL. The
+# TTL must outlive a full missed publish cycle: under load the loop's timer
+# can fire late, and with only a few seconds of margin every UserConfig key
+# expires at once, taking dataplane config down for all subjects until the
+# next snapshot.
+PUBLISHER_TTL = REDIS_PUBLISHER_TIME * 2 + 10
 
-# Worker ID for multi-worker coordination (same pattern as session_affinity.py)
-WORKER_ID = f"{socket.gethostname()}:{os.getpid()}"
 PUBLISHER_LOCK_KEY = "mcpgw:dataplane_publisher:lock"
 
 
@@ -86,6 +88,11 @@ class DataplanePublisherService:
         """Initialize the publisher state and dependent services."""
         self.task: asyncio.Task[None] | None = None
         self._shutdown_event = asyncio.Event()
+        # Computed per instance so each gunicorn worker gets its own id;
+        # a module-level constant is evaluated in the master before fork,
+        # which gives every worker the same id and defeats the lock's
+        # compare-and-swap ownership check (same pattern as session_affinity.py).
+        self.worker_id = f"{socket.gethostname()}:{os.getpid()}"
 
     async def start(self) -> None:
         """Start the background publisher task."""
@@ -137,7 +144,7 @@ class DataplanePublisherService:
                 lock_ttl = REDIS_PUBLISHER_TIME + 30  # Lock expires 30s after publish interval
                 acquired = await redis.set(
                     PUBLISHER_LOCK_KEY,
-                    WORKER_ID,
+                    self.worker_id,
                     nx=True,  # Only set if not exists
                     ex=lock_ttl,  # Auto-expire if worker crashes
                 )
@@ -149,7 +156,7 @@ class DataplanePublisherService:
                     continue
 
                 # We hold the lock - publish data
-                logger.info("Worker %s publishing dataplane payload...", WORKER_ID)
+                logger.info("Worker %s publishing dataplane payload...", self.worker_id)
                 payload = await self.fetch_payload()
 
                 if payload is None:
@@ -181,7 +188,7 @@ class DataplanePublisherService:
                     return 0
                     """
                     try:
-                        await redis.eval(release_script, 1, PUBLISHER_LOCK_KEY, WORKER_ID)
+                        await redis.eval(release_script, 1, PUBLISHER_LOCK_KEY, self.worker_id)
                     except Exception as e:
                         logger.warning("Failed to release lock: %s", e)
 
@@ -289,7 +296,7 @@ class DataplanePublisherService:
                         DbResource.uri_template.is_(None),
                     )
                 ).all()
-                tool_rows = db.execute(select(DbTool.id, DbTool.name, DbTool.owner_email, DbTool.team_id, DbTool.visibility).where(DbTool.enabled.is_(True))).all()
+                tool_rows = db.execute(select(DbTool.id, DbTool.original_name, DbTool.owner_email, DbTool.team_id, DbTool.visibility).where(DbTool.enabled.is_(True))).all()
                 backend_items_by_server = self._get_backend_items_by_server(db)
 
                 return {
@@ -324,7 +331,7 @@ class DataplanePublisherService:
         backend_items_by_server: BackendItemsByServer,
     ) -> dict[str, Any]:
         """Build already-filtered dataplane data for one user."""
-        tool_name_by_id = {tool.id: tool.name for tool in tool_rows if self._filter_for_user(tool, user_email, team_ids, is_admin=is_admin)}
+        tool_name_by_id = {tool.id: tool.original_name for tool in tool_rows if self._filter_for_user(tool, user_email, team_ids, is_admin=is_admin)}
 
         return {
             "servers": [
