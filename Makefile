@@ -3436,10 +3436,11 @@ lint-smart:
 
 # Temporary roots for ad-hoc linting tools
 LINT_TMP_ROOT ?= /tmp/mcp-context-forge-lint
-
+LINT_GO_ROOT ?= $(LINT_TMP_ROOT)/go
 LINT_HELM_ROOT ?= $(LINT_TMP_ROOT)/helm
 LINT_NODE_ROOT ?= $(LINT_TMP_ROOT)/node
 LINT_PY_VENV ?= $(LINT_TMP_ROOT)/py-venv
+LINT_GO_TOOLCHAIN ?= go1.26.4
 
 # Tool target defaults
 LINT_ZIZMOR_TARGET ?= .github/workflows
@@ -3469,7 +3470,12 @@ linting-python-env:
 linting-workflow-actionlint:         ## 🧭  GitHub Actions workflow linting
 	@echo "🧭 actionlint ($(LINT_ZIZMOR_TARGET); shellcheck integration disabled)..."
 	@command -v go >/dev/null 2>&1 || { echo "❌ go not found"; exit 1; }
-	@go run github.com/rhysd/actionlint/cmd/actionlint@latest -shellcheck=""
+	@/bin/bash -c "set -euo pipefail; \
+		export GOPATH='$(LINT_GO_ROOT)/gopath'; \
+		export GOMODCACHE='$(LINT_GO_ROOT)/gopath/pkg/mod'; \
+		export GOCACHE='$(LINT_GO_ROOT)/gocache'; \
+		mkdir -p '$(LINT_GO_ROOT)/gopath' '$(LINT_GO_ROOT)/gopath/pkg/mod' '$(LINT_GO_ROOT)/gocache'; \
+		go run github.com/rhysd/actionlint/cmd/actionlint@latest -shellcheck="
 
 .PHONY: linting-workflow-zizmor
 linting-workflow-zizmor:             ## 🔐  GitHub Actions security linting
@@ -3483,9 +3489,14 @@ linting-workflow-reviewdog:          ## 🐶  reviewdog in local reporter mode
 	@echo "🐶 reviewdog local run (input: actionlint)..."
 	@command -v go >/dev/null 2>&1 || { echo "❌ go not found"; exit 1; }
 	@/bin/bash -c "set -euo pipefail; \
+		export GOPATH='$(LINT_GO_ROOT)/gopath'; \
+		export GOMODCACHE='$(LINT_GO_ROOT)/gopath/pkg/mod'; \
+		export GOCACHE='$(LINT_GO_ROOT)/gocache'; \
+		export GOBIN='$(LINT_GO_ROOT)/bin'; \
+		mkdir -p '$(LINT_GO_ROOT)/gopath' '$(LINT_GO_ROOT)/gopath/pkg/mod' '$(LINT_GO_ROOT)/gocache' '$(LINT_GO_ROOT)/bin'; \
 		go install github.com/reviewdog/reviewdog/cmd/reviewdog@latest >/dev/null; \
 		go run github.com/rhysd/actionlint/cmd/actionlint@latest -shellcheck= -oneline | \
-			reviewdog -name=actionlint -efm='%f:%l:%c: %m' -reporter=local"
+			'$(LINT_GO_ROOT)/bin/reviewdog' -name=actionlint -efm='%f:%l:%c: %m' -reporter=local"
 
 .PHONY: linting-python-fixit
 linting-python-fixit:                ## 🧪  Fixit Python linting
@@ -3547,12 +3558,17 @@ linting-helm-lint:                   ## ⎈  Helm lint wrapper
 linting-helm-chart-testing:          ## ⎈  chart-testing lint (relaxed local defaults)
 	@echo "⎈ chart-testing lint..."
 	@command -v go >/dev/null 2>&1 || { echo "❌ go not found"; exit 1; }
-	@go run github.com/helm/chart-testing/v3/ct@latest lint \
-		--charts $(CHART_DIR) \
-		--validate-chart-schema=false \
-		--validate-yaml=false \
-		--validate-maintainers=false \
-		--check-version-increment=false
+	@/bin/bash -c "set -euo pipefail; \
+		export GOPATH='$(LINT_GO_ROOT)/gopath'; \
+		export GOMODCACHE='$(LINT_GO_ROOT)/gopath/pkg/mod'; \
+		export GOCACHE='$(LINT_GO_ROOT)/gocache'; \
+		mkdir -p '$(LINT_GO_ROOT)/gopath' '$(LINT_GO_ROOT)/gopath/pkg/mod' '$(LINT_GO_ROOT)/gocache'; \
+		go run github.com/helm/chart-testing/v3/ct@latest lint \
+			--charts $(CHART_DIR) \
+			--validate-chart-schema=false \
+			--validate-yaml=false \
+			--validate-maintainers=false \
+			--check-version-increment=false"
 
 .PHONY: linting-helm-unittest
 linting-helm-unittest:               ## 🧪  Helm template unit tests
@@ -3581,8 +3597,14 @@ linting-security-kube-linter:        ## 🧱  Kubernetes best-practice linting
 	@echo "🧱 kube-linter scan of $(LINT_KUBE_LINTER_TARGET)..."
 	@command -v go >/dev/null 2>&1 || { echo "❌ go not found"; exit 1; }
 	@/bin/bash -c "set -euo pipefail; \
+		export GOPATH='$(LINT_GO_ROOT)/gopath'; \
+		export GOMODCACHE='$(LINT_GO_ROOT)/gopath/pkg/mod'; \
+		export GOCACHE='$(LINT_GO_ROOT)/gocache'; \
+		export GOBIN='$(LINT_GO_ROOT)/bin'; \
+		export GOTOOLCHAIN='$(LINT_GO_TOOLCHAIN)'; \
+		mkdir -p '$(LINT_GO_ROOT)/gopath' '$(LINT_GO_ROOT)/gopath/pkg/mod' '$(LINT_GO_ROOT)/gocache' '$(LINT_GO_ROOT)/bin'; \
 		go install golang.stackrox.io/kube-linter/cmd/kube-linter@latest >/dev/null; \
-		kube-linter lint '$(LINT_KUBE_LINTER_TARGET)'"
+		'$(LINT_GO_ROOT)/bin/kube-linter' lint '$(LINT_KUBE_LINTER_TARGET)'"
 
 .PHONY: linting-coverage-diff-cover
 linting-coverage-diff-cover:         ## 📊  Changed-lines coverage gate
