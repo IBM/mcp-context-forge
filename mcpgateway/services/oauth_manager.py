@@ -315,6 +315,11 @@ class OAuthManager:
         if isinstance(issuer, str) and issuer:
             runtime_credentials["issuer"] = validate_core_url(issuer, "OAuth config issuer")
 
+        for url_key in ("redirect_uri", "jwks_uri"):
+            url_value = runtime_credentials.get(url_key)
+            if isinstance(url_value, str) and url_value:
+                runtime_credentials[url_key] = validate_core_url(url_value, f"OAuth config {url_key}")
+
         auth_servers = runtime_credentials.get("authorization_servers")
         if auth_servers not in (None, ""):
             if not isinstance(auth_servers, list):
@@ -357,12 +362,16 @@ class OAuthManager:
         Returns:
             The HTTP response from the token endpoint.
         """
+        # SSRF defense: never follow redirects on token endpoints. The shared HTTP
+        # client sets follow_redirects=True, which would let a validated public
+        # token_url 302-redirect into an internal target (e.g. 169.254.169.254)
+        # after pre-fetch SSRF validation has already passed.
         if ca_certificate or client_cert or client_key:
             ssl_context = get_cached_ssl_context(ca_certificate, client_cert=client_cert, client_key=client_key)
             async with httpx.AsyncClient(verify=ssl_context) as client:
-                return await client.post(url, data=data, headers=headers, timeout=self.request_timeout)
+                return await client.post(url, data=data, headers=headers, timeout=self.request_timeout, follow_redirects=False)
         client = await self._get_client()
-        return await client.post(url, data=data, headers=headers, timeout=self.request_timeout)
+        return await client.post(url, data=data, headers=headers, timeout=self.request_timeout, follow_redirects=False)
 
     # Keys whose values must never be echoed in error messages or logs.
     _SENSITIVE_TOKEN_KEYS = frozenset({"access_token", "refresh_token", "id_token", "client_secret", "password", "subject_token"})
@@ -740,7 +749,7 @@ class OAuthManager:
         for attempt in range(self.max_retries):
             try:
                 client = await self._get_client()
-                response = await client.post(token_url, data=token_data, headers=headers, timeout=self.request_timeout)
+                response = await client.post(token_url, data=token_data, headers=headers, timeout=self.request_timeout, follow_redirects=False)
                 response.raise_for_status()
 
                 token_response = self._parse_token_response(response)
@@ -843,7 +852,13 @@ class OAuthManager:
 
         for attempt in range(self.max_retries):
             try:
-                response = await self._post_token_request(token_url, token_data, ca_certificate=ca_certificate, client_cert=client_cert, client_key=client_key)
+                response = await self._post_token_request(
+                    token_url,
+                    token_data,
+                    ca_certificate=ca_certificate,
+                    client_cert=client_cert,
+                    client_key=client_key,
+                )
                 response.raise_for_status()
 
                 token_response = response.json()
