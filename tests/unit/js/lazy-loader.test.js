@@ -6,26 +6,6 @@
 
 import { describe, test, expect, vi, beforeEach } from "vitest";
 
-vi.mock("../../../mcpgateway/admin_ui/tools.js", () => ({
-  __esModule: true,
-  loadTools: vi.fn(),
-}));
-vi.mock("../../../mcpgateway/admin_ui/servers.js", () => ({
-  __esModule: true,
-  loadServers: vi.fn(),
-}));
-vi.mock("../../../mcpgateway/admin_ui/gateways.js", () => ({
-  __esModule: true,
-  loadGateways: vi.fn(),
-}));
-vi.mock("../../../mcpgateway/admin_ui/teams.js", () => ({
-  __esModule: true,
-  loadTeams: vi.fn(),
-}));
-vi.mock("../../../mcpgateway/admin_ui/logging.js", () => ({
-  __esModule: true,
-  searchStructuredLogs: vi.fn(),
-}));
 vi.mock("../../../mcpgateway/admin_ui/metrics.js", () => ({
   __esModule: true,
   loadAggregatedMetrics: vi.fn(),
@@ -33,14 +13,6 @@ vi.mock("../../../mcpgateway/admin_ui/metrics.js", () => ({
 vi.mock("../../../mcpgateway/admin_ui/llmChat.js", () => ({
   __esModule: true,
   initializeLLMChat: vi.fn(),
-}));
-vi.mock("../../../mcpgateway/admin_ui/llmModels.js", () => ({
-  __esModule: true,
-  overviewDashboard: vi.fn(),
-}));
-vi.mock("../../../mcpgateway/admin_ui/plugins.js", () => ({
-  __esModule: true,
-  populatePluginFilters: vi.fn(),
 }));
 
 const mockChartRegister = vi.fn();
@@ -62,34 +34,36 @@ describe("lazy-loader", () => {
     const { loadFeature } = await import(
       "../../../mcpgateway/admin_ui/lazy-loader.js"
     );
-    const { loadTools } = await import(
-      "../../../mcpgateway/admin_ui/tools.js"
+    const { loadAggregatedMetrics } = await import(
+      "../../../mcpgateway/admin_ui/metrics.js"
     );
 
-    await loadFeature("tools");
+    await loadFeature("metrics");
 
-    expect(window.Admin.loadTools).toBe(loadTools);
+    expect(window.Admin.loadAggregatedMetrics).toBe(loadAggregatedMetrics);
   });
 
   test("dedup: a second call for an already-loaded feature does not re-import", async () => {
     const { loadFeature, isFeatureLoaded } = await import(
       "../../../mcpgateway/admin_ui/lazy-loader.js"
     );
-    const toolsModule = await import(
-      "../../../mcpgateway/admin_ui/tools.js"
+    const metricsModule = await import(
+      "../../../mcpgateway/admin_ui/metrics.js"
     );
 
-    await loadFeature("tools");
-    expect(isFeatureLoaded("tools")).toBe(true);
+    await loadFeature("metrics");
+    expect(isFeatureLoaded("metrics")).toBe(true);
 
     // Swap the export after the first load; if loadFeature re-imported, window.Admin
     // would be reassigned to this new function.
-    const secondLoadTools = vi.fn();
-    toolsModule.loadTools = secondLoadTools;
+    const secondLoadAggregatedMetrics = vi.fn();
+    metricsModule.loadAggregatedMetrics = secondLoadAggregatedMetrics;
 
-    await loadFeature("tools");
+    await loadFeature("metrics");
 
-    expect(window.Admin.loadTools).not.toBe(secondLoadTools);
+    expect(window.Admin.loadAggregatedMetrics).not.toBe(
+      secondLoadAggregatedMetrics,
+    );
   });
 
   test("in-flight coalescing: concurrent calls for the same feature share one load", async () => {
@@ -97,20 +71,20 @@ describe("lazy-loader", () => {
       "../../../mcpgateway/admin_ui/lazy-loader.js"
     );
 
-    const first = loadFeature("servers");
-    expect(isFeatureLoading("servers")).toBe(true);
+    const first = loadFeature("llmChat");
+    expect(isFeatureLoading("llmChat")).toBe(true);
 
-    const second = loadFeature("servers");
+    const second = loadFeature("llmChat");
 
     await Promise.all([first, second]);
 
     // Only one in-flight promise should have been tracked; both callers resolve together
     // and the module ends up loaded exactly once.
-    expect(isFeatureLoading("servers")).toBe(false);
+    expect(isFeatureLoading("llmChat")).toBe(false);
   });
 
   test("error path: a rejected dynamic import propagates and clears the in-flight state", async () => {
-    vi.doMock("../../../mcpgateway/admin_ui/gateways.js", () => {
+    vi.doMock("../../../mcpgateway/admin_ui/llmChat.js", () => {
       throw new Error("network error");
     });
 
@@ -118,31 +92,39 @@ describe("lazy-loader", () => {
       "../../../mcpgateway/admin_ui/lazy-loader.js"
     );
 
-    await expect(loadFeature("gateways")).rejects.toThrow();
+    await expect(loadFeature("llmChat")).rejects.toThrow();
 
-    expect(isFeatureLoading("gateways")).toBe(false);
-    expect(isFeatureLoaded("gateways")).toBe(false);
+    expect(isFeatureLoading("llmChat")).toBe(false);
+    expect(isFeatureLoaded("llmChat")).toBe(false);
+
+    // vi.doMock persists past vi.resetModules(); restore the top-level mock
+    // so later tests importing llmChat.js don't inherit this throwing factory.
+    vi.doUnmock("../../../mcpgateway/admin_ui/llmChat.js");
   });
 
   test("retries after a failed load instead of caching the failure", async () => {
     let shouldFail = true;
-    vi.doMock("../../../mcpgateway/admin_ui/teams.js", () => {
+    vi.doMock("../../../mcpgateway/admin_ui/metrics.js", () => {
       if (shouldFail) {
         throw new Error("network error");
       }
-      return { __esModule: true, loadTeams: vi.fn() };
+      return { __esModule: true, loadAggregatedMetrics: vi.fn() };
     });
 
     const { loadFeature, isFeatureLoaded } = await import(
       "../../../mcpgateway/admin_ui/lazy-loader.js"
     );
 
-    await expect(loadFeature("teams")).rejects.toThrow();
-    expect(isFeatureLoaded("teams")).toBe(false);
+    await expect(loadFeature("metrics")).rejects.toThrow();
+    expect(isFeatureLoaded("metrics")).toBe(false);
 
     shouldFail = false;
-    await loadFeature("teams");
-    expect(isFeatureLoaded("teams")).toBe(true);
+    await loadFeature("metrics");
+    expect(isFeatureLoaded("metrics")).toBe(true);
+
+    // vi.doMock persists past vi.resetModules(); restore the top-level mock
+    // so later tests importing metrics.js don't inherit this closure-based factory.
+    vi.doUnmock("../../../mcpgateway/admin_ui/metrics.js");
   });
 
   test("unknown feature name warns and resolves without throwing", async () => {
@@ -164,10 +146,10 @@ describe("lazy-loader", () => {
       "../../../mcpgateway/admin_ui/lazy-loader.js"
     );
 
-    await loadFeatures(["tools", "servers"]);
+    await loadFeatures(["metrics", "llmChat"]);
 
-    expect(isFeatureLoaded("tools")).toBe(true);
-    expect(isFeatureLoaded("servers")).toBe(true);
+    expect(isFeatureLoaded("metrics")).toBe(true);
+    expect(isFeatureLoaded("llmChat")).toBe(true);
   });
 
   test("getLoadedFeatures reflects everything loaded so far", async () => {
@@ -175,11 +157,11 @@ describe("lazy-loader", () => {
       "../../../mcpgateway/admin_ui/lazy-loader.js"
     );
 
-    await loadFeature("tools");
-    await loadFeature("servers");
+    await loadFeature("metrics");
+    await loadFeature("llmChat");
 
     expect(getLoadedFeatures()).toEqual(
-      expect.arrayContaining(["tools", "servers"]),
+      expect.arrayContaining(["metrics", "llmChat"]),
     );
     expect(getLoadedFeatures()).toHaveLength(2);
   });

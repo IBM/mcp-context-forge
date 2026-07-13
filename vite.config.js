@@ -62,30 +62,21 @@ export default defineConfig({
             return 'vendor-editor';
           }
 
-          // Feature chunks - lazy loaded on tab click
-          if (id.includes('mcpgateway/admin_ui/tools.js')) {
-            return 'tools';
+          // Feature chunks - genuinely lazy loaded on tab click (see
+          // lazy-loader.js featureModules). Each must stay in its own chunk,
+          // never grouped with a statically-imported module, or Rollup will
+          // pull it into the eager load graph too.
+          if (id.includes('mcpgateway/admin_ui/metrics.js')) {
+            return 'metrics';
           }
-          if (id.includes('mcpgateway/admin_ui/servers.js')) {
-            return 'servers';
+          if (id.includes('mcpgateway/admin_ui/llmChat.js')) {
+            return 'llm-chat';
           }
-          if (id.includes('mcpgateway/admin_ui/gateways.js')) {
-            return 'gateways';
-          }
-          if (id.includes('mcpgateway/admin_ui/teams.js')) {
-            return 'teams';
-          }
-          if (id.includes('mcpgateway/admin_ui/logging.js') ||
-              id.includes('mcpgateway/admin_ui/metrics.js')) {
-            return 'monitoring';
-          }
-          if (id.includes('mcpgateway/admin_ui/llmChat.js') ||
-              id.includes('mcpgateway/admin_ui/llmModels.js')) {
-            return 'llm';
-          }
-          if (id.includes('mcpgateway/admin_ui/plugins.js')) {
-            return 'plugins';
-          }
+          // tools.js, servers.js, gateways.js, teams.js, logging.js,
+          // llmModels.js, and plugins.js are statically imported by
+          // admin.js (they cross-import each other and several other
+          // eagerly-loaded modules), so they are left to Rollup's default
+          // chunking rather than split out here.
         }
       },
     },

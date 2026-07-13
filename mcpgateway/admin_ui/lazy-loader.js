@@ -4,16 +4,14 @@
  */
 
 // Map of feature names to their dynamic import functions
+// Only features with no static import elsewhere in the eager bundle belong here.
+// tools/servers/gateways/teams/logging/plugins/llmModels are cross-imported by
+// each other and by several eagerly-loaded modules (app.js, events.js, etc.),
+// so they cannot be split into on-demand chunks without breaking those
+// circular dependencies; they are statically imported in admin.js instead.
 const featureModules = {
-  tools: () => import('./tools.js'),
-  servers: () => import('./servers.js'),
-  gateways: () => import('./gateways.js'),
-  teams: () => import('./teams.js'),
-  logging: () => import('./logging.js'),
   metrics: () => import('./metrics.js'),
   llmChat: () => import('./llmChat.js'),
-  llmModels: () => import('./llmModels.js'),
-  plugins: () => import('./plugins.js'),
   // chart.js exports { Chart, registerables } rather than self-registering on window.Admin
   charts: () => import('chart.js')
 };

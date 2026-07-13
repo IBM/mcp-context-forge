@@ -163,17 +163,13 @@ export const getVisibleSidebarTabs = function () {
   return Array.from(new Set(visibleTabs));
 };
 
-// Map tab names to feature modules for lazy loading
+// Map tab names to feature modules for lazy loading.
+// Only tabs whose feature module has no static import elsewhere in the eager
+// bundle belong here (see lazy-loader.js comment for why tools/servers/
+// gateways/teams/logs/plugins/llm-models are excluded).
 const TAB_FEATURE_MAP = {
-  'tools': 'tools',
-  'servers': 'servers',
-  'gateways': 'gateways',
-  'teams': 'teams',
-  'logs': 'logging',
   'metrics': 'metrics',
   'llm-chat': 'llmChat',
-  'llm-models': 'llmModels',
-  'plugins': 'plugins',
   'observability': 'charts'
 };
 

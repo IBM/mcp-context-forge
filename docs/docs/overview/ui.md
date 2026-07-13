@@ -104,7 +104,7 @@ When `MCPGATEWAY_UI_AIRGAPPED=true`:
 
 ### Container Builds (Recommended)
 
-All production container builds (`Containerfile`, `Containerfile.lite`, `Containerfile.scratch`) include the Vite-built Admin UI assets via the `frontend-builder` stage:
+The production container build (`Containerfile`) includes the Vite-built Admin UI assets via the `frontend-builder` stage:
 
 ```bash
 docker build -f Containerfile -t mcpgateway:airgapped .
