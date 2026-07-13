@@ -3,12 +3,12 @@
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
 
-MCP mode (shadow ↔ edge) smoke and drift tests.
+Runtime-mode smoke and drift tests.
 
-Exercises the gateway's ``/admin/runtime/mcp-mode`` API for boot-mode
-diagnostics. Since the Rust MCP runtime was removed, the gateway always
-boots ``python`` and edge/shadow overrides are advisory — the data plane
-remains served by the Python transport.
+Since the Rust MCP runtime was removed, the /admin/runtime/mcp-mode and
+/admin/runtime/a2a-mode endpoints no longer exist. The gateway always
+boots ``python``. Remaining tests verify the /health mcp_runtime block
+and the static version payload for python-only invariants.
 
 The fixtures skip cleanly when:
   * The gateway isn't reachable (shared with other gateway-target tests).
@@ -77,15 +77,18 @@ def test_runtime_mode_rejects_unsupported(gateway_http_client, runtime_mode_stat
 def test_runtime_mode_boot_mode_is_always_python(gateway_http_client) -> None:
     """The gateway always boots python since the Rust transport was removed.
 
-    Regression guard: a boot-mode override in the response would indicate
-    leftover Rust-boot detection logic.
+    Regression guard: /health mcp_runtime block should report python across
+    all mode fields. No mutable admin endpoint exists for this anymore.
     """
-    resp = gateway_http_client.get("/admin/runtime/mcp-mode")
+    resp = gateway_http_client.get("/health")
     assert resp.status_code == 200
-    state = resp.json()
-    assert state["boot_mode"] == "python", f"boot_mode should always be python, got {state['boot_mode']!r}"
-    assert state["mounted"] == "python", f"mounted should always be python, got {state['mounted']!r}"
-    assert state["effective_mode"] == "python", f"effective_mode should always be python, got {state['effective_mode']!r}"
+    health = resp.json()
+    rt = health.get("mcp_runtime")
+    if rt is None:
+        pytest.skip("/health does not expose mcp_runtime block on this deployment")
+    assert rt.get("boot_mode") == "python", f"boot_mode should be python, got {rt.get('boot_mode')!r}"
+    assert rt.get("mounted") == "python", f"mounted should be python, got {rt.get('mounted')!r}"
+    assert rt.get("effective_mode") == "python", f"effective_mode should be python, got {rt.get('effective_mode')!r}"
 
 
 def test_shadow_boot_rejects_edge_with_safety_flag_reason(gateway_http_client, runtime_mode_state: dict) -> None:
@@ -154,30 +157,22 @@ def test_get_carries_cluster_propagation_and_reconcile_status(runtime_mode_state
 
 
 def test_health_mirrors_runtime_mode_state(gateway_http_client) -> None:
-    """`/health` surfaces the same runtime-mode state as the admin endpoint.
+    """`/health` mcp_runtime block reflects permanent python-only state.
 
-    Multi-pod deployments propagate state via Redis, so a single admin GET
-    and a single health GET may land on different pods at different
-    propagation points. Poll briefly for convergence before asserting
-    mirror equality — all four asserted keys must converge.
+    The /admin/runtime/mcp-mode endpoint was removed with the Rust runtime.
+    Verify the /health mcp_runtime block is self-consistent for a python-only
+    deployment.
     """
-    import time as _time
-
-    deadline = _time.monotonic() + 3.0
-    admin = None
-    mcp_rt = None
-    asserted_keys = ("boot_mode", "effective_mode", "override_active", "cluster_propagation")
-    while _time.monotonic() < deadline:
-        admin = gateway_http_client.get("/admin/runtime/mcp-mode").json()
-        health = gateway_http_client.get("/health").json()
-        mcp_rt = health.get("mcp_runtime")
-        if mcp_rt is None:
-            pytest.skip("/health does not expose mcp_runtime block on this deployment")
-        if all(mcp_rt.get(key) == admin.get(key) for key in asserted_keys):
-            break
-        _time.sleep(0.1)
-    for key in asserted_keys:
-        assert mcp_rt.get(key) == admin.get(key), f"mcp_runtime.{key}={mcp_rt.get(key)!r} vs admin.{key}={admin.get(key)!r}"
+    resp = gateway_http_client.get("/health")
+    assert resp.status_code == 200
+    health = resp.json()
+    rt = health.get("mcp_runtime")
+    if rt is None:
+        pytest.skip("/health does not expose mcp_runtime block on this deployment")
+    # All mode fields should agree on python
+    assert rt.get("boot_mode") == rt.get("effective_mode") == "python"
+    assert rt.get("override_active") is False
+    assert rt.get("rust_build_included") is False
 
 
 # ---------------------------------------------------------------------------
@@ -215,19 +210,8 @@ def test_data_plane_runtime_header_under_shadow(flip_runtime_mode, gateway_http_
 # A2A mode — same contract as MCP mode, different runtime
 # ---------------------------------------------------------------------------
 def test_a2a_mode_endpoint_has_equivalent_shape(gateway_http_client) -> None:
-    """`/admin/runtime/a2a-mode` mirrors the MCP endpoint's contract.
+    """`/admin/runtime/a2a-mode` endpoint was removed with the Rust runtime.
 
-    Field-name drift from MCP: the a2a runtime uses ``invoke_mode`` (the
-    per-invocation path) where MCP uses ``mounted`` (the /mcp transport).
-    Both name their boot/effective/override fields the same.
+    This test skips since the endpoint no longer exists.
     """
-    resp = gateway_http_client.get("/admin/runtime/a2a-mode")
-    if resp.status_code != 200:
-        pytest.skip(f"a2a-mode admin endpoint unavailable ({resp.status_code}): {resp.text[:200]}")
-    state = resp.json()
-    # ``invoke_mode`` is the a2a analogue of MCP's ``mounted``.
-    for key in ("runtime", "boot_mode", "effective_mode", "invoke_mode", "supported_override_modes"):
-        assert key in state, f"a2a state payload missing {key!r}: {state}"
-    assert state["runtime"] == "a2a"
-    assert state["boot_mode"] in {"off", "shadow", "edge", "full"}
-    assert state["invoke_mode"] in {"python", "rust"}
+    pytest.skip("/admin/runtime/a2a-mode endpoint removed with Rust runtime")
