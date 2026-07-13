@@ -24,6 +24,8 @@ from starlette.types import ASGIApp
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.plugins import get_plugin_manager
+from mcpgateway.plugins.utils import build_request_extensions, record_plugin_metrics
+from mcpgateway.services.observability_service import current_trace_id
 from mcpgateway.utils.correlation_id import generate_correlation_id, get_correlation_id
 from mcpgateway.utils.verify_credentials import _resolve_auth_header_name
 
@@ -80,7 +82,9 @@ async def run_pre_request_hooks(
             global_context=global_context,
             local_contexts=None,
             violations_as_exceptions=False,
+            extensions=build_request_extensions(),
         )
+        record_plugin_metrics(current_trace_id.get(), pre_result.metadata)
 
         if not pre_result.modified_payload:
             return headers, global_context, context_table
@@ -248,7 +252,9 @@ class HttpAuthMiddleware(BaseHTTPMiddleware):
                     global_context=global_context,
                     local_contexts=context_table,
                     violations_as_exceptions=False,
+                    extensions=build_request_extensions(),
                 )
+                record_plugin_metrics(current_trace_id.get(), post_result.metadata)
 
                 if post_result.modified_payload:
                     modified_response_headers = post_result.modified_payload.root

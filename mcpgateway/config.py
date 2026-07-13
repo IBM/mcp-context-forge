@@ -1887,6 +1887,14 @@ class Settings(BaseSettings):
     # Enable span events
     observability_events_enabled: bool = Field(default=True, description="Enable event logging within spans")
 
+    # Plugin metrics consumer (G1: PluginResult.metadata -> observability). Independent
+    # on/off switches so the internal DB sink and the optional OTel export sink can each
+    # be disabled without touching the other (DB growth vs external-collector concerns
+    # are separate operational trade-offs).
+    plugin_metrics_db_spans_enabled: bool = Field(default=True, description="Record plugin metadata as internal observability DB spans (plugin.metrics.<name>)")
+    plugin_metrics_db_numeric_rows_enabled: bool = Field(default=True, description="Additionally record numeric plugin metadata fields as internal ObservabilityMetric rows")
+    plugin_metrics_max_numeric_per_call: int = Field(default=16, ge=0, description="Max numeric ObservabilityMetric rows written per invoke_hook() call, across all plugins")
+
     # Correlation ID Settings
     correlation_id_enabled: bool = Field(default=True, description="Enable automatic correlation ID tracking for requests")
     correlation_id_header: str = Field(default="X-Correlation-ID", description="HTTP header name for correlation ID")

@@ -6109,7 +6109,7 @@ class TestReadResourceCoverageEdges:
         plugin_manager = AsyncMock()
         plugin_manager._initialized = True
         plugin_manager.has_hooks_for.side_effect = lambda hook: hook == ResourceHookType.RESOURCE_PRE_FETCH
-        plugin_manager.invoke_hook = AsyncMock(return_value=(SimpleNamespace(modified_payload=None), None))
+        plugin_manager.invoke_hook = AsyncMock(return_value=(SimpleNamespace(modified_payload=None, metadata=None), None))
         svc._get_plugin_manager = AsyncMock(return_value=plugin_manager)
 
         global_ctx = SimpleNamespace(user=None, server_id=None)
@@ -6150,7 +6150,7 @@ class TestReadResourceCoverageEdges:
         plugin_manager = AsyncMock()
         plugin_manager._initialized = True
         plugin_manager.has_hooks_for.side_effect = lambda hook: hook == ResourceHookType.RESOURCE_PRE_FETCH
-        plugin_manager.invoke_hook = AsyncMock(return_value=(SimpleNamespace(modified_payload=None), None))
+        plugin_manager.invoke_hook = AsyncMock(return_value=(SimpleNamespace(modified_payload=None, metadata=None), None))
         svc._get_plugin_manager = AsyncMock(return_value=plugin_manager)
 
         global_ctx = SimpleNamespace(user=None, server_id=None)

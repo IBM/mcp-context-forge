@@ -36,13 +36,14 @@ from mcpgateway.db import EmailTeamMember as DbEmailTeamMember
 from mcpgateway.db import fresh_db_session, get_for_update
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.observability import create_span, set_span_attribute, set_span_error
+from mcpgateway.plugins.utils import build_request_extensions, record_plugin_metrics
 from mcpgateway.schemas import A2AAgentAggregateMetrics, A2AAgentCreate, A2AAgentMetrics, A2AAgentRead, A2AAgentUpdate
 from mcpgateway.services.a2a_protocol import prepare_a2a_invocation
 from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.encryption_service import protect_oauth_config_for_storage
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batches, pause_rollup_during_purge
-from mcpgateway.services.observability_service import ObservabilityService
+from mcpgateway.services.observability_service import current_trace_id, ObservabilityService
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.utils.admin_check import is_user_admin
@@ -2303,7 +2304,9 @@ class A2AAgentService(BaseService):
                     global_context=global_context,
                     local_contexts=context_table,
                     violations_as_exceptions=True,
+                    extensions=build_request_extensions(),
                 )
+                record_plugin_metrics(current_trace_id.get(), pre_result.metadata)
                 if pre_result.modified_payload:
                     if pre_result.modified_payload.parameters is not None:
                         parameters = pre_result.modified_payload.parameters
@@ -2520,7 +2523,9 @@ class A2AAgentService(BaseService):
                             global_context=global_context,
                             local_contexts=context_table,
                             violations_as_exceptions=False,
+                            extensions=build_request_extensions(),
                         )
+                        record_plugin_metrics(current_trace_id.get(), post_result.metadata if post_result else None)
                         if post_result and post_result.retry_delay_ms > 0:
                             logger.info(
                                 "Plugin requested retry for A2A agent %s after %sms",

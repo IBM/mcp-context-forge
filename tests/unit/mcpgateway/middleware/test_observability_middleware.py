@@ -81,11 +81,58 @@ async def test_dispatch_trace_setup_success(mock_request, mock_call_next):
 
 
 @pytest.mark.asyncio
+async def test_dispatch_sets_span_id_on_request_state(mock_request, mock_call_next):
+    """request.state.span_id must be bridged (alongside trace_id) so downstream
+    hook call sites (Task B1) can build plugin trace context from request.state.
+    """
+    middleware = ObservabilityMiddleware(app=None, enabled=True)
+    with (
+        patch.object(middleware.service, "start_trace", return_value="trace123"),
+        patch.object(middleware.service, "start_span", return_value="span123") as mock_start_span,
+        patch.object(middleware.service, "end_span"),
+        patch.object(middleware.service, "end_trace"),
+        patch("mcpgateway.middleware.observability_middleware.attach_trace_to_session"),
+        patch("mcpgateway.middleware.observability_middleware.parse_traceparent", return_value=("traceX", "spanY", "flags")),
+        patch("mcpgateway.middleware.observability_middleware.should_skip_observability", return_value=False),
+    ):
+        response = await middleware.dispatch(mock_request, mock_call_next)
+        assert response.status_code == 200
+        mock_start_span.assert_called_once()
+        assert mock_request.state.trace_id == "trace123"
+        assert mock_request.state.span_id == "span123"
+
+
+@pytest.mark.asyncio
 async def test_dispatch_trace_setup_failure(mock_request, mock_call_next):
     middleware = ObservabilityMiddleware(app=None, enabled=True)
     with patch.object(middleware.service, "start_trace", side_effect=Exception("trace fail")), patch("mcpgateway.middleware.observability_middleware.should_skip_observability", return_value=False):
         response = await middleware.dispatch(mock_request, mock_call_next)
         assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_dispatch_trace_setup_failure_after_trace_id_set_resets_both_tokens(mock_request, mock_call_next):
+    """If trace setup fails AFTER trace_id/plugins_trace_id ContextVars are already set
+    (here: start_span raises, before span_id_token is set), both of those tokens must be
+    reset in the except block -- not just skipped because they're None -- so stale trace
+    context never bleeds into a later request reusing the same task/context.
+    """
+    middleware = ObservabilityMiddleware(app=None, enabled=True)
+    with (
+        patch.object(middleware.service, "start_trace", return_value="trace123"),
+        patch.object(middleware.service, "start_span", side_effect=Exception("span setup fail")),
+        patch("mcpgateway.middleware.observability_middleware.attach_trace_to_session"),
+        patch("mcpgateway.middleware.observability_middleware.parse_traceparent", return_value=("traceX", "spanY", "flags")),
+        patch("mcpgateway.middleware.observability_middleware.should_skip_observability", return_value=False),
+        patch("mcpgateway.middleware.observability_middleware.current_trace_id") as mock_trace_id_var,
+        patch("mcpgateway.middleware.observability_middleware.plugins_trace_id") as mock_plugins_trace_id_var,
+    ):
+        mock_trace_id_var.set.return_value = "trace-token"
+        mock_plugins_trace_id_var.set.return_value = "plugins-token"
+        response = await middleware.dispatch(mock_request, mock_call_next)
+        assert response.status_code == 200
+        mock_trace_id_var.reset.assert_called_once_with("trace-token")
+        mock_plugins_trace_id_var.reset.assert_called_once_with("plugins-token")
 
 
 @pytest.mark.asyncio
