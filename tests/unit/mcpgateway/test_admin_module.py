@@ -1991,3 +1991,49 @@ def test_get_bundle_css_files_stale_cache_rereads_manifest(monkeypatch, tmp_path
     monkeypatch.setattr(admin, "_bundle_css_cache", {"files": ["assets/stale.css"]})  # stale; file absent
 
     assert admin.get_bundle_css_files() == ["assets/new.css"]
+
+
+def test_get_bundle_css_files_falls_back_to_disk_scan_when_manifest_missing(monkeypatch, tmp_path):
+    """No manifest on disk but assets/*.css exist — falls back to scanning them, like
+    get_bundle_js_filename's bundle-*.js disk fallback."""
+    static_dir = _setup_static_dir(tmp_path)
+    assets_dir = static_dir / "assets"
+    assets_dir.mkdir()
+    (assets_dir / "index-abc123.css").touch()
+    (assets_dir / "vendor-editor-xyz.css").touch()
+
+    monkeypatch.setattr(admin, "__file__", str(tmp_path / "admin.py"))
+    monkeypatch.setattr(admin, "_bundle_css_cache", {"files": None})
+
+    result = admin.get_bundle_css_files()
+    assert sorted(result) == ["assets/index-abc123.css", "assets/vendor-editor-xyz.css"]
+
+
+def test_get_bundle_css_files_disk_fallback_excludes_stale_build(monkeypatch, tmp_path):
+    """Disk fallback only picks files from the newest build, not leftover CSS from an
+    older build that Vite's emptyOutDir:false left behind."""
+    static_dir = _setup_static_dir(tmp_path)
+    assets_dir = static_dir / "assets"
+    assets_dir.mkdir()
+
+    old_css = assets_dir / "index-old111.css"
+    old_css.touch()
+    old_time = time.time() - 3600
+    os.utime(old_css, (old_time, old_time))
+
+    (assets_dir / "index-new222.css").touch()
+
+    monkeypatch.setattr(admin, "__file__", str(tmp_path / "admin.py"))
+    monkeypatch.setattr(admin, "_bundle_css_cache", {"files": None})
+
+    assert admin.get_bundle_css_files() == ["assets/index-new222.css"]
+
+
+def test_get_bundle_css_files_no_manifest_no_assets_returns_empty_list(monkeypatch, tmp_path):
+    """Neither manifest nor assets directory exists — returns an empty list rather than raising."""
+    _setup_static_dir(tmp_path)
+
+    monkeypatch.setattr(admin, "__file__", str(tmp_path / "admin.py"))
+    monkeypatch.setattr(admin, "_bundle_css_cache", {"files": None})
+
+    assert admin.get_bundle_css_files() == []

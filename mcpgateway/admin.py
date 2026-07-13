@@ -464,13 +464,20 @@ def get_bundle_css_files() -> list:
     Font Awesome vendor chunk) is listed under that *chunk's own* manifest entry, not the
     top-level entry, so the entry's "imports" graph must be walked to collect all of it.
 
+    Falls back to scanning ``assets/*.css`` on disk if the manifest is unreadable or has
+    no CSS for the entry, mirroring :func:`get_bundle_js_filename`'s disk fallback. Since a
+    single build can emit more than one CSS file (e.g. the CodeMirror/Font Awesome vendor
+    chunk plus the entry's own CSS), the fallback keeps every file whose mtime is within a
+    few seconds of the newest one, rather than just the single newest file, so it doesn't
+    pick only half of the current build's assets.
+
     Returns:
         list[str]: Paths relative to the static dir (e.g. ['assets/index-abc123.css']),
-            or an empty list if the manifest is unreadable or has no CSS for the entry.
+            or an empty list if neither the manifest nor the assets directory has any CSS.
     """
     static_dir = Path(__file__).parent / "static"
 
-    cached = _bundle_css_cache["files"]
+    cached = _bundle_css_cache.get("files")
     if cached is not None and all((static_dir / f).exists() for f in cached):
         return cached
 
@@ -494,10 +501,22 @@ def get_bundle_css_files() -> list:
                             if css_path not in css_files:
                                 css_files.append(css_path)
                         queue.extend(chunk.get("imports") or [])
-                    _bundle_css_cache["files"] = css_files
-                    return css_files
+                    if css_files:
+                        _bundle_css_cache["files"] = css_files
+                        return css_files
     except Exception as e:
         LOGGER.warning(f"Failed to read Vite manifest for CSS assets: {e}")
+
+    # Manifest unreadable, missing, or missing the entry — find CSS assets directly on disk.
+    assets_dir = static_dir / "assets"
+    if assets_dir.exists():
+        css_paths = sorted(assets_dir.glob("*.css"), key=lambda p: p.stat().st_mtime, reverse=True)
+        if css_paths:
+            newest_mtime = css_paths[0].stat().st_mtime
+            recent_paths = [p for p in css_paths if newest_mtime - p.stat().st_mtime < 5]
+            css_files = [f"assets/{p.name}" for p in recent_paths]
+            _bundle_css_cache["files"] = css_files
+            return css_files
 
     return []
 
