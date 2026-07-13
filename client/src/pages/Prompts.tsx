@@ -11,16 +11,18 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import type { PromptRead } from "@/generated/types";
+import type { CursorPaginatedPromptsResponse, PromptRead } from "@/generated/types";
 import { PromptDetailsPanel } from "@/components/prompts";
 import { useQuery } from "@/hooks/useQuery";
-import type { PromptGroup, PromptsResponse } from "@/types/prompts";
+import type { PromptGroup } from "@/types/prompts";
 
 const MAX_VISIBLE_PROMPTS = 8;
 
-function getPromptItems(data: (PromptRead | null)[]): NonNullable<PromptRead>[] {
-  if (!Array.isArray(data)) return [];
-  return data.filter((p): p is NonNullable<PromptRead> => p !== null);
+type PromptsListResponse = (PromptRead | null)[] | CursorPaginatedPromptsResponse;
+
+function getPromptItems(data: PromptsListResponse | undefined): NonNullable<PromptRead>[] {
+  const list = Array.isArray(data) ? data : (data?.prompts ?? []);
+  return list.filter((p): p is NonNullable<PromptRead> => p != null);
 }
 
 function getPromptLabel(prompt: NonNullable<PromptRead>): string {
@@ -201,11 +203,11 @@ export function Prompts() {
     error,
     isLoading,
     refetch,
-  } = useQuery<PromptsResponse>("/prompts?limit=1000&include_inactive=true");
+  } = useQuery<PromptsListResponse>("/prompts?limit=1000&include_inactive=true");
 
   const restPromptsLabel = intl.formatMessage({ id: "prompts.restPromptsGroup" });
   const groups = useMemo(
-    () => buildPromptGroups(getPromptItems(promptsData ?? []), restPromptsLabel),
+    () => buildPromptGroups(getPromptItems(promptsData), restPromptsLabel),
     [promptsData, restPromptsLabel],
   );
 
