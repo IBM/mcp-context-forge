@@ -429,9 +429,29 @@ plugins:
         ["text/plain", "text/markdown", "text/html", "application/json"]
       allowed_extensions: [".md", ".txt", ".html", ".json"]
 
-  # Retry with exponential backoff — triggers real gateway re-invocation
+  # Retry with Backoff (CPEX pilot) — Rust-backed exponential-backoff retry wrapper that triggers
+  # real gateway re-invocation on tool_post_invoke, trace-aware. Reads extensions.request.trace_id
+  # (see mcpgateway/plugins/utils.py:build_request_extensions) and, when a trace is active, emits
+  # result.metadata["retry_with_backoff"] (retry_count: consecutive failures recorded so far for
+  # this tool call; retry_delay_ms: the per-attempt backoff delay just computed -- not a
+  # cumulative total, 0 in the success/exhausted-budget branches) for
+  # mcpgateway/plugins/utils.py:record_plugin_metrics() to persist as a dedicated
+  # `plugin.metrics.retry_with_backoff` observability span. Requires
+  # cpex-retry-with-backoff>=0.3.6 (see pyproject.toml) -- earlier releases do not emit metrics.
+  #
+  # Left mode: "disabled" deliberately, unlike PIIFilter: this plugin ships with
+  # retry_on_status/max_retries below and hooks tool_post_invoke, so flipping mode to "sequential"
+  # would not just newly enable metrics -- per cpex.framework.PluginMode, "disabled" plugins are
+  # never instantiated or registered (see cpex/framework/manager.py load_plugins(): `if
+  # plugin_config.mode != PluginMode.DISABLED: ... else: logger.info("Plugin: %s is disabled.
+  # Ignoring.", ...)`), so today this plugin's hooks never run at all. Enabling it would newly
+  # start RE-INVOKING tool calls (real gateway re-invocation, not a dry-run) that return one of
+  # retry_on_status for every existing deployment using the default config.yaml -- a materially
+  # bigger behavior change than PIIFilter (whose block_on_detection defaults to false even once
+  # enabled). That is an opt-in decision for operators to make explicitly; do not flip silently.
   - name: "RetryWithBackoffPlugin"
     kind: "cpex_retry_with_backoff.RetryWithBackoffPlugin"
+    version: "0.3.6"
     hooks: ["tool_post_invoke"]
     tags: ["retry", "backoff", "resilience"]
     mode: "disabled"

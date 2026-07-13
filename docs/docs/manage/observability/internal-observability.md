@@ -874,8 +874,10 @@ its own `0.3.6` release, the bundled Secrets Detection plugin (`cpex-secrets-det
 Encoded Exfil Detector plugin (`cpex-encoded-exfil-detection`) emits
 `result.metadata["encoded_exfil_detection"]` starting from its own `0.3.6` release, and the
 bundled URL Reputation plugin (`cpex-url-reputation`) emits `result.metadata["url_reputation"]`
-starting from its own `0.3.5` release, and the bundled Rate Limiter plugin (`cpex-rate-limiter`)
-emits `result.metadata["rate_limiter"]` starting from its own `0.1.7` release — check
+starting from its own `0.3.5` release, the bundled Rate Limiter plugin (`cpex-rate-limiter`)
+emits `result.metadata["rate_limiter"]` starting from its own `0.1.7` release, and the bundled
+Retry with Backoff plugin (`cpex-retry-with-backoff`) emits
+`result.metadata["retry_with_backoff"]` starting from its own `0.3.6` release — check
 `pyproject.toml`/`uv.lock` for the currently pinned version before assuming this data is available
 end-to-end. Note that emitting metrics requires
 the plugin to actually run: a plugin whose
@@ -908,6 +910,8 @@ contract table above.
 | `rate_limiter` | `allowed` | `int` | `1` if this call was allowed through, `0` otherwise — per-call, not cumulative (`prompt_pre_fetch`/`tool_pre_invoke` each evaluate one request at a time) |
 | `rate_limiter` | `throttled` | `int` | `1` if this call was throttled/rejected, `0` otherwise — per-call, mutually exclusive with `allowed` |
 | `rate_limiter` | `backend` | `str` | Which limiter backend served this call — `redis` or `memory` |
+| `retry_with_backoff` | `retry_count` | `int` | Consecutive failures recorded so far for this tool call |
+| `retry_with_backoff` | `retry_delay_ms` | `int` | Per-attempt backoff delay just computed — not a cumulative total; `0` in the success/exhausted-budget branches |
 
 ## Best Practices
 
