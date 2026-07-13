@@ -101,8 +101,11 @@ class MockPermissionService:
         resource_type: Optional[str] = None,
         resource_id: Optional[str] = None,
         team_id: Optional[str] = None,
+        token_teams: Optional[list] = None,
         ip_address: Optional[str] = None,
         user_agent: Optional[str] = None,
+        allow_admin_bypass: bool = True,
+        check_any_team: bool = False,
     ) -> bool:
         """Mock permission check that returns configured result.
 
@@ -112,8 +115,11 @@ class MockPermissionService:
             resource_type: Optional resource type
             resource_id: Optional resource ID
             team_id: Optional team context
+            token_teams: Normalized token team scope from auth context
             ip_address: Optional IP address
             user_agent: Optional user agent
+            allow_admin_bypass: Whether to allow admin bypass
+            check_any_team: Whether to check permission across all team-scoped roles
 
         Returns:
             bool: Permission result
