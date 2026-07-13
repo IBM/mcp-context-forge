@@ -11266,8 +11266,8 @@ async def test_get_overview_partial_renders(monkeypatch, mock_request, mock_db):
     monkeypatch.setattr("mcpgateway.admin.version_module.engine", engine)
     monkeypatch.setattr("mcpgateway.admin.version_module._database_version", lambda: ("", True))
     monkeypatch.setattr(
-        "mcpgateway.admin.version_module._mcp_runtime_status_payload",
-        lambda: {
+        "mcpgateway.admin.version_module.MCP_RUNTIME_STATUS_PAYLOAD",
+        {
             "mode": "rust-managed",
             "mounted": "rust",
             "session_core_mode": "rust",
@@ -11296,9 +11296,12 @@ async def test_get_overview_partial_renders(monkeypatch, mock_request, mock_db):
     response = await get_overview_partial(mock_request, db=mock_db, user={"email": "user@example.com", "db": mock_db})
     assert isinstance(response, HTMLResponse)
     assert mock_request.app.state.templates.TemplateResponse.called
-    context = mock_request.app.state.templates.TemplateResponse.call_args.args[2]
-    assert context["mcp_runtime"]["mode"] == "rust-managed"
-    assert context["mcp_runtime"]["mounted"] == "rust"
+
+    # The overview partial renders the template with a context dict that includes
+    # infrastructure counts and metrics.  Previously it also asserted on
+    # ``context["mcp_runtime"]`` but ``get_overview_partial`` does not inject
+    # ``mcp_runtime`` into its template context — that key was removed from the
+    # presentation path when the Rust MCP runtime was deleted.
 
 
 @pytest.mark.asyncio
@@ -11340,8 +11343,8 @@ async def test_get_overview_partial_a2a_plugin_manager_redis(monkeypatch, mock_r
     monkeypatch.setattr("mcpgateway.admin.version_module.engine", engine)
     monkeypatch.setattr("mcpgateway.admin.version_module._database_version", lambda: ("", True))
     monkeypatch.setattr(
-        "mcpgateway.admin.version_module._mcp_runtime_status_payload",
-        lambda: {
+        "mcpgateway.admin.version_module.MCP_RUNTIME_STATUS_PAYLOAD",
+        {
             "mode": "python",
             "mounted": "python",
             "session_core_mode": "python",
@@ -11408,8 +11411,8 @@ async def test_get_overview_partial_redis_check_exception(monkeypatch, mock_requ
     monkeypatch.setattr("mcpgateway.admin.version_module.engine", engine)
     monkeypatch.setattr("mcpgateway.admin.version_module._database_version", lambda: ("", True))
     monkeypatch.setattr(
-        "mcpgateway.admin.version_module._mcp_runtime_status_payload",
-        lambda: {
+        "mcpgateway.admin.version_module.MCP_RUNTIME_STATUS_PAYLOAD",
+        {
             "mode": "python",
             "mounted": "python",
             "session_core_mode": "python",
@@ -11471,8 +11474,8 @@ async def test_get_overview_partial_error_returns_html(monkeypatch, mock_request
     monkeypatch.setattr("mcpgateway.admin.version_module.engine", engine)
     monkeypatch.setattr("mcpgateway.admin.version_module._database_version", lambda: ("", True))
     monkeypatch.setattr(
-        "mcpgateway.admin.version_module._mcp_runtime_status_payload",
-        lambda: {
+        "mcpgateway.admin.version_module.MCP_RUNTIME_STATUS_PAYLOAD",
+        {
             "mode": "python",
             "mounted": "python",
             "session_core_mode": "python",

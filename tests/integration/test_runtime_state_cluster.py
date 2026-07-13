@@ -133,8 +133,7 @@ async def test_two_coordinators_converge_through_pubsub(monkeypatch: pytest.Monk
     # Both coordinators must look like edge-boot so the published shadow flip
     # is compatible on the receiver (per the new _deployment_allows_override_mode
     # check in the listen-loop).
-    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_mcp_runtime_enabled", True, raising=False)
-    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_mcp_session_auth_reuse_enabled", True, raising=False)
+    # Rust runtime removed — all configs are stubs returning python/no-op
 
     broker = FakeRedisBroker()
 

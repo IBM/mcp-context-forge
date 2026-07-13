@@ -8,7 +8,6 @@ For domain-specific guidance, see subdirectory AGENTS.md files:
 - `charts/AGENTS.md` - Helm chart operations
 - `docs/AGENTS.md` - Documentation authoring
 - `mcp-servers/AGENTS.md` - MCP server implementation
-- `crates/mcp_runtime/DEVELOPING.md` - Rust MCP runtime development workflows, command matrix, and validation
 
 **Note:** The `llms/` directory contains guidance for LLMs *using* ContextForge solution (end-user runtime guidance), not for code agents working on this codebase.
 
@@ -68,9 +67,8 @@ make pre-commit
 # Before committing, use ty, mypy and pyrefly to check just the new files, then run:
 make ruff bandit interrogate pylint verify
 
-# Before committing Rust changes (tools_rust/):
-# Run fmt-check, clippy -D warnings, and cargo test for Rust crates
-cd tools_rust/mcp_runtime && cargo fmt --check && cargo clippy -- -D warnings && cargo test
+# Before committing: run rustfmt check, clippy, and cargo test for any Rust crates
+cargo fmt --check && cargo clippy -- -D warnings && cargo test
 ```
 
 #### Secret Detection (detect-secrets)

@@ -8,7 +8,7 @@ The intent is not to freeze every future protobuf field today. The intent is
 to define the minimum contract surface clearly enough that:
 
 - the existing Rust MCP module can be understood as the reference implementation
-- a Rust A2A module can be implemented without re-designing the trust model
+- A module can use the existing security model without re-designing per-component trust
 - a Go LLM proxy module can be implemented without guessing where policy lives
 - a REST or gRPC module can be implemented without inventing a different
   lifecycle or error model
@@ -43,7 +43,7 @@ It is **illustrative at the wire-schema level**:
 ## Implemented Precedent
 
 The first implemented precedent is the
-[Rust MCP Runtime](../rust-mcp-runtime.md).
+[Modular Runtime Architecture](../modular-design.md).
 
 That precedent proves:
 

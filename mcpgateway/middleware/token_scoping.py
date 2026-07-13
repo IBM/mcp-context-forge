@@ -1432,9 +1432,8 @@ class TokenScopingMiddleware:
         """Return whether the request is a trusted internal MCP/A2A runtime hop.
 
         Delegates to the shared gate in ``auth_context`` so the trust decision is
-        defined in one place. Unlike the previous local check, this trusts both
-        the ``rust`` and ``affinity`` runtime markers — closing the gap where the
-        in-process session-affinity dispatch was still token-scoped.
+        defined in one place. Trust relies on the HMAC-signed
+        ``x-contextforge-auth-context`` header and loopback client address.
 
         Args:
             request: Incoming HTTP request.

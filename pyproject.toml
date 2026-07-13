@@ -228,7 +228,6 @@ dev = [
     "pipdeptree>=3.1.0",
     "setuptools>=82.0.1",
     "debugpy>=1.8.21",
-    "maturin>=1.14.1",
     "Pygments>=2.20.0",
 ]
 

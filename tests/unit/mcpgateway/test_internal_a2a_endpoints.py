@@ -1157,23 +1157,15 @@ class TestInternalA2ADenyPaths:
         monkeypatch.setattr("mcpgateway.main.settings.mcpgateway_a2a_enabled", False)
         # Provide the sidecar headers so the only thing that can cause
         # rejection is the feature-flag branch.
-        headers = {
-            "x-contextforge-mcp-runtime": "rust",
-            "x-contextforge-mcp-runtime-auth": "stub",  # pragma: allowlist secret
-        }
-        with patch("mcpgateway.auth_context.has_valid_internal_mcp_runtime_auth_header", return_value=True):
-            resp = client.post(url, json={}, headers=headers)
+        headers = {}
+        resp = client.post(url, json={}, headers=headers)
         assert resp.status_code == 403
 
     @pytest.mark.parametrize("url", _AGENT_ENDPOINTS)
     def test_agent_endpoints_reject_when_a2a_disabled(self, url, client, monkeypatch):
         monkeypatch.setattr("mcpgateway.main.settings.mcpgateway_a2a_enabled", False)
-        headers = {
-            "x-contextforge-mcp-runtime": "rust",
-            "x-contextforge-mcp-runtime-auth": "stub",  # pragma: allowlist secret
-        }
-        with patch("mcpgateway.auth_context.has_valid_internal_mcp_runtime_auth_header", return_value=True):
-            resp = client.post(url, json={}, headers=headers)
+        headers = {}
+        resp = client.post(url, json={}, headers=headers)
         assert resp.status_code == 403
 
     def test_mcp_runtime_endpoints_still_trusted_when_a2a_disabled(self, client, monkeypatch):
@@ -1199,8 +1191,7 @@ class TestInternalA2ADenyPaths:
             "raw_path": b"/_internal/mcp/authenticate",
             "query_string": b"",
             "headers": [
-                (b"x-contextforge-mcp-runtime", b"rust"),
-                (b"x-contextforge-mcp-runtime-auth", b"stub"),
+                (b"x-contextforge-mcp-runtime", b"affinity"),
             ],
             "client": ("127.0.0.1", 12345),
         }
@@ -1209,11 +1200,9 @@ class TestInternalA2ADenyPaths:
         # First-Party
         from mcpgateway.main import _is_trusted_internal_mcp_runtime_request
 
-        with patch("mcpgateway.auth_context.has_valid_internal_mcp_runtime_auth_header", return_value=True):
-            assert _is_trusted_internal_mcp_runtime_request(request) is True
+        assert _is_trusted_internal_mcp_runtime_request(request) is True
 
         # And the equivalent /_internal/a2a/ path with the same headers
         # MUST still be rejected (the feature flag narrows correctly).
         a2a_scope = {**scope, "path": "/_internal/a2a/authenticate", "raw_path": b"/_internal/a2a/authenticate"}
-        with patch("mcpgateway.auth_context.has_valid_internal_mcp_runtime_auth_header", return_value=True):
-            assert _is_trusted_internal_mcp_runtime_request(Request(a2a_scope)) is False
+        assert _is_trusted_internal_mcp_runtime_request(Request(a2a_scope)) is False

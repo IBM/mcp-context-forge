@@ -10,7 +10,6 @@ Module documentation...
 from pathlib import Path
 
 MAKEFILE = Path(__file__).resolve().parents[2] / "Makefile"
-RUST_RUNTIME_DEVELOPING = Path(__file__).resolve().parents[2] / "crates" / "mcp_runtime" / "DEVELOPING.md"
 
 
 def _target_body(target: str) -> str:
@@ -49,10 +48,3 @@ def test_rust_diff_cover_uses_rust_cobertura_xml() -> None:
     assert "No coverage/cobertura.xml found - running rust-coverage first" in body
     assert "$(MAKE) --no-print-directory rust-coverage" in body
     assert "diff-cover coverage/cobertura.xml --compare-branch=main --fail-under=90" in body
-
-
-def test_rust_runtime_developing_doc_mentions_root_coverage_targets() -> None:
-    docs = RUST_RUNTIME_DEVELOPING.read_text(encoding="utf-8")
-
-    assert "make rust-coverage" in docs
-    assert "make rust-diff-cover" in docs

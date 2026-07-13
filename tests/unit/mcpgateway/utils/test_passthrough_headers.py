@@ -514,15 +514,11 @@ class TestLoopbackSkipTrustedInternalHeaders:
 
         spoofed = {
             "x-contextforge-auth-context": "SPOOFED",
-            "x-contextforge-mcp-runtime": "affinity",
-            "x-contextforge-mcp-runtime-auth": "SPOOFED-HMAC",  # pragma: allowlist secret
             "x-contextforge-session-validated": "rust",
             "x-business-header": "kept",
         }
         out = filter_loopback_skip_headers(spoofed)
         assert "x-contextforge-auth-context" not in out
-        assert "x-contextforge-mcp-runtime" not in out
-        assert "x-contextforge-mcp-runtime-auth" not in out
         assert "x-contextforge-session-validated" not in out
         # Non-trusted business headers are unaffected.
         assert out.get("x-business-header") == "kept"

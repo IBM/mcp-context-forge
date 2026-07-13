@@ -8636,7 +8636,6 @@ class HealthCheckResponse(BaseModel):
 
     status: str = Field(..., description="Overall health status: 'healthy' if all components are healthy, 'unhealthy' otherwise")
     status_items: List[HealthStatusItem] = Field(..., description="List of component health statuses")
-    mcp_runtime: Dict[str, Any] = Field(default_factory=dict, description="MCP runtime diagnostics and configuration")
 
 
 class GunicornMetricsSchema(BaseModel):

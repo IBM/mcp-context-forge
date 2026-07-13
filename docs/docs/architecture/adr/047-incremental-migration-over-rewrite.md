@@ -18,7 +18,7 @@ The existing codebase already has:
 - a broad unit, integration, E2E, security, and performance test surface
 - cross-cutting concerns such as auth, RBAC, plugins, and admin UI that must
   remain coherent while protocol runtimes are extracted
-- an implemented Rust MCP sidecar precedent showing that sidecar rollout is
+- an implemented sidecar precedent showing that sidecar rollout is
   feasible
 
 ## Decision
@@ -47,7 +47,7 @@ ADR does not freeze their final names.
 - Each phase leaves the system fully functional — no "big bang" cutover.
 - Risk is distributed across multiple small PRs instead of one massive change.
 - Legacy mode preserves an escape hatch if module mode has issues.
-- The implemented Rust MCP runtime sidecar proves the sidecar pattern works before generalizing it.
+- The sidecar pattern proves the approach works before generalizing it.
 
 ### Negative
 
@@ -63,4 +63,4 @@ ADR does not freeze their final names.
 ## References
 
 - [Modular Runtime Architecture](../modular-design.md)
-- [ADR-043](043-rust-mcp-runtime-sidecar-mode-model.md)
+- [ADR-050](050-defer-generic-cluster-settings-propagation-framework.md)

@@ -25,10 +25,6 @@ SHELL := /bin/bash
 # Rust build configuration (set to 1 to enable Rust builds, 0 to disable)
 # Default is disabled to avoid requiring Rust toolchain for standard builds
 ENABLE_RUST_BUILD ?= 0
-ENABLE_RUST_MCP_RMCP_BUILD ?=
-RUST_MCP_BUILD ?= 0
-RUST_MCP_MODE ?= off
-RUST_MCP_LOG ?= warn
 
 # Project variables
 PROJECT_NAME      = mcpgateway
@@ -320,12 +316,6 @@ ensure-secrets:
 .PHONY: install-dev
 install-dev: venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && $(UV_BIN) pip install --group dev '.[plugins]'"
-	@if [ "$(ENABLE_RUST_BUILD)" = "1" ]; then \
-		echo "🦀 Building Rust..."; \
-		$(MAKE) rust-dev || echo "⚠️  Rust not available (optional)"; \
-	else \
-		echo "⏭️  Rust builds disabled (set ENABLE_RUST_BUILD=1 to enable)"; \
-	fi
 	@$(MAKE) build-ui
 	@echo ""
 	@echo "🔑  Next step — choose one:"
@@ -808,10 +798,9 @@ clean:
 # help: test-mcp-cli         - [DEPRECATED] Alias for test-mcp-protocol-e2e (accepts same K=<filter>)
 # help: test-mcp-rbac        - RBAC + multi-transport MCP protocol tests (needs live gateway + SSE)
 # help: test-mcp-access-matrix - MCP role/access matrix (Rust transport, edge/full mode)
-# help: test-mcp-plugin-parity - MCP plugin parity E2E for current Python or Rust stack
-# help: test-mcp-session-isolation - MCP session/auth isolation tests for Rust public transport
+# help: test-mcp-plugin-parity - MCP plugin parity E2E for current Python stack
 # help: test-e2e-sso         - E2E tests requiring a live SSO identity provider (Keycloak or Entra ID)
-# help: test-live-gateway    - Run ALL live-gateway tests (mcp + sso + protocol_compliance + e2e_rust)
+# help: test-live-gateway    - Run ALL live-gateway tests (mcp + sso + protocol_compliance)
 # help: test-plugin-integration - Self-contained plugin E2E tests (boots gateway; PLUGIN=<name> ENFORCEMENT=static|binding|both)
 # help: test-plugin-secrets-detection  - Plugin E2E: SecretsDetection
 # help: test-plugin-encoded-exfil      - Plugin E2E: EncodedExfil
@@ -850,8 +839,8 @@ clean:
 
 # Dirs/files always excluded from standard pytest runs.
 # tests/live_gateway/ — see tests/live_gateway/README.md. Subsuites need
-# a running gateway (`make testing-up`), Keycloak/Entra (sso/), the Rust
-# transport (e2e_rust/), or specific protocol setup (protocol_compliance/).
+# a running gateway (`make testing-up`), Keycloak/Entra (sso/),
+# or specific protocol setup (protocol_compliance/).
 # Invoke via `make test-live-gateway` (everything) or a targeted helper
 # (test-mcp-protocol-e2e, test-mcp-rbac, test-mcp-plugin-parity,
 # test-mcp-access-matrix, test-mcp-session-isolation, test-e2e-sso,
@@ -902,7 +891,7 @@ test-protocol-compliance-gateway: uv  ## Protocol compliance harness — gateway
 		|| { echo "❌ gateway-target compliance harness failed!"; exit 1; }
 	@echo "✅ gateway-target compliance harness passed!"
 
-test-protocol-compliance-matrix: uv  ## MCP compliance matrix across every runnable engine (reference, python, rust_edge, rust_full) with aggregated summary
+test-protocol-compliance-matrix: uv  ## MCP compliance matrix across every runnable engine; summary table (override with MATRIX_ARGS)
 	@$(UV_BIN) run python scripts/compliance_matrix.py $(MATRIX_ARGS)
 
 test-mcp-rbac: uv  ## RBAC + multi-transport MCP protocol tests (needs live gateway + SSE)
@@ -913,10 +902,10 @@ test-mcp-rbac: uv  ## RBAC + multi-transport MCP protocol tests (needs live gate
 		|| { echo "❌ MCP RBAC transport tests failed!"; exit 1; }
 	@echo "✅ MCP RBAC transport tests passed!"
 
-test-mcp-access-matrix: uv  ## Detailed Rust MCP role/access matrix test with strong tool/resource/prompt sentinels
+test-mcp-access-matrix: uv  ## Detailed MCP role/access matrix tests with strong tool/resource/prompt sentinels
 	@echo "🧪 Running MCP role/access matrix tests against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
-	@echo "   Requires: docker-compose stack rebuilt in Rust edge/full mode"
-	@$(UV_BIN) run pytest tests/live_gateway/e2e_rust/test_mcp_access_matrix.py -v -s --tb=short \
+	@echo "   Requires: docker-compose stack"
+	@$(UV_BIN) run pytest tests/live_gateway/e2e_access_matrix/ -v -s --tb=short \
 		|| { echo "❌ MCP role/access matrix tests failed!"; exit 1; }
 	@echo "✅ MCP role/access matrix tests passed!"
 
@@ -940,10 +929,10 @@ test-primary-worker-multiinstance:  ## Multi-instance primary-worker E2E: scales
 
 test-mcp-session-isolation: uv  ## MCP session/auth isolation tests for the Rust public transport path
 	@echo "🧪 Running MCP session/auth isolation tests against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
-	@echo "   Requires: docker-compose stack rebuilt in Rust edge/full mode"
-	@$(UV_BIN) run pytest tests/live_gateway/e2e_rust/test_mcp_session_isolation.py -v -s --tb=short \
-		|| { echo "❌ MCP session/auth isolation tests failed!"; exit 1; }
-	@echo "✅ MCP session/auth isolation tests passed!"
+	@echo "   Requires: docker-compose stack"
+	@$(UV_BIN) run pytest tests/live_gateway/session_isolation/ -v -s --tb=short \
+		|| { echo "❌ MCP session isolation tests failed!"; exit 1; }
+	@echo "✅ MCP session isolation tests passed!"
 
 test-e2e-sso: uv  ## E2E tests requiring a live SSO identity provider (Keycloak or Entra ID)
 	@echo "🔐 Running SSO-dependent E2E tests against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
@@ -971,7 +960,7 @@ MCP_ISOLATION_LOAD_RUN_TIME ?= 60s
 
 test-mcp-session-isolation-load: ## Multi-user MCP session/auth isolation correctness load test
 	@echo "🧪 Running MCP session/auth isolation load test against $(MCP_ISOLATION_LOAD_HOST)..."
-	@echo "   Requires: docker-compose stack rebuilt in Rust full mode"
+	@echo "   Requires: docker-compose stack"
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -eu -o pipefail -c 'source $(VENV_DIR)/bin/activate && \
 		locust -f $(MCP_ISOLATION_LOCUSTFILE) \
@@ -1749,39 +1738,6 @@ testing-up:                                ## Start testing stack (Locust + A2A 
 	@echo ""
 	@echo "   Next:"
 	@echo "      • Open Locust: http://localhost:8089 (default host is http://nginx:80)"
-
-.PHONY: testing-up-rust
-testing-up-rust:                           ## Start testing stack with RUST_MCP_MODE=edge
-	@RUST_MCP_MODE=edge RUST_MCP_LOG=$(RUST_MCP_LOG) $(MAKE) testing-up
-
-.PHONY: testing-up-rust-shadow
-testing-up-rust-shadow:                    ## Start testing stack with RUST_MCP_MODE=shadow
-	@RUST_MCP_MODE=shadow RUST_MCP_LOG=$(RUST_MCP_LOG) $(MAKE) testing-up
-
-.PHONY: testing-up-rust-full
-testing-up-rust-full:                      ## Start testing stack with RUST_MCP_MODE=full
-	@RUST_MCP_MODE=full RUST_MCP_LOG=$(RUST_MCP_LOG) $(MAKE) testing-up
-
-.PHONY: testing-rebuild-rust
-testing-rebuild-rust:                      ## Rebuild Rust image with no cache, then start testing stack in edge mode
-	@$(MAKE) testing-down
-	@$(MAKE) compose-clean
-	@$(MAKE) docker-prod-rust-no-cache
-	@RUST_MCP_MODE=edge RUST_MCP_LOG=$(RUST_MCP_LOG) $(MAKE) testing-up
-
-.PHONY: testing-rebuild-rust-shadow
-testing-rebuild-rust-shadow:               ## Rebuild Rust image with no cache, then start testing stack in shadow mode
-	@$(MAKE) testing-down
-	@$(MAKE) compose-clean
-	@$(MAKE) docker-prod-rust-no-cache
-	@RUST_MCP_MODE=shadow RUST_MCP_LOG=$(RUST_MCP_LOG) $(MAKE) testing-up
-
-.PHONY: testing-rebuild-rust-full
-testing-rebuild-rust-full:                 ## Rebuild Rust image with no cache, then start testing stack in full mode
-	@$(MAKE) testing-down
-	@$(MAKE) compose-clean
-	@$(MAKE) docker-prod-rust-no-cache
-	@RUST_MCP_MODE=full RUST_MCP_LOG=$(RUST_MCP_LOG) $(MAKE) testing-up
 
 .PHONY: testing-down
 testing-down:                              ## Stop testing stack
@@ -2867,10 +2823,6 @@ benchmark-rate-limiter-redis-capacity:      ## Capacity test: 3 gateways + Redis
 			--only-summary \
 			CapacityPromptUser || true'
 
-# help: benchmark-rate-limiter-capacity-rust  - Capacity test with Rust engine enabled (default)
-.PHONY: benchmark-rate-limiter-capacity-rust
-benchmark-rate-limiter-capacity-rust:       ## Capacity test with Rust engine
-	RATE_LIMITER_FORCE_PYTHON=0 $(MAKE) benchmark-rate-limiter-redis-capacity
 
 # help: benchmark-rate-limiter-capacity-python  - Capacity test with Python fallback (forced)
 .PHONY: benchmark-rate-limiter-capacity-python
@@ -3636,6 +3588,8 @@ linting-helm-unittest:               ## 🧪  Helm template unit tests
 			helm plugin install https://github.com/helm-unittest/helm-unittest --version v0.5.2 --verify=false >/dev/null; \
 		fi; \
 		helm unittest $(CHART_DIR)"
+
+
 
 .PHONY: linting-security-checkov
 linting-security-checkov:            ## 🛡️  IaC security scanning with Checkov
@@ -4715,31 +4669,17 @@ deps-update:
 # =============================================================================
 .PHONY: dist wheel sdist verify publish publish-testpypi
 
-dist: clean uv               ## Build wheel + sdist into ./dist (optionally includes Rust)
+dist: clean uv               ## Build wheel + sdist into ./dist
 	@echo "📦 Building Python package..."
 	@BUILD_UI_ASSETS=true $(UV_BIN) build
-	@if [ "$(ENABLE_RUST_BUILD)" = "1" ]; then \
-		echo "🦀 Building Rust..."; \
-		$(MAKE) rust-build || { echo "⚠️  Rust build failed, continuing without Rust"; exit 0; }; \
-		echo '🦀 Rust wheels built successfully'; \
-	else \
-		echo "⏭️  Rust builds disabled (ENABLE_RUST_BUILD=0)"; \
-	fi
 	@echo '🛠  Python wheel & sdist written to ./dist'
 	@echo ''
 	@echo '💡 To publish the Python package:'
 	@echo '   make publish         # Publish Python package'
 
-wheel: uv                    ## Build wheel only (Python + optionally Rust)
+wheel: uv                    ## Build wheel only
 	@echo "📦 Building Python wheel..."
 	@BUILD_UI_ASSETS=true $(UV_BIN) build --wheel
-	@if [ "$(ENABLE_RUST_BUILD)" = "1" ]; then \
-		echo "🦀 Building Rust wheels..."; \
-		$(MAKE) rust-build || { echo "⚠️  Rust build failed, continuing without Rust"; exit 0; }; \
-		echo '🦀 Rust wheels built successfully'; \
-	else \
-		echo "⏭️  Rust builds disabled (ENABLE_RUST_BUILD=0)"; \
-	fi
 	@echo '🛠  Python wheel written to ./dist'
 
 sdist: uv                    ## Build source distribution only
@@ -4815,10 +4755,7 @@ endef
 # help: container-build      - Build image using detected runtime
 # help: container-build-multi - Build multiplatform image (amd64/arm64/s390x,ppc64le) locally
 # help: container-inspect-manifest - Inspect multiplatform manifest in registry
-# help: container-build-rust - Build image WITH Rust plugins (ENABLE_RUST_BUILD=1)
-# help: container-build-rust-lite - Build lite image WITH Rust plugins
-# help: container-rust       - Build with Rust and run container (all-in-one)
-# help: container-run        - Run container (CONTAINER_SSL=1 CONTAINER_HOST_NET=1 CONTAINER_JWT=1)
+# help: container-run        - Run container (CONTAINER_SSL=1 CONTAINER_HOST_NET=1 CONTAINER_JWT=1 CONTAINER_HTTP_SERVER=granian|gunicorn)
 # help: container-push       - Push image (handles localhost/ prefix)
 # help: container-stop       - Stop & remove the container
 # help: container-logs       - Stream container logs
@@ -4833,7 +4770,7 @@ endef
 # help: use-podman           - Switch to Podman runtime
 # help: show-runtime         - Show current container runtime
 
-.PHONY: container-build container-build-rust container-build-rust-lite container-rust \
+.PHONY: container-build container-run container-run-ssl container-run-ssl-host \
         container-run container-run-ssl container-run-ssl-host \
         container-run-ssl-jwt container-push container-info container-stop container-logs container-shell \
         container-health image-list image-clean image-retag container-check-image \
@@ -4867,26 +4804,13 @@ PLATFORM ?= linux/$(shell uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
 
 container-build:
 	@echo "🔨 Building with $(CONTAINER_RUNTIME) for platform $(PLATFORM)..."
-	@RUST_BUILD_VALUE="$(ENABLE_RUST_BUILD)"; RMCP_BUILD_VALUE="$(ENABLE_RUST_MCP_RMCP_BUILD)"; RUST_ARG=""; RMCP_ARG=""; PROFILING_ARG=""; \
-	if [ "$(RUST_MCP_BUILD)" = "1" ] || [ "$(RUST_MCP_BUILD)" = "true" ]; then \
-		RUST_BUILD_VALUE="1"; \
-		if [ -z "$$RMCP_BUILD_VALUE" ] || [ "$$RMCP_BUILD_VALUE" = "0" ] || [ "$$RMCP_BUILD_VALUE" = "false" ]; then \
-			RMCP_BUILD_VALUE="1"; \
-		fi; \
-	fi; \
-	if [ "$$RUST_BUILD_VALUE" = "1" ] || [ "$$RUST_BUILD_VALUE" = "true" ]; then \
-		echo "🦀 Building container WITH Rust plugins..."; \
+	@RUST_ARG=""; PROFILING_ARG=""; \
+	if [ "$(ENABLE_RUST_BUILD)" = "1" ] || [ "$(ENABLE_RUST_BUILD)" = "true" ]; then \
+		echo "🦀 Building container WITH Rust..."; \
 		RUST_ARG="--build-arg ENABLE_RUST=true"; \
-		if [ "$$RMCP_BUILD_VALUE" = "1" ] || [ "$$RMCP_BUILD_VALUE" = "true" ]; then \
-			echo "🦀 Enabling rmcp support in the Rust MCP runtime..."; \
-			RMCP_ARG="--build-arg ENABLE_RUST_MCP_RMCP=true"; \
-		else \
-			RMCP_ARG="--build-arg ENABLE_RUST_MCP_RMCP=false"; \
-		fi; \
 	else \
-		echo "⏭️  Building container WITHOUT Rust plugins (set RUST_MCP_BUILD=1 or ENABLE_RUST_BUILD=1 to enable)"; \
+		echo "⏭️  Building container WITHOUT Rust plugins (set ENABLE_RUST_BUILD=1 to enable)"; \
 		RUST_ARG="--build-arg ENABLE_RUST=false"; \
-		RMCP_ARG="--build-arg ENABLE_RUST_MCP_RMCP=false"; \
 	fi; \
 	if [ "$(ENABLE_PROFILING_BUILD)" = "1" ]; then \
 		echo "📊 Building container WITH profiling tools (memray)..."; \
@@ -4908,7 +4832,6 @@ container-build:
 		--platform=$(PLATFORM) \
 		-f $(CONTAINER_FILE) \
 		$$RUST_ARG \
-		$$RMCP_ARG \
 		$$PROFILING_ARG \
 		$$FIPS_ARG \
 		$(DOCKER_BUILD_ARGS) \
@@ -4916,18 +4839,6 @@ container-build:
 		.
 	@echo "✅ Built image: $(call get_image_name)"
 	$(CONTAINER_RUNTIME) images $(IMAGE_BASE):$(IMAGE_TAG)
-
-container-build-rust:
-	@echo "🦀 Building container WITH Rust plugins..."
-	$(MAKE) container-build ENABLE_RUST_BUILD=1
-
-container-build-rust-lite:
-	@echo "🦀 Building lite container WITH Rust plugins..."
-	$(MAKE) container-build ENABLE_RUST_BUILD=1
-
-container-rust: container-build-rust
-	@echo "🦀 Building and running container with Rust plugins..."
-	$(MAKE) container-run
 
 container-build-fips: ## Build FedRAMP-compliant image (ENABLE_FIPS=true) for Dreadnought/FedRAMP deployments
 	@$(MAKE) container-build ENABLE_FIPS_BUILD=true
@@ -5399,12 +5310,6 @@ docker:
 
 docker-prod:
 	@DOCKER_CONTENT_TRUST=1 $(MAKE) container-build CONTAINER_RUNTIME=docker
-
-docker-prod-rust:
-	@DOCKER_CONTENT_TRUST=1 $(MAKE) container-build CONTAINER_RUNTIME=docker RUST_MCP_BUILD=1
-
-docker-prod-rust-no-cache:
-	@DOCKER_CONTENT_TRUST=1 $(MAKE) container-build CONTAINER_RUNTIME=docker RUST_MCP_BUILD=1 DOCKER_BUILD_ARGS="--no-cache"
 
 # Build production image with profiling tools (memray) for performance debugging
 # Usage: make docker-prod-profiling
@@ -7316,12 +7221,14 @@ test-full: coverage test-js test-ui-report
 # help: detect-secrets-scan    - detect-secrets scan for secrets in repository using baseline file .secrets.baseline
 # help: detect-secrets-audit   - detect-secrets audit for unverified secrets detected in baseline file .secrets.baseline
 # help: devskim-install-dotnet - Install .NET SDK and DevSkim CLI (security patterns scanner)
+# help: sri-generate        - Generate SRI hashes for CDN resources
+# help: sri-verify          - Verify SRI hashes match current CDN content
 # help: devskim             - Run DevSkim static analysis for security anti-patterns
 
 # List of security tools to run with security-all
-SECURITY_TOOLS := semgrep dodgy detect-secrets-scan interrogate prospector pip-audit devskim
+SECURITY_TOOLS := semgrep dodgy detect-secrets-scan interrogate prospector pip-audit devskim sri-verify
 
-.PHONY: security-all security-report security-fix $(SECURITY_TOOLS) pyupgrade devskim-install-dotnet devskim
+.PHONY: security-all security-report security-fix $(SECURITY_TOOLS) pyupgrade devskim-install-dotnet devskim sri-generate sri-verify
 
 ## --------------------------------------------------------------------------- ##
 ##  Master security target
@@ -7584,6 +7491,19 @@ devskim:                            ## 🛡️  Run DevSkim security patterns an
 		echo "   • Or install .NET SDK and run: dotnet tool install --global Microsoft.CST.DevSkim.CLI"; \
 		echo "   • Then add to PATH: export PATH=\"\$$PATH:\$$HOME/.dotnet/tools\""; \
 	fi
+
+## --------------------------------------------------------------------------- ##
+##  SRI (Subresource Integrity) Management
+## --------------------------------------------------------------------------- ##
+
+.PHONY: sri-generate sri-verify
+
+sri-generate:                       ## 🔐 Generate SRI hashes for CDN resources
+	@echo "🔐 Generating SRI hashes for CDN resources..."
+	@python3 scripts/generate-sri-hashes.py
+
+sri-verify:                         ## ✅ Verify SRI hashes match current CDN content
+	@python3 scripts/verify-sri-hashes.py
 
 ## --------------------------------------------------------------------------- ##
 ##  Security reporting and advanced targets
@@ -8263,7 +8183,44 @@ upgrade-validate:                         ## Validate fresh + upgrade + roundtri
 	@echo "  Target image: $(UPGRADE_TARGET_IMAGE)"
 	@BASE_IMAGE=$(UPGRADE_BASE_IMAGE) TARGET_IMAGE=$(UPGRADE_TARGET_IMAGE) bash scripts/ci/run_upgrade_validation.sh
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+.PHONY: conc-02-gateways
+conc-02-gateways:                    ## Run CONC-02 gateways read-during-write check (manual env/token setup required)
+	@/bin/bash tests/manual/concurrency/run_conc_02_gateways.sh
+
+# -----------------------------------------------------------------------------
+# Temporary CI toggle for Conventional Commit message linting
+# -----------------------------------------------------------------------------
+# Default is disabled to avoid blocking in-flight PRs with legacy commit titles.
+# Re-enable by setting COMMITLINT_ENFORCED=1 in CI or locally.
+COMMITLINT_ENFORCED ?= 0
+COMMITLINT_FROM ?= HEAD~1
+COMMITLINT_TO ?= HEAD
+
+.PHONY: linting-workflow-commitlint
+linting-workflow-commitlint:         ## 📝  Conventional Commits linting (toggleable)
+	@/bin/bash -c "set -euo pipefail; \
+		if [ '$(COMMITLINT_ENFORCED)' != '1' ]; then \
+			echo '⏭️ commitlint disabled (set COMMITLINT_ENFORCED=1 to enable)'; \
+			exit 0; \
+		fi; \
+		echo '📝 commitlint $(COMMITLINT_FROM)..$(COMMITLINT_TO)...'; \
+		command -v node >/dev/null 2>&1 || { echo '❌ node not found'; exit 1; }; \
+		command -v npm >/dev/null 2>&1 || { echo '❌ npm not found'; exit 1; }; \
+		mkdir -p '$(LINT_NODE_ROOT)/commitlint' '$(LINT_NODE_ROOT)/npm-cache'; \
+		cd '$(LINT_NODE_ROOT)/commitlint'; \
+		if [ ! -f package.json ]; then npm init -y >/dev/null 2>&1; fi; \
+		npm_config_cache='$(LINT_NODE_ROOT)/npm-cache' npm install --silent @commitlint/cli @commitlint/config-conventional; \
+		cd '$(CURDIR)'; \
+		NODE_PATH='$(LINT_NODE_ROOT)/commitlint/node_modules' \
+			node '$(LINT_NODE_ROOT)/commitlint/node_modules/@commitlint/cli/lib/cli.js' \
+			--extends @commitlint/config-conventional \
+			--from '$(COMMITLINT_FROM)' \
+			--to '$(COMMITLINT_TO)'"
+
+.PHONY: conc-01-gateways
+conc-01-gateways:                    ## Run CONC-01 gateways manual matrix (manual env/token setup required)
+	@/bin/bash tests/manual/concurrency/run_conc_01_gateways.sh
 # 🦀 RUST
 # =============================================================================
 # 🦀 RUST (workspace: crates/*)
@@ -8297,15 +8254,9 @@ upgrade-validate:                         ## Validate fresh + upgrade + roundtri
 # help: rust-uninstall-plugins                - Uninstall maturin crates from Python environment
 # help: rust-build-wheels                     - Build Python wheels for maturin crates
 # help:
-# help: Runtime:
-# help: rust-mcp-runtime-build                - Build the experimental Rust MCP runtime
-# help: rust-mcp-runtime-test                 - Run tests for the experimental Rust MCP runtime
-# help: rust-mcp-runtime-run                  - Run the experimental Rust MCP runtime against local gateway /rpc
-# help: -----------------------------------------------------------------------------
 
 .PHONY: rust-build rust-build-check rust-dev rust-test rust-format rust-fmt-check rust-lint rust-check rust-doc rust-clean rust-verify rust-verify-stubs rust-stub-gen rust-licenses rust-vet rust-deny rust-coverage rust-diff-cover rust-bench-check
 .PHONY: rust-ensure-deps rust-install-deps rust-install-targets rust-install rust-build-wheels rust-uninstall-plugins rust-clean-stubs rust-verify-python-crates
-.PHONY: rust-mcp-runtime-build rust-mcp-runtime-test rust-mcp-runtime-run
 
 # Intentional broad scan under crates/: workspace-owned crates live here and CI
 # should pick up new maturin crates automatically rather than curating a short list.
@@ -8518,53 +8469,3 @@ rust-install-targets: rust-ensure-deps  ## Install all Rust cross-compilation ta
 	@rustup target add x86_64-apple-darwin
 	@rustup target add aarch64-apple-darwin
 	@rustup target add x86_64-pc-windows-msvc
-
-rust-mcp-runtime-build:                 ## Build the experimental Rust MCP runtime
-	@echo "🦀 Building experimental Rust MCP runtime..."
-	@cd crates/mcp_runtime && cargo build --release
-
-rust-mcp-runtime-test:                  ## Run tests for the experimental Rust MCP runtime
-	@echo "🧪 Running Rust MCP runtime tests..."
-	@cd crates/mcp_runtime && cargo test --release
-
-rust-mcp-runtime-run:                   ## Run the experimental Rust MCP runtime against local gateway /rpc
-	@echo "🚀 Starting Rust MCP runtime on http://127.0.0.1:8787 with backend http://127.0.0.1:4444/rpc"
-	@cd crates/mcp_runtime && cargo run --release -- --backend-rpc-url http://127.0.0.1:4444/rpc --listen-http 127.0.0.1:8787
-
-.PHONY: conc-02-gateways
-conc-02-gateways:                    ## Run CONC-02 gateways read-during-write check (manual env/token setup required)
-	@/bin/bash tests/manual/concurrency/run_conc_02_gateways.sh
-
-# -----------------------------------------------------------------------------
-# Temporary CI toggle for Conventional Commit message linting
-# -----------------------------------------------------------------------------
-# Default is disabled to avoid blocking in-flight PRs with legacy commit titles.
-# Re-enable by setting COMMITLINT_ENFORCED=1 in CI or locally.
-COMMITLINT_ENFORCED ?= 0
-COMMITLINT_FROM ?= HEAD~1
-COMMITLINT_TO ?= HEAD
-
-.PHONY: linting-workflow-commitlint
-linting-workflow-commitlint:         ## 📝  Conventional Commits linting (toggleable)
-	@/bin/bash -c "set -euo pipefail; \
-		if [ '$(COMMITLINT_ENFORCED)' != '1' ]; then \
-			echo '⏭️ commitlint disabled (set COMMITLINT_ENFORCED=1 to enable)'; \
-			exit 0; \
-		fi; \
-		echo '📝 commitlint $(COMMITLINT_FROM)..$(COMMITLINT_TO)...'; \
-		command -v node >/dev/null 2>&1 || { echo '❌ node not found'; exit 1; }; \
-		command -v npm >/dev/null 2>&1 || { echo '❌ npm not found'; exit 1; }; \
-		mkdir -p '$(LINT_NODE_ROOT)/commitlint' '$(LINT_NODE_ROOT)/npm-cache'; \
-		cd '$(LINT_NODE_ROOT)/commitlint'; \
-		if [ ! -f package.json ]; then npm init -y >/dev/null 2>&1; fi; \
-		npm_config_cache='$(LINT_NODE_ROOT)/npm-cache' npm install --silent @commitlint/cli @commitlint/config-conventional; \
-		cd '$(CURDIR)'; \
-		NODE_PATH='$(LINT_NODE_ROOT)/commitlint/node_modules' \
-			node '$(LINT_NODE_ROOT)/commitlint/node_modules/@commitlint/cli/lib/cli.js' \
-			--extends @commitlint/config-conventional \
-			--from '$(COMMITLINT_FROM)' \
-			--to '$(COMMITLINT_TO)'"
-
-.PHONY: conc-01-gateways
-conc-01-gateways:                    ## Run CONC-01 gateways manual matrix (manual env/token setup required)
-	@/bin/bash tests/manual/concurrency/run_conc_01_gateways.sh

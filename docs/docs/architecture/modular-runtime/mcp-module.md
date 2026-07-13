@@ -8,7 +8,7 @@ specification and defines what future MCP implementations should preserve.
 MCP is the first implemented protocol module in ContextForge.
 
 The current implementation is the
-[Rust MCP Runtime](../rust-mcp-runtime.md), which already proves:
+[Modular MCP Module Specification](../modular-design.md), which already proves:
 
 - sidecar deployment
 - direct public ingress in `edge` and `full` mode
@@ -44,7 +44,7 @@ The current Rust MCP module is the reference implementation, but it is still a
 transition architecture in one important respect:
 
 - implemented today:
-  - trusted internal HTTP over UDS or loopback on some seams
+  - trusted internal HTTP over UDS or loopback on core APIs
 - target-state default:
   - gRPC over UDS for the core SPI
 

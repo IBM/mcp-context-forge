@@ -133,7 +133,8 @@ helm install mcp-stack contextforge/mcp-stack \
 **Binary targets:**
 
 - Go servers: Cross-compiled Go executables (5-15 MB)
-- Rust servers: Static Rust binaries (3-10 MB)
+- rustup: Rust toolchain installer
+
 - Platforms: linux-amd64, linux-arm64, darwin-amd64, darwin-arm64, windows-amd64
 
 **Distribution:**
@@ -193,13 +194,11 @@ docker buildx build --platform linux/amd64,linux/arm64 \
   --push .
 ```
 
-**Python wheels (Rust plugins):**
+**Python wheels:**
 ```bash
-# Cross-compile Rust plugin for multiple architectures
-cargo build --release --target x86_64-unknown-linux-gnu
-cargo build --release --target aarch64-unknown-linux-gnu
-maturin build --release --target x86_64-unknown-linux-gnu
-maturin build --release --target aarch64-unknown-linux-gnu
+# Cross-compile Python wheels with compiled extensions for multiple architectures
+maturin build --release --platform x86_64-unknown-linux-gnu
+maturin build --release --platform aarch64-unknown-linux-gnu
 ```
 
 **Go binaries:**

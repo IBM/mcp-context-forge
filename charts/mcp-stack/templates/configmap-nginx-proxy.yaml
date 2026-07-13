@@ -48,12 +48,6 @@ data:
         keepalive 32;
       }
 
-      # A2A API: prefer Rust sidecar when enabled, fallback to Python gateway.
-      upstream a2a_upstream {
-        server {{ $gatewayServiceName }}:8788;
-        server {{ $gatewayServiceName }}:{{ $gatewayServicePort }} backup;
-        keepalive 32;
-      }
 
       {{- if .Values.nginxProxy.tls.enabled }}
       server {

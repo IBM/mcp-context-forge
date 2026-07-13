@@ -102,498 +102,46 @@ LOGIN_PATH = "/login"
 router = APIRouter(tags=["meta"])
 
 
-def _env_flag(name: str, default: bool = False) -> bool:
-    """Read a boolean environment variable using common truthy spellings.
-
-    Args:
-        name: Environment variable name.
-        default: Default value used when the variable is unset.
-
-    Returns:
-        Parsed boolean value.
-    """
-    value = os.getenv(name)
-    if value is None:
-        return default
-    return value.strip().lower() in {"1", "true", "yes", "on"}
-
-
-def _rust_build_included() -> bool:
-    """Return whether the current image includes Rust MCP artifacts.
-
-    Returns:
-        ``True`` when the current image contains the Rust MCP binaries/plugins.
-    """
-    return _env_flag("CONTEXTFORGE_ENABLE_RUST_BUILD", default=False)
-
-
-def _rust_runtime_managed() -> bool:
-    """Return whether the gateway expects to manage the Rust MCP sidecar locally.
-
-    Returns:
-        ``True`` when the gateway should launch and supervise the Rust sidecar.
-    """
-    return _env_flag("EXPERIMENTAL_RUST_MCP_RUNTIME_MANAGED", default=True)
-
-
-def _runtime_override_mode(runtime: str) -> Optional[str]:
-    """Return the active override for ``runtime`` (``shadow`` or ``edge``) when one is set.
-
-    Args:
-        runtime: Runtime kind (``"mcp"`` or ``"a2a"``).
-
-    Returns:
-        ``"shadow"`` or ``"edge"`` when an admin override is in effect, else ``None``.
-    """
-    # First-Party
-    from mcpgateway.runtime_state import get_runtime_state  # pylint: disable=import-outside-toplevel
-
-    return get_runtime_state().override_mode(runtime)
-
-
-def _boot_mcp_transport_mount() -> str:
-    """Return the transport mount selected by boot-time settings (no override applied).
-
-    Returns:
-        ``"rust"`` when boot settings select Rust ingress, otherwise ``"python"``.
-    """
-    return "rust" if bool(settings.experimental_rust_mcp_runtime_enabled and settings.experimental_rust_mcp_session_auth_reuse_enabled) else "python"
-
-
-def _boot_mcp_runtime_mode() -> str:
-    """Return the boot-time runtime mode label derived from settings.
-
-    Returns:
-        One of ``"off"``, ``"shadow"``, ``"edge"``, or ``"full"``.
-    """
-    if not settings.experimental_rust_mcp_runtime_enabled:
-        return "off"
-    if not settings.experimental_rust_mcp_session_auth_reuse_enabled:
-        return "shadow"
-    if (
-        settings.experimental_rust_mcp_session_core_enabled
-        and settings.experimental_rust_mcp_event_store_enabled
-        and settings.experimental_rust_mcp_resume_core_enabled
-        and settings.experimental_rust_mcp_live_stream_core_enabled
-        and settings.experimental_rust_mcp_affinity_core_enabled
-    ):
-        return "full"
-    return "edge"
-
-
-def _current_mcp_transport_mount() -> str:
-    """Return which public ``/mcp`` transport is currently mounted.
-
-    Returns:
-        Runtime label identifying the currently mounted public MCP transport.
-    """
-    return "rust" if _should_mount_public_rust_transport() else "python"
-
-
-def _should_mount_public_rust_transport() -> bool:
-    """Return whether public ``/mcp`` should be served directly by Rust.
-
-    Returns:
-        ``True`` only when the Rust runtime is enabled and Rust can safely own
-        steady-state public MCP session traffic.
-
-    **Safety invariant (must remain invariant under runtime override):**
-    Rust public ingress requires BOTH ``experimental_rust_mcp_runtime_enabled``
-    AND ``experimental_rust_mcp_session_auth_reuse_enabled``. The
-    session-auth-reuse flag is what makes Rust's handling of public MCP
-    session traffic safe (dedicated isolation coverage lives in
-    ``crates/mcp_runtime/TESTING-DESIGN.md``). A runtime override can toggle
-    between the two modes the invariant permits (``shadow`` forces Python;
-    ``edge`` matches the default), but it cannot loosen the invariant — an
-    override to ``edge`` on a deployment that did not opt into
-    session-auth-reuse at boot stays on Python.
-    """
-    rust_safe_for_public = bool(settings.experimental_rust_mcp_runtime_enabled and settings.experimental_rust_mcp_session_auth_reuse_enabled)
-    override = _runtime_override_mode("mcp")
-    if override == "shadow":
-        return False
-    # override == "edge" or override is None (default): both honor the
-    # safety invariant. This means a boot=shadow deployment with an
-    # admin-issued override=edge still returns False here (the router
-    # rejects such a PATCH with 409 at the API boundary — this is the
-    # belt to the router's braces).
-    return rust_safe_for_public
-
-
-def _should_use_rust_public_session_stack() -> bool:
-    """Return whether Rust should own the effective public MCP session stack.
-
-    Returns:
-        ``True`` only when the public MCP transport and session semantics should
-        stay on the Rust-backed path.
-    """
-    return _should_mount_public_rust_transport()
-
-
-def _current_mcp_runtime_mode() -> str:
-    """Return the current MCP runtime mode label used for health and UI surfaces.
-
-    Returns:
-        Human-readable runtime mode label for diagnostics and UI reporting.
-    """
-    if settings.experimental_rust_mcp_runtime_enabled:
-        return "rust-managed" if _rust_runtime_managed() else "rust-external"
-    if _rust_build_included():
-        return "python-rust-built-disabled"
-    return "python"
-
-
-def _current_mcp_session_core_mode() -> str:
-    """Return which runtime currently owns MCP session metadata.
-
-    Returns:
-        ``"rust"`` when the Rust session core is enabled, otherwise ``"python"``.
-    """
-    if _should_use_rust_public_session_stack() and settings.experimental_rust_mcp_session_core_enabled:
-        return "rust"
-    return "python"
-
-
-def _current_mcp_event_store_mode() -> str:
-    """Return which runtime currently owns MCP resumable event-store semantics.
-
-    Returns:
-        ``"rust"`` when the Rust event store is enabled, otherwise ``"python"``.
-    """
-    if _should_use_rust_public_session_stack() and settings.experimental_rust_mcp_event_store_enabled:
-        return "rust"
-    return "python"
-
-
-def _current_mcp_resume_core_mode() -> str:
-    """Return which runtime currently owns public MCP replay/resume behavior.
-
-    Returns:
-        ``"rust"`` when Rust owns replay/resume, otherwise ``"python"``.
-    """
-    if (
-        _should_use_rust_public_session_stack()
-        and settings.experimental_rust_mcp_session_core_enabled
-        and settings.experimental_rust_mcp_event_store_enabled
-        and settings.experimental_rust_mcp_resume_core_enabled
-    ):
-        return "rust"
-    return "python"
-
-
-def _current_mcp_live_stream_core_mode() -> str:
-    """Return which runtime currently owns non-resume public GET ``/mcp`` SSE behavior.
-
-    Returns:
-        ``"rust"`` when Rust owns live GET ``/mcp`` streaming, otherwise ``"python"``.
-    """
-    if _should_use_rust_public_session_stack() and settings.experimental_rust_mcp_live_stream_core_enabled:
-        return "rust"
-    return "python"
-
-
-def _current_mcp_affinity_core_mode() -> str:
-    """Return which runtime currently owns MCP multi-worker session-affinity forwarding.
-
-    Returns:
-        ``"rust"`` when Rust owns session-affinity forwarding, otherwise ``"python"``.
-    """
-    if _should_use_rust_public_session_stack() and settings.experimental_rust_mcp_affinity_core_enabled:
-        return "rust"
-    return "python"
-
-
-def _current_mcp_session_auth_reuse_mode() -> str:
-    """Return which runtime currently owns MCP session-bound auth-context reuse.
-
-    Returns:
-        ``"rust"`` when Rust session auth reuse is enabled, otherwise ``"python"``.
-    """
-    return "rust" if _should_mount_public_rust_transport() else "python"
-
-
-def _mcp_runtime_status_payload() -> Dict[str, Any]:
-    """Return MCP runtime diagnostics for health, UI, and version surfaces.
-
-    Returns:
-        Diagnostic payload describing the active MCP runtime configuration.
-    """
-    # First-Party
-    from mcpgateway.runtime_state import get_runtime_state  # pylint: disable=import-outside-toplevel
-
-    state = get_runtime_state()
-    mcp_override = state.override_mode("mcp")
-    payload: Dict[str, Any] = {
-        "mode": _current_mcp_runtime_mode(),
-        "mounted": _current_mcp_transport_mount(),
-        "boot_mode": _boot_mcp_runtime_mode(),
-        "boot_mounted": _boot_mcp_transport_mount(),
-        "effective_mode": mcp_override or _boot_mcp_runtime_mode(),
-        "override_active": mcp_override is not None,
-        "override_version": state.version("mcp"),
-        "cluster_propagation": str(state.cluster_propagation),
-        "boot_reconcile_status": str(state.boot_reconcile_status("mcp")),
-        "pod_id": state.pod_id,
-        "rust_build_included": _rust_build_included(),
-        "rust_runtime_enabled": settings.experimental_rust_mcp_runtime_enabled,
-        "session_core_mode": _current_mcp_session_core_mode(),
-        "event_store_mode": _current_mcp_event_store_mode(),
-        "resume_core_mode": _current_mcp_resume_core_mode(),
-        "live_stream_core_mode": _current_mcp_live_stream_core_mode(),
-        "affinity_core_mode": _current_mcp_affinity_core_mode(),
-        "session_auth_reuse_mode": _current_mcp_session_auth_reuse_mode(),
-        "rust_session_core_enabled": bool(_should_use_rust_public_session_stack() and settings.experimental_rust_mcp_session_core_enabled),
-        "rust_event_store_enabled": bool(_should_use_rust_public_session_stack() and settings.experimental_rust_mcp_event_store_enabled),
-        "rust_resume_core_enabled": bool(
-            _should_use_rust_public_session_stack()
-            and settings.experimental_rust_mcp_session_core_enabled
-            and settings.experimental_rust_mcp_event_store_enabled
-            and settings.experimental_rust_mcp_resume_core_enabled
-        ),
-        "rust_live_stream_core_enabled": bool(_should_use_rust_public_session_stack() and settings.experimental_rust_mcp_live_stream_core_enabled),
-        "rust_affinity_core_enabled": bool(_should_use_rust_public_session_stack() and settings.experimental_rust_mcp_affinity_core_enabled),
-        "rust_session_auth_reuse_enabled": bool(settings.experimental_rust_mcp_runtime_enabled and settings.experimental_rust_mcp_session_auth_reuse_enabled),
-    }
-
-    if settings.experimental_rust_mcp_runtime_enabled:
-        payload["rust_runtime_managed"] = _rust_runtime_managed()
-        if settings.experimental_rust_mcp_runtime_uds:
-            payload["sidecar_transport"] = "uds"
-            payload["sidecar_target"] = settings.experimental_rust_mcp_runtime_uds
-        else:
-            payload["sidecar_transport"] = "http"
-            payload["sidecar_target"] = settings.experimental_rust_mcp_runtime_url
-
-    last_change = state.last_change("mcp")
-    if last_change is not None:
-        payload["last_change"] = {
-            "version": last_change.version,
-            "mode": last_change.mode,
-            "initiator_user": last_change.initiator_user,
-            "initiator_pod": last_change.initiator_pod,
-            "timestamp": last_change.timestamp,
-        }
-
-    return payload
-
-
-def _deployment_allows_override_mode(runtime, mode):
-    """Return a ``MoveCompatibility`` for whether ``mode`` can take effect on this deployment.
-
-    Single source of truth shared by the admin router (which translates the
-    rejection reason into a 409 detail string) and the coordinator (which
-    surfaces the rejection reason via ``BootReconcileStatus``). Two concerns
-    compose:
-
-    1. **Is there a mechanism that could honor the override?** For MCP, an
-       override is observed only by the ``MCPIngressMount`` mounted for
-       ``boot=shadow`` and ``boot=edge``. ``boot=off`` has no Rust sidecar
-       (``NO_DISPATCHER``); ``boot=full`` mounts a plain Rust proxy with no
-       dispatcher (``BOOT_FULL_STRANDS``). For A2A, overrides are observed
-       per-invocation, requiring the A2A runtime to be enabled at boot —
-       ``boot=off`` returns ``NO_DISPATCHER``.
-    2. **Does the target mode satisfy the safety invariant?** An ``edge``
-       override additionally requires the session-auth-reuse (MCP) or
-       delegate-enabled (A2A) flag; without it, routing public traffic to
-       Rust would be unsafe. Failure surfaces as ``EDGE_NEEDS_SAFETY_FLAG``.
-
-    Args:
-        runtime: ``RuntimeKind`` (or its string value) being evaluated.
-        mode: ``OverrideMode`` (or its string value) being requested.
-
-    Returns:
-        A ``MoveCompatibility`` member; ``OK`` when the override can both
-        be observed and safely honored, otherwise the structured rejection
-        reason.
-    """
-    # First-Party: lazy to avoid the version <-> runtime_state import cycle.
-    # First-Party
-    from mcpgateway.runtime_state import (  # pylint: disable=import-outside-toplevel
-        _coerce_mode,
-        _coerce_runtime,
-        MoveCompatibility,
-        OverrideMode,
-        RuntimeKind,
-    )
-
-    kind = _coerce_runtime(runtime)
-    target = _coerce_mode(mode)
-
-    if kind == RuntimeKind.MCP:
-        if not settings.experimental_rust_mcp_runtime_enabled:
-            return MoveCompatibility.NO_DISPATCHER
-        is_full_boot = bool(
-            settings.experimental_rust_mcp_session_auth_reuse_enabled
-            and settings.experimental_rust_mcp_session_core_enabled
-            and settings.experimental_rust_mcp_event_store_enabled
-            and settings.experimental_rust_mcp_resume_core_enabled
-            and settings.experimental_rust_mcp_live_stream_core_enabled
-            and settings.experimental_rust_mcp_affinity_core_enabled
-        )
-        if is_full_boot:
-            return MoveCompatibility.BOOT_FULL_STRANDS
-        if target == OverrideMode.SHADOW:
-            return MoveCompatibility.OK
-        # target == OverrideMode.EDGE
-        if not settings.experimental_rust_mcp_session_auth_reuse_enabled:
-            return MoveCompatibility.EDGE_NEEDS_SAFETY_FLAG
-        return MoveCompatibility.OK
-
-    # A2A runtime removed - always return NO_DISPATCHER for A2A
-    if kind == RuntimeKind.A2A:
-        return MoveCompatibility.NO_DISPATCHER
-
-    return MoveCompatibility.NO_DISPATCHER  # pragma: no cover — _coerce_runtime rejects unknown kinds upstream
-
-
-def deployment_allows_override_mode(runtime, mode):
-    """Public wrapper for ``_deployment_allows_override_mode``.
-
-    Args:
-        runtime: ``RuntimeKind`` or string runtime kind.
-        mode: ``OverrideMode`` or string target mode.
-
-    Returns:
-        A ``MoveCompatibility`` member.
-    """
-    return _deployment_allows_override_mode(runtime, mode)
-
-
-def rust_build_included() -> bool:
-    """Return whether the current image includes Rust MCP artifacts.
-
-    Returns:
-        ``True`` when the current image contains the Rust MCP binaries/plugins.
-    """
-    return _rust_build_included()
-
-
-def rust_runtime_managed() -> bool:
-    """Return whether the gateway expects to manage the Rust MCP sidecar locally.
-
-    Returns:
-        ``True`` when the gateway should launch and supervise the Rust sidecar.
-    """
-    return _rust_runtime_managed()
-
-
-def current_mcp_transport_mount() -> str:
-    """Return which public ``/mcp`` transport is currently mounted.
-
-    Returns:
-        Runtime label identifying the currently mounted public MCP transport.
-    """
-    return _current_mcp_transport_mount()
-
-
-def boot_mcp_runtime_mode() -> str:
-    """Return the boot-time runtime mode label derived from settings.
-
-    Returns:
-        One of ``"off"``, ``"shadow"``, ``"edge"``, or ``"full"``.
-    """
-    return _boot_mcp_runtime_mode()
-
-
-def boot_mcp_transport_mount() -> str:
-    """Return the transport mount selected by boot-time settings (no override applied).
-
-    Returns:
-        ``"rust"`` when boot settings select Rust ingress, otherwise ``"python"``.
-    """
-    return _boot_mcp_transport_mount()
-
-
-def should_mount_public_rust_transport() -> bool:
-    """Return whether public ``/mcp`` should be served directly by Rust.
-
-    Returns:
-        ``True`` only when the Rust runtime is enabled and Rust can safely own
-        steady-state public MCP session traffic.
-    """
-    return _should_mount_public_rust_transport()
-
-
-def should_use_rust_public_session_stack() -> bool:
-    """Return whether Rust should own the effective public MCP session stack.
-
-    Returns:
-        ``True`` only when the public MCP transport and session semantics should
-        stay on the Rust-backed path.
-    """
-    return _should_use_rust_public_session_stack()
-
-
-def current_mcp_runtime_mode() -> str:
-    """Return the current MCP runtime mode label used for health and UI surfaces.
-
-    Returns:
-        Human-readable runtime mode label for diagnostics and UI reporting.
-    """
-    return _current_mcp_runtime_mode()
-
-
-def current_mcp_session_core_mode() -> str:
-    """Return which runtime currently owns MCP session metadata.
-
-    Returns:
-        ``"rust"`` when the Rust session core is enabled, otherwise ``"python"``.
-    """
-    return _current_mcp_session_core_mode()
-
-
-def current_mcp_event_store_mode() -> str:
-    """Return which runtime currently owns MCP resumable event-store semantics.
-
-    Returns:
-        ``"rust"`` when the Rust event store is enabled, otherwise ``"python"``.
-    """
-    return _current_mcp_event_store_mode()
-
-
-def current_mcp_resume_core_mode() -> str:
-    """Return which runtime currently owns public MCP replay/resume behavior.
-
-    Returns:
-        ``"rust"`` when Rust owns replay/resume, otherwise ``"python"``.
-    """
-    return _current_mcp_resume_core_mode()
-
-
-def current_mcp_live_stream_core_mode() -> str:
-    """Return which runtime currently owns non-resume public GET ``/mcp`` SSE behavior.
-
-    Returns:
-        ``"rust"`` when Rust owns live GET ``/mcp`` streaming, otherwise ``"python"``.
-    """
-    return _current_mcp_live_stream_core_mode()
-
-
-def current_mcp_affinity_core_mode() -> str:
-    """Return which runtime currently owns MCP multi-worker session-affinity forwarding.
-
-    Returns:
-        ``"rust"`` when Rust owns session-affinity forwarding, otherwise ``"python"``.
-    """
-    return _current_mcp_affinity_core_mode()
-
-
-def current_mcp_session_auth_reuse_mode() -> str:
-    """Return which runtime currently owns MCP session-bound auth-context reuse.
-
-    Returns:
-        ``"rust"`` when Rust session auth reuse is enabled, otherwise ``"python"``.
-    """
-    return _current_mcp_session_auth_reuse_mode()
-
-
-def mcp_runtime_status_payload() -> Dict[str, Any]:
-    """Return MCP runtime diagnostics for health, UI, and version surfaces.
-
-    Returns:
-        Diagnostic payload describing the active MCP runtime configuration.
-    """
-    return _mcp_runtime_status_payload()
+# Runtime mode constants — all modes are "python" (Rust runtime removed).
+MCP_RUNTIME_MODE = "python"
+MCP_TRANSPORT_MOUNT = "python"
+MCP_SESSION_CORE_MODE = "python"
+MCP_EVENT_STORE_MODE = "python"
+MCP_RESUME_CORE_MODE = "python"
+MCP_LIVE_STREAM_CORE_MODE = "python"
+MCP_AFFINITY_CORE_MODE = "python"
+MCP_SESSION_AUTH_REUSE_MODE = "python"
+RUST_BUILD_INCLUDED = False
+RUST_RUNTIME_MANAGED = False
+
+# MCP runtime diagnostics for health/version/UI surfaces (constant — no function call needed).
+MCP_RUNTIME_STATUS_PAYLOAD: Dict[str, Any] = {
+    "mode": MCP_RUNTIME_MODE,
+    "mounted": MCP_TRANSPORT_MOUNT,
+    "boot_mode": MCP_RUNTIME_MODE,
+    "boot_mounted": MCP_TRANSPORT_MOUNT,
+    "effective_mode": MCP_RUNTIME_MODE,
+    "override_active": False,
+    "override_version": None,
+    "cluster_propagation": "N/A",
+    "boot_reconcile_status": "N/A",
+    "pod_id": "N/A",
+    "rust_build_included": RUST_BUILD_INCLUDED,
+    "rust_runtime_enabled": False,
+    "session_core_mode": MCP_SESSION_CORE_MODE,
+    "event_store_mode": MCP_EVENT_STORE_MODE,
+    "resume_core_mode": MCP_RESUME_CORE_MODE,
+    "live_stream_core_mode": MCP_LIVE_STREAM_CORE_MODE,
+    "affinity_core_mode": MCP_AFFINITY_CORE_MODE,
+    "session_auth_reuse_mode": MCP_SESSION_AUTH_REUSE_MODE,
+    "rust_session_core_enabled": False,
+    "rust_event_store_enabled": False,
+    "rust_resume_core_enabled": False,
+    "rust_live_stream_core_enabled": False,
+    "rust_affinity_core_enabled": False,
+    "rust_session_auth_reuse_enabled": False,
+    "status": "healthy",
+}
 
 
 def _is_secret(key: str) -> bool:
@@ -1055,7 +603,7 @@ def _build_payload(
             "metrics_cleanup_enabled": getattr(settings, "metrics_cleanup_enabled", True),
             "metrics_rollup_enabled": getattr(settings, "metrics_rollup_enabled", True),
         },
-        "mcp_runtime": _mcp_runtime_status_payload(),
+        "mcp_runtime": MCP_RUNTIME_STATUS_PAYLOAD,
         "env": _public_env(),
         "system": _system_metrics(),
     }

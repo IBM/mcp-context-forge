@@ -3,13 +3,12 @@
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
 
-Per-request scope resolution and Rust-runtime trust-layer helpers.
+Per-request scope resolution and internal MCP auth-context helpers.
 
 Purpose (for future implementers)
 ---------------------------------
 ``mcpgateway`` keeps token primitives, request scope resolution, and the
-trusted Rust-runtime hop in three logical groups, even though only two
-modules currently exist:
+internal MCP auth-context forwarding in two logical modules:
 
 - ``mcpgateway.auth`` (the larger sibling) - the **token / session / team
   model layer** and the FastAPI auth dependency. Most helpers there are pure
@@ -23,21 +22,21 @@ modules currently exist:
   pattern unless it is part of the dependency chain.
 
 - ``mcpgateway.auth_context`` (this module) - the **per-request scope
-  resolution layer** plus the **Rust-runtime trust-header helpers**. The
+  resolution layer** plus the **internal MCP auth-context helpers**. The
   scope-resolution helpers take a FastAPI ``Request`` plus the ``user``
   produced by the auth dependency and compute what the caller is allowed
   to see on this specific request - this is Layer 1 in the two-layer model
   documented in ``AGENTS.md`` ("what you can SEE"), distinct from the
   Layer 2 RBAC checks in ``mcpgateway.middleware.rbac`` ("what you can
-  DO"). The trust-header helpers (``decode_internal_mcp_auth_context``,
-  ``has_valid_internal_mcp_runtime_auth_header``, the
-  ``_expected_internal_mcp_runtime_auth_header*`` family) implement the
-  HMAC contract between the Rust MCP runtime and the Python gateway. They
-  live here, not in ``auth.py``, because the trusted forwarded context
-  produces a synthetic ``user`` that the per-request helpers consume; the
-  two responsibilities are coupled at the request boundary. A future
-  refactor may extract them into a third ``mcpgateway.auth_runtime``
-  module if the coupling weakens.
+  DO"). The auth-context helpers (``decode_internal_mcp_auth_context``,
+  ``encode_internal_mcp_auth_context``, ``get_internal_mcp_auth_context``)
+  encode/decode trusted auth payloads for cross-worker forwarding so a
+  destination worker can use the caller's already-validated identity without
+  re-running authentication. The trust gate (``is_trusted_internal_mcp_request``)
+  relies on the loopback address, the "affinity" runtime marker, and the
+  encoded ``x-contextforge-auth-context`` header to validate these
+  in-process hops. A future refactor may extract the auth-context encoding
+  into its own module if the coupling weakens.
 
 Why this module exists as a separate file
 -----------------------------------------
@@ -56,22 +55,28 @@ Public surface
 The names below are the **module's public API**. Callers in ``main.py``,
 ``admin.py``, routers, and transports should use these names.
 
-    Constants (HTTP header names used by the Rust -> Python MCP bridge)
-        INTERNAL_MCP_SESSION_VALIDATED_HEADER
+    Constants (HTTP header names for internal trust-gate)
+        INTERNAL_MCP_PATH_PREFIX
+        INTERNAL_A2A_PATH_PREFIX
+        INTERNAL_AUTH_CONTEXT_HEADER
+
+    Auth-context encoding
+        decode_internal_mcp_auth_context(header_value) -> dict
+        encode_internal_mcp_auth_context(auth_context) -> str
+        get_internal_mcp_auth_context(request) -> dict | None
 
     Identity resolution
         get_user_email(user) -> str
 
-    Trust-layer headers forwarded from the Rust MCP runtime
-        decode_internal_mcp_auth_context(header_value) -> dict
-        get_internal_mcp_auth_context(request) -> dict | None
-        has_valid_internal_mcp_runtime_auth_header(request) -> bool
+    Trust-gate helpers
+        is_trusted_internal_mcp_request(request) -> bool
 
     Per-request JWT / scope resolution (the Layer-1 surface)
         get_token_teams_from_request(request) -> list[str] | None
         get_rpc_filter_context(request, user) -> (email, teams, is_admin)
         get_request_identity(request, user) -> (email, is_admin)
         get_scoped_resource_access_context(request, user) -> (email, teams)
+        get_scoped_visibility_from_user_context(user_context) -> (email, teams)
 
 Private surface
 ---------------
@@ -81,12 +86,9 @@ yourself needing one from another module, consider whether the calling code
 should really go through one of the public wrappers above, or whether the
 helper belongs in ``mcpgateway.auth`` instead.
 
-    _INTERNAL_MCP_RUNTIME_AUTH_CONTEXT   (constant string used to derive headers)
-    _INTERNAL_MCP_RUNTIME_AUTH_HEADER    (header name consumed by the trust gate)
     _auth_encryption_secret_value        (config-dependent secret accessor)
-    _expected_internal_mcp_runtime_auth_header
-    _expected_internal_mcp_runtime_auth_header_for_secret
     _has_verified_jwt_payload            (probe used by the resolution helpers)
+    _internal_path_requires_auth_context (path classifier for internal routes)
 
 Security invariants
 -------------------
@@ -107,12 +109,16 @@ policy. The key invariants that this module enforces:
 4. Non-JWT admin callers (basic-auth / dev mode) keep unrestricted visibility
    via the fallback-admin branch; this carve-out is intentional and documented
    in ``AGENTS.md``.
+5. ``is_trusted_internal_mcp_request`` validates that in-process internal
+   requests are truly local (loopback addresses), carry a recognized
+   runtime marker ("affinity"), and optionally contain a valid
+   ``x-contextforge-auth-context`` header. All three checks must pass
+   for the middleware exemption to apply.
 """
 
 # Standard
 import asyncio
 import base64
-from functools import lru_cache
 import hashlib
 import hmac
 import logging
@@ -129,14 +135,6 @@ from mcpgateway.config import settings
 
 # Module-level logger
 logger = logging.getLogger(__name__)
-
-# Trust-layer header names. ``INTERNAL_MCP_SESSION_VALIDATED_HEADER`` is part
-# of the module's public constant API (main.py's middleware compares against
-# it). The other two are implementation details of the header-derivation chain
-# and are not exported.
-INTERNAL_MCP_SESSION_VALIDATED_HEADER = "x-contextforge-session-validated"
-_INTERNAL_MCP_RUNTIME_AUTH_HEADER = "x-contextforge-mcp-runtime-auth"
-_INTERNAL_MCP_RUNTIME_AUTH_CONTEXT = "contextforge-internal-mcp-runtime-v1"
 
 
 def get_user_email(user: Any) -> str:
@@ -273,140 +271,61 @@ def _auth_encryption_secret_value() -> str:
     return str(secret)
 
 
-@lru_cache(maxsize=8)
-def _expected_internal_mcp_runtime_auth_header_for_secret(secret: str) -> str:
-    """Return the shared secret-derived trust header for Rust->Python MCP hops.
-
-    Args:
-        secret: Auth-encryption secret to derive the trust header from.
-
-    Returns:
-        Hex-encoded SHA-256 digest derived from the provided auth secret.
-    """
-    material = f"{secret}:{_INTERNAL_MCP_RUNTIME_AUTH_CONTEXT}".encode("utf-8")
-    return hashlib.sha256(material).hexdigest()
-
-
-def _expected_internal_mcp_runtime_auth_header() -> str:
-    """Return the current shared secret-derived trust header for Rust->Python MCP hops.
-
-    Returns:
-        Hex-encoded SHA-256 digest derived from the current auth secret.
-    """
-    return _expected_internal_mcp_runtime_auth_header_for_secret(_auth_encryption_secret_value())
-
-
-def has_valid_internal_mcp_runtime_auth_header(request: Request) -> bool:
-    """Validate the shared secret-derived trust header for internal MCP requests.
-
-    Args:
-        request: Incoming internal MCP request.
-
-    Returns:
-        ``True`` when the derived trust header matches the expected value.
-    """
-    provided = request.headers.get(_INTERNAL_MCP_RUNTIME_AUTH_HEADER)
-    if not provided:
-        return False
-    return hmac.compare_digest(provided, _expected_internal_mcp_runtime_auth_header())
-
-
-# Redis-transit integrity for forwarded auth context.
-#
-# The header-borne auth context that reaches /_internal/mcp/rpc is gated by the
-# secret-derived runtime-auth token, so a caller must already hold the secret.
-# The session-affinity Redis pub/sub hop is different: a writer to the Redis
-# channel needs no secret, yet the owner worker re-stamps whatever auth context
-# it reads with a valid runtime-auth token before dispatching. That makes the
-# owner a signing oracle for forged contexts. Signing the auth context alone
-# closes the forged-identity oracle, but it does not prove that the verified
-# identity belongs to the *operation* being executed: an attacker with Redis
-# write access could pair a captured signature with a different method, path,
-# body, or response_channel (CWE-347). To close that, the publisher signs the
-# whole forwarded envelope (every operation field, including response_channel so
-# the response cannot be redirected) and the consumer verifies the envelope
-# before dispatch.
-#
-# These helpers are deliberately separate from the general header-encoding
-# contract (encode/decode_internal_mcp_auth_context), which must stay
-# byte-compatible for the Rust runtime. The forward signature is Redis-only
-# Python transit metadata: it is stripped by the owning worker before the
-# in-process dispatch and never reaches the Rust runtime, so it does not affect
-# the encoded auth-context wire format.
-FORWARD_SIG_FIELD = "forward_sig"
-_REDIS_FORWARD_ENVELOPE_SIG_DOMAIN = b"mcpgw.redis-fwd-envelope.v1"
-_REDIS_FORWARD_ENVELOPE_SIG_DELIMITER = b"\x1f"  # ASCII unit separator; never present in canonical JSON
-
-
-def _redis_forward_envelope_sig_material(envelope: Dict[str, Any]) -> bytes:
-    """Build the domain-separated HMAC input for a Redis-forwarded envelope.
-
-    The signature field itself is excluded, then the remaining envelope is
-    canonicalized with sorted keys so the publisher and the consumer (which has
-    round-tripped the payload through JSON) produce byte-identical material. The
-    domain tag plus a unit separator that cannot occur in the canonical JSON keep
-    the two segments unambiguous.
-
-    Args:
-        envelope: The forwarded Redis payload. The signature field, if present,
-            is ignored so signing and verification see the same input.
-
-    Returns:
-        The byte string fed to HMAC.
-    """
-    without_sig = {k: v for k, v in envelope.items() if k != FORWARD_SIG_FIELD}
-    canonical = orjson.dumps(without_sig, option=orjson.OPT_SORT_KEYS)
-    return _REDIS_FORWARD_ENVELOPE_SIG_DOMAIN + _REDIS_FORWARD_ENVELOPE_SIG_DELIMITER + canonical
-
-
-def sign_redis_forward_envelope(envelope: Dict[str, Any]) -> str:
-    """Sign a full forwarded envelope for transit over the session-affinity Redis hop.
-
-    Keyed with ``auth_encryption_secret`` and bound to every operation field in
-    the envelope (method, path, body, headers, response_channel, auth_context,
-    ...), so a captured signature cannot be replayed under a different operation
-    or to a different response channel.
-
-    Args:
-        envelope: The forwarded Redis payload to protect. Any existing signature
-            field is excluded from the signed material.
-
-    Returns:
-        Hex-encoded HMAC-SHA256 signature.
-    """
-    return hmac.new(
-        _auth_encryption_secret_value().encode("utf-8"),
-        _redis_forward_envelope_sig_material(envelope),
-        hashlib.sha256,
-    ).hexdigest()
-
-
-def verify_redis_forward_envelope(envelope: Dict[str, Any]) -> bool:
-    """Verify a Redis-forwarded envelope signature in constant time.
-
-    Must be called on the untouched received envelope, before any field is
-    decoded or mutated, so the recomputed material matches what was signed.
-
-    Args:
-        envelope: The forwarded Redis payload, including its ``forward_sig``.
-
-    Returns:
-        ``True`` only when the envelope carries a non-empty ``forward_sig`` that
-        is a valid signature for the rest of the envelope under the current secret.
-    """
-    signature = envelope.get(FORWARD_SIG_FIELD)
-    if not isinstance(signature, str) or not signature:
-        return False
-    expected = sign_redis_forward_envelope(envelope)
-    return hmac.compare_digest(signature, expected)
-
-
 # Internal-dispatch trust gate, defined once and shared by all callers.
 INTERNAL_MCP_PATH_PREFIX = "/_internal/mcp"
 INTERNAL_A2A_PATH_PREFIX = "/_internal/a2a"
-INTERNAL_RUNTIME_MARKER_HEADER = "x-contextforge-mcp-runtime"
 INTERNAL_AUTH_CONTEXT_HEADER = "x-contextforge-auth-context"
-TRUSTED_INTERNAL_RUNTIME_MARKERS = frozenset({"rust", "affinity"})
+
+# Redis-envelope signing for cross-worker request forwarding.
+FORWARD_SIG_FIELD = "forward_sig"
+
+
+def sign_redis_forward_envelope(data: Dict[str, Any]) -> str:
+    """Produce an HMAC-SHA256 signature over the canonical JSON of *data*.
+
+    The signature covers every key in *data* **except** ``forward_sig``
+    itself, so a replay of the signature with mutated fields (method,
+    response_channel, auth_context, etc.) will always be rejected.  The
+    canonical JSON uses sorted keys to guarantee key-order independence.
+
+    Args:
+        data: The forward envelope dict (may already contain ``forward_sig``).
+
+    Returns:
+        Hex-encoded HMAC-SHA256 digest.
+    """
+    payload = {k: v for k, v in data.items() if k != FORWARD_SIG_FIELD}
+    canonical = orjson.dumps(payload, option=orjson.OPT_SORT_KEYS)
+    key = _auth_encryption_secret_value().encode("utf-8")
+    return hmac.new(key, canonical, hashlib.sha256).hexdigest()
+
+
+def verify_redis_forward_envelope(data: Any) -> bool:
+    """Verify the HMAC-SHA256 on the received forward-envelope dict.
+
+    The envelope must carry a string ``forward_sig`` whose HMAC (computed
+    over the sorted-keys canonical JSON of all other fields) matches.
+    Returns ``False`` on any structural defect; never raises.
+
+    Args:
+        data: The received forward envelope (dict or any other type).
+
+    Returns:
+        ``True`` when the signature is valid, ``False`` otherwise.
+    """
+    if not isinstance(data, dict):
+        return False
+    sig = data.get(FORWARD_SIG_FIELD)
+    if not isinstance(sig, str) or not sig:
+        return False
+    try:
+        payload = {k: v for k, v in data.items() if k != FORWARD_SIG_FIELD}
+        canonical = orjson.dumps(payload, option=orjson.OPT_SORT_KEYS)
+        key = _auth_encryption_secret_value().encode("utf-8")
+        expected = hmac.new(key, canonical, hashlib.sha256).hexdigest()
+        return hmac.compare_digest(expected, sig)
+    except Exception:
+        return False
 
 
 def _internal_path_requires_auth_context(path: str) -> bool:
@@ -433,11 +352,10 @@ def is_trusted_internal_runtime_request(
 ) -> bool:
     """Return whether a request is a trusted in-process internal-runtime hop.
 
-    The trust boundary is the HMAC header and, when required, the encoded
-    ``x-contextforge-auth-context``. The loopback check is defense in depth,
-    not an independent gate: ProxyHeaders(trusted_hosts="*") lets a direct
-    external caller influence ``request.client.host`` (the replay is hardened
-    separately by stripping forwarded / client-IP headers).
+    The trust boundary is the encoded ``x-contextforge-auth-context`` header
+    (HMAC-signed) and loopback client address. ProxyHeaders(trusted_hosts="*")
+    lets a direct external caller influence ``request.client.host`` (the replay
+    is hardened separately by stripping forwarded / client-IP headers).
 
     Args:
         request: Incoming request to inspect.
@@ -447,15 +365,11 @@ def is_trusted_internal_runtime_request(
             defaults to ``request.url.path``.
 
     Returns:
-        ``True`` only when prefix, runtime marker, HMAC, optional auth context,
-        and loopback all hold; otherwise ``False``.
+        ``True`` only when prefix, optional auth context, and loopback all hold;
+        otherwise ``False``.
     """
     p = path if path is not None else (getattr(getattr(request, "url", None), "path", "") or "")
     if not any(p == prefix or p.startswith(f"{prefix}/") for prefix in allowed_prefixes):
-        return False
-    if request.headers.get(INTERNAL_RUNTIME_MARKER_HEADER) not in TRUSTED_INTERNAL_RUNTIME_MARKERS:
-        return False
-    if not has_valid_internal_mcp_runtime_auth_header(request):
         return False
     if require_auth_context and not request.headers.get(INTERNAL_AUTH_CONTEXT_HEADER):
         return False

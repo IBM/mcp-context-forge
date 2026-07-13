@@ -31,7 +31,7 @@ make container-inspect-manifest REGISTRY=ghcr.io/ibm/mcp-context-forge:latest
 |------|------------|-----------|------|----------|
 | `Containerfile` | ubi10-minimal | amd64, arm64, s390x, ppc64le | ~150MB | All builds (local, CI/CD, multiplatform) |
 
-Optional build args: `ENABLE_RUST=true` (Rust MCP + A2A runtimes), `ENABLE_RUST_MCP_RMCP=true` (rmcp-upstream-client feature), `ENABLE_PROFILING=true` (memray + gdb).
+Optional build args: `ENABLE_PROFILING=true` (memray + gdb).
 
 ## How It Works
 

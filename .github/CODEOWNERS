@@ -1,17 +1,6 @@
 # Plugin framework
 /mcpgateway/plugins @araujof @terylt @jonpspri
 
-# Rust projects
-/crates/ @lucarlig @dawid-nowak
-/mcp-servers/rust/ @lucarlig @dawid-nowak
-/Cargo.toml @lucarlig @dawid-nowak
-/Cargo.lock @lucarlig @dawid-nowak
-/deny.toml @lucarlig @dawid-nowak
-/rust-toolchain.toml @lucarlig @dawid-nowak
-/supply-chain/ @lucarlig @dawid-nowak
-/.github/workflows/rust.yml @lucarlig @dawid-nowak
-/.github/workflows/pytest-rust.yml @lucarlig @dawid-nowak
-
 # Tests for plugin framework
 /tests/unit/mcpgateway/plugins @araujof @terylt @jonpspri
 

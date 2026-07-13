@@ -243,12 +243,6 @@ async def test_coordinator_next_version_local_when_redis_missing(monkeypatch: py
 
 @pytest.mark.asyncio
 async def test_coordinator_reconciles_from_hint(monkeypatch: pytest.MonkeyPatch):
-    # Simulate an edge-boot deployment so the persisted hint's mode=edge is
-    # compatible with the safety invariant; otherwise _reconcile_from_hint
-    # would (correctly) discard the hint as INCOMPATIBLE_HINT.
-    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_mcp_runtime_enabled", True, raising=False)
-    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_mcp_session_auth_reuse_enabled", True, raising=False)
-
     hint_payload = orjson.dumps(
         {
             "runtime": "mcp",
@@ -275,9 +269,10 @@ async def test_coordinator_reconciles_from_hint(monkeypatch: pytest.MonkeyPatch)
     coord = RuntimeStateCoordinator()
     await coord.start()
     try:
-        state = __import__("mcpgateway.runtime_state", fromlist=["get_runtime_state"]).get_runtime_state()
-        assert state.override_mode("mcp") == "edge"
-        assert state.version("mcp") == 17
+        state = get_runtime_state()
+        # Rust MCP runtime removed — all hints rejected with NO_DISPATCHER
+        assert state.override_mode("mcp") is None
+        assert state.version("mcp") == 0
     finally:
         await coord.stop()
 
@@ -289,51 +284,19 @@ def test_constants_match_kinds():
 
 # ---------------------------------------------------------------------------
 # I5: table-driven _deployment_allows_override_mode
+# (Rust MCP runtime removed — always NO_DISPATCHER)
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    ("runtime_enabled", "session_auth", "all_cores", "mode", "expected_label"),
-    [
-        # boot=off (runtime disabled): every mode rejected as NO_DISPATCHER
-        (False, False, False, "shadow", "no_dispatcher"),
-        (False, False, False, "edge", "no_dispatcher"),
-        # boot=shadow (runtime, no safety flag, no cores): shadow OK; edge needs safety flag
-        (True, False, False, "shadow", "ok"),
-        (True, False, False, "edge", "edge_needs_safety_flag"),
-        # boot=edge (runtime + safety flag, no cores): both modes OK
-        (True, True, False, "shadow", "ok"),
-        (True, True, False, "edge", "ok"),
-        # boot=full (all six flags): both modes rejected as BOOT_FULL_STRANDS
-        (True, True, True, "shadow", "boot_full_strands"),
-        (True, True, True, "edge", "boot_full_strands"),
-    ],
-    ids=[
-        "off-shadow",
-        "off-edge",
-        "shadow-shadow",
-        "shadow-edge",
-        "edge-shadow",
-        "edge-edge",
-        "full-shadow",
-        "full-edge",
-    ],
-)
-def test_deployment_allows_override_mode_mcp_table(monkeypatch: pytest.MonkeyPatch, runtime_enabled, session_auth, all_cores, mode, expected_label):
-    """Pin every (boot config × target mode) → MoveCompatibility outcome for MCP."""
-    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_mcp_runtime_enabled", runtime_enabled, raising=False)
-    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_mcp_session_auth_reuse_enabled", session_auth, raising=False)
-    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_mcp_session_core_enabled", all_cores, raising=False)
-    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_mcp_event_store_enabled", all_cores, raising=False)
-    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_mcp_resume_core_enabled", all_cores, raising=False)
-    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_mcp_live_stream_core_enabled", all_cores, raising=False)
-    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_mcp_affinity_core_enabled", all_cores, raising=False)
-
+def test_deployment_allows_override_mode_mcp_always_dispatchable():
+    """Verify that Rust MCP runtime is permanently removed — NO_DISPATCHER never equals OK."""
+    # The functions that previously checked deployment compatibility were deleted.
+    # The only remaining assertion is that the old invariant (NO_DISPATCHER != OK)
+    # still holds after the removal.
+    # First-Party
     from mcpgateway.runtime_state import MoveCompatibility
-    from mcpgateway.version import deployment_allows_override_mode
 
-    result = deployment_allows_override_mode("mcp", mode)
-    assert result == MoveCompatibility(expected_label)
+    assert MoveCompatibility.NO_DISPATCHER != MoveCompatibility.OK
 
 
 
@@ -347,19 +310,15 @@ async def test_override_edge_cannot_bypass_session_auth_reuse_invariant(monkeypa
     from a hint written before we tightened the router), the read side must refuse
     to break the documented safety invariant.
     """
-    # Simulate boot=shadow: Rust runtime enabled, session-auth-reuse NOT enabled.
-    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_mcp_runtime_enabled", True, raising=False)
-    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_mcp_session_auth_reuse_enabled", False, raising=False)
-
     # Force the override to "edge" directly on state (bypassing the router).
     state = get_runtime_state()
     await state.apply_local("mcp", "edge", initiator_user="replay", version=1)
     assert state.override_mode("mcp") == "edge"
 
     # The read side must still refuse to route to Rust.
-    from mcpgateway.version import should_mount_public_rust_transport
+    from mcpgateway.version import MCP_RUNTIME_STATUS_PAYLOAD
 
-    assert should_mount_public_rust_transport() is False
+    assert MCP_RUNTIME_STATUS_PAYLOAD["rust_build_included"] is False
 
 
 @pytest.mark.asyncio
@@ -373,10 +332,6 @@ async def test_reconcile_from_hint_discards_incompatible_mode(monkeypatch: pytes
     """
     # First-Party
     from mcpgateway.runtime_state import BootReconcileStatus
-
-    # Shadow-boot: runtime enabled but session-auth-reuse NOT enabled.
-    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_mcp_runtime_enabled", True, raising=False)
-    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_mcp_session_auth_reuse_enabled", False, raising=False)
 
     hint_payload = orjson.dumps(
         {
@@ -403,28 +358,17 @@ async def test_reconcile_from_hint_discards_incompatible_mode(monkeypatch: pytes
         # The stale edge hint must NOT have been applied.
         assert state.override_mode("mcp") is None
         assert state.version("mcp") == 0
-        assert state.boot_reconcile_status("mcp") == BootReconcileStatus.INCOMPATIBLE_SAFETY_FLAG
+        assert state.boot_reconcile_status("mcp") == BootReconcileStatus.INCOMPATIBLE_NO_DISPATCHER
     finally:
         await coord.stop()
 
 
 @pytest.mark.asyncio
 async def test_reconcile_from_hint_discards_shadow_on_full_boot(monkeypatch: pytest.MonkeyPatch):
-    """A shadow hint must NOT be applied on boot=full — full mounts a plain RustMCPRuntimeProxy
-    with no dispatcher, so the override would strand in state (diagnostics say shadow; transport
-    always routes to Rust). The router also 409s for any PATCH on boot=full, so without this
-    guard the operator would have no path to clear the stale override.
+    """A shadow hint must NOT be applied on boot=full — since the Rust MCP runtime has been removed,
+    all hints are rejected with INCOMPATIBLE_NO_DISPATCHER regardless of boot config.
     """
     from mcpgateway.runtime_state import BootReconcileStatus
-
-    # boot=full: all cores enabled.
-    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_mcp_runtime_enabled", True, raising=False)
-    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_mcp_session_auth_reuse_enabled", True, raising=False)
-    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_mcp_session_core_enabled", True, raising=False)
-    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_mcp_event_store_enabled", True, raising=False)
-    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_mcp_resume_core_enabled", True, raising=False)
-    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_mcp_live_stream_core_enabled", True, raising=False)
-    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_mcp_affinity_core_enabled", True, raising=False)
 
     hint_payload = orjson.dumps({"runtime": "mcp", "mode": "shadow", "version": 9, "initiator_pod": "other", "timestamp": 1.0})
 
@@ -440,7 +384,7 @@ async def test_reconcile_from_hint_discards_shadow_on_full_boot(monkeypatch: pyt
     try:
         state = get_runtime_state()
         assert state.override_mode("mcp") is None
-        assert state.boot_reconcile_status("mcp") == BootReconcileStatus.INCOMPATIBLE_BOOT_FULL
+        assert state.boot_reconcile_status("mcp") == BootReconcileStatus.INCOMPATIBLE_NO_DISPATCHER
     finally:
         await coord.stop()
 
@@ -449,8 +393,6 @@ async def test_reconcile_from_hint_discards_shadow_on_full_boot(monkeypatch: pyt
 async def test_reconcile_from_hint_discards_any_mode_on_off_boot(monkeypatch: pytest.MonkeyPatch):
     """boot=off has no Rust sidecar at all — no hint can take effect. Must be discarded."""
     from mcpgateway.runtime_state import BootReconcileStatus
-
-    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_mcp_runtime_enabled", False, raising=False)
 
     hint_payload = orjson.dumps({"runtime": "mcp", "mode": "shadow", "version": 3, "initiator_pod": "other", "timestamp": 1.0})
 
@@ -476,8 +418,6 @@ async def test_reconcile_from_hint_discards_a2a_hint_on_a2a_off_boot(monkeypatch
     """A2A boot=off has runtime disabled — no hint can take effect."""
     from mcpgateway.runtime_state import BootReconcileStatus
 
-    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_a2a_runtime_enabled", False, raising=False)
-
     hint_payload = orjson.dumps({"runtime": "a2a", "mode": "shadow", "version": 11, "initiator_pod": "other", "timestamp": 1.0})
 
     async def fake_get(key):
@@ -502,14 +442,6 @@ async def test_reconcile_from_hint_discards_edge_on_full_boot(monkeypatch: pytes
     """Symmetric to shadow-on-full: an edge hint on boot=full also strands."""
     from mcpgateway.runtime_state import BootReconcileStatus
 
-    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_mcp_runtime_enabled", True, raising=False)
-    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_mcp_session_auth_reuse_enabled", True, raising=False)
-    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_mcp_session_core_enabled", True, raising=False)
-    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_mcp_event_store_enabled", True, raising=False)
-    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_mcp_resume_core_enabled", True, raising=False)
-    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_mcp_live_stream_core_enabled", True, raising=False)
-    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_mcp_affinity_core_enabled", True, raising=False)
-
     hint_payload = orjson.dumps({"runtime": "mcp", "mode": "edge", "version": 9, "initiator_pod": "other", "timestamp": 1.0})
 
     async def fake_get(key):
@@ -523,8 +455,9 @@ async def test_reconcile_from_hint_discards_edge_on_full_boot(monkeypatch: pytes
     await coord.start()
     try:
         state = get_runtime_state()
+        # Rust MCP runtime removed — always NO_DISPATCHER
         assert state.override_mode("mcp") is None
-        assert state.boot_reconcile_status("mcp") == BootReconcileStatus.INCOMPATIBLE_BOOT_FULL
+        assert state.boot_reconcile_status("mcp") == BootReconcileStatus.INCOMPATIBLE_NO_DISPATCHER
     finally:
         await coord.stop()
 
@@ -533,8 +466,6 @@ async def test_reconcile_from_hint_discards_edge_on_full_boot(monkeypatch: pytes
 async def test_reconcile_from_hint_discards_edge_on_off_boot(monkeypatch: pytest.MonkeyPatch):
     """Symmetric to shadow-on-off: an edge hint on boot=off also discards."""
     from mcpgateway.runtime_state import BootReconcileStatus
-
-    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_mcp_runtime_enabled", False, raising=False)
 
     hint_payload = orjson.dumps({"runtime": "mcp", "mode": "edge", "version": 5, "initiator_pod": "other", "timestamp": 1.0})
 
@@ -562,9 +493,6 @@ async def test_incompatible_hint_does_not_delete_redis_key_or_downgrade_propagat
     """
     from mcpgateway.runtime_state import BootReconcileStatus
 
-    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_mcp_runtime_enabled", True, raising=False)
-    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_mcp_session_auth_reuse_enabled", False, raising=False)
-
     hint_payload = orjson.dumps({"runtime": "mcp", "mode": "edge", "version": 7, "initiator_pod": "other", "timestamp": 1.0})
 
     async def fake_get(key):
@@ -579,7 +507,8 @@ async def test_incompatible_hint_does_not_delete_redis_key_or_downgrade_propagat
     await coord.start()
     try:
         state = get_runtime_state()
-        assert state.boot_reconcile_status("mcp") == BootReconcileStatus.INCOMPATIBLE_SAFETY_FLAG
+        # Rust MCP runtime removed — always NO_DISPATCHER instead of SAFETY_FLAG
+        assert state.boot_reconcile_status("mcp") == BootReconcileStatus.INCOMPATIBLE_NO_DISPATCHER
         # S1: hint key must NOT be deleted from Redis.
         redis.delete.assert_not_awaited()
         # S2: an internal discard must not falsely degrade pubsub propagation.
@@ -590,9 +519,13 @@ async def test_incompatible_hint_does_not_delete_redis_key_or_downgrade_propagat
 
 @pytest.mark.asyncio
 async def test_reconcile_from_hint_accepts_shadow_mode_on_shadow_boot(monkeypatch: pytest.MonkeyPatch):
-    """A shadow hint is always compatible — shadow is the Python-default and every boot serves Python for shadow overrides."""
-    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_mcp_runtime_enabled", True, raising=False)
-    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_mcp_session_auth_reuse_enabled", False, raising=False)
+    """Legacy test: shadow hint handling on shadow boot.
+
+    Since the Rust MCP runtime has been removed,  all MCP hints are now
+    unconditionally rejected with INCOMPATIBLE_NO_DISPATCHER regardless of
+    boot config, so the override is never applied.
+    """
+    # Historically set boot=shadow; now irrelevant.
 
     hint_payload = orjson.dumps({"runtime": "mcp", "mode": "shadow", "version": 5, "initiator_pod": "other", "timestamp": 1.0})
 
@@ -606,12 +539,13 @@ async def test_reconcile_from_hint_accepts_shadow_mode_on_shadow_boot(monkeypatc
     coord = RuntimeStateCoordinator()
     await coord.start()
     try:
-        from mcpgateway.runtime_state import BootReconcileStatus, OverrideMode
+        from mcpgateway.runtime_state import BootReconcileStatus
 
         state = get_runtime_state()
-        assert state.override_mode("mcp") == OverrideMode.SHADOW
-        assert state.version("mcp") == 5
-        assert state.boot_reconcile_status("mcp") == BootReconcileStatus.OK
+        # Rust MCP removed — hint is always rejected
+        assert state.override_mode("mcp") is None
+        assert state.version("mcp") == 0
+        assert state.boot_reconcile_status("mcp") == BootReconcileStatus.INCOMPATIBLE_NO_DISPATCHER
     finally:
         await coord.stop()
 
@@ -820,10 +754,6 @@ async def test_listen_loop_repromotes_after_recovery(monkeypatch: pytest.MonkeyP
     import asyncio as _asyncio
 
     from mcpgateway.runtime_state import LISTEN_LOOP_DEGRADE_THRESHOLD
-
-    # Make the deployment compatible with the recovery message we'll deliver.
-    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_a2a_runtime_enabled", True, raising=False)
-    monkeypatch.setattr("mcpgateway.config.settings.experimental_rust_a2a_runtime_delegate_enabled", True, raising=False)
 
     redis = _make_redis_mock()
     pubsub = redis.pubsub.return_value
@@ -1175,8 +1105,6 @@ async def test_listen_loop_decodes_bytes_payload_and_reaches_compatibility_check
 
     # Enable MCP runtime + safety flag so the compatibility check returns OK
     # for an edge override; we can then apply_remote it.
-    monkeypatch.setattr(_settings, "experimental_rust_mcp_runtime_enabled", True, raising=False)
-    monkeypatch.setattr(_settings, "experimental_rust_mcp_session_auth_reuse_enabled", True, raising=False)
 
     state = get_runtime_state()
     coord = RuntimeStateCoordinator()
@@ -1199,41 +1127,38 @@ async def test_listen_loop_decodes_bytes_payload_and_reaches_compatibility_check
     caplog.set_level("INFO", logger="mcpgateway.runtime_state")
     await coord._listen_loop()  # noqa: SLF001
 
-    # The bytes payload was decoded, parsed, found compatible, and applied.
-    assert state.override_mode("mcp") == "edge"
-    assert state.version("mcp") == 99
+    # The bytes payload was decoded, parsed, but rejected as incompatible
+    # (Rust MCP runtime removed → always NO_DISPATCHER).
+    assert state.override_mode("mcp") is None
+    assert state.version("mcp") == 0
 
 
 # ---------------------------------------------------------------------
-# version.py status payload includes last_change after an override
+# version.py status payload no longer includes last_change (MCP runtime removed)
 # ---------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_mcp_runtime_status_payload_includes_last_change_after_override(monkeypatch):
-    """After an override is applied, _mcp_runtime_status_payload exposes a last_change block."""
+async def test_mcp_runtime_status_payload_no_last_change_after_override(monkeypatch):
+    """With Rust MCP removed, MCP_RUNTIME_STATUS_PAYLOAD never includes last_change."""
     # First-Party
-    from mcpgateway.config import settings as _settings
-    from mcpgateway.version import _mcp_runtime_status_payload
+    from mcpgateway.version import MCP_RUNTIME_STATUS_PAYLOAD
 
-    monkeypatch.setattr(_settings, "experimental_rust_mcp_runtime_enabled", True, raising=False)
-    monkeypatch.setattr(_settings, "experimental_rust_mcp_session_auth_reuse_enabled", True, raising=False)
-
+    # Apply an override (it will be stored in state, but status_payload won't include last_change)
     state = get_runtime_state()
     await state.apply_local("mcp", "edge", initiator_user="alice@example.com", version=42)
 
-    payload = _mcp_runtime_status_payload()
-    assert "last_change" in payload
-    assert payload["last_change"]["version"] == 42
-    assert payload["last_change"]["mode"] == "edge"
-    assert payload["last_change"]["initiator_user"] == "alice@example.com"
+    assert "last_change" not in MCP_RUNTIME_STATUS_PAYLOAD
+    assert MCP_RUNTIME_STATUS_PAYLOAD["mode"] == "python"
+    assert MCP_RUNTIME_STATUS_PAYLOAD["status"] == "healthy"
 
 
 
 
 def test_boot_mcp_transport_mount_returns_underlying_value():
-    """``boot_mcp_transport_mount`` is a thin public wrapper — verify it returns the same value as the underlying helper."""
+    """``MCP_TRANSPORT_MOUNT`` and ``MCP_RUNTIME_MODE`` are resolved at boot — verify they equal the expected defaults."""
     # First-Party
-    from mcpgateway.version import _boot_mcp_transport_mount, boot_mcp_transport_mount
+    from mcpgateway.version import MCP_RUNTIME_MODE, MCP_TRANSPORT_MOUNT
 
-    assert boot_mcp_transport_mount() == _boot_mcp_transport_mount()
+    assert MCP_TRANSPORT_MOUNT == "python"
+    assert MCP_RUNTIME_MODE == "python"

@@ -164,7 +164,7 @@ def test_tool_pre_invoke_logging_handles_pydantic_model_args(caplog):
 
 
 def test_tool_pre_invoke_logging_hook_paths_are_wired():
-    """Guard against dropping diagnostics from one of the four TOOL_PRE_INVOKE paths."""
+    """Guard against dropping diagnostics from one of the three TOOL_PRE_INVOKE paths."""
     tree = ast.parse(Path(tool_service_module.__file__).read_text(encoding="utf-8"))
     calls = [
         node
@@ -172,4 +172,4 @@ def test_tool_pre_invoke_logging_hook_paths_are_wired():
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "_log_tool_pre_invoke_result"
     ]
 
-    assert len(calls) == 4
+    assert len(calls) == 3

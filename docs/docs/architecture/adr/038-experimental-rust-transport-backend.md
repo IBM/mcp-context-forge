@@ -8,13 +8,22 @@
 
 !!! warning
     This ADR records the original experiment proposal only. The implemented
-    architecture has moved to a Rust sidecar/runtime with mode-based rollout.
-    See [ADR-043](043-rust-mcp-runtime-sidecar-mode-model.md) for the current
+    architecture has moved to a Python-only transport path with no sidecar.
+    See [ADR-050](050-defer-generic-cluster-settings-propagation-framework.md) for the current
     decision.
 
 ContextForge currently implements its transport layer (stdio, SSE, WebSocket, and Streamable HTTP) in Python using asyncio. While this provides functional correctness, the transport layer experiences performance and memory limitations under higher concurrency due to Python runtime overhead and GIL constraints.
 
-Issue #1621 proposes evaluating a Rust-based transport backend to improve throughput, latency, and resource efficiency while preserving the existing Transport API and protocol semantics.
+Issue #1621 proposed evaluating a Rust-based transport backend to improve throughput, latency, and resource efficiency while preserving the existing Transport API and protocol semantics.
+
+**Status: Superseded.** The Rust transport backend was deprecated as of 2026-06-11
+and has been removed. ContextForge now uses a Python-only transport path.
+
+## Status
+
+This ADR is **superseded** by the Python-only transport implementation. All
+functionality described here has been replaced with the standard transport
+path. The historical design rationale is preserved below.
 
 Given the scope and risk of rewriting the full transport layer, an incremental and experimental approach is preferred, starting with the Streamable HTTP transport.
 

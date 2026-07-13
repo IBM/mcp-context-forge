@@ -30,8 +30,6 @@ def _trusted_internal_runtime_headers() -> dict[str, str]:
     secret = settings.auth_encryption_secret.get_secret_value()
     expected = hashlib.sha256(f"{secret}:contextforge-internal-mcp-runtime-v1".encode("utf-8")).hexdigest()
     return {
-        "x-contextforge-mcp-runtime": "rust",
-        "x-contextforge-mcp-runtime-auth": expected,
         "x-contextforge-auth-context": "trusted-payload",
     }
 
@@ -192,14 +190,39 @@ class TestTokenScopingMiddleware:
         call_next.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_internal_mcp_request_without_runtime_header_does_not_bypass(self, middleware, mock_request):
-        """Missing the Rust runtime marker must not bypass token scoping."""
+    async def test_internal_mcp_request_without_auth_context_does_not_bypass(self, middleware, mock_request):
+        """Missing the trusted auth-context header must not bypass token scoping."""
         mock_request.url.path = "/_internal/mcp/rpc"
         mock_request.scope["path"] = "/_internal/mcp/rpc"
         mock_request.method = "POST"
         mock_request.headers = {
             "Authorization": "Bearer scoped-token",
-            "x-contextforge-auth-context": "trusted-payload",
+        }
+
+        with (
+            patch.object(middleware, "_extract_token_scopes", new=AsyncMock(return_value={"sub": "user@example.com", "scopes": {"permissions": ["tools.read"]}})),
+            patch.object(middleware, "_check_server_restriction", return_value=True),
+            patch.object(middleware, "_check_permission_restrictions", return_value=False),
+        ):
+            call_next = AsyncMock()
+            response = await middleware(mock_request, call_next)
+
+        assert response.status_code == status.HTTP_403_FORBIDDEN
+        call_next.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_internal_mcp_request_without_runtime_header_does_not_bypass(self, middleware, mock_request):
+        """The Rust runtime marker is no longer part of the trust gate — only auth-context matters."""
+        # Previously this test checked that a missing x-contextforge-mcp-runtime header
+        # caused the bypass gate to fail. Now the gate only checks auth-context + loopback +
+        # path prefix. Without auth-context the request is NOT trusted and token scoping
+        # proceeds normally.
+        mock_request.url.path = "/_internal/mcp/rpc"
+        mock_request.scope["path"] = "/_internal/mcp/rpc"
+        mock_request.method = "POST"
+        # No auth-context means untrusted → token scoping is enforced.
+        mock_request.headers = {
+            "Authorization": "Bearer scoped-token",
         }
 
         with (
@@ -221,8 +244,6 @@ class TestTokenScopingMiddleware:
         mock_request.method = "POST"
         mock_request.headers = {
             "Authorization": "Bearer scoped-token",
-            "x-contextforge-mcp-runtime": "rust",
-            "x-contextforge-mcp-runtime-auth": _trusted_internal_runtime_headers()["x-contextforge-mcp-runtime-auth"],
         }
 
         with (

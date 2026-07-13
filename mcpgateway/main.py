@@ -73,7 +73,6 @@ from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 # First-Party
 # Import the admin routes from the new module
 from mcpgateway import __version__
-from mcpgateway import version as version_module
 from mcpgateway.auth import get_current_user, get_user_team_roles, TokenValidationError, validate_token_user
 from mcpgateway.auth_context import (
     decode_internal_mcp_auth_context,
@@ -84,7 +83,6 @@ from mcpgateway.auth_context import (
     get_scoped_resource_access_context,
     get_token_teams_from_request,
     get_user_email,
-    INTERNAL_MCP_SESSION_VALIDATED_HEADER,
     is_trusted_internal_mcp_request,
 )
 from mcpgateway.cache import ResourceCache, SessionRegistry
@@ -99,7 +97,7 @@ from mcpgateway.db import A2APushNotificationConfig
 from mcpgateway.db import A2ATask as DbA2ATask
 from mcpgateway.db import refresh_slugs_on_startup, SessionLocal
 from mcpgateway.db import Tool as DbTool
-from mcpgateway.deprecations import RUST_MCP_RUNTIME_DEPRECATION_MESSAGE, VALIDATION_MIDDLEWARE_DEPRECATION_MESSAGE
+from mcpgateway.deprecations import VALIDATION_MIDDLEWARE_DEPRECATION_MESSAGE
 from mcpgateway.handlers.sampling import SamplingError, SamplingHandler
 from mcpgateway.middleware.client_disconnect import ClientDisconnectMiddleware
 from mcpgateway.middleware.compression import SSEAwareCompressMiddleware
@@ -179,20 +177,10 @@ from mcpgateway.services.import_service import ImportError as ImportServiceError
 from mcpgateway.services.import_service import ImportService, ImportValidationError
 from mcpgateway.services.log_aggregator import get_log_aggregator
 from mcpgateway.services.logging_service import LoggingService
-from mcpgateway.services.mcp_apps import (
-    apply_tool_meta,
-    build_mcp_apps_capabilities,
-    filter_model_visible_tools,
-    get_mcp_app_session_cleanup_service,
-    mcp_app_session_service,
-    mcp_apps_enabled,
-    MCPAppsValidationError,
-    serialize_resource_content_for_mcp,
-)
 from mcpgateway.services.metrics import setup_metrics
 from mcpgateway.services.permission_service import PermissionService
 from mcpgateway.services.prompt_service import PromptError, PromptLockConflictError, PromptNameConflictError, PromptNotFoundError
-from mcpgateway.services.resource_service import ResourceError, ResourceLockConflictError, ResourceNotFoundError, ResourceURIConflictError, ResourceValidationError
+from mcpgateway.services.resource_service import ResourceError, ResourceLockConflictError, ResourceNotFoundError, ResourceURIConflictError
 from mcpgateway.services.server_service import ServerError, ServerLockConflictError, ServerNameConflictError, ServerNotFoundError
 from mcpgateway.services.tag_service import TagService
 from mcpgateway.services.tool_service import ToolError, ToolLockConflictError, ToolNameConflictError, ToolNotFoundError
@@ -219,7 +207,7 @@ from mcpgateway.utils.redis_client import close_redis_client, get_redis_client, 
 from mcpgateway.utils.redis_isready import wait_for_redis_ready
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.token_scoping import validate_server_access
-from mcpgateway.utils.trace_context import clear_trace_context, set_trace_context_from_teams, set_trace_session_id
+from mcpgateway.utils.trace_context import set_trace_context_from_teams, set_trace_session_id
 from mcpgateway.utils.trace_redaction import safe_log_user
 from mcpgateway.utils.verify_credentials import (
     _resolve_auth_header_name,
@@ -230,6 +218,18 @@ from mcpgateway.utils.verify_credentials import (
     require_docs_auth_override,
 )
 from mcpgateway.validation.jsonrpc import JSONRPCError
+from mcpgateway.version import (
+    MCP_AFFINITY_CORE_MODE,
+    MCP_EVENT_STORE_MODE,
+    MCP_LIVE_STREAM_CORE_MODE,
+    MCP_RESUME_CORE_MODE,
+    MCP_RUNTIME_MODE,
+    MCP_RUNTIME_STATUS_PAYLOAD,
+    MCP_SESSION_AUTH_REUSE_MODE,
+    MCP_SESSION_CORE_MODE,
+    MCP_TRANSPORT_MOUNT,
+    RUST_BUILD_INCLUDED,
+)
 
 # Initialize logging service first
 logging_service = LoggingService()
@@ -297,22 +297,18 @@ _INTERNAL_MCP_AUTH_CONTEXT_HEADER = "x-contextforge-auth-context"
 def _is_trusted_internal_mcp_runtime_request(request: Request) -> bool:
     """Return whether the request came from a trusted local internal source.
 
-    Two callers are trusted today:
+    In-process session-affinity forwarding to the owner worker carries the
+    identity the edge already validated via ``x-contextforge-auth-context``.
 
-    - ``"rust"`` — the local Rust runtime sidecar (over loopback).
-    - ``"affinity"`` — the in-process dispatch used by session-affinity
-      forwarding to reach the owner worker, carrying the identity the edge
-      already validated.
-
-    Both share the same gates: a shared-secret HMAC header AND a loopback client
-    address. Only the ``x-contextforge-mcp-runtime`` marker value differs.
+    Trust is established by: an HMAC-signed ``x-contextforge-auth-context``
+    header AND a loopback client address.
 
     Args:
         request: Incoming request to inspect.
 
     Returns:
-        ``True`` when the request carries a trusted internal-runtime marker
-        from loopback, otherwise ``False``.
+        ``True`` when the request passes the internal trust gate,
+        otherwise ``False``.
     """
     return is_trusted_internal_mcp_request(request)
 
@@ -385,10 +381,10 @@ def _validate_internal_mcp_auth_context(auth_context: Dict[str, Any]) -> None:
 
 
 def _build_internal_mcp_forwarded_user(request: Request) -> Dict[str, Any]:
-    """Build the authenticated user payload for internal Rust -> Python MCP dispatch.
+    """Build the authenticated user payload for internal MCP dispatch.
 
     Args:
-        request: Trusted internal request forwarded from the Rust runtime.
+        request: Trusted internal request forwarded from the MCP dispatch.
 
     Returns:
         Synthetic authenticated user payload used by internal MCP handlers.
@@ -398,7 +394,7 @@ def _build_internal_mcp_forwarded_user(request: Request) -> Dict[str, Any]:
             is missing or invalid.
     """
     if not _is_trusted_internal_mcp_runtime_request(request):
-        raise HTTPException(status_code=403, detail="Internal MCP dispatch is only available to the local Rust runtime")
+        raise HTTPException(status_code=403, detail="Internal MCP dispatch requires trusted internal auth")
 
     header_value = request.headers.get(_INTERNAL_MCP_AUTH_CONTEXT_HEADER)
     if not header_value:
@@ -418,9 +414,6 @@ def _build_internal_mcp_forwarded_user(request: Request) -> Dict[str, Any]:
 
     if "teams" in auth_context and (auth_context["teams"] is None or isinstance(auth_context["teams"], list)):
         request.state.token_teams = auth_context["teams"]
-
-    if request.headers.get(INTERNAL_MCP_SESSION_VALIDATED_HEADER) == "rust":
-        auth_context["_rust_session_validated"] = True
 
     forwarded_auth_method = auth_context.get("auth_method") or "mcp_internal_forward"
 
@@ -899,9 +892,6 @@ def _serialize_mcp_tool_definition(tool: Any) -> Dict[str, Any]:
     if annotations is not None:
         payload["annotations"] = annotations
 
-    extension_metadata = data.get("extensionMetadata") or data.get("extension_metadata") or getattr(tool, "extension_metadata", None)
-    apply_tool_meta(payload, extension_metadata)
-
     return {key: value for key, value in payload.items() if value is not None}
 
 
@@ -914,7 +904,7 @@ def _serialize_mcp_tool_definitions(tools: List[Any]) -> List[Dict[str, Any]]:
     Returns:
         List of MCP-compatible tool definitions.
     """
-    return [_serialize_mcp_tool_definition(tool) for tool in filter_model_visible_tools(tools)]
+    return [_serialize_mcp_tool_definition(tool) for tool in tools]
 
 
 def _serialize_legacy_tool_payloads(tools: List[Any]) -> List[Dict[str, Any]]:
@@ -927,7 +917,7 @@ def _serialize_legacy_tool_payloads(tools: List[Any]) -> List[Dict[str, Any]]:
         List of legacy tool payload dictionaries.
     """
     payloads: List[Dict[str, Any]] = []
-    for tool in filter_model_visible_tools(tools):
+    for tool in tools:
         if hasattr(tool, "model_dump"):
             payload = tool.model_dump(by_alias=True, exclude_none=True)
         elif isinstance(tool, dict):
@@ -1036,145 +1026,21 @@ async def _authorize_run_cancellation(request: Request, user, request_id: str, *
 resource_cache = ResourceCache(max_size=settings.resource_cache_size, ttl=settings.resource_cache_ttl)
 
 
-def _rust_build_included() -> bool:
-    """Return whether the current image includes Rust MCP artifacts.
-
-    Returns:
-        ``True`` when the current image contains the Rust MCP binaries/plugins.
-    """
-    return version_module.rust_build_included()
-
-
-def _rust_runtime_managed() -> bool:
-    """Return whether the gateway expects to manage the Rust MCP sidecar locally.
-
-    Returns:
-        ``True`` when the gateway should launch and supervise the Rust sidecar.
-    """
-    return version_module.rust_runtime_managed()
-
-
-def _current_mcp_transport_mount() -> str:
-    """Return which public /mcp transport is currently mounted.
-
-    Returns:
-        Runtime label identifying the currently mounted public MCP transport.
-    """
-    return version_module.current_mcp_transport_mount()
-
-
-def _should_mount_public_rust_transport() -> bool:
-    """Return whether the public ``/mcp`` path should be served directly by Rust.
-
-    Returns:
-        ``True`` only when the Rust runtime is enabled and the session-auth reuse
-        path is enabled, allowing Rust to safely own steady-state public MCP
-        session traffic. Otherwise returns ``False`` and leaves public MCP on
-        the Python ingress path.
-    """
-    return version_module.should_mount_public_rust_transport()
-
-
-def _should_use_rust_public_session_stack() -> bool:
-    """Return whether Rust should own the effective public MCP session stack.
-
-    Returns:
-        ``True`` only when the Rust runtime is enabled and session-auth reuse is
-        enabled, allowing the public transport, session metadata, replay/resume,
-        live-stream, and affinity behavior to stay on a consistent Rust-backed
-        path. Otherwise returns ``False`` so the public MCP session stack falls
-        back to Python semantics.
-    """
-    return version_module.should_use_rust_public_session_stack()
-
-
-def _current_mcp_runtime_mode() -> str:
-    """Return a compact runtime-mode label for observability.
-
-    Returns:
-        Human-readable runtime mode label for health/readiness reporting.
-    """
-    return version_module.current_mcp_runtime_mode()
-
-
-def _current_mcp_session_core_mode() -> str:
-    """Return which session core currently owns MCP session metadata.
-
-    Returns:
-        ``"rust"`` when the Rust session core is enabled, otherwise ``"python"``.
-    """
-    return version_module.current_mcp_session_core_mode()
-
-
-def _current_mcp_event_store_mode() -> str:
-    """Return which runtime currently owns MCP resumable event-store semantics.
-
-    Returns:
-        ``"rust"`` when the Rust event store is enabled, otherwise ``"python"``.
-    """
-    return version_module.current_mcp_event_store_mode()
-
-
-def _current_mcp_resume_core_mode() -> str:
-    """Return which runtime currently owns public MCP replay/resume behavior.
-
-    Returns:
-        ``"rust"`` when Rust owns replay/resume, otherwise ``"python"``.
-    """
-    return version_module.current_mcp_resume_core_mode()
-
-
-def _current_mcp_live_stream_core_mode() -> str:
-    """Return which runtime currently owns non-resume public GET /mcp SSE behavior.
-
-    Returns:
-        ``"rust"`` when Rust owns live GET /mcp streaming, otherwise ``"python"``.
-    """
-    return version_module.current_mcp_live_stream_core_mode()
-
-
-def _current_mcp_affinity_core_mode() -> str:
-    """Return which runtime currently owns MCP multi-worker session-affinity forwarding.
-
-    Returns:
-        ``"rust"`` when Rust owns session-affinity forwarding, otherwise ``"python"``.
-    """
-    return version_module.current_mcp_affinity_core_mode()
-
-
-def _current_mcp_session_auth_reuse_mode() -> str:
-    """Return which runtime currently owns MCP session-bound auth-context reuse.
-
-    Returns:
-        ``"rust"`` when Rust session auth reuse is enabled, otherwise ``"python"``.
-    """
-    return version_module.current_mcp_session_auth_reuse_mode()
-
-
-def _mcp_runtime_status_payload() -> Dict[str, Any]:
-    """Return MCP runtime diagnostics for health/readiness endpoints.
-
-    Returns:
-        Diagnostic payload describing the active MCP runtime configuration.
-    """
-    return version_module.mcp_runtime_status_payload()
-
-
 def _apply_runtime_mode_headers(response: Response) -> None:
     """Attach MCP runtime mode headers to a response.
 
     Args:
         response: Response object to annotate.
     """
-    response.headers["x-contextforge-mcp-runtime-mode"] = _current_mcp_runtime_mode()
-    response.headers["x-contextforge-mcp-transport-mounted"] = _current_mcp_transport_mount()
-    response.headers["x-contextforge-rust-build-included"] = "true" if _rust_build_included() else "false"
-    response.headers["x-contextforge-mcp-session-core-mode"] = _current_mcp_session_core_mode()
-    response.headers["x-contextforge-mcp-event-store-mode"] = _current_mcp_event_store_mode()
-    response.headers["x-contextforge-mcp-resume-core-mode"] = _current_mcp_resume_core_mode()
-    response.headers["x-contextforge-mcp-live-stream-core-mode"] = _current_mcp_live_stream_core_mode()
-    response.headers["x-contextforge-mcp-affinity-core-mode"] = _current_mcp_affinity_core_mode()
-    response.headers["x-contextforge-mcp-session-auth-reuse-mode"] = _current_mcp_session_auth_reuse_mode()
+    response.headers["x-contextforge-mcp-runtime-mode"] = MCP_RUNTIME_MODE
+    response.headers["x-contextforge-mcp-transport-mounted"] = MCP_TRANSPORT_MOUNT
+    response.headers["x-contextforge-rust-build-included"] = "true" if RUST_BUILD_INCLUDED else "false"
+    response.headers["x-contextforge-mcp-session-core-mode"] = MCP_SESSION_CORE_MODE
+    response.headers["x-contextforge-mcp-event-store-mode"] = MCP_EVENT_STORE_MODE
+    response.headers["x-contextforge-mcp-resume-core-mode"] = MCP_RESUME_CORE_MODE
+    response.headers["x-contextforge-mcp-live-stream-core-mode"] = MCP_LIVE_STREAM_CORE_MODE
+    response.headers["x-contextforge-mcp-affinity-core-mode"] = MCP_AFFINITY_CORE_MODE
+    response.headers["x-contextforge-mcp-session-auth-reuse-mode"] = MCP_SESSION_AUTH_REUSE_MODE
 
 
 # Type aliases for improved readability
@@ -1748,12 +1614,6 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             await metrics_cleanup_service.start()
             logger.info("Metrics cleanup service initialized (retention: %d days)", settings.metrics_retention_days)
 
-        # Initialize MCP Apps session cleanup service for automatic deletion of expired AppBridge sessions
-        if settings.mcpgateway_mcp_apps_enabled and settings.mcpgateway_mcp_apps_session_cleanup_enabled:
-            mcp_app_session_cleanup_service = get_mcp_app_session_cleanup_service()
-            await mcp_app_session_cleanup_service.start()
-            logger.info("MCP Apps session cleanup service initialized")
-
         # Initialize metrics rollup service for hourly aggregation
         if settings.metrics_rollup_enabled:
             # First-Party
@@ -1987,10 +1847,6 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
             metrics_cleanup_service = get_metrics_cleanup_service()
             services_to_shutdown.insert(2, metrics_cleanup_service)
-
-        if settings.mcpgateway_mcp_apps_enabled and settings.mcpgateway_mcp_apps_session_cleanup_enabled:
-            mcp_app_session_cleanup_service = get_mcp_app_session_cleanup_service()
-            services_to_shutdown.insert(3, mcp_app_session_cleanup_service)
 
         if dataplane_publisher_service is not None:
             services_to_shutdown.insert(3, dataplane_publisher_service)
@@ -3437,11 +3293,6 @@ else:
 # If AuthContextMiddleware is already registered, ObservabilityMiddleware wraps it
 # Execution order will be: AuthContext -> Observability -> Request Handler
 # Wire observability adapter into the plugin manager when observability is enabled
-# _service is a module-level global read later in lifespan(); it must always be bound
-# (even when this branch doesn't run at import time) so tests that flip
-# observability_enabled to True after import and then invoke lifespan() don't hit a
-# NameError on the module global.
-_service = None  # pylint: disable=invalid-name
 if settings.observability_enabled:
     # First-Party
     from mcpgateway.middleware.observability_middleware import ObservabilityMiddleware
@@ -5305,15 +5156,6 @@ def _extract_a2a_request_context(
     }
 
 
-def _extract_mcp_session_id(request: Request, body: Optional[Dict[str, Any]] = None) -> Optional[str]:
-    """Extract the MCP session id from supported transport headers or JSON body fields."""
-    mcp_session_id = request.headers.get("mcp-session-id") or request.headers.get("x-mcp-session-id")
-    if mcp_session_id or not isinstance(body, dict):
-        return mcp_session_id
-    body_session_id = body.get("mcpSessionId") or body.get("mcp_session_id")
-    return body_session_id if isinstance(body_session_id, str) and body_session_id else None
-
-
 @a2a_router.post("/{agent_name}/invoke", response_model=Dict[str, Any])
 @require_permission("a2a.invoke")
 async def invoke_a2a_agent(
@@ -6390,17 +6232,12 @@ async def create_resource(
         return result
     except ResourceURIConflictError as e:
         raise HTTPException(status_code=409, detail=str(e))
-    except ResourceValidationError as e:
-        raise HTTPException(status_code=422, detail=str(e))
     except ResourceError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except ValidationError as e:
         # Handle validation errors from Pydantic
         logger.error(f"Validation error while creating resource: {e}")
         raise HTTPException(status_code=422, detail=ErrorFormatter.format_validation_error(e))
-    except MCPAppsValidationError as e:
-        logger.error(f"MCP Apps validation error while creating resource: {e}")
-        raise HTTPException(status_code=422, detail=str(e))
     except IntegrityError as e:
         logger.error(f"Integrity error while creating resource: {e}")
         raise HTTPException(status_code=409, detail=ErrorFormatter.format_database_error(e))
@@ -6492,7 +6329,6 @@ async def read_resource(resource_id: str, request: Request, db: Session = Depend
             token_teams=auth_token_teams,
             plugin_context_table=plugin_context_table,
             plugin_global_context=plugin_global_context,
-            request_headers=dict(request.headers),
         )
         _enforce_scoped_resource_access(request, db, user, f"/resources/{resource_id}")
         # Release transaction before response serialization
@@ -6510,10 +6346,7 @@ async def read_resource(resource_id: str, request: Request, db: Session = Depend
 
         # If already a ResourceContent, serialize directly
         if isinstance(content, ResourceContent):
-            payload = content.model_dump()
-            if payload.get("meta") is None:
-                payload.pop("meta", None)
-            return payload
+            return content.model_dump()
 
         # If TextContent, wrap into resource envelope with text
         if isinstance(content, TextContent):
@@ -6625,9 +6458,6 @@ async def update_resource(
     except ValidationError as e:
         logger.error(f"Validation error while updating resource {resource_id}: {e}")
         raise HTTPException(status_code=422, detail=ErrorFormatter.format_validation_error(e))
-    except MCPAppsValidationError as e:
-        logger.error(f"MCP Apps validation error while updating resource {resource_id}: {e}")
-        raise HTTPException(status_code=422, detail=str(e))
     except IntegrityError as e:
         logger.error(f"Integrity error while updating resource {resource_id}: {e}")
         raise HTTPException(status_code=409, detail=ErrorFormatter.format_database_error(e))
@@ -7461,8 +7291,6 @@ async def register_gateway(
             response.headers["Retry-After"] = str(max(1, math.ceil(settings.gateway_async_lifecycle_poll_interval)))
         return result
     except Exception as ex:
-        if isinstance(ex, PermissionError):
-            return ORJSONResponse(content={"message": str(ex)}, status_code=status.HTTP_403_FORBIDDEN)
         if isinstance(ex, GatewayConnectionError):
             return ORJSONResponse(content={"message": str(ex)}, status_code=status.HTTP_502_BAD_GATEWAY)
         if isinstance(ex, ValueError):
@@ -8059,24 +7887,17 @@ async def handle_internal_mcp_initialize(request: Request):
         if not isinstance(params, dict):
             params = {}
 
-        server_id = request.headers.get("x-contextforge-server-id") if request.headers.get("x-contextforge-mcp-runtime") == "rust" else None
+        server_id = params.get("server_id")
         if server_id:
             _enforce_internal_mcp_server_scope(request, server_id)
-        else:
-            server_id = params.get("server_id")
 
-        db = SessionLocal()
-        try:
-            result = await _execute_rpc_initialize(
-                request,
-                db,
-                user,
-                params=params,
-                server_id=server_id,
-                mcp_session_id=_extract_mcp_session_id(request),
-            )
-        finally:
-            db.close()
+        result = await _execute_rpc_initialize(
+            request,
+            user,
+            params=params,
+            server_id=server_id,
+            mcp_session_id=request.headers.get("mcp-session-id") or request.headers.get("x-mcp-session-id"),
+        )
         return ORJSONResponse(content={"jsonrpc": "2.0", "result": result, "id": req_id})
     except JSONRPCError as exc:
         error = exc.to_dict()
@@ -8105,7 +7926,7 @@ async def handle_internal_mcp_session_delete(request: Request):
     """
     _build_internal_mcp_forwarded_user(request)
     auth_context = get_internal_mcp_auth_context(request) or {}
-    mcp_session_id = _extract_mcp_session_id(request)
+    mcp_session_id = request.headers.get("mcp-session-id") or request.headers.get("x-mcp-session-id")
     if not mcp_session_id:
         return ORJSONResponse(status_code=400, content={"detail": "mcp-session-id header is required"})
 
@@ -8116,10 +7937,6 @@ async def handle_internal_mcp_session_delete(request: Request):
         )
         if not session_allowed:
             return ORJSONResponse(status_code=deny_status, content={"detail": deny_detail})
-
-    server_id = request.headers.get("x-contextforge-server-id") if request.headers.get("x-contextforge-mcp-runtime") == "rust" else None
-    if server_id:
-        _enforce_internal_mcp_server_scope(request, server_id)
 
     await session_registry.remove_session(mcp_session_id)
 
@@ -8176,10 +7993,6 @@ async def handle_internal_mcp_notifications_initialized(request: Request):
                 },
             )
 
-        server_id = request.headers.get("x-contextforge-server-id") if request.headers.get("x-contextforge-mcp-runtime") == "rust" else None
-        if server_id:
-            _enforce_internal_mcp_server_scope(request, server_id)
-
         logger.info("Client initialized")
         await logging_service.notify("Client initialized", LogLevel.INFO)
         return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -8235,10 +8048,6 @@ async def handle_internal_mcp_notifications_message(request: Request):
                     "id": req_id,
                 },
             )
-
-        server_id = request.headers.get("x-contextforge-server-id") if request.headers.get("x-contextforge-mcp-runtime") == "rust" else None
-        if server_id:
-            _enforce_internal_mcp_server_scope(request, server_id)
 
         params = body.get("params", {})
         if not isinstance(params, dict):
@@ -8302,10 +8111,6 @@ async def handle_internal_mcp_notifications_cancelled(request: Request):
                     "id": req_id,
                 },
             )
-
-        server_id = request.headers.get("x-contextforge-server-id") if request.headers.get("x-contextforge-mcp-runtime") == "rust" else None
-        if server_id:
-            _enforce_internal_mcp_server_scope(request, server_id)
 
         params = body.get("params", {})
         if not isinstance(params, dict):
@@ -8440,11 +8245,7 @@ async def handle_internal_mcp_resources_list(request: Request):
         if not isinstance(params, dict):
             params = {}
 
-        server_id = request.headers.get("x-contextforge-server-id") if request.headers.get("x-contextforge-mcp-runtime") == "rust" else None
-        if server_id:
-            _enforce_internal_mcp_server_scope(request, server_id)
-        else:
-            server_id = params.get("server_id")
+        server_id = params.get("server_id")
         cursor = params.get("cursor")
 
         await _authorize_internal_mcp_request(
@@ -8543,11 +8344,7 @@ async def handle_internal_mcp_resources_read(request: Request):
         if not isinstance(params, dict):
             params = {}
 
-        server_id = request.headers.get("x-contextforge-server-id") if request.headers.get("x-contextforge-mcp-runtime") == "rust" else None
-        if server_id:
-            _enforce_internal_mcp_server_scope(request, server_id)
-        else:
-            server_id = params.get("server_id")
+        server_id = params.get("server_id")
 
         await _authorize_internal_mcp_request(
             request,
@@ -8588,9 +8385,23 @@ async def handle_internal_mcp_resources_read(request: Request):
             plugin_context_table=plugin_context_table,
             plugin_global_context=plugin_global_context,
             meta_data=meta_data,
-            request_headers=dict(request.headers),
         )
-        payload = {"contents": [serialize_resource_content_for_mcp(result, fallback_uri=uri)]}
+        # First-Party
+        from mcpgateway.common.models import ResourceContent  # pylint: disable=import-outside-toplevel
+
+        if isinstance(result, ResourceContent):
+            normalized_content = {"uri": result.uri}
+            if result.mime_type:
+                normalized_content["mimeType"] = result.mime_type
+            if result.text is not None:
+                normalized_content["text"] = result.text
+            elif result.blob is not None:
+                normalized_content["blob"] = base64.b64encode(result.blob).decode("ascii")
+            payload = {"contents": [normalized_content]}
+        elif hasattr(result, "model_dump"):
+            payload = {"contents": [result.model_dump(by_alias=True, exclude_none=True)]}
+        else:
+            payload = {"contents": [result]}
 
         if db.is_active and db.in_transaction() is not None:
             db.commit()
@@ -8671,9 +8482,7 @@ async def handle_internal_mcp_resources_subscribe(request: Request):
         if not isinstance(params, dict):
             params = {}
 
-        server_id = request.headers.get("x-contextforge-server-id") if request.headers.get("x-contextforge-mcp-runtime") == "rust" else None
-        if server_id:
-            _enforce_internal_mcp_server_scope(request, server_id)
+        server_id = params.get("server_id")
 
         await _authorize_internal_mcp_request(
             request,
@@ -8773,9 +8582,7 @@ async def handle_internal_mcp_resources_unsubscribe(request: Request):
         if not isinstance(params, dict):
             params = {}
 
-        server_id = request.headers.get("x-contextforge-server-id") if request.headers.get("x-contextforge-mcp-runtime") == "rust" else None
-        if server_id:
-            _enforce_internal_mcp_server_scope(request, server_id)
+        server_id = params.get("server_id")
 
         await _authorize_internal_mcp_request(
             request,
@@ -8862,11 +8669,7 @@ async def handle_internal_mcp_resource_templates_list(request: Request):
         if not isinstance(params, dict):
             params = {}
 
-        server_id = request.headers.get("x-contextforge-server-id") if request.headers.get("x-contextforge-mcp-runtime") == "rust" else None
-        if server_id:
-            _enforce_internal_mcp_server_scope(request, server_id)
-        else:
-            server_id = params.get("server_id")
+        server_id = params.get("server_id")
 
         await _authorize_internal_mcp_request(
             request,
@@ -9015,11 +8818,7 @@ async def handle_internal_mcp_completion_complete(request: Request):
         if not isinstance(params, dict):
             params = {}
 
-        server_id = request.headers.get("x-contextforge-server-id") if request.headers.get("x-contextforge-mcp-runtime") == "rust" else None
-        if server_id:
-            _enforce_internal_mcp_server_scope(request, server_id)
-        else:
-            server_id = params.get("server_id")
+        server_id = params.get("server_id")
 
         await _authorize_internal_mcp_request(
             request,
@@ -9097,11 +8896,6 @@ async def handle_internal_mcp_sampling_create_message(request: Request):
                     "id": req_id,
                 },
             )
-
-        if request.headers.get("x-contextforge-mcp-runtime") == "rust":
-            server_id = request.headers.get("x-contextforge-server-id")
-            if server_id:
-                _enforce_internal_mcp_server_scope(request, server_id)
 
         params = body.get("params", {})
         if not isinstance(params, dict):
@@ -9241,11 +9035,7 @@ async def handle_internal_mcp_prompts_list(request: Request):
         if not isinstance(params, dict):
             params = {}
 
-        server_id = request.headers.get("x-contextforge-server-id") if request.headers.get("x-contextforge-mcp-runtime") == "rust" else None
-        if server_id:
-            _enforce_internal_mcp_server_scope(request, server_id)
-        else:
-            server_id = params.get("server_id")
+        server_id = params.get("server_id")
         cursor = params.get("cursor")
 
         await _authorize_internal_mcp_request(
@@ -9348,11 +9138,7 @@ async def handle_internal_mcp_prompts_get(request: Request):
         if not isinstance(params, dict):
             params = {}
 
-        server_id = request.headers.get("x-contextforge-server-id") if request.headers.get("x-contextforge-mcp-runtime") == "rust" else None
-        if server_id:
-            _enforce_internal_mcp_server_scope(request, server_id)
-        else:
-            server_id = params.get("server_id")
+        server_id = params.get("server_id")
 
         await _authorize_internal_mcp_request(
             request,
@@ -9482,12 +9268,17 @@ async def _authorize_internal_mcp_server_scoped_method(
         HTTPException: If the trusted server scope header is missing.
         Exception: Propagated after best-effort rollback when unexpected failures occur.
     """
-    server_id = request.headers.get("x-contextforge-server-id")
-    if not server_id:
-        raise HTTPException(status_code=400, detail="Missing trusted MCP server scope")
-
     db = SessionLocal()
     try:
+        # Extract server_id from request body params (no longer from headers)
+        body = orjson.loads(await request.body())
+        params = {}
+        if isinstance(body, dict):
+            params = body.get("params", {})
+            if not isinstance(params, dict):
+                params = {}
+        server_id = params.get("server_id")
+
         await _authorize_internal_mcp_request(
             request,
             db,
@@ -10258,7 +10049,7 @@ async def _maybe_forward_affinitized_rpc_request(
     request_headers = request.headers
     rpc_client_host = getattr(getattr(request, "client", None), "host", None)
     rpc_from_loopback = rpc_client_host in ("127.0.0.1", "::1") if rpc_client_host else False
-    mcp_session_id = _extract_mcp_session_id(request)
+    mcp_session_id = request_headers.get("mcp-session-id") or request_headers.get("x-mcp-session-id")
     is_internally_forwarded = rpc_from_loopback and request_headers.get("x-forwarded-internally") == "true"
 
     if settings.mcpgateway_session_affinity_enabled and mcp_session_id and method != "initialize" and not is_internally_forwarded:
@@ -10304,27 +10095,8 @@ async def _maybe_forward_affinitized_rpc_request(
     return None
 
 
-async def _mcp_apps_initialize_authorized(request: Request, db: Session, user, server_id: Optional[str]) -> bool:
-    """Return whether initialize may advertise MCP Apps for this target."""
-    if not get_user_email(user):
-        return False
-    if not server_id:
-        return True
-
-    user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
-    if not (is_admin and token_teams is None) and token_teams is None:
-        token_teams = []
-
-    try:
-        await server_service.get_server(db, server_id, user_email=user_email, token_teams=token_teams)
-    except ServerNotFoundError:
-        return False
-    return True
-
-
 async def _execute_rpc_initialize(
     request: Request,
-    db: Session,
     user,
     *,
     params: Dict[str, Any],
@@ -10335,7 +10107,6 @@ async def _execute_rpc_initialize(
 
     Args:
         request: Incoming RPC request.
-        db: Active database session.
         user: Authenticated user payload.
         params: Initialize params payload.
         server_id: Optional virtual server identifier.
@@ -10361,10 +10132,6 @@ async def _execute_rpc_initialize(
     result = await session_registry.handle_initialize_logic(params, session_id=init_session_id, server_id=server_id)
     if hasattr(result, "model_dump"):
         result = result.model_dump(by_alias=True, exclude_none=True)
-
-    extensions = build_mcp_apps_capabilities(authorized=await _mcp_apps_initialize_authorized(request, db, user, server_id))
-    if extensions:
-        result.setdefault("capabilities", {})["extensions"] = extensions
 
     if settings.mcpgateway_session_affinity_enabled and mcp_session_id and mcp_session_id != "not-provided":
         try:
@@ -10479,7 +10246,6 @@ async def _execute_rpc_tools_call(
                     plugin_global_context=plugin_global_context,
                     meta_data=meta_data,
                     skip_pre_invoke=skip_pre_invoke,
-                    require_model_visible=True,
                 )
             except (ToolNotFoundError, ValueError):
                 logger.error("Tool not found: %s", name)
@@ -10503,167 +10269,6 @@ async def _execute_rpc_tools_call(
     finally:
         if settings.mcpgateway_tool_cancellation_enabled and run_id:
             await cancellation_service.unregister_run(run_id)
-
-
-@utility_router.post("/appbridge/sessions")
-@require_permission("resources.read")
-async def create_mcp_app_session(request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)):
-    """Create a short-lived AppBridge session for an authorized UI resource."""
-    if not mcp_apps_enabled():
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="MCP Apps are disabled")
-
-    try:
-        body = orjson.loads(await request.body() or b"{}")
-    except orjson.JSONDecodeError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Parse error") from exc
-    if not isinstance(body, dict):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid request body")
-
-    resource_uri = body.get("resourceUri") or body.get("resource_uri")
-    if not resource_uri or not isinstance(resource_uri, str) or not resource_uri.startswith("ui://"):
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="resourceUri must use the ui:// scheme")
-
-    mcp_session_id = _extract_mcp_session_id(request, body)
-    if not mcp_session_id:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="mcp-session-id header is required")
-    await _assert_session_owner_or_admin(request, user, mcp_session_id)
-
-    server_id = body.get("serverId") or body.get("server_id") or request.headers.get("x-contextforge-server-id")
-    if not server_id or not isinstance(server_id, str):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="serverId is required for MCP Apps sessions")
-    user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
-    if is_admin and token_teams is None:
-        resource_user_email = None
-    else:
-        resource_user_email = user_email
-        if token_teams is None:
-            token_teams = []
-
-    try:
-        await resource_service.read_resource(
-            db,
-            resource_uri=resource_uri,
-            user=resource_user_email,
-            server_id=server_id,
-            token_teams=token_teams,
-        )
-    except (ResourceNotFoundError, ResourceError) as exc:
-        logger.info("AppBridge session resource lookup failed for %s on server %s: %s", resource_uri, server_id, exc)
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Resource not found") from exc
-
-    requester_email = get_user_email(user)
-    if not requester_email:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_ACCESS_DENIED_MSG)
-
-    app_session = mcp_app_session_service.create_session(
-        db,
-        mcp_session_id=mcp_session_id,
-        user_email=requester_email,
-        server_id=server_id,
-        resource_uri=resource_uri,
-        token_teams=token_teams,
-    )
-    return ORJSONResponse(
-        content={
-            "appSessionId": app_session.id,
-            "resourceUri": app_session.resource_uri,
-            "serverId": app_session.server_id,
-            "expiresAt": app_session.expires_at.isoformat(),
-        }
-    )
-
-
-@utility_router.post("/appbridge/sessions/{app_session_id}/rpc")
-@require_permission("tools.execute")
-async def handle_mcp_app_session_rpc(app_session_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)):
-    """Execute an app-visible tool through a validated AppBridge session."""
-    if not mcp_apps_enabled():
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="MCP Apps are disabled")
-
-    try:
-        body = orjson.loads(await request.body())
-    except orjson.JSONDecodeError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Parse error") from exc
-    if not isinstance(body, dict):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid request body")
-
-    req_id = body.get("id")
-    method = body.get("method")
-    params = body.get("params") if isinstance(body.get("params"), dict) else {}
-    if method != "tools/call":
-        return {"jsonrpc": "2.0", "error": {"code": -32601, "message": f"Method not found: {method}"}, "id": req_id}
-
-    mcp_session_id = _extract_mcp_session_id(request, body)
-    if not mcp_session_id:
-        return {"jsonrpc": "2.0", "error": {"code": -32003, "message": _ACCESS_DENIED_MSG}, "id": req_id}
-    try:
-        await _assert_session_owner_or_admin(request, user, mcp_session_id)
-    except HTTPException as exc:
-        error_code = -32002 if exc.status_code == status.HTTP_404_NOT_FOUND else -32003
-        return {"jsonrpc": "2.0", "error": {"code": error_code, "message": str(exc.detail)}, "id": req_id}
-
-    requester_email, requester_is_admin = get_request_identity(request, user)
-    server_id = params.get("server_id") or params.get("serverId") or body.get("serverId") or body.get("server_id") or request.headers.get("x-contextforge-server-id")
-    app_session = mcp_app_session_service.get_valid_session(
-        db,
-        app_session_id=app_session_id,
-        mcp_session_id=mcp_session_id,
-        user_email=requester_email,
-        server_id=None,
-        is_admin=requester_is_admin,
-    )
-    if app_session is None:
-        return {"jsonrpc": "2.0", "error": {"code": -32003, "message": _ACCESS_DENIED_MSG}, "id": req_id}
-    if not app_session.server_id or (server_id is not None and server_id != app_session.server_id):
-        return {"jsonrpc": "2.0", "error": {"code": -32003, "message": _ACCESS_DENIED_MSG}, "id": req_id}
-
-    name = params.get("name")
-    if not name:
-        return {"jsonrpc": "2.0", "error": {"code": -32602, "message": "Missing tool name in parameters"}, "id": req_id}
-
-    try:
-        token_teams = app_session.token_teams
-        tool_user_email = None if token_teams is None else app_session.user_email
-        request_headers = {k.lower(): v for k, v in request.headers.items()}
-        request_headers.pop("x-context-forge-gateway-id", None)
-        result = await tool_service.invoke_tool(
-            db=db,
-            name=name,
-            arguments=params.get("arguments", {}),
-            request_headers=request_headers,
-            app_user_email=requester_email,
-            user_email=tool_user_email,
-            token_teams=token_teams,
-            server_id=app_session.server_id,
-            plugin_context_table=getattr(request.state, "plugin_context_table", None),
-            plugin_global_context=getattr(request.state, "plugin_global_context", None),
-            meta_data=params.get("_meta"),
-            require_app_visible=True,
-        )
-        if hasattr(result, "model_dump"):
-            result = result.model_dump(by_alias=True, exclude_none=True)
-        return {"jsonrpc": "2.0", "result": result, "id": req_id}
-    except ToolNotFoundError:
-        return {"jsonrpc": "2.0", "error": {"code": -32601, "message": f"Tool not found: {name}"}, "id": req_id}
-    except ToolError as exc:
-        logger.info("AppBridge tool call failed with tool error for %s: %s", name, exc)
-        return {"jsonrpc": "2.0", "error": {"code": -32000, "message": str(exc)}, "id": req_id}
-    except PluginViolationError as exc:
-        error_code = -32602
-        if exc.violation and hasattr(exc.violation, "mcp_error_code") and isinstance(exc.violation.mcp_error_code, int):
-            error_code = exc.violation.mcp_error_code
-        return {"jsonrpc": "2.0", "error": {"code": error_code, "message": str(exc)}, "id": req_id}
-    except PluginError as exc:
-        error_code = -32603
-        if exc.error and hasattr(exc.error, "mcp_error_code") and isinstance(exc.error.mcp_error_code, int):
-            error_code = exc.error.mcp_error_code
-        return {"jsonrpc": "2.0", "error": {"code": error_code, "message": str(exc)}, "id": req_id}
-    except (ValidationError, ValueError) as exc:
-        logger.info("AppBridge tool call received invalid parameters for %s: %s", name, exc)
-        return {"jsonrpc": "2.0", "error": {"code": -32602, "message": str(exc)}, "id": req_id}
-    except Exception:
-        logger.exception("AppBridge tool call failed for %s", name)
-        return {"jsonrpc": "2.0", "error": {"code": -32603, "message": "Internal error"}, "id": req_id}
 
 
 @utility_router.post("/_internal/mcp/tools/call/")
@@ -10735,8 +10340,7 @@ async def handle_internal_mcp_tools_call(request: Request):
         if (get_internal_mcp_auth_context(request) or {}).get("is_authenticated", True) is True:
             await _ensure_rpc_permission(user, db, "tools.execute", "tools/call", request=request)
 
-        # Trust the pre-invoke-ran marker only on this internal endpoint
-        # (authenticated via x-contextforge-mcp-runtime-auth shared secret).
+        # Trust the pre-invoke-ran marker only on this internal endpoint.
         # External clients cannot reach this path.
         pre_invoke_ran = lowered_request_headers.get("x-contextforge-pre-invoke-ran") == "true"
 
@@ -10787,250 +10391,6 @@ async def handle_internal_mcp_tools_call(request: Request):
             db.close()
         except Exception:
             pass  # nosec B110 - Best effort cleanup on connection failure
-
-
-@utility_router.post("/_internal/mcp/tools/call/resolve/")
-@utility_router.post("/_internal/mcp/tools/call/resolve")
-async def handle_internal_mcp_tools_call_resolve(request: Request):
-    """Resolve a Rust-direct MCP tools/call execution plan without executing the tool.
-
-    Args:
-        request: Trusted internal MCP tools/call resolve request.
-
-    Returns:
-        ORJSONResponse: JSON-RPC response containing execution plan on success,
-                        or JSON-RPC error on validation/permission/plugin failures.
-                        All errors returned as structured JSON-RPC (never re-raised)
-                        since this is an internal Rust↔Python interface.
-
-    Raises:
-        Exception: Propagated after best-effort rollback when unexpected failures occur.
-    """
-    db = SessionLocal()
-    try:
-        user = _build_internal_mcp_forwarded_user(request)
-        try:
-            body = orjson.loads(await request.body())
-        except orjson.JSONDecodeError:
-            return ORJSONResponse(
-                status_code=400,
-                content={
-                    "jsonrpc": "2.0",
-                    "error": {"code": -32700, "message": "Parse error"},
-                    "id": None,
-                },
-            )
-
-        if not isinstance(body, dict) or body.get("method") != "tools/call":
-            return ORJSONResponse(
-                status_code=400,
-                content={
-                    "jsonrpc": "2.0",
-                    "error": {"code": -32600, "message": "Invalid Request"},
-                    "id": body.get("id") if isinstance(body, dict) else None,
-                },
-            )
-
-        params = body.get("params", {})
-        if not isinstance(params, dict):
-            params = {}
-
-        name = params.get("name")
-        if not name:
-            return ORJSONResponse(
-                status_code=400,
-                content={
-                    "jsonrpc": "2.0",
-                    "error": {"code": -32602, "message": "Missing tool name in parameters"},
-                    "id": body.get("id"),
-                },
-            )
-
-        server_id = request.headers.get("x-contextforge-server-id") or params.get("server_id")
-        if server_id:
-            _enforce_internal_mcp_server_scope(request, server_id)
-
-        if (get_internal_mcp_auth_context(request) or {}).get("is_authenticated", True) is True:
-            await _ensure_rpc_permission(user, db, "tools.execute", "tools/call", request=request)
-
-        auth_user_email, auth_token_teams, auth_is_admin = get_rpc_filter_context(request, user)
-        if auth_is_admin and auth_token_teams is None:
-            auth_user_email = None
-        elif auth_token_teams is None:
-            auth_token_teams = []
-
-        arguments = params.get("arguments") if isinstance(params.get("arguments"), dict) else {}
-        plugin_context_table = getattr(request.state, "plugin_context_table", None)
-        plugin_global_context = getattr(request.state, "plugin_global_context", None)
-        plan = await tool_service.prepare_rust_mcp_tool_execution(
-            db=db,
-            name=name,
-            arguments=arguments,
-            request_headers={k.lower(): v for k, v in request.headers.items()},
-            app_user_email=get_user_email(user),
-            user_email=auth_user_email,
-            token_teams=auth_token_teams,
-            server_id=server_id,
-            plugin_global_context=plugin_global_context,
-            plugin_context_table=plugin_context_table,
-            require_model_visible=True,
-        )
-
-        if db.is_active and db.in_transaction() is not None:
-            db.commit()
-        return ORJSONResponse(content=plan)
-    except ToolNotFoundError as exc:
-        request_id = body.get("id") if isinstance(body, dict) else None
-        return ORJSONResponse(
-            status_code=404,
-            content={
-                "jsonrpc": "2.0",
-                "error": {"code": -32601, "message": str(exc)},
-                "id": request_id,
-            },
-        )
-    except ToolError as exc:
-        request_id = body.get("id") if isinstance(body, dict) else None
-        return ORJSONResponse(
-            status_code=400,
-            content={
-                "jsonrpc": "2.0",
-                "error": {"code": -32000, "message": str(exc)},
-                "id": request_id,
-            },
-        )
-    except PluginViolationError as exc:
-        request_id = body.get("id") if isinstance(body, dict) else None
-        # Use violation's codes if present, otherwise JSON-RPC defaults
-        error_code = -32602  # Invalid params (JSON-RPC standard)
-        http_status = 422
-        if exc.violation:
-            if hasattr(exc.violation, "mcp_error_code") and isinstance(exc.violation.mcp_error_code, int):
-                error_code = exc.violation.mcp_error_code
-            if hasattr(exc.violation, "http_status_code") and isinstance(exc.violation.http_status_code, int):
-                candidate_status = exc.violation.http_status_code
-                if VALID_HTTP_STATUS_CODES.get(candidate_status):
-                    http_status = candidate_status
-
-        response = ORJSONResponse(
-            status_code=http_status,
-            content={
-                "jsonrpc": "2.0",
-                "error": {"code": error_code, "message": str(exc)},
-                "id": request_id,
-            },
-        )
-        # Forward validated HTTP headers from violation if present
-        headers = exc.violation.http_headers if exc.violation and exc.violation.http_headers else None
-        if headers:
-            validated_headers = _validate_http_headers(headers)
-            if validated_headers:
-                response.headers.update(validated_headers)
-        return response
-    except PluginError as exc:
-        request_id = body.get("id") if isinstance(body, dict) else None
-        error_code = -32603  # Internal error (JSON-RPC standard)
-        if exc.error and hasattr(exc.error, "mcp_error_code") and isinstance(exc.error.mcp_error_code, int):
-            error_code = exc.error.mcp_error_code
-
-        return ORJSONResponse(
-            status_code=500,
-            content={
-                "jsonrpc": "2.0",
-                "error": {"code": error_code, "message": str(exc)},
-                "id": request_id,
-            },
-        )
-    except JSONRPCError as exc:
-        request_id = body.get("id") if isinstance(body, dict) else None
-        return ORJSONResponse(
-            status_code=403,
-            content={
-                "jsonrpc": "2.0",
-                "error": {"code": exc.code, "message": exc.message, **({"data": exc.data} if exc.data is not None else {})},
-                "id": exc.request_id if exc.request_id is not None else request_id,
-            },
-        )
-    except Exception:
-        try:
-            db.rollback()
-        except Exception:
-            try:
-                db.invalidate()
-            except Exception:
-                pass  # nosec B110 - Best effort cleanup on connection failure
-        raise
-    finally:
-        try:
-            db.close()
-        except Exception:
-            pass  # nosec B110 - Best effort cleanup on connection failure
-
-
-@utility_router.post("/_internal/mcp/tools/call/metric/")
-@utility_router.post("/_internal/mcp/tools/call/metric")
-async def handle_internal_mcp_tools_call_metric(request: Request):
-    """Record buffered tool/server metrics for a Rust-direct `tools/call`.
-
-    Args:
-        request: Trusted internal metrics writeback request.
-
-    Returns:
-        ORJSONResponse acknowledging the buffered metric writeback.
-    """
-    _build_internal_mcp_forwarded_user(request)
-    try:
-        body = orjson.loads(await request.body())
-    except orjson.JSONDecodeError:
-        return ORJSONResponse(status_code=400, content={"detail": "Invalid JSON body"})
-
-    if not isinstance(body, dict):
-        return ORJSONResponse(status_code=400, content={"detail": "Invalid metrics payload"})
-
-    tool_id = body.get("toolId")
-    duration_ms = body.get("durationMs")
-    success = body.get("success")
-    server_id = body.get("serverId")
-    error_message = body.get("errorMessage")
-
-    if not isinstance(tool_id, str) or not tool_id.strip():
-        return ORJSONResponse(status_code=400, content={"detail": "Missing toolId"})
-    if not isinstance(duration_ms, (int, float)) or duration_ms < 0:
-        return ORJSONResponse(status_code=400, content={"detail": "Invalid durationMs"})
-    if not isinstance(success, bool):
-        return ORJSONResponse(status_code=400, content={"detail": "Invalid success flag"})
-    if server_id is not None and (not isinstance(server_id, str) or not server_id.strip()):
-        return ORJSONResponse(status_code=400, content={"detail": "Invalid serverId"})
-    if error_message is not None and not isinstance(error_message, str):
-        return ORJSONResponse(status_code=400, content={"detail": "Invalid errorMessage"})
-
-    request_server_id = request.headers.get("x-contextforge-server-id")
-    if request_server_id:
-        _enforce_internal_mcp_server_scope(request, request_server_id)
-        if server_id and server_id != request_server_id:
-            return ORJSONResponse(status_code=400, content={"detail": "serverId does not match forwarded server scope"})
-        server_id = request_server_id
-
-    # First-Party
-    from mcpgateway.services.metrics_buffer_service import get_metrics_buffer_service  # pylint: disable=import-outside-toplevel
-
-    metrics_buffer = get_metrics_buffer_service()
-    response_time = float(duration_ms) / 1000.0
-    metrics_buffer.record_tool_metric_with_duration(
-        tool_id=tool_id,
-        response_time=response_time,
-        success=success,
-        error_message=error_message,
-    )
-    if server_id:
-        metrics_buffer.record_server_metric_with_duration(
-            server_id=server_id,
-            response_time=response_time,
-            success=success,
-            error_message=error_message,
-        )
-
-    return ORJSONResponse(content={"status": "ok"})
 
 
 async def _handle_tools_list_rpc(
@@ -11175,7 +10535,7 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
             return lowered_headers
 
         _trusted_internal_mcp_dispatch = get_internal_mcp_auth_context(request) is not None
-        _internal_runtime_server_id = request_headers.get("x-contextforge-server-id") if request_headers.get("x-contextforge-mcp-runtime") == "rust" else None
+        _internal_runtime_server_id = None
 
         if not _trusted_internal_mcp_dispatch:
             try:
@@ -11189,7 +10549,7 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
             params["server_id"] = _internal_runtime_server_id
         server_id = params.get("server_id", None)
         cursor = params.get("cursor")  # Extract cursor parameter
-        mcp_session_id = _extract_mcp_session_id(request)
+        mcp_session_id = request_headers.get("mcp-session-id") or request_headers.get("x-mcp-session-id")
 
         # RBAC: Enforce server_id scoping for server-scoped tokens.
         # Extract token scopes once, then:
@@ -11242,7 +10602,6 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
         if method == "initialize":
             result = await _execute_rpc_initialize(
                 request,
-                db,
                 user,
                 params=params,
                 server_id=server_id,
@@ -11342,9 +10701,11 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
                     plugin_context_table=plugin_context_table,
                     plugin_global_context=plugin_global_context,
                     meta_data=meta_data,
-                    request_headers=dict(request.headers),
                 )
-                result = {"contents": [serialize_resource_content_for_mcp(result, fallback_uri=uri)]}
+                if hasattr(result, "model_dump"):
+                    result = {"contents": [result.model_dump(by_alias=True, exclude_none=True)]}
+                else:
+                    result = {"contents": [result]}
             except (ValueError, ResourceNotFoundError) as e:
                 # Resource not found in the gateway
                 logger.error("Resource not found: %s", uri)
@@ -11640,15 +11001,6 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
         elif method.startswith("logging/"):
             # Catch-all for other logging/* methods (currently unsupported)
             result = {}
-        elif method.startswith("extensions/") or method.startswith("io.modelcontextprotocol/"):
-            # Check if this is a known MCP Apps method.
-            # First-Party
-            from mcpgateway.services.mcp_method_registry import mcp_method_registry
-
-            if not mcp_method_registry.is_known_method(method):
-                raise JSONRPCError(-32601, f"Method not found: {method}", {})
-            # Known MCP Apps method but not yet implemented here.
-            raise JSONRPCError(-32601, f"Method not found: {method}", {})
         else:
             # Backward compatibility: Try to invoke as a tool directly
             # This allows both old format (method=tool_name) and new format (method=tools/call)
@@ -11685,7 +11037,6 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
                     plugin_context_table=plugin_context_table,
                     plugin_global_context=plugin_global_context,
                     meta_data=meta_data,
-                    require_model_visible=True,
                 )
                 if hasattr(result, "model_dump"):
                     result = result.model_dump(by_alias=True, exclude_none=True)
@@ -12171,7 +11522,7 @@ def healthcheck(response: Response = None):
         db.commit()
         if response is not None:
             _apply_runtime_mode_headers(response)
-        return {"status": "healthy", "mcp_runtime": _mcp_runtime_status_payload()}
+        return {"status": "healthy", "mcp_runtime": MCP_RUNTIME_STATUS_PAYLOAD}
     except Exception as e:
         # Rollback, then invalidate if rollback fails (mirrors get_db cleanup).
         try:
@@ -12185,7 +11536,7 @@ def healthcheck(response: Response = None):
         logger.error(error_message)
         if response is not None:
             _apply_runtime_mode_headers(response)
-        return {"status": "unhealthy", "error": error_message, "mcp_runtime": _mcp_runtime_status_payload()}
+        return {"status": "unhealthy", "error": error_message, "mcp_runtime": MCP_RUNTIME_STATUS_PAYLOAD}
     finally:
         db.close()
 
@@ -12280,7 +11631,7 @@ async def readiness_check(response: Response):
     response.status_code = status.HTTP_200_OK if is_ready else status.HTTP_503_SERVICE_UNAVAILABLE
 
     _apply_runtime_mode_headers(response)
-    return HealthCheckResponse(status=overall_status, status_items=status_items, mcp_runtime=_mcp_runtime_status_payload())
+    return HealthCheckResponse(status=overall_status, status_items=status_items, mcp_runtime=MCP_RUNTIME_STATUS_PAYLOAD)
 
 
 @app.get("/health/security", tags=["health"])
@@ -12901,20 +12252,18 @@ logger.info(f"Admin API enabled: {ADMIN_API_ENABLED}")
 
 
 class MCPRuntimeHeaderTransportWrapper:
-    """Annotate Python-owned MCP transport responses with the active runtime marker."""
+    """Annotate Python-owned MCP transport responses with core feature headers."""
 
-    def __init__(self, transport_app, *, runtime_name: str) -> None:
-        """Wrap an MCP transport app and stamp a runtime header on responses.
+    def __init__(self, transport_app) -> None:
+        """Wrap an MCP transport app and stamp feature headers on responses.
 
         Args:
             transport_app: Underlying MCP transport app.
-            runtime_name: Runtime label to expose via response headers.
         """
         self.transport_app = transport_app
-        self.runtime_name = runtime_name.encode("ascii")
 
     async def handle_streamable_http(self, scope, receive, send):
-        """Forward an MCP request while ensuring the runtime marker header is present.
+        """Forward an MCP request while annotating response with core feature headers.
 
         Args:
             scope: Incoming ASGI scope.
@@ -12923,33 +12272,31 @@ class MCPRuntimeHeaderTransportWrapper:
         """
 
         async def _send_with_runtime_header(message):
-            """Attach MCP runtime mode headers before sending the ASGI event downstream.
+            """Attach MCP feature headers before sending the ASGI event downstream.
 
             Args:
                 message: Outgoing ASGI message emitted by the wrapped application.
             """
             if message.get("type") == "http.response.start":
                 headers = list(message.get("headers") or [])
-                if not any(isinstance(item, (tuple, list)) and len(item) == 2 and isinstance(item[0], (bytes, bytearray)) and item[0].lower() == b"x-contextforge-mcp-runtime" for item in headers):
-                    headers.append((b"x-contextforge-mcp-runtime", self.runtime_name))
                 if not any(
                     isinstance(item, (tuple, list)) and len(item) == 2 and isinstance(item[0], (bytes, bytearray)) and item[0].lower() == b"x-contextforge-mcp-session-core" for item in headers
                 ):
-                    headers.append((b"x-contextforge-mcp-session-core", _current_mcp_session_core_mode().encode("ascii")))
+                    headers.append((b"x-contextforge-mcp-session-core", MCP_SESSION_CORE_MODE.encode("ascii")))
                 if not any(isinstance(item, (tuple, list)) and len(item) == 2 and isinstance(item[0], (bytes, bytearray)) and item[0].lower() == b"x-contextforge-mcp-resume-core" for item in headers):
-                    headers.append((b"x-contextforge-mcp-resume-core", _current_mcp_resume_core_mode().encode("ascii")))
+                    headers.append((b"x-contextforge-mcp-resume-core", MCP_RESUME_CORE_MODE.encode("ascii")))
                 if not any(
                     isinstance(item, (tuple, list)) and len(item) == 2 and isinstance(item[0], (bytes, bytearray)) and item[0].lower() == b"x-contextforge-mcp-live-stream-core" for item in headers
                 ):
-                    headers.append((b"x-contextforge-mcp-live-stream-core", _current_mcp_live_stream_core_mode().encode("ascii")))
+                    headers.append((b"x-contextforge-mcp-live-stream-core", MCP_LIVE_STREAM_CORE_MODE.encode("ascii")))
                 if not any(
                     isinstance(item, (tuple, list)) and len(item) == 2 and isinstance(item[0], (bytes, bytearray)) and item[0].lower() == b"x-contextforge-mcp-affinity-core" for item in headers
                 ):
-                    headers.append((b"x-contextforge-mcp-affinity-core", _current_mcp_affinity_core_mode().encode("ascii")))
+                    headers.append((b"x-contextforge-mcp-affinity-core", MCP_AFFINITY_CORE_MODE.encode("ascii")))
                 if not any(
                     isinstance(item, (tuple, list)) and len(item) == 2 and isinstance(item[0], (bytes, bytearray)) and item[0].lower() == b"x-contextforge-mcp-session-auth-reuse" for item in headers
                 ):
-                    headers.append((b"x-contextforge-mcp-session-auth-reuse", _current_mcp_session_auth_reuse_mode().encode("ascii")))
+                    headers.append((b"x-contextforge-mcp-session-auth-reuse", MCP_SESSION_AUTH_REUSE_MODE.encode("ascii")))
                 message = dict(message)
                 message["headers"] = headers
             await send(message)
@@ -12957,202 +12304,25 @@ class MCPRuntimeHeaderTransportWrapper:
         await self.transport_app.handle_streamable_http(scope, receive, _send_with_runtime_header)
 
 
-def _select_mcp_ingress(_scope: dict) -> str:
-    """Pick the registered MCPIngressMount ingress to serve a request.
-
-    Single source of truth for the dispatch policy:
-
-    - Boot ``off`` / ``full`` (no dispatcher today): the mount isn't used;
-      the Python transport or the plain Rust proxy is mounted directly
-      from ``_build_mcp_transport_app``.
-    - Boot ``shadow`` / ``edge`` with no override OR an ``edge`` override
-      that satisfies the safety invariant: route to the Rust ingress
-      shape selected by ``settings.mcp_rust_ingress`` (``"public"`` for
-      nginx-style or ``"internal"`` for trusted Python→Rust forwarding).
-    - Override forces ``shadow``, OR safety invariant is unmet: route to
-      the Python transport (the always-safe fallback).
-
-    The ``"rust-public"`` ingress is only registered on ``boot=edge``
-    (the public listener isn't bound on shadow boot per the entrypoint
-    flow). On any other boot mode the selector transparently downgrades
-    a configured ``"public"`` choice to ``"rust-internal"`` to avoid
-    routing to an unregistered name; the misconfig itself is surfaced
-    as a boot-time error in ``_build_mcp_transport_app``.
-
-    Args:
-        _scope: ASGI scope (unused today; reserved so future selectors
-            can route by method/path/headers without changing the
-            mount's API).
-
-    Returns:
-        The ingress name to look up in the mount's registry.
-    """
-    if not _should_mount_public_rust_transport():
-        return "python"
-    if settings.mcp_rust_ingress == "public" and version_module.boot_mcp_runtime_mode() == "edge":
-        return "rust-public"
-    return "rust-internal"
-
-
 def _build_mcp_transport_app():
     """Build the ASGI app to mount at public ``/mcp``.
 
     Returns:
-        For boot modes ``shadow``/``edge``: an :class:`MCPIngressMount`
-        with the Python transport, the trusted-internal Rust proxy, and
-        (when supported) the nginx-style Rust public proxy registered.
-        For boot ``full``: the plain trusted-internal Rust proxy mounted
-        directly (no dispatcher — flipping ``full`` would orphan
-        Rust-held session/event-store state). For boot ``off``: the
-        Python transport. The ``/mcp`` mount calls
-        ``returned_app.handle_streamable_http`` (legacy interface kept
-        for backward compatibility with the existing mount line).
+        The Python streamable HTTP transport wrapper mounted at /mcp.
     """
-    # First-Party
-    from mcpgateway.transports.mcp_ingress_mount import MCPIngressMount  # pylint: disable=import-outside-toplevel
+    python_transport = MCPRuntimeHeaderTransportWrapper(streamable_http_session)
 
-    boot_mode = version_module.boot_mcp_runtime_mode()
-    python_transport = MCPRuntimeHeaderTransportWrapper(streamable_http_session, runtime_name="python")
-
-    if boot_mode in ("shadow", "edge"):
-        # First-Party
-        from mcpgateway.transports.rust_mcp_runtime_proxy import RustMCPRuntimeProxy  # pylint: disable=import-outside-toplevel
-
-        rust_internal = RustMCPRuntimeProxy(streamable_http_session.handle_streamable_http)
-        ingress = MCPIngressMount(selector=_select_mcp_ingress, fallback=python_transport.handle_streamable_http)
-        ingress.register("python", python_transport.handle_streamable_http)
-        ingress.register("rust-internal", rust_internal.handle_streamable_http)
-
-        # Public-listener proxy is only meaningful when the safety invariant
-        # is met (i.e. boot=edge); shadow boot doesn't bind the public
-        # listener. Register it on edge so an operator can flip
-        # `settings.mcp_rust_ingress = "public"` without a restart.
-        if boot_mode == "edge":
-            # First-Party
-            from mcpgateway.transports.rust_mcp_public_proxy import build_rust_public_proxy_app  # pylint: disable=import-outside-toplevel
-
-            ingress.register("rust-public", build_rust_public_proxy_app())
-        elif settings.mcp_rust_ingress == "public":
-            # boot=shadow with mcp_rust_ingress=public is a misconfig: the
-            # Rust public listener isn't bound on shadow boot, so the
-            # selector deliberately downgrades to "rust-internal". Logged
-            # at error severity so it survives the default LOG_LEVEL=ERROR
-            # — a warning here would be invisible in most production
-            # deployments and the operator would never know their setting
-            # is being silently overridden.
-            logger.error(
-                "mcp_rust_ingress=public is set on boot=shadow; the Rust public listener isn't bound on shadow boot. "
-                "Selector will route to rust-internal instead. Switch boot mode to edge to honor the public ingress.",
-            )
-
-        logger.warning(
-            "%s MCP runtime mode: %s (boot=%s). Public /mcp dispatches via MCPIngressMount; ingresses=%s; current=%s. Runtime override may flip via PATCH /admin/runtime/mcp-mode.",
-            RUST_MCP_RUNTIME_DEPRECATION_MESSAGE,
-            _current_mcp_runtime_mode(),
-            boot_mode,
-            ingress.names(),
-            _select_mcp_ingress({}),
-        )
-        # The legacy mount line calls .handle_streamable_http on the returned
-        # app; expose that name on a tiny shim so the mount line can stay
-        # unchanged. (.dispatch is the modern ASGI 3.0 callable.)
-        ingress.handle_streamable_http = ingress.dispatch  # type: ignore[attr-defined]
-        return ingress
-
-    if _should_mount_public_rust_transport():
-        logger.warning(
-            "%s MCP runtime mode: %s. GET/POST/DELETE /mcp requests will be proxied to %s. MCP session core mode: %s. MCP replay/resume core mode: %s. MCP live stream core mode: %s. MCP affinity core mode: %s. MCP session auth reuse mode: %s.",
-            RUST_MCP_RUNTIME_DEPRECATION_MESSAGE,
-            _current_mcp_runtime_mode(),
-            settings.experimental_rust_mcp_runtime_uds or settings.experimental_rust_mcp_runtime_url,
-            _current_mcp_session_core_mode(),
-            _current_mcp_resume_core_mode(),
-            _current_mcp_live_stream_core_mode(),
-            _current_mcp_affinity_core_mode(),
-            _current_mcp_session_auth_reuse_mode(),
-        )
-        # First-Party
-        from mcpgateway.transports.rust_mcp_runtime_proxy import RustMCPRuntimeProxy  # pylint: disable=import-outside-toplevel
-
-        return RustMCPRuntimeProxy(streamable_http_session.handle_streamable_http)
-
-    if _rust_build_included():
-        logger.warning(
-            "MCP runtime mode: %s. Rust MCP artifacts are present in this image, but EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED=false so /mcp remains on the Python transport. Set RUST_MCP_MODE=edge or RUST_MCP_MODE=full to activate the Rust runtime with the simple env flow.",
-            _current_mcp_runtime_mode(),
-        )
-    else:
-        logger.info("MCP runtime mode: %s. /mcp is mounted on the Python transport.", _current_mcp_runtime_mode())
-
+    logger.info(
+        "MCP runtime mode: %s. /mcp is mounted on the Python transport.",
+        MCP_RUNTIME_MODE,
+    )
     return python_transport
 
 
-class InternalTrustedMCPTransportBridge:
-    """Trusted internal bridge from Rust MCP transport requests to the Python session manager."""
-
-    def __init__(self, transport_app) -> None:
-        """Store the underlying Python transport app used for trusted forwarding.
-
-        Args:
-            transport_app: Python transport app that ultimately owns session handling.
-        """
-        self.transport_app = transport_app
-
-    async def handle_streamable_http(self, scope, receive, send):
-        """Translate trusted Rust transport requests into Python session-manager calls.
-
-        Args:
-            scope: Incoming ASGI scope.
-            receive: ASGI receive callable.
-            send: ASGI send callable.
-        """
-        if scope.get("type") != "http":
-            response = ORJSONResponse(status_code=404, content={"detail": "Not found"})
-            await response(scope, receive, send)
-            return
-
-        method = str(scope.get("method", "GET")).upper()
-        if method not in {"GET", "POST", "DELETE"}:
-            response = ORJSONResponse(status_code=405, content={"detail": "Method not allowed"})
-            await response(scope, receive, send)
-            return
-
-        request = Request(scope, receive=receive)
-        try:
-            _build_internal_mcp_forwarded_user(request)
-        except HTTPException as exc:
-            response = ORJSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
-            await response(scope, receive, send)
-            return
-
-        auth_context = get_internal_mcp_auth_context(request) or {}
-        server_id = request.headers.get("x-contextforge-server-id")
-        forwarded_scope = dict(scope)
-        forwarded_scope["path"] = "/mcp/"
-        forwarded_scope["modified_path"] = f"/servers/{server_id}/mcp" if server_id else "/mcp/"
-        forwarded_auth_method = auth_context.get("auth_method") or "mcp_internal_forward"
-
-        token = user_context_var.set(auth_context)
-        try:
-            set_trace_context_from_teams(
-                auth_context.get("teams"),
-                user_email=auth_context.get("email"),
-                is_admin=bool(auth_context.get("permission_is_admin", auth_context.get("is_admin", False))),
-                auth_method=forwarded_auth_method,
-                team_name=auth_context.get("team_name"),
-            )
-            await self.transport_app.handle_streamable_http(forwarded_scope, receive, send)
-        finally:
-            user_context_var.reset(token)
-            clear_trace_context()
-
-
 mcp_transport_app = _build_mcp_transport_app()
-internal_trusted_mcp_transport = InternalTrustedMCPTransportBridge(streamable_http_session)
 
 # Streamable http Mount
 app.mount("/mcp", app=mcp_transport_app.handle_streamable_http)
-app.mount("/_internal/mcp/transport", app=internal_trusted_mcp_transport.handle_streamable_http)
 
 # Conditional static files mounting and root redirect
 if UI_ENABLED:

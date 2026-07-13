@@ -190,9 +190,7 @@ class TestPostRpcInProcess:
         for key, value in headers.items():
             assert captured["headers"][key] == value
         # ...and the trust markers attached on top.
-        assert captured["headers"]["x-contextforge-mcp-runtime"] == "affinity"
         assert captured["headers"]["x-contextforge-auth-context"] == "edge-ctx"
-        assert captured["headers"]["x-contextforge-mcp-runtime-auth"]
 
     @pytest.mark.asyncio
     async def test_requires_non_empty_auth_context(self):

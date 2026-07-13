@@ -7,9 +7,9 @@ discovery, compatibility checks, health integration, and release validation.
 
 | Field | Meaning |
 |-------|---------|
-| `moduleId` | Stable module identifier, for example `mcp-rust-runtime` |
+| `moduleId` | Stable module identifier, for example `mcp-module` |
 | `protocolFamily` | One of `mcp`, `a2a`, `llm`, `rest-grpc`, or a future family |
-| `implementationLanguage` | `python`, `rust`, `go`, or another language identifier |
+| `implementationLanguage` | `python`, `go`, or another language identifier |
 | `moduleVersion` | Module build or release version |
 | `spiVersions` | Supported core SPI versions |
 | `runtimeModes` | Supported runtime modes such as `embedded`, `sidecar` |
@@ -24,9 +24,9 @@ discovery, compatibility checks, health integration, and release validation.
 
 ```json
 {
-  "moduleId": "a2a-rust-runtime",
+  "moduleId": "a2a-module",
   "protocolFamily": "a2a",
-  "implementationLanguage": "rust",
+  "implementationLanguage": "python",
   "moduleVersion": "0.1.0",
   "spiVersions": ["v1alpha1"],
   "runtimeModes": ["sidecar"],

@@ -451,7 +451,7 @@ Release 1.0.3 consolidates **61 PRs** focused on **authentication and JWT harden
 - **🖥️ Admin UI** - Alpine.js CSP migration and component consolidation, Teams panel loading fix, script-defer race-condition fix, SRI hash fixes, and plugin operator labels.
 - **🛡️ FedRAMP / FIPS Compliance** - Opt-in FIPS compliance mode with parameterized base images, additional STIG controls, dotfile permission modes, and `/app` ownership adjustments.
 - **🧩 Plugins & Rate Limiting** - Tightened plugin-bindings payload surface, dedicated Redis instance support for the rate limiter, CPEX plugin regression fixes and metadata resolution, and tool pre-invoke diagnostics.
-- **⚡ Performance & Caching** - AuthCache full-team-object storage, token-revocation caching, team cache hardening, metrics aggregation throttling, and a faster Rust fast-test server.
+- **⚡ Performance & Caching** - AuthCache full-team-object storage, token-revocation caching, team cache hardening, and metrics aggregation throttling.
 - **🏗️ Build & CI** - Multi-architecture (s390x) wheels, merge-queue gates, FIPS-capable base images, container hardening, and node/Playwright CI fixes.
 - **🐛 Bug Fixes** - Observability Resources tab, migration blockers, gateway CRUD REST API, DB CHECK-constraint ordering, edge-mode health convergence, and Streamable HTTP `/mcp` redirect handling.
 

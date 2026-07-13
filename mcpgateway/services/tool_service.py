@@ -27,7 +27,7 @@ import re
 import ssl
 import time
 from types import SimpleNamespace
-from typing import Any, AsyncGenerator, Awaitable, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple, Union
 from urllib.parse import parse_qs, urlparse
 import uuid
 
@@ -72,7 +72,6 @@ from mcpgateway.db import get_for_update, server_tool_association
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import ToolMetric, ToolMetricsHourly
 from mcpgateway.observability import create_child_span, create_span, inject_trace_context_headers, otel_context_active, set_span_attribute, set_span_error
-from mcpgateway.plugins.utils import build_request_extensions, record_plugin_metrics
 from mcpgateway.schemas import AuthenticationValues, ToolCreate, ToolMetrics, ToolRead, ToolUpdate, TopPerformer
 from mcpgateway.services.a2a_protocol import prepare_a2a_invocation
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
@@ -80,7 +79,6 @@ from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.content_security import ContentSecurityService
 from mcpgateway.services.event_service import EventService
 from mcpgateway.services.logging_service import LoggingService
-from mcpgateway.services.mcp_apps import is_app_visible_tool, is_model_visible_tool, mcp_apps_enabled, optional_extension_metadata, validate_extension_metadata
 from mcpgateway.services.metrics_buffer_service import get_metrics_buffer_service
 from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batches, pause_rollup_during_purge
 from mcpgateway.services.metrics_query_service import get_top_performers_combined
@@ -89,8 +87,6 @@ from mcpgateway.services.observability_service import current_trace_id, Observab
 from mcpgateway.services.performance_tracker import get_performance_tracker
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
-from mcpgateway.services.token_exchange_cache import TokenExchangeCache
-from mcpgateway.services.token_storage_service import TokenStorageService
 from mcpgateway.services.upstream_session_registry import downstream_session_id_from_request_context, get_upstream_session_registry, RegistryNotInitializedError, TransportType
 from mcpgateway.transports.context import UserContext
 from mcpgateway.utils.admin_check import is_admin_bypass_granted, is_user_admin
@@ -98,7 +94,6 @@ from mcpgateway.utils.correlation_id import get_correlation_id
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.display_name import generate_display_name
 from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_gateway_access, extract_gateway_id_from_headers
-from mcpgateway.utils.header_filtering import filter_sensitive_headers
 from mcpgateway.utils.identity_propagation import build_identity_headers, build_identity_meta
 from mcpgateway.utils.log_sanitizer import sanitize_for_log
 from mcpgateway.utils.metrics_common import build_top_performers
@@ -108,8 +103,6 @@ from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
 from mcpgateway.utils.ssl_context_cache import get_cached_ssl_context
-from mcpgateway.utils.subject_token import extract_inbound_bearer, looks_like_jwt
-from mcpgateway.utils.token_exchange_audit import audit_token_exchange
 from mcpgateway.utils.trace_context import format_trace_team_scope
 from mcpgateway.utils.trace_redaction import is_input_capture_enabled, is_output_capture_enabled, serialize_trace_payload
 from mcpgateway.utils.url_auth import apply_query_param_auth, sanitize_exception_message, sanitize_url_for_logging
@@ -1066,7 +1059,6 @@ class ToolService(BaseService):
             max_retries=int(settings.oauth_max_retries if hasattr(settings, "oauth_max_retries") else 3),
         )
         self._content_security = ContentSecurityService()
-        self._token_exchange_cache = TokenExchangeCache(redis_url=getattr(settings, "redis_url", None))
 
     async def initialize(self) -> None:
         """Initialize the service.
@@ -1165,7 +1157,6 @@ class ToolService(BaseService):
             "input_schema": tool.input_schema or {"type": "object", "properties": {}},
             "output_schema": tool.output_schema,
             "annotations": tool.annotations or {},
-            "extension_metadata": optional_extension_metadata(getattr(tool, "extension_metadata", None)),
             "auth_type": tool.auth_type,
             "jsonpath_filter": tool.jsonpath_filter,
             "custom_name": tool.custom_name,
@@ -1359,7 +1350,6 @@ class ToolService(BaseService):
 
         tool_dict["request_type"] = tool.request_type
         tool_dict["annotations"] = tool.annotations or {}
-        tool_dict["extension_metadata"] = optional_extension_metadata(getattr(tool, "extension_metadata", None))
 
         # Only decode auth if include_auth=True AND we have encrypted credentials
         if include_auth and has_encrypted_auth:
@@ -1968,7 +1958,6 @@ class ToolService(BaseService):
             >>> db = MagicMock()
             >>> tool = MagicMock()
             >>> tool.name = 'test'
-            >>> tool.extension_metadata = None
             >>> db.execute.return_value.scalar_one_or_none.return_value = None
             >>> mock_gateway = MagicMock()
             >>> mock_gateway.name = 'test_gateway'
@@ -2000,9 +1989,6 @@ class ToolService(BaseService):
 
             if visibility is None:
                 visibility = tool.visibility or "public"
-
-            tool_extension_metadata = optional_extension_metadata(getattr(tool, "extension_metadata", None))
-            validate_extension_metadata(tool_extension_metadata)
 
             # Validate tool content for malicious patterns (CWE-20 fix - Issue #6)
             # Scan tool name, description, and inputSchema
@@ -2065,7 +2051,6 @@ class ToolService(BaseService):
                 input_schema=tool.input_schema,
                 output_schema=tool.output_schema,
                 annotations=tool.annotations,
-                extension_metadata=tool_extension_metadata,
                 jsonpath_filter=tool.jsonpath_filter,
                 auth_type=auth_type,
                 auth_value=auth_value,
@@ -2642,8 +2627,6 @@ class ToolService(BaseService):
         Returns:
             DbTool: Database model instance ready to be added to the session.
         """
-        tool_extension_metadata = optional_extension_metadata(getattr(tool, "extension_metadata", None))
-        validate_extension_metadata(tool_extension_metadata)
         return DbTool(
             original_name=name,
             custom_name=name,
@@ -2659,7 +2642,6 @@ class ToolService(BaseService):
             input_schema=tool.input_schema,
             output_schema=tool.output_schema,
             annotations=tool.annotations,
-            extension_metadata=tool_extension_metadata,
             jsonpath_filter=tool.jsonpath_filter,
             auth_type=auth_type,
             auth_value=auth_value,
@@ -3064,7 +3046,6 @@ class ToolService(BaseService):
                     DbTool.input_schema.label("input_schema"),
                     DbTool.output_schema.label("output_schema"),
                     DbTool.annotations.label("annotations"),
-                    DbTool.extension_metadata.label("extension_metadata"),
                     DbTool.owner_email.label("owner_email"),
                     DbTool.team_id.label("team_id"),
                     DbTool.visibility.label("visibility"),
@@ -3092,7 +3073,6 @@ class ToolService(BaseService):
 
             result: List[Dict[str, Any]] = []
             for row in rows:
-                extension_metadata = optional_extension_metadata(row.get("extension_metadata"))
                 payload: Dict[str, Any] = {
                     "name": row["name"],
                     "description": row["description"],
@@ -3101,10 +3081,6 @@ class ToolService(BaseService):
                 }
                 if row["title"] is not None:
                     payload["title"] = row["title"]
-                if extension_metadata is not None:
-                    payload["extensionMetadata"] = extension_metadata
-                if mcp_apps_enabled() and not is_model_visible_tool(payload):
-                    continue
                 if row["output_schema"] is not None:
                     payload["outputSchema"] = row["output_schema"]
                 result.append(payload)
@@ -3795,829 +3771,6 @@ class ToolService(BaseService):
             logger.exception("Direct proxy tool invocation failed for %s: %s", name, e)
             raise ToolInvocationError(f"Direct proxy tool invocation failed: {str(e)}")
 
-    # Conservative TTL when the AS omits expires_in (RFC 8693 makes it optional, L1).
-    # pylint: disable=duplicate-code
-    # Mirrors GatewayService's token-exchange helpers below for API parity (both fully tested).
-    _TOKEN_EXCHANGE_FALLBACK_TTL = 60
-
-    async def _resolve_token_exchange_header(
-        self,
-        oauth_config: dict,
-        gateway_id: str,
-        gateway_name: str,
-        app_user_email: str,
-        request_headers: dict,
-        ca_certificate: Optional[str] = None,
-        client_cert: Optional[str] = None,
-        client_key: Optional[str] = None,
-    ) -> dict:
-        """Return an Authorization header carrying the exchanged token (cached or fresh).
-
-        Calls ``OAuthManager.token_exchange`` directly (not ``get_access_token``)
-        so the real ``expires_in`` drives the cache TTL (B1).
-
-        Args:
-            oauth_config: Gateway OAuth configuration (grant_type == "token-exchange").
-            gateway_id: Gateway identifier used as a cache key component.
-            gateway_name: Gateway display name, used in error messages and logs.
-            app_user_email: Authenticated end-user email, used as a cache key component.
-            request_headers: Incoming request headers, used to resolve the subject token
-                and for forensic correlation (X-Correlation-ID / X-Request-ID).
-            ca_certificate: Optional custom CA certificate for the token endpoint (PEM format).
-            client_cert: Optional client certificate for mTLS to the token endpoint.
-            client_key: Optional client private key for mTLS to the token endpoint.
-
-        Returns:
-            A dict with a single ``Authorization`` header carrying the exchanged token.
-
-        Raises:
-            ToolInvocationError: If no usable subject token exists or the exchange fails.
-        """
-        audience = oauth_config.get("target_audience")
-        # Fail closed: cache key is (gateway_id, user, audience). Without a user
-        # identity there is no "behalf" to act on, and an empty key component
-        # would let unrelated principals share one delegated token.
-        if not app_user_email:
-            raise ToolInvocationError("Token exchange requires an authenticated user identity. Contact your administrator.")
-        user_key = app_user_email
-        # L3: forensic correlation. Pull request/correlation ids from inbound headers when present.
-        rh = request_headers or {}
-        correlation_id = rh.get("x-correlation-id") or rh.get("X-Correlation-ID")
-        request_id = rh.get("x-request-id") or rh.get("X-Request-ID")
-        sec_logger = get_structured_logger("tool_service")
-
-        def _coerce_ttl(raw):
-            """Coerce the AS-provided ``expires_in`` into a positive int TTL.
-
-            Args:
-                raw: The raw ``expires_in`` value returned by the authorization server.
-
-            Returns:
-                int: ``raw`` as an integer, or the fallback TTL if ``raw`` is missing
-                or cannot be coerced to ``int`` (L8: never let a non-numeric AS
-                expires_in crash the request).
-            """
-            try:
-                return int(raw) if raw else self._TOKEN_EXCHANGE_FALLBACK_TTL
-            except (TypeError, ValueError):
-                return self._TOKEN_EXCHANGE_FALLBACK_TTL
-
-        cached = await self._token_exchange_cache.get(gateway_id, user_key, audience)
-        if cached:
-            return {"Authorization": f"Bearer {cached}"}
-
-        # P4: short-circuit while a recent failure is still negatively cached (no AS hammering).
-        if await self._token_exchange_cache.is_failed(gateway_id, user_key, audience):
-            # L6: record the degraded-mode denial so an outage burst is observable.
-            logger.debug("token-exchange short-circuited by negative cache for gateway %s", gateway_name, extra={"gateway_id": gateway_id, "correlation_id": correlation_id})
-            raise ToolInvocationError(f"Token exchange unavailable for gateway '{gateway_name}'. Contact your administrator.")
-
-        # Resolve subject token. inbound_user_jwt must structurally be a JWT (H2);
-        # an opaque CF session/API token is never forwarded to the external AS.
-        # GatewayService._VALID_SUBJECT_TOKEN_SOURCES only ever persists "inbound_user_jwt"
-        # (config-time validation rejects any other value), so inbound_user_jwt is the only
-        # supported subject_token_source here.
-        subject_token = extract_inbound_bearer(request_headers)
-        if subject_token and not looks_like_jwt(subject_token):
-            subject_token = None
-
-        if not subject_token:
-            raise ToolInvocationError(f"User authentication required for token-exchange gateway '{gateway_name}'.")
-
-        # P1: single-flight. Only one coroutine exchanges per {gw,user,aud}; the rest
-        # await the lock and read the freshly-cached token via the double-check below.
-        async with self._token_exchange_cache.lock(gateway_id, user_key, audience):
-            cached = await self._token_exchange_cache.get(gateway_id, user_key, audience)
-            if cached:
-                return {"Authorization": f"Bearer {cached}"}
-
-            scopes = oauth_config.get("scopes") or []
-            started = time.monotonic()
-            try:
-                response = await self.oauth_manager.token_exchange(
-                    token_url=oauth_config["token_url"],
-                    subject_token=subject_token,
-                    client_id=oauth_config.get("client_id", ""),
-                    client_secret=oauth_config.get("client_secret", ""),  # raw encrypted DB value — token_exchange() decrypts inline (client_secret_is_plaintext defaults False)
-                    audience=audience,
-                    scope=" ".join(scopes) if scopes else None,
-                    requested_token_type=oauth_config.get("requested_token_type", "urn:ietf:params:oauth:token-type:access_token"),
-                    subject_token_type=oauth_config.get("subject_token_type", "urn:ietf:params:oauth:token-type:jwt"),
-                    ca_certificate=ca_certificate,
-                    client_cert=client_cert,
-                    client_key=client_key,
-                )
-            except Exception as e:
-                latency_ms = int((time.monotonic() - started) * 1000)
-                # H1: caller gets a generic message; AS detail never echoed out.
-                safe_reason = SecurityValidator.sanitize_log_message(str(e))
-                await self._token_exchange_cache.set_failure(gateway_id, user_key, audience)  # P4
-                audit_token_exchange(
-                    user_email=app_user_email,
-                    gateway_id=gateway_id,
-                    target_audience=audience,
-                    success=False,
-                    expires_in=None,
-                    upstream=gateway_name,
-                    error=safe_reason,
-                    latency_ms=latency_ms,
-                    correlation_id=correlation_id,
-                    request_id=request_id,
-                )
-                sec_logger.log(
-                    level="WARNING",
-                    message=f"Token exchange failed for gateway {gateway_name}",
-                    event_type="token_exchange_failed",
-                    user_email=app_user_email,
-                    custom_fields={
-                        "gateway_id": gateway_id,
-                        "target_audience": audience,
-                        "latency_ms": latency_ms,
-                        "error": safe_reason,
-                        "correlation_id": correlation_id,
-                        "request_id": request_id,
-                    },
-                    is_security_event=True,
-                )
-                # L1: message stays sanitized. exc_info is intentionally omitted -- the traceback's
-                # final line renders str(e) unredacted regardless of how sanitized safe_reason is,
-                # which would re-leak AS response content into the log record (CWE-532).
-                logger.warning("Token exchange failed for gateway %s: %s", gateway_name, safe_reason, extra={"gateway_id": gateway_id, "correlation_id": correlation_id})
-                raise ToolInvocationError(f"Token exchange failed for gateway '{gateway_name}'. Contact your administrator.") from None
-
-            exchanged = response["access_token"]
-            expires_in = _coerce_ttl(response.get("expires_in"))  # L8/L1/B1
-            latency_ms = int((time.monotonic() - started) * 1000)
-            await self._token_exchange_cache.set(gateway_id, user_key, audience, exchanged, expires_in=expires_in)
-            audit_token_exchange(
-                user_email=app_user_email,
-                gateway_id=gateway_id,
-                target_audience=audience,
-                success=True,
-                expires_in=expires_in,
-                upstream=gateway_name,
-                error=None,
-                latency_ms=latency_ms,
-                correlation_id=correlation_id,
-                request_id=request_id,
-            )
-            sec_logger.log(
-                level="INFO",
-                message=f"Token exchange succeeded for gateway {gateway_name}",
-                event_type="token_exchange_succeeded",
-                user_email=app_user_email,
-                custom_fields={
-                    "gateway_id": gateway_id,
-                    "target_audience": audience,
-                    "expires_in": expires_in,
-                    "latency_ms": latency_ms,
-                    "correlation_id": correlation_id,
-                    "request_id": request_id,
-                },
-                is_security_event=True,
-            )
-            return {"Authorization": f"Bearer {exchanged}"}
-
-    @staticmethod
-    def _sanitize_passthrough_for_token_exchange(passthrough_allowed: Optional[List[str]], grant_type: Optional[str]) -> Optional[List[str]]:
-        """Drop ``authorization`` from passthrough when token-exchange owns the header (B3).
-
-        When ``grant_type`` is ``"token-exchange"``, the gateway's exchanged
-        ``Authorization`` header must not be overridden by the inbound caller's
-        JWT, even if ``authorization`` is in the gateway's ``passthrough_allowed``
-        list. Removing it from the allow-list ensures the exchanged token always
-        wins in ``compute_passthrough_headers_cached``.
-
-        Args:
-            passthrough_allowed: The gateway's configured passthrough header allow-list.
-            grant_type: The OAuth grant type for the target gateway, or ``None``
-                if the gateway is not an OAuth gateway.
-
-        Returns:
-            The list unchanged for any grant type other than ``"token-exchange"``;
-            otherwise a copy with ``authorization`` (case-insensitive) removed.
-        """
-        if grant_type != "token-exchange" or not passthrough_allowed:
-            return passthrough_allowed
-        return [h for h in passthrough_allowed if h.lower() != "authorization"]
-
-    async def _invalidate_token_exchange_on_unauthorized(self, status_code: int, oauth_config: Optional[dict], gateway_id: str, app_user_email: Optional[str]) -> None:
-        """Evict the cached exchanged token on an upstream 401 (B2).
-
-        A 401 from the upstream means the cached exchanged token is no longer
-        valid (revoked, expired early, or wrong audience). Evicting it forces
-        the next ``_resolve_token_exchange_header`` call to re-exchange.
-
-        Args:
-            status_code: The HTTP status code returned by the upstream call.
-            oauth_config: Gateway OAuth configuration; a no-op unless
-                ``grant_type == "token-exchange"``.
-            gateway_id: Gateway identifier used as a cache key component.
-            app_user_email: Authenticated end-user email, used as a cache key component.
-        """
-        if status_code != 401:
-            return
-        if not oauth_config or oauth_config.get("grant_type") != "token-exchange":
-            return
-        if not app_user_email:
-            # No identity to invalidate under -- _resolve_token_exchange_header never
-            # caches anonymous callers, so there is nothing to evict here either.
-            return
-        await self._token_exchange_cache.invalidate(gateway_id, app_user_email, oauth_config.get("target_audience"))
-
-    async def _send_with_token_exchange_retry(
-        self,
-        send: Callable[[dict], Awaitable[Any]],
-        headers: dict,
-        oauth_config: Optional[dict],
-        gateway_id: str,
-        gateway_name: str,
-        app_user_email: Optional[str],
-        request_headers: dict,
-        ca_certificate: Optional[str] = None,
-        client_cert: Optional[str] = None,
-        client_key: Optional[str] = None,
-    ) -> Any:
-        """Send the upstream request, retrying exactly once on a 401 from a token-exchange gateway (B2).
-
-        On a 401 response from a ``grant_type == "token-exchange"`` gateway, the
-        cached exchanged token is invalidated and a fresh token is resolved via
-        ``_resolve_token_exchange_header``, then the request is retried once with
-        the fresh ``Authorization`` header. For all other gateways/grant types,
-        or non-401 responses, this is a single send with no retry.
-
-        Args:
-            send: An async callable taking a headers dict and returning a response
-                object exposing ``.status_code``. Kept generic so the retry policy
-                is testable without a live upstream connection.
-            headers: The initial headers to send (including any cached/exchanged
-                ``Authorization`` header).
-            oauth_config: Gateway OAuth configuration; retry only applies when
-                ``grant_type == "token-exchange"``.
-            gateway_id: Gateway identifier used for cache invalidation and re-exchange.
-            gateway_name: Gateway display name, used in error messages and logs.
-            app_user_email: Authenticated end-user email, used for cache keys.
-            request_headers: Incoming request headers, forwarded to
-                ``_resolve_token_exchange_header`` to resolve a fresh subject token.
-            ca_certificate: Optional custom CA certificate for the token endpoint,
-                forwarded to the re-exchange so a retry doesn't silently fall back
-                to the system CA store.
-            client_cert: Optional client certificate for mTLS to the token endpoint.
-            client_key: Optional client private key for mTLS to the token endpoint.
-
-        Returns:
-            The response object from ``send``, either from the first attempt or
-            the single retry.
-        """
-        resp = await send(headers)
-        if getattr(resp, "status_code", None) != 401:
-            return resp
-        if not oauth_config or oauth_config.get("grant_type") != "token-exchange":
-            return resp
-        await self._invalidate_token_exchange_on_unauthorized(401, oauth_config, gateway_id, app_user_email)
-        fresh = await self._resolve_token_exchange_header(
-            oauth_config, gateway_id, gateway_name, app_user_email, request_headers, ca_certificate=ca_certificate, client_cert=client_cert, client_key=client_key
-        )
-        return await send({**headers, **fresh})  # single retry; no loop -- preserve original headers, only Authorization changes
-
-    # pylint: enable=duplicate-code
-
-    async def prepare_rust_mcp_tool_execution(
-        self,
-        db: Session,
-        name: str,
-        arguments: Optional[Dict[str, Any]] = None,
-        request_headers: Optional[Dict[str, str]] = None,
-        app_user_email: Optional[str] = None,
-        user_email: Optional[str] = None,
-        token_teams: Optional[List[str]] = None,
-        server_id: Optional[str] = None,
-        plugin_global_context: Optional[GlobalContext] = None,
-        plugin_context_table: Optional[PluginContextTable] = None,
-        require_model_visible: bool = False,
-    ) -> Dict[str, Any]:
-        """Build a narrow MCP execution plan for the Rust runtime hot path.
-
-        This reuses Python's existing auth, scoping, and secret-handling logic,
-        but stops before the actual upstream MCP call. The Rust runtime can then
-        execute the call directly for the simple streamable HTTP MCP cases that
-        dominate load tests, while Python remains the authority for policy.
-
-        When tool_pre_invoke hooks are registered, they are executed during plan
-        resolution and their modifications (cleaned args, injected headers) are
-        returned in the plan for the Rust runtime to apply.
-
-        Args:
-            db: Active database session.
-            name: Tool name requested by the caller.
-            arguments: Tool call arguments from the JSON-RPC params (passed to pre-invoke hooks).
-            request_headers: Incoming request headers used for passthrough/auth decisions.
-            app_user_email: OAuth application user email, when present.
-            user_email: Effective requester email after auth normalization.
-            token_teams: Normalized team scope from the caller token.
-            server_id: Optional virtual server identifier restricting tool access.
-            plugin_global_context: Optional global context from middleware for hook continuity.
-            plugin_context_table: Optional context table from prior hooks for state sharing.
-            require_model_visible: When True, deny execution unless the resolved tool is model-visible.
-
-        Returns:
-            A Rust execution plan dictionary, or a fallback descriptor when direct
-            Rust execution is not eligible.
-
-        Raises:
-            ToolNotFoundError: If the requested tool is not visible or invocable.
-            ToolInvocationError: If gateway auth preparation fails or the tool name is ambiguous.
-        """
-
-        gateway_id_from_header = extract_gateway_id_from_headers(request_headers)
-        is_direct_proxy = False
-        tool = None
-        gateway = None
-        tool_selected_from_server_scope = False
-        tool_payload: Dict[str, Any] = {}
-        gateway_payload: Optional[Dict[str, Any]] = None
-        if gateway_id_from_header:
-            gateway = db.execute(select(DbGateway).where(DbGateway.id == gateway_id_from_header)).scalar_one_or_none()
-            if gateway and gateway.gateway_mode == "direct_proxy" and settings.mcpgateway_direct_proxy_enabled:
-                if not await check_gateway_access(db, gateway, user_email, token_teams):
-                    raise ToolNotFoundError(f"Tool not found: {name}")
-                is_direct_proxy = True
-                gateway_payload = {
-                    "id": str(gateway.id),
-                    "name": gateway.name,
-                    "url": gateway.url,
-                    "auth_type": gateway.auth_type,
-                    "auth_value": encode_auth(gateway.auth_value) if isinstance(gateway.auth_value, dict) else gateway.auth_value,
-                    "auth_query_params": gateway.auth_query_params,
-                    "oauth_config": gateway.oauth_config,
-                    "ca_certificate": gateway.ca_certificate,
-                    "ca_certificate_sig": gateway.ca_certificate_sig,
-                    "passthrough_headers": gateway.passthrough_headers,
-                    "gateway_mode": gateway.gateway_mode,
-                }
-                tool_payload = {
-                    "id": None,
-                    "name": name,
-                    "original_name": name,
-                    "enabled": True,
-                    "reachable": True,
-                    "integration_type": "MCP",
-                    "request_type": "streamablehttp",
-                    "gateway_id": str(gateway.id),
-                }
-
-        if not is_direct_proxy:
-            tool_lookup_cache = _get_tool_lookup_cache()
-            cached_payload = await tool_lookup_cache.get(name) if tool_lookup_cache.enabled else None
-
-            if cached_payload:
-                status = cached_payload.get("status", "active")
-                if status == "missing":
-                    raise ToolNotFoundError(f"Tool not found: {name}")
-                if status == "inactive":
-                    raise ToolNotFoundError(f"Tool '{name}' exists but is inactive")
-                if status == "offline":
-                    raise ToolNotFoundError(f"Tool '{name}' exists but is currently offline. Please verify if it is running.")
-                tool_payload = cached_payload.get("tool") or {}
-                gateway_payload = cached_payload.get("gateway")
-
-        if not tool_payload:
-            tools = self._load_invocable_tools(db, name, server_id=server_id)
-            tool_selected_from_server_scope = bool(server_id)
-
-            if not tools:
-                raise ToolNotFoundError(f"Tool not found: {name}")
-
-            multiple_found = len(tools) > 1
-            if not multiple_found:
-                tool = tools[0]
-            else:
-                visibility_priority = {"team": 0, "private": 1, "public": 2}
-                accessible_tools: list[tuple[int, int, Any]] = []
-                for candidate in tools:
-                    tool_dict = {"visibility": candidate.visibility, "team_id": candidate.team_id, "owner_email": candidate.owner_email}
-                    if await self._check_tool_access(db, tool_dict, user_email, token_teams):
-                        name_priority = 0 if getattr(candidate, "name", None) == name else 1
-                        priority = visibility_priority.get(candidate.visibility, 99)
-                        accessible_tools.append((name_priority, priority, candidate))
-
-                if not accessible_tools:
-                    raise ToolNotFoundError(f"Tool not found: {name}")
-
-                accessible_tools.sort(key=lambda item: (item[0], item[1]))
-                best_name_priority, best_visibility_priority = accessible_tools[0][0], accessible_tools[0][1]
-                best_tools = [candidate for name_priority, priority, candidate in accessible_tools if name_priority == best_name_priority and priority == best_visibility_priority]
-                if len(best_tools) > 1:
-                    raise ToolInvocationError(f"Multiple tools found with name '{name}' at same priority level. Tool name is ambiguous.")
-                tool = best_tools[0]
-
-            if not tool.enabled:
-                raise ToolNotFoundError(f"Tool '{name}' exists but is inactive")
-
-            if not tool.reachable:
-                await tool_lookup_cache.set_negative(name, "offline")
-                raise ToolNotFoundError(f"Tool '{name}' exists but is currently offline. Please verify if it is running.")
-
-            gateway = tool.gateway
-            cache_payload = self._build_tool_cache_payload(tool, gateway)
-            tool_payload = cache_payload.get("tool") or {}
-            gateway_payload = cache_payload.get("gateway")
-            if not multiple_found:
-                await tool_lookup_cache.set(name, cache_payload, gateway_id=tool_payload.get("gateway_id"))
-
-        if tool_payload.get("enabled") is False:
-            raise ToolNotFoundError(f"Tool '{name}' exists but is inactive")
-        if tool_payload.get("reachable") is False:
-            raise ToolNotFoundError(f"Tool '{name}' exists but is currently offline. Please verify if it is running.")
-
-        if is_direct_proxy:
-            return {"eligible": False, "fallbackReason": "direct-proxy"}
-
-        if not await self._check_tool_access(db, tool_payload, user_email, token_teams):
-            raise ToolNotFoundError(f"Tool not found: {name}")
-
-        if require_model_visible and not is_model_visible_tool(tool_payload):
-            raise ToolNotFoundError(f"Tool not found: {name}")
-
-        if server_id and not tool_selected_from_server_scope:
-            tool_id_for_check = tool_payload.get("id")
-            if not tool_id_for_check:
-                raise ToolNotFoundError(f"Tool not found: {name}")
-            server_match = db.execute(
-                select(server_tool_association.c.tool_id).where(
-                    server_tool_association.c.server_id == server_id,
-                    server_tool_association.c.tool_id == tool_id_for_check,
-                )
-            ).first()
-            if not server_match:
-                raise ToolNotFoundError(f"Tool not found: {name}")
-
-        tool_integration_type = tool_payload.get("integration_type")
-        if tool_integration_type != "MCP":
-            return {"eligible": False, "fallbackReason": f"unsupported-integration:{tool_integration_type or 'unknown'}"}
-
-        tool_request_type = tool_payload.get("request_type")
-        transport = tool_request_type.lower() if tool_request_type else "sse"
-        if transport not in {"streamablehttp", "sse"}:
-            return {"eligible": False, "fallbackReason": f"unsupported-transport:{transport}"}
-
-        tool_jsonpath_filter = tool_payload.get("jsonpath_filter")
-        if tool_jsonpath_filter:
-            return {"eligible": False, "fallbackReason": "jsonpath-filter-configured"}
-
-        passthrough_allowed = global_config_cache.get_passthrough_headers(db, settings.default_passthrough_headers)
-
-        if tool is not None:
-            gateway = tool.gateway
-
-        tool_name_original = tool_payload.get("original_name") or tool_payload.get("name") or name
-        tool_id = tool_payload.get("id")
-        tool_gateway_id = tool_payload.get("gateway_id")
-        tool_timeout_ms = tool_payload.get("timeout_ms")
-        effective_timeout = (tool_timeout_ms / 1000) if tool_timeout_ms else settings.tool_timeout
-
-        # Resolve per-tool context_id for plugin manager (same pattern as invoke_tool)
-        # First-Party
-        from mcpgateway.plugins.gateway_plugin_manager import make_context_id  # pylint: disable=import-outside-toplevel
-
-        _tool_team_id = tool_payload.get("team_id")
-        # Use name (the gateway-scoped unique identifier, e.g. "mac-fs-read-file") as the binding key.
-        # original_name (e.g. "read_file") is only unique per gateway, so two gateways in the same
-        # team can share the same original_name — making it ambiguous as a binding key.
-        # name is enforced unique per team by DB constraint uq_team_owner_email_name_tool.
-        _binding_tool_name = tool_payload.get("name") or name
-        plugin_context_id = make_context_id(str(_tool_team_id), _binding_tool_name) if _tool_team_id else server_id
-        plugin_manager = await self._get_plugin_manager(plugin_context_id)
-        has_pre_invoke = plugin_manager and plugin_manager.has_hooks_for(ToolHookType.TOOL_PRE_INVOKE)
-        has_post_invoke = plugin_manager and plugin_manager.has_hooks_for(ToolHookType.TOOL_POST_INVOKE)
-
-        has_gateway = gateway_payload is not None
-        gateway_url = gateway_payload.get("url") if has_gateway else None
-        gateway_name = gateway_payload.get("name") if has_gateway else None
-        gateway_auth_type = gateway_payload.get("auth_type") if has_gateway else None
-        gateway_auth_value = gateway_payload.get("auth_value") if has_gateway and isinstance(gateway_payload.get("auth_value"), str) else None
-        gateway_auth_query_params = gateway_payload.get("auth_query_params") if has_gateway and isinstance(gateway_payload.get("auth_query_params"), dict) else None
-        gateway_oauth_config = gateway_payload.get("oauth_config") if has_gateway and isinstance(gateway_payload.get("oauth_config"), dict) else None
-        if has_gateway and gateway is not None:
-            runtime_gateway_auth_value = getattr(gateway, "auth_value", None)
-            if isinstance(runtime_gateway_auth_value, dict):
-                gateway_auth_value = encode_auth(runtime_gateway_auth_value)
-            elif isinstance(runtime_gateway_auth_value, str):
-                gateway_auth_value = runtime_gateway_auth_value
-            runtime_gateway_query_params = getattr(gateway, "auth_query_params", None)
-            if isinstance(runtime_gateway_query_params, dict):
-                gateway_auth_query_params = runtime_gateway_query_params
-            runtime_gateway_oauth_config = getattr(gateway, "oauth_config", None)
-            if isinstance(runtime_gateway_oauth_config, dict):
-                gateway_oauth_config = runtime_gateway_oauth_config
-        # MCP invoke path: cert params come from the serialized gateway_payload dict
-        # (the ORM session that produced the gateway object may already be closed).
-        gateway_ca_cert = gateway_payload.get("ca_certificate") if has_gateway else None
-        gateway_client_cert = gateway_payload.get("client_cert") if has_gateway else None
-        gateway_client_key = gateway_payload.get("client_key") if has_gateway else None
-        gateway_id_str = gateway_payload.get("id") if has_gateway else None
-
-        if tool is None and has_gateway:
-            requires_gateway_auth_hydration = gateway_auth_type in {"basic", "bearer", "authheaders", "oauth", "query_param"}
-            if requires_gateway_auth_hydration:
-                tool_id_for_hydration = tool_payload.get("id")
-                if tool_id_for_hydration:
-                    tool_auth_row = db.execute(select(DbTool).options(joinedload(DbTool.gateway)).where(DbTool.id == tool_id_for_hydration)).scalar_one_or_none()
-                    if tool_auth_row and tool_auth_row.gateway:
-                        hydrated_gateway_auth_value = getattr(tool_auth_row.gateway, "auth_value", None)
-                        if isinstance(hydrated_gateway_auth_value, dict):
-                            gateway_auth_value = encode_auth(hydrated_gateway_auth_value)
-                        elif isinstance(hydrated_gateway_auth_value, str):
-                            gateway_auth_value = hydrated_gateway_auth_value
-                        hydrated_gateway_query_params = getattr(tool_auth_row.gateway, "auth_query_params", None)
-                        if isinstance(hydrated_gateway_query_params, dict):
-                            gateway_auth_query_params = hydrated_gateway_query_params
-                        hydrated_gateway_oauth_config = getattr(tool_auth_row.gateway, "oauth_config", None)
-                        if isinstance(hydrated_gateway_oauth_config, dict):
-                            gateway_oauth_config = hydrated_gateway_oauth_config
-
-        gateway_auth_query_params_decrypted: Optional[Dict[str, str]] = None
-        if gateway_auth_type == "query_param" and gateway_auth_query_params:
-            gateway_auth_query_params_decrypted = {}
-            for param_key, encrypted_value in gateway_auth_query_params.items():
-                if encrypted_value:
-                    try:
-                        decrypted = decode_auth(encrypted_value)
-                        gateway_auth_query_params_decrypted[param_key] = decrypted.get(param_key, "")
-                    except Exception:  # noqa: S110
-                        logger.debug("Failed to decrypt query param '%s' for Rust MCP tool execution plan", param_key)
-            if gateway_auth_query_params_decrypted and gateway_url:
-                gateway_url = apply_query_param_auth(gateway_url, gateway_auth_query_params_decrypted)
-
-        if gateway_ca_cert:
-            return {"eligible": False, "fallbackReason": "custom-ca-certificate"}
-
-        if not gateway_url:
-            return {"eligible": False, "fallbackReason": "missing-gateway-url"}
-
-        # Tracks whether we entered the OAuth authorization_code "no DB token" branch.
-        # When True, the auth requirement is deferred to AFTER tool_pre_invoke hooks
-        # run so plugins (e.g. Vault) can inject auth. The deny-path check below the
-        # plugin invocation enforces the requirement locally with an actionable error.
-        oauth_authcode_no_db_token = False
-
-        gateway_grant_type = None
-        if has_gateway and gateway_auth_type == "oauth" and isinstance(gateway_oauth_config, dict) and gateway_oauth_config:
-            grant_type = gateway_oauth_config.get("grant_type", "client_credentials")
-            gateway_grant_type = grant_type
-            if grant_type == "authorization_code":
-                try:
-                    with fresh_db_session() as token_db:
-                        token_storage = TokenStorageService(token_db)
-                        if not app_user_email:
-                            raise ToolInvocationError(f"User authentication required for OAuth-protected gateway '{gateway_name}'. Please ensure you are authenticated.")
-                        access_token = await token_storage.get_user_token(gateway_id_str, app_user_email)
-
-                    if access_token:
-                        headers = {"Authorization": f"Bearer {access_token}"}
-                    else:
-                        # No DB-stored OAuth token. Defer the auth requirement to after
-                        # tool_pre_invoke hooks run so plugins (e.g. Vault) can inject
-                        # auth headers. The post-hook check below enforces the requirement
-                        # locally with an actionable error if no plugin provides auth.
-                        oauth_authcode_no_db_token = True
-                        headers = {}
-                        logger.info(
-                            "OAuth authorization_code gateway '%s' invoked without DB-stored token; deferring auth check to allow plugin injection",
-                            gateway_name,
-                            extra={"gateway_id": gateway_id_str, "user": app_user_email or "<unknown>"},
-                        )
-                except Exception as e:
-                    logger.error("Failed to obtain stored OAuth token for gateway %s: %s", gateway_name, e)
-                    raise ToolInvocationError(f"OAuth token retrieval failed for gateway: {str(e)}")
-            elif grant_type == "token-exchange":
-                headers = await self._resolve_token_exchange_header(
-                    gateway_oauth_config, gateway_id_str, gateway_name, app_user_email, request_headers, ca_certificate=gateway_ca_cert, client_cert=gateway_client_cert, client_key=gateway_client_key
-                )
-            else:
-                try:
-                    access_token = await self.oauth_manager.get_access_token(gateway_oauth_config, ca_certificate=gateway_ca_cert, client_cert=gateway_client_cert, client_key=gateway_client_key)
-                    headers = {"Authorization": f"Bearer {access_token}"}
-                except Exception as e:
-                    logger.error("Failed to obtain OAuth access token for gateway %s: %s", gateway_name, e)
-                    raise ToolInvocationError(f"OAuth authentication failed for gateway: {str(e)}")
-        else:
-            headers = decode_auth(gateway_auth_value) if gateway_auth_value else {}
-
-        if request_headers:
-            # B3: when the gateway uses token-exchange, the exchanged Authorization header
-            # must win over any inbound user JWT that the passthrough config would otherwise
-            # forward verbatim.
-            effective_passthrough_allowed = self._sanitize_passthrough_for_token_exchange(passthrough_allowed, gateway_grant_type)
-            gateway_passthrough_headers = gateway_payload.get("passthrough_headers") if has_gateway else None
-            if gateway_grant_type == "token-exchange":
-                gateway_passthrough_headers = self._sanitize_passthrough_for_token_exchange(gateway_passthrough_headers, gateway_grant_type)
-            headers = compute_passthrough_headers_cached(
-                request_headers,
-                headers,
-                effective_passthrough_allowed,
-                gateway_auth_type=gateway_auth_type,
-                gateway_passthrough_headers=gateway_passthrough_headers,
-                is_token_exchange=(gateway_grant_type == "token-exchange"),
-            )
-
-        runtime_headers = {str(header_name): str(header_value) for header_name, header_value in headers.items() if header_name and header_value}
-
-        hook_global_context = None
-        if has_pre_invoke or has_post_invoke:
-            hook_global_context = self._build_rust_tool_hook_global_context(
-                app_user_email=app_user_email,
-                server_id=server_id,
-                tool_gateway_id=tool_gateway_id,
-                plugin_global_context=plugin_global_context,
-                tool_payload=tool_payload,
-                gateway_payload=gateway_payload,
-                request_headers=request_headers,
-            )
-
-        native_post_invoke_retry_policy = None
-        if has_post_invoke:
-            native_post_invoke_retry_policy, requires_python_fallback = self._build_rust_native_tool_post_invoke_retry_policy(plugin_manager, name, hook_global_context)
-            if requires_python_fallback:
-                return {"eligible": False, "fallbackReason": "post-invoke-hooks-configured"}
-
-        # Run tool_pre_invoke hooks so that plugins (e.g. wxo_connections) can
-        # inject credentials and clean arguments before the Rust direct call.
-        modified_args = arguments
-        if has_pre_invoke and arguments is not None:
-            pre_invoke_headers = HttpHeaderPayload(root=dict(runtime_headers))
-            pre_result, _ = await plugin_manager.invoke_hook(
-                ToolHookType.TOOL_PRE_INVOKE,
-                payload=ToolPreInvokePayload(name=name, args=arguments, headers=pre_invoke_headers),
-                global_context=hook_global_context,
-                local_contexts=plugin_context_table,
-                violations_as_exceptions=True,
-                extensions=build_request_extensions(),
-            )
-            record_plugin_metrics(current_trace_id.get(), pre_result.metadata)
-            _log_tool_pre_invoke_result(name, arguments, pre_invoke_headers, pre_result)
-            if pre_result.modified_payload:
-                modified_args = pre_result.modified_payload.args
-                if pre_result.modified_payload.name and pre_result.modified_payload.name != name:
-                    tool_name_original = pre_result.modified_payload.name
-                if pre_result.modified_payload.headers is not None:
-                    plugin_headers = pre_result.modified_payload.headers.root if hasattr(pre_result.modified_payload.headers, "root") else {}
-                    for hk, hv in plugin_headers.items():
-                        if hk and hv:
-                            runtime_headers[str(hk).lower()] = str(hv)
-
-        # Defense in depth: strip X-Vault-Tokens (case-insensitive) from outbound
-        # headers. The Vault plugin removes this header when it processes the token,
-        # but stripping unconditionally prevents leakage when the plugin is disabled,
-        # errors in permissive mode, or the header is mistakenly in passthrough_allowed.
-        runtime_headers = {hk: hv for hk, hv in runtime_headers.items() if hk.lower() != "x-vault-tokens"}
-
-        # OAuth authorization_code deny-path: if we entered the no-DB-token branch
-        # above and no plugin (or other auth source) injected an Authorization header,
-        # fail locally with an actionable error rather than relying on upstream 401.
-        # This restores the original UX directing the user to /oauth/authorize/{id}
-        # while still allowing legitimate plugin-injected auth (e.g. Vault) to satisfy
-        # the requirement.
-        if oauth_authcode_no_db_token and not any(hk.lower() == "authorization" for hk in runtime_headers):
-            raise ToolInvocationError(f"Please authorize {gateway_name} first. Visit /oauth/authorize/{gateway_id_str} to complete OAuth flow.")
-
-        runtime_headers = inject_trace_context_headers(runtime_headers)
-
-        plan: Dict[str, Any] = {
-            "eligible": True,
-            "transport": transport,
-            "serverUrl": gateway_url,
-            "remoteToolName": tool_name_original,
-            "headers": runtime_headers,
-            "timeoutMs": int(effective_timeout * 1000),
-            "gatewayId": tool_gateway_id,
-            "toolName": name,
-            "toolId": tool_id or None,
-            "serverId": server_id,
-        }
-        if native_post_invoke_retry_policy is not None:
-            plan["postInvokeRetryPolicy"] = native_post_invoke_retry_policy
-        if has_pre_invoke:
-            plan["hasPreInvokeHooks"] = True
-            if modified_args is not None:
-                plan["modifiedArgs"] = modified_args
-        return plan
-
-    def _build_rust_tool_hook_global_context(
-        self,
-        *,
-        app_user_email: Optional[str],
-        server_id: Optional[str],
-        tool_gateway_id: Optional[str],
-        plugin_global_context: Optional[GlobalContext],
-        tool_payload: Optional[Dict[str, Any]],
-        gateway_payload: Optional[Dict[str, Any]],
-        request_headers: Optional[Dict[str, str]] = None,
-    ) -> GlobalContext:
-        """Build plugin global context for Rust-direct tool plan resolution.
-
-        Args:
-            app_user_email: Effective authenticated user for plugin context.
-            server_id: Explicit virtual server scope from the request.
-            tool_gateway_id: Resolved tool gateway id.
-            plugin_global_context: Existing middleware context if available.
-            tool_payload: Resolved tool payload.
-            gateway_payload: Resolved gateway payload.
-            request_headers: Request headers for extracting content type.
-
-        Returns:
-            GlobalContext primed with the same metadata the Python invoke path exposes.
-        """
-        # Derive tenant_id from the tool payload so rate limiting and other
-        # tenant-scoped plugin behaviour works on the fallback path where
-        # middleware didn't run and _propagate_tenant_id never got a chance
-        # to fill it in. Non-string team_id values are ignored defensively.
-        payload_team_id = tool_payload.get("team_id") if tool_payload else None
-        hook_tenant_id = _extract_tenant_id_from_payload(payload_team_id)
-
-        if plugin_global_context:
-            hook_global_context = plugin_global_context
-            _apply_tool_payload_to_global_context(hook_global_context, tool_gateway_id, app_user_email, hook_tenant_id)
-        else:
-            request_id = get_correlation_id() or uuid.uuid4().hex
-            context_server_id = tool_gateway_id if tool_gateway_id and isinstance(tool_gateway_id, str) else server_id
-            content_type = request_headers.get("content-type") if request_headers else None
-            hook_global_context = GlobalContext(request_id=request_id, server_id=context_server_id, tenant_id=hook_tenant_id, user=app_user_email, content_type=content_type)
-
-        tool_metadata: Optional[PydanticTool] = self._pydantic_tool_from_payload(tool_payload) if tool_payload else None
-        gateway_metadata: Optional[PydanticGateway] = self._pydantic_gateway_from_payload(gateway_payload) if gateway_payload else None
-        if tool_metadata:
-            hook_global_context.metadata[TOOL_METADATA] = tool_metadata
-        if gateway_metadata:
-            hook_global_context.metadata[GATEWAY_METADATA] = gateway_metadata
-        return hook_global_context
-
-    def _build_rust_native_tool_post_invoke_retry_policy(
-        self,
-        plugin_manager: Optional[Any],
-        tool_name: str,
-        hook_global_context: Optional[GlobalContext],
-    ) -> Tuple[Optional[Dict[str, Any]], bool]:
-        """Return a native Rust retry policy when the active post-invoke hooks allow it.
-
-        The Rust runtime only supports native post-invoke execution for the
-        default retry-with-backoff plugin. Any other active `tool_post_invoke`
-        hook must still force the call back to Python to preserve plugin semantics.
-
-        Args:
-            plugin_manager: Plugin manager instance (may be None).
-            tool_name: Requested tool name.
-            hook_global_context: Resolved plugin context for condition matching.
-
-        Returns:
-            Tuple of `(policy, requires_python_fallback)`.
-        """
-        if not plugin_manager or not plugin_manager.has_hooks_for(ToolHookType.TOOL_POST_INVOKE):
-            return (None, False)
-
-        # Third-Party
-        from cpex.framework import PluginMode  # pylint: disable=import-outside-toplevel
-        from cpex.framework.utils import payload_matches  # pylint: disable=import-outside-toplevel
-
-        global_context = hook_global_context or GlobalContext(request_id=get_correlation_id() or uuid.uuid4().hex)
-        payload = ToolPostInvokePayload(name=tool_name, result={})
-        hook_refs = plugin_manager._registry.get_hook_refs_for_hook(hook_type=ToolHookType.TOOL_POST_INVOKE)  # pylint: disable=protected-access
-
-        active_hook_refs = []
-        for hook_ref in hook_refs:
-            if hook_ref.plugin_ref.mode == PluginMode.DISABLED:
-                continue
-            if hook_ref.plugin_ref.conditions and not payload_matches(payload, ToolHookType.TOOL_POST_INVOKE, hook_ref.plugin_ref.conditions, global_context):
-                continue
-            active_hook_refs.append(hook_ref)
-
-        if not active_hook_refs:
-            return (None, False)
-
-        if len(active_hook_refs) != 1 or active_hook_refs[0].plugin_ref.name != "RetryWithBackoffPlugin":
-            return (None, True)
-
-        retry_hook = active_hook_refs[0]
-        try:
-            effective_cfg = _build_retry_policy_config(retry_hook.plugin_ref.plugin.config.config or {}, tool_name)
-        except (TypeError, ValueError):
-            return (None, True)
-
-        if effective_cfg["check_text_content"]:
-            return (None, True)
-
-        return (
-            {
-                "kind": "retry_with_backoff",
-                "maxRetries": effective_cfg["max_retries"],
-                "backoffBaseMs": effective_cfg["backoff_base_ms"],
-                "maxBackoffMs": effective_cfg["max_backoff_ms"],
-                "retryOnStatus": effective_cfg["retry_on_status"],
-                "jitter": effective_cfg["jitter"],
-            },
-            False,
-        )
-
     def _load_invocable_tools(self, db: Session, name: str, server_id: Optional[str] = None) -> List[DbTool]:
         """Load candidate tools for invocation, narrowing to a virtual server when possible.
 
@@ -4629,10 +3782,7 @@ class ToolService(BaseService):
         Returns:
             A list of candidate tool ORM rows matching the request.
         """
-        name_filter = DbTool.name == name  # pylint: disable=comparison-with-callable
-        if server_id:
-            name_filter = or_(name_filter, DbTool.original_name == name)
-        query = select(DbTool).options(joinedload(DbTool.gateway)).where(name_filter)
+        query = select(DbTool).options(joinedload(DbTool.gateway)).where(DbTool.name == name)  # pylint: disable=comparison-with-callable
         if server_id:
             query = query.join(server_tool_association, DbTool.id == server_tool_association.c.tool_id).where(server_tool_association.c.server_id == server_id)
         return db.execute(query).scalars().all()
@@ -4679,9 +3829,7 @@ class ToolService(BaseService):
                 global_context=global_context,
                 local_contexts=context_table,
                 violations_as_exceptions=False,
-                extensions=build_request_extensions(),
             )
-            record_plugin_metrics(current_trace_id.get(), timeout_post_result.metadata if timeout_post_result else None)
             if timeout_post_result and timeout_post_result.retry_delay_ms > 0:
                 raise ToolTimeoutError(f"Tool invocation timed out after {effective_timeout}s", retry_delay_ms=timeout_post_result.retry_delay_ms)
 
@@ -4699,10 +3847,7 @@ class ToolService(BaseService):
         context_table: Any,
         global_context: Any,
         meta_data: Optional[Dict[str, Any]],
-        *,
         skip_pre_invoke: bool,
-        require_app_visible: bool,
-        require_model_visible: bool,
         path_label: str,
     ) -> "ToolResult":
         """Sleep for the plugin-requested delay, then recursively re-invoke the tool.
@@ -4725,8 +3870,6 @@ class ToolService(BaseService):
             global_context: Plugin global context.
             meta_data: Optional metadata dictionary.
             skip_pre_invoke: Whether to skip pre-invoke hooks.
-            require_app_visible: Whether the retried invocation must resolve an app-visible tool.
-            require_model_visible: Whether the retried invocation must resolve a model-visible tool.
             path_label: Label for log messages (success/timeout/exception).
 
         Returns:
@@ -4755,8 +3898,6 @@ class ToolService(BaseService):
                 plugin_global_context=global_context,
                 meta_data=meta_data,
                 skip_pre_invoke=skip_pre_invoke,
-                require_app_visible=require_app_visible,
-                require_model_visible=require_model_visible,
                 retry_attempt=retry_attempt + 1,
             )
 
@@ -4774,8 +3915,6 @@ class ToolService(BaseService):
         plugin_global_context: Optional[GlobalContext] = None,
         meta_data: Optional[Dict[str, Any]] = None,
         skip_pre_invoke: bool = False,
-        require_app_visible: bool = False,
-        require_model_visible: bool = False,
         retry_attempt: int = 0,
     ) -> ToolResult:
         """
@@ -4798,9 +3937,7 @@ class ToolService(BaseService):
             plugin_context_table: Optional plugin context table from previous hooks for cross-hook state sharing.
             plugin_global_context: Optional global context from middleware for consistency across hooks.
             meta_data: Optional metadata dictionary for additional context (e.g., request ID).
-            skip_pre_invoke: When True, skip TOOL_PRE_INVOKE hooks (used by trusted Rust fallback path).
-            require_app_visible: When True, deny execution unless the resolved tool is MCP Apps app-visible.
-            require_model_visible: When True, deny execution unless the resolved tool is model-visible.
+            skip_pre_invoke: When True, skip TOOL_PRE_INVOKE hooks (used by trusted internal MCP path).
             retry_attempt: Zero-based retry counter; 0 = original call.  Incremented by the retry
                 loop and compared against ``settings.max_tool_retries``.
 
@@ -4846,7 +3983,7 @@ class ToolService(BaseService):
         if gateway_id_from_header:
             # Look up gateway to check if it's in direct_proxy mode
             gateway = db.execute(select(DbGateway).where(DbGateway.id == gateway_id_from_header)).scalar_one_or_none()
-            if gateway and gateway.gateway_mode == "direct_proxy" and settings.mcpgateway_direct_proxy_enabled and not require_app_visible:
+            if gateway and gateway.gateway_mode == "direct_proxy" and settings.mcpgateway_direct_proxy_enabled:
                 # SECURITY: Check gateway access before allowing direct proxy
                 # This prevents RBAC bypass where any authenticated user could invoke tools
                 # on any gateway just by knowing the gateway ID
@@ -4921,22 +4058,21 @@ class ToolService(BaseService):
                 # _check_tool_access (same rules as list_tools) and prioritize.
                 # Priority (lower is better): team (0) > private (1) > public (2)
                 visibility_priority = {"team": 0, "private": 1, "public": 2}
-                accessible_tools: list[tuple[int, int, Any]] = []
+                accessible_tools: list[tuple[int, Any]] = []
                 for t in tools:
                     tool_dict = {"visibility": t.visibility, "team_id": t.team_id, "owner_email": t.owner_email}
                     if await self._check_tool_access(db, tool_dict, user_email, token_teams):
-                        name_priority = 0 if getattr(t, "name", None) == name else 1
                         priority = visibility_priority.get(t.visibility, 99)
-                        accessible_tools.append((name_priority, priority, t))
+                        accessible_tools.append((priority, t))
 
                 if not accessible_tools:
                     raise ToolNotFoundError(f"Tool not found: {name}")
 
-                accessible_tools.sort(key=lambda x: (x[0], x[1]))
+                accessible_tools.sort(key=lambda x: x[0])
 
                 # Check for ambiguity at the highest priority level
-                best_name_priority, best_visibility_priority = accessible_tools[0][0], accessible_tools[0][1]
-                best_tools = [t for name_priority, p, t in accessible_tools if name_priority == best_name_priority and p == best_visibility_priority]
+                best_priority = accessible_tools[0][0]
+                best_tools = [t for p, t in accessible_tools if p == best_priority]
 
                 if len(best_tools) > 1:
                     raise ToolInvocationError(f"Multiple tools found with name '{name}' at same priority level. Tool name is ambiguous.")
@@ -4999,12 +4135,6 @@ class ToolService(BaseService):
                 ).first()
                 if not server_match:
                     raise ToolNotFoundError(f"Tool not found: {name}")
-
-        if require_app_visible:
-            if is_direct_proxy or not is_app_visible_tool(tool_payload):
-                raise ToolNotFoundError(f"Tool not found: {name}")
-        elif require_model_visible and not is_direct_proxy and not is_model_visible_tool(tool_payload):
-            raise ToolNotFoundError(f"Tool not found: {name}")
 
         # Extract A2A-related data from annotations (will be used after db.close() if A2A tool)
         tool_annotations = tool_payload.get("annotations") or {}
@@ -5175,7 +4305,6 @@ class ToolService(BaseService):
         a2a_agent_auth_type: Optional[str] = None
         a2a_agent_auth_value: Optional[str] = None
         a2a_agent_auth_query_params: Optional[Dict[str, str]] = None
-        a2a_agent_passthrough_headers: Optional[List[str]] = None
 
         if tool_integration_type == "A2A" and "a2a_agent_id" in tool_annotations:
             a2a_agent_id = tool_annotations.get("a2a_agent_id")
@@ -5200,7 +4329,6 @@ class ToolService(BaseService):
             a2a_agent_auth_type = a2a_agent.auth_type
             a2a_agent_auth_value = a2a_agent.auth_value
             a2a_agent_auth_query_params = a2a_agent.auth_query_params
-            a2a_agent_passthrough_headers = a2a_agent.passthrough_headers
 
         # ═══════════════════════════════════════════════════════════════════════════
         # CRITICAL: Release DB connection back to pool BEFORE making HTTP calls
@@ -5297,13 +4425,6 @@ class ToolService(BaseService):
                     },
                 ):
                     headers = tool_headers.copy()
-
-                # B2: gateway grant type, used to decide whether upstream 401s should
-                # trigger a single re-exchange-and-retry (REST and MCP branches below).
-                gateway_grant_type = None
-                if has_gateway and gateway_auth_type == "oauth" and isinstance(gateway_oauth_config, dict) and gateway_oauth_config:
-                    gateway_grant_type = gateway_oauth_config.get("grant_type", "client_credentials")
-
                 if tool_integration_type == "REST":
                     # Handle OAuth authentication for REST tools
                     if tool_auth_type == "oauth" and isinstance(tool_oauth_config, dict) and tool_oauth_config:
@@ -5363,9 +4484,7 @@ class ToolService(BaseService):
                             global_context=global_context,
                             local_contexts=context_table,  # Pass context from previous hooks
                             violations_as_exceptions=True,
-                            extensions=build_request_extensions(),
                         )
-                        record_plugin_metrics(current_trace_id.get(), pre_result.metadata)
                         _log_tool_pre_invoke_result(name, arguments, pre_invoke_headers, pre_result)
                         if pre_result.modified_payload:
                             payload = pre_result.modified_payload
@@ -5444,32 +4563,6 @@ class ToolService(BaseService):
 
                     with create_child_span("tool.gateway_call", {"tool.name": name, "tool.id": tool_id, "tool.integration_type": "REST"}):
                         rest_start_time = time.time()
-
-                        async def _send(call_headers: dict) -> Any:
-                            """Issue the REST upstream call with the given headers (B2 retry hook)."""
-                            if method == "GET":
-                                return await asyncio.wait_for(self._http_client.get(final_url, params=payload, headers=call_headers), timeout=effective_timeout)
-                            if _ct_base == "application/x-www-form-urlencoded":
-                                # NOTE: Intentional asymmetry with the JSON/default path below.
-                                # Form-encoded bodies use params= to keep URL query params on the
-                                # query string (semantically correct for form encoding), whereas
-                                # the JSON path merges them into the body via payload.update() for
-                                # backward compatibility and signed-URL support.
-                                form_payload = {k: self._form_value_to_str(v) for k, v in payload.items()}
-                                return await asyncio.wait_for(
-                                    self._http_client.request(method, final_url, data=form_payload, params=_url_query_params, headers=call_headers), timeout=effective_timeout
-                                )
-                            if _ct_base == "multipart/form-data":
-                                # Strip Content-Type so httpx can set it with the correct boundary parameter.
-                                # URL query params forwarded via params= (same asymmetry as form-urlencoded above).
-                                headers_mp = {k: v for k, v in call_headers.items() if k.lower() != "content-type"}
-                                files_payload = {k: (None, self._form_value_to_str(v)) for k, v in payload.items()}
-                                return await asyncio.wait_for(
-                                    self._http_client.request(method, final_url, files=files_payload, params=_url_query_params, headers=headers_mp), timeout=effective_timeout
-                                )
-                            # For POST/PUT/PATCH/DELETE (JSON body, default path)
-                            return await asyncio.wait_for(self._http_client.request(method, final_url, json=payload, headers=call_headers), timeout=effective_timeout)
-
                         try:
                             if method == "GET":
                                 # For GET: Extract and merge URL query params with input arguments
@@ -5488,25 +4581,32 @@ class ToolService(BaseService):
                                         )
 
                                 payload.update(query_params)
-                            elif has_query_mapping or has_header_mapping:
-                                # When mappings are used (not None/empty), query params were already extracted and mapped
-                                # Merge them into the JSON body for backward compatibility with mapped tools
-                                payload.update(query_params)
-                            # else: No mappings (None or empty) - preserve query params in URL for signed URL support
-                            # (Azure SAS, AWS presigned URLs, webhook signatures, etc.)
-
-                            response = await self._send_with_token_exchange_retry(
-                                _send,
-                                headers,
-                                gateway_oauth_config if (has_gateway and gateway_grant_type == "token-exchange") else None,
-                                gateway_id_str,
-                                gateway_name,
-                                app_user_email,
-                                request_headers or {},
-                                ca_certificate=gateway_ca_cert,
-                                client_cert=gateway_client_cert,
-                                client_key=gateway_client_key,
-                            )
+                                response = await asyncio.wait_for(self._http_client.get(final_url, params=payload, headers=headers), timeout=effective_timeout)
+                            elif _ct_base == "application/x-www-form-urlencoded":
+                                # NOTE: Intentional asymmetry with the JSON/default path below.
+                                # Form-encoded bodies use params= to keep URL query params on the
+                                # query string (semantically correct for form encoding), whereas
+                                # the JSON path merges them into the body via payload.update() for
+                                # backward compatibility and signed-URL support.
+                                form_payload = {k: self._form_value_to_str(v) for k, v in payload.items()}
+                                response = await asyncio.wait_for(self._http_client.request(method, final_url, data=form_payload, params=_url_query_params, headers=headers), timeout=effective_timeout)
+                            elif _ct_base == "multipart/form-data":
+                                # Strip Content-Type so httpx can set it with the correct boundary parameter.
+                                # URL query params forwarded via params= (same asymmetry as form-urlencoded above).
+                                headers_mp = {k: v for k, v in headers.items() if k.lower() != "content-type"}
+                                files_payload = {k: (None, self._form_value_to_str(v)) for k, v in payload.items()}
+                                response = await asyncio.wait_for(
+                                    self._http_client.request(method, final_url, files=files_payload, params=_url_query_params, headers=headers_mp), timeout=effective_timeout
+                                )
+                            else:
+                                # For POST/PUT/PATCH/DELETE: Different behavior based on mapping presence
+                                if has_query_mapping or has_header_mapping:
+                                    # When mappings are used (not None/empty), query params were already extracted and mapped
+                                    # Merge them into the JSON body for backward compatibility with mapped tools
+                                    payload.update(query_params)
+                                # else: No mappings (None or empty) - preserve query params in URL for signed URL support
+                                # (Azure SAS, AWS presigned URLs, webhook signatures, etc.)
+                                response = await asyncio.wait_for(self._http_client.request(method, final_url, json=payload, headers=headers), timeout=effective_timeout)
                         except (asyncio.TimeoutError, httpx.TimeoutException):
                             rest_elapsed_ms = (time.time() - rest_start_time) * 1000
                             structured_logger.log(
@@ -5611,7 +4711,6 @@ class ToolService(BaseService):
 
                     # Handle OAuth authentication for the gateway (using local variables)
                     # NOTE: Use has_gateway instead of gateway to avoid accessing detached ORM object
-                    # gateway_grant_type was already computed above (shared with the REST branch for B2).
                     if has_gateway and gateway_auth_type == "oauth" and isinstance(gateway_oauth_config, dict) and gateway_oauth_config:
                         grant_type = gateway_oauth_config.get("grant_type", "client_credentials")
 
@@ -5619,6 +4718,9 @@ class ToolService(BaseService):
                             # For Authorization Code flow, try to get stored tokens
                             # NOTE: Use fresh_db_session() since the original db was closed
                             try:
+                                # First-Party
+                                from mcpgateway.services.token_storage_service import TokenStorageService  # pylint: disable=import-outside-toplevel
+
                                 with fresh_db_session() as token_db:
                                     token_storage = TokenStorageService(token_db)
 
@@ -5645,17 +4747,6 @@ class ToolService(BaseService):
                             except Exception as e:
                                 logger.error("Failed to obtain stored OAuth token for gateway %s: %s", gateway_name, e)
                                 raise ToolInvocationError(f"OAuth token retrieval failed for gateway: {str(e)}")
-                        elif grant_type == "token-exchange":
-                            headers = await self._resolve_token_exchange_header(
-                                gateway_oauth_config,
-                                gateway_id_str,
-                                gateway_name,
-                                app_user_email,
-                                request_headers,
-                                ca_certificate=gateway_ca_cert,
-                                client_cert=gateway_client_cert,
-                                client_key=gateway_client_key,
-                            )
                         else:
                             # For Client Credentials flow, get token directly (no DB needed)
                             try:
@@ -5671,18 +4762,8 @@ class ToolService(BaseService):
 
                     # Use cached passthrough headers (no DB query needed)
                     if request_headers:
-                        # B3: when the gateway uses token-exchange, the exchanged Authorization header
-                        # must win over any inbound user JWT that the passthrough config would otherwise
-                        # forward verbatim.
-                        effective_passthrough_allowed = self._sanitize_passthrough_for_token_exchange(passthrough_allowed, gateway_grant_type)
-                        effective_gateway_passthrough = self._sanitize_passthrough_for_token_exchange(gateway_passthrough, gateway_grant_type)
                         headers = compute_passthrough_headers_cached(
-                            request_headers,
-                            headers,
-                            effective_passthrough_allowed,
-                            gateway_auth_type=gateway_auth_type,
-                            gateway_passthrough_headers=effective_gateway_passthrough,
-                            is_token_exchange=(gateway_grant_type == "token-exchange"),
+                            request_headers, headers, passthrough_allowed, gateway_auth_type=gateway_auth_type, gateway_passthrough_headers=gateway_passthrough
                         )
                         # Read MCP-Session-Id from downstream client (MCP protocol header)
                         # and normalize to x-mcp-session-id for our internal session affinity logic
@@ -6206,9 +5287,7 @@ class ToolService(BaseService):
                             global_context=global_context,
                             local_contexts=None,
                             violations_as_exceptions=True,
-                            extensions=build_request_extensions(),
                         )
-                        record_plugin_metrics(current_trace_id.get(), pre_result.metadata)
                         _log_tool_pre_invoke_result(name, arguments, pre_invoke_headers, pre_result)
                         if pre_result.modified_payload:
                             payload = pre_result.modified_payload
@@ -6266,48 +5345,28 @@ class ToolService(BaseService):
 
                 elif tool_integration_type == "A2A" and a2a_agent_endpoint_url:
                     # A2A tool invocation using pre-extracted agent data (extracted in Phase 2 before db.close())
-                    a2a_allowlist = a2a_agent_passthrough_headers or []
                     headers = {"Content-Type": "application/json"}
-                    if request_headers:
-                        headers = compute_passthrough_headers_cached(
-                            request_headers,
-                            headers,
-                            passthrough_allowed,
-                            gateway_auth_type=None,
-                            gateway_passthrough_headers=a2a_allowlist,
-                        )
-                        if not settings.enable_sensitive_header_passthrough:
-                            headers = filter_sensitive_headers(headers)
-                    plugin_headers = filter_sensitive_headers(headers)
 
                     # Plugin hook: tool pre-invoke for A2A
                     plugin_manager = await self._get_plugin_manager(plugin_context_id)
                     if plugin_manager and plugin_manager.has_hooks_for(ToolHookType.TOOL_PRE_INVOKE) and not skip_pre_invoke:
                         if tool_metadata:
                             global_context.metadata[TOOL_METADATA] = tool_metadata
-                        pre_invoke_headers = HttpHeaderPayload(root=plugin_headers)
+                        pre_invoke_headers = HttpHeaderPayload(root=headers)
                         pre_result, context_table = await plugin_manager.invoke_hook(
                             ToolHookType.TOOL_PRE_INVOKE,
                             payload=ToolPreInvokePayload(name=name, args=arguments, headers=pre_invoke_headers),
                             global_context=global_context,
                             local_contexts=context_table,
                             violations_as_exceptions=True,
-                            extensions=build_request_extensions(),
                         )
-                        record_plugin_metrics(current_trace_id.get(), pre_result.metadata)
                         _log_tool_pre_invoke_result(name, arguments, pre_invoke_headers, pre_result)
                         if pre_result.modified_payload:
                             payload = pre_result.modified_payload
                             name = payload.name
                             arguments = payload.args
                             if payload.headers is not None:
-                                plugin_returned_headers = payload.headers.model_dump()
-                                if a2a_allowlist:
-                                    allowlist_lower = {h.lower() for h in a2a_allowlist}
-                                    safe_headers = {k: v for k, v in plugin_returned_headers.items() if k.lower() in allowlist_lower}
-                                    if not settings.enable_sensitive_header_passthrough:
-                                        safe_headers = filter_sensitive_headers(safe_headers)
-                                    headers.update(safe_headers)
+                                headers = payload.headers.model_dump()
 
                     prepared = prepare_a2a_invocation(
                         agent_type=a2a_agent_type,
@@ -6416,9 +5475,7 @@ class ToolService(BaseService):
                             global_context=global_context,
                             local_contexts=context_table,
                             violations_as_exceptions=True,
-                            extensions=build_request_extensions(),
                         )
-                        record_plugin_metrics(current_trace_id.get(), post_result.metadata)
                         # Use modified payload if provided
                         if post_result.modified_payload:
                             # Reconstruct ToolResult from modified result
@@ -6455,10 +5512,8 @@ class ToolService(BaseService):
                             context_table,
                             global_context,
                             meta_data,
-                            skip_pre_invoke=skip_pre_invoke,
-                            require_app_visible=require_app_visible,
-                            require_model_visible=require_model_visible,
-                            path_label="success",
+                            skip_pre_invoke,
+                            "success",
                         )
 
                 return tool_result
@@ -6486,10 +5541,8 @@ class ToolService(BaseService):
                         context_table,
                         global_context,
                         meta_data,
-                        skip_pre_invoke=skip_pre_invoke,
-                        require_app_visible=require_app_visible,
-                        require_model_visible=require_model_visible,
-                        path_label="timeout",
+                        skip_pre_invoke,
+                        "timeout",
                     )
                 raise
             except asyncio.CancelledError:
@@ -6526,9 +5579,7 @@ class ToolService(BaseService):
                             global_context=global_context,
                             local_contexts=context_table,
                             violations_as_exceptions=False,  # Don't let plugin errors mask the original exception
-                            extensions=build_request_extensions(),
                         )
-                        record_plugin_metrics(current_trace_id.get(), exc_post_result.metadata if exc_post_result else None)
                     except Exception as plugin_exc:
                         logger.debug("Failed to invoke post-invoke plugins on exception: %s", plugin_exc)
 
@@ -6549,10 +5600,8 @@ class ToolService(BaseService):
                         context_table,
                         global_context,
                         meta_data,
-                        skip_pre_invoke=skip_pre_invoke,
-                        require_app_visible=require_app_visible,
-                        require_model_visible=require_model_visible,
-                        path_label="exception",
+                        skip_pre_invoke,
+                        "exception",
                     )
 
                 raise ToolInvocationError(f"Tool invocation failed: {error_message}")
@@ -6753,9 +5802,7 @@ class ToolService(BaseService):
             >>> service.convert_tool_to_read = MagicMock(return_value='tool_read')
             >>> ToolRead.model_validate = MagicMock(return_value='tool_read')
             >>> import asyncio
-            >>> tool_update = MagicMock()
-            >>> tool_update.extension_metadata = None
-            >>> asyncio.run(service.update_tool(db, 'tool_id', tool_update))
+            >>> asyncio.run(service.update_tool(db, 'tool_id', MagicMock()))
             'tool_read'
         """
         try:
@@ -6852,10 +5899,6 @@ class ToolService(BaseService):
                 tool.output_schema = tool_update.output_schema
             if tool_update.annotations is not None:
                 tool.annotations = tool_update.annotations
-            tool_update_extension_metadata = optional_extension_metadata(getattr(tool_update, "extension_metadata", None))
-            if tool_update_extension_metadata is not None:
-                validate_extension_metadata(tool_update_extension_metadata)
-                tool.extension_metadata = tool_update_extension_metadata
             if tool_update.jsonpath_filter is not None:
                 tool.jsonpath_filter = tool_update.jsonpath_filter
             if tool_update.visibility is not None:

@@ -3,7 +3,7 @@
 - *Status:* Proposed
 - *Date:* 2026-03-15
 - *Deciders:* Platform Team
-- *Related:* [Modular Runtime Architecture](../modular-design.md), [ADR-043](043-rust-mcp-runtime-sidecar-mode-model.md)
+- *Related:* [Modular Runtime Architecture](../modular-design.md), [ADR-050: Defer Generic Cluster-Wide Settings Propagation](050-defer-generic-cluster-settings-propagation-framework.md)
 
 ## Context
 
@@ -33,8 +33,9 @@ We also allow:
 - **direct in-process calls** for embedded runtimes using the same conceptual
   contract
 
-This is important because the currently implemented Rust MCP precedent still
-uses trusted internal HTTP over UDS or loopback. That precedent remains valid
+This is important because the currently implemented sidecar precedent still
+uses trusted internal HTTP over UDS or loopback. This model remains valid
+for new sidecar modules today.
 during migration, but it does not redefine the longer-term default boundary.
 
 ## Consequences

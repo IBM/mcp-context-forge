@@ -45,7 +45,6 @@ Examples:
 """
 
 # Standard
-import importlib
 import logging
 import re
 import secrets
@@ -61,7 +60,6 @@ from starlette.responses import Response
 
 # First-Party
 from mcpgateway.auth import get_current_user
-from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.middleware.path_filter import should_skip_request_logging
 from mcpgateway.services.logging_service import LoggingService
@@ -76,8 +74,6 @@ logger = logging_service.get_logger(__name__)
 # Initialize structured logger for gateway boundary logging
 structured_logger = get_structured_logger("http_gateway")
 
-_RUST_REQUEST_LOGGING_MODULE = None
-_RUST_REQUEST_LOGGING_IMPORT_FAILED = False
 
 SENSITIVE_KEYS = frozenset(
     {
@@ -188,11 +184,6 @@ def mask_sensitive_data(data, max_depth: int = 10):
         >>> mask_sensitive_data({"level": {"nested": {}}}, max_depth=1)
         {'level': '<nested too deep>'}
     """
-    if getattr(settings, "experimental_rust_request_logging_masking_enabled", False) is True:
-        rust_module = _load_rust_request_logging_module()
-        if rust_module is not None:
-            return rust_module.mask_sensitive_data(data, max_depth)
-
     if max_depth <= 0:
         return "<nested too deep>"
 
@@ -272,11 +263,6 @@ def mask_sensitive_headers(headers):
         >>> "******" in result["Cookie"]
         True
     """
-    if getattr(settings, "experimental_rust_request_logging_masking_enabled", False) is True:
-        rust_module = _load_rust_request_logging_module()
-        if rust_module is not None:
-            return rust_module.mask_sensitive_headers(headers)
-
     masked_headers = {}
     for key, value in headers.items():
         key_lower = key.lower()
@@ -291,40 +277,10 @@ def mask_sensitive_headers(headers):
 
 
 def _mask_json_payload_for_logging(payload: bytes, max_depth: int = 10) -> str:
-    """Mask a JSON payload for logging, preferring the native bytes fast path."""
-    if getattr(settings, "experimental_rust_request_logging_masking_enabled", False) is True:
-        rust_module = _load_rust_request_logging_module()
-        if rust_module is not None and hasattr(rust_module, "mask_sensitive_json_bytes"):
-            try:
-                masked_payload = rust_module.mask_sensitive_json_bytes(payload, max_depth)
-                if isinstance(masked_payload, bytes):
-                    return masked_payload.decode("utf-8", errors="ignore")
-                return str(masked_payload)
-            except Exception as exc:
-                logger.warning("Failed in processing the payload %s", SecurityValidator.sanitize_log_message(str(exc)))
-
+    """Mask a JSON payload for logging."""
     json_payload = orjson.loads(payload)
     payload_to_log = mask_sensitive_data(json_payload, max_depth)
     return orjson.dumps(payload_to_log).decode()
-
-
-def _load_rust_request_logging_module():
-    """Load the experimental Rust masking native extension on demand."""
-    global _RUST_REQUEST_LOGGING_IMPORT_FAILED, _RUST_REQUEST_LOGGING_MODULE
-
-    if _RUST_REQUEST_LOGGING_MODULE is None:
-        if _RUST_REQUEST_LOGGING_IMPORT_FAILED:
-            return None
-        try:
-            _RUST_REQUEST_LOGGING_MODULE = importlib.import_module("request_logging_masking_native_extension")
-        except ImportError as exc:
-            _RUST_REQUEST_LOGGING_IMPORT_FAILED = True
-            logger.warning(
-                f"Experimental Rust request logging masking is enabled but the native extension is unavailable; "
-                f"falling back to Python masking. Install the request logging masking native extension first. ({exc})"
-            )
-            return None
-    return _RUST_REQUEST_LOGGING_MODULE
 
 
 class RequestLoggingMiddleware(BaseHTTPMiddleware):

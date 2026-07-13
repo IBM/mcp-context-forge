@@ -15,16 +15,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 
-def _trusted_internal_request(path, *, marker="rust", hmac_value=None, ctx="ctx", client="127.0.0.1"):
+def _trusted_internal_request(path, *, marker="affinity", hmac_value=None, ctx="ctx", client="127.0.0.1"):
     """Build a real loopback internal request for trust-gate exemption tests."""
     from starlette.requests import Request
 
-    from mcpgateway.auth_context import _expected_internal_mcp_runtime_auth_header
+    _HMAC_DUMMY = "HMAC-DUMMY"  # pragma: allowlist secret
 
-    headers = [
-        (b"x-contextforge-mcp-runtime", marker.encode()),
-        (b"x-contextforge-mcp-runtime-auth", (hmac_value or _expected_internal_mcp_runtime_auth_header()).encode()),
-    ]
+    headers = []
     if ctx is not None:
         headers.append((b"x-contextforge-auth-context", ctx.encode()))
     scope = {
@@ -136,8 +133,8 @@ class TestRateLimitMiddlewareTiers:
 
     @pytest.mark.asyncio
     async def test_forged_internal_request_is_still_rate_limited(self, middleware):
-        """A forged HMAC fails the trust gate, so the rate-limit path runs."""
-        request = _trusted_internal_request("/_internal/mcp/rpc", hmac_value="forged")
+        """An untrusted request (no auth-context) is still rate-limited."""
+        request = _trusted_internal_request("/_internal/mcp/rpc", ctx=None)
         call_next = AsyncMock(return_value="passthrough")
         middleware.get_endpoint_tier = MagicMock(side_effect=RuntimeError("reached rate-limit path"))
 

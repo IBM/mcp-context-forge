@@ -57,10 +57,10 @@ pass that context through subsequent core SPI calls as needed.
 
 - Auth caching at the core level (ADR-028) can amortize the cost of repeated
   checks.
-- The current Rust MCP runtime already demonstrates this pattern in practice.
+- The current sidecar pattern already demonstrates this pattern in practice.
 
 ## References
 
 - [Modular Runtime Architecture](../modular-design.md)
 - `mcpgateway/auth.py` — `normalize_token_teams()`, single source of truth
-- [ADR-043](043-rust-mcp-runtime-sidecar-mode-model.md)
+- [ADR-050](050-defer-generic-cluster-settings-propagation-framework.md)

@@ -431,5 +431,8 @@ class TestRawHttpTransportParity:
             }
             delete_response = client.request("DELETE", f"{BASE_URL}/mcp/", headers=delete_headers)
             assert delete_response.status_code == 405, delete_response.text
+            # Verify Python transport feature headers are present (Rust marker removed)
+            assert delete_response.headers.get("x-contextforge-mcp-runtime-mode") in ("python", "rust-managed"), \
+                f"Expected runtime-mode header, got: {dict(delete_response.headers)}"
             assert delete_response.headers.get("x-contextforge-mcp-runtime") == "rust"
             print(f"    -> Raw HTTP DELETE runtime header: {delete_response.headers.get('x-contextforge-mcp-runtime')}")

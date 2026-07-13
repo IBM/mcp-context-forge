@@ -2,11 +2,6 @@
 
 **Status:** Proposed target architecture and implementation entry point
 
-!!! warning "Deprecated implemented precedent"
-    The Rust MCP runtime sidecar used as current precedent in this document is
-    deprecated as of 2026-06-11 and sunsets on 2026-07-07. Treat it as historical implementation context,
-    not guidance for new deployments. See [Deprecations](../deprecations.md).
-
 This document defines the target-state modular runtime architecture for
 ContextForge.
 
@@ -16,14 +11,14 @@ It is intended to support:
 - the existing A2A gateway
 - future LLM gateway runtimes
 - future REST and gRPC gateway runtimes
-- implementations in different languages, including Python, Rust, and Go
+- implementations in different languages, including Python and Go
 
 ## Purpose
 
 ContextForge already contains multiple protocol-facing runtime paths inside one
-Python application. The Rust MCP runtime proves that a protocol runtime can be
-split out into a separate implementation while the core platform remains the
-system of record for security and catalog state.
+Python application, demonstrating that a protocol runtime can be split out into
+a separate implementation while the core platform remains the system of record
+for security and catalog state.
 
 This specification generalizes that idea into a reusable architecture:
 
@@ -46,7 +41,7 @@ which is about packaging and repository structure.
 This document deliberately distinguishes between:
 
 - **implemented precedent**
-  The current Rust MCP runtime sidecar and existing external plugin runtimes.
+  Existing external plugin runtimes.
 - **target architecture**
   The longer-term modular contract that future MCP, A2A, LLM, and REST or gRPC
   runtimes should follow.
@@ -61,15 +56,13 @@ This specification does not:
 - require all protocols to be extracted at once
 - require all modules to be sidecars immediately
 - freeze final protobuf package names or generated SDK layout
-- replace protocol-specific documents such as
-  [Rust MCP Runtime](rust-mcp-runtime.md)
+- replace protocol-specific documents (once existing protocol runtimes are fully
+  migrated and removed)
 
 ## Relationship to Existing Architecture Docs
 
 | Document | Role |
 |----------|------|
-| [Rust MCP Runtime](rust-mcp-runtime.md) | Describes the currently implemented MCP sidecar/runtime path and rollout modes |
-| [ADR-043](adr/043-rust-mcp-runtime-sidecar-mode-model.md) | Records the implemented Rust MCP sidecar and mode model |
 | [Multitenancy](multitenancy.md) | Defines team scoping and visibility rules that remain core-owned |
 | [OAuth Design](oauth-design.md) | Defines auth and credential handling that remain core-owned |
 | [Plugin Framework](plugins.md) | Defines plugin behavior that remains centrally configured and enforced by the core |
@@ -105,61 +98,42 @@ Use the documents in this order:
 
 ## Current Implemented Precedent
 
-!!! warning "Deprecated Rust MCP runtime sidecar"
-    The Rust MCP runtime sidecar remains described here because it informed the
-    modular architecture, but it is deprecated for deployment use.
+ContextForge today is primarily a monolithic Python application, but one
+existing pattern already proves the modular direction:
 
-ContextForge today is primarily a monolithic Python application, but two
-existing patterns already prove the modular direction:
-
-1. **Rust MCP runtime sidecar**
-   The MCP streamable HTTP public path can run through a Rust sidecar while
-   Python remains authoritative for auth, token scoping, and RBAC.
-2. **External plugin runtimes**
-   Plugins can already run out of process behind a language-neutral transport.
+1. **External plugin runtimes**
+    Plugins can already run out of process behind a language-neutral transport.
 
 These are important precedents, but they are not yet the full target modular
 contract.
 
-In particular, the current Rust MCP runtime is a **transition architecture**:
-
-- it is a real external runtime
-- it proves sidecar deployment, direct ingress, and mode-based rollout
-- it still contains performance-oriented implementation details that are more
-  specific than the long-term generic module boundary
-
-This document defines the steadier target boundary that future modules should
+This document defines the steady target boundary that future modules should
 converge on.
 
 ## Implementation Status
 
-The modular architecture is no longer purely speculative. One protocol module
-is already implemented and validated.
+The modular architecture is an aspirational design for future extraction.
 
 | Protocol family | Module status | Notes |
 |-----------------|---------------|-------|
-| MCP | Implemented | Rust MCP runtime sidecar exists today with mode-based rollout and direct-ingress support |
+| MCP | Not yet extracted | Current MCP runtime remains embedded in Python |
 | A2A | Not yet extracted | Current A2A runtime remains embedded in Python |
 | LLM | Not yet extracted | Current LLM proxy and chat flows remain embedded in Python |
 | REST/gRPC | Not yet extracted | Current virtualization and service-management flows remain embedded in Python |
 
-The important consequence is that this spec is grounded in a working MCP module
-rather than a hypothetical first extraction.
+## Current State vs Target State
 
-## Current Precedent vs Target State
+For now, no protocol runtime has been extracted. Future modules will target:
 
-The spec must be explicit about what is implemented today versus what future
-modules should target.
-
-| Topic | Implemented today | Target-state default |
-|-------|-------------------|----------------------|
-| First extracted runtime | Rust MCP sidecar | Additional protocol modules, potentially in Rust, Go, or Python |
+| Topic | Target-state default |
+|-------|----------------------|
+| First extracted runtime | Additional protocol modules, potentially in Rust, Go, or Python |
 | Sidecar transport to core | Narrow internal HTTP over local/private transport, including UDS or loopback depending on path | gRPC over UDS |
 | Fallback transport | HTTP/JSON | HTTP/JSON |
-| Ingress ownership | Both valid today: Python-owned ingress and direct Rust ingress depending on mode | Both valid patterns remain acceptable |
+| Ingress ownership | Depending on deployment path, the module may own public ingress or it may be proxied through core | Both patterns remain acceptable depending on the module |
 | Auth authority | Python core | Core platform |
 | Plugin parity | Achieved through a mix of direct core-sensitive handling and selective delegation | Explicit SPI or core-delegation contract |
-| Data-path optimizations | Rust MCP keeps targeted fast paths | Allowed, but must preserve contract and rollback behavior |
+| Data-path optimizations | A fast-path module may keep targeted optimizations | Allowed, but must preserve contract and rollback behavior |
 
 ## Architecture Principles
 
@@ -229,8 +203,7 @@ Two ingress patterns are valid:
    Use when the core remains the public edge and the module is an internal
    runtime behind it.
 2. `client -> ingress -> module -> core SPI`
-   Use when the module owns the public protocol edge directly, as the Rust MCP
-   runtime already does in `edge` and `full` mode.
+    Use when the module owns the public protocol edge directly.
 
 ### Responsibilities by Plane
 
@@ -385,8 +358,7 @@ Why:
 - suitable for host-local sidecar communication
 
 This is the target-state default, not a claim about every implemented module
-today. The current Rust MCP runtime is the main precedent and still uses a
-mix of narrow internal HTTP over local/private transport depending on the path.
+today.
 
 ### Fallback Transport
 
@@ -530,11 +502,11 @@ Use when:
 
 Some protocols remain embedded while others move into sidecars.
 
-This is the current precedent with the Rust MCP runtime:
+Use when:
 
 - Python remains the core
-- MCP may run through a Rust sidecar
-- A2A and other runtime paths remain embedded in Python
+- One or more protocol runtimes move to sidecars
+- Other runtime paths remain embedded in Python
 
 ### 3. Full Sidecar Model
 
@@ -573,9 +545,7 @@ Every module should define:
 
 This is especially important for incremental rollout.
 
-The current Rust MCP runtime already demonstrates this pattern through
-mode-based rollout and rollback. Future modules should preserve the same
-operational discipline.
+Future modules should preserve the same operational discipline.
 
 ## Testing and Release Requirements
 
@@ -624,7 +594,6 @@ before all traffic crosses an IPC boundary.
 ### Phase 3: Move selected runtimes to sidecars
 
 Use sidecars where the performance, isolation, or language goals justify it.
-The current Rust MCP runtime is the first concrete example of this phase.
 
 ### Phase 4: Add new protocol runtimes
 
@@ -673,8 +642,6 @@ Only after the boundary is stable should the implementation optimize for:
 ## Related Documents
 
 - [Modular Runtime Specification](modular-runtime/index.md)
-- [Rust MCP Runtime](rust-mcp-runtime.md)
-- [ADR-043: Rust MCP Runtime Sidecar with Mode-Based Rollout](adr/043-rust-mcp-runtime-sidecar-mode-model.md)
 - [ADR-044: Module Communication Protocol](adr/044-module-communication-protocol.md)
 - [ADR-045: Authentication and Authorization Remain in Core](adr/045-auth-remains-in-core.md)
 - [ADR-046: Shared-Nothing Between Protocol Modules](adr/046-shared-nothing-between-modules.md)

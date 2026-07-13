@@ -48,44 +48,6 @@ install_plugin_requirements
         cwd=REPO_ROOT,
         check=False,
     )
-
-
-def _run_entrypoint_function(app_root: Path, function_name: str, exports: dict[str, str]) -> subprocess.CompletedProcess[str]:
-    export_lines = "\n".join(f'export {key}="{value}"' for key, value in exports.items())
-    command = f"""
-set -euo pipefail
-export CONTEXTFORGE_TEST_ONLY_SOURCE=true
-export APP_ROOT="{app_root}"
-source "{ENTRYPOINT}"
-{export_lines}
-{function_name}
-"""
-    return subprocess.run(
-        ["bash", "-lc", command],
-        capture_output=True,
-        text=True,
-        cwd=REPO_ROOT,
-        check=False,
-    )
-
-
-def test_print_mcp_runtime_mode_warns_when_rust_enabled(tmp_path: Path) -> None:
-    app_root = _make_app_root(tmp_path)
-
-    result = _run_entrypoint_function(
-        app_root,
-        "print_mcp_runtime_mode",
-        {
-            "EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED": "true",
-            "EXPERIMENTAL_RUST_MCP_RUNTIME_MANAGED": "true",
-        },
-    )
-
-    assert result.returncode == 0
-    assert "Rust MCP runtime sidecar is deprecated as of 2026-06-11 and will sunset on 2026-07-07" in result.stdout
-
-
-
 def test_install_plugin_requirements_refuses_path_outside_app_root(tmp_path: Path) -> None:
     app_root = _make_app_root(tmp_path)
     outside_requirements = tmp_path / "outside.txt"

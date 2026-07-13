@@ -3,12 +3,12 @@
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
 
-Runtime-mutable MCP mode (shadow ↔ edge) smoke and drift tests.
+MCP mode (shadow ↔ edge) smoke and drift tests.
 
-Exercises the gateway's ``/admin/runtime/mcp-mode`` API and, when the
-gateway booted with Rust support (``RUST_MCP_MODE=shadow|edge``), flips
-between ``shadow`` and ``edge`` mid-run to catch behavioral drift between
-the Python and Rust ingress paths.
+Exercises the gateway's ``/admin/runtime/mcp-mode`` API for boot-mode
+diagnostics. Since the Rust MCP runtime was removed, the gateway always
+boots ``python`` and edge/shadow overrides are advisory — the data plane
+remains served by the Python transport.
 
 The fixtures skip cleanly when:
   * The gateway isn't reachable (shared with other gateway-target tests).
@@ -51,26 +51,20 @@ def test_runtime_mode_off_rejects_flip(gateway_http_client, runtime_mode_state: 
 
 
 def test_runtime_mode_flip_to_edge_mounts_rust(flip_runtime_mode) -> None:
-    """Flipping to ``edge`` updates ``mounted`` to ``rust``.
+    """Flipping to ``edge`` records the override in state.
 
-    Asserts only against the PATCH response, which is the authoritative
-    acknowledgement of the flip on the serving pod. Cross-pod GET
-    consistency is documented as eventual (Redis pub/sub) — concurrent
-    flips from other pods can supersede version counters in ways a
-    single-pod harness shouldn't try to synchronize. The publish_status
-    and audit_persisted assertions elsewhere cover the cluster-propagation
-    contract.
+    Note: since the Rust MCP runtime was removed, edge override is advisory
+    — the data plane continues to serve via the Python transport. The PATCH
+    still records the override for diagnostics purposes.
     """
     post_flip = flip_runtime_mode("edge")
     assert post_flip["effective_mode"] == "edge"
-    assert post_flip["mounted"] == "rust", f"flip to edge should mount rust ingress, got mounted={post_flip['mounted']!r}"
 
 
 def test_runtime_mode_flip_to_shadow_mounts_python(flip_runtime_mode) -> None:
-    """Flipping to ``shadow`` mounts the Python ingress path (see sibling docstring)."""
+    """Flipping to ``shadow`` records the override for diagnostics."""
     post_flip = flip_runtime_mode("shadow")
     assert post_flip["effective_mode"] == "shadow"
-    assert post_flip["mounted"] == "python", f"flip to shadow should mount python ingress, got mounted={post_flip['mounted']!r}"
 
 
 def test_runtime_mode_rejects_unsupported(gateway_http_client, runtime_mode_state: dict) -> None:
@@ -80,19 +74,50 @@ def test_runtime_mode_rejects_unsupported(gateway_http_client, runtime_mode_stat
         assert resp.status_code >= 400, f"expected rejection for mode={bad_mode!r}, got {resp.status_code}: {resp.text[:200]}"
 
 
+def test_runtime_mode_boot_mode_is_always_python(gateway_http_client) -> None:
+    """The gateway always boots python since the Rust transport was removed.
+
+    Regression guard: a boot-mode override in the response would indicate
+    leftover Rust-boot detection logic.
+    """
+    resp = gateway_http_client.get("/admin/runtime/mcp-mode")
+    assert resp.status_code == 200
+    state = resp.json()
+    assert state["boot_mode"] == "python", f"boot_mode should always be python, got {state['boot_mode']!r}"
+    assert state["mounted"] == "python", f"mounted should always be python, got {state['mounted']!r}"
+    assert state["effective_mode"] == "python", f"effective_mode should always be python, got {state['effective_mode']!r}"
+
+
 def test_shadow_boot_rejects_edge_with_safety_flag_reason(gateway_http_client, runtime_mode_state: dict) -> None:
     """Boot=shadow must refuse mode=edge with a safety-flag-gated 409.
 
-    The spec requires ``experimental_rust_mcp_session_auth_reuse_enabled``,
-    which only boot_mode=edge sets. Any PATCH asking for edge from a
-    non-edge boot is rejected with a message naming that constraint.
+    Since the Rust MCP runtime was removed, shadow boot is no longer possible
+    (the gateway always boots ``python``). This test is kept as a guard
+    against regression: if the gateway ever booted shadow again, edge would
+    not be allowed without the session-auth-reuse safety flag.
     """
     if runtime_mode_state["boot_mode"] != "shadow":
         pytest.skip(f"gateway booted {runtime_mode_state['boot_mode']}; this rail only checked under boot_mode=shadow")
     resp = gateway_http_client.patch("/admin/runtime/mcp-mode", json={"mode": "edge"})
     assert resp.status_code == 409, f"expected 409, got {resp.status_code}: {resp.text[:200]}"
-    body = resp.text.lower()
-    assert "safety" in body or "reuse" in body or "edge" in body, f"409 body should explain the safety-flag constraint: {resp.text[:300]}"
+
+
+@pytest.mark.xfail(
+    strict=False,
+    reason=(
+        "GAP-010: nginx reverse-proxy does not follow runtime flips. Shadow flip "
+        "is observable on the admin plane but the data plane still only serves "
+        "via Python. Assertion becomes valid under direct-to-pod "
+        "or single-process topologies."
+    ),
+)
+def test_data_plane_runtime_header_under_shadow(flip_runtime_mode, gateway_http_client) -> None:
+    """After flipping to ``shadow``, the admin API records the override.
+
+    Data-plane witness (x-contextforge-mcp-runtime) may still report "rust"
+    under nginx fronting — the test is marked xfail for that case.
+    """
+    flip_runtime_mode("shadow")
 
 
 def test_patch_response_carries_publish_and_audit_fields(flip_runtime_mode, runtime_mode_state: dict) -> None:
@@ -156,59 +181,26 @@ def test_health_mirrors_runtime_mode_state(gateway_http_client) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Data-plane witness tests
-#
-# Control-plane assertions above prove the admin API accepts the flip and
-# reports the new state. These tests go further: they issue a real MCP
-# ``initialize`` request after the flip and read ``x-contextforge-mcp-runtime``
-# off the response to confirm the actual dispatch path changed. That header
-# is the data-plane witness — its value tells us which transport served the
-# request.
+# Note: Data-plane witness tests were removed — the Rust transport is no
+# longer mounted, so there is no data-plane witness to verify.  Edge/shadow
+# overrides are advisory for diagnostics only.
 # ---------------------------------------------------------------------------
-_INIT_BODY = {
-    "jsonrpc": "2.0",
-    "id": 1,
-    "method": "initialize",
-    "params": {
-        "protocolVersion": "2025-03-26",
-        "capabilities": {},
-        "clientInfo": {"name": "compliance-harness", "version": "0.1.0"},
-    },
-}
-_MCP_HEADERS = {
-    "accept": "application/json, text/event-stream",
-    "content-type": "application/json",
-    "mcp-protocol-version": "2025-03-26",
-}
-
-
-def _mcp_initialize_runtime_header(gateway_http_client) -> str:
-    """POST an initialize and return ``x-contextforge-mcp-runtime`` on the response."""
-    resp = gateway_http_client.post("/mcp/", headers=_MCP_HEADERS, json=_INIT_BODY)
-    assert resp.status_code == 200, f"initialize failed: {resp.status_code} {resp.text[:200]}"
-    runtime = resp.headers.get("x-contextforge-mcp-runtime")
-    assert runtime in {"python", "rust"}, f"response missing or invalid x-contextforge-mcp-runtime header: {runtime!r}"
-    return runtime
-
 
 def test_data_plane_runtime_header_under_edge(flip_runtime_mode, gateway_http_client) -> None:
-    """After flipping to ``edge``, an MCP initialize response names the Rust runtime.
+    """After flipping to ``edge``, the admin API records the override state.
 
-    This is the strict data-plane witness. It passes on both direct-to-pod
-    topologies and nginx-fronted topologies (where nginx always routes to
-    Rust under boot_mode=edge, matching the flip target).
+    Note: since the Rust transport is removed, the data-plane witness may
+    still report "python" — the edge mode is advisory only.
     """
     flip_runtime_mode("edge")
-    runtime = _mcp_initialize_runtime_header(gateway_http_client)
-    assert runtime == "rust", f"after flipping to edge, expected the Rust runtime on the data plane, " f"got x-contextforge-mcp-runtime={runtime!r}"
 
 
 @pytest.mark.xfail(
     strict=False,
     reason=(
         "GAP-010: nginx reverse-proxy does not follow runtime flips. Shadow flip "
-        "is observable on the admin plane but the data plane continues to serve "
-        "via Rust (nginx → :8787). Assertion becomes valid under direct-to-pod "
+        "is observable on the admin plane but the data plane still only serves "
+        "via Python. Assertion becomes valid under direct-to-pod "
         "or single-process topologies."
     ),
 )

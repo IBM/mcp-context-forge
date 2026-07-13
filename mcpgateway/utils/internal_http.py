@@ -93,15 +93,11 @@ async def post_rpc_in_process(*, content: bytes, headers: dict, timeout: float, 
         raise ValueError("post_rpc_in_process requires a non-empty auth_context for trusted-internal dispatch")
 
     # First-Party
-    from mcpgateway.auth_context import _expected_internal_mcp_runtime_auth_header  # pylint: disable=import-outside-toplevel,protected-access
     from mcpgateway.main import app  # pylint: disable=import-outside-toplevel,cyclic-import
 
-    # Trust headers for the internal endpoint: the "affinity" runtime marker, the
-    # shared-secret HMAC, and the encoded edge auth context (so the endpoint
+    # Trust headers for the internal endpoint: the encoded edge auth context (so the endpoint
     # reconstructs the caller without re-authenticating).
     rpc_headers = dict(headers)
-    rpc_headers["x-contextforge-mcp-runtime"] = "affinity"
-    rpc_headers["x-contextforge-mcp-runtime-auth"] = _expected_internal_mcp_runtime_auth_header()
     rpc_headers["x-contextforge-auth-context"] = auth_context
 
     # client=("127.0.0.1", 0) sets scope["client"] to a loopback address so the

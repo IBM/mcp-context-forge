@@ -10,8 +10,8 @@ This document describes the complete release process for ContextForge, from pre-
 |-------|-------|
 | [1. Version Update](#1-version-update) | Bump version, update references, CHANGELOG, roadmap, security advisories, base images |
 | [2. Python Dependency Updates](#2-python-dependency-updates) | Update pyproject.toml/requirements.txt, pip-audit |
-| [3. Rust & JS Dependency Updates](#3-rust-go-javascript-dependency-updates) | cargo update, npm update |
-| [4. Quality Gates](#4-quality-gates) | Package metadata validation, secrets scanning (pre-commit/CI handle the rest) |
+| [3. Go & JavaScript Dependency Updates](#3-go-javascript-dependency-updates) | go get -u, npm update |
+| [4. Quality Gates](#4-quality-gates) | Code formatting, linting, secrets scanning, security analysis |
 | [5. Test Gates](#5-test-gates) | Unit tests, JS tests, UI tests, MCP tests, load tests |
 | [6. Build Verification](#6-build-verification) | Docker build, compose stack, embedded mode, package validation |
 | [7. SSO Verification](#7-sso-verification) | Keycloak SSO login flow |
@@ -118,49 +118,49 @@ make docker-prod DOCKER_BUILD_ARGS="--no-cache"
 Update all Python dependencies across the repository before cutting a release. This ensures the release ships with current, patched versions.
 
 ### 2.1 Update CPEX dependencies
+Update the `[tool.uv.exclude-newer-package]` section of `pyproject.toml` file to the current date/time and execute
+`uv lock --upgrade` to get the latest depenencies and update the uv.lock file.
 
-Update the `[tool.uv.sources]` / `[tool.uv.exclude-newer-package]` section of the root `pyproject.toml` to the current date/time, then run:
-
-```bash
-uv lock --upgrade
-```
-
-### 2.2 Update all `pyproject.toml` lockfiles and `requirements.txt` files
-
-The snippet below auto-discovers every `pyproject.toml` and `requirements.txt` in the repository, skipping generated templates and virtual-environment directories. No hardcoded path list means newly added or deleted sub-projects are picked up automatically.
+### 2.2 Update dependencies with `update_dependencies.py`
 
 ```bash
-# uv-sync + lockfile upgrade for every pyproject.toml
-# Skips: mcp-servers/templates (generated), .venv dirs, Rust crates (no uv)
-find . \
-  -path "./mcp-servers/templates" -prune -o \
-  -path "*/.venv" -prune -o \
-  -path "*/target" -prune -o \
-  -path "./.cache" -prune -o \
-  -name "pyproject.toml" -type f -print \
-| while read -r toml_file; do
-    dir=$(dirname "$toml_file")
-    echo "==> $dir"
-    uv-upsync --project "$dir" 2>/dev/null || true
-    uv lock --upgrade --exclude-newer "10 days" --project "$dir"
-  done
-
-# requirements.txt files (docs, tests)
-find . \
-  -path "*/.venv" -prune -o \
-  -path "./.cache" -prune -o \
-  -name "requirements.txt" -type f -print \
-| while read -r req_file; do
-    echo "==> $req_file"
-    python .github/tools/update_dependencies.py --file "$req_file"
-  done
+find . -path "./mcp-servers/templates" -prune -o -path "*/.venv" -prune -o -name "pyproject.toml" -type f -print | while read -r toml_file; do
+  dir=$(dirname "$toml_file")
+  echo "Updating dependencies in $dir"
+  (cd "$dir" && uv lock --upgrade)
+done
 ```
 
-!!! tip "Dry-run the requirements updater first"
-    Use `--dry-run` to preview changes before applying:
-    ```bash
-    python .github/tools/update_dependencies.py --file docs/requirements.txt --dry-run
-    ```
+!!! Optional: The above step may not update all dependencies as expected. Run the following command to update all dependencies in pyproject.toml files and not work from dynamic versions.
+The repository includes an async dependency updater at `.github/tools/update_dependencies.py`. Run it against every `pyproject.toml` and `requirements.txt` in the tree:
+
+```bash
+
+# Main project
+python .github/tools/update_dependencies.py --file pyproject.toml
+
+# MCP servers
+python .github/tools/update_dependencies.py --file mcp-servers/python/data_analysis_server/pyproject.toml
+python .github/tools/update_dependencies.py --file mcp-servers/python/graphviz_server/pyproject.toml
+python .github/tools/update_dependencies.py --file mcp-servers/python/mcp-rss-search/pyproject.toml
+python .github/tools/update_dependencies.py --file mcp-servers/python/python_sandbox_server/pyproject.toml
+python .github/tools/update_dependencies.py --file mcp-servers/python/mcp_eval_server/pyproject.toml
+python .github/tools/update_dependencies.py --file mcp-servers/python/url_to_markdown_server/pyproject.toml
+python .github/tools/update_dependencies.py --file mcp-servers/python/output_schema_test_server/pyproject.toml
+
+# External plugins
+python .github/tools/update_dependencies.py --file plugins/external/cedar/pyproject.toml
+python .github/tools/update_dependencies.py --file plugins/external/llmguard/pyproject.toml
+python .github/tools/update_dependencies.py --file plugins/external/opa/pyproject.toml
+
+# Requirements files
+python .github/tools/update_dependencies.py --file docs/requirements.txt
+python .github/tools/update_dependencies.py --file tests/load/requirements.txt
+python .github/tools/update_dependencies.py --file tests/populate/requirements.txt
+```
+
+!!! tip "Dry-run first"
+    Use `--dry-run` to preview changes before applying: `python .github/tools/update_dependencies.py --file pyproject.toml --dry-run`
 
 ### 2.3 Reinstall and verify
 
@@ -189,58 +189,34 @@ make test
 
 ---
 
-## 3. Rust & JavaScript Dependency Updates
+### 3. Go & JavaScript Dependency Updates
 
-Update non-Python dependencies across the repository.
-
-### 3.1 Rust dependencies
-
-Update the root workspace `Cargo.lock` and verify the workspace builds and passes tests:
+1. Update `go.mod` and `go.sum` for all Go modules:
 
 ```bash
-cargo update --workspace
-
-# Verify build + lint + tests
-make rust-check
+find . -path "./mcp-servers/templates" -prune -o -name "go.mod" -type f -print | while read -r mod_file; do
+  dir=$(dirname "$mod_file")
+  echo "Updating Go dependencies in $dir"
+  (cd "$dir" && go get -u ./... && go mod tidy)
+done
 ```
 
-| What it runs | Description |
-|--------------|-------------|
-| `cargo fmt --check` | Verify Rust formatting |
-| `cargo clippy -- -D warnings` | Lint for common mistakes and anti-patterns |
-| `cargo test --lib --release` | Run Rust unit tests |
+2. Update `LINT_GO_TOOLCHAIN ?= go1.26.4` appropriately in the _root_/Makefile
+3. Update Dockerfile e.g. `FROM golang:1.26.4`
 
-### 3.2 Rust supply-chain vetting
-
-After any Rust dependency update, run cargo-vet before release freeze:
+Verify Go code compiles and passes security checks:
 
 ```bash
-make rust-vet
+make linting-go-gosec
+make linting-go-govulncheck
 ```
 
-The `make rust-vet` target runs `cargo vet check` against `supply-chain/config.toml`, `supply-chain/audits.toml`, and the trusted audit imports recorded in `supply-chain/imports.lock`. Release CI treats this as a blocking gate for Rust wheels and source distributions.
+| Target | What it checks |
+|--------|----------------|
+| `linting-go-gosec` | Security static analysis across all Go modules |
+| `linting-go-govulncheck` | Known vulnerability scanning in Go dependencies |
 
-If vetting fails, use the [cargo-vet audit workflow](https://mozilla.github.io/cargo-vet/performing-audits.html) to handle each unvetted crate before tagging:
-
-| Option | When to use it | What to do |
-|--------|----------------|------------|
-| Use an imported audit | A trusted upstream audit set already covers the crate/version | Review the suggested import, then update `supply-chain/config.toml` and `supply-chain/imports.lock` if the trust relationship is acceptable |
-| Audit the diff | Cargo-vet suggests a small `cargo vet diff <crate> <old> <new>` | Review the exact version diff, then record it with `cargo vet certify <crate> <old> <new>` |
-| Audit the crate fully | The crate is new, or the diff is not a useful review unit | Inspect the exact crate source with `cargo vet inspect <crate> <version>`, then record it with `cargo vet certify <crate> <version>` |
-| Add a temporary exemption | The update is needed now, but a full audit is not practical before release | Add the narrowest `[[exemptions.<crate>]]` entry in `supply-chain/config.toml` with the required criteria, and document why it is acceptable |
-| Skip or revert the update | The audit cost or risk is too high for the release window | Keep the currently vetted version and move the dependency update to a follow-up task |
-
-Audits and exemptions should be reviewed by Rust maintainers or security reviewers who understand the affected crate and the `safe-to-deploy` / `safe-to-run` criteria. Prefer diff audits over exemptions. Exemptions are allowed, but each one reduces the value of the vetting gate and should be revisited with `cargo vet suggest`.
-
-When ContextForge and `cpex-plugins` share Rust dependency changes, apply the same decision in both repositories: run each repo's cargo-vet check, update each repo's `supply-chain/` metadata, or explicitly defer the update in the repo where the audit cannot be completed.
-
-At the end of Rust supply-chain vetting, prune stale cargo-vet exemptions:
-
-```bash
-cargo vet prune
-```
-
-### 3.3 JavaScript dependencies (npm)
+### 3.4 JavaScript dependencies (npm)
 
 Update `package.json` and verify the frontend builds and passes linting:
 
@@ -257,46 +233,57 @@ make lint-web
 make test-js-coverage
 ```
 
-### 3.4 Frontend CDN dependencies
+### 3.5 Frontend CDN dependencies
 
-The Admin UI installs vendor JavaScript through npm and bundles/chunks it with Vite. Release validation should therefore focus on npm dependency updates and verifying the generated bundle, not CDN-pinned assets.
+The Admin UI loads frontend libraries (Tailwind, Chart.js, CodeMirror, Font Awesome, Marked, DOMPurify) from CDNs at runtime, with pinned versions in three places that must be kept in sync. **Note:** HTMX and Alpine.js are bundled via npm/Vite and no longer loaded from CDN.
 
 | File | What it controls |
 |------|------------------|
-| `package.json` | Frontend dependency versions and scripts |
-| `package-lock.json` | Locked npm dependency graph |
-| `mcpgateway/admin_ui/` | Admin UI source bundled by Vite |
+| `scripts/cdn_resources.py` | Single source of truth for CDN URLs and versions (used by SRI scripts) |
+| `scripts/download-cdn-assets.sh` | Downloads pinned CDN assets into the container for airgapped deployment |
+| `mcpgateway/templates/*.html` | `<script>` and `<link>` tags with hardcoded CDN URLs |
 
 **Update procedure:**
 
-1. **Check for new versions** of frontend dependencies in `package.json` and the lockfile.
+1. **Check for new versions** of each library at its upstream (npm, cdnjs, jsdelivr). The current pinned versions are listed in `scripts/cdn_resources.py`.
 
-2. **Update npm dependencies** and refresh the lockfile:
-
-    ```bash
-    npm update
-    npm audit
-    npm audit fix
-    ```
-
-3. **Rebuild the Admin UI bundle**:
+2. **Update the version numbers** in all three files. Search-and-replace the old version with the new one:
 
     ```bash
-    make build-ui
+    # Example: update Chart.js from 4.4.1 to 4.5.0
+    grep -rn "4.4.1" scripts/cdn_resources.py scripts/download-cdn-assets.sh mcpgateway/templates/
+    # Replace in all matching files
+    # Note: Alpine.js and HTMX are bundled via npm/Vite — update via package.json instead
     ```
 
-4. **Rebuild the container** to verify the frontend build path:
+3. **Regenerate SRI hashes** for the new CDN URLs:
+
+    ```bash
+    make sri-generate
+    ```
+
+    This fetches each resource from its CDN URL and writes SHA-384 hashes to `mcpgateway/sri_hashes.json`.
+
+4. **Verify SRI hashes** match the live CDN content:
+
+    ```bash
+    make sri-verify
+    ```
+
+5. **Rebuild the container** to test the airgapped download path:
 
     ```bash
     make docker-prod DOCKER_BUILD_ARGS="--no-cache"
     ```
 
-5. **Smoke test the Admin UI** to verify bundled assets load correctly in normal and air-gapped deployments.
+    The `Containerfile` runs `scripts/download-cdn-assets.sh` during build to vendor all CDN assets into `mcpgateway/static/vendor/`. A build failure here means a URL is broken or a version was updated inconsistently.
 
-!!! note "Bundled frontend assets"
-    Admin UI vendor JavaScript is installed from npm and bundled/chunked with Vite. Keep `package.json`, `package-lock.json`, and the Admin UI source in sync when updating frontend dependencies.
+6. **Smoke test the Admin UI** to verify all frontend libraries load correctly (both CDN and vendored modes).
 
-### 3.5 Rebuild containers
+!!! warning "Three files must stay in sync"
+    A version bump in `cdn_resources.py` without matching changes in `download-cdn-assets.sh` and the HTML templates will cause SRI verification failures or broken airgapped builds. Always update all three together.
+
+### 3.6 Rebuild containers
 
 After updating all dependency ecosystems, rebuild the production container from scratch to verify everything integrates:
 
@@ -308,33 +295,86 @@ make docker-prod DOCKER_BUILD_ARGS="--no-cache"
 
 ## 4. Quality Gates
 
-The steps below are the quality gates that require a human to run at release time. Formatting (`ruff-format`), import sorting, YAML/TOML/JSON syntax checks, and docstring coverage are all enforced by pre-commit hooks on every commit and are not repeated here. Python linters (`ruff`, `bandit`, `interrogate`, `pylint`), web linting, and config-file linting run in CI on every PR.
+All formatting and linting checks must pass with zero errors.
+
+### 4.1 Code formatting
+
+```bash
+make ruff-format
+```
+
+| Target | What it checks |
+|--------|----------------|
+| `ruff-format` | Formats Python code (includes import sorting and unused code removal) |
 
 !!! note "Pre-commit hooks run automatically"
-    `ruff-format`, `ruff-check`, `bandit`, `interrogate`, `detect-secrets`, `yamllint`, `check-yaml`, `check-toml`, and `check-json` all run as pre-commit hooks and in CI. They do not need a dedicated manual release step. `check-headers` also runs as a pre-commit hook but is not yet in CI — it remains a manual release step (§4.3) until a CI job is added.
+    The configured pre-commit hooks (whitespace, EOF fixers, detect-secrets, AST checks, etc.) are enforced at commit time and in CI — they do not need a dedicated release step. If a release commit passes pre-commit locally it will pass in CI; otherwise investigate before tagging.
 
-### 4.1 Package metadata validation
-
-```bash
-make verify
-```
-
-Validates the wheel and sdist with twine, check-manifest, and pyroma. This is not yet wired into a CI job and must be run manually before tagging.
-
-### 4.2 Secrets scanning
+### 4.2 Python linters
 
 ```bash
-make detect-secrets-scan
+make ruff vulture bandit interrogate pylint verify
 ```
 
-Re-runs the full baseline scan across all tracked files against `.secrets.baseline`. `detect-secrets` also runs as a pre-commit hook on every commit, but a fresh full-tree scan immediately before tagging is the last line of defence.
+| Target | What it checks |
+|--------|----------------|
+| `ruff` | PEP 8 style, pyflakes, docstrings, pylint rules (E3, E4, E7, E9, F, D1, D417, PL) |
+| `vulture` | Dead code detection (unused functions, variables, imports) |
+| `bandit` | Security vulnerabilities in Python code |
+| `interrogate` | Docstring coverage (must meet threshold) |
+| `pylint` | Code quality score (must be ≥ 10, fails on errors) |
+| `verify` | Package metadata validation (twine, check-manifest, pyroma) |
 
-**Acceptance criteria:** No unaudited secrets detected. Any false positives are triaged via `make detect-secrets-audit` and recorded in `.secrets.baseline`.
+### 4.3 Configuration file validation
+
+```bash
+make yamllint tomllint jsonlint
+```
+
+| Target | What it checks |
+|--------|----------------|
+| `yamllint` | YAML syntax and style (compose files, CI workflows, plugin config) |
+| `tomllint` | TOML syntax (`pyproject.toml`, Rust `Cargo.toml`) |
+| `jsonlint` | JSON syntax (`package.json`, test fixtures, schemas) |
+
+### 4.4 Web code linters
+
+```bash
+make lint-web
+```
+
+Runs eslint, nodejsscan, htmlhint, stylelint, retire.js, and npm audit against the frontend code.
+
+### 4.5 Secrets scanning
+
+```bash
+make dodgy detect-secrets-scan
+```
+
+| Target | What it checks |
+|--------|----------------|
+| `dodgy` | Hardcoded passwords, suspicious code patterns, secret-like strings |
+| `detect-secrets-scan` | Scans tracked files for secrets against the `.secrets.baseline` allowlist |
+
+**Acceptance criteria:** No secrets or credentials detected. Any false positives are triaged via `make detect-secrets-audit` and recorded in `.secrets.baseline`. `detect-secrets` also runs automatically as a pre-commit hook on every change, so most regressions are caught before merge.
 
 !!! warning "Run before tagging"
     Secrets in git history survive even after deletion from the working tree. Always run the secrets-scan gate before creating a release tag.
 
-### 4.3 License header compliance
+### 4.6 Security best practices
+
+```bash
+make devskim prospector
+```
+
+| Target | What it checks |
+|--------|----------------|
+| `devskim` | Microsoft DevSkim security anti-patterns (crypto misuse, injection, hardcoded creds) |
+| `prospector` | Comprehensive multi-tool analysis (pylint, pyflakes, mccabe, dodgy, pep8, pep257) |
+
+Review the output for any high-severity findings. DevSkim results are also written to `devskim-results.sarif` for integration with CI dashboards.
+
+### 4.7 License header compliance
 
 ```bash
 make check-headers
@@ -425,7 +465,23 @@ make docker-prod DOCKER_BUILD_ARGS="--no-cache"
 
 This builds the lite production image with Docker Content Trust enabled.
 
-### 6.2 Compose stack validation
+### 6.2 Containerfile linting and image scanning
+
+Lint the Dockerfiles for best-practice violations, then scan the built image for vulnerabilities and CIS benchmark compliance:
+
+```bash
+make hadolint dockle security-scan
+```
+
+| Target | What it checks |
+|--------|----------------|
+| `hadolint` | Dockerfile best practices and shell linting for `Containerfile.*` and any `Dockerfile.*` |
+| `dockle` | CIS Docker Benchmark compliance and image best practices (runs against the built image via tarball) |
+| `security-scan` | Show current local container review guidance |
+
+**Acceptance criteria:** Review the generated SBOM and any separately-run container scan results before publishing. No errors from `hadolint` (warnings are acceptable if documented). No failures from `dockle` at warn level.
+
+### 6.3 Compose stack validation
 
 Bring up the full stack with the testing profile and verify all services are healthy:
 
@@ -442,7 +498,7 @@ make compose-ps
 !!! warning "Run compose tests before tearing down"
     The UI tests, MCP tests, and load tests in [Section 5](#5-test-gates) require this stack to be running. Run all compose-dependent tests before calling `make compose-clean`.
 
-### 6.3 Embedded mode verification
+### 6.4 Embedded mode verification
 
 Verify the gateway works correctly in embedded/iframe mode with benchmark servers:
 
@@ -471,7 +527,7 @@ Tear down when done:
 make embedded-down
 ```
 
-### 6.4 Python package build
+### 6.5 Python package build
 
 ```bash
 make dist
@@ -1384,28 +1440,35 @@ python .github/tools/update_dependencies.py --file pyproject.toml
 make install-dev
 make pip-audit
 
-# 2. Rust / JS / CDN dependency updates
+# 2. Rust / Go / JS / CDN dependency updates
 cargo update --workspace
-make rust-vet
+# ... go get -u ./... && go mod tidy for all go.mod dirs ...
+make linting-go-gosec linting-go-govulncheck
 npm update && npm audit && npm audit fix
 make lint-web test-js-coverage
-# Frontend deps: update package.json/package-lock.json and rebuild the Vite bundle
+# CDN deps: update versions in cdn_resources.py, download-cdn-assets.sh, templates/*.html
+make sri-generate sri-verify
 
 # 3. Rebuild after dep updates
 make docker-prod DOCKER_BUILD_ARGS="--no-cache"
 make test
 
-# 4. Quality gates (pre-commit/CI handle formatting and linting)
-make verify
-make detect-secrets-scan
+# 4. Format, lint & security
+make ruff-format
+make ruff vulture bandit interrogate pylint verify
+make yamllint tomllint jsonlint
+make lint-web
+make dodgy detect-secrets-scan
+make devskim prospector
 make check-headers
 
 # 5. Unit tests
 make coverage
 make test-js-coverage
 
-# 6. Build & compose stack
+# 6. Build, Containerfile lint & compose stack
 make docker-prod DOCKER_BUILD_ARGS="--no-cache"
+make hadolint dockle security-scan
 make testing-down compose-clean testing-up
 
 # 7. Integration tests (compose stack must be running)

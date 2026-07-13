@@ -3,7 +3,7 @@
 - *Status:* Accepted
 - *Date:* 2026-04-18
 - *Deciders:* Platform Team
-- *Related:* [ADR-043: Rust MCP Runtime Sidecar with Mode-Based Rollout](043-rust-mcp-runtime-sidecar-mode-model.md), [Issue #4273: Runtime-mutable RUST_MCP_MODE](https://github.com/IBM/mcp-context-forge/issues/4273)
+- *Related:* [ADR-050: Runtime Mode Override (Deprecated)](050-defer-generic-cluster-settings-propagation-framework.md), [Issue #4273: Runtime-mutable MCP mode](https://github.com/IBM/mcp-context-forge/issues/4273)
 
 ## Context
 
@@ -248,16 +248,14 @@ any of them re-introduces a bug class the original code already paid for.
 
 ### Neutral
 
-- ADR-043 (Rust MCP Runtime Sidecar with Mode-Based Rollout) and the
-  Modular Runtime Architecture work continue independently. Nothing in
+- ADR-043 (sidecar mode model) was deprecated and superseded by the Python-only transport path.
+  The Modular Runtime Architecture work continues independently. Nothing in
   this ADR forecloses or accelerates either.
 
 ## References
 
 - Implementation: `mcpgateway/runtime_state.py`,
   `mcpgateway/routers/runtime_admin_router.py`,
-  `mcpgateway/version.py` (the `_should_mount_public_rust_transport` /
-  `_should_delegate_a2a_to_rust` / `_deployment_allows_override_mode`
-  helpers)
-- Architecture overview: [Rust MCP Runtime — Runtime Mode Override](../rust-mcp-runtime.md#runtime-mode-override)
+  `mcpgateway/version.py` (the safety-invariant helpers)
+- Architecture overview: [Deprecations](../../deprecations.md)
 - Reverse-proxy follow-up: [#4278](https://github.com/IBM/mcp-context-forge/issues/4278)

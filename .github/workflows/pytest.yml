@@ -19,7 +19,7 @@ on:
     paths:
       - "mcpgateway/**"
       - "tests/**"
-      - "!tests/live_gateway/e2e_rust/**"
+      - "tests/live_gateway/**"
       - "pyproject.toml"
       - "uv.lock"
       - ".github/workflows/pytest.yml"
@@ -109,11 +109,6 @@ jobs:
           version: "0.10.11"
           python-version: ${{ matrix.python }}
 
-      # -----------------------------------------------------------
-      # Note: Rust plugin builds removed - all plugins now distributed as PyPI packages
-      # Rust MCP runtime (tools_rust/mcp_runtime) not needed for main pytest suite
-      # (e2e_rust tests are excluded and run in separate workflow)
-      # -----------------------------------------------------------
 
       # 3️⃣  Run the tests with coverage (fail under 95 %total  coverage)
       # -----------------------------------------------------------

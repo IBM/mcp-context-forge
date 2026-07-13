@@ -1479,39 +1479,6 @@ def test_mcp_require_auth_defaults_to_auth_required_false():
     assert s.mcp_require_auth is False
 
 
-def test_experimental_rust_mcp_runtime_defaults():
-    """Experimental Rust MCP runtime settings should default to disabled with local sidecar URL."""
-    s = Settings(environment="development", _env_file=None)
-    assert s.experimental_rust_mcp_runtime_enabled is False
-    assert s.experimental_rust_mcp_runtime_url == "http://127.0.0.1:8787"
-    assert s.experimental_rust_mcp_runtime_uds is None
-    assert s.experimental_rust_mcp_runtime_timeout_seconds == 30
-    assert s.experimental_rust_mcp_session_core_enabled is False
-    assert s.experimental_rust_mcp_event_store_enabled is False
-    assert s.experimental_rust_mcp_resume_core_enabled is False
-    assert s.experimental_rust_mcp_live_stream_core_enabled is False
-    assert s.experimental_rust_mcp_affinity_core_enabled is False
-    assert s.experimental_rust_mcp_session_auth_reuse_enabled is False
-
-
-def test_experimental_rust_mcp_runtime_uds_accepts_absolute_path(tmp_path: Path):
-    """The optional Rust runtime UDS path should round-trip when configured."""
-    uds_path = tmp_path / "contextforge-rust.sock"
-    s = Settings(experimental_rust_mcp_runtime_uds=str(uds_path), environment="development", _env_file=None)
-    assert s.experimental_rust_mcp_runtime_uds == str(uds_path)
-
-
-def test_experimental_rust_mcp_runtime_uds_rejects_relative_path():
-    """The Rust runtime UDS path must be absolute."""
-    with pytest.raises(ValueError, match="must be an absolute path"):
-        Settings(experimental_rust_mcp_runtime_uds="relative.sock", environment="development", _env_file=None)
-
-
-def test_experimental_rust_mcp_runtime_uds_rejects_missing_parent(tmp_path: Path):
-    """The Rust runtime UDS parent directory must already exist."""
-    missing_parent = tmp_path / "missing" / "contextforge-rust.sock"
-    with pytest.raises(ValueError, match="parent directory does not exist"):
-        Settings(experimental_rust_mcp_runtime_uds=str(missing_parent), _env_file=None)
 
 
 

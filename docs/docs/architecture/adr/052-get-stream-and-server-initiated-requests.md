@@ -3,13 +3,13 @@
 - *Status:* Proposed
 - *Date:* 2026-04-19
 - *Deciders:* Platform Team
-- *Related:* [ADR-038: Multi-Worker Session Affinity](038-multi-worker-session-affinity.md), [ADR-043: Rust MCP Runtime Sidecar](043-rust-mcp-runtime-sidecar-mode-model.md), [Issue #4205: GET /mcp 405 fallback](https://github.com/IBM/mcp-context-forge/issues/4205), [Issue #4299: Per-session upstream isolation](https://github.com/IBM/mcp-context-forge/issues/4299), [MCP spec — Listening for messages from the server](https://modelcontextprotocol.io/specification/draft/basic/transports#listening-for-messages-from-the-server)
+- *Related:* [ADR-038: Multi-Worker Session Affinity](038-multi-worker-session-affinity.md), [ADR-050: Defer Generic Cluster-Wide Settings Propagation Framework](050-defer-generic-cluster-settings-propagation-framework.md), [Issue #4205: GET /mcp 405 fallback](https://github.com/IBM/mcp-context-forge/issues/4205), [Issue #4299: Per-session upstream isolation](https://github.com/IBM/mcp-context-forge/issues/4299), [MCP spec — Listening for messages from the server](https://modelcontextprotocol.io/specification/draft/basic/transports#listening-for-messages-from-the-server)
 
 ## Context
 
 The MCP Streamable HTTP spec defines a server-to-client stream: the client opens `GET /mcp` with `Accept: text/event-stream`, optionally carrying `Last-Event-Id`, and the server returns an SSE stream that delivers server-initiated JSON-RPC messages — notifications (logging, progress, list-changed) and *requests* the server makes of the client (sampling/createMessage, elicitation/create, roots/list).
 
-**What we have today (post-#4205, #4299).** Both the Python gateway (`streamablehttp_transport.py:3004-3031`) and the Rust runtime (`crates/mcp_runtime/src/lib.rs:4654-4706`) return `405 Method Not Allowed` on `GET /mcp` whenever stateful sessions are disabled OR no `Mcp-Session-Id` header is present. The 405 was correct under #4205 because there was no infrastructure to deliver server-initiated messages to a downstream listener — the per-session message handler in `services/notification_service.py:369-431` consumes upstream notifications only to trigger internal list-refresh, and `routers/reverse_proxy.py:532` carries an explicit `# TODO: Implement message queue for SSE delivery`.
+**What we have today (post-#4205, #4299).** Both the Python gateway (`streamablehttp_transport.py:3004-3031`) return `405 Method Not Allowed` on `GET /mcp` whenever stateful sessions are disabled OR no `Mcp-Session-Id` header is present. The 405 was correct under #4205 because there was no infrastructure to deliver server-initiated messages to a downstream listener — the per-session message handler in `services/notification_service.py:369-431` consumes upstream notifications only to trigger internal list-refresh, and `routers/reverse_proxy.py:532` carries an explicit `# TODO: Implement message queue for SSE delivery`.
 
 **Why we need it back.** Restoring the GET stream is a prerequisite for several upcoming features that all depend on server-to-client delivery: structured logging visible to the client, progress notifications, sampling/elicitation passthrough (extending the work in [ADR-022](022-elicitation-passthrough-implementation.md) to streamable HTTP), and list-changed notifications that today are absorbed into refresh logic instead of forwarded.
 
@@ -191,16 +191,12 @@ Tests in `tests/unit/mcpgateway/transports/test_streamablehttp_transport.py`:
 - **Default on.** `mcp_get_stream_enabled=True` ships in the same release as the implementation. Operators can revert to 405 behavior with a single env var if a regression appears.
 - **Tests.** The current happy-path 405 tests in `tests/unit/mcpgateway/transports/test_streamablehttp_transport.py:6490+` are converted to assert SSE is returned for valid sessions; the negative cases (stateless mode, missing/invalid session ID) keep their 405 assertions. New tests cover `Last-Event-Id` resume, multi-worker fanout against a mock Redis, and the 409 response on second listener.
 - **Compliance harness.** Connect → notification fanout → `Last-Event-Id` resume exercised end-to-end by the protocol-compliance matrix in docker-compose; a dedicated transport-core test for the GET stream can be added later when a stable harness anchor exists (not required for this ADR to ship).
-- **Rust runtime.** The `session_id.is_none()` 405 branch in
-  `crates/mcp_runtime/src/lib.rs` (`forward_transport_request`) **stays** —
-  it's spec-mandated (GET requires a session id) and applies in both
-  Python-served and Rust-relayed configurations. What changed for ADR-052
-  is that the GET-with-session path now relays a real SSE stream end to
-  end (Python's GET handler returns events instead of 405). The Rust
-  relay code itself needed no behavior change — comments around the 405
-  branch were updated to point at ADR-052, and `crates/mcp_runtime/DEVELOPING.md`
-  § "GET /mcp Stream Relay" documents the unchanged data flow for relay-mode
-  developers.
+- **Rust runtime.** The `session_id.is_none()` 405 branch in the transport core **stays** —
+  it's spec-mandated (GET requires a session id) and applies in all
+  configurations. What changed for ADR-052 is that the GET-with-session
+  path now relays a real SSE stream end to end (Python's GET handler
+  returns events instead of 405). The relay code itself needed no behavior
+  change — comments around the 405 branch were updated to point at ADR-052.
 
 ## Trying it out
 
@@ -216,7 +212,6 @@ compose, and `make testing-up` (3-replica multi-node with Redis).
   - `mcpgateway/services/session_affinity.py` (add listener-claim methods)
   - `mcpgateway/services/notification_service.py` (publish to event bus, request correlation)
   - `mcpgateway/config.py` (`mcp_get_stream_enabled`)
-  - `crates/mcp_runtime/src/lib.rs` (drop 405 branch in live-stream path)
 - Tests:
   - `tests/unit/mcpgateway/transports/test_streamablehttp_transport.py`
   - `tests/unit/mcpgateway/services/test_session_affinity.py`
@@ -224,4 +219,4 @@ compose, and `make testing-up` (3-replica multi-node with Redis).
   - `tests/unit/mcpgateway/transports/test_redis_event_store.py` (cross-stream, evicted-cursor, no-cursor replay)
   - `tests/unit/mcpgateway/services/test_notification_service.py` (request correlation, id-collision, publish-failure telemetry, shutdown timeout)
 - Spec: [Streamable HTTP — Listening for messages from the server](https://modelcontextprotocol.io/specification/draft/basic/transports#listening-for-messages-from-the-server)
-- Prior ADRs: [ADR-022](022-elicitation-passthrough-implementation.md), [ADR-038](038-multi-worker-session-affinity.md), [ADR-043](043-rust-mcp-runtime-sidecar-mode-model.md)
+- Prior ADRs: [ADR-022](022-elicitation-passthrough-implementation.md), [ADR-038](038-multi-worker-session-affinity.md), [ADR-050](050-defer-generic-cluster-settings-propagation-framework.md)

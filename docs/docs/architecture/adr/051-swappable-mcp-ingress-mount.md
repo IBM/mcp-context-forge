@@ -3,29 +3,26 @@
 - *Status:* Accepted
 - *Date:* 2026-04-18
 - *Deciders:* Platform Team
-- *Related:* [ADR-043: Rust MCP Runtime Sidecar with Mode-Based Rollout](043-rust-mcp-runtime-sidecar-mode-model.md), [ADR-050: Defer Generic Cluster-Wide Settings Propagation Framework](050-defer-generic-cluster-settings-propagation-framework.md), [Issue #4273: Runtime-mutable RUST_MCP_MODE](https://github.com/IBM/mcp-context-forge/issues/4273), [Issue #4278: Propagate runtime MCP mode override into the public reverse proxy](https://github.com/IBM/mcp-context-forge/issues/4278)
+- *Related:* [ADR-050: Defer Generic Cluster-Wide Settings Propagation Framework](050-defer-generic-cluster-settings-propagation-framework.md), [Issue #4273: Runtime-mutable MCP mode](https://github.com/IBM/mcp-context-forge/issues/4273), [Issue #4278: Propagate runtime MCP mode override into the public reverse proxy](https://github.com/IBM/mcp-context-forge/issues/4278)
 
 ## Context
 
 Issue #4273 introduced the runtime-mutable MCP mode override. The original
-implementation mounted an `MCPStreamableHTTPModeDispatcher` at `/mcp` that
-held two hard-coded transports — `MCPRuntimeHeaderTransportWrapper`
-(Python) and `RustMCPRuntimeProxy` (the trusted Python→Rust forwarder over
-`MCP_RUST_LISTEN_HTTP` / UDS) — and chose between them per request based
-on `_should_mount_public_rust_transport()`. That worked for the two
+implementation mounted a dispatcher at `/mcp` that held two hard-coded
+transports — a Python transport and a forwarder over the internal listener
+(UDS) — and chose between them per request. That worked for the two
 transports we had at the time but pinned the dispatcher to a closed set
 and embedded the selection policy inside the dispatch method.
 
 Two near-term needs surfaced that the dispatcher couldn't accommodate
 cleanly:
 
-1. **An nginx-style reverse proxy to the Rust public listener.** In a
-   single-process / no-nginx deployment, edge mode still routes through
-   Python's `RustMCPRuntimeProxy` over the trusted-internal listener
-   (`MCP_RUST_LISTEN_HTTP`). For deployments without nginx in front, the
-   gateway can also play the nginx role itself by reverse-proxying to
-   the Rust public listener at `MCP_RUST_PUBLIC_LISTEN_HTTP`. This is a
-   third ingress kind, not a different way of using the existing two.
+1. **An nginx-style reverse proxy to the backend listener.** In a
+    single-process / no-nginx deployment, edge mode still routes through
+    an internal proxy over the trusted-internal listener. For deployments
+    without nginx in front, the gateway can also play the nginx role itself
+    by reverse-proxying to the public listener. This is a third ingress
+    kind, not a different way of using the existing two.
 
 2. **Future ingresses we don't yet have specs for.** Shadow-comparison
    (run both transports, compare results), percentage traffic split,
@@ -55,14 +52,7 @@ Implementation:
   Selector receives the ASGI scope so policies can inspect
   method/path/headers without changing the mount API.
 
-- **`mcpgateway/transports/rust_mcp_public_proxy.py`** —
-  `RustMCPPublicProxyApp`, an ASGI app that does nginx-style reverse-proxy
-  to `MCP_RUST_PUBLIC_LISTEN_HTTP`. Adds `X-Forwarded-{For,Proto,Host}`,
-  RFC 7239 `Forwarded`, and `X-Real-IP` so the Rust public listener's
-  `/_internal/mcp/authenticate` callback sees the original client info.
-  Streams both directions; preserves `Authorization` / `Cookie` (this is
-  a public hop, not trusted-internal); does NOT inject any trust-marker
-  headers. Built via `build_rust_public_proxy_app()` factory.
+- **`mcpgateway/transports/`** — ingress mount and proxy classes
 
 - **`mcpgateway/main.py`** — `_select_mcp_ingress(scope)` is the single
   selection policy. `_build_mcp_transport_app()` constructs the mount,
@@ -73,29 +63,19 @@ Implementation:
   the `app.mount("/mcp", app=mcp_transport_app.handle_streamable_http)`
   line stays unchanged.
 
-- **`mcpgateway/config.py`** — two new settings:
-  - `mcp_rust_ingress: str = "internal"` — selector input, picks between
-    the two Rust ingress shapes (`"internal"` or `"public"`).
-  - `mcp_rust_public_proxy_upstream: str = "http://127.0.0.1:8787"` —
-    default upstream for `RustMCPPublicProxyApp`, matching
-    `docker-entrypoint.sh`'s `MCP_RUST_PUBLIC_LISTEN_HTTP=0.0.0.0:8787`
-    accessed via loopback inside the same pod.
+- **Config** — two new settings for
+  backend ingress type and upstream URL. The selection policy preserves
+  all the existing safety invariants.
 
-The selection policy in `_select_mcp_ingress` preserves all the existing
-safety invariants:
+The selection policy preserves all the existing safety invariants:
 
-- `_should_mount_public_rust_transport()` is consulted first — same
-  function the runtime-mode override coordinator already gates on, so
+- The routing predicate is consulted first — same
+  mechanism the runtime-mode override coordinator already gates on, so
   shadow override / edge boot / safety-flag check / boot=full all behave
   identically to the prior dispatcher.
-- Within the Rust branch, the `mcp_rust_ingress` setting selects between
-  the two shapes. Default is `"internal"` to preserve the prior behavior
-  bit-for-bit; operators opt into the public-proxy shape with a single
-  setting change.
-- For boot=full, the mount isn't used at all — the plain
-  `RustMCPRuntimeProxy` is mounted directly per the prior code, since
-  full-boot has no dispatcher (flipping `full` would orphan Rust-held
-  session/event-store state per ADR-043).
+- For boot=full, the mount isn't used at all — the plain proxy is
+  mounted directly per the prior code, since full-boot has no dispatcher
+  (flipping full would orphan sidecar-owned session/event-store state).
 
 ## Why this isn't the framework ADR-050 deferred
 
@@ -128,13 +108,11 @@ the same way the prior dispatcher consumed the same predicates.
   itself is now there.
 - **Operator-facing 503 names the missing ingress.** When a deployment
   is misconfigured (selector returns an ingress name not registered for
-  this build) the response body reads, e.g., `MCP ingress 'rust-public'
-  is not registered for this build; available: ['python', 'rust-internal']`.
-- **The nginx-style public proxy is now a usable production option.**
-  Single-process / no-proxy edge deployments can set
-  `mcp_rust_ingress=public` and route directly to Rust's public listener
-  without nginx in the picture — partially closing the gap tracked in
-  #4278 for non-nginx topologies.
+  this build) the response body explains the issue.
+- The nginx-style public proxy is now a usable production option.
+  Single-process / no-proxy edge deployments can set the ingress shape
+  and route directly to the backend listener without nginx in the picture
+  — partially closing the gap tracked in #4278 for non-nginx topologies.
 - **Drain semantics preserved.** Per-request selection means in-flight
   requests on a deselected ingress complete on their original handler;
   only newly-accepted requests follow the new selection. Same property
@@ -155,20 +133,18 @@ the same way the prior dispatcher consumed the same predicates.
   in `main.py` predates the rename. Aliasing one to the other keeps the
   mount line unchanged; a follow-up could change the mount line and drop
   the alias.
-- **Public-listener proxy shares a port with the internal listener.**
-  `MCP_RUST_LISTEN_HTTP=127.0.0.1:8787` and
-  `MCP_RUST_PUBLIC_LISTEN_HTTP=0.0.0.0:8787` are the same port on
-  different bind addresses. Operators who want to run both listeners
-  from outside the default `docker-entrypoint.sh` flow need to be aware
-  that the Rust binary picks one or the other based on env at startup —
-  this isn't something the new ingress shape can change.
+- **Internal/public shares a port.** The internal and public listeners
+  use the same port on different bind addresses. Operators who want to run
+  both from outside the default entrypoint flow need to be aware that the
+  binary picks one or the other based on env at startup — this isn't
+  something the new ingress shape can change.
 
 ### Neutral
 
 - The runtime-mode override admin API (`PATCH /admin/runtime/mcp-mode`)
   is unchanged. It still reads/writes `RuntimeState`; the selector picks
-  it up via `_should_mount_public_rust_transport()` on the next request.
-- Docs at `docs/docs/architecture/rust-mcp-runtime.md` and the operator
+  it up via the underlying predicate on the next request.
+- Docs at `docs/docs/architecture/deprecations.md` and the operator
   guidance in `.env.example` / `docker-compose.yml` continue to describe
   shadow ↔ edge as the user-visible toggle. The internal/public ingress
   choice is a deployment-shape setting separate from the runtime override.
@@ -229,5 +205,5 @@ and keeps the available ingress set auditable from one location.
   - `tests/unit/mcpgateway/transports/test_mcp_ingress_mount.py`
   - `tests/unit/mcpgateway/test_main_extended.py` (the two
     `test_mcp_ingress_mount_*` tests + the three `test_import_*` tests)
-- Architecture overview: [Rust MCP Runtime](../rust-mcp-runtime.md)
+- Architecture overview: [Deprecations](../../deprecations.md)
 - Reverse-proxy follow-up: [#4278](https://github.com/IBM/mcp-context-forge/issues/4278)

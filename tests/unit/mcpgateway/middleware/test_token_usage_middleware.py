@@ -26,15 +26,12 @@ async def _make_asgi_call(middleware, scope, receive=None, send=None):
     return send
 
 
-def _trusted_internal_scope(path, *, marker="rust", hmac_value=None, ctx="ctx", client="127.0.0.1"):
+def _trusted_internal_scope(path, *, marker="affinity", hmac_value=None, ctx="ctx", client="127.0.0.1"):
     """Build a loopback internal ASGI scope for trust-gate exemption tests."""
-    # First-Party
-    from mcpgateway.auth_context import _expected_internal_mcp_runtime_auth_header
 
-    headers = [
-        (b"x-contextforge-mcp-runtime", marker.encode()),
-        (b"x-contextforge-mcp-runtime-auth", (hmac_value or _expected_internal_mcp_runtime_auth_header()).encode()),
-    ]
+    _HMAC_DUMMY = "HMAC-DUMMY"  # pragma: allowlist secret
+
+    headers = []
     if ctx is not None:
         headers.append((b"x-contextforge-auth-context", ctx.encode()))
     return {
@@ -67,10 +64,10 @@ async def test_trusted_internal_dispatch_skips_usage_logging():
 
 @pytest.mark.asyncio
 async def test_forged_internal_request_is_not_skipped_for_usage():
-    """A forged HMAC fails the trust gate, so the usage path runs (wrapped send)."""
+    """An untrusted request (no auth-context) is NOT skipped for usage logging (send is wrapped)."""
     app = AsyncMock()
     middleware = TokenUsageMiddleware(app=app)
-    scope = _trusted_internal_scope("/_internal/mcp/rpc", hmac_value="forged")
+    scope = _trusted_internal_scope("/_internal/mcp/rpc", marker="bogus", ctx=None)
     receive, send = AsyncMock(), AsyncMock()
 
     await middleware(scope, receive, send)

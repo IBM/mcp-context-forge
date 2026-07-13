@@ -77,10 +77,6 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 RUN if [ "$ENABLE_RUST" != "true" ]; then \
         echo "⏭️  Rust builds disabled (set --build-arg ENABLE_RUST=true to enable)"; \
         mkdir -p /build/native-extension-wheels /build/target/release; \
-        printf '#!/usr/bin/env sh\n' > /build/target/release/contextforge-mcp-runtime; \
-        printf 'echo "Rust MCP runtime not built into this image. Rebuild with --build-arg ENABLE_RUST=true." >&2\n' >> /build/target/release/contextforge-mcp-runtime; \
-        printf 'exit 1\n' >> /build/target/release/contextforge-mcp-runtime; \
-        chmod +x /build/target/release/contextforge-mcp-runtime; \
     fi
 
 # Install system deps + Rust toolchain in a single layer (only if ENABLE_RUST=true)
@@ -142,19 +138,6 @@ RUN if [ "$ENABLE_RUST" = "true" ]; then \
         rm -f /tmp/build_local_native_extensions.py \
     else \
         echo "⏭️  Skipping local native extension build"; \
-    fi
-
-# Build MCP runtime binary
-RUN if [ "$ENABLE_RUST" = "true" ]; then \
-        if [ "$ENABLE_RUST_MCP_RMCP" = "true" ]; then \
-            cargo build --release -p contextforge_mcp_runtime --features rmcp-upstream-client; \
-        else \
-            cargo build --release -p contextforge_mcp_runtime; \
-        fi && \
-        cp /build/target/release/contextforge_mcp_runtime /build/target/release/contextforge-mcp-runtime && \
-        echo "✅ Rust MCP runtime built successfully"; \
-    else \
-        echo "⏭️  Skipping Rust MCP runtime build"; \
     fi
 
 ###############################################################################
@@ -329,12 +312,9 @@ RUN set -euo pipefail \
     && rm -rf "/app/"*.egg-info /app/build /app/dist /app/.eggs
 
 # ----------------------------------------------------------------------------
-# Copy Rust runtime binaries and frontend static output from their builder
-# stages AFTER the venv install so those changes don't invalidate the heavy
-# dependency layer above.
+# Copy frontend static output from their builder stage AFTER the venv install
+# so those changes don't invalidate the heavy dependency layer above.
 # ----------------------------------------------------------------------------
-COPY --from=rust-builder /build/target/release/contextforge-mcp-runtime /app/bin/contextforge-mcp-runtime
-
 COPY --from=frontend-builder /opt/app-root/src/mcpgateway/static/ /app/mcpgateway/static/
 
 # Copy pre-built Tailwind CSS from node-builder
@@ -430,8 +410,6 @@ COPY --from=builder --chown=10001:10001 /app /app
 # ----------------------------------------------------------------------------
 ENV PATH="/app/.venv/bin:${PATH}" \
     PYTHONPATH="/app" \
-    CONTEXTFORGE_ENABLE_RUST_BUILD=${ENABLE_RUST} \
-    CONTEXTFORGE_ENABLE_RUST_MCP_RMCP_BUILD=${ENABLE_RUST_MCP_RMCP} \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PYTHONHASHSEED=random \

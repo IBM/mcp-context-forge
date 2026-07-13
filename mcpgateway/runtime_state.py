@@ -5,7 +5,7 @@ SPDX-License-Identifier: Apache-2.0
 
 Runtime-mutable mode state for the public ``/mcp`` ingress path.
 
-Boot-time env var (``RUST_MCP_MODE``) still selects the initial transport at
+Boot-time env var still selects the initial transport at
 process start. This module layers an optional in-memory override on top so an
 authorized admin can flip ``shadow ↔ edge`` without restarting the process.
 
@@ -110,13 +110,9 @@ class BootReconcileStatus(StrEnum):
       dispatcher mounted on this deployment (e.g. ``boot=off`` for either
       runtime). The hint is discarded; the operator must boot with the
       runtime enabled for the hint to take effect.
-    - ``INCOMPATIBLE_BOOT_FULL``: hint targeted MCP on a ``boot=full`` pod.
-      Full-boot mounts a plain Rust proxy with no dispatcher, so the
-      override would strand. Operator action: boot with ``RUST_MCP_MODE=edge``.
-    - ``INCOMPATIBLE_SAFETY_FLAG``: hint requested ``edge`` but the
-      deployment did not opt into the session-auth-reuse (MCP) safety
-      flag at boot. Operator action: enable the corresponding flag
-      (typically by booting with ``RUST_MCP_MODE=edge``).
+    - ``INCOMPATIBLE_NO_DISPATCHER``: the override targets a runtime that has no
+      active dispatcher on this deployment. The hint is discarded; an operator
+      must enable the runtime dispatcher for the hint to take effect.
     - ``PUBSUB_UNAVAILABLE``: pub/sub subscribe failed during start; this pod
       will not receive remote overrides until restart.
     - ``COORDINATOR_OFFLINE``: coordinator was never started (e.g. test mode
@@ -127,8 +123,6 @@ class BootReconcileStatus(StrEnum):
     REDIS_UNAVAILABLE = "redis_unavailable"
     MALFORMED_HINT = "malformed_hint"
     INCOMPATIBLE_NO_DISPATCHER = "incompatible_no_dispatcher"
-    INCOMPATIBLE_BOOT_FULL = "incompatible_boot_full"
-    INCOMPATIBLE_SAFETY_FLAG = "incompatible_safety_flag"
     PUBSUB_UNAVAILABLE = "pubsub_unavailable"
     COORDINATOR_OFFLINE = "coordinator_offline"
 
@@ -145,8 +139,6 @@ class MoveCompatibility(StrEnum):
 
     OK = "ok"
     NO_DISPATCHER = "no_dispatcher"
-    BOOT_FULL_STRANDS = "boot_full_strands"
-    EDGE_NEEDS_SAFETY_FLAG = "edge_needs_safety_flag"
 
 
 def _move_compat_to_reconcile_status(compat: "MoveCompatibility") -> "BootReconcileStatus":
@@ -158,15 +150,9 @@ def _move_compat_to_reconcile_status(compat: "MoveCompatibility") -> "BootReconc
     Returns:
         The matching ``BootReconcileStatus``. ``OK`` maps to ``OK`` for symmetry.
     """
-    if compat == MoveCompatibility.OK:  # pragma: no cover — caller filters OK upstream
+    if compat == MoveCompatibility.OK:
         return BootReconcileStatus.OK
-    if compat == MoveCompatibility.NO_DISPATCHER:
-        return BootReconcileStatus.INCOMPATIBLE_NO_DISPATCHER
-    if compat == MoveCompatibility.BOOT_FULL_STRANDS:
-        return BootReconcileStatus.INCOMPATIBLE_BOOT_FULL
-    if compat == MoveCompatibility.EDGE_NEEDS_SAFETY_FLAG:
-        return BootReconcileStatus.INCOMPATIBLE_SAFETY_FLAG
-    return BootReconcileStatus.INCOMPATIBLE_NO_DISPATCHER  # pragma: no cover — defensive default for future MoveCompatibility variants
+    return BootReconcileStatus.INCOMPATIBLE_NO_DISPATCHER
 
 
 # Backward-compat aliases for callers that consume the bare string set or the
@@ -789,8 +775,8 @@ class RuntimeStateCoordinator:
         # not be able to clear state on the new deployment's terms.
         #
         # The Redis hint key is intentionally NOT deleted here: a future
-        # compatible-boot pod (e.g. the operator restores RUST_MCP_MODE=edge
-        # in a later deploy) must still be able to read it for boot
+        # compatible-boot pod (e.g. the operator restores the edge mode
+        # flag in a later deploy) must still be able to read it for boot
         # reconciliation. Stale hints expire on their own via the 24h TTL
         # set at publish time; an operator who wants to clear immediately
         # can DEL the contextforge:runtime:mode_state:{runtime} key.
@@ -799,11 +785,8 @@ class RuntimeStateCoordinator:
         except ValueError:
             hint_mode = None
         if hint_mode is not None:
-            # First-Party: lazy to avoid the version <-> runtime_state import cycle.
-            # First-Party
-            from mcpgateway.version import _deployment_allows_override_mode  # pylint: disable=import-outside-toplevel,cyclic-import
-
-            compat = _deployment_allows_override_mode(kind, hint_mode)
+            # Rust runtime removed: no override can be honored; always NO_DISPATCHER.
+            compat = MoveCompatibility.NO_DISPATCHER
             if compat != MoveCompatibility.OK:
                 logger.warning(
                     "RuntimeStateCoordinator: discarding incompatible boot hint for %s (mode=%s) on pod %s; "
@@ -908,11 +891,8 @@ class RuntimeStateCoordinator:
                 remote_mode = None
                 remote_runtime = None
             if remote_mode is not None and remote_runtime is not None:
-                # First-Party: lazy to avoid the version <-> runtime_state import cycle.
-                # First-Party
-                from mcpgateway.version import _deployment_allows_override_mode  # pylint: disable=import-outside-toplevel,cyclic-import
-
-                remote_compat = _deployment_allows_override_mode(remote_runtime, remote_mode)
+                # Rust runtime removed: no override can be honored; always NO_DISPATCHER.
+                remote_compat = MoveCompatibility.NO_DISPATCHER
                 if remote_compat != MoveCompatibility.OK:
                     logger.warning(
                         "RuntimeStateCoordinator: discarding incompatible remote override for %s (mode=%s) from pod=%s; reason=%s. The publishing pod's flags allow this mode but this pod's do not.",

@@ -1070,10 +1070,9 @@ class SessionAffinity:
         OAuth bearer or an ``MCP_REQUIRE_AUTH=false`` public-only request would
         401 if re-authenticated there. Instead, the originating worker's
         already-validated identity rides in ``auth_context`` (the encoded
-        ``x-contextforge-auth-context`` header); with the
-        ``x-contextforge-mcp-runtime: affinity`` marker, the shared-secret HMAC,
-        and the loopback client address, the trusted endpoint accepts the request
-        and reconstructs the same user the edge established.
+        ``x-contextforge-auth-context`` header); with the loopback client
+        address, the trusted endpoint accepts the request and reconstructs the
+        same user the edge established.
 
         Args:
             request: Serialized HTTP request data from Redis Pub/Sub containing:
@@ -1157,22 +1156,14 @@ class SessionAffinity:
 
             # First-Party - lazy imports avoid a circular dependency with main/transport.
             # The forwarded envelope was already verified above, before any field was decoded.
-            # First-Party
-            from mcpgateway.auth_context import _expected_internal_mcp_runtime_auth_header  # pylint: disable=import-outside-toplevel,protected-access
             from mcpgateway.main import app  # pylint: disable=import-outside-toplevel,cyclic-import
             from mcpgateway.utils.passthrough_headers import safe_extract_and_filter_for_loopback  # pylint: disable=import-outside-toplevel
             from mcpgateway.utils.verify_credentials import _resolve_auth_header_name  # pylint: disable=import-outside-toplevel,protected-access
 
             # Trust headers for the internal /_internal/mcp/rpc endpoint:
-            # - x-contextforge-mcp-runtime: "affinity" caller marker
-            # - x-contextforge-mcp-runtime-auth: shared-secret HMAC
-            # - x-contextforge-auth-context: the encoded edge auth context, so the
-            #   endpoint reconstructs the same user without re-authenticating.
             rpc_headers = {
                 "content-type": "application/json",
                 "x-mcp-session-id": mcp_session_id or "",
-                "x-contextforge-mcp-runtime": "affinity",
-                "x-contextforge-mcp-runtime-auth": _expected_internal_mcp_runtime_auth_header(),
                 "x-contextforge-auth-context": auth_context_header,
             }
             # Preserve the bearer under the configured auth header (AUTH_HEADER_NAME),

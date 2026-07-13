@@ -191,7 +191,7 @@ When `MCP_CLIENT_AUTH_ENABLED=false`:
 
 - Access control relies on `MCP_REQUIRE_AUTH` + tool/resource visibility only
 - Team membership validation is skipped (no JWT to extract teams from)
-- Use `TRUST_PROXY_AUTH=true` with a reverse proxy for user identification
+- Use `TRUST_PROXY_AUTH=true` with a reverse proxy for user identification, taking care to validate proxy headers.
 
 ---
 
