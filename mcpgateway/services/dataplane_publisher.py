@@ -312,7 +312,6 @@ class DataplanePublisherService:
                 gateway_rows = db.execute(
                     select(
                         DbGateway.id,
-                        DbGateway.slug,
                         DbGateway.name,
                         DbGateway.url,
                         DbGateway.transport,
@@ -378,7 +377,6 @@ class DataplanePublisherService:
             "gateways": [
                 {
                     "id": gateway.id,
-                    "slug": gateway.slug,
                     "name": gateway.name,
                     "url": gateway.url,
                     "transport": gateway.transport,
@@ -406,15 +404,33 @@ class DataplanePublisherService:
     @staticmethod
     def _filter_backend_items_for_user(backend_items_by_gateway: dict[str, BackendItems], tool_names_by_id: dict[str, tuple[str, str]]) -> dict[str, BackendItems]:
         """Filter backend tool IDs for one user and convert visible tools to names."""
-        return {
-            gateway_id: {
-                "tools": [tool_names_by_id[tool_id][0] for tool_id in backend_items["tools"] if tool_id in tool_names_by_id],
-                "tool_name_aliases": {tool_names_by_id[tool_id][1]: tool_names_by_id[tool_id][0] for tool_id in backend_items["tools"] if tool_id in tool_names_by_id},
+        filtered: dict[str, BackendItems] = {}
+        for gateway_id, backend_items in backend_items_by_gateway.items():
+            tools: list[str] = []
+            tool_name_aliases: dict[str, str] = {}
+            for tool_id in backend_items["tools"]:
+                names = tool_names_by_id.get(tool_id)
+                if names is None:
+                    continue
+                original_name, exposed_name = names
+                tools.append(original_name)
+                if exposed_name in tool_name_aliases and tool_name_aliases[exposed_name] != original_name:
+                    logger.warning(
+                        "Duplicate exposed tool name '%s' on backend %s: keeping alias to '%s', dropping alias to '%s'",
+                        exposed_name,
+                        gateway_id,
+                        tool_name_aliases[exposed_name],
+                        original_name,
+                    )
+                    continue
+                tool_name_aliases[exposed_name] = original_name
+            filtered[gateway_id] = {
+                "tools": tools,
+                "tool_name_aliases": tool_name_aliases,
                 "resources": list(backend_items["resources"]),
                 "prompts": list(backend_items["prompts"]),
             }
-            for gateway_id, backend_items in backend_items_by_gateway.items()
-        }
+        return filtered
 
     def _get_backend_items_by_server(self, db: Any) -> BackendItemsByServer:
         """Fetch tools, resources, and prompts grouped by server and backend gateway."""

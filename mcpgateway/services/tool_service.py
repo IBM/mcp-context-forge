@@ -18,6 +18,7 @@ It handles:
 import asyncio
 import base64
 import binascii
+from collections import Counter
 from collections.abc import Mapping
 from datetime import datetime, timezone
 from functools import lru_cache
@@ -161,6 +162,21 @@ logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
 
 _W3C_TRACEPARENT_RE = re.compile(r"^([0-9a-f]{2})-([0-9a-f]{32})-([0-9a-f]{16})-([0-9a-f]{2})$")
+
+
+def _warn_on_duplicate_exposed_tool_names(server_id: str, exposed_names: List[str]) -> None:
+    """Warn when a virtual server exposes the same tool name more than once.
+
+    MCP tool names SHOULD be unique within a server; duplicate exposed names
+    cannot be disambiguated by clients and make scoped invocation ambiguous.
+
+    Args:
+        server_id: Virtual server whose listing is being produced.
+        exposed_names: Protocol-visible tool names in the listing.
+    """
+    duplicates = sorted({name for name, count in Counter(exposed_names).items() if count > 1})
+    if duplicates:
+        logger.warning("Virtual server %s exposes duplicate tool names %s; rename the tools' custom names to keep invocation unambiguous", server_id, duplicates)
 
 
 def _extract_tenant_id_from_payload(team_id: Any) -> Optional[str]:
@@ -3018,6 +3034,7 @@ class ToolService(BaseService):
                     logger.exception("Failed to convert tool %s (%s): %s", getattr(tool, "id", "unknown"), getattr(tool, "name", "unknown"), e)
                     # Continue with remaining tools instead of failing completely
 
+            _warn_on_duplicate_exposed_tool_names(server_id, [tool_read.custom_name for tool_read in result if getattr(tool_read, "custom_name", None)])
             return result
 
     async def list_server_mcp_tool_definitions(
@@ -3110,6 +3127,7 @@ class ToolService(BaseService):
                     payload["outputSchema"] = row["output_schema"]
                 result.append(payload)
 
+            _warn_on_duplicate_exposed_tool_names(server_id, [definition["name"] for definition in result])
             return result
 
     async def list_tools_for_user(

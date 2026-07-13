@@ -9284,6 +9284,30 @@ class TestRustMcpExecutionPlan:
         db.commit.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_list_server_mcp_tool_definitions_warns_on_duplicate_exposed_names(self, tool_service, caplog):
+        """Duplicate exposed custom names within one server should be surfaced as a warning."""
+        row = {
+            "name": "Shared.Tool",
+            "title": None,
+            "description": "desc",
+            "input_schema": {"type": "object"},
+            "output_schema": None,
+            "annotations": None,
+            "owner_email": None,
+            "team_id": None,
+            "visibility": "public",
+        }
+        db = MagicMock()
+        db.execute.return_value.mappings.return_value.all.return_value = [row, dict(row)]
+
+        with caplog.at_level(logging.WARNING, logger="mcpgateway.services.tool_service"):
+            payload = await tool_service.list_server_mcp_tool_definitions(db, "srv-1", user_email=None, token_teams=None)
+
+        assert [definition["name"] for definition in payload] == ["Shared.Tool", "Shared.Tool"]
+        assert "duplicate tool names" in caplog.text
+        assert "srv-1" in caplog.text
+
+    @pytest.mark.asyncio
     async def test_prepare_rust_mcp_tool_execution_post_invoke_hooks_force_fallback(self, tool_service):
         """Post-invoke hooks should force fallback even when pre-invoke hooks are also registered."""
         # Create a mock plugin manager with proper registry structure

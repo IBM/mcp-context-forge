@@ -8,6 +8,7 @@ Unit tests for DataplanePublisherService.
 """
 
 import asyncio
+import logging
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
@@ -177,7 +178,6 @@ async def test_full_payload_generation_with_mock_db():
 
     gateway1 = Mock()
     gateway1.id = "g1"
-    gateway1.slug = "gateway-1"
     gateway1.name = "Gateway 1"
     gateway1.url = "http://localhost:9000"
     gateway1.transport = "STREAMABLEHTTP"
@@ -443,8 +443,8 @@ def test_create_payload_keeps_gateways_with_the_same_slug():
                 }
             ],
             "gateways": [
-                {"id": "gateway1", "slug": "shared-name", "name": "Shared Name", "url": "http://one.example/mcp", "transport": "STREAMABLEHTTP", "passthrough_headers": []},
-                {"id": "gateway2", "slug": "shared-name", "name": "Shared Name", "url": "http://two.example/mcp", "transport": "STREAMABLEHTTP", "passthrough_headers": []},
+                {"id": "gateway1", "name": "Shared Name", "url": "http://one.example/mcp", "transport": "STREAMABLEHTTP", "passthrough_headers": []},
+                {"id": "gateway2", "name": "Shared Name", "url": "http://two.example/mcp", "transport": "STREAMABLEHTTP", "passthrough_headers": []},
             ],
             "prompts": [],
             "resources": [],
@@ -456,6 +456,24 @@ def test_create_payload_keeps_gateways_with_the_same_slug():
     assert set(backends) == {"gateway1", "gateway2"}
     assert backends["gateway1"]["url"] == "http://one.example/mcp"
     assert backends["gateway2"]["url"] == "http://two.example/mcp"
+
+
+def test_filter_backend_items_keeps_first_alias_on_duplicate_exposed_name(caplog):
+    """Duplicate exposed names on one backend keep the first alias and warn instead of silently overwriting."""
+    from mcpgateway.services.dataplane_publisher import DataplanePublisherService
+
+    backend_items = {"g1": {"tools": ["tool1", "tool2"], "resources": [], "prompts": []}}
+    tool_names_by_id = {
+        "tool1": ("upstream_one", "Shared.Name"),
+        "tool2": ("upstream_two", "Shared.Name"),
+    }
+
+    with caplog.at_level(logging.WARNING, logger="mcpgateway.services.dataplane_publisher"):
+        filtered = DataplanePublisherService._filter_backend_items_for_user(backend_items, tool_names_by_id)
+
+    assert filtered["g1"]["tools"] == ["upstream_one", "upstream_two"]
+    assert filtered["g1"]["tool_name_aliases"] == {"Shared.Name": "upstream_one"}
+    assert "Duplicate exposed tool name 'Shared.Name'" in caplog.text
 
 
 def test_create_payload_normalizes_null_passthrough_headers():
