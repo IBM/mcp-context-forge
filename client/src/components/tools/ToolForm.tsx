@@ -281,8 +281,11 @@ export function ToolForm({ isOpen, onToggle, onSuccess, tool }: ToolFormProps) {
                 placeholder={intl.formatMessage({ id: "tools.form.url.placeholder" })}
                 className="rounded-md border-neutral-300 px-4 text-sm text-neutral-900 shadow-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-0 placeholder:text-neutral-400 dark:border-neutral-700 dark:text-neutral-100 dark:placeholder:text-neutral-500"
                 aria-invalid={!!errors.url}
-                aria-describedby={errors.url ? "url-error" : undefined}
+                aria-describedby={errors.url ? "url-helper url-error" : "url-helper"}
               />
+              <p id="url-helper" className="text-xs text-neutral-500 dark:text-neutral-400">
+                {intl.formatMessage({ id: "tools.form.url.helper" })}
+              </p>
               {errors.url && (
                 <p id="url-error" className="text-sm text-red-500">
                   {errors.url}
