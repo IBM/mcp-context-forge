@@ -2255,6 +2255,7 @@ class ResourceService(BaseService):
         resource_db = None
         server_scoped = False
         resource_db_gateway = None  # Only set when eager-loaded via Q2's joinedload
+        direct_proxy_read = False  # True once content is fetched live via direct_proxy
         # CWE-400: Validate meta_data limits before any further processing
         _validate_meta_data(meta_data)
         content = None
@@ -2452,6 +2453,10 @@ class ResourceService(BaseService):
                                         content = TextResourceContents(uri=uri, text="")
 
                                     success = True
+                                    # Content was fetched live from the upstream; it is already the
+                                    # final payload and must not be routed through the post-fetch
+                                    # metadata->content resolution block below (issue #5451).
+                                    direct_proxy_read = True
                                     logger.info(
                                         "[READ RESOURCE] Using direct_proxy mode for gateway %s (from X-Context-Forge-Gateway-Id header). Meta Attached: %s",
                                         SecurityValidator.sanitize_log_message(gateway.id),
@@ -2574,7 +2579,13 @@ class ResourceService(BaseService):
                 # ResourceContents covers TextResourceContents and BlobResourceContents (MCP-compliant)
                 # ResourceContent is the legacy model for backwards compatibility
 
-                if isinstance(content, (ResourceContent, ResourceContents, TextContent)):
+                if direct_proxy_read:
+                    # Content already fetched live via direct_proxy; it is the final payload.
+                    # Skip the metadata->content resolution below, which assumes a cached
+                    # record carrying an ``id`` and would raise AttributeError on the id-less
+                    # TextResourceContents / BlobResourceContents models (issue #5451).
+                    pass
+                elif isinstance(content, (ResourceContent, ResourceContents, TextContent)):
                     # Metrics are recorded in read_resource finally block for all resources
                     resource_response = await self.invoke_resource(
                         db,
