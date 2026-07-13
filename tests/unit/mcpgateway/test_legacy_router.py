@@ -325,11 +325,9 @@ class TestBuildLegacyRouterGroupF:
         admin_mod.set_logging_service = lambda _: None
         admin_mod.validate_section_permissions = lambda _: None
 
-        runtime_mod = _make_mock_router_module_named("runtime_admin_router", "/sentinel-runtime-admin")
         well_known_mod = _make_mock_router_module("/sentinel-well-known")
         return {
             "mcpgateway.admin": admin_mod,
-            "mcpgateway.routers.runtime_admin_router": runtime_mod,
             "mcpgateway.routers.well_known": well_known_mod,
         }
 
