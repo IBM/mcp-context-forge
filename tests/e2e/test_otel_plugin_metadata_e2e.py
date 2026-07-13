@@ -192,6 +192,16 @@ RAW_PII_EMAIL = "e2e.synthetic.subject@pii-e2e-fixture.invalid"
 TOOL_NAME = "pii_probe_echo_tool"
 UPSTREAM_TOOL_URL = "https://internal.e2e-fixture.invalid/echo"
 
+# Synthetic "secret" -- this is AWS's own long-published documentation placeholder access key
+# ID (used throughout AWS SDK/CLI examples, e.g. https://docs.aws.amazon.com/IAM/latest/UserGuide/id_credentials_access-keys.html),
+# never a real credential. Realistic enough in shape (``AKIA`` + 16 upper-alnum chars) to trip
+# the secrets_detection plugin's aws_access_key_id detector; the whole point of this test is to
+# prove this value (or any raw secret) never reaches /observability.
+RAW_SECRET_VALUE = "AKIAIOSFODNN7EXAMPLE"
+
+SECRETS_TOOL_NAME = "secrets_probe_echo_tool"
+SECRETS_UPSTREAM_TOOL_URL = "https://internal.e2e-fixture.invalid/secrets-echo"
+
 
 def _new_traceparent() -> tuple[str, str]:
     """Build a W3C ``traceparent`` header value with a trace_id we control.
@@ -367,26 +377,190 @@ async def traced_app(monkeypatch, tmp_path):
     engine.dispose()
 
 
+@pytest_asyncio.fixture
+async def traced_app_secrets_detection(monkeypatch, tmp_path):
+    """Task 7 parity check: same real-temp-DB/dedicated-FastAPI-app pattern as ``traced_app``
+    above, but forces the ``SecretsDetection`` plugin active instead of ``PIIFilter``.
+
+    ``secrets_detection`` is Rust-core like ``pii_filter`` (both ship as separate
+    ``cpex-*`` packages installed from the sibling ``../cpex-plugins`` checkout), so this
+    fixture is structurally the same kind of test as ``traced_app`` -- it is kept as its own
+    fixture (rather than parametrizing ``traced_app``) so the already-passing/well-documented
+    ``pii_filter`` fixture is not touched at all by this addition.
+
+    Two deltas from the shipped ``plugins/config.yaml`` ``SecretsDetection`` entry, beyond
+    flipping ``mode`` to ``"sequential"`` (mirroring how ``traced_app`` flips ``PIIFilter``'s
+    mode -- see that fixture's docstring):
+
+      * ``block_on_detection: False`` -- the shipped default is ``True`` (see the config.yaml
+        comment on the ``SecretsDetection`` entry: unlike ``PIIFilter``, this plugin blocks by
+        default). Left at its default, ``tool_post_invoke``'s ``invoke_hook(...,
+        violations_as_exceptions=True, ...)`` call in ``ToolService`` would raise
+        ``PluginViolationError`` *before* ``record_plugin_metrics()`` is ever reached, so no
+        ``plugin.metrics.secrets_detection`` span would exist to assert on. Disabling blocking
+        here is the direct analogue of ``PIIFilter``'s own default (``block_on_detection:
+        false``, redact-not-block) that the ``traced_app`` docstring/tests already rely on.
+      * ``redact: True`` -- the shipped default is ``False``. Without redaction, a non-blocking
+        detection would still return the raw secret value in the tool result (no masking
+        pass), which would fail this test's S1 (no-raw-secret-leak) assertion the same way an
+        unmasked PII value would fail the ``pii_filter`` test. Mirrors ``PIIFilter``'s masking
+        behavior (``block_on_detection=false`` there also implies "redact instead").
+    """
+    # --- Real temp SQLite database, shared by app + plugin factory + observability ---
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(bind=engine)
+    TestSessionLocal = sessionmaker(autocommit=False, autoflush=False, expire_on_commit=False, bind=engine)
+
+    monkeypatch.setattr(db_mod, "engine", engine, raising=False)
+    monkeypatch.setattr(db_mod, "SessionLocal", TestSessionLocal, raising=False)
+    monkeypatch.setattr(main_mod, "SessionLocal", TestSessionLocal, raising=False)
+    monkeypatch.setattr("mcpgateway.services.observability_service.SessionLocal", TestSessionLocal, raising=False)
+    monkeypatch.setattr("mcpgateway.routers.observability.SessionLocal", TestSessionLocal, raising=False)
+    try:
+        monkeypatch.setattr("mcpgateway.middleware.auth_middleware.SessionLocal", TestSessionLocal, raising=False)
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        monkeypatch.setattr("mcpgateway.services.security_logger.SessionLocal", TestSessionLocal, raising=False)
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        monkeypatch.setattr("mcpgateway.services.audit_trail_service.SessionLocal", TestSessionLocal, raising=False)
+    except Exception:  # noqa: BLE001
+        pass
+
+    def override_get_db():
+        db = TestSessionLocal()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    # --- Real plugin manager factory, pointed at a private copy of plugins/config.yaml with
+    # SecretsDetection forced active (see the docstring above for why block_on_detection/redact
+    # are also overridden here, not just mode). ---
+    real_config = yaml.safe_load((_REPO_ROOT / "plugins" / "config.yaml").read_text())
+    for plugin_entry in real_config.get("plugins", []):
+        if plugin_entry.get("name") == "SecretsDetection":
+            plugin_entry["mode"] = "sequential"
+            plugin_entry.setdefault("config", {})
+            plugin_entry["config"]["block_on_detection"] = False
+            plugin_entry["config"]["redact"] = True
+    patched_config_path = tmp_path / "plugins_config_secrets_detection_enabled.yaml"
+    patched_config_path.write_text(yaml.safe_dump(real_config, sort_keys=False))
+
+    await shutdown_plugin_manager_factory()
+    enable_plugins(True)
+    init_plugin_manager_factory(
+        yaml_path=str(patched_config_path),
+        timeout=30,
+        hook_policies=HOOK_PAYLOAD_POLICIES,
+        observability=None,
+        db_factory=TestSessionLocal,
+    )
+    plugin_manager = await get_plugin_manager()
+    assert plugin_manager is not None, "Plugin manager factory failed to initialize -- check plugins/config.yaml and that cpex-secrets-detection is installed"
+    assert plugin_manager.has_hooks_for(ToolHookType.TOOL_POST_INVOKE), "secrets_detection plugin not registered for tool_post_invoke -- check plugins/config.yaml"
+
+    # --- Dedicated FastAPI app instance (NOT mcpgateway.main.app) ---
+    observability_service = ObservabilityService()
+    test_app = FastAPI(title="otel-secrets-detection-metadata-e2e")
+    test_app.add_middleware(ObservabilityMiddleware, enabled=True, service=observability_service)
+    test_app.include_router(tool_router)  # real POST /tools (tool registration)
+    test_app.include_router(utility_router)  # real POST /rpc (tools/call dispatch)
+    test_app.include_router(observability_router)  # real GET /observability/traces/{trace_id}
+    test_app.add_exception_handler(Exception, unhandled_exception_handler)
+    test_app.add_exception_handler(RequestValidationError, request_validation_exception_handler)
+    test_app.add_exception_handler(ValidationError, validation_exception_handler)
+    test_app.add_exception_handler(IntegrityError, database_exception_handler)
+    test_app.add_exception_handler(PluginViolationError, plugin_violation_exception_handler)
+    test_app.add_exception_handler(PluginError, plugin_exception_handler)
+
+    test_app.dependency_overrides[get_db] = override_get_db
+
+    # --- Auth: dependency-override pattern (mirrors traced_app / test_admin_apis.py) ---
+    mock_email_user = create_mock_email_user(email=ADMIN_EMAIL, full_name="E2E Admin", is_admin=True, is_active=True)
+    admin_user_context = create_mock_user_context(email=ADMIN_EMAIL, full_name="E2E Admin", is_admin=True)
+
+    async def mock_get_current_user_with_permissions():
+        return admin_user_context
+
+    async def mock_require_admin_auth():
+        return ADMIN_EMAIL
+
+    async def mock_get_jwt_token():
+        return make_test_jwt(ADMIN_EMAIL, is_admin=True)
+
+    async def mock_require_auth():
+        return ADMIN_EMAIL
+
+    def mock_get_permission_service(*args, **kwargs):
+        return MockPermissionService(always_grant=True)
+
+    test_app.dependency_overrides[get_current_user] = lambda: mock_email_user
+    test_app.dependency_overrides[get_current_user_with_permissions] = mock_get_current_user_with_permissions
+    test_app.dependency_overrides[require_admin_auth] = mock_require_admin_auth
+    test_app.dependency_overrides[require_auth] = mock_require_auth
+    test_app.dependency_overrides[get_jwt_token] = mock_get_jwt_token
+    test_app.dependency_overrides[get_permission_service] = mock_get_permission_service
+
+    # --- Mock only the outbound network call to the (fictitious) upstream tool backend ---
+    upstream_response = httpx.Response(
+        200,
+        json={
+            "content": [{"type": "text", "text": f"Rotate this credential immediately: {RAW_SECRET_VALUE}"}],
+            "isError": False,
+        },
+        request=httpx.Request("POST", SECRETS_UPSTREAM_TOOL_URL),
+    )
+    mock_request = AsyncMock(return_value=upstream_response)
+    monkeypatch.setattr(tool_service._http_client, "request", mock_request)
+
+    transport = ASGITransport(app=test_app)
+    async with AsyncClient(transport=transport, base_url="http://e2e-test") as client:
+        yield client
+
+    test_app.dependency_overrides.clear()
+    await shutdown_plugin_manager_factory()
+    enable_plugins(False)
+    engine.dispose()
+
+
 def _auth_headers() -> dict:
     """Mint a real admin JWT via tests/helpers/auth.make_test_jwt and build a Bearer header."""
     token = make_test_jwt(ADMIN_EMAIL, is_admin=True)
     return make_auth_headers(token)
 
 
-async def _register_probe_tool(client: AsyncClient) -> str:
-    """Register a REST tool whose (mocked) upstream response echoes PII, via a real POST /tools call.
+async def _register_probe_tool(
+    client: AsyncClient,
+    tool_name: str = TOOL_NAME,
+    upstream_url: str = UPSTREAM_TOOL_URL,
+    description: str = "E2E fixture tool: echoes upstream content so tool_post_invoke has PII to detect.",
+) -> str:
+    """Register a REST tool whose (mocked) upstream response echoes sensitive content, via a
+    real POST /tools call.
+
+    Defaults preserve the original ``pii_probe_echo_tool``/``UPSTREAM_TOOL_URL`` behavior;
+    ``tool_name``/``upstream_url``/``description`` let other fixtures (e.g. the
+    secrets_detection parity check below) register an analogous probe tool against a
+    different mocked upstream without duplicating this whole helper.
 
     Returns:
         The gateway-assigned (slugified) tool ``name`` to use for ``tools/call`` lookups --
-        registration accepts ``pii_probe_echo_tool`` but the RPC dispatcher resolves tools by
-        their normalized ``name`` (dashes), not the original ``customName``.
+        registration accepts the human-readable ``tool_name`` but the RPC dispatcher resolves
+        tools by their normalized ``name`` (dashes), not the original ``customName``.
     """
     tool_payload = {
         "tool": {
-            "name": TOOL_NAME,
-            "description": "E2E fixture tool: echoes upstream content so tool_post_invoke has PII to detect.",
+            "name": tool_name,
+            "description": description,
             "integrationType": "REST",
-            "url": UPSTREAM_TOOL_URL,
+            "url": upstream_url,
             "requestType": "POST",
             "visibility": "public",
         },
@@ -560,3 +734,103 @@ class TestOtelPluginMetadataE2E:
         for span in spans:
             for key, value in dict(span.attributes or {}).items():
                 assert RAW_PII_EMAIL not in str(value), f"SECURITY: raw PII found in OTel span '{span.name}' attribute '{key}'"
+
+
+class TestOtelSecretsDetectionMetadataE2E:
+    """Task 7: ``secrets_detection`` parity check for the C1 chain above.
+
+    Mirrors ``TestOtelPluginMetadataE2E.test_traced_tool_call_surfaces_pii_filter_metrics_without_leaking_pii``
+    exactly (same traceparent -> tools/call -> /observability/traces/{trace_id} chain, same
+    G1 DB-sink assertion shape, same S1 no-raw-secret-leak assertion) but drives the real
+    ``secrets_detection`` CPEX plugin (installed from ../cpex-plugins, Rust-backed, like
+    ``pii_filter``) via the ``traced_app_secrets_detection`` fixture instead of ``pii_filter``
+    via ``traced_app``.
+
+    NOTE: this file's ``pii_filter`` tests above cannot run to a real pass/fail result in a
+    fresh checkout of this environment -- they fail at fixture setup with an AssertionError
+    from the ``assert plugin_manager.has_hooks_for(...)`` line (chained from
+    ``ModuleNotFoundError: No module named 'cpex_pii_filter'``), because ``cpex-pii-filter``
+    has never been installed into this gateway's ``.venv`` by default. This test hits the
+    identical failure mode for ``cpex-secrets-detection`` when that package is likewise not
+    installed -- see Task 7's report for the exact captured error.
+
+    Unlike ``cpex-pii-filter``, ``cpex-secrets-detection`` (Rust/maturin-built, from the
+    sibling ``../cpex-plugins`` checkout's ``plugins/rust/python-package/secrets_detection``)
+    WAS successfully dev-installed into this gateway's ``.venv`` during Task 7's verification
+    (``pip install -e <path> --no-deps``; cargo/rustc/maturin were all present in this
+    sandbox), and with it installed this test passes end-to-end for real -- not just up to
+    the same install boundary. That install is local to this sandbox's ``.venv`` (which is
+    git-ignored) and is not committed as part of this change; a fresh checkout/CI run without
+    that package installed will still hit the ModuleNotFoundError-derived AssertionError
+    above, same as the ``pii_filter`` tests.
+    """
+
+    @pytest.mark.asyncio
+    async def test_traced_tool_call_surfaces_secrets_detection_metrics_without_leaking_secret(self, traced_app_secrets_detection: AsyncClient):
+        """Full chain: traceparent -> tools/call -> secrets_detection -> /observability/traces/{trace_id}."""
+        client = traced_app_secrets_detection
+        registered_tool_name = await _register_probe_tool(
+            client,
+            tool_name=SECRETS_TOOL_NAME,
+            upstream_url=SECRETS_UPSTREAM_TOOL_URL,
+            description="E2E fixture tool: echoes upstream content so tool_post_invoke has a secret-shaped value to detect.",
+        )
+
+        trace_id, traceparent = _new_traceparent()
+        headers = {**_auth_headers(), "traceparent": traceparent}
+
+        rpc_request = {
+            "jsonrpc": "2.0",
+            "id": "e2e-secrets-1",
+            "method": "tools/call",
+            "params": {"name": registered_tool_name, "arguments": {"note": "please rotate the credential on file"}},
+        }
+        rpc_response = await client.post("/rpc", json=rpc_request, headers=headers)
+        assert rpc_response.status_code == 200, f"tools/call failed: {rpc_response.status_code} {rpc_response.text}"
+        rpc_body = rpc_response.json()
+        assert "error" not in rpc_body, f"tools/call returned a JSON-RPC error: {rpc_body}"
+
+        # S1 (part 1): the raw secret value must not leak back to the RPC caller either --
+        # the plugin's redaction (block_on_detection=false, redact=true per the fixture's
+        # config overrides, so it redacts rather than blocks) should have replaced it before
+        # the result was returned.
+        assert RAW_SECRET_VALUE not in rpc_response.text, "Raw secret leaked into the tools/call RPC response body"
+
+        # Now query the real observability endpoint for the trace we chose via traceparent.
+        trace_response = await client.get(f"/observability/traces/{trace_id}", headers=_auth_headers())
+        assert trace_response.status_code == 200, f"GET /observability/traces/{{trace_id}} failed: {trace_response.status_code} {trace_response.text}"
+        trace_body = trace_response.json()
+
+        assert trace_body["trace_id"] == trace_id
+        spans = trace_body.get("spans", [])
+        assert spans, "No spans recorded for the traced request"
+
+        secrets_metric_spans = [s for s in spans if s.get("name") == "plugin.metrics.secrets_detection"]
+        assert secrets_metric_spans, f"No 'plugin.metrics.secrets_detection' span found; span names present: {[s.get('name') for s in spans]}"
+
+        # Unlike pii_filter, the real cpex-secrets-detection plugin (verified against
+        # v0.3.7) does not emit a "stage" field in its tool_post_invoke metadata, so --
+        # unlike the pii_filter test above -- there is nothing to filter spans by here;
+        # this tool only triggers one post-invoke detection pass, so the single span is it.
+        attrs = secrets_metric_spans[0]["attributes"]
+        assert attrs.get("total_detections", 0) >= 1, f"Expected at least 1 secret detection, got attributes: {attrs}"
+        assert attrs.get("total_masked", 0) >= 1, f"Expected at least 1 masked value, got attributes: {attrs}"
+        assert attrs.get("total_blocked", 0) == 0, f"Expected no blocked detections (block_on_detection=false), got attributes: {attrs}"
+        # "secret_types" is the allowlisted string field for this plugin (see
+        # mcpgateway/plugins/utils.py::_SAFE_STRING_FIELD_NAMES). Verified against the real
+        # plugin: RAW_SECRET_VALUE ("AKIAIOSFODNN7EXAMPLE") is classified as "aws_access_key_id".
+        assert "aws_access_key_id" in str(attrs.get("secret_types", "")), f"Expected 'aws_access_key_id' in secret_types, got: {attrs.get('secret_types')}"
+        assert secrets_metric_spans[0].get("resource_type") == "plugin"
+        assert secrets_metric_spans[0].get("resource_name") == "secrets_detection"
+
+        # S1 (part 2, the security-critical assertion): the RAW matched secret value must
+        # never appear anywhere in the observability response -- not in span attributes, not
+        # in event messages, not anywhere in the serialized body. Only counts/type-names
+        # allowed.
+        full_response_text = trace_response.text
+        assert RAW_SECRET_VALUE not in full_response_text, "SECURITY: raw secret value leaked into /observability/traces/{trace_id} response"
+
+        # Belt-and-suspenders: no span attribute value anywhere in the trace contains the raw secret.
+        for span in spans:
+            for key, value in (span.get("attributes") or {}).items():
+                assert RAW_SECRET_VALUE not in str(value), f"SECURITY: raw secret found in span '{span.get('name')}' attribute '{key}'"
