@@ -23,6 +23,7 @@ import secrets
 from typing import Any, List, Optional
 
 # Third-Party
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 # First-Party
@@ -31,7 +32,7 @@ from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import EmailTeam, EmailTeamInvitation, EmailTeamMember, EmailUser, utc_now
 from mcpgateway.services.logging_service import LoggingService
-from mcpgateway.services.team_management_service import check_team_member_capacity, get_user_team_count
+from mcpgateway.services.team_management_service import check_team_member_capacity, get_user_team_count, TeamManagementService
 
 # Initialize logging
 logging_service = LoggingService()
@@ -291,7 +292,9 @@ class TeamInvitationService:
             EmailTeamMember: The created team membership record
 
         Raises:
-            ValueError: If invitation is invalid or expired
+            ValueError: If invitation is invalid or expired, or if the user is already a member
+                (including races where a concurrent accept wins the insert, or wins the reactivation
+                of a stale row via the compare-and-swap UPDATE on is_active)
             Exception: If acceptance fails
 
         Examples:
@@ -354,15 +357,61 @@ class TeamInvitationService:
             # Check team member limit (explicit per-team value or global default)
             check_team_member_capacity(self.db, team)
 
-            # Create team membership
-            membership = EmailTeamMember(team_id=invitation.team_id, user_email=invitation.email, role=invitation.role, joined_at=utc_now(), invited_by=invitation.invited_by, is_active=True)
+            # Reuse any prior (inactive) membership row for this (team_id, user_email) pair instead of
+            # inserting a duplicate: uq_team_member is unique regardless of is_active, so a stale row left
+            # behind by a previous removal from the team would otherwise collide on insert.
+            # with_for_update() row-locks the reused row on backends that support it (e.g. Postgres), but
+            # is a silent no-op on SQLite -- this project's default DB -- so it alone does not close the
+            # race between two concurrent accepts both reactivating the same stale row. The conditional
+            # UPDATE below (matched against the is_active=False state we just observed) is what actually
+            # closes the race on every backend: only one of two racing callers can flip is_active from
+            # False to True, the other gets rowcount 0 and is turned into the same "already a member"
+            # error used for the commit-time IntegrityError race on the insert path below.
+            membership = self.db.query(EmailTeamMember).filter(EmailTeamMember.team_id == invitation.team_id, EmailTeamMember.user_email == invitation.email).with_for_update().first()
 
-            self.db.add(membership)
+            reactivated = membership is not None
+            if membership:
+                if membership.is_active:
+                    # Closed by with_for_update() on Postgres: another transaction reactivated this row
+                    # between our earlier "already a member" check and acquiring the lock here.
+                    self.db.rollback()
+                    raise ValueError("User is already a member of this team")
+
+                updated_rows = (
+                    self.db.query(EmailTeamMember)
+                    .filter(EmailTeamMember.id == membership.id, EmailTeamMember.is_active.is_(False))
+                    .update({"role": invitation.role, "joined_at": utc_now(), "invited_by": invitation.invited_by, "is_active": True}, synchronize_session=False)
+                )
+                if updated_rows == 0:
+                    # Lost the race to another concurrent accept (e.g. on SQLite, where with_for_update()
+                    # above does not actually lock): the row was reactivated between our read and this UPDATE.
+                    self.db.rollback()
+                    raise ValueError("User is already a member of this team")
+
+                # Keep the in-memory object in sync with the row the bulk UPDATE above just changed.
+                membership.role = invitation.role
+                membership.joined_at = utc_now()
+                membership.invited_by = invitation.invited_by
+                membership.is_active = True
+            else:
+                membership = EmailTeamMember(team_id=invitation.team_id, user_email=invitation.email, role=invitation.role, joined_at=utc_now(), invited_by=invitation.invited_by, is_active=True)
+                self.db.add(membership)
 
             # Deactivate the invitation
             invitation.is_active = False
 
-            self.db.commit()
+            try:
+                self.db.commit()
+            except IntegrityError as integrity_error:
+                self.db.rollback()
+                logger.warning("Concurrent accept detected for %s on team %s: %s", SecurityValidator.sanitize_log_message(invitation.email), invitation.team_id, integrity_error)
+                raise ValueError("User is already a member of this team") from integrity_error
+
+            # Write the same audit trail entry that TeamManagementService.add_member_to_team writes,
+            # so a membership reactivated via invitation-accept isn't invisible in EmailTeamMemberHistory.
+            TeamManagementService(self.db).log_team_member_action(
+                membership.id, invitation.team_id, invitation.email, invitation.role, "reactivated" if reactivated else "added", invitation.invited_by
+            )
 
             # Invalidate auth cache for user's team membership
             try:
