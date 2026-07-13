@@ -118,49 +118,49 @@ make docker-prod DOCKER_BUILD_ARGS="--no-cache"
 Update all Python dependencies across the repository before cutting a release. This ensures the release ships with current, patched versions.
 
 ### 2.1 Update CPEX dependencies
-Update the `[tool.uv.exclude-newer-package]` section of `pyproject.toml` file to the current date/time and execute
-`uv lock --upgrade` to get the latest depenencies and update the uv.lock file.
 
-### 2.2 Update dependencies with `update_dependencies.py`
+Update the `[tool.uv.sources]` / `[tool.uv.exclude-newer-package]` section of the root `pyproject.toml` to the current date/time, then run:
 
 ```bash
-find . -path "./mcp-servers/templates" -prune -o -path "*/.venv" -prune -o -name "pyproject.toml" -type f -print | while read -r toml_file; do
-  dir=$(dirname "$toml_file")
-  echo "Updating dependencies in $dir"
-  (cd "$dir" && uv lock --upgrade)
-done
+uv lock --upgrade
 ```
 
-!!! Optional: The above step may not update all dependencies as expected. Run the following command to update all dependencies in pyproject.toml files and not work from dynamic versions.
-The repository includes an async dependency updater at `.github/tools/update_dependencies.py`. Run it against every `pyproject.toml` and `requirements.txt` in the tree:
+### 2.2 Update all `pyproject.toml` lockfiles and `requirements.txt` files
+
+The snippet below auto-discovers every `pyproject.toml` and `requirements.txt` in the repository, skipping generated templates and virtual-environment directories. No hardcoded path list means newly added or deleted sub-projects are picked up automatically.
 
 ```bash
+# uv-sync + lockfile upgrade for every pyproject.toml
+# Skips: mcp-servers/templates (generated), .venv dirs, Rust crates (no uv)
+find . \
+  -path "./mcp-servers/templates" -prune -o \
+  -path "*/.venv" -prune -o \
+  -path "*/target" -prune -o \
+  -path "./.cache" -prune -o \
+  -name "pyproject.toml" -type f -print \
+| while read -r toml_file; do
+    dir=$(dirname "$toml_file")
+    echo "==> $dir"
+    uv-upsync --project "$dir" 2>/dev/null || true
+    uv lock --upgrade --exclude-newer "10 days" --project "$dir"
+  done
 
-# Main project
-python .github/tools/update_dependencies.py --file pyproject.toml
-
-# MCP servers
-python .github/tools/update_dependencies.py --file mcp-servers/python/data_analysis_server/pyproject.toml
-python .github/tools/update_dependencies.py --file mcp-servers/python/graphviz_server/pyproject.toml
-python .github/tools/update_dependencies.py --file mcp-servers/python/mcp-rss-search/pyproject.toml
-python .github/tools/update_dependencies.py --file mcp-servers/python/python_sandbox_server/pyproject.toml
-python .github/tools/update_dependencies.py --file mcp-servers/python/mcp_eval_server/pyproject.toml
-python .github/tools/update_dependencies.py --file mcp-servers/python/url_to_markdown_server/pyproject.toml
-python .github/tools/update_dependencies.py --file mcp-servers/python/output_schema_test_server/pyproject.toml
-
-# External plugins
-python .github/tools/update_dependencies.py --file plugins/external/cedar/pyproject.toml
-python .github/tools/update_dependencies.py --file plugins/external/llmguard/pyproject.toml
-python .github/tools/update_dependencies.py --file plugins/external/opa/pyproject.toml
-
-# Requirements files
-python .github/tools/update_dependencies.py --file docs/requirements.txt
-python .github/tools/update_dependencies.py --file tests/load/requirements.txt
-python .github/tools/update_dependencies.py --file tests/populate/requirements.txt
+# requirements.txt files (docs, tests)
+find . \
+  -path "*/.venv" -prune -o \
+  -path "./.cache" -prune -o \
+  -name "requirements.txt" -type f -print \
+| while read -r req_file; do
+    echo "==> $req_file"
+    python .github/tools/update_dependencies.py --file "$req_file"
+  done
 ```
 
-!!! tip "Dry-run first"
-    Use `--dry-run` to preview changes before applying: `python .github/tools/update_dependencies.py --file pyproject.toml --dry-run`
+!!! tip "Dry-run the requirements updater first"
+    Use `--dry-run` to preview changes before applying:
+    ```bash
+    python .github/tools/update_dependencies.py --file docs/requirements.txt --dry-run
+    ```
 
 ### 2.3 Reinstall and verify
 
