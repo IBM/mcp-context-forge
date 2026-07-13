@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { useIntl } from "react-intl";
 import { Box } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -52,6 +53,7 @@ export function ResourceForm({
 }: ResourceFormProps) {
   const intl = useIntl();
   const isEditMode = Boolean(resource);
+  const headingRef = useRef<HTMLHeadingElement>(null);
   const {
     uri,
     name,
@@ -77,6 +79,11 @@ export function ResourceForm({
     initialValues: resourceToInitialValues(resource),
   });
 
+  useEffect(() => {
+    if (isOpen) headingRef.current?.focus();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   if (!isOpen) return null;
 
   return (
@@ -87,7 +94,11 @@ export function ResourceForm({
             <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-sm bg-[#ff5aff] shadow-sm">
               <Box className="h-4 w-4 text-black" />
             </div>
-            <h2 className="text-lg font-semibold tracking-tight text-neutral-950 dark:text-neutral-50">
+            <h2
+              ref={headingRef}
+              tabIndex={-1}
+              className="text-lg font-semibold tracking-tight text-neutral-950 dark:text-neutral-50"
+            >
               {isEditMode
                 ? intl.formatMessage({ id: "resources.form.heading.edit" })
                 : intl.formatMessage({ id: "resources.form.title" })}

@@ -639,7 +639,7 @@ describe("Resources", () => {
         ).toBeInTheDocument();
       });
 
-      await user.click(screen.getByLabelText("More options"));
+      await user.click(screen.getByLabelText("More options for Resource 1"));
       await user.click(await screen.findByText("Edit"));
 
       await waitFor(() => {
@@ -873,7 +873,7 @@ describe("Resources", () => {
         ).toBeInTheDocument(),
       );
 
-      await user.click(screen.getByLabelText("More options"));
+      await user.click(screen.getByLabelText("More options for Resource 1"));
       await user.click(await screen.findByText("Delete"));
       await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument());
       await user.click(screen.getByRole("button", { name: /^delete$/i }));
@@ -909,7 +909,7 @@ describe("Resources", () => {
         ).toBeInTheDocument(),
       );
 
-      await user.click(screen.getByLabelText("More options"));
+      await user.click(screen.getByLabelText("More options for Resource 1"));
       await user.click(await screen.findByText("Delete"));
       await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument());
       await user.click(screen.getByRole("button", { name: /^delete$/i }));
@@ -932,7 +932,7 @@ describe("Resources", () => {
 
       const { user } = await setup(mockResources, "solo-gateway");
 
-      await user.click(screen.getByLabelText("More options"));
+      await user.click(screen.getByLabelText("More options for Resource 1"));
       await user.click(await screen.findByText("Delete"));
       await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument());
       await user.click(screen.getByRole("button", { name: /^delete$/i }));
@@ -956,7 +956,7 @@ describe("Resources", () => {
 
       const { user } = await setup(mockResources, "multi-gateway");
 
-      const moreOptionsButtons = screen.getAllByLabelText("More options");
+      const moreOptionsButtons = screen.getAllByLabelText(/^More options for Resource \d+$/);
       await user.click(moreOptionsButtons[0]);
       await user.click(await screen.findByText("Delete"));
       await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument());
@@ -998,7 +998,7 @@ describe("Resources", () => {
       expect(within(panel).getAllByText("Resource 1").length).toBeGreaterThan(0);
       expect(within(panel).getAllByText("Resource 2").length).toBeGreaterThan(0);
 
-      const moreOptionsButtons = screen.getAllByLabelText("More options");
+      const moreOptionsButtons = screen.getAllByLabelText(/^More options for Resource \d+$/);
       await user.click(moreOptionsButtons[0]);
       await user.click(await screen.findByText("Delete"));
       await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument());
@@ -1029,7 +1029,7 @@ describe("Resources", () => {
 
       const { user } = await setup(mockResources, "reopen-gateway");
 
-      const moreOptionsButtons = screen.getAllByLabelText("More options");
+      const moreOptionsButtons = screen.getAllByLabelText(/^More options for Resource \d+$/);
       await user.click(moreOptionsButtons[0]);
       await user.click(await screen.findByText("Delete"));
       await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument());
@@ -1059,7 +1059,7 @@ describe("Resources", () => {
 
       const { user } = await setup(mockResources, "err-gateway");
 
-      await user.click(screen.getByLabelText("More options"));
+      await user.click(screen.getByLabelText("More options for Resource 1"));
       await user.click(await screen.findByText("Delete"));
       await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument());
       await user.click(screen.getByRole("button", { name: /^delete$/i }));

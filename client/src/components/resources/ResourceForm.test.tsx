@@ -194,6 +194,11 @@ describe("ResourceForm", () => {
       expect(screen.getByRole("heading", { name: "Edit resource" })).toBeInTheDocument();
     });
 
+    it("moves focus to the heading on mount so opening the form is announced", () => {
+      renderForm({ resource: createMockResource() });
+      expect(screen.getByRole("heading", { name: "Edit resource" })).toHaveFocus();
+    });
+
     it("shows 'Update resource' submit button instead of 'Add resources'", () => {
       renderForm({ resource: createMockResource() });
       expect(screen.getByRole("button", { name: "Update resource" })).toBeInTheDocument();

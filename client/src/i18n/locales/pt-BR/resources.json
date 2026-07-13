@@ -54,7 +54,7 @@
   "resources.table.resourceId": "ID do recurso",
   "resources.table.copyUri": "Copiar {uri}",
   "resources.table.copyResourceId": "Copiar ID do recurso",
-  "resources.table.moreOptions": "Mais opções",
+  "resources.table.moreOptionsFor": "Mais opções para {name}",
   "resources.table.view": "Ver",
   "resources.table.edit": "Editar",
   "resources.table.delete": "Excluir",

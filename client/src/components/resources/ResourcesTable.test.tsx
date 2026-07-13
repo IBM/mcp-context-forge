@@ -57,6 +57,15 @@ describe("ResourcesTable", () => {
     expect(screen.getByText("Resource 3 Title")).toBeInTheDocument();
   });
 
+  it("gives each row's more-options trigger a unique accessible name", () => {
+    const resources = [createMockResource(1), createMockResource(2), createMockResource(3)];
+    render(<ResourcesTable resources={resources} onSelectResource={mockOnSelectResource} />);
+
+    expect(screen.getByLabelText("More options for Resource 1 Title")).toBeInTheDocument();
+    expect(screen.getByLabelText("More options for Resource 2 Title")).toBeInTheDocument();
+    expect(screen.getByLabelText("More options for Resource 3 Title")).toBeInTheDocument();
+  });
+
   it("displays title when available", () => {
     const resources = [createMockResource(1, { title: "Custom Title" })];
     render(<ResourcesTable resources={resources} onSelectResource={mockOnSelectResource} />);
@@ -229,7 +238,7 @@ describe("ResourcesTable", () => {
         />,
       );
 
-      const moreButton = screen.getByLabelText("More options");
+      const moreButton = screen.getByLabelText("More options for Resource 1 Title");
       await user.click(moreButton);
 
       expect(await screen.findByText("Delete")).toBeInTheDocument();
@@ -247,7 +256,7 @@ describe("ResourcesTable", () => {
         />,
       );
 
-      await user.click(screen.getByLabelText("More options"));
+      await user.click(screen.getByLabelText("More options for Resource 1 Title"));
       await user.click(await screen.findByText("Delete"));
 
       expect(mockOnDeleteResource).toHaveBeenCalledOnce();
@@ -266,7 +275,7 @@ describe("ResourcesTable", () => {
         />,
       );
 
-      await user.click(screen.getByLabelText("More options"));
+      await user.click(screen.getByLabelText("More options for Resource 1 Title"));
       await user.click(await screen.findByText("Delete"));
 
       expect(mockOnSelectResource).not.toHaveBeenCalled();
@@ -277,7 +286,7 @@ describe("ResourcesTable", () => {
       const resources = [createMockResource(1)];
       render(<ResourcesTable resources={resources} onSelectResource={mockOnSelectResource} />);
 
-      await user.click(screen.getByLabelText("More options"));
+      await user.click(screen.getByLabelText("More options for Resource 1 Title"));
 
       expect(screen.queryByText("Delete")).not.toBeInTheDocument();
     });
@@ -296,7 +305,7 @@ describe("ResourcesTable", () => {
         />,
       );
 
-      const moreButton = screen.getByLabelText("More options");
+      const moreButton = screen.getByLabelText("More options for Resource 1 Title");
       await user.click(moreButton);
 
       expect(await screen.findByText("Edit")).toBeInTheDocument();
@@ -314,7 +323,7 @@ describe("ResourcesTable", () => {
         />,
       );
 
-      await user.click(screen.getByLabelText("More options"));
+      await user.click(screen.getByLabelText("More options for Resource 1 Title"));
       await user.click(await screen.findByText("Edit"));
 
       expect(mockOnEditResource).toHaveBeenCalledOnce();
@@ -333,7 +342,7 @@ describe("ResourcesTable", () => {
         />,
       );
 
-      await user.click(screen.getByLabelText("More options"));
+      await user.click(screen.getByLabelText("More options for Resource 1 Title"));
       await user.click(await screen.findByText("Edit"));
 
       expect(mockOnSelectResource).not.toHaveBeenCalled();
@@ -351,7 +360,7 @@ describe("ResourcesTable", () => {
         />,
       );
 
-      await user.click(screen.getByLabelText("More options"));
+      await user.click(screen.getByLabelText("More options for Resource 1 Title"));
 
       expect(screen.queryByText("Edit")).not.toBeInTheDocument();
     });
@@ -368,7 +377,7 @@ describe("ResourcesTable", () => {
         />,
       );
 
-      await user.click(screen.getByLabelText("More options"));
+      await user.click(screen.getByLabelText("More options for Resource 1 Title"));
 
       expect(await screen.findByText("Edit")).toBeInTheDocument();
       expect(screen.getByText("Delete")).toBeInTheDocument();

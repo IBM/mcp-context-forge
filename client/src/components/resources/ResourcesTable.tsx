@@ -121,7 +121,10 @@ export function ResourcesTable({
                       type="button"
                       variant="ghost"
                       size="icon-xs"
-                      aria-label={intl.formatMessage({ id: "resources.table.moreOptions" })}
+                      aria-label={intl.formatMessage(
+                        { id: "resources.table.moreOptionsFor" },
+                        { name: resource.title || resource.name },
+                      )}
                       className="size-5 text-muted-foreground hover:text-foreground"
                       onClick={(e) => {
                         e.stopPropagation();
@@ -158,7 +161,10 @@ export function ResourcesTable({
                   type="button"
                   variant="ghost"
                   size="icon-xs"
-                  aria-label={intl.formatMessage({ id: "resources.table.moreOptions" })}
+                  aria-label={intl.formatMessage(
+                    { id: "resources.table.moreOptionsFor" },
+                    { name: resource.title || resource.name },
+                  )}
                   className="size-5 text-muted-foreground hover:text-foreground"
                   onClick={(e) => {
                     e.stopPropagation();
