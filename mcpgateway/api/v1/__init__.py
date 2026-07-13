@@ -99,6 +99,16 @@ def _assemble_routers(  # noqa: C901 — deliberate single-function assembly, co
     target_router.include_router(version_router)
     logger.info("Version router included")
 
+    # Unified search endpoint — versioned, non-admin (/v1/search). Reuses the
+    # admin unified-search core (perform_unified_search) without the admin.dashboard
+    # gate, so client-facing global search does not depend on the admin dashboard
+    # route. Always present; per-entity RBAC and token scoping still apply.
+    # First-Party
+    from mcpgateway.routers.search import router as search_router  # pylint: disable=import-outside-toplevel
+
+    target_router.include_router(search_router)
+    logger.info("Unified search router included (/search)")
+
     # -------------------------------------------------------------------------
     # Group B — always-tried optional router (tool plugin bindings)
     # -------------------------------------------------------------------------
