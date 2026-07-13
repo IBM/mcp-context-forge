@@ -535,7 +535,7 @@ async def test_invoke_method_success(service, db):
         def __init__(self, **_kwargs):
             self._services = None
 
-        async def start(self, timeout=None):
+        async def start(self, timeout=None, trusted_local=False):
             return None
 
         async def invoke(self, service_name, method, request_data, timeout=None):
@@ -580,7 +580,7 @@ async def test_invoke_method_error_path(service, db):
         def __init__(self, **_kwargs):
             self._services = None
 
-        async def start(self, timeout=None):
+        async def start(self, timeout=None, trusted_local=False):
             return None
 
         async def invoke(self, _service_name, _method, _request_data, timeout=None):
@@ -629,7 +629,7 @@ async def test_invoke_method_validates_tls_paths_when_configured(service, db):
         def __init__(self, **_kwargs):
             self._services = None
 
-        async def start(self, timeout=None):
+        async def start(self, timeout=None, trusted_local=False):
             return None
 
         async def invoke(self, _service_name, _method, _request_data, timeout=None):
@@ -960,7 +960,7 @@ async def test_perform_reflection_tls_reads_cert_and_key(monkeypatch, service, d
         visibility="public",
     )
 
-    with patch("mcpgateway.services.grpc_service.Path.read_bytes", side_effect=[b"cert", b"key"]):
+    with patch("mcpgateway.utils.grpc_validation.Path.read_bytes", side_effect=[b"cert", b"key"]):
         await service._perform_reflection(db, db_service)
 
     assert db_service.reachable is True
@@ -997,7 +997,7 @@ async def test_perform_reflection_tls_missing_cert(monkeypatch, service, db):
         visibility="public",
     )
 
-    with patch("mcpgateway.services.grpc_service.Path.read_bytes", side_effect=FileNotFoundError("missing")):
+    with patch("mcpgateway.utils.grpc_validation.Path.read_bytes", side_effect=FileNotFoundError("missing")):
         with pytest.raises(GrpcServiceError):
             await service._perform_reflection(db, db_service)
 

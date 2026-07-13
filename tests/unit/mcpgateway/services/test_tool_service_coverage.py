@@ -6186,8 +6186,8 @@ class TestInvokeToolRestTimeout:
         plugin_manager.has_hooks_for = MagicMock(return_value=True)
         plugin_manager.invoke_hook = AsyncMock(
             side_effect=[
-                (SimpleNamespace(modified_payload=None), context_table),  # pre-invoke
-                (SimpleNamespace(modified_payload=None, retry_delay_ms=0), context_table),  # post-invoke (timeout handler)
+                (SimpleNamespace(modified_payload=None, metadata=None), context_table),  # pre-invoke
+                (SimpleNamespace(modified_payload=None, retry_delay_ms=0, metadata=None), context_table),  # post-invoke (timeout handler)
             ]
         )
 
@@ -6346,7 +6346,7 @@ class TestInvokeToolRestPreInvokeModifiedPayload:
 
         plugin_manager.has_hooks_for = MagicMock(side_effect=_has_hooks_for)
         modified_payload = SimpleNamespace(name="test_tool", args={"k": "v"}, headers=None)
-        plugin_manager.invoke_hook = AsyncMock(return_value=(SimpleNamespace(modified_payload=modified_payload), {}))
+        plugin_manager.invoke_hook = AsyncMock(return_value=(SimpleNamespace(modified_payload=modified_payload, metadata=None), {}))
 
         mock_response = MagicMock()
         mock_response.status_code = 200
@@ -7424,8 +7424,8 @@ class TestInvokeToolPluginPostInvokeSerialization:
         plugin_manager.has_hooks_for = MagicMock(return_value=True)
         plugin_manager.invoke_hook = AsyncMock(
             side_effect=[
-                (SimpleNamespace(modified_payload=None, retry_delay_ms=0), {}),  # pre-invoke
-                (SimpleNamespace(modified_payload=SimpleNamespace(result={"status": "transformed", "valid": False}), retry_delay_ms=0), {}),  # post-invoke
+                (SimpleNamespace(modified_payload=None, retry_delay_ms=0, metadata=None), {}),  # pre-invoke
+                (SimpleNamespace(modified_payload=SimpleNamespace(result={"status": "transformed", "valid": False}), retry_delay_ms=0, metadata=None), {}),  # post-invoke
             ]
         )
 
@@ -7477,8 +7477,8 @@ class TestInvokeToolPluginPostInvokeSerialization:
         plugin_manager.has_hooks_for = MagicMock(return_value=True)
         plugin_manager.invoke_hook = AsyncMock(
             side_effect=[
-                (SimpleNamespace(modified_payload=None, retry_delay_ms=0), {}),  # pre-invoke
-                (SimpleNamespace(modified_payload=SimpleNamespace(result={"unserializable", "set", "values"}), retry_delay_ms=0), {}),  # post-invoke
+                (SimpleNamespace(modified_payload=None, retry_delay_ms=0, metadata=None), {}),  # pre-invoke
+                (SimpleNamespace(modified_payload=SimpleNamespace(result={"unserializable", "set", "values"}), retry_delay_ms=0, metadata=None), {}),  # post-invoke
             ]
         )
 
@@ -7950,7 +7950,7 @@ class TestInvokeToolA2A:
             args={"interaction_type": "query", "foo": "bar"},
             headers=SimpleNamespace(model_dump=lambda: {"Content-Type": "application/json", "X-Test": "1"}),
         )
-        plugin_manager.invoke_hook = AsyncMock(return_value=(SimpleNamespace(modified_payload=modified_payload), {}))
+        plugin_manager.invoke_hook = AsyncMock(return_value=(SimpleNamespace(modified_payload=modified_payload, metadata=None), {}))
 
         captured = {}
         mock_http_response = MagicMock()
@@ -8716,7 +8716,7 @@ class TestInvokeToolA2A:
             return hook_type == ToolHookType.TOOL_POST_INVOKE
 
         plugin_manager.has_hooks_for = MagicMock(side_effect=_has_hooks_for)
-        plugin_manager.invoke_hook = AsyncMock(return_value=(SimpleNamespace(modified_payload=None, retry_delay_ms=0), context_table))
+        plugin_manager.invoke_hook = AsyncMock(return_value=(SimpleNamespace(modified_payload=None, retry_delay_ms=0, metadata=None), context_table))
 
         with (
             _setup_cache_for_invoke(tp),
@@ -8765,7 +8765,7 @@ class TestInvokeToolMcpSse:
             patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
             patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
-            patch("mcpgateway.services.token_storage_service.TokenStorageService") as mock_tss,
+            patch("mcpgateway.services.tool_service.TokenStorageService") as mock_tss,
         ):
             mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
             mock_trace.get = MagicMock(return_value=None)
@@ -8819,7 +8819,7 @@ class TestInvokeToolMcpSse:
             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
             patch("mcpgateway.services.tool_service.get_correlation_id", return_value="corr-1"),
             patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
-            patch("mcpgateway.services.token_storage_service.TokenStorageService") as mock_tss,
+            patch("mcpgateway.services.tool_service.TokenStorageService") as mock_tss,
             patch("mcpgateway.services.tool_service.sse_client", side_effect=fake_sse_client),
             patch("mcpgateway.services.tool_service.ClientSession", return_value=_SessionCM()),
             patch("mcpgateway.services.tool_service.httpx.AsyncClient", return_value=MagicMock()),
@@ -8835,6 +8835,72 @@ class TestInvokeToolMcpSse:
 
         assert result is not None
         assert captured_headers["Authorization"] == "Bearer stored-token"
+
+    @pytest.mark.asyncio
+    async def test_mcp_gateway_oauth_token_exchange_applies_exchanged_header(self, tool_service):
+        """MCP (RFC 8693) gateways resolve an exchanged Authorization header for the upstream call.
+
+        Exercises the ``grant_type == "token-exchange"`` branch of the MCP
+        invocation path: ``_resolve_token_exchange_header`` produces the upstream
+        Authorization header, which must reach the SSE client unchanged.
+        """
+        tp = _make_tool_payload(integration_type="MCP", request_type="SSE", gateway_id="gw-uuid-1", jsonpath_filter="")
+        gp = _make_gateway_payload(auth_type="oauth", oauth_config={"grant_type": "token-exchange", "target_audience": "aud"})
+        db = MagicMock()
+
+        captured_headers: dict[str, str] = {}
+
+        def fake_sse_client(*, url=None, headers=None, httpx_client_factory=None, **_kw):
+            class _CM:
+                async def __aenter__(self):
+                    if httpx_client_factory is not None:
+                        httpx_client_factory(headers=headers)
+                    captured_headers.update(headers or {})
+                    return (MagicMock(), MagicMock(), AsyncMock())
+
+                async def __aexit__(self, *exc):
+                    return False
+
+            return _CM()
+
+        mock_session = AsyncMock()
+        mock_session.initialize = AsyncMock()
+        mock_session.call_tool = AsyncMock(return_value=ToolResult(content=[TextContent(type="text", text="ok")], is_error=False))
+
+        class _SessionCM:
+            async def __aenter__(self):
+                return mock_session
+
+            async def __aexit__(self, *exc):
+                return False
+
+        resolve_mock = AsyncMock(return_value={"Authorization": "Bearer exch-tok"})
+
+        with (
+            _setup_cache_for_invoke(tp, gp),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+            patch.object(tool_service, "_resolve_token_exchange_header", resolve_mock),
+            patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc,
+            patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace,
+            patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
+            patch("mcpgateway.services.tool_service.get_correlation_id", return_value="corr-1"),
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
+            patch("mcpgateway.services.tool_service.sse_client", side_effect=fake_sse_client),
+            patch("mcpgateway.services.tool_service.ClientSession", return_value=_SessionCM()),
+            patch("mcpgateway.services.tool_service.httpx.AsyncClient", return_value=MagicMock()),
+        ):
+            mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
+            mock_trace.get = MagicMock(return_value=None)
+            mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
+            mock_mbuf.return_value = MagicMock()
+
+            result = await tool_service.invoke_tool(db, "test_tool", {}, app_user_email="user@test.com")
+
+        assert result is not None
+        resolve_mock.assert_awaited_once()
+        assert captured_headers["Authorization"] == "Bearer exch-tok"
 
     @pytest.mark.asyncio
     async def test_mcp_gateway_oauth_authorization_code_missing_token_raises(self, tool_service):
@@ -8857,7 +8923,7 @@ class TestInvokeToolMcpSse:
             patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
             patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
-            patch("mcpgateway.services.token_storage_service.TokenStorageService") as mock_tss,
+            patch("mcpgateway.services.tool_service.TokenStorageService") as mock_tss,
             patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=None)),
         ):
             mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
@@ -8918,7 +8984,7 @@ class TestInvokeToolMcpSse:
         mock_pm = MagicMock()
         mock_pm.has_hooks_for = MagicMock(side_effect=lambda hook_type: hook_type == ToolHookType.TOOL_PRE_INVOKE)
 
-        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False):  # noqa: ARG001
+        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False, extensions=None):  # noqa: ARG001
             if hook_type != ToolHookType.TOOL_PRE_INVOKE:
                 return PluginResult(modified_payload=None, continue_processing=True), {}
             new_headers = dict(payload.headers.root) if payload.headers else {}
@@ -8937,7 +9003,7 @@ class TestInvokeToolMcpSse:
             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
             patch("mcpgateway.services.tool_service.get_correlation_id", return_value="corr-1"),
             patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
-            patch("mcpgateway.services.token_storage_service.TokenStorageService") as mock_tss,
+            patch("mcpgateway.services.tool_service.TokenStorageService") as mock_tss,
             patch("mcpgateway.services.tool_service.sse_client", side_effect=fake_sse_client),
             patch("mcpgateway.services.tool_service.ClientSession", return_value=_SessionCM()),
             patch("mcpgateway.services.tool_service.httpx.AsyncClient", return_value=MagicMock()),
@@ -9554,7 +9620,7 @@ class TestInvokeToolMcpSseTimeoutAndErrors:
             return hook_type == ToolHookType.TOOL_POST_INVOKE
 
         plugin_manager.has_hooks_for = MagicMock(side_effect=_has_hooks_for)
-        plugin_manager.invoke_hook = AsyncMock(return_value=(SimpleNamespace(modified_payload=None, retry_delay_ms=0), context_table))
+        plugin_manager.invoke_hook = AsyncMock(return_value=(SimpleNamespace(modified_payload=None, retry_delay_ms=0, metadata=None), context_table))
 
         def fake_sse_client(*, url=None, headers=None, httpx_client_factory=None, **_kw):
             class _CM:
@@ -9680,7 +9746,7 @@ class TestInvokeToolMcpStreamableHttpCoverage:
             return hook_type == ToolHookType.TOOL_PRE_INVOKE
 
         plugin_manager.has_hooks_for = MagicMock(side_effect=_has_hooks_for)
-        plugin_manager.invoke_hook = AsyncMock(return_value=(SimpleNamespace(modified_payload=None), {}))
+        plugin_manager.invoke_hook = AsyncMock(return_value=(SimpleNamespace(modified_payload=None, metadata=None), {}))
 
         def fake_streamablehttp_client(*, url=None, headers=None, httpx_client_factory=None, **_kw):
             class _CM:
@@ -9750,7 +9816,7 @@ class TestInvokeToolMcpStreamableHttpCoverage:
 
         plugin_manager.has_hooks_for = MagicMock(side_effect=_has_hooks_for)
         modified_payload = SimpleNamespace(name="test_tool", args={}, headers=None)
-        plugin_manager.invoke_hook = AsyncMock(return_value=(SimpleNamespace(modified_payload=modified_payload), {}))
+        plugin_manager.invoke_hook = AsyncMock(return_value=(SimpleNamespace(modified_payload=modified_payload, metadata=None), {}))
 
         upstream_session = AsyncMock()
         upstream_session.call_tool = AsyncMock(return_value=ToolResult(content=[TextContent(type="text", text="ok")], is_error=False))
@@ -9810,7 +9876,7 @@ class TestInvokeToolMcpStreamableHttpCoverage:
             return hook_type == ToolHookType.TOOL_POST_INVOKE
 
         plugin_manager.has_hooks_for = MagicMock(side_effect=_has_hooks_for)
-        plugin_manager.invoke_hook = AsyncMock(return_value=(SimpleNamespace(modified_payload=None, retry_delay_ms=0), None))
+        plugin_manager.invoke_hook = AsyncMock(return_value=(SimpleNamespace(modified_payload=None, retry_delay_ms=0, metadata=None), None))
 
         def fake_streamablehttp_client(*, url=None, headers=None, httpx_client_factory=None, **_kw):
             class _CM:

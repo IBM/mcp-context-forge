@@ -12585,6 +12585,8 @@ async def admin_add_gateway(
             content["gateway"] = gateway_payload
         return ORJSONResponse(content=content, status_code=202 if is_pending else 200)
 
+    except PermissionError as ex:
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=403)
     except GatewayConnectionError as ex:
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=502)
     except GatewayDuplicateConflictError as ex:

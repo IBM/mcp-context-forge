@@ -3395,6 +3395,11 @@ else:
 # If AuthContextMiddleware is already registered, ObservabilityMiddleware wraps it
 # Execution order will be: AuthContext -> Observability -> Request Handler
 # Wire observability adapter into the plugin manager when observability is enabled
+# _service is a module-level global read later in lifespan(); it must always be bound
+# (even when this branch doesn't run at import time) so tests that flip
+# observability_enabled to True after import and then invoke lifespan() don't hit a
+# NameError on the module global.
+_service = None  # pylint: disable=invalid-name
 if settings.observability_enabled:
     # First-Party
     from mcpgateway.middleware.observability_middleware import ObservabilityMiddleware
@@ -6431,6 +6436,7 @@ async def read_resource(resource_id: str, request: Request, db: Session = Depend
             token_teams=auth_token_teams,
             plugin_context_table=plugin_context_table,
             plugin_global_context=plugin_global_context,
+            request_headers=dict(request.headers),
         )
         _enforce_scoped_resource_access(request, db, user, f"/resources/{resource_id}")
         # Release transaction before response serialization
@@ -7393,6 +7399,8 @@ async def register_gateway(
             response.headers["Retry-After"] = str(max(1, math.ceil(settings.gateway_async_lifecycle_poll_interval)))
         return result
     except Exception as ex:
+        if isinstance(ex, PermissionError):
+            return ORJSONResponse(content={"message": str(ex)}, status_code=status.HTTP_403_FORBIDDEN)
         if isinstance(ex, GatewayConnectionError):
             return ORJSONResponse(content={"message": str(ex)}, status_code=status.HTTP_502_BAD_GATEWAY)
         if isinstance(ex, ValueError):
@@ -8513,6 +8521,7 @@ async def handle_internal_mcp_resources_read(request: Request):
             plugin_context_table=plugin_context_table,
             plugin_global_context=plugin_global_context,
             meta_data=meta_data,
+            request_headers=dict(request.headers),
         )
         # First-Party
         from mcpgateway.common.models import ResourceContent  # pylint: disable=import-outside-toplevel
@@ -11095,6 +11104,7 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
                     plugin_context_table=plugin_context_table,
                     plugin_global_context=plugin_global_context,
                     meta_data=meta_data,
+                    request_headers=dict(request.headers),
                 )
                 if hasattr(result, "model_dump"):
                     result = {"contents": [result.model_dump(by_alias=True, exclude_none=True)]}

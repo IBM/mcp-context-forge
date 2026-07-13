@@ -29,6 +29,8 @@ from sqlalchemy.orm import Session
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.db import fresh_db_session, SessionLocal
+from mcpgateway.plugins.utils import build_request_extensions, record_plugin_metrics
+from mcpgateway.services.observability_service import current_trace_id
 from mcpgateway.services.permission_service import PermissionService
 from mcpgateway.transports.context import UserContext
 from mcpgateway.utils.trace_context import (
@@ -739,7 +741,9 @@ def require_permission(permission: str, resource_type: Optional[str] = None, all
                     ),
                     global_context=global_context,
                     local_contexts=plugin_context_table,  # Pass context table for cross-hook state
+                    extensions=build_request_extensions(),
                 )
+                record_plugin_metrics(current_trace_id.get(), result.metadata)
 
                 # If a plugin made a decision, respect it
                 if result and result.modified_payload and hasattr(result.modified_payload, "granted"):

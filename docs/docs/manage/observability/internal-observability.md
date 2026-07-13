@@ -785,6 +785,93 @@ WHERE start_time < NOW() - INTERVAL '7 days';
    echo $OBSERVABILITY_EVENTS_ENABLED  # Should be "true"
    ```
 
+## Plugin Metrics (`result.metadata`)
+
+Plugins can return per-plugin observability data by setting `PluginResult.metadata["<plugin_name>"]`
+in any hook they implement. The gateway consumes this after every `invoke_hook()` call
+(`mcpgateway.plugins.utils.record_plugin_metrics()`) across all wired hook call sites:
+`tool_pre_invoke`/`tool_post_invoke`, `prompt_pre_fetch`/`prompt_post_fetch`,
+`resource_pre_fetch`/`resource_post_fetch`, `http_pre_request`/`http_post_request`,
+`http_auth_resolve_user`, `http_auth_check_permission`, and `agent_pre_invoke`/`agent_post_invoke`.
+
+### Shape
+
+```text
+result.metadata = {
+    "<plugin_name>": {
+        "<field_name>": <value>,
+        ...
+    },
+    ...
+}
+```
+
+Each top-level key namespaces one plugin's own metadata dict; a single hook invocation can carry
+metadata from every plugin that ran in the chain.
+
+### Value types and limits
+
+`result.metadata` is treated as **untrusted plugin output** and validated before it is recorded
+anywhere (`mcpgateway.plugins.utils._sanitize_plugin_metrics()`). None of these bounds are
+configurable — a plugin that needs different limits should be revisited rather than the gateway
+loosening its defaults:
+
+| Element | Contract |
+|---|---|
+| Plugin name / field name (dict key) | Must match `^[A-Za-z0-9_.-]{1,64}$`; otherwise dropped |
+| `bool` value | Recorded as-is |
+| `int` / `float` value | Recorded as-is, but only for field names in a deny-by-default allowlist (currently `total_detections`, `total_masked`); every other numeric field name is dropped regardless of value. Non-finite values (`NaN`/`inf`/`-inf`) are always rejected |
+| `str` value | Recorded as-is, but only for field names in a deny-by-default allowlist (currently `stage`, `detection_types`); every other string field name is dropped regardless of value. Accepted values must match the low-cardinality charset `^[A-Za-z0-9_.,:=/-]*$` and be ≤ 64 chars — overlong values are **rejected outright, not truncated** — this is intentionally **not** a free-text channel |
+| `list[str]` value | Joined into a single comma-separated string, then subject to the same allowlisted `str` contract; only the first 32 items are considered |
+| Any other type (`dict`, mixed list, `None`, etc.) | Dropped |
+| Keys per plugin | Capped at 32 |
+| Plugins per call | Capped at 16 |
+
+Values that are dropped are never logged — only the key name and a short reason — since the value
+itself may be malformed, oversized, or adversarial.
+
+**Plugin metadata is untrusted and must stay low-cardinality and non-sensitive.** It is designed
+for counters, status/type-name tokens, and short enums (e.g. `total_detections: 3`,
+`stage: "tool_post_invoke"`) — not for raw request content or free text.
+
+### DB sink vs. OTel sink
+
+Validated metadata is recorded through up to two independent sinks:
+
+- **Internal DB (primary)**: a dedicated `plugin.metrics.<plugin_name>` span carries the validated
+  fields as span attributes, batched into one DB session per `invoke_hook()` call. Controlled by
+  `PLUGIN_METRICS_DB_SPANS_ENABLED` (default `true`).
+- **Internal DB (secondary, numeric only)**: each numeric field is additionally recorded as an
+  `ObservabilityMetric` row via `record_metric()`, so plugin counters are queryable as metrics, not
+  just span attributes. Each row is its own independent DB session/commit (mirrors the existing
+  "issue #3883" pattern), so this is capped per call across all plugins via
+  `PLUGIN_METRICS_MAX_NUMERIC_PER_CALL` (default `16`) and can be disabled entirely with
+  `PLUGIN_METRICS_DB_NUMERIC_ROWS_ENABLED=false`.
+- **OTel export (optional, additive)**: when an OTel exporter is configured
+  (`otel_tracing_enabled()`) and there is an active OTel context (`otel_context_active()`), the
+  already-sanitized metrics are re-emitted as an OTel span through the gateway's existing exporter.
+  This is purely additive — disabling it does not affect the internal DB sinks above, and the
+  gateway remains the sole export authority (plugins never talk to OTel directly).
+
+All of the above is best-effort (L4): any failure (missing trace, DB error, malformed plugin
+metadata) is logged at debug level and swallowed — it never raises into the request path, and is a
+no-op entirely when no trace is active (metrics recording is gated on `trace_id` presence, so it
+costs nothing on untraced requests).
+
+### Hook coverage
+
+As of this writing, all 17 gateway-side `invoke_hook()` call sites pass trace context in
+(`extensions=`) and consume `result.metadata` out. If you add a new plugin hook call site, wire it
+the same way: pass `extensions=build_request_extensions()` into `invoke_hook()`, then call
+`record_plugin_metrics(current_trace_id.get(), <result>.metadata)` immediately after.
+
+### Dependency on plugin-side metrics emission
+
+This consumer only records something if the plugin actually populates `result.metadata`. The
+bundled PII-filter plugin (`cpex-pii-filter`) emits `result.metadata["pii_filter"]` starting from
+its own `0.3.6` release — check `pyproject.toml`/`uv.lock` for the currently pinned version before
+assuming this data is available end-to-end.
+
 ## Best Practices
 
 ### Development

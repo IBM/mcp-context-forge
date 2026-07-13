@@ -60,6 +60,7 @@ from mcpgateway.db import ResourceMetric, ResourceMetricsHourly
 from mcpgateway.db import ResourceSubscription as DbSubscription
 from mcpgateway.db import server_resource_association
 from mcpgateway.observability import create_span, set_span_attribute, set_span_error
+from mcpgateway.plugins.utils import build_request_extensions, record_plugin_metrics
 from mcpgateway.schemas import ResourceCreate, ResourceMetrics, ResourceRead, ResourceSubscription, ResourceUpdate, TopPerformer
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.base_service import BaseService
@@ -81,6 +82,7 @@ from mcpgateway.utils.pagination import unified_paginate
 from mcpgateway.utils.services_auth import decode_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
 from mcpgateway.utils.ssl_context_cache import get_cached_ssl_context
+from mcpgateway.utils.subject_token import extract_inbound_bearer, looks_like_jwt
 from mcpgateway.utils.trace_context import format_trace_team_scope
 from mcpgateway.utils.trace_redaction import is_input_capture_enabled, is_output_capture_enabled, serialize_trace_payload
 from mcpgateway.utils.url_auth import apply_query_param_auth, sanitize_exception_message
@@ -1603,6 +1605,7 @@ class ResourceService(BaseService):
         resource_obj: Optional[Any] = None,
         gateway_obj: Optional[Any] = None,
         server_id: Optional[str] = None,
+        request_headers: Optional[Dict[str, str]] = None,
     ) -> Any:
         """
         Invoke a resource via its configured gateway using SSE or StreamableHTTP transport.
@@ -1643,6 +1646,9 @@ class ResourceService(BaseService):
                 Virtual server ID for server metrics recording. When provided, indicates
                 the resource was invoked through a specific virtual server endpoint.
                 Direct resource calls (e.g., from admin UI) should pass None.
+            request_headers (Optional[Dict[str, str]]):
+                Inbound request headers. Required for token-exchange gateways to resolve
+                the RFC 8693 subject_token from the caller's Authorization bearer.
 
         Returns:
             Any: The text content returned by the remote resource, or ``None`` if the
@@ -1909,6 +1915,33 @@ class ResourceService(BaseService):
                                     if span:
                                         set_span_attribute(span, "health.status", "unhealthy")
                                         set_span_error(span, "Failed to obtain stored OAuth token")
+                            elif grant_type == "token-exchange":
+                                # RFC 8693 / On-Behalf-Of: exchange the caller's inbound JWT for a
+                                # downstream-audience-scoped token. Fail closed -- never fall through
+                                # to client_credentials or an unauthenticated request for this grant.
+                                subject_token = extract_inbound_bearer(request_headers or {})
+                                if subject_token and not looks_like_jwt(subject_token):
+                                    subject_token = None
+                                if not subject_token:
+                                    logger.error("Token exchange requires an authenticated user JWT for gateway %s", gateway_name)
+                                    if span:
+                                        set_span_attribute(span, "health.status", "unhealthy")
+                                        set_span_error(span, "Token exchange requires an authenticated user JWT")
+                                else:
+                                    try:
+                                        access_token = await self.oauth_manager.get_access_token(
+                                            gateway_oauth_config,
+                                            ca_certificate=gateway.ca_certificate,
+                                            client_cert=gateway.client_cert,
+                                            client_key=gateway.client_key,
+                                            subject_token=subject_token,
+                                        )
+                                        headers["Authorization"] = f"Bearer {access_token}"
+                                    except Exception as e:
+                                        logger.error("Token exchange failed for gateway %s: %s", gateway_name, e)
+                                        if span:
+                                            set_span_attribute(span, "health.status", "unhealthy")
+                                            set_span_error(span, "Token exchange failed")
                             else:
                                 # For Client Credentials flow, get token directly (makes network calls)
                                 try:
@@ -2149,6 +2182,7 @@ class ResourceService(BaseService):
         plugin_context_table: Optional[PluginContextTable] = None,
         plugin_global_context: Optional[GlobalContext] = None,
         meta_data: Optional[Dict[str, Any]] = None,
+        request_headers: Optional[Dict[str, str]] = None,
     ) -> Union[ResourceContent, ResourceContents]:
         """Read a resource's content with plugin hook support.
 
@@ -2165,6 +2199,8 @@ class ResourceService(BaseService):
             plugin_context_table: Optional plugin context table from previous hooks for cross-hook state sharing.
             plugin_global_context: Optional global context from middleware for consistency across hooks.
             meta_data: Optional metadata dictionary to pass to the gateway during resource reading.
+            request_headers: Optional inbound request headers, forwarded to invoke_resource()
+                so token-exchange gateways can resolve the RFC 8693 subject_token.
 
         Returns:
             Resource content object
@@ -2328,7 +2364,9 @@ class ResourceService(BaseService):
                         global_context,
                         local_contexts=plugin_context_table,  # Pass context from previous hooks
                         violations_as_exceptions=True,
+                        extensions=build_request_extensions(),
                     )
+                    record_plugin_metrics(current_trace_id.get(), pre_result.metadata)
                     # Use modified URI if plugin changed it
                     if pre_result.modified_payload:
                         uri = pre_result.modified_payload.uri
@@ -2551,6 +2589,7 @@ class ResourceService(BaseService):
                         resource_obj=resource_db,
                         gateway_obj=resource_db_gateway,
                         server_id=server_id,
+                        request_headers=request_headers,
                     )
                     if resource_response:
                         setattr(content, "text", resource_response)
@@ -2568,6 +2607,7 @@ class ResourceService(BaseService):
                             resource_obj=resource_db,
                             gateway_obj=resource_db_gateway,
                             server_id=server_id,
+                            request_headers=request_headers,
                         )
                         if resource_response:
                             setattr(content, "blob", resource_response)
@@ -2582,6 +2622,7 @@ class ResourceService(BaseService):
                             resource_obj=resource_db,
                             gateway_obj=resource_db_gateway,
                             server_id=server_id,
+                            request_headers=request_headers,
                         )
                         if resource_response:
                             setattr(content, "text", resource_response)
@@ -2599,7 +2640,10 @@ class ResourceService(BaseService):
                 # ═══════════════════════════════════════════════════════════════════════════
                 if has_post_fetch:
                     post_payload = ResourcePostFetchPayload(uri=original_uri, content=content)
-                    post_result, _ = await plugin_manager.invoke_hook(ResourceHookType.RESOURCE_POST_FETCH, post_payload, global_context, contexts, violations_as_exceptions=True)
+                    post_result, _ = await plugin_manager.invoke_hook(
+                        ResourceHookType.RESOURCE_POST_FETCH, post_payload, global_context, contexts, violations_as_exceptions=True, extensions=build_request_extensions()
+                    )
+                    record_plugin_metrics(current_trace_id.get(), post_result.metadata)
                     if post_result.modified_payload:
                         content = post_result.modified_payload.content
 
