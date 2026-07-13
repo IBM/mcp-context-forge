@@ -19,6 +19,22 @@ branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
+def _existing_index_names(bind) -> set:
+    """Return index names on the resources table via the DB catalog directly.
+
+    SQLAlchemy's Inspector.get_indexes() silently drops expression-based indexes on both
+    SQLite and Postgres ("Skipped unsupported reflection of expression-based index"), which
+    would make the COALESCE(...)-based indexes below always look absent and break the
+    idempotent create-if-missing / drop-if-present checks in upgrade()/downgrade().
+    """
+    dialect_name = bind.dialect.name
+    if dialect_name == "sqlite":
+        rows = bind.execute(text("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'resources'")).fetchall()
+    else:
+        rows = bind.execute(text("SELECT indexname AS name FROM pg_indexes WHERE tablename = 'resources'")).fetchall()
+    return {r[0] for r in rows}
+
+
 def upgrade() -> None:
     """Upgrade schema."""
     bind = op.get_bind()
@@ -30,7 +46,12 @@ def upgrade() -> None:
     # Pre-flight: fail early with a clear message if duplicate names already exist under the
     # same ownership scope. Without this check the constraint creation below raises a raw
     # IntegrityError that is hard to diagnose.
-    dupes = bind.execute(text("SELECT name, team_id, owner_email, gateway_id, COUNT(*) AS cnt " "FROM resources " "GROUP BY name, team_id, owner_email, gateway_id " "HAVING COUNT(*) > 1")).fetchall()
+    # NOTE: grouping uses COALESCE(team_id, '') to match the index expression below - team_id is
+    # NULL for public/private resources, and SQL treats NULLs as distinct, so grouping on the raw
+    # column would miss duplicates the new index is about to enforce.
+    dupes = bind.execute(
+        text("SELECT name, COALESCE(team_id, '') AS team_scope, owner_email, gateway_id, COUNT(*) AS cnt FROM resources GROUP BY name, team_scope, owner_email, gateway_id HAVING COUNT(*) > 1")
+    ).fetchall()
     if dupes:
         dupe_list = ", ".join(f"'{r[0]}'" for r in dupes[:5])
         raise RuntimeError(
@@ -39,27 +60,19 @@ def upgrade() -> None:
             f"(e.g. {dupe_list}). Resolve duplicates before migrating."
         )
 
-    existing_indexes = {i["name"] for i in inspector.get_indexes("resources")}
+    existing_indexes = _existing_index_names(bind)
 
-    # Use create_index(unique=True) instead of create_unique_constraint: SQLite does not
-    # support ALTER TABLE ADD CONSTRAINT, but it does support CREATE UNIQUE INDEX.
+    # Use raw CREATE UNIQUE INDEX (not op.create_index) so we can index COALESCE(team_id, '')
+    # instead of the bare column. team_id is NULL for public/private resources, and both SQLite
+    # and Postgres treat NULLs as distinct in unique indexes, so indexing the raw column would
+    # let unlimited duplicate names through for those two visibilities - only team-scoped rows
+    # would ever be blocked. Wrapping team_id in COALESCE collapses NULL to a single comparable
+    # value so the constraint actually enforces uniqueness for public/private resources too.
     if "uq_team_owner_gateway_name_resource" not in existing_indexes:
-        op.create_index(
-            "uq_team_owner_gateway_name_resource",
-            "resources",
-            ["team_id", "owner_email", "gateway_id", "name"],
-            unique=True,
-        )
+        op.execute(text("CREATE UNIQUE INDEX uq_team_owner_gateway_name_resource ON resources (COALESCE(team_id, ''), owner_email, gateway_id, name)"))
 
     if "uq_team_owner_name_resource_local" not in existing_indexes:
-        op.create_index(
-            "uq_team_owner_name_resource_local",
-            "resources",
-            ["team_id", "owner_email", "name"],
-            unique=True,
-            postgresql_where=sa.text("gateway_id IS NULL"),
-            sqlite_where=sa.text("gateway_id IS NULL"),
-        )
+        op.execute(text("CREATE UNIQUE INDEX uq_team_owner_name_resource_local ON resources (COALESCE(team_id, ''), owner_email, name) WHERE gateway_id IS NULL"))
 
 
 def downgrade() -> None:
@@ -70,7 +83,7 @@ def downgrade() -> None:
     if "resources" not in inspector.get_table_names():
         return
 
-    existing_indexes = {i["name"] for i in inspector.get_indexes("resources")}
+    existing_indexes = _existing_index_names(bind)
     if "uq_team_owner_name_resource_local" in existing_indexes:
         op.drop_index("uq_team_owner_name_resource_local", table_name="resources")
 

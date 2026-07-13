@@ -1881,7 +1881,13 @@ class TestResourceTemplates:
 
         # Create a valid ResourceTemplate object
         template_obj = ResourceTemplate(
-            id="1", uriTemplate="test://template/{id}", name="template", description="Test template", mime_type="text/plain", annotations=None, _meta=None  # alias for uri_template
+            id="1",
+            uriTemplate="test://template/{id}",
+            name="template",
+            description="Test template",
+            mime_type="text/plain",
+            annotations=None,
+            _meta=None,  # alias for uri_template
         )
 
         # Pre-load template cache
@@ -1892,7 +1898,6 @@ class TestResourceTemplates:
 
         # Patch match + extraction to force an error
         with patch.object(service, "_uri_matches_template", return_value=True), patch.object(service, "_extract_template_params", side_effect=Exception("Template error")):
-
             # Assert failure path
             with pytest.raises(ResourceError) as exc_info:
                 await service._read_template_resource(db, uri)
@@ -1927,7 +1932,6 @@ class TestResourceTemplates:
         service._template_cache = {"binary": template}
 
         with patch.object(service, "_uri_matches_template", return_value=True), patch.object(service, "_extract_template_params", return_value={"id": "123"}):
-
             with pytest.raises(ResourceError) as exc_info:
                 await service._read_template_resource(db, uri)
 
@@ -2275,13 +2279,18 @@ class TestErrorHandling:
         """Test update resource with generic error."""
         update_data = ResourceUpdate(name="New Name")
 
-        mock_scalar = MagicMock()
-        mock_scalar.scalar_one_or_none.return_value = mock_resource
-        mock_db.execute.return_value = mock_scalar
+        def _gfu_side_effect(_db, _model, _id=None, **kwargs):
+            # Name-conflict pre-check queries pass `where`; only the initial by-id lookup should
+            # resolve to the resource being updated.
+            if kwargs.get("where") is not None:
+                return None
+            return mock_resource
+
         mock_db.commit.side_effect = Exception("Database error")
 
-        with pytest.raises(ResourceError) as exc_info:
-            await resource_service.update_resource(mock_db, "test://resource", update_data)
+        with patch("mcpgateway.services.resource_service.get_for_update", side_effect=_gfu_side_effect):
+            with pytest.raises(ResourceError) as exc_info:
+                await resource_service.update_resource(mock_db, "test://resource", update_data)
 
         assert "Failed to update resource" in str(exc_info.value)
         mock_db.rollback.assert_called_once()
@@ -2614,6 +2623,7 @@ class TestResourceUpdateMimeTypeDetection:
         mock_resource.version = 1
 
         mock_db.get = MagicMock(return_value=mock_resource)
+        mock_db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None)))
         mock_db.commit = MagicMock()
         mock_db.refresh = MagicMock()
 

@@ -589,6 +589,15 @@ class ResourceService(BaseService):
                 ).scalar_one_or_none()
                 if existing_by_name:
                     raise ResourceNameConflictError(resource.name, enabled=existing_by_name.enabled, resource_id=existing_by_name.id, visibility=existing_by_name.visibility)
+            else:
+                # Private resources are scoped by owner rather than team.
+                existing_by_name = db.execute(
+                    select(DbResource).where(
+                        DbResource.name == resource.name, DbResource.visibility == "private", DbResource.owner_email == (owner_email or created_by), DbResource.gateway_id == gateway_id
+                    )
+                ).scalar_one_or_none()
+                if existing_by_name:
+                    raise ResourceNameConflictError(resource.name, enabled=existing_by_name.enabled, resource_id=existing_by_name.id, visibility=existing_by_name.visibility)
 
             # Check for existing resource with the same uri
             if visibility.lower() == "public":
@@ -909,13 +918,11 @@ class ResourceService(BaseService):
                 elif visibility.lower() == "team" and team_id:
                     name_conditions = [DbResource.name.in_(resource_names), DbResource.visibility == "team", DbResource.team_id == team_id]
                 else:
-                    name_conditions = None
+                    # Private resources are scoped by owner rather than team.
+                    name_conditions = [DbResource.name.in_(resource_names), DbResource.visibility == "private", DbResource.owner_email == (owner_email or created_by)]
 
-                if name_conditions is not None:
-                    existing_by_name_rows = db.execute(select(DbResource).where(*name_conditions)).scalars().all()
-                    existing_by_name_map = {(r.name, r.gateway_id): r for r in existing_by_name_rows}
-                else:
-                    existing_by_name_map = {}
+                existing_by_name_rows = db.execute(select(DbResource).where(*name_conditions)).scalars().all()
+                existing_by_name_map = {(r.name, r.gateway_id): r for r in existing_by_name_rows}
 
                 resources_to_add = []
                 resources_to_update = []
@@ -3131,6 +3138,48 @@ class ResourceService(BaseService):
                     if existing_resource:
                         raise ResourceURIConflictError(resource_update.uri, enabled=existing_resource.enabled, resource_id=existing_resource.id, visibility=existing_resource.visibility)
 
+            # Check for name conflict if name is being changed. Without this, renaming a resource
+            # to an existing name silently succeeds: the DB unique index only backstops team-scoped
+            # rows (team_id is NULL for public/private), and no pre-check ran here before.
+            if resource_update.name and resource_update.name != resource.name:
+                new_visibility = resource_update.visibility or resource.visibility
+                new_team_id = resource_update.team_id or resource.team_id
+                new_gateway_id = resource.gateway_id
+                if new_visibility.lower() == "public":
+                    existing_by_name = get_for_update(
+                        db, DbResource, where=and_(DbResource.name == resource_update.name, DbResource.visibility == "public", DbResource.gateway_id == new_gateway_id, DbResource.id != resource_id)
+                    )
+                elif new_visibility.lower() == "team" and new_team_id:
+                    existing_by_name = get_for_update(
+                        db,
+                        DbResource,
+                        where=and_(
+                            DbResource.name == resource_update.name,
+                            DbResource.visibility == "team",
+                            DbResource.team_id == new_team_id,
+                            DbResource.gateway_id == new_gateway_id,
+                            DbResource.id != resource_id,
+                        ),
+                    )
+                else:
+                    new_owner_email = resource_update.owner_email or resource.owner_email
+                    existing_by_name = get_for_update(
+                        db,
+                        DbResource,
+                        where=and_(
+                            DbResource.name == resource_update.name,
+                            DbResource.visibility == "private",
+                            DbResource.owner_email == new_owner_email,
+                            DbResource.gateway_id == new_gateway_id,
+                            DbResource.id != resource_id,
+                        ),
+                    )
+                # Belt-and-braces: exclude a self-match in addition to the `id != resource_id` filter above.
+                if existing_by_name and existing_by_name.id == resource_id:
+                    existing_by_name = None
+                if existing_by_name:
+                    raise ResourceNameConflictError(resource_update.name, enabled=existing_by_name.enabled, resource_id=existing_by_name.id, visibility=existing_by_name.visibility)
+
             # Check ownership if user_email provided
             if user_email:
                 # First-Party
@@ -3410,6 +3459,22 @@ class ResourceService(BaseService):
                 error=pe,
             )
             raise pe
+        except ResourceNameConflictError as ne:
+            logger.error("Resource name conflict: %s", ne)
+
+            # Structured logging: Log name conflict error
+            structured_logger.log(
+                level="WARNING",
+                message="Resource update failed due to name conflict",
+                event_type="resource_name_conflict",
+                component="resource_service",
+                user_id=modified_by,
+                user_email=user_email,
+                resource_type="resource",
+                resource_id=str(resource_id),
+                error=ne,
+            )
+            raise ne
         except Exception as e:
             db.rollback()
             if isinstance(e, ResourceNotFoundError):

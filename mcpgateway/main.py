@@ -6573,6 +6573,8 @@ async def update_resource(
     except IntegrityError as e:
         logger.error(f"Integrity error while updating resource {resource_id}: {e}")
         raise HTTPException(status_code=409, detail=ErrorFormatter.format_database_error(e))
+    except ResourceNameConflictError as e:
+        raise HTTPException(status_code=409, detail=str(e))
     except ResourceURIConflictError as e:
         raise HTTPException(status_code=409, detail=str(e))
     except ContentSizeError as e:

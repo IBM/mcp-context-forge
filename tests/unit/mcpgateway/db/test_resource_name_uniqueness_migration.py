@@ -98,8 +98,12 @@ def _insert_resource(conn, *, name, team_id=None, owner_email=None, gateway_id=N
 
 
 def _get_index_names(conn, table_name):
-    inspector = sa.inspect(conn)
-    return {i["name"] for i in inspector.get_indexes(table_name)}
+    # Inspector.get_indexes() silently drops expression-based indexes (e.g. the
+    # COALESCE(team_id, '') indexes this migration creates), so verification here reads
+    # sqlite_master directly rather than relying on reflection - same approach the migration's
+    # own idempotency check uses.
+    rows = conn.execute(sa.text("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = :t"), {"t": table_name}).fetchall()
+    return {r[0] for r in rows}
 
 
 def _get_table_names(conn):
