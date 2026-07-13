@@ -5866,6 +5866,7 @@ class ToolService(BaseService):
 
                 elif tool_integration_type == "A2A" and a2a_agent_endpoint_url:
                     # A2A tool invocation using pre-extracted agent data (extracted in Phase 2 before db.close())
+                    a2a_allowlist = a2a_agent_passthrough_headers or []
                     headers = {"Content-Type": "application/json"}
                     if request_headers:
                         headers = compute_passthrough_headers_cached(
@@ -5873,11 +5874,10 @@ class ToolService(BaseService):
                             headers,
                             passthrough_allowed,
                             gateway_auth_type=None,
-                            gateway_passthrough_headers=a2a_agent_passthrough_headers,
+                            gateway_passthrough_headers=a2a_allowlist,
                         )
                         if not settings.enable_sensitive_header_passthrough:
                             headers = filter_sensitive_headers(headers)
-                    a2a_effective_passthrough_headers = a2a_agent_passthrough_headers if a2a_agent_passthrough_headers is not None else passthrough_allowed
                     plugin_headers = filter_sensitive_headers(headers)
 
                     # Plugin hook: tool pre-invoke for A2A
@@ -5900,9 +5900,9 @@ class ToolService(BaseService):
                             arguments = payload.args
                             if payload.headers is not None:
                                 plugin_returned_headers = payload.headers.model_dump()
-                                if a2a_effective_passthrough_headers:
-                                    a2a_allowlist = {h.lower() for h in a2a_effective_passthrough_headers}
-                                    safe_headers = {k: v for k, v in plugin_returned_headers.items() if k.lower() in a2a_allowlist}
+                                if a2a_allowlist:
+                                    allowlist_lower = {h.lower() for h in a2a_allowlist}
+                                    safe_headers = {k: v for k, v in plugin_returned_headers.items() if k.lower() in allowlist_lower}
                                     if not settings.enable_sensitive_header_passthrough:
                                         safe_headers = filter_sensitive_headers(safe_headers)
                                     headers.update(safe_headers)

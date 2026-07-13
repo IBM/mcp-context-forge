@@ -7728,6 +7728,7 @@ def _make_a2a_agent(*, enabled=True, agent_type="jsonrpc", auth_type=None, auth_
     agent.auth_type = auth_type
     agent.auth_value = auth_value
     agent.auth_query_params = auth_query_params
+    agent.passthrough_headers = None
     return agent
 
 
@@ -8209,8 +8210,8 @@ class TestInvokeToolA2A:
         assert "X-Other" not in captured_headers
 
     @pytest.mark.asyncio
-    async def test_a2a_pre_invoke_modified_headers_use_global_allowlist_when_agent_unset(self, tool_service):
-        """A2A plugin-modified headers fall back to global passthrough headers when the agent has no override."""
+    async def test_a2a_pre_invoke_blocks_headers_when_agent_allowlist_unset(self, tool_service):
+        """A2A tool invocation matches the direct A2A default-deny behavior when the agent allowlist is unset."""
         # Third-Party
         from cpex.framework import ToolHookType
 
@@ -8274,9 +8275,12 @@ class TestInvokeToolA2A:
                 db,
                 "test_tool",
                 {"interaction_type": "query"},
+                request_headers={"X-Tenant-Id": "tenant-from-request"},
             )
 
-        assert captured_headers["X-Tenant-Id"] == "tenant-from-plugin"
+        payload = plugin_manager.invoke_hook.await_args.kwargs["payload"]
+        assert payload.headers.root == {"Content-Type": "application/json"}
+        assert "X-Tenant-Id" not in captured_headers
         assert "Authorization" not in captured_headers
         assert "X-Other" not in captured_headers
 

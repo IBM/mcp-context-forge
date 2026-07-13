@@ -57,7 +57,7 @@ Optional request fields:
 
 | Field | Description | Example |
 | --- | --- | --- |
-| `passthrough_headers` | Header names allowed to pass from the incoming request to this A2A agent. `TOOL_PRE_INVOKE` plugin payloads receive only the non-sensitive subset of these headers. | `["Authorization", "X-Tenant-Id"]` |
+| `passthrough_headers` | Header names allowed to pass from the incoming request to this A2A agent. Unset (`null`) and empty (`[]`) both block request-header forwarding. `TOOL_PRE_INVOKE` plugin payloads receive only the non-sensitive subset. | `["Authorization", "X-Tenant-Id"]` |
 
 ### 3. Test the Agent
 
