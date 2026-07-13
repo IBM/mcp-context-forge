@@ -161,6 +161,8 @@ class TestAcceptInvitationCoverage:
 
             f.first = _first
             f.count = MagicMock(return_value=1)
+            # No prior membership row to reuse -> insert branch (compare-and-swap UPDATE is not hit)
+            f.with_for_update = MagicMock(return_value=MagicMock(first=MagicMock(return_value=None)))
             return q
 
         db.query = _query_side_effect
@@ -171,7 +173,7 @@ class TestAcceptInvitationCoverage:
 
         assert result is not None  # returns the EmailTeamMember instance
         assert invitation.is_active is False
-        db.add.assert_called_once()  # membership created
+        db.add.assert_any_call(result)  # membership created
         db.commit.assert_called()
 
     @pytest.mark.asyncio
@@ -200,6 +202,7 @@ class TestAcceptInvitationCoverage:
 
             f.first = _first
             f.count = MagicMock(return_value=0)
+            f.with_for_update = MagicMock(return_value=MagicMock(first=MagicMock(return_value=None)))
             return q
 
         db.query = _query_side_effect
@@ -350,6 +353,7 @@ class TestAcceptInvitationMoreBranches:
 
             f.first = _first
             f.count = MagicMock(return_value=2)  # under limit
+            f.with_for_update = MagicMock(return_value=MagicMock(first=MagicMock(return_value=None)))
             return q
 
         db.query = _query_side_effect
