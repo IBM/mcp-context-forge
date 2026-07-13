@@ -176,72 +176,64 @@ describe("useToolForm", () => {
     });
   });
 
-  describe("generateSchema – custom header sanitization", () => {
-    it("strips control characters from custom header key and value (multi-header path)", async () => {
-      let capturedBody: Record<string, unknown> | undefined;
+  // The generation flow itself (payload shape, status→message mapping, spec-URL
+  // fallback) is unit-tested in useGenerateSchemaFromOpenapi.test.ts. These
+  // tests cover only the form's wiring: applying results and surfacing errors.
+  describe("generateSchema – form integration", () => {
+    it("applies the generated schemas and spec URL to the form fields", async () => {
       server.use(
-        http.post("*/v1/tools/generate-schemas-from-openapi", async ({ request }) => {
-          capturedBody = (await request.json()) as Record<string, unknown>;
-          return HttpResponse.json({
+        http.post("*/v1/tools/generate-schemas-from-openapi", () =>
+          HttpResponse.json({
             success: true,
-            input_schema: null,
-            output_schema: null,
+            input_schema: { type: "object", properties: { a: { type: "string" } } },
+            output_schema: { type: "object" },
+            spec_url: "https://api.example.com/openapi.json",
             message: "ok",
-          });
-        }),
+          }),
+        ),
       );
 
       const { result } = renderHook(() => useToolForm());
 
       act(() => {
         result.current.setUrl("https://api.example.com/endpoint");
-        result.current.setAuthType("custom");
-        result.current.setCustomHeaders([
-          { id: "1", key: "X-Api-Key\r\nInjected: evil", value: "value\x00with\x1fnull" },
-        ]);
       });
 
       await act(async () => {
         await result.current.generateSchema();
       });
 
-      await waitFor(() => expect(capturedBody).toBeDefined());
-      const headers = capturedBody?.auth_headers as Array<{ key: string; value: string }>;
-      expect(headers[0].key).toBe("X-Api-KeyInjected: evil");
-      expect(headers[0].value).toBe("valuewithnull");
+      await waitFor(() => expect(result.current.schemaMode).toBe("generated"));
+      expect(result.current.generatedSpecUrl).toBe("https://api.example.com/openapi.json");
+      expect(result.current.inputSchema).toBe(
+        JSON.stringify({ type: "object", properties: { a: { type: "string" } } }, null, 2),
+      );
+      expect(result.current.outputSchema).toBe(JSON.stringify({ type: "object" }, null, 2));
     });
 
-    it("strips control characters from custom header key and value (single-header path)", async () => {
-      let capturedBody: Record<string, unknown> | undefined;
+    it("surfaces a mapped generation error in errors.schema and reveals the fallback", async () => {
       server.use(
-        http.post("*/v1/tools/generate-schemas-from-openapi", async ({ request }) => {
-          capturedBody = (await request.json()) as Record<string, unknown>;
-          return HttpResponse.json({
-            success: true,
-            input_schema: null,
-            output_schema: null,
-            message: "ok",
-          });
-        }),
+        http.post("*/v1/tools/generate-schemas-from-openapi", () =>
+          HttpResponse.json({ success: false, message: "backend detail" }, { status: 502 }),
+        ),
       );
 
-      const { result } = renderHook(() => useToolForm({ maxCustomHeaders: 1 }));
+      const { result } = renderHook(() => useToolForm());
 
       act(() => {
         result.current.setUrl("https://api.example.com/endpoint");
-        result.current.setAuthType("custom");
-        result.current.setCustomHeaders([
-          { id: "1", key: "X-Api-Key\r\nInjected: evil", value: "value\x00with\x1fnull" },
-        ]);
       });
 
       await act(async () => {
         await result.current.generateSchema();
       });
 
-      await waitFor(() => expect(capturedBody).toBeDefined());
-      expect(capturedBody?.auth_header_key).toBe("X-Api-KeyInjected: evil");
-      expect(capturedBody?.auth_header_value).toBe("valuewithnull");
+      await waitFor(() =>
+        expect(result.current.errors.schema).toBe(
+          "Couldn't fetch the OpenAPI spec — check that the URL is correct and reachable",
+        ),
+      );
+      expect(result.current.showSpecUrlInput).toBe(true);
     });
   });
 
@@ -839,6 +831,40 @@ describe("useToolForm", () => {
       expect(result.current.authType).toBe("none");
       expect(result.current.bearerToken).toBe("");
       expect(result.current.visibility).toBe("public");
+    });
+
+    it("clears schema-generation state on reset", async () => {
+      server.use(
+        http.post("*/v1/tools/generate-schemas-from-openapi", () =>
+          HttpResponse.json({
+            success: true,
+            input_schema: { type: "object", properties: {} },
+            output_schema: null,
+            spec_url: "https://api.example.com/openapi.json",
+            message: "ok",
+          }),
+        ),
+      );
+
+      const { result } = renderHook(() => useToolForm());
+
+      act(() => {
+        result.current.setUrl("https://api.example.com/endpoint");
+        result.current.setOpenApiSpecUrl("https://api.example.com/openapi.json");
+      });
+      await act(async () => {
+        await result.current.generateSchema();
+      });
+      await waitFor(() => expect(result.current.generatedSpecUrl).not.toBe(""));
+
+      act(() => {
+        result.current.resetForm();
+      });
+
+      expect(result.current.schemaMode).toBe("none");
+      expect(result.current.generatedSpecUrl).toBe("");
+      expect(result.current.openApiSpecUrl).toBe("");
+      expect(result.current.showSpecUrlInput).toBe(false);
     });
   });
 });
