@@ -167,7 +167,7 @@ def _patched_settings(token_idle_timeout: int):
 def _make_blocklist_mock(*, last_activity_returns=None, last_activity_raises=None, update_activity_raises=False, revoke_raises=False):
     """Construct a configurable ``TokenBlocklistService`` mock."""
     from unittest.mock import AsyncMock
-    
+
     mock = MagicMock()
     if last_activity_raises is not None:
         mock.get_last_activity.side_effect = last_activity_raises
