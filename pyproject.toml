@@ -279,7 +279,7 @@ plugins = [
     "cpex-pii-filter>=0.3.6",  # 0.3.6 is the first release that emits result.metadata on tool_post_invoke
     "cpex-rate-limiter>=0.1.6",
     "cpex-retry-with-backoff>=0.3.1,<0.3.2",
-    "cpex-secrets-detection>=0.3.6",
+    "cpex-secrets-detection>=0.3.7",  # 0.3.7 is the first release that emits result.metadata
     "cpex-url-reputation>=0.3.4",
 ]
 

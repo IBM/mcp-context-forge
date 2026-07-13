@@ -761,9 +761,27 @@ plugins:
       require_parameterization: false
       block_on_violation: true
 
-  # Secrets Detection - regex-based detector for common secrets/keys
+  # Secrets Detection (CPEX pilot) — Rust-backed regex/entropy detector for common secrets/keys,
+  # trace-aware. Reads extensions.request.trace_id (see
+  # mcpgateway/plugins/utils.py:build_request_extensions) and, when a trace is active, emits
+  # result.metadata["secrets_detection"] (counts/type-names only, never raw matched values) for
+  # mcpgateway/plugins/utils.py:record_plugin_metrics() to persist as a dedicated
+  # `plugin.metrics.secrets_detection` observability span. Requires cpex-secrets-detection>=0.3.7
+  # (see pyproject.toml) -- earlier releases do not emit metrics.
+  #
+  # Left mode: "disabled" deliberately, unlike PIIFilter above: this plugin ships with
+  # block_on_detection: true and min_findings_to_block: 1 below, so flipping mode to "sequential"
+  # would not just newly enable metrics -- per cpex.framework.PluginMode, "disabled" plugins are
+  # never instantiated or registered (see cpex/framework/manager.py load_plugins(): `if
+  # plugin_config.mode != PluginMode.DISABLED: ... else: logger.info("Plugin: %s is disabled.
+  # Ignoring.", ...)`), so today this plugin's hooks never run at all. Enabling it would newly
+  # start BLOCKING tool calls/prompts/resources containing secret-shaped strings for every
+  # existing deployment using the default config.yaml -- a materially bigger behavior/security-
+  # posture change than PIIFilter (whose block_on_detection defaults to false even once enabled).
+  # That is an opt-in decision for operators to make explicitly; do not flip silently.
   - name: "SecretsDetection"
     kind: "cpex_secrets_detection.SecretsDetectionPlugin"
+    version: "0.3.7"
     hooks: ["prompt_pre_fetch", "tool_post_invoke", "resource_post_fetch"]
     tags: ["security", "secrets", "dlp"]
     mode: "disabled"

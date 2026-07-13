@@ -869,8 +869,30 @@ the same way: pass `extensions=build_request_extensions()` into `invoke_hook()`,
 
 This consumer only records something if the plugin actually populates `result.metadata`. The
 bundled PII-filter plugin (`cpex-pii-filter`) emits `result.metadata["pii_filter"]` starting from
-its own `0.3.6` release — check `pyproject.toml`/`uv.lock` for the currently pinned version before
-assuming this data is available end-to-end.
+its own `0.3.6` release, and the bundled Secrets Detection plugin (`cpex-secrets-detection`) emits
+`result.metadata["secrets_detection"]` starting from its own `0.3.7` release — check
+`pyproject.toml`/`uv.lock` for the currently pinned version before assuming this data is available
+end-to-end. Note that emitting metrics requires the plugin to actually run: a plugin whose
+`plugins/config.yaml` block is `mode: "disabled"` is never instantiated (its hooks never fire), so
+no metadata is ever produced regardless of the pinned version.
+
+### Per-plugin metadata fields
+
+Each bundled `cpex-*` plugin that emits `result.metadata` is documented below as it is wired up.
+Every field listed here must also appear in `_SAFE_STRING_FIELD_NAMES` /
+`_SAFE_NUMERIC_FIELD_NAMES` in `mcpgateway/plugins/utils.py`, or it is silently dropped per the
+contract table above.
+
+| Plugin (`result.metadata` key) | Field | Type | Description |
+|---|---|---|---|
+| `pii_filter` | `stage` | `str` | Hook stage the detection occurred in (e.g. `tool_post_invoke`) |
+| `pii_filter` | `detection_types` | `list[str]` | PII category names detected (e.g. `email`, `ssn`) — never the matched value |
+| `pii_filter` | `total_detections` | `int` | Count of PII matches found |
+| `pii_filter` | `total_masked` | `int` | Count of matches redacted/masked |
+| `secrets_detection` | `total_detections` | `int` | Count of secret-shaped matches found |
+| `secrets_detection` | `total_masked` | `int` | Count of matches redacted/masked |
+| `secrets_detection` | `total_blocked` | `int` | Count of matches that triggered a block (`block_on_detection`) |
+| `secrets_detection` | `secret_types` | `list[str]` | Secret category names detected (e.g. `aws_key`, `api_token`) — never the matched value |
 
 ## Best Practices
 
