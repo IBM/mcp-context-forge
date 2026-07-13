@@ -18,7 +18,7 @@ Tests cover:
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 import sys
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 import uuid
 
 # Third-Party
@@ -59,13 +59,14 @@ def blocklist_service(test_db):
 class TestTokenRevocation:
     """Tests for token revocation functionality."""
 
-    def test_revoke_token_success(self, blocklist_service, test_db):
+    @pytest.mark.asyncio
+    async def test_revoke_token_success(self, blocklist_service, test_db):
         """Test successful token revocation."""
         jti = str(uuid.uuid4())
         # Use utc_now() to ensure consistent timezone handling
         token_expiry = utc_now() + timedelta(minutes=20)
 
-        result = blocklist_service.revoke_token(jti=jti, revoked_by="test@example.com", reason="logout", token_expiry=token_expiry)
+        result = await blocklist_service.revoke_token(jti=jti, revoked_by="test@example.com", reason="logout", token_expiry=token_expiry)
 
         assert result is True
 
@@ -86,19 +87,21 @@ class TestTokenRevocation:
             # Both are timezone-aware
             assert abs((revocation.token_expiry - token_expiry).total_seconds()) < 1
 
-    def test_revoke_token_duplicate(self, blocklist_service, test_db):
+    @pytest.mark.asyncio
+    async def test_revoke_token_duplicate(self, blocklist_service, test_db):
         """Test revoking an already revoked token."""
         jti = str(uuid.uuid4())
 
         # Revoke once
-        blocklist_service.revoke_token(jti=jti, revoked_by="test@example.com", reason="logout")
+        await blocklist_service.revoke_token(jti=jti, revoked_by="test@example.com", reason="logout")
 
         # Revoke again - should succeed (idempotent)
-        result = blocklist_service.revoke_token(jti=jti, revoked_by="test@example.com", reason="logout")
+        result = await blocklist_service.revoke_token(jti=jti, revoked_by="test@example.com", reason="logout")
 
         assert result is True
 
-    def test_revoke_token_duplicate_without_db_session(self, test_db):
+    @pytest.mark.asyncio
+    async def test_revoke_token_duplicate_without_db_session(self, test_db):
         """Test revoking an already revoked token without db session."""
         # Create service without db to test fresh_db_session path
         service = TokenBlocklistService(db=None)
@@ -110,19 +113,20 @@ class TestTokenRevocation:
             mock_session.return_value.__exit__.return_value = None
 
             # Revoke once
-            service.revoke_token(jti=jti, revoked_by="test@example.com", reason="logout")
+            await service.revoke_token(jti=jti, revoked_by="test@example.com", reason="logout")
 
             # Revoke again - should succeed (idempotent) and hit the duplicate check path
-            result = service.revoke_token(jti=jti, revoked_by="test@example.com", reason="logout")
+            result = await service.revoke_token(jti=jti, revoked_by="test@example.com", reason="logout")
 
             assert result is True
 
-    def test_revoke_token_with_last_activity(self, blocklist_service, test_db):
+    @pytest.mark.asyncio
+    async def test_revoke_token_with_last_activity(self, blocklist_service, test_db):
         """Test token revocation with last activity timestamp."""
         jti = str(uuid.uuid4())
         last_activity = utc_now() - timedelta(minutes=30)
 
-        result = blocklist_service.revoke_token(jti=jti, revoked_by="test@example.com", reason="idle_timeout", last_activity=last_activity)
+        result = await blocklist_service.revoke_token(jti=jti, revoked_by="test@example.com", reason="idle_timeout", last_activity=last_activity)
 
         assert result is True
 
@@ -131,7 +135,8 @@ class TestTokenRevocation:
         assert revocation.last_activity is not None
         assert revocation.reason == "idle_timeout"
 
-    def test_revoke_token_sets_api_token_inactive(self, blocklist_service, test_db):
+    @pytest.mark.asyncio
+    async def test_revoke_token_sets_api_token_inactive(self, blocklist_service, test_db):
         """Test that revoking a token sets EmailApiToken.is_active to False."""
         # First-Party
         from mcpgateway.db import EmailApiToken, EmailTeam
@@ -165,7 +170,7 @@ class TestTokenRevocation:
         assert api_token.is_active is True
 
         # Revoke the token
-        result = blocklist_service.revoke_token(
+        result = await blocklist_service.revoke_token(
             jti=jti,
             revoked_by="test@example.com",
             reason="idle_timeout"
@@ -187,13 +192,14 @@ class TestTokenRevocation:
         assert revocation is not None
         assert revocation.reason == "idle_timeout"
 
-    def test_revoke_token_without_api_token_record(self, blocklist_service, test_db):
+    @pytest.mark.asyncio
+    async def test_revoke_token_without_api_token_record(self, blocklist_service, test_db):
         """Test that revoking a session token (no EmailApiToken) works correctly."""
         # Session tokens don't have EmailApiToken records
         jti = str(uuid.uuid4())
 
         # Revoke the token (should not fail even though no EmailApiToken exists)
-        result = blocklist_service.revoke_token(
+        result = await blocklist_service.revoke_token(
             jti=jti,
             revoked_by="test@example.com",
             reason="logout"
@@ -209,7 +215,8 @@ class TestTokenRevocation:
         assert revocation is not None
         assert revocation.reason == "logout"
 
-    def test_revoke_token_sets_api_token_inactive_without_db_session(self, test_db):
+    @pytest.mark.asyncio
+    async def test_revoke_token_sets_api_token_inactive_without_db_session(self, test_db):
         """Test that revoking a token sets EmailApiToken.is_active to False when using fresh_db_session."""
         # First-Party
         from mcpgateway.db import EmailApiToken, EmailTeam
@@ -251,7 +258,7 @@ class TestTokenRevocation:
             mock_session.return_value.__exit__.return_value = None
 
             # Revoke the token
-            result = service.revoke_token(
+            result = await service.revoke_token(
                 jti=jti,
                 revoked_by="test@example.com",
                 reason="security"
@@ -273,7 +280,8 @@ class TestTokenRevocation:
         assert revocation is not None
         assert revocation.reason == "security"
 
-    def test_revoke_token_invalidates_auth_cache(self, blocklist_service, test_db):
+    @pytest.mark.asyncio
+    async def test_revoke_token_invalidates_auth_cache(self, blocklist_service, test_db):
         """Test that revoking a token invalidates the auth cache."""
         # First-Party
         from mcpgateway.db import EmailApiToken, EmailTeam
@@ -303,10 +311,10 @@ class TestTokenRevocation:
         test_db.add(api_token)
         test_db.commit()
 
-        # Mock asyncio.run to verify it's called without actually running the coroutine
-        with patch("mcpgateway.services.token_blocklist_service.asyncio.run") as mock_asyncio_run:
+        # Mock auth_cache.invalidate_revocation to verify it's called
+        with patch("mcpgateway.cache.auth_cache.auth_cache.invalidate_revocation", new_callable=AsyncMock) as mock_invalidate:
             # Revoke the token
-            result = blocklist_service.revoke_token(
+            result = await blocklist_service.revoke_token(
                 jti=jti,
                 revoked_by="test@example.com",
                 reason="logout"
@@ -314,15 +322,11 @@ class TestTokenRevocation:
 
             assert result is True
 
-            # Verify cache invalidation was called (we're outside an async context, so asyncio.run should be called)
-            mock_asyncio_run.assert_called_once()
+            # Verify cache invalidation was awaited
+            mock_invalidate.assert_awaited_once_with(jti)
 
-            # Verify the call was for auth_cache.invalidate_revocation by checking the coroutine name
-            call_args = mock_asyncio_run.call_args
-            coro = call_args[0][0]  # First positional argument
-            assert coro.__name__ == "invalidate_revocation"
-
-    def test_revoke_token_repairs_inconsistent_state(self, blocklist_service, test_db):
+    @pytest.mark.asyncio
+    async def test_revoke_token_repairs_inconsistent_state(self, blocklist_service, test_db):
         """Test that revoking an already-revoked token repairs EmailApiToken.is_active if inconsistent."""
         # First-Party
         from mcpgateway.db import EmailApiToken, EmailTeam
@@ -366,7 +370,7 @@ class TestTokenRevocation:
         assert api_token.is_active is True
 
         # Call revoke_token again (idempotent path should repair)
-        result = blocklist_service.revoke_token(
+        result = await blocklist_service.revoke_token(
             jti=jti,
             revoked_by="test@example.com",
             reason="logout"
@@ -388,7 +392,8 @@ class TestTokenRevocation:
         assert revocation_check is not None
         assert revocation_check.reason == "idle_timeout"  # Original reason preserved
 
-    def test_revoke_token_repairs_inconsistent_state_without_db_session(self, test_db):
+    @pytest.mark.asyncio
+    async def test_revoke_token_repairs_inconsistent_state_without_db_session(self, test_db):
         """Test that revoking an already-revoked token repairs EmailApiToken.is_active using fresh_db_session."""
         # First-Party
         from mcpgateway.db import EmailApiToken, EmailTeam
@@ -440,7 +445,7 @@ class TestTokenRevocation:
             mock_session.return_value.__exit__.return_value = None
 
             # Call revoke_token (idempotent path should repair via fresh_db_session)
-            result = service.revoke_token(
+            result = await service.revoke_token(
                 jti=jti,
                 revoked_by="test@example.com",
                 reason="logout"
@@ -454,9 +459,9 @@ class TestTokenRevocation:
         # Verify token is now inactive (repaired via fresh_db_session path)
         assert api_token.is_active is False
 
-    @patch("mcpgateway.services.token_blocklist_service.asyncio.get_running_loop")
-    def test_revoke_token_invalidates_auth_cache_in_async_context(self, mock_get_loop, blocklist_service, test_db):
-        """Test that cache invalidation uses create_task when in async context."""
+    @pytest.mark.asyncio
+    async def test_revoke_token_invalidates_auth_cache_in_async_context(self, blocklist_service, test_db):
+        """Test that cache invalidation is properly awaited in async context."""
         # First-Party
         from mcpgateway.db import EmailApiToken, EmailTeam
 
@@ -485,27 +490,22 @@ class TestTokenRevocation:
         test_db.add(api_token)
         test_db.commit()
 
-        # Mock event loop
-        mock_loop = MagicMock()
-        mock_task = MagicMock()
-        mock_loop.create_task.return_value = mock_task
-        mock_get_loop.return_value = mock_loop
+        # Mock auth_cache.invalidate_revocation to verify it's awaited
+        with patch("mcpgateway.cache.auth_cache.auth_cache.invalidate_revocation", new_callable=AsyncMock) as mock_invalidate:
+            # Revoke the token
+            result = await blocklist_service.revoke_token(
+                jti=jti,
+                revoked_by="test@example.com",
+                reason="logout"
+            )
 
-        # Revoke the token
-        result = blocklist_service.revoke_token(
-            jti=jti,
-            revoked_by="test@example.com",
-            reason="logout"
-        )
+            assert result is True
 
-        assert result is True
+            # Verify cache invalidation was awaited (not fire-and-forget)
+            mock_invalidate.assert_awaited_once_with(jti)
 
-        # Verify create_task was called (async context path)
-        mock_loop.create_task.assert_called_once()
-        # Verify done_callback was added to suppress warning
-        mock_task.add_done_callback.assert_called_once()
-
-    def test_revoke_token_cache_invalidation_exception_handling(self, blocklist_service, test_db):
+    @pytest.mark.asyncio
+    async def test_revoke_token_cache_invalidation_exception_handling(self, blocklist_service, test_db):
         """Test that cache invalidation exceptions are handled gracefully."""
         # First-Party
         from mcpgateway.db import EmailApiToken, EmailTeam
@@ -535,10 +535,10 @@ class TestTokenRevocation:
         test_db.add(api_token)
         test_db.commit()
 
-        # Mock the auth_cache import to raise an exception
-        with patch("mcpgateway.services.token_blocklist_service.asyncio.run", side_effect=Exception("Cache error")):
+        # Mock auth_cache.invalidate_revocation to raise an exception
+        with patch("mcpgateway.cache.auth_cache.auth_cache.invalidate_revocation", new_callable=AsyncMock, side_effect=Exception("Cache error")):
             # Should still succeed even if cache invalidation fails
-            result = blocklist_service.revoke_token(
+            result = await blocklist_service.revoke_token(
                 jti=jti,
                 revoked_by="test@example.com",
                 reason="logout"
@@ -557,12 +557,13 @@ class TestTokenRevocation:
 class TestRevocationCheck:
     """Tests for checking if tokens are revoked."""
 
-    def test_is_token_revoked_true(self, blocklist_service, test_db):
+    @pytest.mark.asyncio
+    async def test_is_token_revoked_true(self, blocklist_service, test_db):
         """Test checking a revoked token."""
         jti = str(uuid.uuid4())
 
         # Revoke token
-        blocklist_service.revoke_token(jti=jti, revoked_by="test@example.com", reason="logout")
+        await blocklist_service.revoke_token(jti=jti, revoked_by="test@example.com", reason="logout")
 
         # Check if revoked
         assert blocklist_service.is_token_revoked(jti) is True
@@ -573,8 +574,9 @@ class TestRevocationCheck:
 
         assert blocklist_service.is_token_revoked(jti) is False
 
+    @pytest.mark.asyncio
     @patch("mcpgateway.services.token_blocklist_service.TokenBlocklistService._get_redis_client")
-    def test_is_token_revoked_with_redis_cache(self, mock_redis, blocklist_service, test_db):
+    async def test_is_token_revoked_with_redis_cache(self, mock_redis, blocklist_service, test_db):
         """Test revocation check with Redis caching."""
         jti = str(uuid.uuid4())
 
@@ -584,13 +586,14 @@ class TestRevocationCheck:
         mock_redis.return_value = redis_mock
 
         # Revoke token (should cache in Redis)
-        blocklist_service.revoke_token(jti=jti, revoked_by="test@example.com", reason="logout")
+        await blocklist_service.revoke_token(jti=jti, revoked_by="test@example.com", reason="logout")
 
         # Check revocation (should hit Redis cache)
         assert blocklist_service.is_token_revoked(jti) is True
 
+    @pytest.mark.asyncio
     @patch("mcpgateway.services.token_blocklist_service.TokenBlocklistService._get_redis_client")
-    def test_revoke_token_redis_cache_error(self, mock_redis, blocklist_service, test_db):
+    async def test_revoke_token_redis_cache_error(self, mock_redis, blocklist_service, test_db):
         """Test token revocation when Redis caching fails."""
         jti = str(uuid.uuid4())
 
@@ -600,7 +603,7 @@ class TestRevocationCheck:
         mock_redis.return_value = redis_mock
 
         # Should still succeed even if Redis caching fails
-        result = blocklist_service.revoke_token(jti=jti, revoked_by="test@example.com", reason="logout", token_expiry=utc_now() + timedelta(hours=1))
+        result = await blocklist_service.revoke_token(jti=jti, revoked_by="test@example.com", reason="logout", token_expiry=utc_now() + timedelta(hours=1))
 
         assert result is True
 
@@ -608,13 +611,14 @@ class TestRevocationCheck:
         revocation = test_db.execute(select(TokenRevocation).where(TokenRevocation.jti == jti)).scalar_one_or_none()
         assert revocation is not None
 
-    def test_is_token_revoked_without_db_session(self):
+    @pytest.mark.asyncio
+    async def test_is_token_revoked_without_db_session(self):
         """Test checking revocation without db session."""
         service = TokenBlocklistService(db=None)
         jti = str(uuid.uuid4())
 
         # Revoke token first
-        service.revoke_token(jti=jti, revoked_by="test@example.com", reason="logout")
+        await service.revoke_token(jti=jti, revoked_by="test@example.com", reason="logout")
 
         # Check if revoked (should use fresh_db_session)
         assert service.is_token_revoked(jti) is True
@@ -890,7 +894,8 @@ class TestSingletonService:
 class TestErrorHandling:
     """Tests for error handling."""
 
-    def test_revoke_token_database_error(self):
+    @pytest.mark.asyncio
+    async def test_revoke_token_database_error(self):
         """Test token revocation with database error."""
         # Create a service with no database (will use fresh_db_session)
         service = TokenBlocklistService(db=None)
@@ -899,7 +904,7 @@ class TestErrorHandling:
         with patch("mcpgateway.services.token_blocklist_service.fresh_db_session") as mock_session:
             mock_session.side_effect = Exception("Database connection failed")
 
-            result = service.revoke_token(jti=str(uuid.uuid4()), revoked_by="test@example.com", reason="logout")
+            result = await service.revoke_token(jti=str(uuid.uuid4()), revoked_by="test@example.com", reason="logout")
 
             assert result is False
 
@@ -915,13 +920,14 @@ class TestErrorHandling:
             # Should fail closed (treat as revoked on error)
             result = service.is_token_revoked(str(uuid.uuid4()))
 
+    @pytest.mark.asyncio
     @patch("mcpgateway.services.token_blocklist_service.TokenBlocklistService._get_redis_client")
-    def test_is_token_revoked_redis_error_fallback_to_db(self, mock_redis, blocklist_service, test_db):
+    async def test_is_token_revoked_redis_error_fallback_to_db(self, mock_redis, blocklist_service, test_db):
         """Test revocation check falls back to DB when Redis fails."""
         jti = str(uuid.uuid4())
 
         # Revoke token in database
-        blocklist_service.revoke_token(jti=jti, revoked_by="test@example.com", reason="logout")
+        await blocklist_service.revoke_token(jti=jti, revoked_by="test@example.com", reason="logout")
 
         # Mock Redis to raise an error
         redis_mock = MagicMock()

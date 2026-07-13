@@ -1854,7 +1854,7 @@ async def get_current_user(
                                 exp_ts = payload.get("exp")
                                 token_expiry = datetime.fromtimestamp(exp_ts, tz=timezone.utc) if exp_ts else None
 
-                                blocklist_service.revoke_token(jti=jti, revoked_by=email, reason="idle_timeout", token_expiry=token_expiry, last_activity=last_activity)
+                                await blocklist_service.revoke_token(jti=jti, revoked_by=email, reason="idle_timeout", token_expiry=token_expiry, last_activity=last_activity)
                             except Exception as revoke_error:
                                 logger.warning(f"Failed to revoke idle token: {revoke_error}")
 

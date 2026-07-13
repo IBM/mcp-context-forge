@@ -336,7 +336,7 @@ async def logout(request: Request, current_user: EmailUser = Depends(get_current
 
             # Revoke token using blocklist service
             blocklist_service = get_token_blocklist_service(db=db)
-            success = blocklist_service.revoke_token(jti=jti, revoked_by=user.email, reason="logout", token_expiry=token_expiry, last_activity=last_activity_dt)
+            success = await blocklist_service.revoke_token(jti=jti, revoked_by=user.email, reason="logout", token_expiry=token_expiry, last_activity=last_activity_dt)
 
             if not success:
                 raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to revoke token")
