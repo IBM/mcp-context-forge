@@ -363,6 +363,40 @@ class TestResourceRegistration:
         assert "currently inactive" in str(err)
 
     @pytest.mark.asyncio
+    async def test_register_resource_team_without_team_id_raises_validation_error(self, resource_service, mock_db, sample_resource_create):
+        """Team-scoped create with no team_id must raise ResourceValidationError before any DB lookup."""
+        with pytest.raises(ResourceValidationError, match="team_id"):
+            await resource_service.register_resource(mock_db, sample_resource_create, visibility="team")
+
+        mock_db.execute.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_register_resource_team_name_conflict(self, resource_service, mock_db, sample_resource_create, mock_resource):
+        """Name conflict when a team-scoped resource with the same name already exists in the same team."""
+        mock_resource.visibility = "team"
+        name_match = MagicMock()
+        name_match.scalar_one_or_none.return_value = mock_resource
+        mock_db.execute.side_effect = [name_match]
+
+        with pytest.raises(ResourceNameConflictError) as exc_info:
+            await resource_service.register_resource(mock_db, sample_resource_create, visibility="team", team_id="team-1")
+
+        assert "already exists" in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_register_resource_private_name_conflict(self, resource_service, mock_db, sample_resource_create, mock_resource):
+        """Name conflict when a private resource with the same name already exists for the same owner."""
+        mock_resource.visibility = "private"
+        name_match = MagicMock()
+        name_match.scalar_one_or_none.return_value = mock_resource
+        mock_db.execute.side_effect = [name_match]
+
+        with pytest.raises(ResourceNameConflictError) as exc_info:
+            await resource_service.register_resource(mock_db, sample_resource_create, visibility="private", owner_email="owner@example.com")
+
+        assert "already exists" in str(exc_info.value)
+
+    @pytest.mark.asyncio
     async def test_resource_create_with_invalid_uri(self):
         """Test resource creation with invalid URI."""
         with pytest.raises(ValueError) as exc_info:
@@ -5546,6 +5580,79 @@ class TestResourceServiceCoverageEdges:
         ):
             result = await svc.update_resource(db, "res-1", resource_update)
         assert result == "resource_read"
+
+    @pytest.mark.asyncio
+    async def test_update_resource_team_name_change_conflict_raises(self):
+        """Cover update_resource team-scoped name-conflict raise (get_for_update team branch,
+        the shared conflict raise, and the ResourceNameConflictError re-raise/structured-logging block)."""
+        # First-Party
+        from mcpgateway.services.resource_service import ResourceNameConflictError, ResourceService
+
+        svc = ResourceService()
+        db = MagicMock()
+
+        resource = MagicMock()
+        resource.id = "res-1"
+        resource.name = "old-name"
+        resource.uri = "http://example.com/old"
+        resource.visibility = "team"
+        resource.team_id = "team-1"
+        resource.owner_email = None
+        resource.tags = []
+        resource.version = 7
+
+        conflicting = MagicMock()
+        conflicting.id = "res-2"
+        conflicting.enabled = True
+        conflicting.visibility = "team"
+
+        resource_update = ResourceUpdate(name="new-name", visibility="team", team_id="team-1")
+
+        def _gfu_side_effect(_db, _model, _id=None, **kwargs):
+            if kwargs.get("where") is not None:
+                return conflicting
+            return resource
+
+        with patch("mcpgateway.services.resource_service.get_for_update", side_effect=_gfu_side_effect):
+            with pytest.raises(ResourceNameConflictError, match="new-name"):
+                await svc.update_resource(db, "res-1", resource_update)
+
+    @pytest.mark.asyncio
+    async def test_update_resource_content_pattern_error_reraised(self):
+        """Cover update_resource's ContentPatternError re-raise (US-3 / CWE-116 malicious-content check)."""
+        # First-Party
+        from mcpgateway.services.content_security import ContentPatternError
+        from mcpgateway.services.resource_service import ResourceService
+
+        svc = ResourceService()
+        db = MagicMock()
+        db.rollback = MagicMock()
+
+        resource = MagicMock()
+        resource.id = "res-1"
+        resource.name = "old-name"
+        resource.uri = "http://example.com/old"
+        resource.visibility = "public"
+        resource.team_id = None
+        resource.owner_email = None
+        resource.mime_type = "text/plain"
+        resource.tags = []
+        resource.version = 1
+
+        resource_update = ResourceUpdate(content="rm -rf / ; echo done")
+
+        mock_security_service = MagicMock()
+        mock_security_service.validate_resource_size = MagicMock()
+        mock_security_service.detect_malicious_patterns.side_effect = ContentPatternError(";", "Resource content", "rm -rf / ; echo done", "command_injection")
+
+        with (
+            patch("mcpgateway.services.resource_service.get_for_update", return_value=resource),
+            patch("mcpgateway.services.resource_service.get_content_security_service", return_value=mock_security_service),
+        ):
+            with pytest.raises(ContentPatternError):
+                await svc.update_resource(db, "res-1", resource_update)
+
+        db.rollback.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_get_resource_by_id_include_inactive_true_not_found_skips_inactive_check(self):

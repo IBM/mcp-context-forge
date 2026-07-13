@@ -418,3 +418,59 @@ class TestResourceNameConflict:
             }
             resp = client.post("/resources/", json=body, headers=auth_headers)
             assert resp.status_code == 200, resp.text
+
+    def test_create_team_resource_without_team_id_returns_422(self, client, auth_headers):
+        """POST /resources with visibility=team but no resolvable team_id must
+        surface register_resource's ResourceValidationError as a 422, not an
+        unhandled 500."""
+        body = {
+            "resource": {
+                "uri": "test://team-resource-no-id",
+                "name": "team-resource-no-id",
+                "description": "team resource without team_id",
+                "content": "hello",
+                "mime_type": "text/plain",
+            },
+            "visibility": "team",
+        }
+        resp = client.post("/resources/", json=body, headers=auth_headers)
+        assert resp.status_code == 422, resp.text
+        assert "team_id" in resp.json()["detail"]
+
+    def test_rename_resource_to_duplicate_name_returns_409(self, client, auth_headers):
+        """PUT /resources/{id} that renames a resource to a name already used
+        by another (public) resource must return 409 with a meaningful
+        conflict message, not an opaque IntegrityError."""
+        first_body = {
+            "resource": {
+                "uri": "test://rename-target",
+                "name": "rename-target",
+                "description": "existing resource with the target name",
+                "content": "hello",
+                "mime_type": "text/plain",
+            },
+            "visibility": "public",
+        }
+        first = client.post("/resources/", json=first_body, headers=auth_headers)
+        assert first.status_code == 200, first.text
+
+        second_body = {
+            "resource": {
+                "uri": "test://rename-source",
+                "name": "rename-source",
+                "description": "resource to be renamed",
+                "content": "world",
+                "mime_type": "text/plain",
+            },
+            "visibility": "public",
+        }
+        second = client.post("/resources/", json=second_body, headers=auth_headers)
+        assert second.status_code == 200, second.text
+        second_id = second.json()["id"]
+
+        update_resp = client.put(f"/resources/{second_id}", json={"name": "rename-target"}, headers=auth_headers)
+
+        assert update_resp.status_code == 409, update_resp.text
+        detail = update_resp.json()["detail"]
+        assert "rename-target" in detail
+        assert "already exists" in detail

@@ -750,6 +750,23 @@ class ResourceService(BaseService):
                 },
             )
             raise
+        except ResourceValidationError:
+            logger.error(f"ResourceValidationError for resource: {resource.name}")
+
+            # Structured logging: Log validation error
+            structured_logger.log(
+                level="WARNING",
+                message="Resource creation failed due to validation error",
+                event_type="resource_validation_failed",
+                component="resource_service",
+                user_id=created_by,
+                user_email=owner_email,
+                custom_fields={
+                    "resource_name": resource.name,
+                    "visibility": visibility,
+                },
+            )
+            raise
         except ContentSizeError as cse:
             db.rollback()
             structured_logger.log(
