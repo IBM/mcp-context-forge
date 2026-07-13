@@ -146,7 +146,7 @@ def _validate_oauth_config_urls(v: Optional[Dict[str, Any]]) -> Optional[Dict[st
         return v
     if not isinstance(v, dict):
         raise ValueError("oauth_config must be an object")
-    for field_name in ("token_url", "authorization_url", "issuer", "authorization_server"):
+    for field_name in ("token_url", "authorization_url", "issuer", "authorization_server", "redirect_uri", "jwks_uri"):
         raw_value = v.get(field_name)
         if raw_value in (None, ""):
             continue

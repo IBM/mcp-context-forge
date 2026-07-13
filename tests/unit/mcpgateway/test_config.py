@@ -669,6 +669,47 @@ def test_gateway_create_rejects_oauth_authorization_servers_with_blocked_urls():
     assert "SSRF protection" in str(exc_info.value)
 
 
+def test_gateway_create_rejects_ssrf_redirect_uri():
+    """Gateway creation should reject blocked oauth_config.redirect_uri (issue #407 Gap B)."""
+    with pytest.raises(ValidationError) as exc_info:
+        GatewayCreate(
+            name="blocked-oauth-redirect-uri",
+            url="https://example.com/sse",
+            auth_type="oauth",
+            oauth_config={
+                "grant_type": "authorization_code",
+                "client_id": "client-id",
+                "client_secret": "test-client-secret",  # pragma: allowlist secret
+                "authorization_url": "https://issuer.example/authorize",
+                "token_url": "https://issuer.example/token",
+                "redirect_uri": "http://169.254.169.254/latest/meta-data/",
+            },
+        )
+
+    assert "OAuth config redirect_uri" in str(exc_info.value)
+    assert "SSRF protection" in str(exc_info.value)
+
+
+def test_gateway_create_rejects_ssrf_jwks_uri():
+    """Gateway creation should reject blocked oauth_config.jwks_uri (issue #407 Gap B)."""
+    with pytest.raises(ValidationError) as exc_info:
+        GatewayCreate(
+            name="blocked-oauth-jwks-uri",
+            url="https://example.com/sse",
+            auth_type="oauth",
+            oauth_config={
+                "grant_type": "client_credentials",
+                "client_id": "client-id",
+                "client_secret": "test-client-secret",  # pragma: allowlist secret
+                "token_url": "https://issuer.example/token",
+                "jwks_uri": "http://169.254.169.254/.well-known/jwks.json",
+            },
+        )
+
+    assert "OAuth config jwks_uri" in str(exc_info.value)
+    assert "SSRF protection" in str(exc_info.value)
+
+
 def test_gateway_update_accepts_safe_public_oauth_token_url():
     """Gateway update should allow safe public OAuth token URLs."""
     from mcpgateway.schemas import GatewayUpdate
