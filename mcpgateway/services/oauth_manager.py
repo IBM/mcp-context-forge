@@ -852,8 +852,13 @@ class OAuthManager:
 
         for attempt in range(self.max_retries):
             try:
-                client = await self._get_client()
-                response = await client.post(token_url, data=token_data, timeout=self.request_timeout, follow_redirects=False)
+                response = await self._post_token_request(
+                    token_url,
+                    token_data,
+                    ca_certificate=ca_certificate,
+                    client_cert=client_cert,
+                    client_key=client_key,
+                )
                 response.raise_for_status()
 
                 token_response = response.json()
