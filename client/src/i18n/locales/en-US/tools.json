@@ -66,7 +66,7 @@
   "tools.form.name": "Name",
   "tools.form.name.placeholder": "the-greatest-tool",
   "tools.form.url": "URL",
-  "tools.form.url.placeholder": "https://<host>/<path>",
+  "tools.form.url.placeholder": "https://[host]/[path]",
   "tools.form.url.helper": "https://reqres.in/api/users",
   "tools.form.schema": "Schema",
   "tools.form.schema.description": "Autogenerate from OpenAPI spec or add schema manually",
