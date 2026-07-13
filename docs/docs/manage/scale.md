@@ -950,7 +950,7 @@ For 1000+ concurrent users:
 
 ```bash
 # Connection pool - Formula: (concurrent_requests / workers) * 1.5
-# Example: 32 workers × 150 = 4800 < Redis maxclients (15000)
+# Example: 32 workers × 50 = 1600 < Redis maxclients (15000)
 REDIS_MAX_CONNECTIONS=50
 
 # Timeouts - keep low for fast failure detection
