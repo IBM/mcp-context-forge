@@ -67,7 +67,7 @@
   "tools.form.name.placeholder": "listar-usuarios",
   "tools.form.url": "URL",
   "tools.form.url.placeholder": "https://[servidor]/[caminho]",
-  "tools.form.url.helper": "https://reqres.in/api/users",
+  "tools.form.url.helper": "ex. https://reqres.in/api/users",
   "tools.form.schema": "Esquema",
   "tools.form.schema.description": "Gere automaticamente a partir de uma especificação OpenAPI ou adicione o esquema manualmente",
   "tools.form.schema.generate": "Gerar",
