@@ -64,7 +64,7 @@
   "tools.form.required": "(obligatorio)",
   "tools.form.requestType": "Tipo de solicitud",
   "tools.form.name": "Nombre",
-  "tools.form.name.placeholder": "la-mejor-herramienta",
+  "tools.form.name.placeholder": "listar-usuarios",
   "tools.form.url": "URL",
   "tools.form.url.placeholder": "https://[servidor]/[ruta]",
   "tools.form.url.helper": "https://reqres.in/api/users",
