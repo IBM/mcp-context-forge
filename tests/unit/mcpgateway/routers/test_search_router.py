@@ -6,14 +6,10 @@ Authors: Mihai Criveti
 
 Tests for the versioned unified search router (``GET /v1/search``).
 
-Covers the acceptance criteria from the feature request:
-    * route is mounted at the versioned path without disturbing /admin/search
-    * unauthenticated requests are rejected
-    * invalid / empty entity_types is a 400
-    * ``users`` is only searchable with user-management permission (no leak)
-    * ``team_id`` is forwarded to per-entity searches
-    * ``limit`` / ``limit_per_type`` alias behaviour
-    * grouped + flattened response shape matches the /admin/search contract
+Covers the feature-request acceptance criteria: route mounted at the versioned
+path, unauthenticated rejection, invalid entity_types (400), ``users`` protection,
+``team_id`` scoping, ``limit``/``limit_per_type``, and response-shape parity with
+``/admin/search``.
 """
 
 # Standard

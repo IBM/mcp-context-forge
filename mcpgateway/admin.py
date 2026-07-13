@@ -11392,12 +11392,10 @@ async def perform_unified_search(
 ) -> dict[str, Any]:
     """Unified search across primary entities (shared, permission-agnostic core).
 
-    This is the single source of truth for unified search behavior. It performs
-    NO top-level permission check of its own — callers are responsible for the
-    outer gate (``admin.dashboard`` for the admin route, authentication-only for
-    the versioned ``/v1/search`` route). Per-entity RBAC and token scoping are
-    still enforced inside each ``admin_search_*`` call, so visibility is correct
-    regardless of the outer gate.
+    Single source of truth for unified search. Performs no top-level permission
+    check — callers own the outer gate (``admin.dashboard`` for the admin route,
+    auth-only for ``/v1/search``). Per-entity RBAC and token scoping are still
+    enforced inside each ``admin_search_*`` call.
 
     Searches servers, gateways, tools, resources, prompts, agents, teams, roots,
     and optionally users (when the caller has ``admin.user_management`` permission).
@@ -11675,8 +11673,7 @@ async def admin_unified_search(
     """Unified search across primary admin entities (admin-gated wrapper).
 
     Thin wrapper that enforces the ``admin.dashboard`` permission and delegates
-    to :func:`perform_unified_search`. The versioned ``GET /v1/search`` route
-    reuses the same helper without the admin-panel permission gate.
+    to :func:`perform_unified_search`.
 
     Args:
         q (str): Free-text search query.
