@@ -75,6 +75,10 @@
   "tools.form.schema.addManually": "+ Adicionar manualmente",
   "tools.form.schema.specUrlLabel": "Ou forneça uma URL direta da especificação OpenAPI",
   "tools.form.schema.specUrlPlaceholder": "https://api.exemplo.com/openapi.json",
+  "tools.form.schema.generatedFrom": "Gerado a partir de {specUrl}",
+  "tools.form.schema.overwrite.title": "Substituir o esquema existente?",
+  "tools.form.schema.overwrite.description": "Gerar a partir do OpenAPI substituirá os esquemas de entrada e saída que você já inseriu. Deseja continuar?",
+  "tools.form.schema.overwrite.confirm": "Substituir",
   "tools.form.inputSchema": "Esquema de entrada",
   "tools.form.outputSchema": "Esquema de saída",
   "tools.form.copyInputSchema": "Copiar esquema de entrada",
@@ -98,6 +102,11 @@
   "tools.form.error.invalidValue": "Valor inválido",
   "tools.form.error.generateSchemaFailed": "Falha ao gerar o esquema",
   "tools.form.error.generateSchemaUrl": "Falha ao gerar o esquema. Verifique a URL e tente novamente.",
+  "tools.form.error.generateSchema.ssrf": "URL inacessível a partir do gateway (bloqueada pela proteção SSRF)",
+  "tools.form.error.generateSchema.notFound": "O caminho {path} com o método {method} não está na especificação OpenAPI",
+  "tools.form.error.generateSchema.fetchFailed": "Não foi possível obter a especificação OpenAPI — verifique se a URL está correta e acessível",
+  "tools.form.error.generateSchema.specAuthRequired": "O endpoint da especificação OpenAPI requer autenticação (retornou 401/403). O gateway obtém a especificação sem credenciais — forneça uma URL direta para uma especificação acessível ou adicione os esquemas manualmente.",
+  "tools.form.error.generateSchema.generic": "Algo deu errado ao gerar o esquema. Tente novamente.",
   "tools.form.error.updateFailed": "Falha ao atualizar a ferramenta. Tente novamente.",
   "tools.form.error.createFailed": "Falha ao criar a ferramenta. Tente novamente."
 }

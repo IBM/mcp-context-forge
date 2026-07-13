@@ -1,8 +1,8 @@
 import { useState, useCallback, useMemo, type FormEvent } from "react";
 import { useIntl } from "react-intl";
 import { z } from "zod";
-import { api } from "@/api/client";
 import { useQuery } from "@/hooks/useQuery";
+import { useGenerateSchemaFromOpenapi } from "@/hooks/useGenerateSchemaFromOpenapi";
 import type { Visibility } from "@/types/server";
 import { sanitizeString, sanitizeUrl, sanitizePassword, sanitizeToken } from "@/lib/sanitize";
 
@@ -181,6 +181,7 @@ export interface UseToolFormReturn {
   schemaMode: SchemaMode;
   openApiSpecUrl: string;
   showSpecUrlInput: boolean;
+  generatedSpecUrl: string;
   errors: FormErrors;
   isValid: boolean;
   isSubmitting: boolean;
@@ -305,11 +306,21 @@ export function useToolForm({
   const [outputSchema, setOutputSchema] = useState(
     initialValues?.outputSchema ?? initialState.outputSchema,
   );
-  const [isGeneratingSchema, setIsGeneratingSchema] = useState(false);
   const [schemaMode, setSchemaMode] = useState<SchemaMode>(initialValues?.schemaMode ?? "none");
-  const [openApiSpecUrl, setOpenApiSpecUrl] = useState("");
-  const [showSpecUrlInput, setShowSpecUrlInput] = useState(false);
   const [errors, setErrors] = useState<FormErrors>({});
+
+  // The OpenAPI schema-generation async flow lives in its own hook; this form
+  // stays the owner of the editable schema fields and applies results via the
+  // success callback below.
+  const {
+    isGenerating: isGeneratingSchema,
+    generatedSpecUrl,
+    openApiSpecUrl,
+    setOpenApiSpecUrl,
+    showSpecUrlInput,
+    generate,
+    reset: resetSchemaGeneration,
+  } = useGenerateSchemaFromOpenapi();
 
   // Use useQuery for POST request to create tool
   const { execute: createTool, isLoading: isCreating } = useQuery<unknown, ApiToolPayload>(
@@ -333,106 +344,19 @@ export function useToolForm({
   const isSubmitting = isCreating || isUpdating;
 
   const generateSchema = useCallback(async () => {
-    if (!url.trim()) return;
-    try {
-      const parsed = new URL(url.trim());
-      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return;
-    } catch {
-      return;
-    }
-    const safeSpecUrl = (() => {
-      if (!openApiSpecUrl.trim()) return undefined;
-      try {
-        const u = new URL(openApiSpecUrl.trim());
-        return u.protocol === "http:" || u.protocol === "https:"
-          ? openApiSpecUrl.trim()
-          : undefined;
-      } catch {
-        return undefined;
-      }
-    })();
-    setIsGeneratingSchema(true);
     setErrors((prev) => ({ ...prev, schema: undefined }));
-    try {
-      const payload: Record<string, unknown> = {
-        url: url.trim(),
-        request_type: requestType,
-        ...(safeSpecUrl ? { openapi_url: safeSpecUrl } : {}),
-      };
-
-      if (authType === "bearer" && bearerToken.trim()) {
-        payload.auth_type = "bearer";
-        payload.auth_token = bearerToken;
-      } else if (authType === "basic") {
-        payload.auth_type = "basic";
-        payload.auth_username = authUsername;
-        payload.auth_password = authPassword;
-      } else if (authType === "custom") {
-        const validHeaders = customHeaders.filter((h) => h.key.trim());
-        if (validHeaders.length > 0) {
-          payload.auth_type = "authheaders";
-          if (maxCustomHeaders === 1) {
-            payload.auth_header_key = sanitizeString(validHeaders[0].key, 200);
-            payload.auth_header_value = sanitizeString(validHeaders[0].value, 1000);
-          } else {
-            payload.auth_headers = validHeaders.map((h) => ({
-              key: sanitizeString(h.key, 200),
-              value: sanitizeString(h.value, 1000),
-            }));
-          }
-        }
-      }
-
-      const result = await api.post<{
-        success: boolean;
-        input_schema: Record<string, unknown> | null;
-        output_schema: Record<string, unknown> | null;
-        message: string;
-        requires_auth?: boolean;
-      }>("/v1/tools/generate-schemas-from-openapi", payload);
-      if (result.success) {
-        setInputSchema(result.input_schema ? JSON.stringify(result.input_schema, null, 2) : "");
-        setOutputSchema(result.output_schema ? JSON.stringify(result.output_schema, null, 2) : "");
+    await generate({
+      url,
+      requestType,
+      onSuccess: ({ inputSchema: input, outputSchema: output }) => {
+        setInputSchema(input);
+        setOutputSchema(output);
         setSchemaMode("generated");
-      } else {
-        setErrors((prev) => ({
-          ...prev,
-          schema:
-            result.message || intl.formatMessage({ id: "tools.form.error.generateSchemaFailed" }),
-        }));
-      }
-    } catch (error) {
-      let message = intl.formatMessage({ id: "tools.form.error.generateSchemaUrl" });
-      let requiresAuth = false;
-      if (error && typeof error === "object" && "body" in error) {
-        const err = error as { body?: { message?: string; requires_auth?: boolean } };
-        if (err.body?.message) {
-          message = err.body.message;
-        }
-        if (err.body?.requires_auth) {
-          requiresAuth = true;
-        }
-      }
-      if (requiresAuth) {
-        setAdvancedOpen(true);
-        setShowSpecUrlInput(true);
-      }
-      setErrors((prev) => ({ ...prev, schema: message }));
-    } finally {
-      setIsGeneratingSchema(false);
-    }
-  }, [
-    url,
-    requestType,
-    authType,
-    bearerToken,
-    authUsername,
-    authPassword,
-    customHeaders,
-    openApiSpecUrl,
-    maxCustomHeaders,
-    intl,
-  ]);
+      },
+      onError: (message) => setErrors((prev) => ({ ...prev, schema: message })),
+      onRequiresAuth: () => setAdvancedOpen(true),
+    });
+  }, [generate, url, requestType]);
 
   const getFormData = useCallback((): ApiToolPayload => {
     const AUTH_TYPE_TO_API: Record<AuthType, string> = {
@@ -599,10 +523,9 @@ export function useToolForm({
     setInputSchema(initialState.inputSchema);
     setOutputSchema(initialState.outputSchema);
     setSchemaMode("none");
-    setOpenApiSpecUrl("");
-    setShowSpecUrlInput(false);
+    resetSchemaGeneration();
     setErrors({});
-  }, []);
+  }, [resetSchemaGeneration]);
 
   const handleSubmit = useCallback(
     async (event: FormEvent<HTMLFormElement>, onSuccess?: (response?: unknown) => void) => {
@@ -789,6 +712,7 @@ export function useToolForm({
     schemaMode,
     openApiSpecUrl,
     showSpecUrlInput,
+    generatedSpecUrl,
     errors,
     isValid,
     isSubmitting,
