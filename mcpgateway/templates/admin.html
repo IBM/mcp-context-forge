@@ -17,8 +17,10 @@
       sizes="32x32"
       href="{{ root_path }}/static/favicon.ico"
     />
-    <!-- Tailwind CSS (pre-compiled) -->
+    <!-- Tailwind CSS - Using precompiled CSS for strict CSP compliance -->
     <link rel="stylesheet" href="{{ root_path }}/static/css/tailwind.min.css" />
+    <!-- Custom animations - Previously defined via inline Tailwind config, now external for CSP compliance -->
+    <link rel="stylesheet" href="{{ root_path }}/static/css/auth-animations.css" />
     <!-- HTMX is now bundled in the main JS bundle -->
     <script nonce="{{ csp_nonce(request) }}">
       // Configure HTMX to swap content on 4xx responses (for inline error display)
@@ -2280,7 +2282,9 @@
               x-init="$syncCheckbox('servers', 'show-inactive-servers')"
               @change="updateInactiveUrlState('servers', $el.checked)"
               hx-get="{{ root_path }}/admin/servers/partial?page=1{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
-              hx-vals="js:{include_inactive: document.getElementById('show-inactive-servers').checked, per_page: document.querySelector('#servers-pagination-controls select')?.value || 50, q: document.getElementById('servers-search-input')?.value || '', tags: document.getElementById('servers-tag-filter')?.value || ''}"
+              data-hx-vals-per-page="#servers-pagination-controls select"
+              data-hx-vals-search="servers-search-input"
+              data-hx-vals-tags="servers-tag-filter"
               hx-target="#servers-table"
               hx-swap="outerHTML"
               hx-indicator="#servers-loading"
@@ -2876,7 +2880,6 @@
                     hx-get="{{ root_path }}/admin/tools/partial?page=1&per_page=50&render=selector{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
                     hx-trigger="load"
                     hx-swap="innerHTML"
-                    hx-on:htmx:after-swap="window.Admin?.initToolSelect?.('associatedTools', 'selectedToolsPills', 'selectedToolsWarning', 6, 'selectAllToolsBtn', 'clearAllToolsBtn')"
                   >
                     <!-- Tools will be loaded via HTMX -->
                     <div class="text-center py-4 text-gray-500 dark:text-gray-400">
@@ -2948,7 +2951,6 @@
                   hx-get="{{ root_path }}/admin/resources/partial?page=1&per_page=20&render=selector{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
                   hx-trigger="load"
                   hx-swap="innerHTML"
-                  hx-on:htmx:after-swap="window.Admin?.initResourceSelect?.('associatedResources', 'selectedResourcesPills', 'selectedResourcesWarning', 6, 'selectAllResourcesBtn', 'clearAllResourcesBtn')"
                 >
                   <!-- Resources will be loaded via HTMX -->
                   <div class="text-center py-4 text-gray-500 dark:text-gray-400">
@@ -3015,7 +3017,6 @@
                   hx-get="{{ root_path }}/admin/prompts/partial?page=1&per_page=20&render=selector{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
                   hx-trigger="load"
                   hx-swap="innerHTML"
-                  hx-on:htmx:after-swap="window.Admin?.initPromptSelect?.('associatedPrompts', 'selectedPromptsPills', 'selectedPromptsWarning', 6, 'selectAllPromptsBtn', 'clearAllPromptsBtn')"
                 >
                   <!-- Prompts will be loaded via HTMX -->
                   <div class="text-center py-4 text-gray-500 dark:text-gray-400">
@@ -3305,7 +3306,9 @@
               x-init="$syncCheckbox('tools', 'show-inactive-tools')"
               @change="updateInactiveUrlState('tools', $el.checked)"
               hx-get="{{ root_path }}/admin/tools/partial?page=1{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
-              hx-vals="js:{include_inactive: document.getElementById('show-inactive-tools').checked, per_page: document.querySelector('#tools-pagination-controls select')?.value || 50, q: document.getElementById('tools-search-input')?.value || '', tags: document.getElementById('tools-tag-filter')?.value || ''}"
+              data-hx-vals-per-page="#tools-pagination-controls select"
+              data-hx-vals-search="tools-search-input"
+              data-hx-vals-tags="tools-tag-filter"
               hx-target="#tools-table"
               hx-swap="outerHTML"
               hx-indicator="#tools-loading"
@@ -4088,7 +4091,6 @@
                     name="include_inactive"
                     class="mr-2 show-inactive-toggle"
                     hx-get="{{ root_path }}/admin/tool-ops/partial?page=1"
-                    hx-vals="js:{include_inactive: document.getElementById('show-inactive-tools-toolops').checked}"
                     hx-trigger="change"
                     hx-target="#tool-ops-main-content-wrapper"
                     hx-swap="innerHTML"
@@ -4324,7 +4326,9 @@
               x-init="$syncCheckbox('resources', 'show-inactive-resources')"
               @change="updateInactiveUrlState('resources', $el.checked)"
               hx-get="{{ root_path }}/admin/resources/partial?page=1{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
-              hx-vals="js:{include_inactive: document.getElementById('show-inactive-resources').checked, per_page: document.querySelector('#resources-pagination-controls select')?.value || 50, q: document.getElementById('resources-search-input')?.value || '', tags: document.getElementById('resources-tag-filter')?.value || ''}"
+              data-hx-vals-per-page="#resources-pagination-controls select"
+              data-hx-vals-search="resources-search-input"
+              data-hx-vals-tags="resources-tag-filter"
               hx-target="#resources-table"
               hx-swap="outerHTML"
               hx-indicator="#resources-loading"
@@ -4576,7 +4580,9 @@
               x-init="$syncCheckbox('prompts', 'show-inactive-prompts')"
               @change="updateInactiveUrlState('prompts', $el.checked)"
               hx-get="{{ root_path }}/admin/prompts/partial?page=1{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
-              hx-vals="js:{include_inactive: document.getElementById('show-inactive-prompts').checked, per_page: document.querySelector('#prompts-pagination-controls select')?.value || 50, q: document.getElementById('prompts-search-input')?.value || '', tags: document.getElementById('prompts-tag-filter')?.value || ''}"
+              data-hx-vals-per-page="#prompts-pagination-controls select"
+              data-hx-vals-search="prompts-search-input"
+              data-hx-vals-tags="prompts-tag-filter"
               hx-target="#prompts-table"
               hx-swap="outerHTML"
               hx-indicator="#prompts-loading"
@@ -4867,7 +4873,9 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
               x-init="$syncCheckbox('gateways', 'show-inactive-gateways')"
               @change="updateInactiveUrlState('gateways', $el.checked)"
               hx-get="{{ root_path }}/admin/gateways/partial?page=1{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
-              hx-vals="js:{include_inactive: document.getElementById('show-inactive-gateways').checked, per_page: document.querySelector('#gateways-pagination-controls select')?.value || 50, q: document.getElementById('gateways-search-input')?.value || '', tags: document.getElementById('gateways-tag-filter')?.value || ''}"
+              data-hx-vals-per-page="#gateways-pagination-controls select"
+              data-hx-vals-search="gateways-search-input"
+              data-hx-vals-tags="gateways-tag-filter"
               hx-target="#gateways-table"
               hx-swap="outerHTML"
               hx-indicator="#gateways-loading"
@@ -6326,7 +6334,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
               x-init="$syncCheckbox('tokens', 'show-inactive-tokens')"
               @change="updateInactiveUrlState('tokens', $el.checked)"
               hx-get="{{ root_path }}/admin/tokens/partial?page=1{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
-              hx-vals="js:{include_inactive: document.getElementById('show-inactive-tokens').checked, per_page: document.querySelector('#tokens-pagination-controls select')?.value || 50}"
+              data-hx-vals-per-page="#tokens-pagination-controls select"
               hx-target="#tokens-table"
               hx-swap="innerHTML"
               hx-indicator="#tokens-loading"
@@ -6666,7 +6674,9 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
               x-init="$syncCheckbox('agents', 'show-inactive-a2a-agents')"
               @change="updateInactiveUrlState('agents', $el.checked)"
               hx-get="{{ root_path }}/admin/a2a/partial?page=1{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
-              hx-vals="js:{include_inactive: document.getElementById('show-inactive-a2a-agents').checked, per_page: document.querySelector('#agents-pagination-controls select')?.value || 50, q: document.getElementById('a2a-agents-search-input')?.value || '', tags: document.getElementById('a2a-agents-tag-filter')?.value || ''}"
+              data-hx-vals-per-page="#agents-pagination-controls select"
+              data-hx-vals-search="a2a-agents-search-input"
+              data-hx-vals-tags="a2a-agents-tag-filter"
               hx-target="#agents-table"
               hx-swap="outerHTML"
               hx-indicator="#agents-loading"
@@ -11348,7 +11358,6 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                         hx-get="{{ root_path }}/admin/tools/partial?page=1&per_page=20&render=selector{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
                         hx-trigger="load"
                         hx-swap="innerHTML"
-                        hx-on:htmx:after-swap="window.Admin?.initToolSelect?.('edit-server-tools', 'selectedEditToolsPills', 'selectedEditToolsWarning', 6, 'selectAllEditToolsBtn', 'clearAllEditToolsBtn')"
                       >
                         <!-- Tools will be loaded via HTMX -->
                         <div class="text-center py-4 text-gray-500 dark:text-gray-400">
@@ -11423,7 +11432,6 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                         hx-get="{{ root_path }}/admin/resources/partial?page=1&per_page=20&render=selector{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
                         hx-trigger="load"
                         hx-swap="innerHTML"
-                        hx-on:htmx:after-swap="window.Admin?.initResourceSelect?.('edit-server-resources', 'selectedEditResourcesPills', 'selectedEditResourcesWarning', 6, 'selectAllEditResourcesBtn', 'clearAllEditResourcesBtn')"
                       >
                         <!-- Resources will be loaded via HTMX -->
                         <div class="text-center py-4 text-gray-500 dark:text-gray-400">
@@ -11490,7 +11498,6 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                         hx-get="{{ root_path }}/admin/prompts/partial?page=1&per_page=20&render=selector{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
                         hx-trigger="load"
                         hx-swap="innerHTML"
-                        hx-on:htmx:after-swap="window.Admin?.initPromptSelect?.('edit-server-prompts', 'selectedEditPromptsPills', 'selectedEditPromptsWarning', 6, 'selectAllEditPromptsBtn', 'clearAllEditPromptsBtn')"
                       >
                         <!-- Prompts will be loaded via HTMX -->
                         <div class="text-center py-4 text-gray-500 dark:text-gray-400">
