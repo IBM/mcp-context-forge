@@ -4462,7 +4462,7 @@ class TestToolService:
         tool_service._http_client.request.return_value = mock_response
 
         # Mock compute_passthrough_headers_cached to return modified headers
-        def mock_passthrough(req_headers, base_headers, allowed_headers, gateway_auth_type=None, gateway_passthrough_headers=None):
+        def mock_passthrough(req_headers, base_headers, allowed_headers, gateway_auth_type=None, gateway_passthrough_headers=None, is_token_exchange=False):
             combined = base_headers.copy()
             combined["X-Request-ID"] = req_headers.get("X-Request-ID", "test-123")
             return combined
@@ -4516,7 +4516,7 @@ class TestToolService:
         sse_ctx.__aenter__.return_value = ("read", "write")
 
         # Mock compute_passthrough_headers_cached to return modified headers
-        def mock_passthrough(req_headers, base_headers, allowed_headers, gateway_auth_type=None, gateway_passthrough_headers=None):
+        def mock_passthrough(req_headers, base_headers, allowed_headers, gateway_auth_type=None, gateway_passthrough_headers=None, is_token_exchange=False):
             combined = base_headers.copy()
             combined["X-Custom-Header"] = req_headers.get("X-Custom-Header", "default")
             return combined
@@ -10046,7 +10046,7 @@ class TestRustMcpExecutionPlan:
             patch("mcpgateway.services.tool_service.current_trace_id", MagicMock(get=MagicMock(return_value=None))),
             patch("mcpgateway.services.tool_service.global_config_cache", MagicMock(get_passthrough_headers=MagicMock(return_value=[]))),
             patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
-            patch("mcpgateway.services.token_storage_service.TokenStorageService", return_value=token_storage),
+            patch("mcpgateway.services.tool_service.TokenStorageService", return_value=token_storage),
             patch("mcpgateway.services.tool_service.fresh_db_session", _fresh_db_session),
             patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", side_effect=lambda _request_headers, headers, *_args, **_kwargs: headers),
             patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=None)),
@@ -10086,7 +10086,7 @@ class TestRustMcpExecutionPlan:
             patch("mcpgateway.services.tool_service.current_trace_id", MagicMock(get=MagicMock(return_value=None))),
             patch("mcpgateway.services.tool_service.global_config_cache", MagicMock(get_passthrough_headers=MagicMock(return_value=[]))),
             patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
-            patch("mcpgateway.services.token_storage_service.TokenStorageService", return_value=token_storage),
+            patch("mcpgateway.services.tool_service.TokenStorageService", return_value=token_storage),
             patch("mcpgateway.services.tool_service.fresh_db_session", _fresh_db_session),
             patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=None)),
         ):
@@ -10138,7 +10138,7 @@ class TestRustMcpExecutionPlan:
             patch("mcpgateway.services.tool_service.current_trace_id", MagicMock(get=MagicMock(return_value=None))),
             patch("mcpgateway.services.tool_service.global_config_cache", MagicMock(get_passthrough_headers=MagicMock(return_value=[]))),
             patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
-            patch("mcpgateway.services.token_storage_service.TokenStorageService", return_value=token_storage),
+            patch("mcpgateway.services.tool_service.TokenStorageService", return_value=token_storage),
             patch("mcpgateway.services.tool_service.fresh_db_session", _fresh_db_session),
             patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", side_effect=lambda _request_headers, headers, *_args, **_kwargs: headers),
             patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=mock_pm)),

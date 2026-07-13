@@ -1056,6 +1056,108 @@ class TestOAuthTokenExchange:
         assert post_data["scope"] == "read write"
 
     @pytest.mark.asyncio
+    async def test_subject_token_type_defaults_to_jwt(self):
+        """RFC 8693 §3: CF's inbound subject token is a CF-issued JWT, not an
+        AS-issued access_token, so subject_token_type defaults to "...:jwt"."""
+        # First-Party
+        from mcpgateway.services.oauth_manager import OAuthManager
+
+        manager = OAuthManager()
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"access_token": "tok", "token_type": "Bearer"}
+        mock_response.raise_for_status = MagicMock()
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+        manager._get_client = AsyncMock(return_value=mock_client)
+
+        await manager.token_exchange(
+            token_url="https://auth.example.com/token",
+            subject_token="token",
+            client_id="client",
+            client_secret="",
+        )
+
+        call_kwargs = mock_client.post.call_args
+        post_data = call_kwargs.kwargs.get("data") or call_kwargs[1].get("data")
+        assert post_data["subject_token_type"] == "urn:ietf:params:oauth:token-type:jwt"
+
+    @pytest.mark.asyncio
+    async def test_subject_token_type_override(self):
+        # First-Party
+        from mcpgateway.services.oauth_manager import OAuthManager
+
+        manager = OAuthManager()
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"access_token": "tok", "token_type": "Bearer"}
+        mock_response.raise_for_status = MagicMock()
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+        manager._get_client = AsyncMock(return_value=mock_client)
+
+        await manager.token_exchange(
+            token_url="https://auth.example.com/token",
+            subject_token="token",
+            client_id="client",
+            client_secret="",
+            subject_token_type="urn:ietf:params:oauth:token-type:access_token",
+        )
+
+        call_kwargs = mock_client.post.call_args
+        post_data = call_kwargs.kwargs.get("data") or call_kwargs[1].get("data")
+        assert post_data["subject_token_type"] == "urn:ietf:params:oauth:token-type:access_token"
+
+    @pytest.mark.asyncio
+    async def test_non_bearer_token_type_raises(self):
+        """RFC 8693 §2.2.1: token_type "N_A" means the issued token isn't usable
+        as an OAuth Bearer token. CF only forwards "Authorization: Bearer <token>",
+        so a non-Bearer token_type must fail closed rather than mislabel the token."""
+        # First-Party
+        from mcpgateway.services.oauth_manager import OAuthError, OAuthManager
+
+        manager = OAuthManager()
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"access_token": "tok", "token_type": "N_A", "issued_token_type": "urn:ietf:params:oauth:token-type:saml2"}
+        mock_response.raise_for_status = MagicMock()
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+        manager._get_client = AsyncMock(return_value=mock_client)
+
+        with pytest.raises(OAuthError, match="Unsupported or missing token_type"):
+            await manager.token_exchange(
+                token_url="https://auth.example.com/token",
+                subject_token="token",
+                client_id="client",
+                client_secret="",
+            )
+
+    @pytest.mark.asyncio
+    async def test_missing_token_type_raises(self):
+        """RFC 8693 §2.2.1: token_type is REQUIRED. An AS that omits it must fail
+        closed rather than have CF silently assume Bearer."""
+        # First-Party
+        from mcpgateway.services.oauth_manager import OAuthError, OAuthManager
+
+        manager = OAuthManager()
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"access_token": "tok"}
+        mock_response.raise_for_status = MagicMock()
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+        manager._get_client = AsyncMock(return_value=mock_client)
+
+        with pytest.raises(OAuthError, match="Unsupported or missing token_type"):
+            await manager.token_exchange(
+                token_url="https://auth.example.com/token",
+                subject_token="token",
+                client_id="client",
+                client_secret="",
+            )
+
+    @pytest.mark.asyncio
     async def test_missing_access_token_raises(self):
         # First-Party
         from mcpgateway.services.oauth_manager import OAuthError, OAuthManager
@@ -1076,6 +1178,34 @@ class TestOAuthTokenExchange:
                 client_id="client",
                 client_secret="",
             )
+
+    @pytest.mark.asyncio
+    async def test_missing_access_token_error_redacts_sensitive_fields(self):
+        """CWE-532: a malformed response missing access_token may still carry other
+        credential-bearing fields (e.g. refresh_token); those must never be echoed
+        verbatim into the OAuthError raised for this case."""
+        # First-Party
+        from mcpgateway.services.oauth_manager import OAuthError, OAuthManager
+
+        manager = OAuthManager()
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"error": "invalid_grant", "refresh_token": "super-secret-refresh-value"}
+        mock_response.raise_for_status = MagicMock()
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+        manager._get_client = AsyncMock(return_value=mock_client)
+
+        with pytest.raises(OAuthError) as exc_info:
+            await manager.token_exchange(
+                token_url="https://auth.example.com/token",
+                subject_token="token",
+                client_id="client",
+                client_secret="",
+            )
+
+        assert "super-secret-refresh-value" not in str(exc_info.value)
+        assert "[REDACTED]" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_http_error_retries_and_raises(self):
@@ -1105,7 +1235,7 @@ class TestOAuthTokenExchange:
 
         manager = OAuthManager()
         mock_response = MagicMock()
-        mock_response.json.return_value = {"access_token": "tok"}
+        mock_response.json.return_value = {"access_token": "tok", "token_type": "Bearer"}
         mock_response.raise_for_status = MagicMock()
 
         mock_client = AsyncMock()
@@ -1132,7 +1262,7 @@ class TestOAuthTokenExchange:
 
         manager = OAuthManager()
         mock_response = MagicMock()
-        mock_response.json.return_value = {"access_token": "tok"}
+        mock_response.json.return_value = {"access_token": "tok", "token_type": "Bearer"}
         mock_response.raise_for_status = MagicMock()
 
         mock_client = AsyncMock()
@@ -1232,7 +1362,7 @@ class TestTokenExchangeEncryptedSecret:
         mock_encryption.decrypt_secret_async = AsyncMock(return_value="decrypted-secret")
 
         mock_response = MagicMock()
-        mock_response.json.return_value = {"access_token": "tok-123"}
+        mock_response.json.return_value = {"access_token": "tok-123", "token_type": "Bearer"}
         mock_response.raise_for_status = MagicMock()
 
         mock_client = AsyncMock()

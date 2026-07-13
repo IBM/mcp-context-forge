@@ -28,7 +28,7 @@ import re
 import ssl
 import time
 from types import SimpleNamespace
-from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple, Union
+from typing import Any, AsyncGenerator, Awaitable, Callable, Dict, List, Optional, Tuple, Union
 from urllib.parse import parse_qs, urlparse
 import uuid
 
@@ -88,6 +88,8 @@ from mcpgateway.services.observability_service import current_trace_id, Observab
 from mcpgateway.services.performance_tracker import get_performance_tracker
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
+from mcpgateway.services.token_exchange_cache import TokenExchangeCache
+from mcpgateway.services.token_storage_service import TokenStorageService
 from mcpgateway.services.upstream_session_registry import downstream_session_id_from_request_context, get_upstream_session_registry, RegistryNotInitializedError, TransportType
 from mcpgateway.transports.context import UserContext
 from mcpgateway.utils.admin_check import is_admin_bypass_granted, is_user_admin
@@ -104,6 +106,8 @@ from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
 from mcpgateway.utils.ssl_context_cache import get_cached_ssl_context
+from mcpgateway.utils.subject_token import extract_inbound_bearer, looks_like_jwt
+from mcpgateway.utils.token_exchange_audit import audit_token_exchange
 from mcpgateway.utils.trace_context import format_trace_team_scope
 from mcpgateway.utils.trace_redaction import is_input_capture_enabled, is_output_capture_enabled, serialize_trace_payload
 from mcpgateway.utils.url_auth import apply_query_param_auth, sanitize_exception_message, sanitize_url_for_logging
@@ -1060,6 +1064,7 @@ class ToolService(BaseService):
             max_retries=int(settings.oauth_max_retries if hasattr(settings, "oauth_max_retries") else 3),
         )
         self._content_security = ContentSecurityService()
+        self._token_exchange_cache = TokenExchangeCache(redis_url=getattr(settings, "redis_url", None))
 
     async def initialize(self) -> None:
         """Initialize the service.
@@ -3772,6 +3777,293 @@ class ToolService(BaseService):
             logger.exception("Direct proxy tool invocation failed for %s: %s", name, e)
             raise ToolInvocationError(f"Direct proxy tool invocation failed: {str(e)}")
 
+    # Conservative TTL when the AS omits expires_in (RFC 8693 makes it optional, L1).
+    # pylint: disable=duplicate-code
+    # Mirrors GatewayService's token-exchange helpers below for API parity (both fully tested).
+    _TOKEN_EXCHANGE_FALLBACK_TTL = 60
+
+    async def _resolve_token_exchange_header(
+        self,
+        oauth_config: dict,
+        gateway_id: str,
+        gateway_name: str,
+        app_user_email: str,
+        request_headers: dict,
+        ca_certificate: Optional[str] = None,
+        client_cert: Optional[str] = None,
+        client_key: Optional[str] = None,
+    ) -> dict:
+        """Return an Authorization header carrying the exchanged token (cached or fresh).
+
+        Calls ``OAuthManager.token_exchange`` directly (not ``get_access_token``)
+        so the real ``expires_in`` drives the cache TTL (B1).
+
+        Args:
+            oauth_config: Gateway OAuth configuration (grant_type == "token-exchange").
+            gateway_id: Gateway identifier used as a cache key component.
+            gateway_name: Gateway display name, used in error messages and logs.
+            app_user_email: Authenticated end-user email, used as a cache key component.
+            request_headers: Incoming request headers, used to resolve the subject token
+                and for forensic correlation (X-Correlation-ID / X-Request-ID).
+            ca_certificate: Optional custom CA certificate for the token endpoint (PEM format).
+            client_cert: Optional client certificate for mTLS to the token endpoint.
+            client_key: Optional client private key for mTLS to the token endpoint.
+
+        Returns:
+            A dict with a single ``Authorization`` header carrying the exchanged token.
+
+        Raises:
+            ToolInvocationError: If no usable subject token exists or the exchange fails.
+        """
+        audience = oauth_config.get("target_audience")
+        # Fail closed: cache key is (gateway_id, user, audience). Without a user
+        # identity there is no "behalf" to act on, and an empty key component
+        # would let unrelated principals share one delegated token.
+        if not app_user_email:
+            raise ToolInvocationError("Token exchange requires an authenticated user identity. Contact your administrator.")
+        user_key = app_user_email
+        # L3: forensic correlation. Pull request/correlation ids from inbound headers when present.
+        rh = request_headers or {}
+        correlation_id = rh.get("x-correlation-id") or rh.get("X-Correlation-ID")
+        request_id = rh.get("x-request-id") or rh.get("X-Request-ID")
+        sec_logger = get_structured_logger("tool_service")
+
+        def _coerce_ttl(raw):
+            """Coerce the AS-provided ``expires_in`` into a positive int TTL.
+
+            Args:
+                raw: The raw ``expires_in`` value returned by the authorization server.
+
+            Returns:
+                int: ``raw`` as an integer, or the fallback TTL if ``raw`` is missing
+                or cannot be coerced to ``int`` (L8: never let a non-numeric AS
+                expires_in crash the request).
+            """
+            try:
+                return int(raw) if raw else self._TOKEN_EXCHANGE_FALLBACK_TTL
+            except (TypeError, ValueError):
+                return self._TOKEN_EXCHANGE_FALLBACK_TTL
+
+        cached = await self._token_exchange_cache.get(gateway_id, user_key, audience)
+        if cached:
+            return {"Authorization": f"Bearer {cached}"}
+
+        # P4: short-circuit while a recent failure is still negatively cached (no AS hammering).
+        if await self._token_exchange_cache.is_failed(gateway_id, user_key, audience):
+            # L6: record the degraded-mode denial so an outage burst is observable.
+            logger.debug("token-exchange short-circuited by negative cache for gateway %s", gateway_name, extra={"gateway_id": gateway_id, "correlation_id": correlation_id})
+            raise ToolInvocationError(f"Token exchange unavailable for gateway '{gateway_name}'. Contact your administrator.")
+
+        # Resolve subject token. inbound_user_jwt must structurally be a JWT (H2);
+        # an opaque CF session/API token is never forwarded to the external AS.
+        # GatewayService._VALID_SUBJECT_TOKEN_SOURCES only ever persists "inbound_user_jwt"
+        # (config-time validation rejects any other value), so inbound_user_jwt is the only
+        # supported subject_token_source here.
+        subject_token = extract_inbound_bearer(request_headers)
+        if subject_token and not looks_like_jwt(subject_token):
+            subject_token = None
+
+        if not subject_token:
+            raise ToolInvocationError(f"User authentication required for token-exchange gateway '{gateway_name}'.")
+
+        # P1: single-flight. Only one coroutine exchanges per {gw,user,aud}; the rest
+        # await the lock and read the freshly-cached token via the double-check below.
+        async with self._token_exchange_cache.lock(gateway_id, user_key, audience):
+            cached = await self._token_exchange_cache.get(gateway_id, user_key, audience)
+            if cached:
+                return {"Authorization": f"Bearer {cached}"}
+
+            scopes = oauth_config.get("scopes") or []
+            started = time.monotonic()
+            try:
+                response = await self.oauth_manager.token_exchange(
+                    token_url=oauth_config["token_url"],
+                    subject_token=subject_token,
+                    client_id=oauth_config.get("client_id", ""),
+                    client_secret=oauth_config.get("client_secret", ""),  # raw encrypted DB value — token_exchange() decrypts inline (client_secret_is_plaintext defaults False)
+                    audience=audience,
+                    scope=" ".join(scopes) if scopes else None,
+                    requested_token_type=oauth_config.get("requested_token_type", "urn:ietf:params:oauth:token-type:access_token"),
+                    subject_token_type=oauth_config.get("subject_token_type", "urn:ietf:params:oauth:token-type:jwt"),
+                    ca_certificate=ca_certificate,
+                    client_cert=client_cert,
+                    client_key=client_key,
+                )
+            except Exception as e:
+                latency_ms = int((time.monotonic() - started) * 1000)
+                # H1: caller gets a generic message; AS detail never echoed out.
+                safe_reason = SecurityValidator.sanitize_log_message(str(e))
+                await self._token_exchange_cache.set_failure(gateway_id, user_key, audience)  # P4
+                audit_token_exchange(
+                    user_email=app_user_email,
+                    gateway_id=gateway_id,
+                    target_audience=audience,
+                    success=False,
+                    expires_in=None,
+                    upstream=gateway_name,
+                    error=safe_reason,
+                    latency_ms=latency_ms,
+                    correlation_id=correlation_id,
+                    request_id=request_id,
+                )
+                sec_logger.log(
+                    level="WARNING",
+                    message=f"Token exchange failed for gateway {gateway_name}",
+                    event_type="token_exchange_failed",
+                    user_email=app_user_email,
+                    custom_fields={
+                        "gateway_id": gateway_id,
+                        "target_audience": audience,
+                        "latency_ms": latency_ms,
+                        "error": safe_reason,
+                        "correlation_id": correlation_id,
+                        "request_id": request_id,
+                    },
+                    is_security_event=True,
+                )
+                # L1: message stays sanitized. exc_info is intentionally omitted -- the traceback's
+                # final line renders str(e) unredacted regardless of how sanitized safe_reason is,
+                # which would re-leak AS response content into the log record (CWE-532).
+                logger.warning("Token exchange failed for gateway %s: %s", gateway_name, safe_reason, extra={"gateway_id": gateway_id, "correlation_id": correlation_id})
+                raise ToolInvocationError(f"Token exchange failed for gateway '{gateway_name}'. Contact your administrator.") from None
+
+            exchanged = response["access_token"]
+            expires_in = _coerce_ttl(response.get("expires_in"))  # L8/L1/B1
+            latency_ms = int((time.monotonic() - started) * 1000)
+            await self._token_exchange_cache.set(gateway_id, user_key, audience, exchanged, expires_in=expires_in)
+            audit_token_exchange(
+                user_email=app_user_email,
+                gateway_id=gateway_id,
+                target_audience=audience,
+                success=True,
+                expires_in=expires_in,
+                upstream=gateway_name,
+                error=None,
+                latency_ms=latency_ms,
+                correlation_id=correlation_id,
+                request_id=request_id,
+            )
+            sec_logger.log(
+                level="INFO",
+                message=f"Token exchange succeeded for gateway {gateway_name}",
+                event_type="token_exchange_succeeded",
+                user_email=app_user_email,
+                custom_fields={
+                    "gateway_id": gateway_id,
+                    "target_audience": audience,
+                    "expires_in": expires_in,
+                    "latency_ms": latency_ms,
+                    "correlation_id": correlation_id,
+                    "request_id": request_id,
+                },
+                is_security_event=True,
+            )
+            return {"Authorization": f"Bearer {exchanged}"}
+
+    @staticmethod
+    def _sanitize_passthrough_for_token_exchange(passthrough_allowed: Optional[List[str]], grant_type: Optional[str]) -> Optional[List[str]]:
+        """Drop ``authorization`` from passthrough when token-exchange owns the header (B3).
+
+        When ``grant_type`` is ``"token-exchange"``, the gateway's exchanged
+        ``Authorization`` header must not be overridden by the inbound caller's
+        JWT, even if ``authorization`` is in the gateway's ``passthrough_allowed``
+        list. Removing it from the allow-list ensures the exchanged token always
+        wins in ``compute_passthrough_headers_cached``.
+
+        Args:
+            passthrough_allowed: The gateway's configured passthrough header allow-list.
+            grant_type: The OAuth grant type for the target gateway, or ``None``
+                if the gateway is not an OAuth gateway.
+
+        Returns:
+            The list unchanged for any grant type other than ``"token-exchange"``;
+            otherwise a copy with ``authorization`` (case-insensitive) removed.
+        """
+        if grant_type != "token-exchange" or not passthrough_allowed:
+            return passthrough_allowed
+        return [h for h in passthrough_allowed if h.lower() != "authorization"]
+
+    async def _invalidate_token_exchange_on_unauthorized(self, status_code: int, oauth_config: Optional[dict], gateway_id: str, app_user_email: Optional[str]) -> None:
+        """Evict the cached exchanged token on an upstream 401 (B2).
+
+        A 401 from the upstream means the cached exchanged token is no longer
+        valid (revoked, expired early, or wrong audience). Evicting it forces
+        the next ``_resolve_token_exchange_header`` call to re-exchange.
+
+        Args:
+            status_code: The HTTP status code returned by the upstream call.
+            oauth_config: Gateway OAuth configuration; a no-op unless
+                ``grant_type == "token-exchange"``.
+            gateway_id: Gateway identifier used as a cache key component.
+            app_user_email: Authenticated end-user email, used as a cache key component.
+        """
+        if status_code != 401:
+            return
+        if not oauth_config or oauth_config.get("grant_type") != "token-exchange":
+            return
+        if not app_user_email:
+            # No identity to invalidate under -- _resolve_token_exchange_header never
+            # caches anonymous callers, so there is nothing to evict here either.
+            return
+        await self._token_exchange_cache.invalidate(gateway_id, app_user_email, oauth_config.get("target_audience"))
+
+    async def _send_with_token_exchange_retry(
+        self,
+        send: Callable[[dict], Awaitable[Any]],
+        headers: dict,
+        oauth_config: Optional[dict],
+        gateway_id: str,
+        gateway_name: str,
+        app_user_email: Optional[str],
+        request_headers: dict,
+        ca_certificate: Optional[str] = None,
+        client_cert: Optional[str] = None,
+        client_key: Optional[str] = None,
+    ) -> Any:
+        """Send the upstream request, retrying exactly once on a 401 from a token-exchange gateway (B2).
+
+        On a 401 response from a ``grant_type == "token-exchange"`` gateway, the
+        cached exchanged token is invalidated and a fresh token is resolved via
+        ``_resolve_token_exchange_header``, then the request is retried once with
+        the fresh ``Authorization`` header. For all other gateways/grant types,
+        or non-401 responses, this is a single send with no retry.
+
+        Args:
+            send: An async callable taking a headers dict and returning a response
+                object exposing ``.status_code``. Kept generic so the retry policy
+                is testable without a live upstream connection.
+            headers: The initial headers to send (including any cached/exchanged
+                ``Authorization`` header).
+            oauth_config: Gateway OAuth configuration; retry only applies when
+                ``grant_type == "token-exchange"``.
+            gateway_id: Gateway identifier used for cache invalidation and re-exchange.
+            gateway_name: Gateway display name, used in error messages and logs.
+            app_user_email: Authenticated end-user email, used for cache keys.
+            request_headers: Incoming request headers, forwarded to
+                ``_resolve_token_exchange_header`` to resolve a fresh subject token.
+            ca_certificate: Optional custom CA certificate for the token endpoint,
+                forwarded to the re-exchange so a retry doesn't silently fall back
+                to the system CA store.
+            client_cert: Optional client certificate for mTLS to the token endpoint.
+            client_key: Optional client private key for mTLS to the token endpoint.
+
+        Returns:
+            The response object from ``send``, either from the first attempt or
+            the single retry.
+        """
+        resp = await send(headers)
+        if getattr(resp, "status_code", None) != 401:
+            return resp
+        if not oauth_config or oauth_config.get("grant_type") != "token-exchange":
+            return resp
+        await self._invalidate_token_exchange_on_unauthorized(401, oauth_config, gateway_id, app_user_email)
+        fresh = await self._resolve_token_exchange_header(
+            oauth_config, gateway_id, gateway_name, app_user_email, request_headers, ca_certificate=ca_certificate, client_cert=client_cert, client_key=client_key
+        )
+        return await send({**headers, **fresh})  # single retry; no loop -- preserve original headers, only Authorization changes
+
+    # pylint: enable=duplicate-code
+
     async def prepare_rust_mcp_tool_execution(
         self,
         db: Session,
@@ -4045,13 +4337,12 @@ class ToolService(BaseService):
         # plugin invocation enforces the requirement locally with an actionable error.
         oauth_authcode_no_db_token = False
 
+        gateway_grant_type = None
         if has_gateway and gateway_auth_type == "oauth" and isinstance(gateway_oauth_config, dict) and gateway_oauth_config:
             grant_type = gateway_oauth_config.get("grant_type", "client_credentials")
+            gateway_grant_type = grant_type
             if grant_type == "authorization_code":
                 try:
-                    # First-Party
-                    from mcpgateway.services.token_storage_service import TokenStorageService  # pylint: disable=import-outside-toplevel
-
                     with fresh_db_session() as token_db:
                         token_storage = TokenStorageService(token_db)
                         if not app_user_email:
@@ -4075,6 +4366,10 @@ class ToolService(BaseService):
                 except Exception as e:
                     logger.error("Failed to obtain stored OAuth token for gateway %s: %s", gateway_name, e)
                     raise ToolInvocationError(f"OAuth token retrieval failed for gateway: {str(e)}")
+            elif grant_type == "token-exchange":
+                headers = await self._resolve_token_exchange_header(
+                    gateway_oauth_config, gateway_id_str, gateway_name, app_user_email, request_headers, ca_certificate=gateway_ca_cert, client_cert=gateway_client_cert, client_key=gateway_client_key
+                )
             else:
                 try:
                     access_token = await self.oauth_manager.get_access_token(gateway_oauth_config, ca_certificate=gateway_ca_cert, client_cert=gateway_client_cert, client_key=gateway_client_key)
@@ -4086,12 +4381,20 @@ class ToolService(BaseService):
             headers = decode_auth(gateway_auth_value) if gateway_auth_value else {}
 
         if request_headers:
+            # B3: when the gateway uses token-exchange, the exchanged Authorization header
+            # must win over any inbound user JWT that the passthrough config would otherwise
+            # forward verbatim.
+            effective_passthrough_allowed = self._sanitize_passthrough_for_token_exchange(passthrough_allowed, gateway_grant_type)
+            gateway_passthrough_headers = gateway_payload.get("passthrough_headers") if has_gateway else None
+            if gateway_grant_type == "token-exchange":
+                gateway_passthrough_headers = self._sanitize_passthrough_for_token_exchange(gateway_passthrough_headers, gateway_grant_type)
             headers = compute_passthrough_headers_cached(
                 request_headers,
                 headers,
-                passthrough_allowed,
+                effective_passthrough_allowed,
                 gateway_auth_type=gateway_auth_type,
-                gateway_passthrough_headers=gateway_payload.get("passthrough_headers") if has_gateway else None,
+                gateway_passthrough_headers=gateway_passthrough_headers,
+                is_token_exchange=(gateway_grant_type == "token-exchange"),
             )
 
         runtime_headers = {str(header_name): str(header_value) for header_name, header_value in headers.items() if header_name and header_value}
@@ -4943,6 +5246,13 @@ class ToolService(BaseService):
                     },
                 ):
                     headers = tool_headers.copy()
+
+                # B2: gateway grant type, used to decide whether upstream 401s should
+                # trigger a single re-exchange-and-retry (REST and MCP branches below).
+                gateway_grant_type = None
+                if has_gateway and gateway_auth_type == "oauth" and isinstance(gateway_oauth_config, dict) and gateway_oauth_config:
+                    gateway_grant_type = gateway_oauth_config.get("grant_type", "client_credentials")
+
                 if tool_integration_type == "REST":
                     # Handle OAuth authentication for REST tools
                     if tool_auth_type == "oauth" and isinstance(tool_oauth_config, dict) and tool_oauth_config:
@@ -5081,6 +5391,32 @@ class ToolService(BaseService):
 
                     with create_child_span("tool.gateway_call", {"tool.name": name, "tool.id": tool_id, "tool.integration_type": "REST"}):
                         rest_start_time = time.time()
+
+                        async def _send(call_headers: dict) -> Any:
+                            """Issue the REST upstream call with the given headers (B2 retry hook)."""
+                            if method == "GET":
+                                return await asyncio.wait_for(self._http_client.get(final_url, params=payload, headers=call_headers), timeout=effective_timeout)
+                            if _ct_base == "application/x-www-form-urlencoded":
+                                # NOTE: Intentional asymmetry with the JSON/default path below.
+                                # Form-encoded bodies use params= to keep URL query params on the
+                                # query string (semantically correct for form encoding), whereas
+                                # the JSON path merges them into the body via payload.update() for
+                                # backward compatibility and signed-URL support.
+                                form_payload = {k: self._form_value_to_str(v) for k, v in payload.items()}
+                                return await asyncio.wait_for(
+                                    self._http_client.request(method, final_url, data=form_payload, params=_url_query_params, headers=call_headers), timeout=effective_timeout
+                                )
+                            if _ct_base == "multipart/form-data":
+                                # Strip Content-Type so httpx can set it with the correct boundary parameter.
+                                # URL query params forwarded via params= (same asymmetry as form-urlencoded above).
+                                headers_mp = {k: v for k, v in call_headers.items() if k.lower() != "content-type"}
+                                files_payload = {k: (None, self._form_value_to_str(v)) for k, v in payload.items()}
+                                return await asyncio.wait_for(
+                                    self._http_client.request(method, final_url, files=files_payload, params=_url_query_params, headers=headers_mp), timeout=effective_timeout
+                                )
+                            # For POST/PUT/PATCH/DELETE (JSON body, default path)
+                            return await asyncio.wait_for(self._http_client.request(method, final_url, json=payload, headers=call_headers), timeout=effective_timeout)
+
                         try:
                             if method == "GET":
                                 # For GET: Extract and merge URL query params with input arguments
@@ -5099,32 +5435,25 @@ class ToolService(BaseService):
                                         )
 
                                 payload.update(query_params)
-                                response = await asyncio.wait_for(self._http_client.get(final_url, params=payload, headers=headers), timeout=effective_timeout)
-                            elif _ct_base == "application/x-www-form-urlencoded":
-                                # NOTE: Intentional asymmetry with the JSON/default path below.
-                                # Form-encoded bodies use params= to keep URL query params on the
-                                # query string (semantically correct for form encoding), whereas
-                                # the JSON path merges them into the body via payload.update() for
-                                # backward compatibility and signed-URL support.
-                                form_payload = {k: self._form_value_to_str(v) for k, v in payload.items()}
-                                response = await asyncio.wait_for(self._http_client.request(method, final_url, data=form_payload, params=_url_query_params, headers=headers), timeout=effective_timeout)
-                            elif _ct_base == "multipart/form-data":
-                                # Strip Content-Type so httpx can set it with the correct boundary parameter.
-                                # URL query params forwarded via params= (same asymmetry as form-urlencoded above).
-                                headers_mp = {k: v for k, v in headers.items() if k.lower() != "content-type"}
-                                files_payload = {k: (None, self._form_value_to_str(v)) for k, v in payload.items()}
-                                response = await asyncio.wait_for(
-                                    self._http_client.request(method, final_url, files=files_payload, params=_url_query_params, headers=headers_mp), timeout=effective_timeout
-                                )
-                            else:
-                                # For POST/PUT/PATCH/DELETE: Different behavior based on mapping presence
-                                if has_query_mapping or has_header_mapping:
-                                    # When mappings are used (not None/empty), query params were already extracted and mapped
-                                    # Merge them into the JSON body for backward compatibility with mapped tools
-                                    payload.update(query_params)
-                                # else: No mappings (None or empty) - preserve query params in URL for signed URL support
-                                # (Azure SAS, AWS presigned URLs, webhook signatures, etc.)
-                                response = await asyncio.wait_for(self._http_client.request(method, final_url, json=payload, headers=headers), timeout=effective_timeout)
+                            elif has_query_mapping or has_header_mapping:
+                                # When mappings are used (not None/empty), query params were already extracted and mapped
+                                # Merge them into the JSON body for backward compatibility with mapped tools
+                                payload.update(query_params)
+                            # else: No mappings (None or empty) - preserve query params in URL for signed URL support
+                            # (Azure SAS, AWS presigned URLs, webhook signatures, etc.)
+
+                            response = await self._send_with_token_exchange_retry(
+                                _send,
+                                headers,
+                                gateway_oauth_config if (has_gateway and gateway_grant_type == "token-exchange") else None,
+                                gateway_id_str,
+                                gateway_name,
+                                app_user_email,
+                                request_headers or {},
+                                ca_certificate=gateway_ca_cert,
+                                client_cert=gateway_client_cert,
+                                client_key=gateway_client_key,
+                            )
                         except (asyncio.TimeoutError, httpx.TimeoutException):
                             rest_elapsed_ms = (time.time() - rest_start_time) * 1000
                             structured_logger.log(
@@ -5229,6 +5558,7 @@ class ToolService(BaseService):
 
                     # Handle OAuth authentication for the gateway (using local variables)
                     # NOTE: Use has_gateway instead of gateway to avoid accessing detached ORM object
+                    # gateway_grant_type was already computed above (shared with the REST branch for B2).
                     if has_gateway and gateway_auth_type == "oauth" and isinstance(gateway_oauth_config, dict) and gateway_oauth_config:
                         grant_type = gateway_oauth_config.get("grant_type", "client_credentials")
 
@@ -5236,9 +5566,6 @@ class ToolService(BaseService):
                             # For Authorization Code flow, try to get stored tokens
                             # NOTE: Use fresh_db_session() since the original db was closed
                             try:
-                                # First-Party
-                                from mcpgateway.services.token_storage_service import TokenStorageService  # pylint: disable=import-outside-toplevel
-
                                 with fresh_db_session() as token_db:
                                     token_storage = TokenStorageService(token_db)
 
@@ -5265,6 +5592,17 @@ class ToolService(BaseService):
                             except Exception as e:
                                 logger.error("Failed to obtain stored OAuth token for gateway %s: %s", gateway_name, e)
                                 raise ToolInvocationError(f"OAuth token retrieval failed for gateway: {str(e)}")
+                        elif grant_type == "token-exchange":
+                            headers = await self._resolve_token_exchange_header(
+                                gateway_oauth_config,
+                                gateway_id_str,
+                                gateway_name,
+                                app_user_email,
+                                request_headers,
+                                ca_certificate=gateway_ca_cert,
+                                client_cert=gateway_client_cert,
+                                client_key=gateway_client_key,
+                            )
                         else:
                             # For Client Credentials flow, get token directly (no DB needed)
                             try:
@@ -5280,8 +5618,18 @@ class ToolService(BaseService):
 
                     # Use cached passthrough headers (no DB query needed)
                     if request_headers:
+                        # B3: when the gateway uses token-exchange, the exchanged Authorization header
+                        # must win over any inbound user JWT that the passthrough config would otherwise
+                        # forward verbatim.
+                        effective_passthrough_allowed = self._sanitize_passthrough_for_token_exchange(passthrough_allowed, gateway_grant_type)
+                        effective_gateway_passthrough = self._sanitize_passthrough_for_token_exchange(gateway_passthrough, gateway_grant_type)
                         headers = compute_passthrough_headers_cached(
-                            request_headers, headers, passthrough_allowed, gateway_auth_type=gateway_auth_type, gateway_passthrough_headers=gateway_passthrough
+                            request_headers,
+                            headers,
+                            effective_passthrough_allowed,
+                            gateway_auth_type=gateway_auth_type,
+                            gateway_passthrough_headers=effective_gateway_passthrough,
+                            is_token_exchange=(gateway_grant_type == "token-exchange"),
                         )
                         # Read MCP-Session-Id from downstream client (MCP protocol header)
                         # and normalize to x-mcp-session-id for our internal session affinity logic
