@@ -40,9 +40,11 @@ from typing import Any, Generator
 import uuid
 
 # Third-Party
+import httpx
 import pytest
 from fastmcp.client import Client
 from fastmcp.client.auth import BearerAuth
+from mcp import McpError
 
 pw = pytest.importorskip("playwright", reason="playwright is not installed – pip install playwright")
 from playwright.sync_api import APIRequestContext, Playwright
@@ -68,6 +70,7 @@ STREAMABLE_HTTP_GATEWAY_NAME = f"{RBAC_PREFIX}-streamable-http-gw"
 # Must match docker-compose gateway JWT_SECRET_KEY
 _JWT_SECRET = os.getenv("JWT_SECRET_KEY", "my-test-key-but-now-longer-than-32-bytes")
 _CLIENT_TIMEOUT = float(os.getenv("MCP_E2E_CLIENT_TIMEOUT", "5.0"))
+# Covers one default 60-second publish interval plus 15 seconds of slack.
 _PER_SERVER_ACCESS_SYNC_DEADLINE_SECONDS = 75.0
 _PER_SERVER_ACCESS_RETRY_DELAY_SECONDS = 1.0
 
@@ -472,7 +475,7 @@ def _mcp_tools_list_after_publisher_sync(access_token: str, server_url: str = BA
     while True:
         try:
             return _mcp_tools_list(access_token, server_url=server_url)
-        except Exception:
+        except (httpx.HTTPError, McpError, RuntimeError, TimeoutError):
             if time.monotonic() >= deadline:
                 raise
             time.sleep(_PER_SERVER_ACCESS_RETRY_DELAY_SECONDS)
