@@ -360,9 +360,30 @@ plugins:
       ttl: 300
       key_fields: {}
 
-  # URL reputation static checks
+  # URL Reputation (CPEX pilot) — Rust-backed static reputation checks for resource URLs,
+  # trace-aware. Reads extensions.request.trace_id (see
+  # mcpgateway/plugins/utils.py:build_request_extensions) and, when a trace is active, emits
+  # result.metadata["url_reputation"] (total_checked/total_blocked counters plus
+  # reputation_categories violation-reason slugs, never the checked URL/domain itself) for
+  # mcpgateway/plugins/utils.py:record_plugin_metrics() to persist as a dedicated
+  # `plugin.metrics.url_reputation` observability span. Requires cpex-url-reputation>=0.3.5 (see
+  # pyproject.toml) -- earlier releases do not emit metrics.
+  #
+  # Left mode: "disabled" deliberately, unlike PIIFilter: this plugin ships with
+  # blocked_domains/blocked_patterns below and only hooks resource_pre_fetch, so flipping mode to
+  # "sequential" would not just newly enable metrics -- per cpex.framework.PluginMode, "disabled"
+  # plugins are never instantiated or registered (see cpex/framework/manager.py load_plugins():
+  # `if plugin_config.mode != PluginMode.DISABLED: ... else: logger.info("Plugin: %s is disabled.
+  # Ignoring.", ...)`), so today this plugin's hooks never run at all. Enabling it would newly
+  # start BLOCKING resource fetches for every existing deployment using the default config.yaml
+  # whose target URL matches blocked_domains/blocked_patterns or trips the plugin's other
+  # reputation checks (insecure scheme, high-entropy domain, illegal TLD, unicode spoofing,
+  # malformed URL/domain) -- a materially bigger behavior/security-posture change than PIIFilter
+  # (whose block_on_detection defaults to false even once enabled). That is an opt-in decision for
+  # operators to make explicitly; do not flip silently.
   - name: "URLReputationPlugin"
     kind: "cpex_url_reputation.URLReputationPlugin"
+    version: "0.3.5"
     hooks: ["resource_pre_fetch"]
     tags: ["security", "url", "reputation"]
     mode: "disabled"
