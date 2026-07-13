@@ -19,7 +19,8 @@ import type { PromptGroup, PromptsResponse } from "@/types/prompts";
 const MAX_VISIBLE_PROMPTS = 8;
 
 function getPromptItems(data: (PromptRead | null)[]): NonNullable<PromptRead>[] {
-  return (data ?? []).filter((p): p is NonNullable<PromptRead> => p !== null);
+  if (!Array.isArray(data)) return [];
+  return data.filter((p): p is NonNullable<PromptRead> => p !== null);
 }
 
 function getPromptLabel(prompt: NonNullable<PromptRead>): string {
@@ -211,7 +212,7 @@ export function Prompts() {
   useEffect(() => {
     if (activeGroup) setDisplayGroup(activeGroup);
   }, [activeGroup]);
-      
+
   useEffect(() => {
     if (!showForm && shouldRestoreFormCloseFocus) {
       addPromptsCardRef.current?.focus();
@@ -256,32 +257,26 @@ export function Prompts() {
               <div className="h-8 w-8 animate-spin rounded-full border-4 border-gray-200 border-t-blue-600 dark:border-gray-700 dark:border-t-blue-400" />
             </div>
           ) : (
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2 2xl:grid-cols-3">
-          <AddPromptsCard />
-          {groups.map((group) => (
-            <PromptGroupCard key={group.key} group={group} onViewDetails={setActiveGroup} />
-          ))}
-        </div>
-          {error && (
-            <div
-              className="mb-6 rounded-lg border border-red-200 bg-red-50 p-4 dark:border-red-800 dark:bg-red-900/20"
-              role="alert"
-              aria-live="assertive"
-            >
-              <h3 className="mb-1 font-semibold">
-                {intl.formatMessage({ id: "prompts.error.loading" })}
-              </h3>
-              <p className="text-red-800 dark:text-red-200">{error.message}</p>
-            </div>
-          )}
-
-          {!isLoading && (
-            <div className="grid grid-cols-1 gap-6 lg:grid-cols-2 2xl:grid-cols-3">
-              <AddPromptsCard onActivate={handleAddPrompt} cardRef={addPromptsCardRef} />
-              {groups.map((group) => (
-                <PromptGroupCard key={group.key} group={group} />
-              ))}
-            </div>
+            <>
+              <div className="grid grid-cols-1 gap-6 lg:grid-cols-2 2xl:grid-cols-3">
+                <AddPromptsCard onActivate={handleAddPrompt} cardRef={addPromptsCardRef} />
+                {groups.map((group) => (
+                  <PromptGroupCard key={group.key} group={group} onViewDetails={setActiveGroup} />
+                ))}
+              </div>
+              {error && (
+                <div
+                  className="mb-6 rounded-lg border border-red-200 bg-red-50 p-4 dark:border-red-800 dark:bg-red-900/20"
+                  role="alert"
+                  aria-live="assertive"
+                >
+                  <h3 className="mb-1 font-semibold">
+                    {intl.formatMessage({ id: "prompts.error.loading" })}
+                  </h3>
+                  <p className="text-red-800 dark:text-red-200">{error.message}</p>
+                </div>
+              )}
+            </>
           )}
         </>
       )}
