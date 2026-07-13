@@ -97,6 +97,7 @@ export function ToolForm({ isOpen, onToggle, onSuccess, tool }: ToolFormProps) {
     isSubmitting,
     setName,
     setUrl,
+    setUrlError,
     setDescription,
     setRequestType,
     setAdvancedOpen,
@@ -158,9 +159,15 @@ export function ToolForm({ isOpen, onToggle, onSuccess, tool }: ToolFormProps) {
   // This form only ever creates REST tools, so "MCP" appears only when editing.
   const showGenerate = integrationType === "REST";
 
-  // Guard against silently clobbering schemas the user has already entered:
-  // confirm first whenever either schema field is non-empty.
+  // Validate the URL inline on click rather than blocking with a disabled
+  // button, so the user learns *why* the action can't proceed. If schemas
+  // already exist, confirm before clobbering them.
   const handleGenerateClick = () => {
+    if (!url.trim()) {
+      setUrlError(intl.formatMessage({ id: "tools.form.error.urlRequired" }));
+      document.getElementById("tool-url")?.focus();
+      return;
+    }
     if (inputSchema.trim() || outputSchema.trim()) {
       setShowOverwriteConfirm(true);
     } else {
@@ -277,7 +284,10 @@ export function ToolForm({ isOpen, onToggle, onSuccess, tool }: ToolFormProps) {
               <Input
                 id="tool-url"
                 value={url}
-                onChange={(event) => setUrl(event.target.value)}
+                onChange={(event) => {
+                  setUrl(event.target.value);
+                  setUrlError(undefined);
+                }}
                 placeholder={intl.formatMessage({ id: "tools.form.url.placeholder" })}
                 className="rounded-md border-neutral-300 px-4 text-sm text-neutral-900 shadow-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-0 placeholder:text-neutral-400 dark:border-neutral-700 dark:text-neutral-100 dark:placeholder:text-neutral-500"
                 aria-invalid={!!errors.url}
@@ -314,7 +324,7 @@ export function ToolForm({ isOpen, onToggle, onSuccess, tool }: ToolFormProps) {
                       type="button"
                       variant="outline"
                       className="flex-1 gap-2"
-                      disabled={isGeneratingSchema || !url.trim() || !requestType}
+                      disabled={isGeneratingSchema}
                       onClick={handleGenerateClick}
                     >
                       {schemaMode === "generated" ? (
