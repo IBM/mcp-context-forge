@@ -9,6 +9,7 @@ Unit tests for observability middleware.
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+from types import SimpleNamespace
 from starlette.requests import Request
 from starlette.responses import Response
 from mcpgateway.middleware.observability_middleware import ObservabilityMiddleware
@@ -196,6 +197,78 @@ async def test_dispatch_end_trace_error_failure_logs_warning(mock_request):
         with pytest.raises(RuntimeError):
             await middleware.dispatch(mock_request, failing_call_next)
         mock_warning.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_dispatch_resolves_user_email_after_call_next(mock_request):
+    """Trace user attribution is resolved after downstream auth runs."""
+    middleware = ObservabilityMiddleware(app=None, enabled=True)
+    mock_request.state = SimpleNamespace()
+
+    async def auth_populating_call_next(request):
+        request.state.user = SimpleNamespace(email="postauth@example.com")
+        return Response("OK", status_code=200)
+
+    with (
+        patch.object(middleware.service, "start_trace", return_value="trace123") as mock_start_trace,
+        patch.object(middleware.service, "start_span", return_value="span123"),
+        patch.object(middleware.service, "end_span"),
+        patch.object(middleware.service, "end_trace") as mock_end_trace,
+        patch("mcpgateway.middleware.observability_middleware.should_skip_observability", return_value=False),
+    ):
+        response = await middleware.dispatch(mock_request, auth_populating_call_next)
+        assert response.status_code == 200
+
+        assert mock_start_trace.call_args.kwargs.get("user_email") is None
+        assert mock_end_trace.call_args.kwargs.get("user_email") == "postauth@example.com"
+
+
+@pytest.mark.asyncio
+async def test_dispatch_resolves_user_email_from_state_fallback(mock_request):
+    """Trace attribution falls back to request.state.user_email when user object is absent."""
+    middleware = ObservabilityMiddleware(app=None, enabled=True)
+    mock_request.state = SimpleNamespace()
+
+    async def token_auth_call_next(request):
+        request.state.user_email = "token-user@example.com"
+        return Response("OK", status_code=200)
+
+    with (
+        patch.object(middleware.service, "start_trace", return_value="trace123") as mock_start_trace,
+        patch.object(middleware.service, "start_span", return_value="span123"),
+        patch.object(middleware.service, "end_span"),
+        patch.object(middleware.service, "end_trace") as mock_end_trace,
+        patch("mcpgateway.middleware.observability_middleware.should_skip_observability", return_value=False),
+    ):
+        response = await middleware.dispatch(mock_request, token_auth_call_next)
+        assert response.status_code == 200
+
+        assert mock_start_trace.call_args.kwargs.get("user_email") is None
+        assert mock_end_trace.call_args.kwargs.get("user_email") == "token-user@example.com"
+
+
+@pytest.mark.asyncio
+async def test_dispatch_exception_path_passes_user_email_to_end_trace(mock_request):
+    """Error-path end_trace() receives the authenticated user email even when call_next() raises."""
+    middleware = ObservabilityMiddleware(app=None, enabled=True)
+    mock_request.state = SimpleNamespace()
+
+    async def auth_then_raise_call_next(request):
+        request.state.user = SimpleNamespace(email="errpath@example.com")
+        raise RuntimeError("downstream failure")
+
+    with (
+        patch.object(middleware.service, "start_trace", return_value="trace123"),
+        patch.object(middleware.service, "start_span", return_value="span123"),
+        patch.object(middleware.service, "end_span"),
+        patch.object(middleware.service, "add_event"),
+        patch.object(middleware.service, "end_trace") as mock_end_trace,
+        patch("mcpgateway.middleware.observability_middleware.should_skip_observability", return_value=False),
+    ):
+        with pytest.raises(RuntimeError):
+            await middleware.dispatch(mock_request, auth_then_raise_call_next)
+
+        assert mock_end_trace.call_args.kwargs.get("user_email") == "errpath@example.com"
 
 
 # ============================================================================

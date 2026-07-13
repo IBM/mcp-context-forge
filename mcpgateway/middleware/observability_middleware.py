@@ -104,6 +104,24 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         self.service = service or ObservabilityService()
         logger.info(f"Observability middleware initialized (enabled={self.enabled})")
 
+    @staticmethod
+    def _extract_user_email_from_state(request: Request) -> Optional[str]:
+        """Extract authenticated user email from request state.
+
+        Auth context may be available as request.state.user.email or as
+        request.state.user_email depending on middleware/dependency path.
+        """
+        user = getattr(request.state, "user", None)
+        email = getattr(user, "email", None)
+        if isinstance(email, str) and email:
+            return email
+
+        state_user_email = getattr(request.state, "user_email", None)
+        if isinstance(state_user_email, str) and state_user_email:
+            return state_user_email
+
+        return None
+
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
         """Process request and create observability trace.
 
@@ -131,13 +149,9 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         # Extract request context
         http_method = request.method
         http_url = sanitize_header_for_storage(str(request.url), max_length=2000)
-        user_email = None
+        user_email = self._extract_user_email_from_state(request)
         ip_address = request.client.host if request.client else None
         user_agent = sanitize_header_for_storage(request.headers.get("user-agent"), max_length=500)
-
-        # Try to extract user from request state (set by auth middleware)
-        if hasattr(request.state, "user") and hasattr(request.state.user, "email"):
-            user_email = request.state.user.email
 
         # Extract W3C Trace Context from headers (for distributed tracing)
         external_trace_id = None
@@ -223,11 +237,13 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
             # End trace (creates independent observability session)
             if trace_id:
                 duration_ms = (time.time() - start_time) * 1000
+                resolved_user_email = self._extract_user_email_from_state(request)
                 try:
                     self.service.end_trace(
                         trace_id,
                         status="ok" if status_code < 400 else "error",
                         http_status_code=status_code,
+                        user_email=resolved_user_email,
                         attributes={"response_time_ms": duration_ms},
                     )
                 except Exception as end_trace_error:
@@ -265,6 +281,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
 
             # End trace with error (creates independent observability session)
             if trace_id:
+                resolved_user_email = self._extract_user_email_from_state(request)
                 try:
                     sanitized_error = sanitize_for_log(sanitize_trace_text(str(e)))
                     self.service.end_trace(
@@ -272,6 +289,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                         status="error",
                         status_message=sanitized_error,
                         http_status_code=500,
+                        user_email=resolved_user_email,
                     )
                 except Exception as trace_error:
                     logger.warning(f"Failed to end trace: {trace_error}")
