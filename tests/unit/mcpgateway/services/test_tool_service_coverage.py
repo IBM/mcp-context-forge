@@ -8140,7 +8140,7 @@ class TestInvokeToolA2A:
     async def test_a2a_pre_invoke_modified_headers_are_refiltered(self, tool_service):
         """A2A tool pre-invoke modified headers cannot bypass downstream filtering."""
         # Third-Party
-        from cpex.framework import ToolHookType
+        from cpex.framework import PluginResult, ToolHookType
 
         tp = _make_tool_payload(
             integration_type="A2A",
@@ -8165,7 +8165,7 @@ class TestInvokeToolA2A:
                 }
             ),
         )
-        plugin_manager.invoke_hook = AsyncMock(return_value=(SimpleNamespace(modified_payload=modified_payload), {}))
+        plugin_manager.invoke_hook = AsyncMock(return_value=(PluginResult(modified_payload=modified_payload), {}))
 
         captured_headers = {}
         mock_http_response = MagicMock()
@@ -8213,7 +8213,7 @@ class TestInvokeToolA2A:
     async def test_a2a_pre_invoke_blocks_headers_when_agent_allowlist_unset(self, tool_service):
         """A2A tool invocation matches the direct A2A default-deny behavior when the agent allowlist is unset."""
         # Third-Party
-        from cpex.framework import ToolHookType
+        from cpex.framework import PluginResult, ToolHookType
 
         tp = _make_tool_payload(
             integration_type="A2A",
@@ -8238,7 +8238,7 @@ class TestInvokeToolA2A:
                 }
             ),
         )
-        plugin_manager.invoke_hook = AsyncMock(return_value=(SimpleNamespace(modified_payload=modified_payload), {}))
+        plugin_manager.invoke_hook = AsyncMock(return_value=(PluginResult(modified_payload=modified_payload), {}))
 
         captured_headers = {}
         mock_http_response = MagicMock()
