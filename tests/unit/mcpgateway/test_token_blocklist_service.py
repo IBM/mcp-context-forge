@@ -101,6 +101,20 @@ class TestTokenRevocation:
         assert result is True
 
     @pytest.mark.asyncio
+    async def test_revoke_token_duplicate_cache_invalidation_error(self, blocklist_service, test_db):
+        """Test duplicate revocation succeeds when auth cache invalidation fails."""
+        jti = str(uuid.uuid4())
+        revocation = TokenRevocation(jti=jti, revoked_by="system@example.com", reason="logout")
+        test_db.add(revocation)
+        test_db.commit()
+
+        with patch("mcpgateway.cache.auth_cache.auth_cache.invalidate_revocation", new_callable=AsyncMock, side_effect=Exception("Cache error")) as mock_invalidate:
+            result = await blocklist_service.revoke_token(jti=jti, revoked_by="test@example.com", reason="logout")
+
+        assert result is True
+        mock_invalidate.assert_awaited_once_with(jti)
+
+    @pytest.mark.asyncio
     async def test_revoke_token_duplicate_without_db_session(self, test_db):
         """Test revoking an already revoked token without db session."""
         # Create service without db to test fresh_db_session path
@@ -119,6 +133,27 @@ class TestTokenRevocation:
             result = await service.revoke_token(jti=jti, revoked_by="test@example.com", reason="logout")
 
             assert result is True
+
+    @pytest.mark.asyncio
+    async def test_revoke_token_duplicate_without_db_session_cache_invalidation_error(self, test_db):
+        """Test duplicate revocation with fresh_db_session succeeds when cache invalidation fails."""
+        service = TokenBlocklistService(db=None)
+        jti = str(uuid.uuid4())
+        revocation = TokenRevocation(jti=jti, revoked_by="system@example.com", reason="logout")
+        test_db.add(revocation)
+        test_db.commit()
+
+        with (
+            patch("mcpgateway.services.token_blocklist_service.fresh_db_session") as mock_session,
+            patch("mcpgateway.cache.auth_cache.auth_cache.invalidate_revocation", new_callable=AsyncMock, side_effect=Exception("Cache error")) as mock_invalidate,
+        ):
+            mock_session.return_value.__enter__.return_value = test_db
+            mock_session.return_value.__exit__.return_value = None
+
+            result = await service.revoke_token(jti=jti, revoked_by="test@example.com", reason="logout")
+
+        assert result is True
+        mock_invalidate.assert_awaited_once_with(jti)
 
     @pytest.mark.asyncio
     async def test_revoke_token_with_last_activity(self, blocklist_service, test_db):
