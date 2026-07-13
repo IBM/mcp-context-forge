@@ -24,7 +24,6 @@ Security Compliance:
 """
 
 # Standard
-import asyncio
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Optional
 
@@ -80,7 +79,7 @@ class TokenBlocklistService:
 
         return self._redis_client if self._redis_client is not False else None
 
-    def revoke_token(self, jti: str, revoked_by: str, reason: str = "logout", token_expiry: Optional[datetime] = None, last_activity: Optional[datetime] = None) -> bool:
+    async def revoke_token(self, jti: str, revoked_by: str, reason: str = "logout", token_expiry: Optional[datetime] = None, last_activity: Optional[datetime] = None) -> bool:
         """Revoke a token by adding it to the blocklist.
 
         Args:
@@ -96,7 +95,7 @@ class TokenBlocklistService:
         Examples:
             >>> service = TokenBlocklistService()
             >>> # Requires database connection - see unit tests for examples
-            >>> # service.revoke_token(jti="abc-123", revoked_by="user@example.com", reason="logout")
+            >>> # await service.revoke_token(jti="abc-123", revoked_by="user@example.com", reason="logout")
         """
         try:
             if self.db is not None:
@@ -118,7 +117,13 @@ class TokenBlocklistService:
                         db.commit()
                     logger.debug("Token %s already revoked", jti)
                     # Invalidate auth cache to ensure revoked token is rejected immediately
-                    self._invalidate_auth_cache(jti)
+                    try:
+                        # First-Party
+                        from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
+
+                        await auth_cache.invalidate_revocation(jti)
+                    except Exception as cache_error:
+                        logger.debug("Failed to invalidate auth cache for revoked token %s: %s", jti, cache_error)
                     return True
 
                 # Create revocation record
@@ -145,7 +150,13 @@ class TokenBlocklistService:
                             db.commit()
                         logger.debug("Token %s already revoked", jti)
                         # Invalidate auth cache to ensure revoked token is rejected immediately
-                        self._invalidate_auth_cache(jti)
+                        try:
+                            # First-Party
+                            from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
+
+                            await auth_cache.invalidate_revocation(jti)
+                        except Exception as cache_error:
+                            logger.debug("Failed to invalidate auth cache for revoked token %s: %s", jti, cache_error)
                         return True
 
                     # Create revocation record
@@ -169,7 +180,13 @@ class TokenBlocklistService:
                     logger.warning("Failed to cache revocation in Redis: %s", e)
 
             # Invalidate auth cache to ensure revoked token is rejected immediately
-            self._invalidate_auth_cache(jti)
+            try:
+                # First-Party
+                from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
+
+                await auth_cache.invalidate_revocation(jti)
+            except Exception as cache_error:
+                logger.debug("Failed to invalidate auth cache for revoked token %s: %s", jti, cache_error)
 
             logger.info(
                 "Token revoked: jti=%s, reason=%s, revoked_by=%s",
@@ -184,33 +201,6 @@ class TokenBlocklistService:
         except Exception as e:
             logger.error("Failed to revoke token %s: %s", jti, e)
             return False
-
-    def _invalidate_auth_cache(self, jti: str) -> None:
-        """Invalidate auth cache for a revoked token.
-
-        This is a synchronous wrapper that runs the async invalidation in the current
-        or new event loop, ensuring revoked tokens are rejected immediately.
-
-        Args:
-            jti: JWT ID to invalidate
-        """
-        try:
-            # First-Party
-            from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
-
-            # Try to get the current event loop
-            try:
-                loop = asyncio.get_running_loop()
-                # We're in an async context, create a task (fire-and-forget is acceptable here
-                # since the Redis/local cache update is best-effort, and the DB write is authoritative)
-                task = loop.create_task(auth_cache.invalidate_revocation(jti))
-                # Suppress the unawaited coroutine warning by adding a dummy done callback
-                task.add_done_callback(lambda t: None)
-            except RuntimeError:
-                # No running loop, create a new one for this operation
-                asyncio.run(auth_cache.invalidate_revocation(jti))
-        except Exception as cache_error:
-            logger.debug("Failed to invalidate auth cache for revoked token %s: %s", jti, cache_error)
 
     def is_token_revoked(self, jti: str) -> bool:
         """Check if a token is revoked.
