@@ -3440,7 +3440,6 @@ LINT_GO_ROOT ?= $(LINT_TMP_ROOT)/go
 LINT_HELM_ROOT ?= $(LINT_TMP_ROOT)/helm
 LINT_NODE_ROOT ?= $(LINT_TMP_ROOT)/node
 LINT_PY_VENV ?= $(LINT_TMP_ROOT)/py-venv
-LINT_GO_TOOLCHAIN ?= go1.26.4
 
 # Tool target defaults
 LINT_ZIZMOR_TARGET ?= .github/workflows
@@ -3601,7 +3600,6 @@ linting-security-kube-linter:        ## 🧱  Kubernetes best-practice linting
 		export GOMODCACHE='$(LINT_GO_ROOT)/gopath/pkg/mod'; \
 		export GOCACHE='$(LINT_GO_ROOT)/gocache'; \
 		export GOBIN='$(LINT_GO_ROOT)/bin'; \
-		export GOTOOLCHAIN='$(LINT_GO_TOOLCHAIN)'; \
 		mkdir -p '$(LINT_GO_ROOT)/gopath' '$(LINT_GO_ROOT)/gopath/pkg/mod' '$(LINT_GO_ROOT)/gocache' '$(LINT_GO_ROOT)/bin'; \
 		go install golang.stackrox.io/kube-linter/cmd/kube-linter@latest >/dev/null; \
 		'$(LINT_GO_ROOT)/bin/kube-linter' lint '$(LINT_KUBE_LINTER_TARGET)'"

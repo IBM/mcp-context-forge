@@ -242,7 +242,7 @@ Successful response:
 
 ```json
 {
-  "appSessionId": "5a51a7f84aa548d99aa13f4b5f07ed76",
+  "appSessionId": "<A very random-looking session id string>"
   "resourceUri": "ui://widgets/customer-search",
   "serverId": "server-123",
   "expiresAt": "2026-06-05T15:30:00+00:00"
