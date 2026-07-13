@@ -10524,13 +10524,17 @@ async def create_mcp_app_session(request: Request, db: Session = Depends(get_db)
         if token_teams is None:
             token_teams = []
 
-    await resource_service.read_resource(
-        db,
-        resource_uri=resource_uri,
-        user=resource_user_email,
-        server_id=server_id,
-        token_teams=token_teams,
-    )
+    try:
+        await resource_service.read_resource(
+            db,
+            resource_uri=resource_uri,
+            user=resource_user_email,
+            server_id=server_id,
+            token_teams=token_teams,
+        )
+    except (ResourceNotFoundError, ResourceError) as exc:
+        logger.info("AppBridge session resource lookup failed for %s on server %s: %s", resource_uri, server_id, exc)
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Resource not found") from exc
 
     requester_email = get_user_email(user)
     if not requester_email:

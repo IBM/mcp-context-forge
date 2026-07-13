@@ -22,7 +22,7 @@ from mcpgateway.services.mcp_apps import (
     MCPAppsValidationError,
     validate_ui_resource,
 )
-from mcpgateway.services.resource_service import ResourceNotFoundError
+from mcpgateway.services.resource_service import ResourceError, ResourceNotFoundError
 from mcpgateway.services.tool_service import ToolError, ToolNotFoundError, ToolService
 
 
@@ -526,9 +526,11 @@ class TestAppBridgeEndpoints:
             patch.object(main_mod.resource_service, "read_resource", new=AsyncMock(side_effect=ResourceNotFoundError("Resource not found"))) as read_mock,
             patch.object(main_mod.mcp_app_session_service, "create_session") as create_mock,
         ):
-            with pytest.raises(ResourceNotFoundError):
+            with pytest.raises(HTTPException) as excinfo:
                 await main_mod.create_mcp_app_session.__wrapped__(request=request, db=mock_db, user={"email": "user@example.com"})
 
+        assert excinfo.value.status_code == 404
+        assert excinfo.value.detail == "Resource not found"
         read_mock.assert_awaited_once()
         create_mock.assert_not_called()
 
@@ -550,14 +552,42 @@ class TestAppBridgeEndpoints:
             patch.object(main_mod.resource_service, "read_resource", new=AsyncMock(side_effect=ResourceNotFoundError("Resource not found"))) as read_mock,
             patch.object(main_mod.mcp_app_session_service, "create_session") as create_mock,
         ):
-            with pytest.raises(ResourceNotFoundError):
+            with pytest.raises(HTTPException) as excinfo:
                 await main_mod.create_mcp_app_session.__wrapped__(request=request, db=mock_db, user={"email": "user@example.com", "token_teams": ["team-b"]})
 
+        assert excinfo.value.status_code == 404
+        assert excinfo.value.detail == "Resource not found"
         read_mock.assert_awaited_once()
         assert read_mock.await_args.kwargs["resource_uri"] == "ui://widgets/team-a-only"
         assert read_mock.await_args.kwargs["server_id"] == "server-1"
         assert read_mock.await_args.kwargs["user"] == "user@example.com"
         assert read_mock.await_args.kwargs["token_teams"] == ["team-b"]
+        create_mock.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_create_session_maps_resource_lookup_error_to_not_found(self, monkeypatch, mock_db):
+        """App session creation should not leak resource lookup failures as 500s."""
+        # First-Party
+        from mcpgateway import main as main_mod
+
+        monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", True)
+        request = FakeRequest(
+            {"resourceUri": "ui://widgets/bad", "serverId": "server-1"},
+            headers={"mcp-session-id": "mcp-session-1"},
+        )
+
+        with (
+            patch.object(main_mod, "_assert_session_owner_or_admin", new=AsyncMock()),
+            patch.object(main_mod, "get_rpc_filter_context", return_value=("user@example.com", ["team-1"], False)),
+            patch.object(main_mod.resource_service, "read_resource", new=AsyncMock(side_effect=ResourceError("lookup failed"))) as read_mock,
+            patch.object(main_mod.mcp_app_session_service, "create_session") as create_mock,
+        ):
+            with pytest.raises(HTTPException) as excinfo:
+                await main_mod.create_mcp_app_session.__wrapped__(request=request, db=mock_db, user={"email": "user@example.com"})
+
+        assert excinfo.value.status_code == 404
+        assert excinfo.value.detail == "Resource not found"
+        read_mock.assert_awaited_once()
         create_mock.assert_not_called()
 
     @pytest.mark.asyncio
