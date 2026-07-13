@@ -16,14 +16,40 @@ exclude-newer = "10 days"
 
 [tool.uv.exclude-newer-package]
 cpex = "2026-07-13T23:59:59Z"
+# cpex-url-reputation pinned past its normal soak cutoff: 0.3.5 (2026-07-13) is the first
+# release that emits result.metadata["url_reputation"] for resource_pre_fetch, which
+# tests/integration/plugins/test_plugin_metrics_consumer_integration.py and
+# tests/e2e/test_otel_plugin_metadata_e2e.py depend on. Vetted ahead of the usual window for
+# this reason.
 cpex-url-reputation = "2026-07-13T23:59:59Z"
+# cpex-rate-limiter pinned past its normal soak cutoff: 0.1.7 (2026-07-13) is the first
+# release that emits result.metadata["rate_limiter"] for prompt_pre_fetch/tool_pre_invoke, which
+# tests/integration/plugins/test_plugin_metrics_consumer_integration.py and
+# tests/e2e/test_otel_plugin_metadata_e2e.py depend on. Vetted ahead of the usual window for
+# this reason.
 cpex-rate-limiter = "2026-07-13T23:59:59Z"
+# cpex-encoded-exfil-detection pinned past its normal soak cutoff: 0.3.6 (2026-07-13) is the
+# first release that emits result.metadata["encoded_exfil_detection"] for
+# tool_post_invoke/tool_pre_invoke/resource hooks, which
+# tests/integration/plugins/test_plugin_metrics_consumer_integration.py and
+# tests/e2e/test_otel_plugin_metadata_e2e.py depend on. Vetted ahead of the usual window for
+# this reason.
 cpex-encoded-exfil-detection = "2026-07-13T23:59:59Z"
 # cpex-pii-filter pinned past its normal soak cutoff: 0.3.6 (2026-07-07) is the first
 # release that emits result.metadata for tool_post_invoke, which tests/e2e/test_otel_plugin_metadata_e2e.py
 # depends on. Vetted ahead of the usual window for this reason.
 cpex-pii-filter = "2026-07-07T23:59:59Z"
+# cpex-retry-with-backoff pinned past its normal soak cutoff: 0.3.6 (2026-07-13) is the first
+# release that emits result.metadata["retry_with_backoff"] for tool_post_invoke, which
+# tests/integration/plugins/test_plugin_metrics_consumer_integration.py and
+# tests/e2e/test_otel_plugin_metadata_e2e.py depend on. Vetted ahead of the usual window for
+# this reason.
 cpex-retry-with-backoff = "2026-07-13T23:59:59Z"
+# cpex-secrets-detection pinned past its normal soak cutoff: 0.3.7 (2026-07-13) is the first
+# release that emits result.metadata["secrets_detection"] for tool_post_invoke, which
+# tests/integration/plugins/test_plugin_metrics_consumer_integration.py and
+# tests/e2e/test_otel_plugin_metadata_e2e.py depend on. Vetted ahead of the usual window for
+# this reason.
 cpex-secrets-detection = "2026-07-13T23:59:59Z"
 
 
