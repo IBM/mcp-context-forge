@@ -3563,8 +3563,6 @@ linting-helm-unittest:               ## 🧪  Helm template unit tests
 		fi; \
 		helm unittest $(CHART_DIR)"
 
-
-
 .PHONY: linting-security-checkov
 linting-security-checkov:            ## 🛡️  IaC security scanning with Checkov
 	@echo "🛡️ checkov scan of $(LINT_CHECKOV_TARGET)..."
