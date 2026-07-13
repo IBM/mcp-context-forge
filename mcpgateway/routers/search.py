@@ -6,22 +6,16 @@ Authors: Mihai Criveti
 
 Unified Search API Router.
 
-Exposes the unified cross-entity search capability at a stable, versioned,
-non-admin path (``GET /v1/search``). Historically this capability was only
-reachable through ``GET /admin/search``, which is gated on the ``admin.dashboard``
-permission and lives under the admin dashboard router. Client-facing callers
-(e.g. the React global search) should not depend on an admin-panel route that
-may be deprecated, so this router re-exposes the same behavior and response
-shape without the admin-panel gate.
+Exposes unified cross-entity search at a stable, versioned, non-admin path
+(``GET /v1/search``) so client-facing callers do not depend on
+``GET /admin/search``, which is gated on ``admin.dashboard`` and slated for
+deprecation.
 
 Security model:
-    This route requires only authentication at the top level. It does NOT add
-    an ``admin.dashboard`` gate. Real authorization is enforced per-entity
-    inside :func:`mcpgateway.admin.perform_unified_search`: each entity search
-    carries its own RBAC permission (``tools.read``, ``gateways.read``,
-    ``admin.user_management`` for users, etc.) and token scoping continues to
-    filter visible entities. Entity-specific denials are suppressed so a single
-    restricted entity type never fails the whole search or leaks existence.
+    Authentication only at the top level (no ``admin.dashboard`` gate). Real
+    authorization is enforced per-entity inside
+    :func:`mcpgateway.admin.perform_unified_search`, and token scoping still
+    filters visible entities.
 """
 
 # Standard
@@ -34,7 +28,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 # First-Party
-from mcpgateway.admin import _validated_team_id_param, perform_unified_search  # noqa: PLC2701 — reuse admin team_id validation for parity
+from mcpgateway.admin import _validated_team_id_param, perform_unified_search  # noqa: PLC2701 — reuse admin team_id validation
 from mcpgateway.common.query_params import QueryEntityTypes, QueryGatewayIdList, QueryTagsFilter
 from mcpgateway.config import settings
 from mcpgateway.db import get_db
@@ -65,10 +59,9 @@ async def unified_search(
 ) -> dict[str, Any]:
     """Unified search across primary entities (versioned, non-admin route).
 
-    Preserves the behavior, query parameters, and grouped/flattened response
-    shape of ``GET /admin/search`` but without the ``admin.dashboard`` gate.
-    Delegates to :func:`mcpgateway.admin.perform_unified_search`; per-entity
-    RBAC and token scoping are enforced inside that helper.
+    Same behavior and response shape as ``GET /admin/search`` without the
+    ``admin.dashboard`` gate; delegates to
+    :func:`mcpgateway.admin.perform_unified_search`.
 
     Args:
         q (str): Free-text search query.
