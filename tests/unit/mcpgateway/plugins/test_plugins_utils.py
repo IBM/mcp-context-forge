@@ -486,6 +486,29 @@ class TestRecordPluginMetricsS4Validation:
         dropped_records = [r.getMessage() for r in caplog.records if "Dropped" in r.getMessage()]
         assert any("custom_tags" in msg and "not in the explicit string allowlist" in msg for msg in dropped_records)
 
+    def test_bool_value_bypasses_the_string_and_numeric_field_name_allowlists(self, caplog):
+        """A bool value is accepted unconditionally, regardless of field name -- unlike
+        str/int/float values, bools are never checked against _SAFE_STRING_FIELD_NAMES or
+        _SAFE_NUMERIC_FIELD_NAMES. Mirrors the real encoded_exfil_detection.redacted field:
+        `redacted` is not a member of either allowlist, yet the value must still survive.
+        """
+        mock_service = _make_observability_service_mock()
+        mock_session = MagicMock()
+
+        metadata = {"encoded_exfil_detection": {"redacted": True}}
+
+        with (
+            patch("mcpgateway.services.observability_service.ObservabilityService", return_value=mock_service),
+            patch("mcpgateway.db.SessionLocal", return_value=mock_session),
+            caplog.at_level(logging.DEBUG),
+        ):
+            record_plugin_metrics("trace-1", metadata)
+
+        attrs = mock_service.start_span.call_args.kwargs["attributes"]
+        assert attrs["redacted"] is True
+        dropped_records = [r.getMessage() for r in caplog.records if "Dropped" in r.getMessage()]
+        assert not any("redacted" in msg for msg in dropped_records)
+
     def test_key_scan_is_bounded_not_just_accepted_count(self):
         """Invalid keys don't get a free pass: only the first _MAX_PLUGIN_KEYS items of
         the raw dict are ever inspected, so a valid key placed after that window is

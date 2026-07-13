@@ -887,9 +887,13 @@ no metadata is ever produced regardless of the pinned version.
 ### Per-plugin metadata fields
 
 Each bundled `cpex-*` plugin that emits `result.metadata` is documented below as it is wired up.
-Every field listed here must also appear in `_SAFE_STRING_FIELD_NAMES` /
-`_SAFE_NUMERIC_FIELD_NAMES` in `mcpgateway/plugins/utils.py`, or it is silently dropped per the
-contract table above.
+Every `str`- or `int`/`float`-typed field listed here must also appear in
+`_SAFE_STRING_FIELD_NAMES` / `_SAFE_NUMERIC_FIELD_NAMES` in `mcpgateway/plugins/utils.py`, or it is
+silently dropped per the contract table above. `bool`-typed fields are the one exception: per
+`_sanitize_plugin_metrics()`, any value that is a Python `bool` is always accepted unconditionally
+and is never subject to either allowlist — this is why `encoded_exfil_detection`'s `redacted`
+field below survives even though `redacted` is not a member of `_SAFE_STRING_FIELD_NAMES` or
+`_SAFE_NUMERIC_FIELD_NAMES`.
 
 | Plugin (`result.metadata` key) | Field | Type | Description |
 |---|---|---|---|

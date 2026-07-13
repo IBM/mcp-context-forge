@@ -330,8 +330,11 @@ class TestRecordPluginMetricsAdditionalPluginsIntegration:
         observability_service.end_trace(trace_id)
 
     def test_url_reputation_records_span_and_metrics(self, db_session, observability_service: ObservabilityService):
-        """Fake url_reputation metadata -> span attributes (incl. the ``reputation_categories``
-        string field) plus numeric metric rows for ``total_checked``/``total_blocked``.
+        """Fake url_reputation metadata -> span attributes, including ``reputation_categories``
+        as a ``list[str]`` joined into a single comma-separated string by
+        ``_sanitize_plugin_metrics`` -- the same list-to-string behavior already exercised for
+        ``encoding_types`` in ``test_encoded_exfil_detection_records_span_and_metrics`` above --
+        plus numeric metric rows for ``total_checked``/``total_blocked``.
         """
         trace_id = observability_service.start_trace(name="test_trace_g1_url_reputation")
 
@@ -339,7 +342,7 @@ class TestRecordPluginMetricsAdditionalPluginsIntegration:
             "url_reputation": {
                 "total_checked": 1,
                 "total_blocked": 1,
-                "reputation_categories": "blocked_domain",
+                "reputation_categories": ["blocked_domain"],
             }
         }
 
