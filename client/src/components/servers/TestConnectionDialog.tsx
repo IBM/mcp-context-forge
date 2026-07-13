@@ -18,6 +18,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { Textarea } from "../ui/textarea";
 import { JsonHighlighter } from "../ui/json-highlighter";
 import { copyToClipboard } from "@/lib/clipboard";
+import { serversApi } from "@/api/servers";
+import type { GatewayTestRequest, GatewayTestResponse } from "@/generated/types";
+import { parseApiError } from "@/lib/errorUtils";
 import { cn } from "@/lib/utils";
 
 interface TestConnectionDialogProps {
@@ -28,12 +31,6 @@ interface TestConnectionDialogProps {
 }
 
 type TestStatus = "idle" | "testing" | "success" | "error";
-
-interface TestResponse {
-  status_code: number;
-  latency_ms: number;
-  body?: string | Record<string, unknown>;
-}
 
 const HTTP_METHODS = ["Get", "Post", "Put", "Delete", "Patch"] as const;
 
@@ -89,26 +86,36 @@ export function TestConnectionDialog({ open, onOpenChange, serverUrl }: TestConn
   const [headers, setHeaders] = useState<string>("");
   const [contentType, setContentType] = useState<string>("application/json");
   const [body, setBody] = useState<string>("");
-  const [response, setResponse] = useState<TestResponse | null>(null);
+  const [response, setResponse] = useState<GatewayTestResponse>(null);
   const [error, setError] = useState<string>("");
   const titleRef = useRef<HTMLHeadingElement>(null);
+  // Tracks the in-flight test request so it can be cancelled when the dialog is
+  // closed, reopened, or unmounted (prevents state updates on a stale request).
+  const abortRef = useRef<AbortController | null>(null);
 
-  // Reset state when dialog opens
+  // Cancel any in-flight request whenever the dialog opens or closes (covers the
+  // footer Close button, Escape, and overlay-dismiss uniformly), then reset state
+  // on open.
   useEffect(() => {
-    if (open) {
-      setStatus("idle");
-      setMethod("Get");
-      setUrl(serverUrl);
-      setPath("");
-      setHeaders("");
-      setContentType("application/json");
-      setBody("");
-      setResponse(null);
-      setError("");
+    abortRef.current?.abort();
+    if (!open) {
+      return;
     }
+    setStatus("idle");
+    setMethod("Get");
+    setUrl(serverUrl);
+    setPath("");
+    setHeaders("");
+    setContentType("application/json");
+    setBody("");
+    setResponse(null);
+    setError("");
   }, [open, serverUrl]);
 
-  const handleTest = useCallback(() => {
+  // Cancel any in-flight request on unmount.
+  useEffect(() => () => abortRef.current?.abort(), []);
+
+  const handleTest = useCallback(async () => {
     setResponse(null);
     setError("");
 
@@ -120,13 +127,15 @@ export function TestConnectionDialog({ open, onOpenChange, serverUrl }: TestConn
       return;
     }
 
-    // Validate JSON fields before they would be sent.
+    // Validate and capture the headers JSON before it would be sent.
+    let parsedHeaders: Record<string, string> | undefined;
     if (headers.trim()) {
       try {
         const parsed = JSON.parse(headers);
-        if (typeof parsed !== "object" || Array.isArray(parsed)) {
+        if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
           throw new Error("Headers must be a JSON object");
         }
+        parsedHeaders = parsed as Record<string, string>;
       } catch (e) {
         setStatus("error");
         setError(`Invalid headers JSON: ${e instanceof Error ? e.message : "Parse error"}`);
@@ -134,26 +143,60 @@ export function TestConnectionDialog({ open, onOpenChange, serverUrl }: TestConn
       }
     }
 
-    if (body.trim() && method !== "Get" && method !== "HEAD") {
-      try {
-        JSON.parse(body);
-      } catch (e) {
-        setStatus("error");
-        setError(`Invalid body JSON: ${e instanceof Error ? e.message : "Parse error"}`);
-        return;
+    // Validate and capture the request body. JSON bodies are parsed to an object
+    // so the backend forwards them as JSON; form-encoded bodies are sent as-is.
+    const sendsBody = method !== "Get" && method !== "HEAD";
+    let parsedBody: string | Record<string, unknown> | undefined;
+    if (sendsBody && body.trim()) {
+      if (contentType === "application/json") {
+        try {
+          parsedBody = JSON.parse(body);
+        } catch (e) {
+          setStatus("error");
+          setError(`Invalid body JSON: ${e instanceof Error ? e.message : "Parse error"}`);
+          return;
+        }
+      } else {
+        parsedBody = body;
       }
     }
 
-    // TODO(#5326): Send the request to `POST /v1/mcp-servers/test` once that
-    // endpoint exists. The React UI must not call the legacy `/admin/**` routes
-    // (reserved for the HTMX admin UI), so live connection testing is disabled
-    // until the v1 endpoint is implemented.
-    // https://github.com/IBM/mcp-context-forge/issues/5326
-    setStatus("error");
-    setError("Connection testing isn't available yet — the API endpoint is pending (#5326).");
-  }, [url, headers, body, method]);
+    const payload: GatewayTestRequest = {
+      method: method.toUpperCase(),
+      baseUrl: urlResult.data,
+      path: path.trim(),
+      contentType,
+      ...(parsedHeaders ? { headers: parsedHeaders } : {}),
+      ...(parsedBody !== undefined ? { body: parsedBody } : {}),
+    };
+
+    // Cancel any previous in-flight request before starting a new one.
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+
+    setStatus("testing");
+    try {
+      const result = await serversApi.testConnectivity(payload, controller.signal);
+      if (controller.signal.aborted) {
+        return;
+      }
+      const statusCode = result?.statusCode ?? 0;
+      const succeeded = statusCode >= 200 && statusCode < 300;
+      setResponse(result);
+      setStatus(succeeded ? "success" : "error");
+    } catch (e) {
+      if (controller.signal.aborted) {
+        return;
+      }
+      setResponse(null);
+      setStatus("error");
+      setError(parseApiError(e, "Connection test failed. Please try again."));
+    }
+  }, [url, headers, body, method, path, contentType]);
 
   const handleClose = useCallback(() => {
+    // The open→false effect cancels any in-flight request; just close here.
     onOpenChange(false);
   }, [onOpenChange]);
 
@@ -165,7 +208,7 @@ export function TestConnectionDialog({ open, onOpenChange, serverUrl }: TestConn
   }, [response]);
 
   const headline = response
-    ? `Status: ${response.status_code} ${status === "success" ? "OK" : "error"}`
+    ? `Status: ${response.statusCode} ${status === "success" ? "OK" : "error"}`
     : error || "Connection failed";
 
   const isTesting = status === "testing";
@@ -358,7 +401,7 @@ export function TestConnectionDialog({ open, onOpenChange, serverUrl }: TestConn
 
                 {response && (
                   <p className="pl-6 text-[13px] text-muted-foreground">
-                    Latency: {response.latency_ms} ms
+                    Latency: {response.latencyMs} ms
                   </p>
                 )}
 

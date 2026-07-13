@@ -7,6 +7,7 @@
 
 import { api } from "./client";
 import type { ServersResponse, MCPServer } from "../types/server";
+import type { GatewayTestRequest, GatewayTestResponse } from "@/generated/types";
 
 const serverByIdRequestCache = new Map<string, Promise<MCPServer>>();
 
@@ -100,6 +101,21 @@ export const serversApi = {
   testConnection: (id: string): Promise<{ success: boolean; message: string }> => {
     const validId = validateServerId(id);
     return api.post(`/gateways/${validId}/test`, {});
+  },
+
+  /**
+   * Test ad-hoc connectivity to an MCP server / gateway URL.
+   *
+   * Unlike {@link testConnection} (which pings an already-registered server by
+   * ID), this sends a caller-supplied request (URL, method, path, headers, body)
+   * to the v1 REST endpoint and returns the upstream response. The React UI must
+   * use this rather than the legacy /admin/gateways/test route.
+   */
+  testConnectivity: (
+    request: GatewayTestRequest,
+    signal?: AbortSignal,
+  ): Promise<GatewayTestResponse> => {
+    return api.post("/v1/mcp-servers/test", request, { signal });
   },
 
   /**
