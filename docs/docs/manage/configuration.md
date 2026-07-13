@@ -930,6 +930,7 @@ The gateway includes built-in observability features for tracking HTTP requests,
 | `MAX_CONCURRENT_HEALTH_CHECKS` | Max concurrent health checks        | `20`    | int > 0 |
 | `AUTO_REFRESH_SERVERS` | Auto refresh tools/prompts/resources        | `false` | bool    |
 | `FILELOCK_NAME`         | File lock for leader election             | `gateway_service_leader.lock` | string |
+| `PRIMARY_WORKER_LOCK_PATH` | Override path for the primary-worker election lock file (per-host; default is a port-scoped temp file) | (none) | string |
 | `DEFAULT_ROOTS`         | Default root paths for resources          | `[]`    | JSON array |
 
 ### Database Connection Pool

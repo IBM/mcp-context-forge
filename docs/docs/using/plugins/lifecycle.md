@@ -339,3 +339,25 @@ make serve
 
 !!! note
         `PLUGINS_ENABLED=true` should be set in your gateway `.env` file.
+
+## Multi-Worker Execution
+
+Under multiple workers (`GUNICORN_WORKERS`), every worker calls each plugin's
+`initialize()`, so **hooks run on every worker by design**. A non-hook plugin
+that does a **side effect** at startup or in a background task would otherwise
+run it once per worker. Gate it with `is_primary_worker()` to run on one worker
+per host:
+
+```python
+from mcpgateway.utils.primary_worker import is_primary_worker
+
+class InventorySync(Plugin):
+    async def initialize(self) -> None:
+        if not is_primary_worker():
+            return
+        ...  # runs on one worker only
+```
+
+One worker is elected via a file lock; the OS frees it on process exit, so a
+follower takes over. Re-check it each cycle for recurring work. The lock is per
+host and its path is overridable with `PRIMARY_WORKER_LOCK_PATH`.
