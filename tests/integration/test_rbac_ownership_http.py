@@ -165,6 +165,42 @@ class TestRBACOwnershipHTTP:
         # Cleanup
         app.dependency_overrides.clear()
 
+    @patch("mcpgateway.main.tool_service.delete_tool", new_callable=AsyncMock)
+    # @patch("mcpgateway.middleware.rbac.PermissionService", MockPermissionService)
+    def test_delete_private_tool_non_owner_admin_returns_403(
+        self,
+        mock_delete_tool: AsyncMock,
+        test_db_and_client,
+    ):
+        """Test that non-owner admin cannot delete private tool owned by another admin.
+        """
+        TestSessionLocal, _ = test_db_and_client
+
+        # Set up user context as admin but NOT the owner
+        mock_user = MagicMock()
+        mock_user.email = "admin-b@example.com"
+
+        app.dependency_overrides[require_auth] = lambda: "admin-b@example.com"
+        app.dependency_overrides[get_current_user] = lambda: mock_user
+        app.dependency_overrides[get_current_user_with_permissions] = create_user_context(
+            "admin-b@example.com", is_admin=True, TestSessionLocal=TestSessionLocal
+        )
+
+        client = TestClient(app)
+
+        # Attempt to delete private tool owned by admin-a@example.com
+        response = client.delete(
+            "/tools/private-tool-123",
+            headers={"Authorization": "Bearer test-token"}
+        )
+
+        # Verify HTTP 403 Forbidden - admin cannot delete another admin's private tool
+        assert response.status_code == 403
+        assert "Access denied" in response.json()["detail"]
+
+        # Cleanup
+        app.dependency_overrides.clear()
+
     @patch("mcpgateway.main.tool_service.update_tool", new_callable=AsyncMock)
     @patch("mcpgateway.middleware.rbac.PermissionService", MockPermissionService)
     def test_update_tool_non_owner_returns_403(
@@ -197,18 +233,25 @@ class TestRBACOwnershipHTTP:
         # Cleanup
         app.dependency_overrides.clear()
 
-    @patch("mcpgateway.main.server_service.delete_server", new_callable=AsyncMock)
     @patch("mcpgateway.middleware.rbac.PermissionService", MockPermissionService)
     def test_delete_server_owner_succeeds(
         self,
-        mock_delete_server: AsyncMock,
         test_db_and_client,
     ):
         """Test that owner can successfully delete their own server."""
         TestSessionLocal, _ = test_db_and_client
 
-        # Mock service to succeed
-        mock_delete_server.return_value = None
+        # Create a server in the database
+        with TestSessionLocal() as db:
+            from mcpgateway.db import Server
+            server = Server(
+                id="server-123",
+                name="Test Server",
+                owner_email="owner@example.com",
+                team_id="public",
+            )
+            db.add(server)
+            db.commit()
 
         # Set up user context as owner
         mock_user = MagicMock()
@@ -262,18 +305,27 @@ class TestRBACOwnershipHTTP:
         # Cleanup
         app.dependency_overrides.clear()
 
-    @patch("mcpgateway.main.gateway_service.delete_gateway", new_callable=AsyncMock)
     @patch("mcpgateway.middleware.rbac.PermissionService", MockPermissionService)
     def test_delete_gateway_team_admin_succeeds(
         self,
-        mock_delete_gateway: AsyncMock,
         test_db_and_client,
     ):
         """Test that team admin can delete team member's gateway."""
         TestSessionLocal, _ = test_db_and_client
 
-        # Mock service to succeed (team admin has permission)
-        mock_delete_gateway.return_value = None
+        # Create a gateway in the database
+        with TestSessionLocal() as db:
+            from mcpgateway.db import Gateway
+            gateway = Gateway(
+                id="gateway-123",
+                name="Test Gateway",
+                url="http://test.example.com",
+                owner_email="member@example.com",
+                team_id="public",
+                capabilities={},  # Required field
+            )
+            db.add(gateway)
+            db.commit()
 
         # Set up user context as team admin
         mock_user = MagicMock()
