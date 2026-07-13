@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { ToolAdvancedSettings } from "@/components/tools/ToolAdvancedSettings";
+import { ConfirmDialog } from "@/components/servers/ConfirmDialog";
 import { useToolForm, type RequestType, type SchemaMode, type AuthType } from "@/hooks/useToolForm";
 import type { Tool } from "@/types/tool";
 import type { Visibility } from "@/types/server";
@@ -62,6 +63,7 @@ export function ToolForm({ isOpen, onToggle, onSuccess, tool }: ToolFormProps) {
   const intl = useIntl();
   const [copiedInput, setCopiedInput] = useState(false);
   const [copiedOutput, setCopiedOutput] = useState(false);
+  const [showOverwriteConfirm, setShowOverwriteConfirm] = useState(false);
 
   const isEditMode = Boolean(tool);
 
@@ -89,6 +91,7 @@ export function ToolForm({ isOpen, onToggle, onSuccess, tool }: ToolFormProps) {
     schemaMode,
     openApiSpecUrl,
     showSpecUrlInput,
+    generatedSpecUrl,
     errors,
     isValid,
     isSubmitting,
@@ -149,6 +152,20 @@ export function ToolForm({ isOpen, onToggle, onSuccess, tool }: ToolFormProps) {
 
   const handleCancel = () => {
     onToggle();
+  };
+
+  // Schema generation reads an OpenAPI spec, so it only applies to REST tools.
+  // This form only ever creates REST tools, so "MCP" appears only when editing.
+  const showGenerate = integrationType === "REST";
+
+  // Guard against silently clobbering schemas the user has already entered:
+  // confirm first whenever either schema field is non-empty.
+  const handleGenerateClick = () => {
+    if (inputSchema.trim() || outputSchema.trim()) {
+      setShowOverwriteConfirm(true);
+    } else {
+      void generateSchema();
+    }
   };
 
   const onSubmit = (event: React.FormEvent<HTMLFormElement>) => {
@@ -285,45 +302,63 @@ export function ToolForm({ isOpen, onToggle, onSuccess, tool }: ToolFormProps) {
                 <p className="text-sm text-neutral-600 dark:text-neutral-400">
                   {intl.formatMessage({ id: "tools.form.schema.description" })}
                 </p>
-                <div className="flex gap-3">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="flex-1 gap-2"
-                    disabled={isGeneratingSchema || !url.trim()}
-                    onClick={() => void generateSchema()}
-                  >
-                    {schemaMode === "generated" ? (
-                      <RefreshCw
-                        className={`h-4 w-4 ${isGeneratingSchema ? "animate-spin" : ""}`}
-                      />
-                    ) : (
-                      <Zap className={`h-4 w-4 ${isGeneratingSchema ? "animate-pulse" : ""}`} />
+                {/* Generate reads an OpenAPI spec (REST only); "Add manually"
+                    reveals the fields in add-mode (when editing they're always
+                    shown below). */}
+                {showGenerate && (
+                  <div className="flex gap-3">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="flex-1 gap-2"
+                      disabled={isGeneratingSchema || !url.trim() || !requestType}
+                      onClick={handleGenerateClick}
+                    >
+                      {schemaMode === "generated" ? (
+                        <RefreshCw
+                          className={`h-4 w-4 ${isGeneratingSchema ? "animate-spin" : ""}`}
+                        />
+                      ) : (
+                        <Zap className={`h-4 w-4 ${isGeneratingSchema ? "animate-pulse" : ""}`} />
+                      )}
+                      {isGeneratingSchema
+                        ? intl.formatMessage({ id: "tools.form.schema.generating" })
+                        : schemaMode === "generated"
+                          ? intl.formatMessage({ id: "tools.form.schema.regenerate" })
+                          : intl.formatMessage({ id: "tools.form.schema.generate" })}
+                    </Button>
+                    {!isEditMode && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        className="flex-1"
+                        onClick={() => {
+                          setSchemaMode("manual");
+                          if (!inputSchema.trim()) {
+                            setInputSchema('{\n  "type": "object",\n  "properties": {}\n}');
+                          }
+                        }}
+                      >
+                        {intl.formatMessage({ id: "tools.form.schema.addManually" })}
+                      </Button>
                     )}
-                    {isGeneratingSchema
-                      ? intl.formatMessage({ id: "tools.form.schema.generating" })
-                      : schemaMode === "generated"
-                        ? intl.formatMessage({ id: "tools.form.schema.regenerate" })
-                        : intl.formatMessage({ id: "tools.form.schema.generate" })}
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    className="flex-1"
-                    onClick={() => {
-                      setSchemaMode("manual");
-                      if (!inputSchema.trim()) {
-                        setInputSchema('{\n  "type": "object",\n  "properties": {}\n}');
-                      }
-                    }}
-                  >
-                    {intl.formatMessage({ id: "tools.form.schema.addManually" })}
-                  </Button>
-                </div>
+                  </div>
+                )}
+
+                {schemaMode === "generated" && generatedSpecUrl && !errors.schema && (
+                  <p aria-live="polite" className="text-xs text-neutral-500 dark:text-neutral-400">
+                    {intl.formatMessage(
+                      { id: "tools.form.schema.generatedFrom" },
+                      { specUrl: generatedSpecUrl },
+                    )}
+                  </p>
+                )}
 
                 {errors.schema && (
                   <div className="space-y-2">
-                    <p className="text-sm text-red-500">{errors.schema}</p>
+                    <p role="alert" aria-live="assertive" className="text-sm text-red-500">
+                      {errors.schema}
+                    </p>
                     {showSpecUrlInput && (
                       <div className="space-y-1">
                         <label
@@ -346,7 +381,9 @@ export function ToolForm({ isOpen, onToggle, onSuccess, tool }: ToolFormProps) {
                   </div>
                 )}
 
-                {schemaMode !== "none" && (
+                {/* In edit mode the schemas are the thing being edited, so the
+                    fields are always visible even when empty. */}
+                {(isEditMode || schemaMode !== "none") && (
                   <div className="space-y-4">
                     <div className="space-y-1.5">
                       <label
@@ -498,6 +535,16 @@ export function ToolForm({ isOpen, onToggle, onSuccess, tool }: ToolFormProps) {
           </form>
         </div>
       </div>
+
+      <ConfirmDialog
+        open={showOverwriteConfirm}
+        onOpenChange={setShowOverwriteConfirm}
+        title={intl.formatMessage({ id: "tools.form.schema.overwrite.title" })}
+        description={intl.formatMessage({ id: "tools.form.schema.overwrite.description" })}
+        confirmLabel={intl.formatMessage({ id: "tools.form.schema.overwrite.confirm" })}
+        cancelLabel={intl.formatMessage({ id: "tools.form.cancel" })}
+        onConfirm={() => void generateSchema()}
+      />
     </>
   );
 }

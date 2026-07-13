@@ -75,6 +75,10 @@
   "tools.form.schema.addManually": "+ Add manually",
   "tools.form.schema.specUrlLabel": "Or provide a direct OpenAPI spec URL",
   "tools.form.schema.specUrlPlaceholder": "https://api.example.com/openapi.json",
+  "tools.form.schema.generatedFrom": "Generated from {specUrl}",
+  "tools.form.schema.overwrite.title": "Replace existing schema?",
+  "tools.form.schema.overwrite.description": "Generating from OpenAPI will overwrite the input and output schemas you've already entered. Do you want to continue?",
+  "tools.form.schema.overwrite.confirm": "Replace",
   "tools.form.inputSchema": "Input schema",
   "tools.form.outputSchema": "Output schema",
   "tools.form.copyInputSchema": "Copy input schema",
@@ -98,6 +102,11 @@
   "tools.form.error.invalidValue": "Invalid value",
   "tools.form.error.generateSchemaFailed": "Failed to generate schema",
   "tools.form.error.generateSchemaUrl": "Failed to generate schema. Check the URL and try again.",
+  "tools.form.error.generateSchema.ssrf": "URL not reachable from the gateway (blocked by SSRF protection)",
+  "tools.form.error.generateSchema.notFound": "The path {path} with method {method} is not in the OpenAPI spec",
+  "tools.form.error.generateSchema.fetchFailed": "Couldn't fetch the OpenAPI spec — check that the URL is correct and reachable",
+  "tools.form.error.generateSchema.specAuthRequired": "The OpenAPI spec endpoint requires authentication (returned 401/403). The gateway fetches the spec without credentials — provide a direct URL to a reachable spec, or add the schemas manually.",
+  "tools.form.error.generateSchema.generic": "Something went wrong while generating the schema. Please try again.",
   "tools.form.error.updateFailed": "Failed to update tool. Please try again.",
   "tools.form.error.createFailed": "Failed to create tool. Please try again."
 }
