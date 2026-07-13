@@ -152,7 +152,7 @@ QueryExportFormatAliased = Annotated[
 QueryToolName = Annotated[
     Optional[str],
     Query(
-        max_length=255,
+        max_length=SecurityValidator.MAX_TOOL_NAME_LENGTH,
         pattern=SecurityValidator.TOOL_NAME_PATTERN,
     ),
 ]

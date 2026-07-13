@@ -104,10 +104,10 @@ class ErrorFormatter:
             str: User-friendly error message with field context
 
         Examples:
-            >>> # Test letter requirement mapping
-            >>> msg = ErrorFormatter._get_user_message("name", "Tool name must start with a letter, number, or underscore")
+            >>> # Test tool-name character mapping
+            >>> msg = ErrorFormatter._get_user_message("name", "Tool name may contain only letters")
             >>> msg
-            'Name must start with a letter, number, or underscore and contain only letters, numbers, periods, underscores, hyphens, and slashes'
+            'Name may contain only letters, numbers, periods, underscores, and hyphens'
 
             >>> # Test length validation mapping
             >>> msg = ErrorFormatter._get_user_message("description", "Tool name exceeds maximum length")
@@ -135,7 +135,7 @@ class ErrorFormatter:
             'Invalid custom_field'
         """
         mappings = {
-            "Tool name must start with a letter, number, or underscore": f"{field.title()} must start with a letter, number, or underscore and contain only letters, numbers, periods, underscores, hyphens, and slashes",
+            "Tool name may contain only": f"{field.title()} may contain only letters, numbers, periods, underscores, and hyphens",
             "Tool name exceeds maximum length": f"{field.title()} is too long (maximum 255 characters)",
             "Tool URL must start with": f"{field.title()} must be a valid HTTP or WebSocket URL",
             "cannot contain directory traversal": f"{field.title()} contains invalid characters",

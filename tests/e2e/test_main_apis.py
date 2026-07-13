@@ -839,7 +839,7 @@ class TestToolAPIs:
         # Tool names with hyphens are valid per MCP spec
         if response.status_code == 422:
             # May fail for other reasons (duplicate, etc)
-            assert "must start with a letter, number, or underscore" in str(response.json()) or "already exists" in str(response.json())
+            assert "may contain only" in str(response.json()) or "already exists" in str(response.json())
         else:
             assert response.status_code == 200
 

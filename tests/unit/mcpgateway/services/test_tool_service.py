@@ -9262,6 +9262,9 @@ class TestRustMcpExecutionPlan:
             token_teams=["team-a"],
         )
 
+        query = str(db.execute.call_args.args[0])
+        assert "tools.custom_name AS name" in query
+
         assert payload == [
             {
                 "name": "tool-public",
@@ -9837,18 +9840,23 @@ class TestRustMcpExecutionPlan:
                 await tool_service.prepare_rust_mcp_tool_execution(MagicMock(), "tool-one", user_email="user@example.com", token_teams=["team-a"])
 
     @pytest.mark.asyncio
-    async def test_prepare_rust_mcp_tool_execution_rejects_server_scoped_cached_payload_without_tool_id(self, tool_service):
-        """Server-scoped cached payloads need a concrete tool id for membership checks."""
+    async def test_prepare_rust_mcp_tool_execution_ignores_global_cache_for_server_aliases(self, tool_service):
+        """Server aliases must resolve in server scope instead of the global name cache."""
         cache = self._cache_mock(self._cache_payload(id=None))
+        db = MagicMock()
 
         with (
             patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=cache),
             patch("mcpgateway.services.tool_service.current_trace_id", MagicMock(get=MagicMock(return_value=None))),
+            patch.object(tool_service, "_load_invocable_tools", return_value=[]) as load_invocable_tools,
             patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
             patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=None)),
         ):
             with pytest.raises(ToolNotFoundError, match="Tool not found"):
-                await tool_service.prepare_rust_mcp_tool_execution(MagicMock(), "tool-one", server_id="srv-1")
+                await tool_service.prepare_rust_mcp_tool_execution(db, "tool-one", server_id="srv-1")
+
+        cache.get.assert_not_awaited()
+        load_invocable_tools.assert_called_once_with(db, "tool-one", server_id="srv-1")
 
     @pytest.mark.asyncio
     async def test_prepare_rust_mcp_tool_execution_uses_live_gateway_auth_fields_for_loaded_tools(self, tool_service):
@@ -10066,7 +10074,7 @@ class TestRustMcpExecutionPlan:
         assert plan["headers"] == {"Authorization": "Bearer hydrated-string"}
 
     def test_load_invocable_tools_applies_server_scope_filter(self, tool_service):
-        """Server-scoped tool loading should join through the server association table."""
+        """Server-scoped tool loading resolves the exposed custom name."""
         db = MagicMock()
         result = MagicMock()
         result.scalars.return_value.all.return_value = []
@@ -10074,6 +10082,21 @@ class TestRustMcpExecutionPlan:
 
         assert tool_service._load_invocable_tools(db, "tool-one", server_id="srv-1") == []
         db.execute.assert_called_once()
+        where_clause = str(db.execute.call_args.args[0].whereclause)
+        assert "tools.custom_name" in where_clause
+        assert "server_tool_association.server_id" in where_clause
+
+    def test_load_invocable_tools_uses_global_name_without_server_scope(self, tool_service):
+        """Global tool loading keeps resolving the namespaced internal name."""
+        db = MagicMock()
+        result = MagicMock()
+        result.scalars.return_value.all.return_value = []
+        db.execute.return_value = result
+
+        assert tool_service._load_invocable_tools(db, "gateway-tool-one") == []
+        where_clause = str(db.execute.call_args.args[0].whereclause)
+        assert "tools.name" in where_clause
+        assert "tools.custom_name" not in where_clause
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -10117,20 +10140,28 @@ class TestRustMcpExecutionPlan:
         assert plan["transport"] == "sse"
 
     @pytest.mark.asyncio
-    async def test_prepare_rust_mcp_tool_execution_checks_server_membership(self, tool_service):
-        """Server-scoped execution should reject tools not attached to the requested server."""
+    async def test_prepare_rust_mcp_tool_execution_routes_server_alias_to_original_name(self, tool_service):
+        """A server-scoped custom alias should invoke the upstream original name."""
         cache = self._cache_mock(self._cache_payload())
+        gateway = SimpleNamespace(id="gw-1")
+        tool = SimpleNamespace(enabled=True, reachable=True, visibility="public", team_id=None, owner_email=None, gateway=gateway)
         db = MagicMock()
-        db.execute.return_value.first.return_value = None
 
         with (
             patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=cache),
             patch("mcpgateway.services.tool_service.current_trace_id", MagicMock(get=MagicMock(return_value=None))),
+            patch.object(tool_service, "_load_invocable_tools", return_value=[tool]) as load_invocable_tools,
+            patch.object(tool_service, "_build_tool_cache_payload", return_value=self._cache_payload(original_name="upstream-tool")),
             patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+            patch("mcpgateway.services.tool_service.global_config_cache.get_passthrough_headers", return_value=[]),
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
             patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=None)),
         ):
-            with pytest.raises(ToolNotFoundError, match="Tool not found"):
-                await tool_service.prepare_rust_mcp_tool_execution(db, "tool-one", server_id="srv-1")
+            plan = await tool_service.prepare_rust_mcp_tool_execution(db, "Custom.Tool", server_id="srv-1")
+
+        assert plan["remoteToolName"] == "upstream-tool"
+        cache.get.assert_not_awaited()
+        load_invocable_tools.assert_called_once_with(db, "Custom.Tool", server_id="srv-1")
 
     @pytest.mark.asyncio
     async def test_prepare_rust_mcp_tool_execution_handles_query_param_auth_and_passthrough(self, tool_service):

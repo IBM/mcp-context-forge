@@ -3056,7 +3056,7 @@ class ToolService(BaseService):
                 "mcp.definition_mode": True,
             },
         ):
-            name_column = DbTool.__table__.c.name
+            name_column = DbTool.__table__.c.custom_name
             query = (
                 select(
                     name_column.label("name"),
@@ -4169,7 +4169,7 @@ class ToolService(BaseService):
 
         if not is_direct_proxy:
             tool_lookup_cache = _get_tool_lookup_cache()
-            cached_payload = await tool_lookup_cache.get(name) if tool_lookup_cache.enabled else None
+            cached_payload = await tool_lookup_cache.get(name) if tool_lookup_cache.enabled and server_id is None else None
 
             if cached_payload:
                 status = cached_payload.get("status", "active")
@@ -4216,14 +4216,15 @@ class ToolService(BaseService):
                 raise ToolNotFoundError(f"Tool '{name}' exists but is inactive")
 
             if not tool.reachable:
-                await tool_lookup_cache.set_negative(name, "offline")
+                if server_id is None:
+                    await tool_lookup_cache.set_negative(name, "offline")
                 raise ToolNotFoundError(f"Tool '{name}' exists but is currently offline. Please verify if it is running.")
 
             gateway = tool.gateway
             cache_payload = self._build_tool_cache_payload(tool, gateway)
             tool_payload = cache_payload.get("tool") or {}
             gateway_payload = cache_payload.get("gateway")
-            if not multiple_found:
+            if not multiple_found and server_id is None:
                 await tool_lookup_cache.set(name, cache_payload, gateway_id=tool_payload.get("gateway_id"))
 
         if tool_payload.get("enabled") is False:
@@ -4630,12 +4631,16 @@ class ToolService(BaseService):
         Returns:
             A list of candidate tool ORM rows matching the request.
         """
-        name_filter = DbTool.name == name  # pylint: disable=comparison-with-callable
         if server_id:
-            name_filter = or_(name_filter, DbTool.original_name == name)
-        query = select(DbTool).options(joinedload(DbTool.gateway)).where(name_filter)
-        if server_id:
-            query = query.join(server_tool_association, DbTool.id == server_tool_association.c.tool_id).where(server_tool_association.c.server_id == server_id)
+            name_filter = or_(DbTool.custom_name == name, DbTool.name == name, DbTool.original_name == name)  # pylint: disable=comparison-with-callable
+            query = (
+                select(DbTool)
+                .options(joinedload(DbTool.gateway))
+                .join(server_tool_association, DbTool.id == server_tool_association.c.tool_id)
+                .where(name_filter, server_tool_association.c.server_id == server_id)
+            )
+        else:
+            query = select(DbTool).options(joinedload(DbTool.gateway)).where(DbTool.name == name)  # pylint: disable=comparison-with-callable
         return db.execute(query).scalars().all()
 
     # ------------------------------------------------------------------
@@ -4891,7 +4896,7 @@ class ToolService(BaseService):
         # Normal mode: look up tool in database/cache
         if not is_direct_proxy:
             tool_lookup_cache = _get_tool_lookup_cache()
-            cached_payload = await tool_lookup_cache.get(name) if tool_lookup_cache.enabled else None
+            cached_payload = await tool_lookup_cache.get(name) if tool_lookup_cache.enabled and server_id is None else None
 
             if cached_payload:
                 status = cached_payload.get("status", "active")
@@ -4948,7 +4953,8 @@ class ToolService(BaseService):
                 raise ToolNotFoundError(f"Tool '{name}' exists but is inactive")
 
             if not tool.reachable:
-                await tool_lookup_cache.set_negative(name, "offline")
+                if server_id is None:
+                    await tool_lookup_cache.set_negative(name, "offline")
                 raise ToolNotFoundError(f"Tool '{name}' exists but is currently offline. Please verify if it is running.")
 
             gateway = tool.gateway
@@ -4957,7 +4963,7 @@ class ToolService(BaseService):
             gateway_payload = cache_payload.get("gateway")
             # Skip caching when multiple tools share a name — resolution is
             # user-dependent, so a cached result could be wrong for other users.
-            if not multiple_found:
+            if not multiple_found and server_id is None:
                 await tool_lookup_cache.set(name, cache_payload, gateway_id=tool_payload.get("gateway_id"))
 
         if tool_payload.get("enabled") is False:
@@ -4977,7 +4983,8 @@ class ToolService(BaseService):
             # Check deprecated status after RBAC to avoid leaking tool existence
             if tool_payload.get("deprecated") is True:
                 # Cache the deprecated status to avoid repeated DB queries
-                await tool_lookup_cache.set_negative(name, "deprecated")
+                if server_id is None:
+                    await tool_lookup_cache.set_negative(name, "deprecated")
                 raise ToolInvocationError(f"Tool '{name}' is deprecated and cannot be executed. Please update your agent to use an alternative tool.")
 
             # ═══════════════════════════════════════════════════════════════════════════

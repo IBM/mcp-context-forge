@@ -18358,8 +18358,7 @@ async def get_observability_traces(
     user_email: QueryUserIdentifierNoDescription = None,
     name_search: Optional[str] = Query(None, max_length=500),
     attribute_search: Optional[str] = Query(None, max_length=500),
-    # tool_name pattern follows MCP SEP-986 (Specify Format for Tool Names), matching
-    # mcpgateway.config.Settings.validation_tool_name_pattern. Allows namespacing via '/'.
+    # tool_name follows mcpgateway.config.Settings.validation_tool_name_pattern.
     tool_name: QueryToolName = None,
     _user=Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),

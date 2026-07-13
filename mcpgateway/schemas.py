@@ -1672,8 +1672,7 @@ class ToolInvocation(BaseModelWithConfigDict):
     - Arguments matching tool's input schema (validated for depth limits)
 
     Validation Rules:
-    - Tool names must start with a letter, number, or underscore and contain only
-      letters, numbers, periods, underscores, hyphens, and slashes (per SEP-986)
+    - Tool names are 1–128 characters and contain only letters, numbers, periods, underscores, or hyphens
     - Tool names cannot contain HTML special characters (<, >, ", ')
     - Arguments are validated to prevent excessively deep nesting (default max: 10 levels)
 

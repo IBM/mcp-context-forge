@@ -225,7 +225,7 @@ def test_sso_error_pattern(error: str, expected: bool) -> None:
 
 
 # ---------------------------------------------------------------------------
-# MCP tool name - SEP-986 compliance.
+# MCP tool-name compliance.
 # ---------------------------------------------------------------------------
 
 
@@ -238,7 +238,7 @@ def test_sso_error_pattern(error: str, expected: bool) -> None:
         ("tool_1", True),
         ("_5gpt_query", True),
         ("my.namespace.tool", True),
-        ("namespace/subtool", True),
+        ("namespace/subtool", False),
         ("1tool", True),
         ("", False),
         ("tool<script>", False),
@@ -246,12 +246,12 @@ def test_sso_error_pattern(error: str, expected: bool) -> None:
         ("tool'test", False),
         ("tool test", False),
         ("tool:sub", False),
-        (".hidden", False),
-        ("-leading-hyphen", False),
+        (".hidden", True),
+        ("-leading-hyphen", True),
     ],
 )
 def test_mcp_tool_name_pattern(tool_name: str, expected: bool) -> None:
-    """Filter-side tool_name mirrors MCP SEP-986 (config.validation_tool_name_pattern)."""
+    """Filter-side tool_name mirrors config.validation_tool_name_pattern."""
     assert _matches(MCP_TOOL_NAME, tool_name) is expected
 
 

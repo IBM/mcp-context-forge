@@ -207,6 +207,7 @@ async def test_full_payload_generation_with_mock_db():
     tool1.id = "t1"
     tool1.name = "gw1-public_tool"
     tool1.original_name = "public_tool"
+    tool1.custom_name = "Public.Tool"
     tool1.owner_email = "user1@example.com"
     tool1.team_id = "team1"
     tool1.visibility = "public"
@@ -216,6 +217,7 @@ async def test_full_payload_generation_with_mock_db():
     tool2.id = "t2"
     tool2.name = "gw1-private_tool"
     tool2.original_name = "private_tool"
+    tool2.custom_name = "Private-Tool"
     tool2.owner_email = "user1@example.com"
     tool2.team_id = "team1"
     tool2.visibility = "private"
@@ -225,6 +227,7 @@ async def test_full_payload_generation_with_mock_db():
     tool3.id = "t3"
     tool3.name = "gw1-team2_tool"
     tool3.original_name = "team2_tool"
+    tool3.custom_name = "Team2_Tool"
     tool3.owner_email = "user2@example.com"
     tool3.team_id = "team2"
     tool3.visibility = "team"
@@ -281,6 +284,7 @@ async def test_full_payload_generation_with_mock_db():
         assert backend["transport"] == "STREAMABLEHTTP"
         assert backend["passthrough_headers"] == ["Authorization"]
         assert backend["allowed_tool_names"] == ["public_tool", "private_tool"]
+        assert backend["tool_name_aliases"] == {"Public.Tool": "public_tool", "Private-Tool": "private_tool"}
         assert backend["allowed_resource_names"] == ["Resource 1"]
         assert backend["allowed_prompt_names"] == ["Prompt 1"]
 
@@ -292,6 +296,7 @@ async def test_full_payload_generation_with_mock_db():
         assert "s2" not in user2_config["virtual_hosts"]
         user2_backend = user2_config["virtual_hosts"]["s1"]["backends"]["gateway-1"]
         assert user2_backend["allowed_tool_names"] == ["public_tool", "team2_tool"]
+        assert user2_backend["tool_name_aliases"] == {"Public.Tool": "public_tool", "Team2_Tool": "team2_tool"}
 
         # Verify active users with no team membership still get public-only config.
         user3_config = payload["user3@example.com"]
@@ -299,6 +304,7 @@ async def test_full_payload_generation_with_mock_db():
         assert "s2" not in user3_config["virtual_hosts"]
         user3_backend = user3_config["virtual_hosts"]["s1"]["backends"]["gateway-1"]
         assert user3_backend["allowed_tool_names"] == ["public_tool"]
+        assert user3_backend["tool_name_aliases"] == {"Public.Tool": "public_tool"}
 
 
 # ============================================================================

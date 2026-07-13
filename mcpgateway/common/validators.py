@@ -76,7 +76,7 @@ logger = logging.getLogger(__name__)
 # precompiled at module level.
 
 # Static inline patterns used multiple times
-_HTML_SPECIAL_CHARS_RE: Pattern[str] = re.compile(r'[<>"\']')  # / removed per SEP-986
+_HTML_SPECIAL_CHARS_RE: Pattern[str] = re.compile(r'[<>"\']')
 _DANGEROUS_TEMPLATE_TAGS_RE: Pattern[str] = re.compile(r"<(script|iframe|object|embed|link|meta|base|form)\b", re.IGNORECASE)
 _EVENT_HANDLER_RE: Pattern[str] = re.compile(r"on\w+\s*=", re.IGNORECASE)
 _MIME_TYPE_RE: Pattern[str] = re.compile(r'^[a-zA-Z0-9][a-zA-Z0-9!#$&\-\^_+\.]*\/[a-zA-Z0-9][a-zA-Z0-9!#$&\-\^_+\.]*(?:\s*;\s*[a-zA-Z0-9!#$&\-\^_+\.]+=(?:[a-zA-Z0-9!#$&\-\^_+\.]+|"[^"\r\n]*"))*$')
@@ -343,7 +343,7 @@ class SecurityValidator:
     IDENTIFIER_PATTERN = settings.validation_identifier_pattern  # Default: ^[a-zA-Z0-9_\-\.]+$
     VALIDATION_SAFE_URI_PATTERN = settings.validation_safe_uri_pattern  # Default: ^[a-zA-Z0-9_\-.:/?=&%]+$
     VALIDATION_UNSAFE_URI_PATTERN = settings.validation_unsafe_uri_pattern  # Default: [<>"\'\\]
-    TOOL_NAME_PATTERN = settings.validation_tool_name_pattern  # Default: ^[a-zA-Z0-9_][a-zA-Z0-9._/-]*$ (SEP-986)
+    TOOL_NAME_PATTERN = settings.validation_tool_name_pattern  # Default: ^[a-zA-Z0-9_.-]+$ (MCP 2025-11-25)
 
     # MCP-compliant limits (configurable)
     MAX_NAME_LENGTH = settings.validation_max_name_length  # Default: 255
@@ -673,23 +673,20 @@ class SecurityValidator:
             >>> try:
             ...     SecurityValidator.validate_tool_name('tool<script>')
             ... except ValueError as e:
-            ...     'must start with a letter, number, or underscore' in str(e)
+            ...     'may contain only' in str(e)
             True
             >>> try:
             ...     SecurityValidator.validate_tool_name('tool"test')
             ... except ValueError as e:
-            ...     'must start with a letter, number, or underscore' in str(e)
+            ...     'may contain only' in str(e)
             True
             >>> try:
             ...     SecurityValidator.validate_tool_name("tool'test")
             ... except ValueError as e:
-            ...     'must start with a letter, number, or underscore' in str(e)
+            ...     'may contain only' in str(e)
             True
-            >>> # Slashes are allowed per SEP-986
-            >>> SecurityValidator.validate_tool_name('tool/test')
-            'tool/test'
-            >>> SecurityValidator.validate_tool_name('namespace/subtool')
-            'namespace/subtool'
+            >>> SecurityValidator.validate_tool_name('-tool.name')
+            '-tool.name'
 
             Test length limit (line 313):
 
@@ -704,8 +701,8 @@ class SecurityValidator:
             raise ValueError("Tool name cannot be empty")
 
         # MCP tools have specific naming requirements
-        if not re.match(cls.TOOL_NAME_PATTERN, value):
-            raise ValueError("Tool name must start with a letter, number, or underscore and contain only letters, numbers, periods, underscores, hyphens, and slashes")
+        if not re.fullmatch(cls.TOOL_NAME_PATTERN, value):
+            raise ValueError("Tool name may contain only letters, numbers, underscores, hyphens, and periods")
 
         # Ensure no HTML-like content (uses precompiled regex)
         if _HTML_SPECIAL_CHARS_RE.search(value):

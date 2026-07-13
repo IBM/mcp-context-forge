@@ -1083,7 +1083,8 @@ async def test_list_tools_with_server_id(monkeypatch):
     """Test list_tools returns tools for a server_id."""
     mock_db = MagicMock()
     mock_tool = MagicMock()
-    mock_tool.name = "t"
+    mock_tool.name = "gateway-t"
+    mock_tool.custom_name = "Custom.Tool"
     mock_tool.title = "Tool Title"
     mock_tool.description = "desc"
     mock_tool.input_schema = {"type": "object"}
@@ -1103,7 +1104,7 @@ async def test_list_tools_with_server_id(monkeypatch):
     result = await list_tools()
 
     assert isinstance(result, list)
-    assert result[0].name == "t"
+    assert result[0].name == "Custom.Tool"
     assert getattr(result[0], "title", None) == "Tool Title"
     assert result[0].description == "desc"
 
