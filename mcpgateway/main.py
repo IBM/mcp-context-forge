@@ -183,7 +183,7 @@ from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.metrics import setup_metrics
 from mcpgateway.services.permission_service import PermissionService
 from mcpgateway.services.prompt_service import PromptError, PromptLockConflictError, PromptNameConflictError, PromptNotFoundError
-from mcpgateway.services.resource_service import ResourceError, ResourceLockConflictError, ResourceNameConflictError, ResourceNotFoundError, ResourceURIConflictError
+from mcpgateway.services.resource_service import ResourceError, ResourceLockConflictError, ResourceNameConflictError, ResourceNotFoundError, ResourceURIConflictError, ResourceValidationError
 from mcpgateway.services.server_service import ServerError, ServerLockConflictError, ServerNameConflictError, ServerNotFoundError
 from mcpgateway.services.tag_service import TagService
 from mcpgateway.services.tool_service import ToolError, ToolLockConflictError, ToolNameConflictError, ToolNotFoundError
@@ -6341,6 +6341,8 @@ async def create_resource(
         raise HTTPException(status_code=409, detail=str(e))
     except ResourceURIConflictError as e:
         raise HTTPException(status_code=409, detail=str(e))
+    except ResourceValidationError as e:
+        raise HTTPException(status_code=422, detail=str(e))
     except ResourceError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except ValidationError as e:

@@ -597,8 +597,8 @@ class ResourceService(BaseService):
                 if existing_resource:
                     raise ResourceURIConflictError(resource.uri, enabled=existing_resource.enabled, resource_id=existing_resource.id, visibility=existing_resource.visibility)
             elif visibility.lower() == "team":
-                if not team_id:
-                    raise ResourceValidationError("Cannot create a team-scoped resource without a team_id")
+                # team_id is guaranteed non-None here: the name-check above already raised
+                # ResourceValidationError for team visibility without a team_id.
                 # Check for existing team resource with the same uri and gateway_id
                 existing_resource = db.execute(
                     select(DbResource).where(DbResource.uri == resource.uri, DbResource.visibility == "team", DbResource.team_id == team_id, DbResource.gateway_id == gateway_id)
@@ -901,6 +901,22 @@ class ResourceService(BaseService):
                 # Use (uri, gateway_id) tuple as key for proper conflict detection with gateway_id scoping
                 existing_resources_map = {(r.uri, r.gateway_id): r for r in existing_resources}
 
+                # Batch check for name conflicts too (mirrors the URI batch query above) so a chunk
+                # of N resources costs 2 SELECTs total instead of N+2 (one per-item name lookup).
+                resource_names = [resource.name for resource in chunk]
+                if visibility.lower() == "public":
+                    name_conditions = [DbResource.name.in_(resource_names), DbResource.visibility == "public"]
+                elif visibility.lower() == "team" and team_id:
+                    name_conditions = [DbResource.name.in_(resource_names), DbResource.visibility == "team", DbResource.team_id == team_id]
+                else:
+                    name_conditions = None
+
+                if name_conditions is not None:
+                    existing_by_name_rows = db.execute(select(DbResource).where(*name_conditions)).scalars().all()
+                    existing_by_name_map = {(r.name, r.gateway_id): r for r in existing_by_name_rows}
+                else:
+                    existing_by_name_map = {}
+
                 resources_to_add = []
                 resources_to_update = []
 
@@ -941,19 +957,9 @@ class ResourceService(BaseService):
                         resource_visibility = visibility if visibility is not None else getattr(resource, "visibility", "public")
                         resource_gateway_id = getattr(resource, "gateway_id", None)
 
-                        # Check for duplicate name before URI conflict (mirrors register_resource logic)
-                        if resource_visibility.lower() == "public":
-                            existing_by_name = db.execute(
-                                select(DbResource).where(DbResource.name == resource.name, DbResource.visibility == "public", DbResource.gateway_id == resource_gateway_id)
-                            ).scalar_one_or_none()
-                        elif resource_visibility.lower() == "team" and resource_team_id:
-                            existing_by_name = db.execute(
-                                select(DbResource).where(
-                                    DbResource.name == resource.name, DbResource.visibility == "team", DbResource.team_id == resource_team_id, DbResource.gateway_id == resource_gateway_id
-                                )
-                            ).scalar_one_or_none()
-                        else:
-                            existing_by_name = None
+                        # Check for duplicate name before URI conflict (mirrors register_resource logic),
+                        # using the batched lookup built above instead of a per-item query.
+                        existing_by_name = existing_by_name_map.get((resource.name, resource_gateway_id))
 
                         if existing_by_name and existing_by_name.uri != resource.uri:
                             # Name conflict with a *different* resource — treat same as URI conflict strategy
