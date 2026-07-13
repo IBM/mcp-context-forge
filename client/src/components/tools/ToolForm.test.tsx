@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { screen, waitFor } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { render } from "@testing-library/react";
 import { http, HttpResponse } from "msw";
@@ -256,6 +256,126 @@ describe("ToolForm", () => {
     });
   });
 
+  describe("Schema generation from OpenAPI", () => {
+    it("shows the 'Generated from' caption with the returned spec_url", async () => {
+      const user = userEvent.setup();
+      server.use(
+        http.post("*/v1/tools/generate-schemas-from-openapi", () =>
+          HttpResponse.json({
+            success: true,
+            input_schema: { type: "object", properties: {} },
+            output_schema: null,
+            spec_url: "https://api.example.com/openapi.json",
+            message: "ok",
+          }),
+        ),
+      );
+      renderForm();
+
+      await user.type(screen.getByLabelText(/URL/), "https://api.example.com/endpoint");
+      await user.click(screen.getByRole("button", { name: /Generate/i }));
+
+      await waitFor(() =>
+        expect(
+          screen.getByText(/Generated from https:\/\/api\.example\.com\/openapi\.json/i),
+        ).toBeInTheDocument(),
+      );
+    });
+
+    it("confirms before overwriting an existing manually-entered schema", async () => {
+      const user = userEvent.setup();
+      const postSpy = vi.fn(() =>
+        HttpResponse.json({
+          success: true,
+          input_schema: { type: "object", properties: {} },
+          output_schema: null,
+          spec_url: "https://api.example.com/openapi.json",
+          message: "ok",
+        }),
+      );
+      server.use(http.post("*/v1/tools/generate-schemas-from-openapi", postSpy));
+      renderForm();
+
+      await user.type(screen.getByLabelText(/URL/), "https://api.example.com/endpoint");
+      // Seed a manual schema so the generate button must confirm first.
+      await user.click(screen.getByRole("button", { name: /Add manually/i }));
+
+      await user.click(screen.getByRole("button", { name: /Generate/i }));
+
+      // The API is not called until the user confirms the overwrite.
+      const dialog = await screen.findByRole("dialog");
+      expect(postSpy).not.toHaveBeenCalled();
+
+      await user.click(within(dialog).getByRole("button", { name: /Replace/i }));
+
+      await waitFor(() => expect(postSpy).toHaveBeenCalledOnce());
+    });
+
+    it("does not confirm when both schema fields are empty", async () => {
+      const user = userEvent.setup();
+      const postSpy = vi.fn(() =>
+        HttpResponse.json({
+          success: true,
+          input_schema: { type: "object", properties: {} },
+          output_schema: null,
+          spec_url: "https://api.example.com/openapi.json",
+          message: "ok",
+        }),
+      );
+      server.use(http.post("*/v1/tools/generate-schemas-from-openapi", postSpy));
+      renderForm();
+
+      await user.type(screen.getByLabelText(/URL/), "https://api.example.com/endpoint");
+      await user.click(screen.getByRole("button", { name: /Generate/i }));
+
+      await waitFor(() => expect(postSpy).toHaveBeenCalledOnce());
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    });
+
+    it("switches the button label to Regenerate after a successful generation", async () => {
+      const user = userEvent.setup();
+      server.use(
+        http.post("*/v1/tools/generate-schemas-from-openapi", () =>
+          HttpResponse.json({
+            success: true,
+            input_schema: { type: "object", properties: {} },
+            output_schema: null,
+            spec_url: "https://api.example.com/openapi.json",
+            message: "ok",
+          }),
+        ),
+      );
+      renderForm();
+
+      await user.type(screen.getByLabelText(/URL/), "https://api.example.com/endpoint");
+      await user.click(screen.getByRole("button", { name: /^Generate$/i }));
+
+      await waitFor(() =>
+        expect(screen.getByRole("button", { name: /Regenerate/i })).toBeInTheDocument(),
+      );
+    });
+
+    it("announces a generation failure via an assertive alert", async () => {
+      const user = userEvent.setup();
+      server.use(
+        http.post("*/v1/tools/generate-schemas-from-openapi", () =>
+          HttpResponse.json(
+            { success: false, message: "OpenAPI spec server returned HTTP 502" },
+            { status: 502 },
+          ),
+        ),
+      );
+      renderForm();
+
+      await user.type(screen.getByLabelText(/URL/), "https://api.example.com/endpoint");
+      await user.click(screen.getByRole("button", { name: /Generate/i }));
+
+      const alert = await screen.findByRole("alert");
+      expect(alert).toHaveAttribute("aria-live", "assertive");
+      expect(alert).toHaveTextContent(/Couldn't fetch the OpenAPI spec/i);
+    });
+  });
+
   describe("Edit mode (tool prop provided)", () => {
     beforeEach(() => {
       server.use(
@@ -296,6 +416,30 @@ describe("ToolForm", () => {
     it("shows request type radio group for REST tools", () => {
       renderForm({ tool: createMockTool({ integrationType: "REST", requestType: "POST" }) });
       expect(screen.getByRole("radiogroup", { name: "Request type" })).toBeInTheDocument();
+    });
+
+    it("shows the Generate button when editing a REST tool", () => {
+      renderForm({ tool: createMockTool({ integrationType: "REST", requestType: "POST" }) });
+      expect(screen.getByRole("button", { name: /Generate/i })).toBeInTheDocument();
+    });
+
+    it("does not show the Generate button when editing an MCP tool", () => {
+      renderForm({
+        tool: createMockTool({ integrationType: "MCP", requestType: "STREAMABLEHTTP" }),
+      });
+      expect(screen.queryByRole("button", { name: /Generate/i })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /Regenerate/i })).not.toBeInTheDocument();
+    });
+
+    it("does not show the Add manually button when editing", () => {
+      renderForm({ tool: createMockTool() });
+      expect(screen.queryByRole("button", { name: /Add manually/i })).not.toBeInTheDocument();
+    });
+
+    it("always shows the input and output schema fields when editing, even with no schema", () => {
+      renderForm({ tool: createMockTool() });
+      expect(screen.getByLabelText(/Input schema/)).toBeInTheDocument();
+      expect(screen.getByLabelText(/Output schema/)).toBeInTheDocument();
     });
 
     it("calls onSuccess after successful tool update", async () => {

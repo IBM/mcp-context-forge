@@ -185,4 +185,53 @@ describe("toolsApi", () => {
       await expect(toolsApi.deactivate("tool-abc-123")).rejects.toThrow("HTTP 403");
     });
   });
+
+  describe("generateSchemasFromOpenapi", () => {
+    it("POSTs to /v1/tools/generate-schemas-from-openapi and returns the schemas", async () => {
+      const body = {
+        message: "Schemas generated successfully",
+        success: true,
+        input_schema: { type: "object" },
+        output_schema: null,
+        spec_url: "https://api.example.com/openapi.json",
+      };
+      mockFetch.mockResolvedValueOnce(
+        new Response(JSON.stringify(body), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+
+      const result = await toolsApi.generateSchemasFromOpenapi({
+        url: "https://api.example.com/v1/calculate",
+        request_type: "POST",
+      });
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining("/v1/tools/generate-schemas-from-openapi"),
+        expect.objectContaining({
+          method: "POST",
+          headers: expect.objectContaining({ "X-CSRF-Token": "test-csrf-token" }),
+          credentials: "same-origin", // pragma: allowlist secret
+        }),
+      );
+      expect(result).toEqual(body);
+    });
+
+    it("throws ApiError carrying the backend status on failure", async () => {
+      mockFetch.mockResolvedValueOnce(
+        new Response(JSON.stringify({ success: false, message: "blocked" }), {
+          status: 400,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+
+      await expect(
+        toolsApi.generateSchemasFromOpenapi({
+          url: "https://api.example.com/v1/calculate",
+          request_type: "POST",
+        }),
+      ).rejects.toThrow("HTTP 400");
+    });
+  });
 });

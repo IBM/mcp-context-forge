@@ -75,6 +75,10 @@
   "tools.form.schema.addManually": "+ Añadir manualmente",
   "tools.form.schema.specUrlLabel": "O proporcione una URL directa de especificación OpenAPI",
   "tools.form.schema.specUrlPlaceholder": "https://api.ejemplo.com/openapi.json",
+  "tools.form.schema.generatedFrom": "Generado a partir de {specUrl}",
+  "tools.form.schema.overwrite.title": "¿Reemplazar el esquema existente?",
+  "tools.form.schema.overwrite.description": "Generar desde OpenAPI sobrescribirá los esquemas de entrada y salida que ya has introducido. ¿Deseas continuar?",
+  "tools.form.schema.overwrite.confirm": "Reemplazar",
   "tools.form.inputSchema": "Esquema de entrada",
   "tools.form.outputSchema": "Esquema de salida",
   "tools.form.copyInputSchema": "Copiar esquema de entrada",
@@ -98,6 +102,11 @@
   "tools.form.error.invalidValue": "Valor no válido",
   "tools.form.error.generateSchemaFailed": "Error al generar el esquema",
   "tools.form.error.generateSchemaUrl": "Error al generar el esquema. Compruebe la URL e inténtelo de nuevo.",
+  "tools.form.error.generateSchema.ssrf": "La URL no es accesible desde la puerta de enlace (bloqueada por la protección SSRF)",
+  "tools.form.error.generateSchema.notFound": "La ruta {path} con el método {method} no está en la especificación OpenAPI",
+  "tools.form.error.generateSchema.fetchFailed": "No se pudo obtener la especificación OpenAPI: compruebe que la URL sea correcta y accesible",
+  "tools.form.error.generateSchema.specAuthRequired": "El punto de acceso de la especificación OpenAPI requiere autenticación (devolvió 401/403). La puerta de enlace obtiene la especificación sin credenciales: proporcione una URL directa a una especificación accesible o añada los esquemas manualmente.",
+  "tools.form.error.generateSchema.generic": "Algo salió mal al generar el esquema. Por favor, inténtelo de nuevo.",
   "tools.form.error.updateFailed": "Error al actualizar la herramienta. Por favor, inténtelo de nuevo.",
   "tools.form.error.createFailed": "Error al crear la herramienta. Por favor, inténtelo de nuevo."
 }
