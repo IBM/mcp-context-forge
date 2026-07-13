@@ -408,7 +408,7 @@ class TestLogout:
 
             # Setup blocklist service
             mock_service = MagicMock()
-            mock_service.revoke_token.return_value = True
+            mock_service.revoke_token = AsyncMock(return_value=True)
             mock_blocklist_service.return_value = mock_service
 
             # Mock jwt.decode inside the function

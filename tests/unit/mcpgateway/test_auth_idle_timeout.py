@@ -166,6 +166,8 @@ def _patched_settings(token_idle_timeout: int):
 
 def _make_blocklist_mock(*, last_activity_returns=None, last_activity_raises=None, update_activity_raises=False, revoke_raises=False):
     """Construct a configurable ``TokenBlocklistService`` mock."""
+    from unittest.mock import AsyncMock
+    
     mock = MagicMock()
     if last_activity_raises is not None:
         mock.get_last_activity.side_effect = last_activity_raises
@@ -176,9 +178,9 @@ def _make_blocklist_mock(*, last_activity_returns=None, last_activity_raises=Non
     else:
         mock.update_activity.return_value = True
     if revoke_raises:
-        mock.revoke_token.side_effect = RuntimeError("blocklist write failed")
+        mock.revoke_token = AsyncMock(side_effect=RuntimeError("blocklist write failed"))
     else:
-        mock.revoke_token.return_value = True
+        mock.revoke_token = AsyncMock(return_value=True)
     return mock
 
 

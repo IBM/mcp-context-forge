@@ -334,8 +334,8 @@ async def logout(request: Request, current_user: EmailUser = Depends(get_current
             token_expiry = datetime.fromtimestamp(exp, tz=timezone.utc) if exp else None
             last_activity_dt = datetime.fromtimestamp(last_activity, tz=timezone.utc) if last_activity else None
 
-            # Revoke token using blocklist service
-            blocklist_service = get_token_blocklist_service(db=db)
+            # Revoke token using blocklist service (don't pass db - service creates its own session)
+            blocklist_service = get_token_blocklist_service()
             success = await blocklist_service.revoke_token(jti=jti, revoked_by=user.email, reason="logout", token_expiry=token_expiry, last_activity=last_activity_dt)
 
             if not success:
