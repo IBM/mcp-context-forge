@@ -920,11 +920,11 @@ class TestPromptService:
         plugin_mgr.has_hooks_for.side_effect = lambda hook: hook in {PromptHookType.PROMPT_PRE_FETCH, PromptHookType.PROMPT_POST_FETCH}
 
         pre_payload = PromptPrehookPayload(prompt_id="1", args={"name": "Alice"})
-        pre_result = SimpleNamespace(modified_payload=pre_payload)
+        pre_result = SimpleNamespace(modified_payload=pre_payload, metadata=None)
 
         modified = PromptResult(messages=[Message(role=Role.ASSISTANT, content=TextContent(type="text", text="post"))], description="post")
         post_payload = PromptPosthookPayload(prompt_id="1", result=modified)
-        post_result = SimpleNamespace(modified_payload=post_payload)
+        post_result = SimpleNamespace(modified_payload=post_payload, metadata=None)
 
         plugin_mgr.invoke_hook = AsyncMock(side_effect=[(pre_result, {"ctx": 1}), (post_result, {"ctx": 1})])
 
@@ -956,6 +956,77 @@ class TestPromptService:
         assert global_ctx.user == "user@test.com"
         assert global_ctx.server_id == "server-1"
         assert global_ctx.tenant_id == "tenant-1"
+
+    @pytest.mark.asyncio
+    async def test_get_prompt_pre_and_post_fetch_hooks_receive_trace_extensions(self, prompt_service, test_db):
+        """G0: PROMPT_PRE_FETCH / PROMPT_POST_FETCH invoke_hook() calls must receive a CPEX
+        Extensions object carrying the active trace_id/span_id from the observability
+        ContextVars, so plugin hooks can correlate their execution with the request trace.
+        """
+        # Standard
+        from contextlib import contextmanager
+
+        # First-Party
+        from cpex.framework import GlobalContext, PromptHookType, PromptPosthookPayload, PromptPrehookPayload
+
+        from mcpgateway.services.observability_service import current_span_id, current_trace_id
+
+        db_prompt = _build_db_prompt(template="Hello, {{ name }}!")
+
+        server_match_result = MagicMock()
+        server_match_result.first.return_value = ("ok",)
+
+        test_db.execute = Mock(side_effect=[_make_execute_result(scalar=db_prompt), server_match_result])
+        prompt_service._apply_access_control = AsyncMock(side_effect=lambda q, *args, **kwargs: q)
+
+        plugin_mgr = MagicMock()
+        plugin_mgr.has_hooks_for.side_effect = lambda hook: hook in {PromptHookType.PROMPT_PRE_FETCH, PromptHookType.PROMPT_POST_FETCH}
+
+        pre_payload = PromptPrehookPayload(prompt_id="1", args={"name": "Alice"})
+        pre_result = SimpleNamespace(modified_payload=pre_payload, metadata=None)
+
+        modified = PromptResult(messages=[Message(role=Role.ASSISTANT, content=TextContent(type="text", text="post"))], description="post")
+        post_payload = PromptPosthookPayload(prompt_id="1", result=modified)
+        post_result = SimpleNamespace(modified_payload=post_payload, metadata=None)
+
+        plugin_mgr.invoke_hook = AsyncMock(side_effect=[(pre_result, {"ctx": 1}), (post_result, {"ctx": 1})])
+
+        @contextmanager
+        def _no_span(*_a, **_kw):
+            yield None
+
+        global_ctx = GlobalContext(request_id="req-1")
+
+        trace_token = current_trace_id.set("trace-g0-prompt")
+        span_token = current_span_id.set("span-g0-prompt")
+        try:
+            with (
+                patch("mcpgateway.services.prompt_service.create_span", _no_span),
+                patch("mcpgateway.services.prompt_service.metrics_buffer") as mock_get_buf,
+                patch.object(prompt_service, "_get_plugin_manager", AsyncMock(return_value=plugin_mgr)),
+            ):
+                mock_get_buf.record_prompt_metric = Mock()
+                await prompt_service.get_prompt(
+                    test_db,
+                    "1",
+                    {"name": "Bob"},
+                    user="user@test.com",
+                    server_id="server-1",
+                    tenant_id="tenant-1",
+                    plugin_context_table={"existing": True},
+                    plugin_global_context=global_ctx,
+                )
+        finally:
+            current_trace_id.reset(trace_token)
+            current_span_id.reset(span_token)
+
+        assert plugin_mgr.invoke_hook.call_count == 2  # pre-fetch and post-fetch
+        for hook_call in plugin_mgr.invoke_hook.await_args_list:
+            assert hook_call.args[0] in (PromptHookType.PROMPT_PRE_FETCH, PromptHookType.PROMPT_POST_FETCH)
+            extensions = hook_call.kwargs["extensions"]
+            assert extensions is not None
+            assert extensions.request.trace_id == "trace-g0-prompt"
+            assert extensions.request.span_id == "span-g0-prompt"
 
     @pytest.mark.asyncio
     async def test_get_prompt_post_hook_policy_does_not_duplicate_prompt_messages(self, prompt_service, test_db):
@@ -1009,7 +1080,7 @@ class TestPromptService:
         plugin_mgr.has_hooks_for.side_effect = lambda hook: hook == PromptHookType.PROMPT_PRE_FETCH
 
         pre_payload = PromptPrehookPayload(prompt_id="1", args={"name": "Alice"})
-        pre_result = SimpleNamespace(modified_payload=pre_payload)
+        pre_result = SimpleNamespace(modified_payload=pre_payload, metadata=None)
         plugin_mgr.invoke_hook = AsyncMock(return_value=(pre_result, {"ctx": 1}))
 
         @contextmanager

@@ -19,7 +19,10 @@ cpex = "2026-06-29T23:59:59Z"
 cpex-url-reputation = "2026-06-29T23:59:59Z"
 cpex-rate-limiter = "2026-06-29T23:59:59Z"
 cpex-encoded-exfil-detection = "2026-06-29T23:59:59Z"
-cpex-pii-filter = "2026-06-29T23:59:59Z"
+# cpex-pii-filter pinned past its normal soak cutoff: 0.3.6 (2026-07-07) is the first
+# release that emits result.metadata for tool_post_invoke, which tests/e2e/test_otel_plugin_metadata_e2e.py
+# depends on. Vetted ahead of the usual window for this reason.
+cpex-pii-filter = "2026-07-07T23:59:59Z"
 cpex-retry-with-backoff = "2026-06-29T23:59:59Z"
 cpex-secrets-detection = "2026-06-29T23:59:59Z"
 
@@ -273,7 +276,7 @@ templating = [
 # Install with: pip install mcp-contextforge-gateway[plugins]
 plugins = [
     "cpex-encoded-exfil-detection>=0.3.5",
-    "cpex-pii-filter>=0.3.5",
+    "cpex-pii-filter>=0.3.6",  # 0.3.6 is the first release that emits result.metadata on tool_post_invoke
     "cpex-rate-limiter>=0.1.6",
     "cpex-retry-with-backoff>=0.3.1,<0.3.2",
     "cpex-secrets-detection>=0.3.6",
