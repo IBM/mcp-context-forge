@@ -7,32 +7,81 @@ Unit tests for logout endpoint in auth router.
 """
 
 from datetime import datetime, timedelta, timezone
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import jwt
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
 from mcpgateway.config import get_settings
 from mcpgateway.main import app
 from mcpgateway.routers.auth import get_db
 from mcpgateway.auth import get_current_user
+from mcpgateway.db import Base, EmailUser
+import mcpgateway.db
 
 
 @pytest.fixture
-def mock_db():
-    """Mock database session."""
-    db = MagicMock()
-    return db
+def test_engine():
+    """Create in-memory SQLite engine with proper schema."""
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    return engine
 
 
 @pytest.fixture
-def mock_current_user():
-    """Mock current user."""
-    user = MagicMock()
-    user.email = "test@example.com"
+def test_session_factory(test_engine):
+    """Create session factory for test database."""
+    return sessionmaker(bind=test_engine)
+
+
+@pytest.fixture
+def mock_db(test_session_factory):
+    """Mock database session with proper schema."""
+    db = test_session_factory()
+    # Add test user
+    user = EmailUser(
+        email="test@example.com",
+        password_hash="x",
+        full_name="Test User",
+        is_admin=False,
+        is_active=True,
+        auth_provider="local",
+        email_verified_at=datetime.now(timezone.utc),
+    )
+    db.add(user)
+    db.commit()
+    yield db
+    db.close()
+
+
+@pytest.fixture
+def mock_current_user(mock_db):
+    """Mock current user from database."""
+    user = mock_db.query(EmailUser).filter_by(email="test@example.com").first()
     return user
+
+
+@pytest.fixture
+def setup_test_db(test_engine, test_session_factory):
+    """Setup test database for authentication middleware."""
+    original_session_local = mcpgateway.db.SessionLocal
+    original_engine = mcpgateway.db.engine
+    mcpgateway.db.SessionLocal = test_session_factory
+    mcpgateway.db.engine = test_engine
+    
+    yield
+    
+    mcpgateway.db.SessionLocal = original_session_local
+    mcpgateway.db.engine = original_engine
 
 
 @pytest.fixture
@@ -64,7 +113,7 @@ def valid_token():
 class TestLogoutEndpoint:
     """Tests for /auth/logout endpoint."""
 
-    def test_logout_success(self, mock_db, mock_current_user, valid_token):
+    def test_logout_success(self, setup_test_db, mock_db, mock_current_user, valid_token):
         """Test successful logout."""
         # Override FastAPI dependencies
         app.dependency_overrides[get_current_user] = lambda: mock_current_user
@@ -73,7 +122,7 @@ class TestLogoutEndpoint:
         try:
             with patch("mcpgateway.services.token_blocklist_service.get_token_blocklist_service") as mock_service:
                 mock_blocklist = MagicMock()
-                mock_blocklist.revoke_token.return_value = True
+                mock_blocklist.revoke_token = AsyncMock(return_value=True)
                 mock_service.return_value = mock_blocklist
 
                 client = TestClient(app)
@@ -94,7 +143,7 @@ class TestLogoutEndpoint:
             # Clean up overrides
             app.dependency_overrides.clear()
 
-    def test_logout_missing_authorization_header(self, mock_db):
+    def test_logout_missing_authorization_header(self, setup_test_db, mock_db):
         """Test logout without Authorization header."""
 
         def mock_auth_fail():
@@ -111,7 +160,7 @@ class TestLogoutEndpoint:
         finally:
             app.dependency_overrides.clear()
 
-    def test_logout_invalid_bearer_format(self, mock_db, mock_current_user):
+    def test_logout_invalid_bearer_format(self, setup_test_db, mock_db, mock_current_user):
         """Test logout with invalid Bearer format."""
         app.dependency_overrides[get_current_user] = lambda: mock_current_user
         app.dependency_overrides[get_db] = lambda: mock_db
@@ -127,7 +176,7 @@ class TestLogoutEndpoint:
         finally:
             app.dependency_overrides.clear()
 
-    def test_logout_token_without_jti(self, mock_db, mock_current_user):
+    def test_logout_token_without_jti(self, setup_test_db, mock_db, mock_current_user):
         """Test logout with token missing JTI."""
         settings = get_settings()
 
@@ -160,7 +209,7 @@ class TestLogoutEndpoint:
         finally:
             app.dependency_overrides.clear()
 
-    def test_logout_invalid_token_format(self, mock_db, mock_current_user):
+    def test_logout_invalid_token_format(self, setup_test_db, mock_db, mock_current_user):
         """Test logout with malformed token."""
         app.dependency_overrides[get_current_user] = lambda: mock_current_user
         app.dependency_overrides[get_db] = lambda: mock_db
@@ -175,7 +224,7 @@ class TestLogoutEndpoint:
         finally:
             app.dependency_overrides.clear()
 
-    def test_logout_revocation_failure(self, mock_db, mock_current_user, valid_token):
+    def test_logout_revocation_failure(self, setup_test_db, mock_db, mock_current_user, valid_token):
         """Test logout when token revocation fails."""
         app.dependency_overrides[get_current_user] = lambda: mock_current_user
         app.dependency_overrides[get_db] = lambda: mock_db
@@ -183,7 +232,7 @@ class TestLogoutEndpoint:
         try:
             with patch("mcpgateway.services.token_blocklist_service.get_token_blocklist_service") as mock_service:
                 mock_blocklist = MagicMock()
-                mock_blocklist.revoke_token.return_value = False
+                mock_blocklist.revoke_token = AsyncMock(return_value=False)
                 mock_service.return_value = mock_blocklist
 
                 client = TestClient(app)
@@ -194,7 +243,7 @@ class TestLogoutEndpoint:
         finally:
             app.dependency_overrides.clear()
 
-    def test_logout_unexpected_error(self, mock_db, mock_current_user, valid_token):
+    def test_logout_unexpected_error(self, setup_test_db, mock_db, mock_current_user, valid_token):
         """Test logout with unexpected error."""
         app.dependency_overrides[get_current_user] = lambda: mock_current_user
         app.dependency_overrides[get_db] = lambda: mock_db
@@ -211,7 +260,7 @@ class TestLogoutEndpoint:
         finally:
             app.dependency_overrides.clear()
 
-    def test_logout_with_secretstr_jwt_key(self, mock_db, mock_current_user, valid_token):
+    def test_logout_with_secretstr_jwt_key(self, setup_test_db, mock_db, mock_current_user, valid_token):
         """Test logout with SecretStr jwt_secret_key (covers line 244 in routers/auth.py)."""
         from pydantic import SecretStr
 
@@ -231,7 +280,7 @@ class TestLogoutEndpoint:
 
                 with patch("mcpgateway.services.token_blocklist_service.get_token_blocklist_service") as mock_service:
                     mock_blocklist = MagicMock()
-                    mock_blocklist.revoke_token.return_value = True
+                    mock_blocklist.revoke_token = AsyncMock(return_value=True)
                     mock_service.return_value = mock_blocklist
 
                     client = TestClient(app)
