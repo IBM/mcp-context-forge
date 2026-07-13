@@ -1451,6 +1451,212 @@ class TestBootstrapResourceAssignments:
 
                     mock_logger.error.assert_called_with("Failed to bootstrap resource assignments: Database error")
 
+    @pytest.mark.asyncio
+    async def test_resource_assignments_integrity_error_rollback(self, mock_settings, mock_db_session, mock_admin_user, mock_personal_team, mock_conn):
+        """Test IntegrityError handling with rollback and expunge (issue #4993)."""
+        from sqlalchemy.exc import IntegrityError
+
+        mock_admin_user.get_personal_team.return_value = mock_personal_team
+
+        # Mock unassigned tool
+        mock_tool = Mock()
+        mock_tool.team_id = None
+        mock_tool.owner_email = None
+        mock_tool.visibility = None
+        mock_tool.name = "test-tool"
+
+        def mock_query_handler(model):
+            query = MagicMock()
+            query.filter.return_value = query
+
+            if hasattr(model, "__name__") and model.__name__ == "EmailUser":
+                query.first.return_value = mock_admin_user
+            elif hasattr(model, "__name__") and model.__name__ == "Tool":
+                query.all.return_value = [mock_tool]
+            else:
+                query.all.return_value = []
+
+            return query
+
+        # First commit raises IntegrityError (concurrent worker assigned it first)
+        mock_db_session.query.side_effect = mock_query_handler
+        mock_db_session.commit.side_effect = IntegrityError("duplicate key", None, None)
+
+        with patch("mcpgateway.bootstrap_db.settings", mock_settings):
+            with patch("mcpgateway.bootstrap_db.Session", return_value=mock_db_session):
+                with patch("mcpgateway.db.EmailUser", Mock(__name__="EmailUser")):
+                    with patch("mcpgateway.db.Tool", Mock(__name__="Tool")):
+                        with patch("mcpgateway.db.Server", Mock(__name__="Server")):
+                            with patch("mcpgateway.db.Resource", Mock(__name__="Resource")):
+                                with patch("mcpgateway.db.Prompt", Mock(__name__="Prompt")):
+                                    with patch("mcpgateway.db.Gateway", Mock(__name__="Gateway")):
+                                        with patch("mcpgateway.db.A2AAgent", Mock(__name__="A2AAgent")):
+                                            with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
+                                                await bootstrap_resource_assignments(mock_conn)
+
+                                                # Verify rollback and expunge were called
+                                                mock_db_session.rollback.assert_called()
+                                                mock_db_session.expunge.assert_called_with(mock_tool)
+
+                                                # Verify debug log for skipped resource
+                                                mock_logger.debug.assert_called()
+                                                debug_call_args = mock_logger.debug.call_args[0][0]
+                                                assert "Skipping" in debug_call_args
+                                                assert "already assigned by concurrent worker" in debug_call_args
+
+    @pytest.mark.asyncio
+    async def test_resource_assignments_integrity_error_with_rename(self, mock_settings, mock_db_session, mock_admin_user, mock_personal_team, mock_conn):
+        """Test IntegrityError with renamed resource cleans up batch_assigned correctly."""
+        from sqlalchemy.exc import IntegrityError
+
+        mock_admin_user.get_personal_team.return_value = mock_personal_team
+
+        # Mock two unassigned tools with same name
+        mock_tool1 = Mock()
+        mock_tool1.team_id = None
+        mock_tool1.owner_email = None
+        mock_tool1.visibility = None
+        mock_tool1.name = "duplicate-tool"
+
+        mock_tool2 = Mock()
+        mock_tool2.team_id = None
+        mock_tool2.owner_email = None
+        mock_tool2.visibility = None
+        mock_tool2.name = "other-tool"
+
+        # Mock existing tool with same base name (will trigger rename)
+        mock_existing = Mock()
+        mock_existing.name = "duplicate-tool"
+        mock_existing.team_id = mock_personal_team.id
+        mock_existing.owner_email = mock_admin_user.email
+
+        call_count = {"query": 0}
+
+        def mock_query_handler(model):
+            query = MagicMock()
+            query.filter.return_value = query
+
+            if hasattr(model, "__name__") and model.__name__ == "EmailUser":
+                query.first.return_value = mock_admin_user
+            elif hasattr(model, "__name__") and model.__name__ == "Tool":
+                call_count["query"] += 1
+                if call_count["query"] == 1:
+                    # First query: return unassigned tools
+                    query.all.return_value = [mock_tool1, mock_tool2]
+                else:
+                    # Second query: return existing tool for conflict detection
+                    return query
+            else:
+                query.all.return_value = []
+
+            return query
+
+        commit_count = {"count": 0}
+
+        def mock_commit_side_effect():
+            commit_count["count"] += 1
+            if commit_count["count"] == 1:
+                # First commit (tool1) fails with IntegrityError
+                raise IntegrityError("duplicate key", None, None)
+            # Second commit (tool2) succeeds
+
+        mock_db_session.query.side_effect = mock_query_handler
+        mock_db_session.commit.side_effect = mock_commit_side_effect
+
+        with patch("mcpgateway.bootstrap_db.settings", mock_settings):
+            with patch("mcpgateway.bootstrap_db.Session", return_value=mock_db_session):
+                with patch("mcpgateway.db.EmailUser", Mock(__name__="EmailUser")):
+                    with patch("mcpgateway.db.Tool", Mock(__name__="Tool")):
+                        with patch("mcpgateway.db.Server", Mock(__name__="Server")):
+                            with patch("mcpgateway.db.Resource", Mock(__name__="Resource")):
+                                with patch("mcpgateway.db.Prompt", Mock(__name__="Prompt")):
+                                    with patch("mcpgateway.db.Gateway", Mock(__name__="Gateway")):
+                                        with patch("mcpgateway.db.A2AAgent", Mock(__name__="A2AAgent")):
+                                            with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
+                                                await bootstrap_resource_assignments(mock_conn)
+
+                                                # Verify rollback and expunge were called for failed resource
+                                                assert mock_db_session.rollback.call_count >= 1
+                                                assert mock_db_session.expunge.call_count >= 1
+
+                                                # Verify second tool was processed (commit called twice)
+                                                assert commit_count["count"] == 2
+
+    @pytest.mark.asyncio
+    async def test_resource_assignments_multiple_integrity_errors(self, mock_settings, mock_db_session, mock_admin_user, mock_personal_team, mock_conn):
+        """Test multiple IntegrityErrors in same batch are handled independently."""
+        from sqlalchemy.exc import IntegrityError
+
+        mock_admin_user.get_personal_team.return_value = mock_personal_team
+
+        # Mock three unassigned tools
+        mock_tool1 = Mock()
+        mock_tool1.team_id = None
+        mock_tool1.owner_email = None
+        mock_tool1.visibility = None
+        mock_tool1.name = "tool-1"
+
+        mock_tool2 = Mock()
+        mock_tool2.team_id = None
+        mock_tool2.owner_email = None
+        mock_tool2.visibility = None
+        mock_tool2.name = "tool-2"
+
+        mock_tool3 = Mock()
+        mock_tool3.team_id = None
+        mock_tool3.owner_email = None
+        mock_tool3.visibility = None
+        mock_tool3.name = "tool-3"
+
+        def mock_query_handler(model):
+            query = MagicMock()
+            query.filter.return_value = query
+
+            if hasattr(model, "__name__") and model.__name__ == "EmailUser":
+                query.first.return_value = mock_admin_user
+            elif hasattr(model, "__name__") and model.__name__ == "Tool":
+                query.all.return_value = [mock_tool1, mock_tool2, mock_tool3]
+            else:
+                query.all.return_value = []
+
+            return query
+
+        commit_count = {"count": 0}
+
+        def mock_commit_side_effect():
+            commit_count["count"] += 1
+            if commit_count["count"] in [1, 3]:
+                # First and third commits fail (tool-1 and tool-3)
+                raise IntegrityError("duplicate key", None, None)
+            # Second commit succeeds (tool-2)
+
+        mock_db_session.query.side_effect = mock_query_handler
+        mock_db_session.commit.side_effect = mock_commit_side_effect
+
+        with patch("mcpgateway.bootstrap_db.settings", mock_settings):
+            with patch("mcpgateway.bootstrap_db.Session", return_value=mock_db_session):
+                with patch("mcpgateway.db.EmailUser", Mock(__name__="EmailUser")):
+                    with patch("mcpgateway.db.Tool", Mock(__name__="Tool")):
+                        with patch("mcpgateway.db.Server", Mock(__name__="Server")):
+                            with patch("mcpgateway.db.Resource", Mock(__name__="Resource")):
+                                with patch("mcpgateway.db.Prompt", Mock(__name__="Prompt")):
+                                    with patch("mcpgateway.db.Gateway", Mock(__name__="Gateway")):
+                                        with patch("mcpgateway.db.A2AAgent", Mock(__name__="A2AAgent")):
+                                            with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
+                                                await bootstrap_resource_assignments(mock_conn)
+
+                                                # Verify rollback called twice (for tool-1 and tool-3)
+                                                assert mock_db_session.rollback.call_count == 2
+
+                                                # Verify expunge called twice
+                                                assert mock_db_session.expunge.call_count == 2
+
+                                                # Verify all three commits were attempted
+                                                assert commit_count["count"] == 3
+
+                                                # Verify success message logged with 1 assigned resource
+                                                mock_logger.info.assert_any_call("Successfully assigned 1 orphaned resources to admin team")
+
 
 class TestMain:
     """Test main function."""
