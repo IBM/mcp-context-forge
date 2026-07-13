@@ -12,7 +12,7 @@ dependencies = [
     "fastmcp>=3.3.0",
     "httpx>=0.28.1",
     "pydantic>=2.13.4",
-    "typing-extensions>=4.15.0",
+    "typing-extensions>=4.16.0",
 ]
 
 [project.optional-dependencies]
@@ -28,12 +28,12 @@ html = [
     "beautifulsoup4>=4.15.0",
     "html2text>=2025.4.15",
     "lxml>=6.1.1",
-    "markdownify>=1.2.2",
+    "markdownify>=1.2.3",
     "readability-lxml>=0.8.4.1",
 ]
 documents = [
     "openpyxl>=3.1.5",
-    "PyMuPDF>=1.27.2.3",
+    "PyMuPDF>=1.28.0",
     "python-docx>=1.2.0",
     "python-pptx>=1.0.2",
 ]
@@ -42,10 +42,10 @@ full = [
     "chardet>=7.4.3",
     "html2text>=2025.4.15",
     "lxml>=6.1.1",
-    "markdownify>=1.2.2",
+    "markdownify>=1.2.3",
     "openpyxl>=3.1.5",
-    "Pillow>=12.2.0",
-    "PyMuPDF>=1.27.2.3",
+    "Pillow>=12.3.0",
+    "PyMuPDF>=1.28.0",
     "python-docx>=1.2.0",
     "python-pptx>=1.0.2",
     "readability-lxml>=0.8.4.1",
