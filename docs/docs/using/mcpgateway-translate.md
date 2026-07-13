@@ -561,6 +561,8 @@ Expose a local gRPC server via HTTP/SSE:
 python3 -m mcpgateway.translate --grpc localhost:50051 --port 9000
 ```
 
+The gRPC target is validated against the platform SSRF settings before any channel is opened. With the default `SSRF_ALLOW_LOCALHOST=false` and `SSRF_ALLOW_PRIVATE_NETWORKS=false`, a target like `localhost:50051` is rejected with a `GrpcServiceError`. To allow a loopback target set `SSRF_ALLOW_LOCALHOST=true`; to allow a specific private range add it to `SSRF_ALLOWED_NETWORKS` (see the [1.0.0-RC3 upgrade notes](../manage/upgrade-to-1.0.0-rc3.md) for the full table of SSRF defaults).
+
 ### gRPC CLI Options
 
 | Flag | Description | Example |
