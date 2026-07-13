@@ -869,8 +869,10 @@ the same way: pass `extensions=build_request_extensions()` into `invoke_hook()`,
 
 This consumer only records something if the plugin actually populates `result.metadata`. The
 bundled PII-filter plugin (`cpex-pii-filter`) emits `result.metadata["pii_filter"]` starting from
-its own `0.3.6` release, and the bundled Secrets Detection plugin (`cpex-secrets-detection`) emits
-`result.metadata["secrets_detection"]` starting from its own `0.3.7` release — check
+its own `0.3.6` release, the bundled Secrets Detection plugin (`cpex-secrets-detection`) emits
+`result.metadata["secrets_detection"]` starting from its own `0.3.7` release, and the bundled
+Encoded Exfil Detector plugin (`cpex-encoded-exfil-detection`) emits
+`result.metadata["encoded_exfil_detection"]` starting from its own `0.3.6` release — check
 `pyproject.toml`/`uv.lock` for the currently pinned version before assuming this data is available
 end-to-end. Note that emitting metrics requires the plugin to actually run: a plugin whose
 `plugins/config.yaml` block is `mode: "disabled"` is never instantiated (its hooks never fire), so
@@ -893,6 +895,9 @@ contract table above.
 | `secrets_detection` | `total_masked` | `int` | Count of matches redacted/masked |
 | `secrets_detection` | `total_blocked` | `int` | Count of matches that triggered a block (`block_on_detection`) |
 | `secrets_detection` | `secret_types` | `list[str]` | Secret category names detected (e.g. `aws_key`, `api_token`) — never the matched value |
+| `encoded_exfil_detection` | `total_detections` | `int` | Count of encoded-payload matches found |
+| `encoded_exfil_detection` | `encoding_types` | `list[str]` | Encoding names detected (e.g. `base64`, `hex`) — never the matched/decoded content |
+| `encoded_exfil_detection` | `redacted` | `bool` | Whether the redact branch fired for this result (present only when it did) |
 
 ## Best Practices
 

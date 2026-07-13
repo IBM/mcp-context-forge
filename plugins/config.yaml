@@ -802,12 +802,30 @@ plugins:
       block_on_detection: true
       min_findings_to_block: 1
 
-  # Encoded Exfil Detector - detect suspicious encoded payloads in prompts, tool outputs, and resources
+  # Encoded Exfil Detector (CPEX pilot) — Rust-backed detector for suspicious encoded payloads in
+  # prompts, tool outputs, and resources, trace-aware. Reads extensions.request.trace_id (see
+  # mcpgateway/plugins/utils.py:build_request_extensions) and, when a trace is active, emits
+  # result.metadata["encoded_exfil_detection"] (counts/encoding-type-names only, never raw matched
+  # content) for mcpgateway/plugins/utils.py:record_plugin_metrics() to persist as a dedicated
+  # `plugin.metrics.encoded_exfil_detection` observability span. Requires
+  # cpex-encoded-exfil-detection>=0.3.6 (see pyproject.toml) -- earlier releases do not emit
+  # metrics.
+  #
+  # Left mode: "disabled" deliberately, unlike PIIFilter: this plugin ships with
+  # block_on_detection: true and min_findings_to_block: 1 below, so flipping mode to "sequential"
+  # would not just newly enable metrics -- per cpex.framework.PluginMode, "disabled" plugins are
+  # never instantiated or registered (see cpex/framework/manager.py load_plugins(): `if
+  # plugin_config.mode != PluginMode.DISABLED: ... else: logger.info("Plugin: %s is disabled.
+  # Ignoring.", ...)`), so today this plugin's hooks never run at all. Enabling it would newly
+  # start BLOCKING tool calls/prompts/resources containing encoded-payload-shaped strings for
+  # every existing deployment using the default config.yaml -- a materially bigger behavior/
+  # security-posture change than PIIFilter (whose block_on_detection defaults to false even once
+  # enabled). That is an opt-in decision for operators to make explicitly; do not flip silently.
   - name: "EncodedExfilDetector"
     kind: "cpex_encoded_exfil_detection.EncodedExfilDetectorPlugin"
+    version: "0.3.6"
     hooks: ["prompt_pre_fetch", "tool_post_invoke", "resource_post_fetch"]
     tags: ["security", "exfiltration", "dlp", "encoding"]
-    # mode: "sequential"
     mode: "disabled"
     priority: 52
     conditions: []
