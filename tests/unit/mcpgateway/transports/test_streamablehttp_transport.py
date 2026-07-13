@@ -1177,8 +1177,8 @@ async def test_list_tools_projects_mcp_apps_meta(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_list_tools_apps_client_includes_app_helper_by_original_name(monkeypatch):
-    """Apps-capable clients need app-only helper tools under the names the iframe calls."""
+async def test_list_tools_apps_client_still_hides_app_only_helpers(monkeypatch):
+    """Self-declared Apps capability must not expose app-only helpers via normal tools/list."""
     # Standard
     from unittest.mock import PropertyMock
 
@@ -1230,9 +1230,9 @@ async def test_list_tools_apps_client_includes_app_helper_by_original_name(monke
         finally:
             server_id_var.reset(token)
 
-    assert [tool.name for tool in result] == ["mcp-apps-open-contact-form", "submit_contact_form"]
-    payload = result[1].model_dump(by_alias=True, exclude_none=True)
-    assert payload["_meta"]["ui"]["visibility"] == ["app"]
+    assert [tool.name for tool in result] == ["mcp-apps-open-contact-form"]
+    payload = result[0].model_dump(by_alias=True, exclude_none=True)
+    assert payload["_meta"]["ui"]["visibility"] == ["model"]
 
 
 @pytest.mark.asyncio
