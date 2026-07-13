@@ -26,3 +26,15 @@ export interface PromptGroup {
   gatewayId?: string | null;
   prompts: Prompt[];
 }
+
+export interface PromptFormData {
+  name: string;
+  visibility: string;
+  template: string;
+  arguments: string;
+  description?: string;
+  tags?: string;
+  teamId?: string;
+}
+
+export type PromptFormErrors = Partial<Record<keyof PromptFormData | "submit", string>>;

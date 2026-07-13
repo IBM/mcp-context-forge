@@ -1,10 +1,17 @@
-import { describe, it, expect, beforeEach } from "vitest";
-import { screen, waitFor, within, fireEvent } from "@testing-library/react";
+import { describe, it, expect, beforeEach, vi } from "vitest";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { server } from "@/test/mocks/server";
 import { renderWithProviders } from "@/test/test-utils";
+import { useAuthContext } from "@/auth/AuthContext";
 import { Prompts } from "./Prompts";
+
+vi.mock("@/auth/AuthContext", () => ({
+  useAuthContext: vi.fn(),
+}));
+
+const mockUseAuthContext = vi.mocked(useAuthContext);
 import type { Prompt } from "@/types/prompts";
 
 function createMockPrompt(overrides: Partial<Prompt> = {}): Prompt {
@@ -31,6 +38,9 @@ function getPromptCard(label: string): HTMLElement {
 describe("Prompts", () => {
   beforeEach(() => {
     server.resetHandlers();
+    mockUseAuthContext.mockReturnValue({ selectedTeamId: null } as ReturnType<
+      typeof useAuthContext
+    >);
   });
 
   it("renders the add prompts card", async () => {
@@ -46,6 +56,147 @@ describe("Prompts", () => {
       screen.getByText(/Connect a MCP server to load prompts automatically/i),
     ).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /More options for/i })).not.toBeInTheDocument();
+  });
+
+  it("renders the add prompts card when the response object has no prompts", async () => {
+    server.use(http.get("/prompts", () => HttpResponse.json({})));
+
+    renderWithProviders(<Prompts />);
+
+    expect(await screen.findByRole("button", { name: "Add prompts" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /More options for/i })).not.toBeInTheDocument();
+  });
+
+  it("shows the prompt form when the add card is clicked", async () => {
+    const user = userEvent.setup();
+    server.use(http.get("/prompts", () => HttpResponse.json([])));
+
+    renderWithProviders(<Prompts />);
+
+    const addPromptsButton = await screen.findByRole("button", { name: "Add prompts" });
+    await user.click(addPromptsButton);
+
+    expect(screen.getByRole("heading", { name: "Add prompt" })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByLabelText(/name/i)).toHaveFocus();
+    });
+  });
+
+  it("shows the prompt form when the add card is activated by keyboard", async () => {
+    const user = userEvent.setup();
+    server.use(http.get("/prompts", () => HttpResponse.json([])));
+
+    renderWithProviders(<Prompts />);
+
+    const addPromptsButton = await screen.findByRole("button", { name: "Add prompts" });
+    addPromptsButton.focus();
+    await user.keyboard("{Enter}");
+
+    expect(screen.getByRole("heading", { name: "Add prompt" })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByLabelText(/name/i)).toHaveFocus();
+    });
+  });
+
+  it("ignores non-activation keys on the add prompts card", async () => {
+    const user = userEvent.setup();
+    server.use(http.get("/prompts", () => HttpResponse.json([])));
+
+    renderWithProviders(<Prompts />);
+
+    const addPromptsButton = await screen.findByRole("button", { name: "Add prompts" });
+    addPromptsButton.focus();
+    await user.keyboard("a");
+
+    expect(screen.queryByRole("heading", { name: "Add prompt" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add prompts" })).toBeInTheDocument();
+  });
+
+  it("returns to the prompt grid when the form is canceled", async () => {
+    const user = userEvent.setup();
+    server.use(http.get("/prompts", () => HttpResponse.json([])));
+
+    renderWithProviders(<Prompts />);
+
+    await user.click(await screen.findByRole("button", { name: "Add prompts" }));
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+
+    const addPromptsButton = screen.getByRole("button", { name: "Add prompts" });
+    expect(addPromptsButton).toBeInTheDocument();
+    await waitFor(() => {
+      expect(addPromptsButton).toHaveFocus();
+    });
+  });
+
+  it("hides the prompt form and refetches prompts after a successful create", async () => {
+    const user = userEvent.setup();
+    let promptListRequests = 0;
+    server.use(
+      http.get("/prompts", () => {
+        promptListRequests += 1;
+        return HttpResponse.json([]);
+      }),
+      http.post("/prompts", () =>
+        HttpResponse.json({
+          id: "prompt-1",
+          name: "Greeting prompt",
+        }),
+      ),
+    );
+
+    renderWithProviders(<Prompts />);
+
+    const addPromptsButton = await screen.findByRole("button", { name: "Add prompts" });
+    await user.click(addPromptsButton);
+    await user.type(screen.getByLabelText(/name/i), "Greeting prompt");
+    fireEvent.change(screen.getByLabelText(/template/i), {
+      target: { value: "Hello {{ name }}" },
+    });
+    await user.click(screen.getByRole("button", { name: "Add prompt" }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole("heading", { name: "Add prompt" })).not.toBeInTheDocument();
+    });
+    const addPromptsButtonAfterSubmit = screen.getByRole("button", { name: "Add prompts" });
+    expect(addPromptsButtonAfterSubmit).toBeInTheDocument();
+    await waitFor(() => {
+      expect(addPromptsButtonAfterSubmit).toHaveFocus();
+    });
+    expect(promptListRequests).toBeGreaterThan(1);
+  });
+
+  it("renders array prompt responses as REST prompt badges with description tooltips", async () => {
+    server.use(
+      http.get("/prompts", () =>
+        HttpResponse.json([
+          {
+            id: "prompt-1",
+            name: "summary_prompt",
+            displayName: "Summarize document",
+            originalName: "summary_original",
+            description: "Turns long text into a short summary.",
+            tags: [{ id: "tag-1", label: "summary" }],
+            arguments: [{ name: "content", required: true }],
+          },
+        ]),
+      ),
+    );
+
+    renderWithProviders(<Prompts />);
+
+    expect(await screen.findByText("REST prompts")).toBeInTheDocument();
+    const restCard = getPromptCard("REST prompts");
+    expect(within(restCard).getByText("Summarize document")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "More options for REST prompts" }),
+    ).toBeInTheDocument();
+
+    const describedTrigger = within(restCard).getByText("Summarize document").closest("button");
+    expect(describedTrigger).not.toBeNull();
+    describedTrigger?.focus();
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(
+      "Turns long text into a short summary.",
+    );
   });
 
   it("renders loading state", () => {
@@ -120,6 +271,9 @@ describe("Prompts", () => {
         originalName: undefined,
         gatewayId: null,
         gatewaySlug: null,
+        description: "   ",
+        tags: undefined,
+        arguments: undefined,
       }),
     ];
 
