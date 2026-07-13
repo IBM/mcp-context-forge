@@ -253,6 +253,8 @@ class TestToolServiceMetricsException:
 
         with (
             _setup_cache_for_invoke(tp),
+            patch.object(tool_service, "_load_invocable_tools", return_value=[MagicMock(enabled=True, reachable=True, gateway=None)]),
+            patch.object(tool_service, "_build_tool_cache_payload", return_value={"tool": tp, "gateway": None}),
             patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
             patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc,
             patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace,

@@ -276,9 +276,9 @@ async def test_full_payload_generation_with_mock_db():
         # Verify backend configuration
         server1 = user1_config["virtual_hosts"]["s1"]
         assert "backends" in server1
-        assert "gateway-1" in server1["backends"], "backends must be keyed by gateway slug"
+        assert "g1" in server1["backends"], "backends must be keyed by gateway ID"
 
-        backend = server1["backends"]["gateway-1"]
+        backend = server1["backends"]["g1"]
         assert backend["name"] == "Gateway 1"
         assert backend["url"] == "http://localhost:9000"
         assert backend["transport"] == "STREAMABLEHTTP"
@@ -294,7 +294,7 @@ async def test_full_payload_generation_with_mock_db():
         # Own private server exists but has no backend associations, so it
         # is omitted from the payload (no publishable backends).
         assert "s2" not in user2_config["virtual_hosts"]
-        user2_backend = user2_config["virtual_hosts"]["s1"]["backends"]["gateway-1"]
+        user2_backend = user2_config["virtual_hosts"]["s1"]["backends"]["g1"]
         assert user2_backend["allowed_tool_names"] == ["public_tool", "team2_tool"]
         assert user2_backend["tool_name_aliases"] == {"Public.Tool": "public_tool", "Team2_Tool": "team2_tool"}
 
@@ -302,7 +302,7 @@ async def test_full_payload_generation_with_mock_db():
         user3_config = payload["user3@example.com"]
         assert "s1" in user3_config["virtual_hosts"]
         assert "s2" not in user3_config["virtual_hosts"]
-        user3_backend = user3_config["virtual_hosts"]["s1"]["backends"]["gateway-1"]
+        user3_backend = user3_config["virtual_hosts"]["s1"]["backends"]["g1"]
         assert user3_backend["allowed_tool_names"] == ["public_tool"]
         assert user3_backend["tool_name_aliases"] == {"Public.Tool": "public_tool"}
 
@@ -424,6 +424,38 @@ def test_create_payload_excludes_non_streamable_gateways():
 
     # The SSE backend is excluded and the now-backendless server is omitted.
     assert result["user@example.com"]["virtual_hosts"] == {}
+
+
+def test_create_payload_keeps_gateways_with_the_same_slug():
+    """Gateway IDs prevent same-slug streamable backends from overwriting each other."""
+    from mcpgateway.services.dataplane_publisher import DataplanePublisherService
+
+    service = DataplanePublisherService()
+    data = {
+        "user@example.com": {
+            "servers": [
+                {
+                    "id": "server1",
+                    "backend_items": {
+                        "gateway1": {"tools": ["tool1"], "resources": [], "prompts": []},
+                        "gateway2": {"tools": ["tool2"], "resources": [], "prompts": []},
+                    },
+                }
+            ],
+            "gateways": [
+                {"id": "gateway1", "slug": "shared-name", "name": "Shared Name", "url": "http://one.example/mcp", "transport": "STREAMABLEHTTP", "passthrough_headers": []},
+                {"id": "gateway2", "slug": "shared-name", "name": "Shared Name", "url": "http://two.example/mcp", "transport": "STREAMABLEHTTP", "passthrough_headers": []},
+            ],
+            "prompts": [],
+            "resources": [],
+        }
+    }
+
+    backends = service.create_payload(data)["user@example.com"]["virtual_hosts"]["server1"]["backends"]
+
+    assert set(backends) == {"gateway1", "gateway2"}
+    assert backends["gateway1"]["url"] == "http://one.example/mcp"
+    assert backends["gateway2"]["url"] == "http://two.example/mcp"
 
 
 def test_create_payload_normalizes_null_passthrough_headers():
