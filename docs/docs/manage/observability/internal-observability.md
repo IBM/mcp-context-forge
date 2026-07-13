@@ -874,8 +874,10 @@ its own `0.3.6` release, the bundled Secrets Detection plugin (`cpex-secrets-det
 Encoded Exfil Detector plugin (`cpex-encoded-exfil-detection`) emits
 `result.metadata["encoded_exfil_detection"]` starting from its own `0.3.6` release, and the
 bundled URL Reputation plugin (`cpex-url-reputation`) emits `result.metadata["url_reputation"]`
-starting from its own `0.3.5` release — check `pyproject.toml`/`uv.lock` for the currently pinned
-version before assuming this data is available end-to-end. Note that emitting metrics requires
+starting from its own `0.3.5` release, and the bundled Rate Limiter plugin (`cpex-rate-limiter`)
+emits `result.metadata["rate_limiter"]` starting from its own `0.1.7` release — check
+`pyproject.toml`/`uv.lock` for the currently pinned version before assuming this data is available
+end-to-end. Note that emitting metrics requires
 the plugin to actually run: a plugin whose
 `plugins/config.yaml` block is `mode: "disabled"` is never instantiated (its hooks never fire), so
 no metadata is ever produced regardless of the pinned version.
@@ -903,6 +905,9 @@ contract table above.
 | `url_reputation` | `total_checked` | `int` | Always `1` — `resource_pre_fetch` checks one URL per call |
 | `url_reputation` | `total_blocked` | `int` | `0` or `1` — whether this URL tripped a block |
 | `url_reputation` | `reputation_categories` | `list[str]` | Violation-reason slugs for this URL (e.g. `blocked_domain`, `insecure_scheme`, `high_entropy_domain`, `illegal_tld`, `unicode_spoofing`, `blocked_pattern`, `malformed_url`, `malformed_domain`, `internal_error`, `other`) — empty when allowed, never the raw URL/domain |
+| `rate_limiter` | `allowed` | `int` | `1` if this call was allowed through, `0` otherwise — per-call, not cumulative (`prompt_pre_fetch`/`tool_pre_invoke` each evaluate one request at a time) |
+| `rate_limiter` | `throttled` | `int` | `1` if this call was throttled/rejected, `0` otherwise — per-call, mutually exclusive with `allowed` |
+| `rate_limiter` | `backend` | `str` | Which limiter backend served this call — `redis` or `memory` |
 
 ## Best Practices
 

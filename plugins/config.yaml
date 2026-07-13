@@ -277,9 +277,28 @@ plugins:
     conditions: []
     config: {}
 
-  # Rate limiter (cpex-rate-limiter package)
+  # Rate limiter (cpex-rate-limiter package) — Rust-backed request rate limiter (fixed-window,
+  # redis or in-memory backend), trace-aware. Reads extensions.request.trace_id (see
+  # mcpgateway/plugins/utils.py:build_request_extensions) and, when a trace is active, emits
+  # result.metadata["rate_limiter"] (per-call allowed/throttled 0-or-1 values plus backend, since
+  # prompt_pre_fetch/tool_pre_invoke each evaluate one request at a time -- never the request
+  # identity/key itself) for mcpgateway/plugins/utils.py:record_plugin_metrics() to persist as a
+  # dedicated `plugin.metrics.rate_limiter` observability span. Requires
+  # cpex-rate-limiter>=0.1.7 (see pyproject.toml) -- earlier releases do not emit metrics.
+  #
+  # Left mode: "disabled" deliberately, unlike PIIFilter: this plugin ships with by_user/by_tenant
+  # limits below and hooks prompt_pre_fetch/tool_pre_invoke, so flipping mode to "sequential"
+  # would not just newly enable metrics -- per cpex.framework.PluginMode, "disabled" plugins are
+  # never instantiated or registered (see cpex/framework/manager.py load_plugins(): `if
+  # plugin_config.mode != PluginMode.DISABLED: ... else: logger.info("Plugin: %s is disabled.
+  # Ignoring.", ...)`), so today this plugin's hooks never run at all. Enabling it would newly
+  # start THROTTLING prompts/tool calls for every existing deployment using the default
+  # config.yaml once by_user/by_tenant limits are exceeded -- a materially bigger behavior change
+  # than PIIFilter (whose block_on_detection defaults to false even once enabled). That is an
+  # opt-in decision for operators to make explicitly; do not flip silently.
   - name: "RateLimiterPlugin"
     kind: "cpex_rate_limiter.RateLimiterPlugin"
+    version: "0.1.7"
     hooks: ["prompt_pre_fetch", "tool_pre_invoke"]
     tags: ["limits", "throttle"]
     mode: "disabled"
