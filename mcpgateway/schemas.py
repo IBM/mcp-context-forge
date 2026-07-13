@@ -1719,12 +1719,17 @@ class ToolInvocation(BaseModelWithConfigDict):
         >>> tool_underscore.name
         '_5gpt_query'
 
-        >>> # Invalid: Tool name starting with hyphen
+        >>> # Valid: Tool name starting with hyphen (per MCP spec)
+        >>> tool_hyphen = ToolInvocation(name="-tool.name", arguments={})
+        >>> tool_hyphen.name
+        '-tool.name'
+
+        >>> # Invalid: Tool name with slash
         >>> try:
-        ...     ToolInvocation(name="-invalid_tool", arguments={})
+        ...     ToolInvocation(name="namespace/tool", arguments={})
         ... except ValidationError as e:
-        ...     print("Validation failed: Must start with letter, number, or underscore")
-        Validation failed: Must start with letter, number, or underscore
+        ...     print("Validation failed: Slashes not allowed")
+        Validation failed: Slashes not allowed
 
         >>> # Valid: Complex but not too deep arguments
         >>> args = {"level1": {"level2": {"level3": {"data": "value"}}}}
