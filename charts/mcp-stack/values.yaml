@@ -85,7 +85,7 @@ mcpContextForge:
 
   image:
     repository: ghcr.io/ibm/mcp-context-forge
-    tag: "1.0.5"                # PRODUCTION: pin a specific immutable tag (e.g. "1.0.0")
+    tag: "v1.0.5"                # PRODUCTION: pin a specific immutable tag (e.g. "v1.0.0")
     pullPolicy: Always          # Always pull to ensure latest security patches
 
   # Service that fronts the gateway
@@ -1049,7 +1049,7 @@ migration:
   # Use same image as mcpgateway
   image:
     repository: ghcr.io/ibm/mcp-context-forge
-    tag: "1.0.5"                            # Should match mcpContextForge.image.tag
+    tag: "v1.0.5"                            # Should match mcpContextForge.image.tag
     pullPolicy: Always                      # Always pull to ensure latest security patches
 
   # Resource limits for the migration job
