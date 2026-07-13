@@ -353,6 +353,7 @@ def compute_passthrough_headers_cached(
     allowed_headers: List[str],
     gateway_auth_type: Optional[str] = None,
     gateway_passthrough_headers: Optional[List[str]] = None,
+    is_token_exchange: bool = False,
 ) -> Dict[str, str]:
     """Compute passthrough headers without database query.
 
@@ -368,6 +369,10 @@ def compute_passthrough_headers_cached(
         allowed_headers: List of header names allowed to pass through (from GlobalConfig).
         gateway_auth_type: The gateway's auth_type (basic, bearer, oauth, none) if applicable.
         gateway_passthrough_headers: Gateway-specific passthrough headers override.
+        is_token_exchange: True when base_headers["Authorization"] was produced by a
+            token-exchange resolver. Blocks the X-Upstream-Authorization rename and the
+            auth_type="none" client-Authorization passthrough from overwriting it, since
+            either would let a caller replace the exchanged token with an arbitrary one.
 
     Returns:
         Combined dictionary of base headers plus allowed passthrough headers.
@@ -393,7 +398,7 @@ def compute_passthrough_headers_cached(
     request_headers_lower = {k.lower(): v for k, v in request_headers.items()} if request_headers else {}
     upstream_auth = request_headers_lower.get("x-upstream-authorization")
 
-    if upstream_auth:
+    if upstream_auth and not is_token_exchange:
         try:
             sanitized_value = sanitize_header_value(upstream_auth)
             if sanitized_value:
@@ -401,7 +406,7 @@ def compute_passthrough_headers_cached(
                 logger.debug("Renamed X-Upstream-Authorization to Authorization for upstream passthrough")
         except Exception as e:
             logger.warning(f"Failed to sanitize X-Upstream-Authorization header: {e}")
-    elif gateway_auth_type == "none":
+    elif gateway_auth_type == "none" and not is_token_exchange:
         # When gateway has no auth, pass through client's Authorization if present
         client_auth = request_headers_lower.get("authorization")
         if client_auth and "authorization" not in [h.lower() for h in base_headers.keys()]:

@@ -169,6 +169,31 @@ class MyPlugin(PluginBase):
             pass
 ```
 
+## Migrating OAuth Gateways to Token Exchange
+
+[RFC 8693 Token Exchange](../architecture/oauth-design.md#token-exchange-rfc-8693--on-behalf-of) (`grant_type: "token-exchange"`) is a strictly **opt-in** OAuth grant for gateways. It is a distinct configuration path from the OAuth flows described in [OAuth 2.0 Integration Design](../architecture/oauth-design.md).
+
+### Impact on Existing Gateways
+
+Existing gateways configured with `grant_type: "client_credentials"`, `"authorization_code"`, or `"password"` are **unaffected**. Token exchange is only activated when a gateway's `oauth_config.grant_type` is explicitly set to `"token-exchange"`.
+
+### Converting a Gateway to On-Behalf-Of
+
+1. Update the gateway's `oauth_config` to set `"grant_type": "token-exchange"`.
+2. Add the required `"target_audience"` field, identifying the downstream resource.
+3. Confirm the Authorization Server at `token_url` has RFC 8693 token exchange enabled and **trusts the ContextForge JWT issuer** — either via direct configuration of ContextForge as a trusted token issuer, or via federated SSO where both ContextForge and the downstream IdP share a common issuer.
+4. Optionally set `"subject_token_source"` (defaults to `"inbound_user_jwt"`) and `"requested_token_type"` (defaults to `urn:ietf:params:oauth:token-type:access_token`).
+
+See the [worked configuration example](../architecture/oauth-design.md#example-configuration) in the OAuth design doc.
+
+### Data and Audit Impact
+
+No database migration is required for this MVP — token exchange is config-only. Audit events are recorded via the structured logging sink and persisted as `StructuredLogEntry` rows with `is_security_event=True`. Typed audit columns (dedicated token-exchange audit table/fields) are planned as a Phase 2 follow-up with its own Alembic migration.
+
+### Rollback
+
+To revert, set `oauth_config.grant_type` back to its previous value (e.g., `client_credentials`). No data cleanup is required — cached exchanged tokens expire according to their TTL (derived from the Authorization Server's `expires_in`) and are not reused once the grant type changes.
+
 ## Related
 
 - [Configuration Reference](configuration.md#identity-propagation)

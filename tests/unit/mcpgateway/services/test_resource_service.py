@@ -4299,6 +4299,137 @@ class TestInvokeResourceCoverage:
         span.set_attribute.assert_any_call("error.message", "boom")
 
     @pytest.mark.asyncio
+    async def test_token_exchange_uses_inbound_bearer_as_subject_token(self, resource_service):
+        """Resources on a token-exchange gateway must call get_access_token(subject_token=<inbound JWT>)
+        and forward the exchanged token upstream -- never the raw inbound JWT."""
+        resource = self._make_resource()
+        gateway = self._make_gateway(transport="sse", auth_type="oauth")
+        gateway.oauth_config = {"grant_type": "token-exchange", "target_audience": "aud"}
+
+        inbound_jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1QGUifQ.sig"  # pragma: allowlist secret
+        resource_service.oauth_manager.get_access_token = AsyncMock(return_value="exchanged-tok")
+
+        db = MagicMock()
+        db.close = MagicMock()
+
+        captured_headers = {}
+        cs_session = AsyncMock()
+        cs_session.initialize = AsyncMock(return_value=None)
+        cs_session.read_resource.return_value = MagicMock(contents=[MagicMock(text="ok", blob=None)])
+
+        with (
+            patch(
+                "mcpgateway.services.resource_service.settings",
+                MagicMock(
+                    enable_ed25519_signing=False,
+                    platform_admin_email="admin@test.com",
+                    httpx_max_connections=10,
+                    httpx_max_keepalive_connections=5,
+                    httpx_keepalive_expiry=30,
+                    mcp_session_pool_enabled=False,
+                    health_check_timeout=1,
+                ),
+            ),
+            patch("mcpgateway.services.resource_service.current_trace_id") as mock_trace,
+            patch(
+                "mcpgateway.services.resource_service.create_span",
+                MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False))),
+            ),
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_metrics_buffer,
+            patch("mcpgateway.services.resource_service.sse_client") as mock_sse,
+            patch("mcpgateway.services.resource_service.ClientSession") as MockCS,
+        ):
+            mock_trace.get = MagicMock(return_value=None)
+            mock_metrics_buffer.return_value = MagicMock()
+
+            def _capture_sse(*_a, **kw):
+                captured_headers.update(kw.get("headers") or {})
+                return mock_sse.return_value
+
+            mock_sse.side_effect = _capture_sse
+            mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock()))
+            mock_sse.return_value.__aexit__ = AsyncMock(return_value=False)
+
+            MockCS.return_value.__aenter__ = AsyncMock(return_value=cs_session)
+            MockCS.return_value.__aexit__ = AsyncMock(return_value=False)
+
+            result = await resource_service.invoke_resource(
+                db,
+                "res-1",
+                "http://test.com",
+                resource_obj=resource,
+                gateway_obj=gateway,
+                request_headers={"Authorization": f"Bearer {inbound_jwt}"},
+            )
+
+        assert result == "ok"
+        resource_service.oauth_manager.get_access_token.assert_awaited_once()
+        _, call_kwargs = resource_service.oauth_manager.get_access_token.call_args
+        assert call_kwargs["subject_token"] == inbound_jwt
+        assert captured_headers.get("Authorization") == "Bearer exchanged-tok"
+
+    @pytest.mark.asyncio
+    async def test_token_exchange_without_inbound_bearer_fails_closed(self, resource_service):
+        """No inbound Authorization bearer -> no subject_token -> no exchange call, no fallback
+        to client_credentials or an unauthenticated request."""
+        resource = self._make_resource()
+        gateway = self._make_gateway(transport="sse", auth_type="oauth")
+        gateway.oauth_config = {"grant_type": "token-exchange", "target_audience": "aud"}
+
+        resource_service.oauth_manager.get_access_token = AsyncMock(return_value="exchanged-tok")
+
+        db = MagicMock()
+        db.close = MagicMock()
+
+        span = MagicMock()
+        cs_session = AsyncMock()
+        cs_session.initialize = AsyncMock(return_value=None)
+        cs_session.read_resource.return_value = MagicMock(contents=[MagicMock(text="ok", blob=None)])
+
+        with (
+            patch(
+                "mcpgateway.services.resource_service.settings",
+                MagicMock(
+                    enable_ed25519_signing=False,
+                    platform_admin_email="admin@test.com",
+                    httpx_max_connections=10,
+                    httpx_max_keepalive_connections=5,
+                    httpx_keepalive_expiry=30,
+                    mcp_session_pool_enabled=False,
+                    health_check_timeout=1,
+                ),
+            ),
+            patch("mcpgateway.services.resource_service.current_trace_id") as mock_trace,
+            patch(
+                "mcpgateway.services.resource_service.create_span",
+                MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=span), __exit__=MagicMock(return_value=False))),
+            ),
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_metrics_buffer,
+            patch("mcpgateway.services.resource_service.sse_client") as mock_sse,
+            patch("mcpgateway.services.resource_service.ClientSession") as MockCS,
+        ):
+            mock_trace.get = MagicMock(return_value=None)
+            mock_metrics_buffer.return_value = MagicMock()
+
+            mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock()))
+            mock_sse.return_value.__aexit__ = AsyncMock(return_value=False)
+
+            MockCS.return_value.__aenter__ = AsyncMock(return_value=cs_session)
+            MockCS.return_value.__aexit__ = AsyncMock(return_value=False)
+
+            await resource_service.invoke_resource(
+                db,
+                "res-1",
+                "http://test.com",
+                resource_obj=resource,
+                gateway_obj=gateway,
+                request_headers=None,
+            )
+
+        resource_service.oauth_manager.get_access_token.assert_not_awaited()
+        span.set_attribute.assert_any_call("health.status", "unhealthy")
+
+    @pytest.mark.asyncio
     async def test_sse_auth_value_string_decode_returns_none_defaults_authentication_to_empty_dict(self, resource_service):
         """Cover non-OAuth auth decode returning None which triggers authentication defaulting in connect_to_sse_session()."""
         resource = self._make_resource()

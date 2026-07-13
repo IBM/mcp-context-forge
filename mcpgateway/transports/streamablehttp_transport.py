@@ -2651,6 +2651,7 @@ async def read_resource(resource_uri: str) -> Union[str, bytes]:
                     server_id=server_id,
                     token_teams=token_teams,
                     meta_data=meta_data,
+                    request_headers=request_headers,
                 )
             except Exception as e:
                 logger.exception("Error reading resource '%s': %s", resource_uri, e)
