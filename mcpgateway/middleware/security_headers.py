@@ -44,11 +44,11 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     CSP Implementation:
     - Uses cryptographically secure nonces (secrets.token_urlsafe(16))
     - script-src-elem: nonce-based, no unsafe-inline (primary defense for modern browsers)
-    - script-src-attr: unsafe-inline for inline event handlers (transitional)
-    - script-src: unsafe-eval for HTMX hx-vals="js:{...}" and hx-on:* eval path (fallback for older browsers)
-    - style-src: retains unsafe-inline for dynamic inline styles
+    - script-src: strict policy, no unsafe-eval or unsafe-inline
+    - style-src: uses 'unsafe-inline' for style attributes (documented configuration for animations and positioning)
     - Nonce stored in request.state.csp_nonce for template access
     - Inline scripts must include nonce="{{ csp_nonce(request) }}" attribute
+    - All HTMX hx-vals and hx-on attributes migrated to JavaScript event handlers
 
     Sensitive headers removed:
     - X-Powered-By: Removes server technology disclosure
@@ -391,31 +391,44 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         # documentation UI render while keeping strict CSP everywhere else.
         skip_csp_for_docs = path in ("/docs", "/redoc", "/openapi.json")
 
-        # CSP directives with layered script security (CSP Level 3)
+        # CSP directives with strict nonce-based security (CSP Level 3)
         #
         # script-src-elem: Controls <script> tags - requires nonces for inline scripts.
         #   This prevents XSS via injected <script> blocks while allowing legitimate
         #   inline scripts that have the matching nonce attribute.
         #
-        # script-src-attr: Controls inline event handlers (onclick, onsubmit, etc.).
-        #   'unsafe-inline' is retained here because converting 200+ inline event
-        #   handlers to external JS is a large refactoring tracked separately.
-        #   The XSS risk is mitigated: event handlers are server-rendered (not
-        #   user-generated) and <script> injection is blocked by script-src-elem.
+        # script-src: Fallback for older browsers. No unsafe-eval or unsafe-inline.
+        #   All HTMX hx-vals="js:{...}" have been migrated to htmx:configRequest handlers.
+        #   All hx-on:* event handlers have been migrated to addEventListener.
+        #   Alpine.js has been migrated to @alpinejs/csp build (no eval required).
+        #   Tailwind CSS uses precompiled CSS (no eval required).
         #
-        # script-src: Fallback for older browsers and controls eval()/new Function().
-        #   'unsafe-eval' is still required: HTMX evaluates hx-vals="js:{...}" and
-        #   hx-on:* attributes via htmx.config.allowEval (defaults true). Tracked in
-        #   issue #4655. The nonce-based script-src-elem is the primary defense for
-        #   modern browsers.
+        # style-src: 'unsafe-inline' for style attributes (documented configuration).
+        #   Inline style attributes (style="...") are used for animation delays,
+        #   positioning, and dynamic styling throughout the application.
+        #   This is acceptable per CSP Level 3 guidance since CSS cannot execute
+        #   JavaScript directly. While CSS injection can be used for clickjacking
+        #   or UI redressing attacks, these are mitigated by:
+        #   1. X-Frame-Options/frame-ancestors preventing iframe embedding
+        #   2. All inline styles are server-rendered (no user-controlled content)
+        #   3. Authentication required for admin UI (not publicly exposed)
+        #   This is a documented trade-off between security strictness and
+        #   implementation complexity (visual-only impact vs. code-execution risk).
+        #   Note: Nonce cannot be used alongside 'unsafe-inline' in style-src because
+        #   the nonce takes precedence and causes the browser to ignore 'unsafe-inline',
+        #   which would block all style attributes since nonces can only apply to <style> blocks.
         #
-        # style-src: Retains 'unsafe-inline' for Alpine.js dynamic inline styles.
+        # CDN Allowlist Rationale:
+        #   - cdnjs.cloudflare.com: Font Awesome 7.0.1 icons, CodeMirror 5.65.20 (code editor)
+        #   - cdn.jsdelivr.net: Chart.js 4.5.1 (metrics charts), Marked 18.0.3 (markdown rendering),
+        #                       DOMPurify 3.4.2 (XSS sanitization)
+        #   - unpkg.com: Reserved for future use (Alpine.js, HTMX updates)
+        #   All CDN resources use SRI (Subresource Integrity) hashes where supported.
         if not skip_csp_for_docs:
             csp_directives = [
                 "default-src 'self'",
                 f"script-src-elem 'self' 'nonce-{csp_nonce}' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://unpkg.com",
-                "script-src-attr 'unsafe-inline'",
-                "script-src 'self' 'unsafe-eval'",
+                "script-src 'self'",
                 "style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net",
                 "img-src 'self' data: https:",
                 "font-src 'self' data: https://cdnjs.cloudflare.com",
