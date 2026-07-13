@@ -45,7 +45,7 @@ authors = [
 
 dependencies = [
     "llm-guard>=0.3.16",
-    "mcp>=1.27.1",
+    "mcp>=1.28.1",
     "orjson>=3.11.9",
     "rapidfuzz>=3.14.5",
     "redis>=8.0.1",
@@ -75,7 +75,7 @@ dev = [
     "pytest-dotenv>=0.5.2",
     "pytest-env>=1.6.0",
     "pytest-examples>=0.0.18",
-    "pytest-rerunfailures>=16.2",
+    "pytest-rerunfailures>=16.4",
     "pytest-trio>=0.8.0",
     "pytest-xdist>=3.8.0",
     "ruff>=0.15.20",

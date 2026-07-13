@@ -13,7 +13,7 @@ dependencies = [
     "orjson>=3.11.9",
     "pydantic>=2.13.4",
     "RestrictedPython>=8.3",
-    "typing-extensions>=4.15.0",
+    "typing-extensions>=4.16.0",
 ]
 
 [project.optional-dependencies]
