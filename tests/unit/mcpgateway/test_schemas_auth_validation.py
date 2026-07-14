@@ -764,3 +764,120 @@ def test_tool_update_authheaders_non_dict_entry_rejected_cleanly():
             auth_type="authheaders",
             auth_headers=["not-a-dict"],
         )
+
+
+# =========================================================================
+# ToolCreate / ToolUpdate: uncoerced header key/value types.
+#
+# The tool schemas assemble auth in a mode="before" validator, so auth_headers
+# arrives as raw client JSON rather than the coerced List[Dict[str, str]] the
+# mode="after" gateway/A2A validators see. Bad key/value types must therefore
+# surface as a 422 ValidationError, not an AttributeError/TypeError -> 500.
+# =========================================================================
+
+
+@pytest.mark.parametrize("bad_key", [123, ["X-API-Key"], {"nested": "key"}, True])
+def test_tool_create_authheaders_non_string_key_rejected_cleanly(bad_key):
+    """A non-string auth_headers key produces a clean ValidationError, not a 500."""
+    with pytest.raises(ValidationError):
+        ToolCreate(
+            name="my_tool",
+            url="https://api.example.com/endpoint",
+            request_type="POST",
+            auth_type="authheaders",
+            auth_headers=[{"key": bad_key, "value": "x"}],
+        )
+
+
+@pytest.mark.parametrize("bad_key", [123, ["X-API-Key"], {"nested": "key"}, True])
+def test_tool_update_authheaders_non_string_key_rejected_cleanly(bad_key):
+    """A non-string auth_headers key produces a clean ValidationError, not a 500 (ToolUpdate)."""
+    with pytest.raises(ValidationError):
+        ToolUpdate(
+            auth_type="authheaders",
+            auth_headers=[{"key": bad_key, "value": "x"}],
+        )
+
+
+def test_tool_create_authheaders_non_string_value_rejected_cleanly():
+    """A non-string auth_headers value produces a clean ValidationError, not a 500."""
+    with pytest.raises(ValidationError):
+        ToolCreate(
+            name="my_tool",
+            url="https://api.example.com/endpoint",
+            request_type="POST",
+            auth_type="authheaders",
+            auth_headers=[{"key": "X-API-Key", "value": {"unexpected": "object"}}],
+        )
+
+
+def test_encode_auth_headers_list_non_string_key_raises_value_error():
+    """The shared helper raises ValueError (not AttributeError/TypeError) for non-string keys."""
+    with pytest.raises(ValueError, match="Header keys must be strings"):
+        _encode_auth_headers_list([{"key": 123, "value": "x"}])
+
+    # An unhashable key would otherwise raise TypeError on dict insertion.
+    with pytest.raises(ValueError, match="Header keys must be strings"):
+        _encode_auth_headers_list([{"key": ["X-API-Key"], "value": "x"}])
+
+
+def test_encode_auth_headers_list_non_string_value_raises_value_error():
+    """The shared helper raises ValueError for non-string header values."""
+    with pytest.raises(ValueError, match="Header values must be strings"):
+        _encode_auth_headers_list([{"key": "X-API-Key", "value": 123}])
+
+
+def test_encode_auth_headers_list_none_value_treated_as_empty():
+    """An explicit null header value is stored as an empty string rather than rejected."""
+    encoded = _encode_auth_headers_list([{"key": "X-API-Key", "value": None}])
+    assert decode_auth(encoded) == {"X-API-Key": ""}
+
+
+# =========================================================================
+# Header key whitespace: surrounding whitespace is trimmed, embedded
+# whitespace is rejected (it would otherwise be persisted as an invalid HTTP
+# header name and only fail at tool-invocation time).
+# =========================================================================
+
+
+def test_encode_auth_headers_list_strips_surrounding_whitespace():
+    """Surrounding whitespace on a header key is trimmed before storage."""
+    encoded = _encode_auth_headers_list([{"key": "  X-API-Key  ", "value": "secret"}])
+    assert decode_auth(encoded) == {"X-API-Key": "secret"}
+
+
+def test_encode_auth_headers_list_embedded_whitespace_key_raises():
+    """A header key with embedded whitespace is rejected instead of stored."""
+    with pytest.raises(ValueError, match="Invalid header key format"):
+        _encode_auth_headers_list([{"key": "X Api Key", "value": "secret"}])
+
+
+def test_encode_auth_headers_list_whitespace_only_key_skipped():
+    """A whitespace-only key is skipped like an empty key."""
+    with pytest.raises(ValueError, match="at least one valid header with a key must be provided"):
+        _encode_auth_headers_list([{"key": "   ", "value": "secret"}])
+
+
+def test_tool_create_authheaders_embedded_whitespace_key_rejected():
+    """ToolCreate rejects a header key with embedded whitespace."""
+    with pytest.raises(ValidationError) as exc_info:
+        ToolCreate(
+            name="my_tool",
+            url="https://api.example.com/endpoint",
+            request_type="POST",
+            auth_type="authheaders",
+            auth_headers=[{"key": "X Api Key", "value": "secret"}],
+        )
+    assert "Invalid header key format" in str(exc_info.value)
+
+
+def test_gateway_create_embedded_whitespace_key_rejected():
+    """GatewayCreate rejects a header key with embedded whitespace (shared helper parity)."""
+    with pytest.raises(ValidationError) as exc_info:
+        GatewayCreate(
+            name="gw",
+            url="https://example.com",
+            auth_type="authheaders",
+            auth_headers=[{"key": "X Api Key", "value": "secret"}],
+        )
+    assert "Invalid header key format" in str(exc_info.value)

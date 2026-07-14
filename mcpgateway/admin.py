@@ -146,6 +146,7 @@ from mcpgateway.schemas import (
     ToolMetrics,
     ToolRead,
     ToolUpdate,
+    _encode_auth_headers_list,
 )
 from mcpgateway.services.a2a_agent_plugin_binding_service import A2AAgentPluginBindingForbiddenError, A2AAgentPluginBindingNotFoundError, A2AAgentPluginBindingService
 from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService
@@ -11780,11 +11781,21 @@ async def admin_get_tool(tool_id: str, request: Request, db: Session = Depends(g
 def _build_auth_obj_from_form(form: Any) -> Optional[dict[str, Any]]:
     """Parse auth fields from a form and return a serialized auth object, or None.
 
+    Custom headers are validated by the same ``_encode_auth_headers_list`` helper the JSON
+    tool/gateway schemas use, so malformed header keys and oversized header sets are rejected
+    here with a 422 instead of being persisted and failing later at tool-invocation time.
+    Rows with a blank key are dropped first: the admin form submits empty rows for headers the
+    user never filled in, and those must keep meaning "no headers" rather than 422.
+
     Args:
         form: Multipart form data containing auth_type and credential fields.
 
     Returns:
         A dict with auth_type and encrypted auth_value, or None if no valid auth provided.
+
+    Raises:
+        HTTPException: 422 if auth_type is 'oauth' (unsupported on tools) or if the supplied
+            custom headers fail validation.
     """
     auth_headers_json = form.get("auth_headers") or ""
     auth_headers: list[dict[str, Any]] = []
@@ -11812,12 +11823,14 @@ def _build_auth_obj_from_form(form: Any) -> Optional[dict[str, Any]]:
                 auth_value = encode_auth({"Authorization": f"Bearer {token}"})
                 auth_obj = {"auth_type": auth_type, "auth_value": auth_value}
         elif auth_type == "authheaders":
-            if auth_headers:
-                header_dict = {h.get("key"): h.get("value", "") for h in auth_headers if h.get("key")}
-                if header_dict:
-                    auth_value = encode_auth(header_dict)
-                    auth_obj = {"auth_type": auth_type, "auth_value": auth_value}
-            else:
+            populated_headers = [h for h in auth_headers if isinstance(h, dict) and h.get("key")]
+            if populated_headers:
+                try:
+                    auth_value = _encode_auth_headers_list(populated_headers)
+                except ValueError as exc:
+                    raise HTTPException(status_code=422, detail=str(exc)) from exc
+                auth_obj = {"auth_type": auth_type, "auth_value": auth_value}
+            elif not auth_headers:
                 header_key = form.get("auth_header_key", "")
                 header_value = form.get("auth_header_value", "")
                 if header_key and header_value:
