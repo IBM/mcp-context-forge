@@ -71,9 +71,14 @@ class _PermissionServiceAlwaysGrant:
         return True
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture
 def _auth_client():
     """TestClient over the real app + a temp SQLite DB, with auth mocked to an admin.
+
+    Function-scoped on purpose: the body holds a ``patch(PermissionService=...)``
+    context and mutates ``app.dependency_overrides``. Module scope would keep that
+    patch active for the whole file and leak the AlwaysGrant permission service
+    into the later real-PermissionService tests in this module.
 
     Yields:
         tuple: ``(client, auth_headers)`` for authenticated requests.
