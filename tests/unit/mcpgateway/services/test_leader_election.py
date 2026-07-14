@@ -136,3 +136,141 @@ async def test_redis_unavailable_filelock_fallback(tmp_path):
     await e.start()
     assert e.is_primary is True  # acquired the fallback file lock
     await e.stop()
+
+
+# --- properties --------------------------------------------------------------
+
+
+async def test_started_and_instance_id_properties():
+    """``started`` tracks the lifecycle and ``instance_id`` is a stable non-empty id."""
+    server = fakeredis.FakeServer()
+    e = _redis_elector(server, lease_ttl=30)
+    assert e.started is False
+    ident = e.instance_id
+    assert isinstance(ident, str) and ident
+    await e.start()
+    assert e.started is True
+    assert e.instance_id == ident  # stable across the lifecycle
+    await e.stop()
+    assert e.started is False
+
+
+# --- redis maintenance loop --------------------------------------------------
+
+
+async def test_redis_lost_lease_demotes_primary():
+    """The heartbeat's compare-and-renew returns 0 once the lease is stolen, demoting us."""
+    server = fakeredis.FakeServer()
+    e = _redis_elector(server, lease_ttl=30, heartbeat_interval=0.1)
+    await e.start()
+    assert e.is_primary is True
+    # Overwrite the lease with a different owner so compare-and-renew fails.
+    await _client(server).set("k", "someone-else")
+    await asyncio.sleep(0.3)  # a heartbeat runs the renew, sees the mismatch
+    assert e.is_primary is False
+    await e.stop()
+
+
+class _RenewBoomRedis:
+    """Async Redis stand-in whose initial acquire works but every ``eval`` errors."""
+
+    def __init__(self):
+        """Start with no lease held."""
+        self._store = {}
+
+    async def set(self, key, value, nx=False, ex=None):
+        """SET NX EX: acquire only if the key is unset.
+
+        Args:
+            key: Lease key.
+            value: Instance id to store.
+            nx: Only set when absent.
+            ex: TTL in seconds (ignored by this stand-in).
+
+        Returns:
+            True on acquire, else None.
+        """
+        if nx and key in self._store:
+            return None
+        self._store[key] = value
+        return True
+
+    async def eval(self, *args, **kwargs):
+        """Always fail, simulating Redis dropping mid-heartbeat.
+
+        Args:
+            *args: Ignored.
+            **kwargs: Ignored.
+
+        Raises:
+            ConnectionError: Always.
+        """
+        raise ConnectionError("redis down mid-heartbeat")
+
+    async def aclose(self):
+        """No-op close."""
+
+
+async def test_redis_maintenance_error_fail_closed():
+    """fail_closed: a Redis error during the heartbeat demotes us to non-primary."""
+    e = PrimaryWorkerElector(
+        backend="redis",
+        redis_key="k",
+        unavailable_policy="fail_closed",
+        lease_ttl=30,
+        heartbeat_interval=0.1,
+        redis_client=_RenewBoomRedis(),
+    )
+    await e.start()
+    assert e.is_primary is True  # initial acquire succeeded
+    await asyncio.sleep(0.3)  # heartbeat calls eval -> raises -> fail closed
+    assert e.is_primary is False
+    await e.stop()
+
+
+# --- own redis client (built from url, closed on stop) -----------------------
+
+
+async def test_redis_builds_own_client_and_closes_on_stop(monkeypatch):
+    """When no client is injected, the elector builds one via ``from_url`` and closes it."""
+    # Third-Party
+    import redis.asyncio as aioredis  # pylint: disable=import-outside-toplevel
+
+    server = fakeredis.FakeServer()
+    closed = {"count": 0}
+
+    class _Tracked(fakeredis_async.FakeRedis):
+        async def aclose(self):
+            closed["count"] += 1
+            await super().aclose()
+
+    monkeypatch.setattr(aioredis, "from_url", lambda *a, **k: _Tracked(server=server, decode_responses=True))
+    e = PrimaryWorkerElector(backend="redis", redis_key="k", lease_ttl=30, heartbeat_interval=10)  # no redis_client -> owns it
+    await e.start()
+    assert e.is_primary is True
+    await e.stop()  # owns_redis -> aclose()
+    assert closed["count"] == 1
+
+
+# --- module singleton --------------------------------------------------------
+
+
+async def test_singleton_start_get_stop():
+    """The module-level helpers create, expose, reuse, and clear one elector."""
+    # First-Party
+    from mcpgateway.services.leader_election import (  # pylint: disable=import-outside-toplevel
+        get_primary_worker_elector,
+        start_primary_worker_elector,
+        stop_primary_worker_elector,
+    )
+
+    assert get_primary_worker_elector() is None
+    try:
+        elector = await start_primary_worker_elector()
+        assert elector.started is True
+        assert get_primary_worker_elector() is elector
+        # A second start reuses the same singleton rather than replacing it.
+        assert await start_primary_worker_elector() is elector
+    finally:
+        await stop_primary_worker_elector()
+    assert get_primary_worker_elector() is None
