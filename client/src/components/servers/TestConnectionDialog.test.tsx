@@ -244,6 +244,38 @@ describe("TestConnectionDialog", () => {
     await waitFor(() => expect(aborted).toBe(true));
   });
 
+  it("relabels the footer button to Cancel during a test and cancels on click", async () => {
+    const user = userEvent.setup();
+    let aborted = false;
+    server.use(
+      http.post(TEST_ENDPOINT, async ({ request }) => {
+        // Resolve only once the client aborts, so the test can observe cancellation.
+        await new Promise<void>((resolve) => {
+          request.signal.addEventListener("abort", () => {
+            aborted = true;
+            resolve();
+          });
+        });
+        return HttpResponse.json({ statusCode: 200, latencyMs: 1, body: {} });
+      }),
+    );
+    const { rerender } = render(<TestConnectionDialog {...defaultProps} />);
+
+    await user.click(screen.getByRole("button", { name: /^test connection$/i }));
+
+    // While in flight the footer button stays enabled and reads "Cancel".
+    const cancelButton = await screen.findByRole("button", { name: /^cancel$/i });
+    expect(cancelButton).toBeEnabled();
+
+    await user.click(cancelButton);
+    // The button requests the close; the parent honors it by flipping `open`,
+    // which aborts the in-flight request via the open→false effect.
+    expect(mockOnOpenChange).toHaveBeenCalledWith(false);
+    rerender(<TestConnectionDialog {...defaultProps} open={false} />);
+
+    await waitFor(() => expect(aborted).toBe(true));
+  });
+
   it("requires a URL before running", async () => {
     const user = userEvent.setup();
     render(<TestConnectionDialog {...defaultProps} />);
