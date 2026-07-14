@@ -147,8 +147,17 @@ class PrimaryWorkerElector:
     # --- filelock backend (passive) -----------------------------------------
 
     def _acquire_filelock(self) -> None:
-        """Try to grab the per-host file lock (held for process lifetime)."""
-        self._filelock = FileLock(self._lock_path or _default_lock_path())
+        """Try to grab the per-host file lock (held for process lifetime).
+
+        Idempotent: reuses a single ``FileLock`` and short-circuits when the lock
+        is already held, so the maintenance loop can call it every heartbeat
+        during a Redis outage without churning (re-creating/releasing) the lock.
+        """
+        if self._filelock is None:
+            self._filelock = FileLock(self._lock_path or _default_lock_path())
+        elif self._filelock.is_locked:
+            self._is_primary = True
+            return
         try:
             self._filelock.acquire(timeout=0)
             self._is_primary = True
@@ -197,9 +206,13 @@ class PrimaryWorkerElector:
                         logger.info("acquired primary lease via follower loop pid=%d", os.getpid())
                         self._is_primary = True
             except Exception as exc:
-                if self._policy == "fail_closed":
-                    self._is_primary = False
+                # A heartbeat/acquire error means we can no longer prove we hold
+                # the lease, so never keep a stale Redis-primary flag (the lease
+                # expires unrenewed and a follower would take it -> two primaries).
+                # Apply the same policy as the initial connect: fail_closed demotes;
+                # filelock_fallback re-elects per host (and demotes if it can't).
                 logger.warning("election maintenance error pid=%d: %s", os.getpid(), exc)
+                self._handle_redis_unavailable(exc)
 
 
 # Module singleton — created/started in the FastAPI lifespan, read by
