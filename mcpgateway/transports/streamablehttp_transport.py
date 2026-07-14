@@ -3863,6 +3863,16 @@ class SessionManagerWrapper:
             json_response=settings.json_response_enabled,
             stateless=stateless,
         )
+        # Stateless manager for sessionless non-initialize requests.
+        # stateless=True means the SDK skips all session-ID validation.
+        # The upstream receives the request as-is and returns its own
+        # response — including its own error if it requires a session.
+        self.session_manager_stateless = StreamableHTTPSessionManager(
+            app=mcp_app,
+            event_store=None,
+            json_response=settings.json_response_enabled,
+            stateless=True,
+        )
         self.stack = AsyncExitStack()
 
     async def initialize(self) -> None:
@@ -3879,6 +3889,7 @@ class SessionManagerWrapper:
         """
         logger.debug("Initializing Streamable HTTP service")
         await self.stack.enter_async_context(self.session_manager.run())
+        await self.stack.enter_async_context(self.session_manager_stateless.run())
 
     async def shutdown(self) -> None:
         """
