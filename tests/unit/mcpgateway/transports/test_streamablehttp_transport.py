@@ -10285,7 +10285,7 @@ async def test_send_with_capture_claims_owner_when_affinity_disabled(monkeypatch
         }
     )
     try:
-        await wrapper.handle_streamable_http(scope, _make_receive(b""), send)
+        await wrapper.handle_streamable_http(scope, _make_receive(b'{"jsonrpc":"2.0","method":"initialize","id":1}'), send)
     finally:
         tr.user_context_var.reset(token)
         await wrapper.shutdown()
