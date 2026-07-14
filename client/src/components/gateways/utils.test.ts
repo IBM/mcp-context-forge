@@ -1,10 +1,9 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
   formatServerTimestamp,
   formatServerDateTime,
   truncateMiddle,
   getVirtualServerEndpoint,
-  copyToClipboard,
   getTagDisplay,
   getVirtualServerComponentCounts,
   hasVirtualServerComponents,
@@ -64,31 +63,6 @@ describe("Gateways Utils", () => {
 
     it("returns absolute URL if window.location.origin is available", () => {
       expect(getVirtualServerEndpoint("test-id")).toBe("http://localhost:3000/servers/test-id/mcp");
-    });
-  });
-
-  describe("copyToClipboard", () => {
-    it("calls navigator.clipboard.writeText if available", () => {
-      const writeTextMock = vi.fn();
-      Object.assign(navigator, {
-        clipboard: {
-          writeText: writeTextMock,
-        },
-      });
-
-      copyToClipboard("test-text");
-      expect(writeTextMock).toHaveBeenCalledWith("test-text");
-    });
-
-    it("does not throw if clipboard is undefined", () => {
-      const originalClipboard = navigator.clipboard;
-      // @ts-expect-error - invalid url - testing missing clipboard
-      delete navigator.clipboard;
-
-      expect(() => copyToClipboard("test")).not.toThrow();
-
-      // @ts-expect-error - restoring clipboard
-      navigator.clipboard = originalClipboard;
     });
   });
 

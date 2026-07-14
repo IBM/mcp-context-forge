@@ -17,7 +17,7 @@ import { RadioGroup } from "../ui/radio-group";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import { Textarea } from "../ui/textarea";
 import { JsonHighlighter } from "../ui/json-highlighter";
-import { copyToClipboard } from "@/components/gateways/utils";
+import { copyToClipboard } from "@/lib/clipboard";
 import { cn } from "@/lib/utils";
 
 interface TestConnectionDialogProps {

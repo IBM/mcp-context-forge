@@ -21,9 +21,9 @@ import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import type { MCPServer, VirtualServer } from "@/types/server";
 import type { ComponentFilter } from "@/components/gateways/types";
+import { copyToClipboard } from "@/lib/clipboard";
 import {
   buildComponentItems,
-  copyToClipboard,
   formatServerDateTime,
   getTagDisplay,
   getVirtualServerEndpoint,
