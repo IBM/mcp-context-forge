@@ -19,8 +19,9 @@ Examples:
 # Standard
 import asyncio
 import base64
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 # Third-Party
 import orjson
@@ -32,7 +33,8 @@ from mcpgateway.cache.admin_stats_cache import admin_stats_cache
 from mcpgateway.cache.auth_cache import auth_cache, get_auth_cache
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
-from mcpgateway.db import EmailTeam, EmailTeamJoinRequest, EmailTeamMember, EmailTeamMemberHistory, EmailUser, utc_now
+from mcpgateway.db import EmailTeam, EmailTeamInvitation, EmailTeamJoinRequest, EmailTeamMember, EmailTeamMemberHistory, EmailUser, utc_now
+from mcpgateway.schemas import MAX_TEAM_MEMBER_SEEDS, TeamMemberSeed
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.pagination import unified_paginate
@@ -173,6 +175,104 @@ class TeamMemberAddError(TeamManagementError):
         >>> isinstance(error, TeamManagementError)
         True
     """
+
+
+class TeamMemberSeedError(TeamManagementError):
+    """Raised when a member listed at team creation cannot be applied.
+
+    Names the offending row so a create-team form can highlight the line the
+    admin typed, rather than reporting a failure with no idea which of ten
+    addresses caused it.
+
+    Attributes:
+        index: Position of the offending row in the caller's request.
+        email: Email address of the offending row.
+        reason: Why the row could not be applied.
+
+    Examples:
+        >>> error = TeamMemberSeedError(2, "bob@example.com", "User not found")
+        >>> str(error)
+        'members[2] (bob@example.com): User not found'
+        >>> error.index
+        2
+        >>> isinstance(error, TeamManagementError)
+        True
+    """
+
+    def __init__(self, index: int, email: str, reason: str):
+        """Initialize the error.
+
+        Args:
+            index: Position of the offending row in the caller's request.
+            email: Email address of the offending row.
+            reason: Why the row could not be applied.
+        """
+        self.index = index
+        self.email = email
+        self.reason = reason
+        super().__init__(f"members[{index}] ({email}): {reason}")
+
+
+@dataclass(frozen=True)
+class _NormalizedSeed:
+    """A member seed with its position in the caller's request preserved.
+
+    The creator's row is dropped during normalization, so the index of a seed in
+    the list no longer matches the row the caller sent. Carrying the original
+    index means an error can still point at the right line.
+
+    Attributes:
+        index: Position of this row in the caller's request.
+        email: Email address to add or invite.
+        role: Role to assign in the team.
+    """
+
+    index: int
+    email: str
+    role: str
+
+
+@dataclass
+class SeededMember:
+    """A membership created directly while seeding a new team.
+
+    Attributes:
+        email: Email address of the member.
+        role: Role assigned in the team.
+    """
+
+    email: str
+    role: str
+
+
+@dataclass
+class SeededInvitation:
+    """An invitation created while seeding a new team.
+
+    Attributes:
+        email: Email address the invitation was sent to.
+        role: Role the invitee will hold once they accept.
+        invitation_id: ID of the created invitation.
+    """
+
+    email: str
+    role: str
+    invitation_id: str
+
+
+@dataclass
+class TeamSeedResult:
+    """Outcome of creating a team together with its initial members.
+
+    Attributes:
+        team: The created (or reactivated) team.
+        members_added: Seeds that resolved to a direct membership.
+        invitations_sent: Seeds that resolved to an invitation.
+    """
+
+    team: EmailTeam
+    members_added: List[SeededMember] = field(default_factory=list)
+    invitations_sent: List[SeededInvitation] = field(default_factory=list)
 
 
 class _Unset:
@@ -468,10 +568,138 @@ class TeamManagementService:
         if self._get_user_team_count(user_email) >= max_teams:
             raise TeamManagementError(f"User has reached the maximum team limit of {max_teams}")
 
+    @staticmethod
+    def _normalize_member_seeds(members: Optional[Sequence[TeamMemberSeed]], created_by: str) -> List[_NormalizedSeed]:
+        """Validate and de-duplicate the members requested for a new team.
+
+        The creator's own address is dropped: they are added as owner by team
+        creation itself, so listing them is a no-op rather than an error. Each
+        surviving seed keeps the index of the row the caller sent it in.
+
+        Args:
+            members: Seeds requested by the caller, if any.
+            created_by: Email of the user creating the team.
+
+        Returns:
+            List[_NormalizedSeed]: The seeds to apply, creator excluded.
+
+        Raises:
+            TeamMemberSeedError: If the same address appears more than once.
+            TeamMemberLimitExceededError: If the request lists more rows than can ever be applied.
+        """
+        if not members:
+            return []
+
+        # HTTP callers are already capped by max_length on TeamCreateRequest.members (a 422);
+        # this catches callers that reach the service directly, where nothing has validated the list.
+        if len(members) > MAX_TEAM_MEMBER_SEEDS:
+            raise TeamMemberLimitExceededError(f"A team cannot be created with more than {MAX_TEAM_MEMBER_SEEDS} members at once (got {len(members)})")
+
+        creator = created_by.strip().lower()
+        seeds: List[_NormalizedSeed] = []
+        seen: Dict[str, int] = {}
+
+        for index, seed in enumerate(members):
+            email = str(seed.email).strip()
+            key = email.lower()
+
+            if key == creator:
+                continue
+
+            if key in seen:
+                raise TeamMemberSeedError(index, email, f"duplicate address, already listed at members[{seen[key]}]")
+
+            seen[key] = index
+            seeds.append(_NormalizedSeed(index=index, email=email, role=seed.role))
+
+        return seeds
+
+    @staticmethod
+    def _check_seed_capacity(seed_count: int, max_members: Optional[int]) -> None:
+        """Raise if the creator plus the seeded members would exceed the team limit.
+
+        Checked before anything is written so an oversized request fails cleanly
+        instead of part-way through.
+
+        Args:
+            seed_count: Number of members being seeded.
+            max_members: Explicit per-team limit, or None to use the global default.
+
+        Raises:
+            TeamMemberLimitExceededError: If the team would start over capacity.
+        """
+        effective_max = max_members if max_members is not None else settings.max_members_per_team
+        if effective_max <= 0:
+            return
+
+        total = seed_count + 1  # the creator is always added as owner
+        if total > effective_max:
+            raise TeamMemberLimitExceededError(f"Team would start with {total} members, exceeding the maximum of {effective_max}")
+
+    async def _seed_members(self, team: EmailTeam, seeds: List[_NormalizedSeed], created_by: str) -> Tuple[List[Tuple[EmailTeamMember, str]], List[EmailTeamInvitation]]:
+        """Route each seed to a membership or an invitation, without committing.
+
+        An address belonging to an active user becomes a membership directly;
+        anything else (unknown address, deactivated account) gets an invitation.
+        Rows are flushed into the caller's transaction, so a failure on any seed
+        rolls the whole team creation back.
+
+        Args:
+            team: The team being created, already flushed so it has an ID.
+            seeds: Normalized seeds to apply.
+            created_by: Email of the user creating the team (the team owner).
+
+        Returns:
+            Tuple: The (membership, history action) pairs and the invitation rows.
+
+        Raises:
+            TeamMemberSeedError: If a seed could not be applied, naming the offending row.
+        """
+        memberships: List[Tuple[EmailTeamMember, str]] = []
+        invitations: List[EmailTeamInvitation] = []
+
+        if not seeds:
+            return memberships, invitations
+
+        # First-Party
+        from mcpgateway.services.team_invitation_service import TeamInvitationService  # pylint: disable=import-outside-toplevel,cyclic-import
+
+        invitation_service = TeamInvitationService(self.db)
+
+        # The creator's ownership row must be visible to the invitation service,
+        # which only lets team owners invite.
+        self.db.flush()
+
+        # One lookup for the whole batch, rather than one per row
+        known_users = {user.email: user for user in self.db.query(EmailUser).filter(EmailUser.email.in_([seed.email for seed in seeds])).all()}
+
+        for seed in seeds:
+            user = known_users.get(seed.email)
+            try:
+                if user and user.is_active:
+                    self._check_user_team_limit(seed.email)
+                    memberships.append(self._upsert_membership(team.id, seed.email, seed.role, invited_by=created_by))
+                    continue
+
+                invitation = await invitation_service.create_invitation(team_id=team.id, email=seed.email, role=seed.role, invited_by=created_by, commit=False)
+                if not invitation:
+                    raise TeamMemberSeedError(seed.index, seed.email, "invitation could not be created")
+                invitations.append(invitation)
+            except TeamMemberSeedError:
+                raise
+            except (ValueError, TeamManagementError) as exc:
+                # Attach the row the admin typed to whatever the underlying service objected to
+                raise TeamMemberSeedError(seed.index, seed.email, str(exc)) from exc
+
+        return memberships, invitations
+
     async def create_team(
         self, name: str, description: Optional[str], created_by: str, visibility: Optional[str] = "public", max_members: Optional[int] = None, skip_limits: bool = False
     ) -> EmailTeam:
         """Create a new team.
+
+        Thin wrapper over :meth:`create_team_with_members` for callers that only
+        need the team itself.
 
         Args:
             name: Team name
@@ -535,11 +763,61 @@ class TeamManagementService:
             >>> description_none is None
             True
         """
+        result = await self.create_team_with_members(name=name, description=description, created_by=created_by, visibility=visibility, max_members=max_members, skip_limits=skip_limits)
+        return result.team
+
+    async def create_team_with_members(
+        self,
+        name: str,
+        description: Optional[str],
+        created_by: str,
+        visibility: Optional[str] = "public",
+        max_members: Optional[int] = None,
+        skip_limits: bool = False,
+        members: Optional[Sequence[TeamMemberSeed]] = None,
+    ) -> TeamSeedResult:
+        """Create a team and, optionally, seed it with members in one transaction.
+
+        Each seed is routed by the server rather than the caller: an address that
+        belongs to an active user becomes a membership, anything else gets an
+        invitation. The team, the creator's ownership, the memberships and the
+        invitations are all written in a single transaction, so a bad row leaves
+        nothing behind rather than a half-populated team.
+
+        Args:
+            name: Team name
+            description: Team description
+            created_by: Email of the user creating the team
+            visibility: Team visibility (private, public)
+            max_members: Maximum number of team members allowed
+            skip_limits: Skip max_teams_per_user check (for admin bypass)
+            members: People to seed the team with. The creator is ignored if
+                listed, since team creation already makes them the owner.
+
+        Returns:
+            TeamSeedResult: The team plus how each seed was resolved.
+
+        Raises:
+            ValueError: If team name, visibility or member list is invalid
+            TeamMemberLimitExceededError: If the seeded team would exceed its member limit
+            Exception: If team creation fails
+
+        Examples:
+            >>> import asyncio
+            >>> from unittest.mock import Mock
+            >>> service = TeamManagementService(Mock())
+            >>> asyncio.iscoroutinefunction(service.create_team_with_members)
+            True
+        """
         try:
             # Validate visibility
             valid_visibilities = ["private", "public"]
             if visibility not in valid_visibilities:
                 raise ValueError(f"Invalid visibility. Must be one of: {', '.join(valid_visibilities)}")
+
+            # Validate the member list before writing anything
+            seeds = self._normalize_member_seeds(members, created_by)
+            self._check_seed_capacity(len(seeds), max_members)
 
             # Check max teams per user
             if not skip_limits:
@@ -599,23 +877,38 @@ class TeamManagementService:
                 membership = EmailTeamMember(team_id=team.id, user_email=created_by, role="owner", joined_at=utc_now(), is_active=True)
                 self.db.add(membership)
 
+            # Memberships and invitations join the same transaction as the team
+            memberships, invitations = await self._seed_members(team, seeds, created_by)
+
             self.db.commit()
 
+            team_id = str(team.id)
+
+            # Post-commit bookkeeping for each seeded member, matching add_member_to_team()
+            for member, action in memberships:
+                self._log_team_member_action(member.id, team_id, member.user_email, member.role, action, created_by)
+                await self._assign_team_rbac_role(member.user_email, team_id, member.role, granted_by=created_by)
+                self._invalidate_membership_caches(member.user_email, team_id)
+
             # Invalidate member count cache for the new team
-            await self.invalidate_team_member_count_cache(str(team.id))
+            await self.invalidate_team_member_count_cache(team_id)
 
             # Invalidate auth cache for creator's team membership
             # Without this, the cache won't know the user belongs to this new team
             try:
                 await auth_cache.invalidate_user_teams(created_by)
                 await auth_cache.invalidate_team_membership(created_by)
-                await auth_cache.invalidate_user_role(created_by, str(team.id))
+                await auth_cache.invalidate_user_role(created_by, team_id)
                 await admin_stats_cache.invalidate_teams()
             except Exception as cache_error:
                 logger.debug("Failed to invalidate cache on team create: %s", cache_error)
 
-            logger.info("Created team '%s' by %s", SecurityValidator.sanitize_log_message(team.name), SecurityValidator.sanitize_log_message(created_by))
-            return team
+            logger.info("Created team '%s' by %s (%d members added, %d invited)", SecurityValidator.sanitize_log_message(team.name), created_by, len(memberships), len(invitations))
+            return TeamSeedResult(
+                team=team,
+                members_added=[SeededMember(email=member.user_email, role=member.role) for member, _ in memberships],
+                invitations_sent=[SeededInvitation(email=invitation.email, role=invitation.role, invitation_id=invitation.id) for invitation in invitations],
+            )
 
         except Exception as e:
             self.db.rollback()
@@ -805,6 +1098,13 @@ class TeamManagementService:
             # Bulk update: deactivate all memberships in single query instead of looping
             self.db.query(EmailTeamMember).filter(EmailTeamMember.team_id == team_id, EmailTeamMember.is_active.is_(True)).update({EmailTeamMember.is_active: False}, synchronize_session=False)
 
+            # Pending invitations must not outlive the team. Creating a team whose slug matches
+            # a deleted one reactivates that row, and a surviving invitation would let someone
+            # invited to the old team walk into the new one.
+            self.db.query(EmailTeamInvitation).filter(EmailTeamInvitation.team_id == team_id, EmailTeamInvitation.is_active.is_(True)).update(
+                {EmailTeamInvitation.is_active: False}, synchronize_session=False
+            )
+
             self.db.commit()
 
             # Invalidate all role caches for this team
@@ -826,6 +1126,46 @@ class TeamManagementService:
             self.db.rollback()
             logger.error("Failed to delete team %s: %s", SecurityValidator.sanitize_log_message(team_id), e)
             return False
+
+    def _upsert_membership(
+        self, team_id: str, user_email: str, role: str, invited_by: Optional[str] = None, grant_source: Optional[str] = None, existing: Union[EmailTeamMember, None, _Unset] = UNSET
+    ) -> Tuple[EmailTeamMember, str]:
+        """Create or reactivate a membership row without committing.
+
+        The row is flushed so its ID is available for history logging, but the
+        transaction is left open for the caller to commit. This lets a caller
+        write several memberships (and other rows) as one atomic unit.
+
+        Args:
+            team_id: ID of the team.
+            user_email: Email of the user to add.
+            role: Role to assign ('owner' or 'member').
+            invited_by: Email of the user performing the add.
+            grant_source: Origin of grant (e.g., 'sso', 'manual', 'bootstrap', 'auto').
+            existing: The user's current membership row, if the caller already looked
+                it up. Omit to have it looked up here.
+
+        Returns:
+            Tuple[EmailTeamMember, str]: The membership row, and the history action
+            describing it ('added' for a new row, 'reactivated' for a revived one).
+        """
+        if isinstance(existing, _Unset):
+            existing = self.db.query(EmailTeamMember).filter(EmailTeamMember.team_id == team_id, EmailTeamMember.user_email == user_email).first()
+
+        if existing:
+            existing.is_active = True
+            existing.role = role
+            existing.joined_at = utc_now()
+            existing.invited_by = invited_by
+            if grant_source is not None:
+                existing.grant_source = grant_source
+            self.db.flush()
+            return existing, "reactivated"
+
+        membership = EmailTeamMember(team_id=team_id, user_email=user_email, role=role, joined_at=utc_now(), invited_by=invited_by, grant_source=grant_source, is_active=True)
+        self.db.add(membership)
+        self.db.flush()
+        return membership, "added"
 
     async def add_member_to_team(self, team_id: str, user_email: str, role: str = "member", invited_by: Optional[str] = None, grant_source: Optional[str] = None) -> EmailTeamMember:
         """Add a member to a team.
@@ -894,22 +1234,9 @@ class TeamManagementService:
 
         # Add or reactivate membership
         try:
-            if existing_membership:
-                existing_membership.is_active = True
-                existing_membership.role = role
-                existing_membership.joined_at = utc_now()
-                existing_membership.invited_by = invited_by
-                if grant_source is not None:
-                    existing_membership.grant_source = grant_source
-                self.db.commit()
-                self._log_team_member_action(existing_membership.id, team_id, user_email, role, "reactivated", invited_by)
-                member = existing_membership
-            else:
-                membership = EmailTeamMember(team_id=team_id, user_email=user_email, role=role, joined_at=utc_now(), invited_by=invited_by, grant_source=grant_source, is_active=True)
-                self.db.add(membership)
-                self.db.commit()
-                self._log_team_member_action(membership.id, team_id, user_email, role, "added", invited_by)
-                member = membership
+            member, action = self._upsert_membership(team_id, user_email, role, invited_by=invited_by, grant_source=grant_source, existing=existing_membership)
+            self.db.commit()
+            self._log_team_member_action(member.id, team_id, user_email, role, action, invited_by)
 
             await self._assign_team_rbac_role(user_email, team_id, role, granted_by=invited_by)
             self._invalidate_membership_caches(user_email, team_id)

@@ -77,8 +77,11 @@ class TestAllowTeamCreationFlag:
         mock_team.updated_at = datetime.now(timezone.utc)
         mock_team.is_active = True
 
+        # First-Party
+        from mcpgateway.services.team_management_service import TeamSeedResult
+
         mock_service = MagicMock()
-        mock_service.create_team = AsyncMock(return_value=mock_team)
+        mock_service.create_team_with_members = AsyncMock(return_value=TeamSeedResult(team=mock_team))
         mock_service_cls.return_value = mock_service
 
         # First-Party

@@ -26,7 +26,7 @@ from mcpgateway.schemas import (
     TeamUpdateRequest,
 )
 from mcpgateway.services.team_invitation_service import TeamInvitationService
-from mcpgateway.services.team_management_service import TeamManagementService
+from mcpgateway.services.team_management_service import SeededInvitation, SeededMember, TeamManagementService, TeamMemberLimitExceededError, TeamSeedResult
 
 from tests.utils.rbac_mocks import patch_rbac_decorators, restore_rbac_decorators
 
@@ -227,7 +227,7 @@ class TestTeamsRouter:
 
             # Mock TeamManagementService
             mock_service = AsyncMock(spec=TeamManagementService)
-            mock_service.create_team = AsyncMock(return_value=mock_team)
+            mock_service.create_team_with_members = AsyncMock(return_value=TeamSeedResult(team=mock_team))
             MockService.return_value = mock_service
 
             # Import the function to test
@@ -238,9 +238,68 @@ class TestTeamsRouter:
             assert result.id == mock_team.id
             assert result.name == mock_team.name
             assert result.description == mock_team.description
-            mock_service.create_team.assert_called_once_with(
-                name=request.name, description=request.description, created_by=mock_user_context["email"], visibility=request.visibility, max_members=request.max_members, skip_limits=False
+            mock_service.create_team_with_members.assert_called_once_with(
+                name=request.name,
+                description=request.description,
+                created_by=mock_user_context["email"],
+                visibility=request.visibility,
+                max_members=request.max_members,
+                skip_limits=False,
+                members=request.members,
             )
+
+    @pytest.mark.asyncio
+    async def test_create_team_reports_seeded_members_and_invitations(self, mock_user_context, mock_team, mock_db):
+        """Seeded members are reported back so the form can confirm without re-querying."""
+        request = TeamCreateRequest(
+            name="New Team",
+            visibility="private",
+            members=[
+                {"email": "alice@example.com", "role": "member"},
+                {"email": "external@partner.com", "role": "owner"},
+            ],
+        )
+
+        seed_result = TeamSeedResult(
+            team=mock_team,
+            members_added=[SeededMember(email="alice@example.com", role="member")],
+            invitations_sent=[SeededInvitation(email="external@partner.com", role="owner", invitation_id="inv-1")],
+        )
+
+        with mock_permission_check(is_admin=False), patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
+            mock_service = AsyncMock(spec=TeamManagementService)
+            mock_service.create_team_with_members = AsyncMock(return_value=seed_result)
+            MockService.return_value = mock_service
+
+            from mcpgateway.routers.teams import create_team
+
+            result = await create_team(request, current_user_ctx=mock_user_context, db=mock_db)
+
+            # The team fields stay at the top level, so existing clients keep working
+            assert result.id == mock_team.id
+
+            assert [(m.email, m.role) for m in result.members_added] == [("alice@example.com", "member")]
+            assert [(i.email, i.role, i.invitation_id) for i in result.invitations_sent] == [("external@partner.com", "owner", "inv-1")]
+
+            assert mock_service.create_team_with_members.call_args.kwargs["members"] == request.members
+
+    @pytest.mark.asyncio
+    async def test_create_team_seed_failure_returns_400(self, mock_user_context, mock_db):
+        """A member row the server cannot apply fails the whole request."""
+        request = TeamCreateRequest(name="New Team", visibility="private", members=[{"email": "alice@example.com"}])
+
+        with mock_permission_check(is_admin=False), patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
+            mock_service = AsyncMock(spec=TeamManagementService)
+            mock_service.create_team_with_members = AsyncMock(side_effect=TeamMemberLimitExceededError("Team would start with 5 members, exceeding the maximum of 3"))
+            MockService.return_value = mock_service
+
+            from mcpgateway.routers.teams import create_team
+
+            with pytest.raises(HTTPException) as exc_info:
+                await create_team(request, current_user_ctx=mock_user_context, db=mock_db)
+
+            assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
+            assert "exceeding the maximum" in str(exc_info.value.detail)
 
     @pytest.mark.asyncio
     async def test_create_team_value_error(self, mock_user_context, mock_db):
@@ -255,7 +314,7 @@ class TestTeamsRouter:
         with mock_permission_check(is_admin=False), patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
 
             mock_service = AsyncMock(spec=TeamManagementService)
-            mock_service.create_team = AsyncMock(side_effect=ValueError("Service validation error"))
+            mock_service.create_team_with_members = AsyncMock(side_effect=ValueError("Service validation error"))
             MockService.return_value = mock_service
 
             from mcpgateway.routers.teams import create_team
@@ -274,7 +333,7 @@ class TestTeamsRouter:
         with mock_permission_check(is_admin=False), patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
 
             mock_service = AsyncMock(spec=TeamManagementService)
-            mock_service.create_team = AsyncMock(side_effect=Exception("Database error"))
+            mock_service.create_team_with_members = AsyncMock(side_effect=Exception("Database error"))
             MockService.return_value = mock_service
 
             from mcpgateway.routers.teams import create_team
@@ -563,7 +622,7 @@ class TestTeamsRouter:
 
             # Mock TeamManagementService
             mock_service = AsyncMock(spec=TeamManagementService)
-            mock_service.create_team = AsyncMock(return_value=mock_team)
+            mock_service.create_team_with_members = AsyncMock(return_value=TeamSeedResult(team=mock_team))
             MockService.return_value = mock_service
 
             from mcpgateway.routers.teams import create_team
@@ -577,8 +636,8 @@ class TestTeamsRouter:
                 token_teams=mock_sso_platform_admin_context.get("token_teams"),
             )
             # Verify skip_limits=True was passed
-            mock_service.create_team.assert_called_once()
-            call_kwargs = mock_service.create_team.call_args.kwargs
+            mock_service.create_team_with_members.assert_called_once()
+            call_kwargs = mock_service.create_team_with_members.call_args.kwargs
             assert call_kwargs["skip_limits"] is True
 
     @pytest.mark.asyncio
@@ -1423,7 +1482,7 @@ class TestTeamsRouter:
 
             mock_settings.allow_team_creation = True
             mock_service = AsyncMock(spec=TeamManagementService)
-            mock_service.create_team = AsyncMock(side_effect=ValueError("max_members cannot exceed the configured limit of 100"))
+            mock_service.create_team_with_members = AsyncMock(side_effect=ValueError("max_members cannot exceed the configured limit of 100"))
             MockService.return_value = mock_service
 
             from mcpgateway.routers.teams import create_team
@@ -1444,7 +1503,7 @@ class TestTeamsRouter:
             mock_settings.allow_team_creation = True
             mock_settings.max_members_per_team = 100
             mock_service = AsyncMock(spec=TeamManagementService)
-            mock_service.create_team = AsyncMock(return_value=mock_team)
+            mock_service.create_team_with_members = AsyncMock(return_value=TeamSeedResult(team=mock_team))
             MockService.return_value = mock_service
 
             from mcpgateway.routers.teams import create_team
@@ -1461,14 +1520,14 @@ class TestTeamsRouter:
             mock_settings.allow_team_creation = True
             mock_settings.max_members_per_team = 100
             mock_service = AsyncMock(spec=TeamManagementService)
-            mock_service.create_team = AsyncMock(return_value=mock_team)
+            mock_service.create_team_with_members = AsyncMock(return_value=TeamSeedResult(team=mock_team))
             MockService.return_value = mock_service
 
             from mcpgateway.routers.teams import create_team
 
             result = await create_team(request, current_user_ctx=mock_admin_context, db=mock_db)
             assert result.id == mock_team.id
-            mock_service.create_team.assert_called_once()
+            mock_service.create_team_with_members.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_update_team_non_admin_max_members_too_high(self, mock_user_context, mock_db):
