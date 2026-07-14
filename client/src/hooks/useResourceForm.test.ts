@@ -356,6 +356,203 @@ describe("useResourceForm", () => {
     });
   });
 
+  describe("Edit mode (resourceId provided)", () => {
+    it("initializes form state from initialValues", () => {
+      const { result } = renderHook(() =>
+        useResourceForm({
+          resourceId: "resource-1",
+          initialValues: {
+            uri: "resource://example/path",
+            name: "Existing Resource",
+            content: "existing content",
+            description: "existing description",
+            mimeType: "text/plain",
+            tags: "a, b",
+            visibility: "private",
+          },
+        }),
+      );
+
+      expect(result.current.uri).toBe("resource://example/path");
+      expect(result.current.name).toBe("Existing Resource");
+      expect(result.current.content).toBe("existing content");
+      expect(result.current.description).toBe("existing description");
+      expect(result.current.mimeType).toBe("text/plain");
+      expect(result.current.tags).toBe("a, b");
+      expect(result.current.visibility).toBe("private");
+    });
+
+    it("sends a PUT request to resourcesApi.update when resourceId is provided", async () => {
+      let capturedBody: unknown;
+      let capturedMethod: string | undefined;
+      server.use(
+        http.put("*/resources/resource-1", async ({ request }) => {
+          capturedMethod = request.method;
+          capturedBody = await request.json();
+          return HttpResponse.json({ id: "resource-1" }, { status: 200 });
+        }),
+      );
+
+      const { result } = renderHook(() =>
+        useResourceForm({
+          resourceId: "resource-1",
+          initialValues: {
+            uri: "resource://example/path",
+            name: "Existing Resource",
+            content: "updated content",
+          },
+        }),
+      );
+
+      await act(async () => {
+        await result.current.handleSubmit(fakeSubmit());
+      });
+
+      await waitFor(() => expect(capturedBody).toBeDefined());
+      expect(capturedMethod).toBe("PUT");
+      expect(capturedBody).toMatchObject({
+        uri: "resource://example/path",
+        name: "Existing Resource",
+        content: "updated content",
+      });
+    });
+
+    it("does not send a POST request to /resources when resourceId is provided", async () => {
+      const postSpy = vi.fn(() => HttpResponse.json({ id: "new-id" }, { status: 201 }));
+      server.use(
+        http.post("*/resources", postSpy),
+        http.put("*/resources/resource-1", () =>
+          HttpResponse.json({ id: "resource-1" }, { status: 200 }),
+        ),
+      );
+
+      const { result } = renderHook(() =>
+        useResourceForm({
+          resourceId: "resource-1",
+          initialValues: { uri: "resource://example/path", name: "Existing", content: "c" },
+        }),
+      );
+
+      await act(async () => {
+        await result.current.handleSubmit(fakeSubmit());
+      });
+
+      expect(postSpy).not.toHaveBeenCalled();
+    });
+
+    it("calls onSuccess after a successful update", async () => {
+      server.use(
+        http.put("*/resources/resource-1", () =>
+          HttpResponse.json({ id: "resource-1" }, { status: 200 }),
+        ),
+      );
+
+      const onSuccess = vi.fn();
+      const { result } = renderHook(() =>
+        useResourceForm({
+          resourceId: "resource-1",
+          initialValues: { uri: "resource://example/path", name: "Existing", content: "c" },
+        }),
+      );
+
+      await act(async () => {
+        await result.current.handleSubmit(fakeSubmit(), onSuccess);
+      });
+
+      await waitFor(() => expect(onSuccess).toHaveBeenCalledOnce());
+    });
+
+    it("sets submitError with the update-failed message on API failure", async () => {
+      server.use(
+        http.put("*/resources/resource-1", () =>
+          HttpResponse.json({ detail: "Update failed" }, { status: 500 }),
+        ),
+      );
+
+      const { result } = renderHook(() =>
+        useResourceForm({
+          resourceId: "resource-1",
+          initialValues: { uri: "resource://example/path", name: "Existing", content: "c" },
+        }),
+      );
+
+      await act(async () => {
+        await result.current.handleSubmit(fakeSubmit());
+      });
+
+      await waitFor(() => expect(result.current.errors.submit).toBeTruthy());
+    });
+  });
+
+  describe("validateForm – name character restrictions", () => {
+    // Mirrors backend SecurityValidator.validate_name (mcpgateway/common/validators.py),
+    // which every resource name round-trips through on create and update.
+    it.each(["valid_name", "valid-name-123", "valid.name", "Test Name", "Business Hours"])(
+      "accepts name %s",
+      (name) => {
+        const { result } = renderHook(() => useResourceForm());
+
+        act(() => {
+          result.current.setUri("resource://example/path");
+          result.current.setName(name);
+          result.current.setContent("content");
+        });
+
+        let valid: boolean;
+        act(() => {
+          valid = result.current.validateForm();
+        });
+
+        expect(valid!).toBe(true);
+        expect(result.current.errors.name).toBeUndefined();
+      },
+    );
+
+    it.each([
+      "Business Hours!",
+      "name<script>",
+      'name"test',
+      "name'test",
+      "name/test",
+      "name,test",
+      "name@test",
+    ])("rejects name %s", (name) => {
+      const { result } = renderHook(() => useResourceForm());
+
+      act(() => {
+        result.current.setUri("resource://example/path");
+        result.current.setName(name);
+        result.current.setContent("content");
+      });
+
+      let valid: boolean;
+      act(() => {
+        valid = result.current.validateForm();
+      });
+
+      expect(valid!).toBe(false);
+      expect(result.current.errors.name).toBeTruthy();
+    });
+
+    it("rejects name longer than 255 characters", () => {
+      const { result } = renderHook(() => useResourceForm());
+
+      act(() => {
+        result.current.setUri("resource://example/path");
+        result.current.setName("a".repeat(256));
+        result.current.setContent("content");
+      });
+
+      let valid: boolean;
+      act(() => {
+        valid = result.current.validateForm();
+      });
+
+      expect(valid!).toBe(false);
+      expect(result.current.errors.name).toBeTruthy();
+    });
+  });
+
   describe("validateForm – description length", () => {
     it("returns false when description exceeds 500 chars", () => {
       const { result } = renderHook(() => useResourceForm());
