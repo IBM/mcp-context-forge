@@ -1153,12 +1153,12 @@ class TeamManagementService:
             existing = self.db.query(EmailTeamMember).filter(EmailTeamMember.team_id == team_id, EmailTeamMember.user_email == user_email).first()
 
         if existing:
-            existing.is_active = True
-            existing.role = role
-            existing.joined_at = utc_now()
-            existing.invited_by = invited_by
+            existing.is_active = True  # pylint: disable=attribute-defined-outside-init
+            existing.role = role  # pylint: disable=attribute-defined-outside-init
+            existing.joined_at = utc_now()  # pylint: disable=attribute-defined-outside-init
+            existing.invited_by = invited_by  # pylint: disable=attribute-defined-outside-init
             if grant_source is not None:
-                existing.grant_source = grant_source
+                existing.grant_source = grant_source  # pylint: disable=attribute-defined-outside-init
             self.db.flush()
             return existing, "reactivated"
 
