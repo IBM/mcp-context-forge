@@ -57,6 +57,7 @@ class _NoRedirectPyJWKClient(jwt.PyJWKClient):
     """
 
     def fetch_data(self) -> Any:
+        """Fetch JWKS data without following redirects."""
         try:
             with httpx.Client(follow_redirects=False, timeout=self.timeout) as _client:
                 resp = _client.get(self.uri, headers=self.headers)

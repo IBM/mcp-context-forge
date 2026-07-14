@@ -180,6 +180,16 @@ from mcpgateway.services.import_service import ImportError as ImportServiceError
 from mcpgateway.services.import_service import ImportService, ImportValidationError
 from mcpgateway.services.log_aggregator import get_log_aggregator
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.services.mcp_apps import (
+    apply_tool_meta,
+    build_mcp_apps_capabilities,
+    filter_model_visible_tools,
+    get_mcp_app_session_cleanup_service,
+    MCPAppsValidationError,
+    mcp_app_session_service,
+    mcp_apps_enabled,
+    serialize_resource_content_for_mcp,
+)
 from mcpgateway.services.metrics import setup_metrics
 from mcpgateway.services.permission_service import PermissionService
 from mcpgateway.services.prompt_service import PromptError, PromptLockConflictError, PromptNameConflictError, PromptNotFoundError
@@ -890,6 +900,9 @@ def _serialize_mcp_tool_definition(tool: Any) -> Dict[str, Any]:
     if annotations is not None:
         payload["annotations"] = annotations
 
+    extension_metadata = data.get("extensionMetadata") or data.get("extension_metadata") or getattr(tool, "extension_metadata", None)
+    apply_tool_meta(payload, extension_metadata)
+
     return {key: value for key, value in payload.items() if value is not None}
 
 
@@ -902,7 +915,7 @@ def _serialize_mcp_tool_definitions(tools: List[Any]) -> List[Dict[str, Any]]:
     Returns:
         List of MCP-compatible tool definitions.
     """
-    return [_serialize_mcp_tool_definition(tool) for tool in tools]
+    return [_serialize_mcp_tool_definition(tool) for tool in filter_model_visible_tools(tools)]
 
 
 def _serialize_legacy_tool_payloads(tools: List[Any]) -> List[Dict[str, Any]]:
@@ -915,7 +928,7 @@ def _serialize_legacy_tool_payloads(tools: List[Any]) -> List[Dict[str, Any]]:
         List of legacy tool payload dictionaries.
     """
     payloads: List[Dict[str, Any]] = []
-    for tool in tools:
+    for tool in filter_model_visible_tools(tools):
         if hasattr(tool, "model_dump"):
             payload = tool.model_dump(by_alias=True, exclude_none=True)
         elif isinstance(tool, dict):
@@ -1723,6 +1736,12 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             await metrics_cleanup_service.start()
             logger.info("Metrics cleanup service initialized (retention: %d days)", settings.metrics_retention_days)
 
+        # Initialize MCP Apps session cleanup service for automatic deletion of expired AppBridge sessions
+        if settings.mcpgateway_mcp_apps_enabled and settings.mcpgateway_mcp_apps_session_cleanup_enabled:
+            mcp_app_session_cleanup_service = get_mcp_app_session_cleanup_service()
+            await mcp_app_session_cleanup_service.start()
+            logger.info("MCP Apps session cleanup service initialized")
+
         # Initialize metrics rollup service for hourly aggregation
         if settings.metrics_rollup_enabled:
             # First-Party
@@ -1956,6 +1975,10 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
             metrics_cleanup_service = get_metrics_cleanup_service()
             services_to_shutdown.insert(2, metrics_cleanup_service)
+
+        if settings.mcpgateway_mcp_apps_enabled and settings.mcpgateway_mcp_apps_session_cleanup_enabled:
+            mcp_app_session_cleanup_service = get_mcp_app_session_cleanup_service()
+            services_to_shutdown.insert(3, mcp_app_session_cleanup_service)
 
         if dataplane_publisher_service is not None:
             services_to_shutdown.insert(3, dataplane_publisher_service)
@@ -5263,6 +5286,15 @@ def _extract_a2a_request_context(
     }
 
 
+def _extract_mcp_session_id(request: Request, body: Optional[Dict[str, Any]] = None) -> Optional[str]:
+    """Extract the MCP session id from supported transport headers or JSON body fields."""
+    mcp_session_id = request.headers.get("mcp-session-id") or request.headers.get("x-mcp-session-id")
+    if mcp_session_id or not isinstance(body, dict):
+        return mcp_session_id
+    body_session_id = body.get("mcpSessionId") or body.get("mcp_session_id")
+    return body_session_id if isinstance(body_session_id, str) and body_session_id else None
+
+
 @a2a_router.post("/{agent_name}/invoke", response_model=Dict[str, Any])
 @require_permission("a2a.invoke")
 async def invoke_a2a_agent(
@@ -6349,6 +6381,9 @@ async def create_resource(
         # Handle validation errors from Pydantic
         logger.error(f"Validation error while creating resource: {e}")
         raise HTTPException(status_code=422, detail=ErrorFormatter.format_validation_error(e))
+    except MCPAppsValidationError as e:
+        logger.error(f"MCP Apps validation error while creating resource: {e}")
+        raise HTTPException(status_code=422, detail=str(e))
     except IntegrityError as e:
         logger.error(f"Integrity error while creating resource: {e}")
         raise HTTPException(status_code=409, detail=ErrorFormatter.format_database_error(e))
@@ -6458,7 +6493,10 @@ async def read_resource(resource_id: str, request: Request, db: Session = Depend
 
         # If already a ResourceContent, serialize directly
         if isinstance(content, ResourceContent):
-            return content.model_dump()
+            payload = content.model_dump()
+            if payload.get("meta") is None:
+                payload.pop("meta", None)
+            return payload
 
         # If TextContent, wrap into resource envelope with text
         if isinstance(content, TextContent):
@@ -6570,6 +6608,9 @@ async def update_resource(
     except ValidationError as e:
         logger.error(f"Validation error while updating resource {resource_id}: {e}")
         raise HTTPException(status_code=422, detail=ErrorFormatter.format_validation_error(e))
+    except MCPAppsValidationError as e:
+        logger.error(f"MCP Apps validation error while updating resource {resource_id}: {e}")
+        raise HTTPException(status_code=422, detail=str(e))
     except IntegrityError as e:
         logger.error(f"Integrity error while updating resource {resource_id}: {e}")
         raise HTTPException(status_code=409, detail=ErrorFormatter.format_database_error(e))
@@ -8009,13 +8050,18 @@ async def handle_internal_mcp_initialize(request: Request):
         else:
             server_id = params.get("server_id")
 
-        result = await _execute_rpc_initialize(
-            request,
-            user,
-            params=params,
-            server_id=server_id,
-            mcp_session_id=request.headers.get("mcp-session-id") or request.headers.get("x-mcp-session-id"),
-        )
+        db = SessionLocal()
+        try:
+            result = await _execute_rpc_initialize(
+                request,
+                db,
+                user,
+                params=params,
+                server_id=server_id,
+                mcp_session_id=_extract_mcp_session_id(request),
+            )
+        finally:
+            db.close()
         return ORJSONResponse(content={"jsonrpc": "2.0", "result": result, "id": req_id})
     except JSONRPCError as exc:
         error = exc.to_dict()
@@ -8044,7 +8090,7 @@ async def handle_internal_mcp_session_delete(request: Request):
     """
     _build_internal_mcp_forwarded_user(request)
     auth_context = get_internal_mcp_auth_context(request) or {}
-    mcp_session_id = request.headers.get("mcp-session-id") or request.headers.get("x-mcp-session-id")
+    mcp_session_id = _extract_mcp_session_id(request)
     if not mcp_session_id:
         return ORJSONResponse(status_code=400, content={"detail": "mcp-session-id header is required"})
 
@@ -8529,22 +8575,7 @@ async def handle_internal_mcp_resources_read(request: Request):
             meta_data=meta_data,
             request_headers=dict(request.headers),
         )
-        # First-Party
-        from mcpgateway.common.models import ResourceContent  # pylint: disable=import-outside-toplevel
-
-        if isinstance(result, ResourceContent):
-            normalized_content = {"uri": result.uri}
-            if result.mime_type:
-                normalized_content["mimeType"] = result.mime_type
-            if result.text is not None:
-                normalized_content["text"] = result.text
-            elif result.blob is not None:
-                normalized_content["blob"] = base64.b64encode(result.blob).decode("ascii")
-            payload = {"contents": [normalized_content]}
-        elif hasattr(result, "model_dump"):
-            payload = {"contents": [result.model_dump(by_alias=True, exclude_none=True)]}
-        else:
-            payload = {"contents": [result]}
+        payload = {"contents": [serialize_resource_content_for_mcp(result, fallback_uri=uri)]}
 
         if db.is_active and db.in_transaction() is not None:
             db.commit()
@@ -10212,7 +10243,7 @@ async def _maybe_forward_affinitized_rpc_request(
     request_headers = request.headers
     rpc_client_host = getattr(getattr(request, "client", None), "host", None)
     rpc_from_loopback = rpc_client_host in ("127.0.0.1", "::1") if rpc_client_host else False
-    mcp_session_id = request_headers.get("mcp-session-id") or request_headers.get("x-mcp-session-id")
+    mcp_session_id = _extract_mcp_session_id(request)
     is_internally_forwarded = rpc_from_loopback and request_headers.get("x-forwarded-internally") == "true"
 
     if settings.mcpgateway_session_affinity_enabled and mcp_session_id and method != "initialize" and not is_internally_forwarded:
@@ -10258,8 +10289,27 @@ async def _maybe_forward_affinitized_rpc_request(
     return None
 
 
+async def _mcp_apps_initialize_authorized(request: Request, db: Session, user, server_id: Optional[str]) -> bool:
+    """Return whether initialize may advertise MCP Apps for this target."""
+    if not get_user_email(user):
+        return False
+    if not server_id:
+        return True
+
+    user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
+    if not (is_admin and token_teams is None) and token_teams is None:
+        token_teams = []
+
+    try:
+        await server_service.get_server(db, server_id, user_email=user_email, token_teams=token_teams)
+    except ServerNotFoundError:
+        return False
+    return True
+
+
 async def _execute_rpc_initialize(
     request: Request,
+    db: Session,
     user,
     *,
     params: Dict[str, Any],
@@ -10270,6 +10320,7 @@ async def _execute_rpc_initialize(
 
     Args:
         request: Incoming RPC request.
+        db: Active database session.
         user: Authenticated user payload.
         params: Initialize params payload.
         server_id: Optional virtual server identifier.
@@ -10295,6 +10346,10 @@ async def _execute_rpc_initialize(
     result = await session_registry.handle_initialize_logic(params, session_id=init_session_id, server_id=server_id)
     if hasattr(result, "model_dump"):
         result = result.model_dump(by_alias=True, exclude_none=True)
+
+    extensions = build_mcp_apps_capabilities(authorized=await _mcp_apps_initialize_authorized(request, db, user, server_id))
+    if extensions:
+        result.setdefault("capabilities", {})["extensions"] = extensions
 
     if settings.mcpgateway_session_affinity_enabled and mcp_session_id and mcp_session_id != "not-provided":
         try:
@@ -10409,6 +10464,7 @@ async def _execute_rpc_tools_call(
                     plugin_global_context=plugin_global_context,
                     meta_data=meta_data,
                     skip_pre_invoke=skip_pre_invoke,
+                    require_model_visible=True,
                 )
             except (ToolNotFoundError, ValueError):
                 logger.error("Tool not found: %s", name)
@@ -10432,6 +10488,167 @@ async def _execute_rpc_tools_call(
     finally:
         if settings.mcpgateway_tool_cancellation_enabled and run_id:
             await cancellation_service.unregister_run(run_id)
+
+
+@utility_router.post("/appbridge/sessions")
+@require_permission("resources.read")
+async def create_mcp_app_session(request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)):
+    """Create a short-lived AppBridge session for an authorized UI resource."""
+    if not mcp_apps_enabled():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="MCP Apps are disabled")
+
+    try:
+        body = orjson.loads(await request.body() or b"{}")
+    except orjson.JSONDecodeError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Parse error") from exc
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid request body")
+
+    resource_uri = body.get("resourceUri") or body.get("resource_uri")
+    if not resource_uri or not isinstance(resource_uri, str) or not resource_uri.startswith("ui://"):
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="resourceUri must use the ui:// scheme")
+
+    mcp_session_id = _extract_mcp_session_id(request, body)
+    if not mcp_session_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="mcp-session-id header is required")
+    await _assert_session_owner_or_admin(request, user, mcp_session_id)
+
+    server_id = body.get("serverId") or body.get("server_id") or request.headers.get("x-contextforge-server-id")
+    if not server_id or not isinstance(server_id, str):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="serverId is required for MCP Apps sessions")
+    user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
+    if is_admin and token_teams is None:
+        resource_user_email = None
+    else:
+        resource_user_email = user_email
+        if token_teams is None:
+            token_teams = []
+
+    try:
+        await resource_service.read_resource(
+            db,
+            resource_uri=resource_uri,
+            user=resource_user_email,
+            server_id=server_id,
+            token_teams=token_teams,
+        )
+    except (ResourceNotFoundError, ResourceError) as exc:
+        logger.info("AppBridge session resource lookup failed for %s on server %s: %s", resource_uri, server_id, exc)
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Resource not found") from exc
+
+    requester_email = get_user_email(user)
+    if not requester_email:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_ACCESS_DENIED_MSG)
+
+    app_session = mcp_app_session_service.create_session(
+        db,
+        mcp_session_id=mcp_session_id,
+        user_email=requester_email,
+        server_id=server_id,
+        resource_uri=resource_uri,
+        token_teams=token_teams,
+    )
+    return ORJSONResponse(
+        content={
+            "appSessionId": app_session.id,
+            "resourceUri": app_session.resource_uri,
+            "serverId": app_session.server_id,
+            "expiresAt": app_session.expires_at.isoformat(),
+        }
+    )
+
+
+@utility_router.post("/appbridge/sessions/{app_session_id}/rpc")
+@require_permission("tools.execute")
+async def handle_mcp_app_session_rpc(app_session_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)):
+    """Execute an app-visible tool through a validated AppBridge session."""
+    if not mcp_apps_enabled():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="MCP Apps are disabled")
+
+    try:
+        body = orjson.loads(await request.body())
+    except orjson.JSONDecodeError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Parse error") from exc
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid request body")
+
+    req_id = body.get("id")
+    method = body.get("method")
+    params = body.get("params") if isinstance(body.get("params"), dict) else {}
+    if method != "tools/call":
+        return {"jsonrpc": "2.0", "error": {"code": -32601, "message": f"Method not found: {method}"}, "id": req_id}
+
+    mcp_session_id = _extract_mcp_session_id(request, body)
+    if not mcp_session_id:
+        return {"jsonrpc": "2.0", "error": {"code": -32003, "message": _ACCESS_DENIED_MSG}, "id": req_id}
+    try:
+        await _assert_session_owner_or_admin(request, user, mcp_session_id)
+    except HTTPException as exc:
+        error_code = -32002 if exc.status_code == status.HTTP_404_NOT_FOUND else -32003
+        return {"jsonrpc": "2.0", "error": {"code": error_code, "message": str(exc.detail)}, "id": req_id}
+
+    requester_email, requester_is_admin = get_request_identity(request, user)
+    server_id = params.get("server_id") or params.get("serverId") or body.get("serverId") or body.get("server_id") or request.headers.get("x-contextforge-server-id")
+    app_session = mcp_app_session_service.get_valid_session(
+        db,
+        app_session_id=app_session_id,
+        mcp_session_id=mcp_session_id,
+        user_email=requester_email,
+        server_id=None,
+        is_admin=requester_is_admin,
+    )
+    if app_session is None:
+        return {"jsonrpc": "2.0", "error": {"code": -32003, "message": _ACCESS_DENIED_MSG}, "id": req_id}
+    if not app_session.server_id or (server_id is not None and server_id != app_session.server_id):
+        return {"jsonrpc": "2.0", "error": {"code": -32003, "message": _ACCESS_DENIED_MSG}, "id": req_id}
+
+    name = params.get("name")
+    if not name:
+        return {"jsonrpc": "2.0", "error": {"code": -32602, "message": "Missing tool name in parameters"}, "id": req_id}
+
+    try:
+        token_teams = app_session.token_teams
+        tool_user_email = None if token_teams is None else app_session.user_email
+        request_headers = {k.lower(): v for k, v in request.headers.items()}
+        request_headers.pop("x-context-forge-gateway-id", None)
+        result = await tool_service.invoke_tool(
+            db=db,
+            name=name,
+            arguments=params.get("arguments", {}),
+            request_headers=request_headers,
+            app_user_email=requester_email,
+            user_email=tool_user_email,
+            token_teams=token_teams,
+            server_id=app_session.server_id,
+            plugin_context_table=getattr(request.state, "plugin_context_table", None),
+            plugin_global_context=getattr(request.state, "plugin_global_context", None),
+            meta_data=params.get("_meta"),
+            require_app_visible=True,
+        )
+        if hasattr(result, "model_dump"):
+            result = result.model_dump(by_alias=True, exclude_none=True)
+        return {"jsonrpc": "2.0", "result": result, "id": req_id}
+    except ToolNotFoundError:
+        return {"jsonrpc": "2.0", "error": {"code": -32601, "message": f"Tool not found: {name}"}, "id": req_id}
+    except ToolError as exc:
+        logger.info("AppBridge tool call failed with tool error for %s: %s", name, exc)
+        return {"jsonrpc": "2.0", "error": {"code": -32000, "message": str(exc)}, "id": req_id}
+    except PluginViolationError as exc:
+        error_code = -32602
+        if exc.violation and hasattr(exc.violation, "mcp_error_code") and isinstance(exc.violation.mcp_error_code, int):
+            error_code = exc.violation.mcp_error_code
+        return {"jsonrpc": "2.0", "error": {"code": error_code, "message": str(exc)}, "id": req_id}
+    except PluginError as exc:
+        error_code = -32603
+        if exc.error and hasattr(exc.error, "mcp_error_code") and isinstance(exc.error.mcp_error_code, int):
+            error_code = exc.error.mcp_error_code
+        return {"jsonrpc": "2.0", "error": {"code": error_code, "message": str(exc)}, "id": req_id}
+    except (ValidationError, ValueError) as exc:
+        logger.info("AppBridge tool call received invalid parameters for %s: %s", name, exc)
+        return {"jsonrpc": "2.0", "error": {"code": -32602, "message": str(exc)}, "id": req_id}
+    except Exception:
+        logger.exception("AppBridge tool call failed for %s", name)
+        return {"jsonrpc": "2.0", "error": {"code": -32603, "message": "Internal error"}, "id": req_id}
 
 
 @utility_router.post("/_internal/mcp/tools/call/")
@@ -10641,6 +10858,7 @@ async def handle_internal_mcp_tools_call_resolve(request: Request):
             server_id=server_id,
             plugin_global_context=plugin_global_context,
             plugin_context_table=plugin_context_table,
+            require_model_visible=True,
         )
 
         if db.is_active and db.in_transaction() is not None:
@@ -10955,7 +11173,7 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
             params["server_id"] = _internal_runtime_server_id
         server_id = params.get("server_id", None)
         cursor = params.get("cursor")  # Extract cursor parameter
-        mcp_session_id = request_headers.get("mcp-session-id") or request_headers.get("x-mcp-session-id")
+        mcp_session_id = _extract_mcp_session_id(request)
 
         # RBAC: Enforce server_id scoping for server-scoped tokens.
         # Extract token scopes once, then:
@@ -11008,6 +11226,7 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
         if method == "initialize":
             result = await _execute_rpc_initialize(
                 request,
+                db,
                 user,
                 params=params,
                 server_id=server_id,
@@ -11112,10 +11331,7 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
                     meta_data=meta_data,
                     request_headers=dict(request.headers),
                 )
-                if hasattr(result, "model_dump"):
-                    result = {"contents": [result.model_dump(by_alias=True, exclude_none=True)]}
-                else:
-                    result = {"contents": [result]}
+                result = {"contents": [serialize_resource_content_for_mcp(result, fallback_uri=uri)]}
             except (ValueError, ResourceNotFoundError) as e:
                 # Resource not found in the gateway
                 logger.error("Resource not found: %s", uri)
@@ -11416,6 +11632,15 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
         elif method.startswith("logging/"):
             # Catch-all for other logging/* methods (currently unsupported)
             result = {}
+        elif method.startswith("extensions/") or method.startswith("io.modelcontextprotocol/"):
+            # Check if this is a known MCP Apps method.
+            # First-Party
+            from mcpgateway.services.mcp_method_registry import mcp_method_registry
+
+            if not mcp_method_registry.is_known_method(method):
+                raise JSONRPCError(-32601, f"Method not found: {method}", {})
+            # Known MCP Apps method but not yet implemented here.
+            raise JSONRPCError(-32601, f"Method not found: {method}", {})
         else:
             # Backward compatibility: Try to invoke as a tool directly
             # This allows both old format (method=tool_name) and new format (method=tools/call)
@@ -11452,6 +11677,7 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
                     plugin_context_table=plugin_context_table,
                     plugin_global_context=plugin_global_context,
                     meta_data=meta_data,
+                    require_model_visible=True,
                 )
                 if hasattr(result, "model_dump"):
                     result = result.model_dump(by_alias=True, exclude_none=True)

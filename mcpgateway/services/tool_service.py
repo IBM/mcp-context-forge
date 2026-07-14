@@ -81,6 +81,7 @@ from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.content_security import ContentSecurityService
 from mcpgateway.services.event_service import EventService
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.services.mcp_apps import is_app_visible_tool, is_model_visible_tool, mcp_apps_enabled, optional_extension_metadata, validate_extension_metadata
 from mcpgateway.services.metrics_buffer_service import get_metrics_buffer_service
 from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batches, pause_rollup_during_purge
 from mcpgateway.services.metrics_query_service import get_top_performers_combined
@@ -1165,6 +1166,7 @@ class ToolService(BaseService):
             "input_schema": tool.input_schema or {"type": "object", "properties": {}},
             "output_schema": tool.output_schema,
             "annotations": tool.annotations or {},
+            "extension_metadata": optional_extension_metadata(getattr(tool, "extension_metadata", None)),
             "auth_type": tool.auth_type,
             "jsonpath_filter": tool.jsonpath_filter,
             "custom_name": tool.custom_name,
@@ -1358,6 +1360,7 @@ class ToolService(BaseService):
 
         tool_dict["request_type"] = tool.request_type
         tool_dict["annotations"] = tool.annotations or {}
+        tool_dict["extension_metadata"] = optional_extension_metadata(getattr(tool, "extension_metadata", None))
 
         # Only decode auth if include_auth=True AND we have encrypted credentials
         if include_auth and has_encrypted_auth:
@@ -1966,6 +1969,7 @@ class ToolService(BaseService):
             >>> db = MagicMock()
             >>> tool = MagicMock()
             >>> tool.name = 'test'
+            >>> tool.extension_metadata = None
             >>> db.execute.return_value.scalar_one_or_none.return_value = None
             >>> mock_gateway = MagicMock()
             >>> mock_gateway.name = 'test_gateway'
@@ -1997,6 +2001,9 @@ class ToolService(BaseService):
 
             if visibility is None:
                 visibility = tool.visibility or "public"
+
+            tool_extension_metadata = optional_extension_metadata(getattr(tool, "extension_metadata", None))
+            validate_extension_metadata(tool_extension_metadata)
 
             # Validate tool content for malicious patterns (CWE-20 fix - Issue #6)
             # Scan tool name, description, and inputSchema
@@ -2059,6 +2066,7 @@ class ToolService(BaseService):
                 input_schema=tool.input_schema,
                 output_schema=tool.output_schema,
                 annotations=tool.annotations,
+                extension_metadata=tool_extension_metadata,
                 jsonpath_filter=tool.jsonpath_filter,
                 auth_type=auth_type,
                 auth_value=auth_value,
@@ -2635,6 +2643,8 @@ class ToolService(BaseService):
         Returns:
             DbTool: Database model instance ready to be added to the session.
         """
+        tool_extension_metadata = optional_extension_metadata(getattr(tool, "extension_metadata", None))
+        validate_extension_metadata(tool_extension_metadata)
         return DbTool(
             original_name=name,
             custom_name=name,
@@ -2650,6 +2660,7 @@ class ToolService(BaseService):
             input_schema=tool.input_schema,
             output_schema=tool.output_schema,
             annotations=tool.annotations,
+            extension_metadata=tool_extension_metadata,
             jsonpath_filter=tool.jsonpath_filter,
             auth_type=auth_type,
             auth_value=auth_value,
@@ -3054,6 +3065,7 @@ class ToolService(BaseService):
                     DbTool.input_schema.label("input_schema"),
                     DbTool.output_schema.label("output_schema"),
                     DbTool.annotations.label("annotations"),
+                    DbTool.extension_metadata.label("extension_metadata"),
                     DbTool.owner_email.label("owner_email"),
                     DbTool.team_id.label("team_id"),
                     DbTool.visibility.label("visibility"),
@@ -3081,6 +3093,7 @@ class ToolService(BaseService):
 
             result: List[Dict[str, Any]] = []
             for row in rows:
+                extension_metadata = optional_extension_metadata(row.get("extension_metadata"))
                 payload: Dict[str, Any] = {
                     "name": row["name"],
                     "description": row["description"],
@@ -3089,6 +3102,10 @@ class ToolService(BaseService):
                 }
                 if row["title"] is not None:
                     payload["title"] = row["title"]
+                if extension_metadata is not None:
+                    payload["extensionMetadata"] = extension_metadata
+                if mcp_apps_enabled() and not is_model_visible_tool(payload):
+                    continue
                 if row["output_schema"] is not None:
                     payload["outputSchema"] = row["output_schema"]
                 result.append(payload)
@@ -4078,6 +4095,7 @@ class ToolService(BaseService):
         server_id: Optional[str] = None,
         plugin_global_context: Optional[GlobalContext] = None,
         plugin_context_table: Optional[PluginContextTable] = None,
+        require_model_visible: bool = False,
     ) -> Dict[str, Any]:
         """Build a narrow MCP execution plan for the Rust runtime hot path.
 
@@ -4101,6 +4119,7 @@ class ToolService(BaseService):
             server_id: Optional virtual server identifier restricting tool access.
             plugin_global_context: Optional global context from middleware for hook continuity.
             plugin_context_table: Optional context table from prior hooks for state sharing.
+            require_model_visible: When True, deny execution unless the resolved tool is model-visible.
 
         Returns:
             A Rust execution plan dictionary, or a fallback descriptor when direct
@@ -4175,19 +4194,20 @@ class ToolService(BaseService):
                 tool = tools[0]
             else:
                 visibility_priority = {"team": 0, "private": 1, "public": 2}
-                accessible_tools: list[tuple[int, Any]] = []
+                accessible_tools: list[tuple[int, int, Any]] = []
                 for candidate in tools:
                     tool_dict = {"visibility": candidate.visibility, "team_id": candidate.team_id, "owner_email": candidate.owner_email}
                     if await self._check_tool_access(db, tool_dict, user_email, token_teams):
+                        name_priority = 0 if getattr(candidate, "name", None) == name else 1
                         priority = visibility_priority.get(candidate.visibility, 99)
-                        accessible_tools.append((priority, candidate))
+                        accessible_tools.append((name_priority, priority, candidate))
 
                 if not accessible_tools:
                     raise ToolNotFoundError(f"Tool not found: {name}")
 
-                accessible_tools.sort(key=lambda item: item[0])
-                best_priority = accessible_tools[0][0]
-                best_tools = [candidate for priority, candidate in accessible_tools if priority == best_priority]
+                accessible_tools.sort(key=lambda item: (item[0], item[1]))
+                best_name_priority, best_visibility_priority = accessible_tools[0][0], accessible_tools[0][1]
+                best_tools = [candidate for name_priority, priority, candidate in accessible_tools if name_priority == best_name_priority and priority == best_visibility_priority]
                 if len(best_tools) > 1:
                     raise ToolInvocationError(f"Multiple tools found with name '{name}' at same priority level. Tool name is ambiguous.")
                 tool = best_tools[0]
@@ -4215,6 +4235,9 @@ class ToolService(BaseService):
             return {"eligible": False, "fallbackReason": "direct-proxy"}
 
         if not await self._check_tool_access(db, tool_payload, user_email, token_teams):
+            raise ToolNotFoundError(f"Tool not found: {name}")
+
+        if require_model_visible and not is_model_visible_tool(tool_payload):
             raise ToolNotFoundError(f"Tool not found: {name}")
 
         if server_id and not tool_selected_from_server_scope:
@@ -4607,7 +4630,10 @@ class ToolService(BaseService):
         Returns:
             A list of candidate tool ORM rows matching the request.
         """
-        query = select(DbTool).options(joinedload(DbTool.gateway)).where(DbTool.name == name)  # pylint: disable=comparison-with-callable
+        name_filter = DbTool.name == name  # pylint: disable=comparison-with-callable
+        if server_id:
+            name_filter = or_(name_filter, DbTool.original_name == name)
+        query = select(DbTool).options(joinedload(DbTool.gateway)).where(name_filter)
         if server_id:
             query = query.join(server_tool_association, DbTool.id == server_tool_association.c.tool_id).where(server_tool_association.c.server_id == server_id)
         return db.execute(query).scalars().all()
@@ -4674,7 +4700,10 @@ class ToolService(BaseService):
         context_table: Any,
         global_context: Any,
         meta_data: Optional[Dict[str, Any]],
+        *,
         skip_pre_invoke: bool,
+        require_app_visible: bool,
+        require_model_visible: bool,
         path_label: str,
     ) -> "ToolResult":
         """Sleep for the plugin-requested delay, then recursively re-invoke the tool.
@@ -4697,6 +4726,8 @@ class ToolService(BaseService):
             global_context: Plugin global context.
             meta_data: Optional metadata dictionary.
             skip_pre_invoke: Whether to skip pre-invoke hooks.
+            require_app_visible: Whether the retried invocation must resolve an app-visible tool.
+            require_model_visible: Whether the retried invocation must resolve a model-visible tool.
             path_label: Label for log messages (success/timeout/exception).
 
         Returns:
@@ -4725,6 +4756,8 @@ class ToolService(BaseService):
                 plugin_global_context=global_context,
                 meta_data=meta_data,
                 skip_pre_invoke=skip_pre_invoke,
+                require_app_visible=require_app_visible,
+                require_model_visible=require_model_visible,
                 retry_attempt=retry_attempt + 1,
             )
 
@@ -4742,6 +4775,8 @@ class ToolService(BaseService):
         plugin_global_context: Optional[GlobalContext] = None,
         meta_data: Optional[Dict[str, Any]] = None,
         skip_pre_invoke: bool = False,
+        require_app_visible: bool = False,
+        require_model_visible: bool = False,
         retry_attempt: int = 0,
     ) -> ToolResult:
         """
@@ -4765,6 +4800,8 @@ class ToolService(BaseService):
             plugin_global_context: Optional global context from middleware for consistency across hooks.
             meta_data: Optional metadata dictionary for additional context (e.g., request ID).
             skip_pre_invoke: When True, skip TOOL_PRE_INVOKE hooks (used by trusted Rust fallback path).
+            require_app_visible: When True, deny execution unless the resolved tool is MCP Apps app-visible.
+            require_model_visible: When True, deny execution unless the resolved tool is model-visible.
             retry_attempt: Zero-based retry counter; 0 = original call.  Incremented by the retry
                 loop and compared against ``settings.max_tool_retries``.
 
@@ -4810,7 +4847,7 @@ class ToolService(BaseService):
         if gateway_id_from_header:
             # Look up gateway to check if it's in direct_proxy mode
             gateway = db.execute(select(DbGateway).where(DbGateway.id == gateway_id_from_header)).scalar_one_or_none()
-            if gateway and gateway.gateway_mode == "direct_proxy" and settings.mcpgateway_direct_proxy_enabled:
+            if gateway and gateway.gateway_mode == "direct_proxy" and settings.mcpgateway_direct_proxy_enabled and not require_app_visible:
                 # SECURITY: Check gateway access before allowing direct proxy
                 # This prevents RBAC bypass where any authenticated user could invoke tools
                 # on any gateway just by knowing the gateway ID
@@ -4885,21 +4922,22 @@ class ToolService(BaseService):
                 # _check_tool_access (same rules as list_tools) and prioritize.
                 # Priority (lower is better): team (0) > private (1) > public (2)
                 visibility_priority = {"team": 0, "private": 1, "public": 2}
-                accessible_tools: list[tuple[int, Any]] = []
+                accessible_tools: list[tuple[int, int, Any]] = []
                 for t in tools:
                     tool_dict = {"visibility": t.visibility, "team_id": t.team_id, "owner_email": t.owner_email}
                     if await self._check_tool_access(db, tool_dict, user_email, token_teams):
+                        name_priority = 0 if getattr(t, "name", None) == name else 1
                         priority = visibility_priority.get(t.visibility, 99)
-                        accessible_tools.append((priority, t))
+                        accessible_tools.append((name_priority, priority, t))
 
                 if not accessible_tools:
                     raise ToolNotFoundError(f"Tool not found: {name}")
 
-                accessible_tools.sort(key=lambda x: x[0])
+                accessible_tools.sort(key=lambda x: (x[0], x[1]))
 
                 # Check for ambiguity at the highest priority level
-                best_priority = accessible_tools[0][0]
-                best_tools = [t for p, t in accessible_tools if p == best_priority]
+                best_name_priority, best_visibility_priority = accessible_tools[0][0], accessible_tools[0][1]
+                best_tools = [t for name_priority, p, t in accessible_tools if name_priority == best_name_priority and p == best_visibility_priority]
 
                 if len(best_tools) > 1:
                     raise ToolInvocationError(f"Multiple tools found with name '{name}' at same priority level. Tool name is ambiguous.")
@@ -4962,6 +5000,12 @@ class ToolService(BaseService):
                 ).first()
                 if not server_match:
                     raise ToolNotFoundError(f"Tool not found: {name}")
+
+        if require_app_visible:
+            if is_direct_proxy or not is_app_visible_tool(tool_payload):
+                raise ToolNotFoundError(f"Tool not found: {name}")
+        elif require_model_visible and not is_direct_proxy and not is_model_visible_tool(tool_payload):
+            raise ToolNotFoundError(f"Tool not found: {name}")
 
         # Extract A2A-related data from annotations (will be used after db.close() if A2A tool)
         tool_annotations = tool_payload.get("annotations") or {}
@@ -6412,8 +6456,10 @@ class ToolService(BaseService):
                             context_table,
                             global_context,
                             meta_data,
-                            skip_pre_invoke,
-                            "success",
+                            skip_pre_invoke=skip_pre_invoke,
+                            require_app_visible=require_app_visible,
+                            require_model_visible=require_model_visible,
+                            path_label="success",
                         )
 
                 return tool_result
@@ -6441,8 +6487,10 @@ class ToolService(BaseService):
                         context_table,
                         global_context,
                         meta_data,
-                        skip_pre_invoke,
-                        "timeout",
+                        skip_pre_invoke=skip_pre_invoke,
+                        require_app_visible=require_app_visible,
+                        require_model_visible=require_model_visible,
+                        path_label="timeout",
                     )
                 raise
             except asyncio.CancelledError:
@@ -6502,8 +6550,10 @@ class ToolService(BaseService):
                         context_table,
                         global_context,
                         meta_data,
-                        skip_pre_invoke,
-                        "exception",
+                        skip_pre_invoke=skip_pre_invoke,
+                        require_app_visible=require_app_visible,
+                        require_model_visible=require_model_visible,
+                        path_label="exception",
                     )
 
                 raise ToolInvocationError(f"Tool invocation failed: {error_message}")
@@ -6704,7 +6754,9 @@ class ToolService(BaseService):
             >>> service.convert_tool_to_read = MagicMock(return_value='tool_read')
             >>> ToolRead.model_validate = MagicMock(return_value='tool_read')
             >>> import asyncio
-            >>> asyncio.run(service.update_tool(db, 'tool_id', MagicMock()))
+            >>> tool_update = MagicMock()
+            >>> tool_update.extension_metadata = None
+            >>> asyncio.run(service.update_tool(db, 'tool_id', tool_update))
             'tool_read'
         """
         try:
@@ -6801,6 +6853,10 @@ class ToolService(BaseService):
                 tool.output_schema = tool_update.output_schema
             if tool_update.annotations is not None:
                 tool.annotations = tool_update.annotations
+            tool_update_extension_metadata = optional_extension_metadata(getattr(tool_update, "extension_metadata", None))
+            if tool_update_extension_metadata is not None:
+                validate_extension_metadata(tool_update_extension_metadata)
+                tool.extension_metadata = tool_update_extension_metadata
             if tool_update.jsonpath_filter is not None:
                 tool.jsonpath_filter = tool_update.jsonpath_filter
             if tool_update.visibility is not None:

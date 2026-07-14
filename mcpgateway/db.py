@@ -3250,6 +3250,7 @@ class Tool(Base):
     input_schema: Mapped[Dict[str, Any]] = mapped_column(JSON)
     output_schema: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
     annotations: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, default=lambda: {})
+    extension_metadata: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
     enabled: Mapped[bool] = mapped_column(default=True)
@@ -3636,6 +3637,7 @@ class Resource(Base):
     # is_active: Mapped[bool] = mapped_column(default=True)
     enabled: Mapped[bool] = mapped_column(default=True)
     tags: Mapped[List[str]] = mapped_column(JSON, default=list, nullable=False)
+    extension_metadata: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
 
     # Comprehensive metadata for audit tracking
     created_by: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
@@ -3975,6 +3977,26 @@ class ResourceSubscription(Base):
     last_notification: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
     resource: Mapped["Resource"] = relationship(back_populates="subscriptions")
+
+
+class MCPAppSession(Base):
+    """Short-lived AppBridge session bound to an MCP session and resource."""
+
+    __tablename__ = "mcp_app_sessions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
+    mcp_session_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    user_email: Mapped[str] = mapped_column(String(255), nullable=False)
+    server_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("servers.id", ondelete="CASCADE"), nullable=True)
+    resource_uri: Mapped[str] = mapped_column(String(767), nullable=False)
+    token_teams: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        Index("idx_mcp_app_sessions_lookup", "id", "mcp_session_id", "user_email"),
+        Index("idx_mcp_app_sessions_expires_at", "expires_at"),
+    )
 
 
 class ToolOpsTestCases(Base):
