@@ -12,6 +12,7 @@ import asyncio
 # Third-Party
 import fakeredis
 import fakeredis.aioredis as fakeredis_async
+from filelock import FileLock
 
 # First-Party
 from mcpgateway.services.leader_election import PrimaryWorkerElector
@@ -225,6 +226,54 @@ async def test_redis_maintenance_error_fail_closed():
     assert e.is_primary is True  # initial acquire succeeded
     await asyncio.sleep(0.3)  # heartbeat calls eval -> raises -> fail closed
     assert e.is_primary is False
+    await e.stop()
+
+
+async def test_redis_maintenance_error_filelock_fallback_demotes_when_lock_held(tmp_path):
+    """Regression: filelock_fallback must NOT keep a stale primary when Redis dies mid-heartbeat.
+
+    A Redis-primary loses Redis; the per-host file lock is already held by another
+    process. Fallback cannot acquire it, so the elector must go non-primary --
+    otherwise its lease expires unrenewed, a follower takes it, and two processes
+    both report primary (the split-brain this backend exists to prevent).
+    """
+    path = str(tmp_path / "x.lock")
+    holder = FileLock(path)
+    holder.acquire(timeout=0)  # pre-hold the fallback lock from "another process"
+    try:
+        e = PrimaryWorkerElector(
+            backend="redis",
+            redis_key="k",
+            unavailable_policy="filelock_fallback",
+            lock_path=path,
+            lease_ttl=30,
+            heartbeat_interval=0.1,
+            redis_client=_RenewBoomRedis(),
+        )
+        await e.start()
+        assert e.is_primary is True  # initial Redis acquire succeeded
+        await asyncio.sleep(0.3)  # heartbeat eval raises -> fallback can't get lock
+        assert e.is_primary is False  # demoted, not left stale-primary
+        await e.stop()
+    finally:
+        holder.release()
+
+
+async def test_redis_maintenance_error_filelock_fallback_reelects_when_lock_free(tmp_path):
+    """filelock_fallback: when Redis dies mid-heartbeat and the file lock is free, re-elect per host."""
+    e = PrimaryWorkerElector(
+        backend="redis",
+        redis_key="k",
+        unavailable_policy="filelock_fallback",
+        lock_path=str(tmp_path / "x.lock"),
+        lease_ttl=30,
+        heartbeat_interval=0.1,
+        redis_client=_RenewBoomRedis(),
+    )
+    await e.start()
+    assert e.is_primary is True  # initial Redis acquire succeeded
+    await asyncio.sleep(0.3)  # heartbeat eval raises -> fallback grabs the free lock
+    assert e.is_primary is True  # still primary, now via the per-host file lock
     await e.stop()
 
 
