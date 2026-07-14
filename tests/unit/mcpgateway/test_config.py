@@ -739,14 +739,48 @@ def test_validate_secrets_non_secretstr_input():
 
 
 def test_validate_secrets_weak_secret_warns():
-    """Weak secret should trigger warnings but not fail."""
-    s = Settings(jwt_secret_key="changeme", _env_file=None)
-    assert s.jwt_secret_key.get_secret_value() == "changeme"
+    """Weak secret with AUTH_REQUIRED=false should warn but not fail (local dev only)."""
+    s = Settings(jwt_secret_key="changeme", auth_required=False, _env_file=None)  # pragma: allowlist secret
+    assert s.jwt_secret_key.get_secret_value() == "changeme"  # pragma: allowlist secret
+
+
+def test_validate_secrets_weak_secret_raises_when_auth_required():
+    """Weak/default secret must be rejected in ALL environments when AUTH_REQUIRED=true (CVE: CWE-1188).
+
+    A known-public key like 'changeme' allows any network client to forge admin JWTs regardless
+    of the ENVIRONMENT setting.  The development carve-out was the vulnerability — it is removed.
+    """
+    from mcpgateway.config import SecurityConfigurationError
+
+    with pytest.raises(SecurityConfigurationError, match="Weak/default secret rejected when AUTH_REQUIRED=true"):
+        Settings(jwt_secret_key="changeme", auth_required=True, environment="development", _env_file=None)  # pragma: allowlist secret
+
+
+def test_validate_secrets_weak_secret_raises_in_staging():
+    """Weak secret is also rejected in staging with AUTH_REQUIRED=true."""
+    from mcpgateway.config import SecurityConfigurationError
+
+    with pytest.raises(SecurityConfigurationError, match="Weak/default secret rejected when AUTH_REQUIRED=true"):
+        Settings(jwt_secret_key="changeme", auth_required=True, environment="staging", _env_file=None)  # pragma: allowlist secret
+
+
+def test_validate_secrets_weak_secret_raises_in_production():
+    """Weak secret is also rejected in production with AUTH_REQUIRED=true."""
+    from mcpgateway.config import SecurityConfigurationError
+
+    with pytest.raises(SecurityConfigurationError, match="Weak/default secret rejected when AUTH_REQUIRED=true"):
+        Settings(jwt_secret_key="changeme", auth_required=True, environment="production", _env_file=None)  # pragma: allowlist secret
+
+
+def test_validate_secrets_strong_secret_passes_development():
+    """Strong secret passes in development with AUTH_REQUIRED=true."""
+    s = Settings(jwt_secret_key="a" * 32, auth_required=True, environment="development", _env_file=None)
+    assert s.jwt_secret_key.get_secret_value() == "a" * 32
 
 
 def test_validate_secrets_low_entropy_warns():
-    """Low entropy secret should trigger warnings."""
-    s = Settings(jwt_secret_key="aaaa", _env_file=None)
+    """Low entropy secret should trigger warnings but not fail when AUTH_REQUIRED=false."""
+    s = Settings(jwt_secret_key="aaaa", auth_required=False, _env_file=None)
     assert s.jwt_secret_key.get_secret_value() == "aaaa"
 
 

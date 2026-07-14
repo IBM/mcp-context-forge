@@ -1470,7 +1470,9 @@ class Settings(BaseSettings):
             Itself.
         """
         # __REPLACE_ME__ placeholders block startup only in production; warn in other environments.
-        # Weak/default secrets are rejected in any non-development environment (staging + production).
+        # Weak/default secrets (e.g. "changeme") are rejected in ALL environments when AUTH_REQUIRED
+        # is true — including development.  A known-public default key anchors JWT trust and allows
+        # any network-reachable client to forge admin tokens regardless of environment label.
         # client_mode is intentionally NOT exempted — secret-strength enforcement is always active.
         weak_secrets = {v.lower() for v in self.WEAK_VALUES}
         env = str(self.environment).lower()
@@ -1481,11 +1483,15 @@ class Settings(BaseSettings):
                     raise SecurityConfigurationError(f"{field_name}: Value is an unset placeholder (__REPLACE_ME__). Run 'python -m mcpgateway.scripts.init_secrets' to generate strong values.")
                 logger.warning(f"🔓 SECURITY WARNING - {field_name}: Value is an unset placeholder (__REPLACE_ME__). Run 'python -m mcpgateway.scripts.init_secrets' to generate strong values.")
             if val.lower() in weak_secrets:
-                if env != "development":
-                    raise SecurityConfigurationError(f"{field_name}: Weak/default secret rejected in '{env}' environment. Run 'python -m mcpgateway.scripts.init_secrets' to generate strong values.")
-        # In non-production environments, unset placeholder secrets emit SECURITY WARNINGs but
-        # do not block startup. Production always rejects them. Weak secrets are rejected in
-        # staging and production; development allows them with warnings from the field validator.
+                if self.auth_required:
+                    raise SecurityConfigurationError(
+                        f"{field_name}: Weak/default secret rejected when AUTH_REQUIRED=true. "
+                        f"Run 'python -m mcpgateway.scripts.init_secrets' to generate strong values, "
+                        f"or set AUTH_REQUIRED=false to run without authentication (insecure; local dev only)."
+                    )
+                logger.warning(f"🔓 SECURITY WARNING - {field_name}: Weak/default secret in use. Set a strong secret before network-exposing this instance.")
+        # __REPLACE_ME__ placeholder secrets warn in non-production; production always rejects them.
+        # Weak secrets are rejected whenever AUTH_REQUIRED=true (all environments).
 
         if not self.client_mode:
             # Check for dangerous combinations - only log warnings, don't raise errors
