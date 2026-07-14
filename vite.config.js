@@ -31,6 +31,9 @@ function cleanOldBundles() {
 export default defineConfig({
   build: {
     minify: 'terser',
+    // lightningcss ships no linux-ppc64(le)/s390x native binary, so fall back
+    // to esbuild for CSS minification on those arches only; others keep lightningcss.
+    cssMinify: ['ppc64', 's390x'].includes(process.arch) ? 'esbuild' : 'lightningcss',
     terserOptions: {
       compress: true,        // enable compress transforms
       mangle: {
