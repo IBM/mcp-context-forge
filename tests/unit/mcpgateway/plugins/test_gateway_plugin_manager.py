@@ -605,9 +605,9 @@ class TestBuildManager:
         """Tool names containing DEFAULT_CONTEXT_ID substring should still get DB lookup."""
         mock_manager = AsyncMock()
         mock_manager.initialize = AsyncMock()
-        
+
         mock_config = [MagicMock()]  # Non-empty config from DB
-        
+
         with (
             patch.object(factory, "get_config_from_db", new_callable=AsyncMock, return_value=mock_config) as mock_db,
             patch.object(factory, "_apply_redis_mode_overrides", new_callable=AsyncMock, side_effect=lambda c: c),
@@ -615,7 +615,7 @@ class TestBuildManager:
         ):
             # Tool name contains "##global##" but is not exactly "##global##"
             result = await factory._build_manager("team-a::my##global##tool")
-        
+
         # Should have called get_config_from_db because tool_name != DEFAULT_CONTEXT_ID
         mock_db.assert_awaited_once_with("team-a::my##global##tool")
         assert result is mock_manager
