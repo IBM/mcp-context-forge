@@ -52,7 +52,7 @@ def get_publisher_interval() -> int:
 
 
 def get_publisher_ttl(publisher_interval: int | None = None) -> int:
-    """Return a key TTL that outlives a full missed publish cycle."""
+    """Return a key TTL for the given interval, or the current setting when omitted."""
     if publisher_interval is None:
         publisher_interval = get_publisher_interval()
     return publisher_interval * 2 + 10

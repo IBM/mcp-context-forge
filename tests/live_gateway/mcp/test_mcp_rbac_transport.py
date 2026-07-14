@@ -70,8 +70,8 @@ STREAMABLE_HTTP_GATEWAY_NAME = f"{RBAC_PREFIX}-streamable-http-gw"
 # Must match docker-compose gateway JWT_SECRET_KEY
 _JWT_SECRET = os.getenv("JWT_SECRET_KEY", "my-test-key-but-now-longer-than-32-bytes")
 _CLIENT_TIMEOUT = float(os.getenv("MCP_E2E_CLIENT_TIMEOUT", "5.0"))
-# Covers one default 60-second publish interval plus 15 seconds of slack.
-_PER_SERVER_ACCESS_SYNC_DEADLINE_SECONDS = 75.0
+# The default covers one 60-second publish interval plus 15 seconds of slack.
+_PER_SERVER_ACCESS_SYNC_DEADLINE_SECONDS = float(os.getenv("MCP_E2E_PUBLISHER_SYNC_DEADLINE", "75.0"))
 _PER_SERVER_ACCESS_RETRY_DELAY_SECONDS = 1.0
 
 
@@ -471,6 +471,11 @@ def _mcp_tools_list(access_token: str, server_url: str = BASE_URL) -> list:
 
 
 def _mcp_tools_list_after_publisher_sync(access_token: str, server_url: str = BASE_URL) -> list:
+    """Retry allow-path discovery while new server config converges.
+
+    Deny-path checks intentionally bypass this helper so stale configuration
+    cannot delay or mask authorization failures.
+    """
     deadline = time.monotonic() + _PER_SERVER_ACCESS_SYNC_DEADLINE_SECONDS
     while True:
         try:
