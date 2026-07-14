@@ -9,7 +9,7 @@ const cardTagVariants = cva(
   {
     variants: {
       variant: {
-        default: "bg-tool-badge-bg text-tool-badge-fg",
+        default: "bg-tool-badge-bg text-white",
         neutral: "bg-neutral-100 text-neutral-700 dark:bg-neutral-800 dark:text-white",
       },
     },

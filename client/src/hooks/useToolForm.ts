@@ -189,7 +189,6 @@ export interface UseToolFormReturn {
   // Setters
   setName: (value: string) => void;
   setUrl: (value: string) => void;
-  setUrlError: (message: string | undefined) => void;
   setDescription: (value: string) => void;
   setRequestType: (value: RequestType) => void;
   setAdvancedOpen: (value: boolean | ((prev: boolean) => boolean)) => void;
@@ -309,11 +308,6 @@ export function useToolForm({
   );
   const [schemaMode, setSchemaMode] = useState<SchemaMode>(initialValues?.schemaMode ?? "none");
   const [errors, setErrors] = useState<FormErrors>({});
-
-  const setUrlError = useCallback(
-    (message: string | undefined) => setErrors((prev) => ({ ...prev, url: message })),
-    [],
-  );
 
   // The OpenAPI schema-generation async flow lives in its own hook; this form
   // stays the owner of the editable schema fields and applies results via the
@@ -726,7 +720,6 @@ export function useToolForm({
     // Setters
     setName,
     setUrl,
-    setUrlError,
     setDescription,
     setRequestType,
     setAdvancedOpen,
