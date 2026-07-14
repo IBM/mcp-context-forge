@@ -274,6 +274,7 @@ def record_plugin_metrics(trace_id: Optional[str], result_metadata: Optional[Dic
     try:
         # First-Party (deferred to avoid a circular import with mcpgateway.services.__init__,
         # mirroring build_request_extensions() above).
+        # First-Party
         from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
         from mcpgateway.db import SessionLocal  # pylint: disable=import-outside-toplevel
         from mcpgateway.services.observability_service import ObservabilityService  # pylint: disable=import-outside-toplevel,cyclic-import
@@ -372,6 +373,7 @@ def record_plugin_metrics(trace_id: Optional[str], result_metadata: Optional[Dic
         # and also no-op when there's no active OTel context, so a configured-but-unused
         # tracer doesn't turn these into orphan root spans.
         try:
+            # First-Party
             from mcpgateway.observability import create_span, otel_context_active, otel_tracing_enabled  # pylint: disable=import-outside-toplevel
 
             if otel_tracing_enabled() and otel_context_active():
@@ -413,6 +415,7 @@ def build_request_extensions() -> Optional[Extensions]:
     """
     try:
         # First-Party (deferred to avoid a circular import with mcpgateway.services.__init__)
+        # First-Party
         from mcpgateway.services.observability_service import current_span_id, current_trace_id  # pylint: disable=import-outside-toplevel
 
         trace_id = current_trace_id.get()
