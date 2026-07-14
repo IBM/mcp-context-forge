@@ -373,16 +373,16 @@ def prepare_a2a_invocation(
                     if isinstance(decoded, Mapping):
                         # Extract the actual key value from the decoded dict
                         api_key = next(iter(decoded.values())) if decoded else auth_value
-                        headers.setdefault("Authorization", f"Bearer {api_key}")
+                        headers["Authorization"] = f"Bearer {api_key}"
                     else:
                         # Fallback if decode returns a string directly
-                        headers.setdefault("Authorization", f"Bearer {decoded}")
+                        headers["Authorization"] = f"Bearer {decoded}"
                 except (InvalidTag, binascii.Error, orjson.JSONDecodeError, IndexError, ValueError):
                     # If decoding fails (corrupted data, wrong key, invalid encoding, truncated input,
                     # or invalid nonce/cipher parameters), use the raw value as the API key
                     #
                     # Keep backward compatibility with older raw API key rows.
-                    headers.setdefault("Authorization", f"Bearer {auth_value}")
+                    headers["Authorization"] = f"Bearer {auth_value}"
             else:
                 decoded = decode_auth(auth_value)
                 if not isinstance(decoded, Mapping):
@@ -392,7 +392,7 @@ def prepare_a2a_invocation(
             if auth_type == "api_key":
                 # Extract the actual key value from the mapping
                 api_key = next(iter(auth_value.values()), "") if auth_value else ""
-                headers.setdefault("Authorization", f"Bearer {api_key}")
+                headers["Authorization"] = f"Bearer {api_key}"
             else:
                 headers.update({str(key): str(value) for key, value in auth_value.items()})
 

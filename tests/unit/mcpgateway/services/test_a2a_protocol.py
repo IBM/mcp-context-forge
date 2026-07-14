@@ -680,6 +680,22 @@ def test_prepare_a2a_invocation_api_key_auth_from_mapping_uses_first_value():
     assert prepared.headers["Authorization"] == "Bearer mapped-key"  # pragma: allowlist secret
 
 
+def test_prepare_a2a_invocation_api_key_auth_overrides_base_authorization():
+    """Configured A2A api_key auth takes precedence over base Authorization."""
+    prepared = prepare_a2a_invocation(
+        agent_type="generic",
+        endpoint_url="https://example.com/",
+        protocol_version="1.0.0",
+        parameters={"query": "hi"},
+        interaction_type="query",
+        auth_type="api_key",
+        auth_value={"api_key": "configured-key"},  # pragma: allowlist secret
+        base_headers={"Authorization": "Bearer client-token"},
+    )
+
+    assert prepared.headers["Authorization"] == "Bearer configured-key"  # pragma: allowlist secret
+
+
 def test_prepare_a2a_invocation_rejects_non_mapping_decoded_auth(monkeypatch):
     """A decoded auth value that is not a mapping should raise ValueError."""
     monkeypatch.setattr("mcpgateway.services.a2a_protocol.decode_auth", lambda _val: "not-a-mapping")
