@@ -845,20 +845,24 @@ async def test_plugin_config_change():
 
 #### Shared Manager Optimization
 
-When no tenant-specific configuration is provided, the factory reuses a shared default plugin manager:
+When no tool-specific configuration is provided, the factory reuses a shared default plugin manager per team:
 
 ```python
-# Tenants without custom configs share the default manager
-manager_a = await factory.get_manager("tenant-a")  # No config → uses shared default
-manager_b = await factory.get_manager("tenant-b")  # No config → reuses same instance
+# Tools within the same team share the team's default manager
+manager_a1 = await factory.get_manager("team-a::tool1")  # No config → uses team-a::##global##
+manager_a2 = await factory.get_manager("team-a::tool2")  # No config → reuses team-a::##global##
 
-# Tenants with custom configs get dedicated managers
-manager_c = await factory.get_manager("tenant-c")  # Has config → dedicated instance
+# Different teams have separate default managers
+manager_b1 = await factory.get_manager("team-b::tool1")  # No config → uses team-b::##global##
+
+# Tools with custom configs get dedicated managers
+manager_a3 = await factory.get_manager("team-a::tool3")  # Has config → dedicated instance
 ```
 
 This optimization:
-- Reduces memory footprint when most tenants use default configuration
-- Maintains isolation through tenant-specific contexts during execution
+- Reduces memory footprint when most tools within a team use default configuration
+- Maintains team isolation with separate default managers per team
+- Maintains isolation through tool-specific contexts during execution
 - Automatically handles cleanup without double-shutdown errors during factory shutdown
 
 
