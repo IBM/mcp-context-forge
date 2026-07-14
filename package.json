@@ -12,6 +12,7 @@
         "eslint-config-prettier": "^10.1.8",
         "eslint-plugin-import": "^2.32.0",
         "eslint-plugin-prettier": "^5.5.5",
+        "esbuild": "^0.28.1",
         "htmlhint": "^1.9.1",
         "istanbul-lib-instrument": "^6.0.3",
         "jsdom": "^28.1.0",
