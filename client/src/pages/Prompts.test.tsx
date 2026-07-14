@@ -12,19 +12,27 @@ vi.mock("@/auth/AuthContext", () => ({
 }));
 
 const mockUseAuthContext = vi.mocked(useAuthContext);
-import type { Prompt } from "@/types/prompts";
+import type { PromptRead } from "@/generated/types";
+
+type Prompt = NonNullable<PromptRead>;
 
 function createMockPrompt(overrides: Partial<Prompt> = {}): Prompt {
   return {
     id: "prompt-1",
     name: "summarize",
-    displayName: "Summarize document",
     originalName: "summarize_document",
+    customName: "summarize_document",
+    customNameSlug: "summarize_document",
+    displayName: "Summarize document",
     gatewayId: "gateway-1",
     gatewaySlug: "gateway-1",
     description: "Summarizes uploaded documents.",
+    template: "Summarize: {{topic}}",
     tags: [{ id: "tag-summary", label: "summary" }],
     arguments: [{ name: "topic", required: true }],
+    createdAt: "2026-01-01T00:00:00Z",
+    updatedAt: "2026-01-01T00:00:00Z",
+    enabled: true,
     ...overrides,
   };
 }
@@ -234,7 +242,7 @@ describe("Prompts", () => {
       }),
     ];
 
-    server.use(http.get("/prompts", () => HttpResponse.json({ prompts })));
+    server.use(http.get("/prompts", () => HttpResponse.json(prompts)));
 
     renderWithProviders(<Prompts />);
 
@@ -277,7 +285,7 @@ describe("Prompts", () => {
       }),
     ];
 
-    server.use(http.get("/prompts", () => HttpResponse.json({ prompts })));
+    server.use(http.get("/prompts", () => HttpResponse.json(prompts)));
 
     renderWithProviders(<Prompts />);
 
@@ -308,7 +316,7 @@ describe("Prompts", () => {
       }),
     );
 
-    server.use(http.get("/prompts", () => HttpResponse.json({ prompts })));
+    server.use(http.get("/prompts", () => HttpResponse.json(prompts)));
 
     renderWithProviders(<Prompts />);
 

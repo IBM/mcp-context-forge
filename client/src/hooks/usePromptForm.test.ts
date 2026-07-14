@@ -227,7 +227,7 @@ describe("usePromptForm", () => {
           arguments: [],
           tags: ["greeting", "example"],
           visibility: "team",
-          team_id: "team-123",
+          teamId: "team-123",
         },
         team_id: "team-123",
         visibility: "team",
@@ -260,7 +260,7 @@ describe("usePromptForm", () => {
       "/prompts",
       expect.objectContaining({
         prompt: expect.objectContaining({
-          team_id: null,
+          teamId: null,
           visibility: "public",
         }),
         team_id: null,

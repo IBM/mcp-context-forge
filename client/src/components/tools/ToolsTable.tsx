@@ -17,7 +17,8 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import type { Tool } from "@/types/tool";
-import { copyToClipboard, truncateMiddle } from "@/components/gateways/utils";
+import { copyToClipboard } from "@/lib/clipboard";
+import { truncateMiddle } from "@/components/gateways/utils";
 import { ToolSchemaDialog } from "@/components/tools/ToolSchemaDialog";
 
 export function ToolsTable({

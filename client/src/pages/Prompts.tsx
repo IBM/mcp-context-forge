@@ -11,21 +11,25 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import type { CursorPaginatedPromptsResponse, PromptRead } from "@/generated/types";
+import { PromptDetailsPanel } from "@/components/prompts";
 import { useQuery } from "@/hooks/useQuery";
-import type { Prompt, PromptGroup, PromptsResponse } from "@/types/prompts";
+import type { PromptGroup } from "@/types/prompts";
 
 const MAX_VISIBLE_PROMPTS = 8;
 
-function getPromptItems(data: PromptsResponse): Prompt[] {
-  if (Array.isArray(data)) return data;
-  return data?.prompts ?? [];
+type PromptsListResponse = (PromptRead | null)[] | CursorPaginatedPromptsResponse;
+
+function getPromptItems(data: PromptsListResponse | undefined): NonNullable<PromptRead>[] {
+  const list = Array.isArray(data) ? data : (data?.prompts ?? []);
+  return list.filter((p): p is NonNullable<PromptRead> => p != null);
 }
 
-function getPromptLabel(prompt: Prompt): string {
-  return prompt.displayName || prompt.originalName || prompt.name;
+function getPromptLabel(prompt: NonNullable<PromptRead>): string {
+  return prompt.displayName || prompt.originalName || prompt.name || "";
 }
 
-function getPromptDescription(prompt: Prompt): string | null {
+function getPromptDescription(prompt: NonNullable<PromptRead>): string | null {
   const description = prompt.description;
   if (!description || description.trim() === "" || description.trim().toLowerCase() === "none") {
     return null;
@@ -37,8 +41,11 @@ function getPromptDescription(prompt: Prompt): string | null {
 // mirroring how the Tools page groups tools. Prompts without a gateway (local
 // templates) are collapsed into a single "REST prompts" card, matching the
 // "REST tools" grouping on the Tools page.
-function buildPromptGroups(prompts: Prompt[], restPromptsLabel: string): PromptGroup[] {
-  const map = new Map<string, PromptGroup>();
+function buildPromptGroups(
+  prompts: NonNullable<PromptRead>[],
+  restPromptsLabel: string,
+): PromptGroup<NonNullable<PromptRead>>[] {
+  const map = new Map<string, PromptGroup<NonNullable<PromptRead>>>();
 
   for (const prompt of prompts) {
     const slug = prompt.gatewaySlug?.trim();
@@ -46,23 +53,29 @@ function buildPromptGroups(prompts: Prompt[], restPromptsLabel: string): PromptG
     // merge into a real gateway whose slug happens to equal the localized
     // "REST prompts" label. `label` stays purely for display.
     const key = slug ? `gateway:${slug}` : "rest";
-    let group = map.get(key);
-    if (!group) {
-      group = {
+    const existing = map.get(key);
+    if (!existing) {
+      map.set(key, {
         key,
         label: slug || restPromptsLabel,
         gatewayId: prompt.gatewayId,
-        prompts: [],
-      };
-      map.set(key, group);
+        prompts: [prompt],
+      });
+    } else {
+      existing.prompts.push(prompt);
     }
-    group.prompts.push(prompt);
   }
 
   return Array.from(map.values());
 }
 
-function PromptGroupCard({ group }: { group: PromptGroup }) {
+function PromptGroupCard({
+  group,
+  onViewDetails,
+}: {
+  group: PromptGroup<NonNullable<PromptRead>>;
+  onViewDetails: (group: PromptGroup<NonNullable<PromptRead>>) => void;
+}) {
   const intl = useIntl();
   const visiblePrompts = group.prompts.slice(0, MAX_VISIBLE_PROMPTS);
   const remainingCount = group.prompts.length - MAX_VISIBLE_PROMPTS;
@@ -97,7 +110,7 @@ function PromptGroupCard({ group }: { group: PromptGroup }) {
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
-              <DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => onViewDetails(group)}>
                 {intl.formatMessage({ id: "prompts.card.viewDetails" })}
               </DropdownMenuItem>
             </DropdownMenuContent>
@@ -107,7 +120,7 @@ function PromptGroupCard({ group }: { group: PromptGroup }) {
 
       <CardContent>
         <div className="flex flex-wrap gap-1">
-          {visiblePrompts.map((prompt) => (
+          {visiblePrompts.map((prompt: NonNullable<PromptRead>) => (
             <CardTag key={prompt.id} tooltip={getPromptDescription(prompt)}>
               {getPromptLabel(prompt)}
             </CardTag>
@@ -174,6 +187,14 @@ function AddPromptsCard({
 
 export function Prompts() {
   const intl = useIntl();
+  const [activeGroup, setActiveGroup] = useState<PromptGroup<NonNullable<PromptRead>> | null>(null);
+  // Keep the last-shown group populated through the drawer's slide-out
+  // transition; clearing `activeGroup` immediately would otherwise blank the
+  // drawer body before the exit animation finishes.
+  const [displayGroup, setDisplayGroup] = useState<PromptGroup<NonNullable<PromptRead>> | null>(
+    null,
+  );
+
   const addPromptsCardRef = useRef<HTMLDivElement>(null);
   const [showForm, setShowForm] = useState(false);
   const [shouldRestoreFormCloseFocus, setShouldRestoreFormCloseFocus] = useState(false);
@@ -182,13 +203,17 @@ export function Prompts() {
     error,
     isLoading,
     refetch,
-  } = useQuery<PromptsResponse>("/prompts?limit=1000&include_inactive=true");
+  } = useQuery<PromptsListResponse>("/prompts?limit=1000&include_inactive=true");
 
   const restPromptsLabel = intl.formatMessage({ id: "prompts.restPromptsGroup" });
   const groups = useMemo(
-    () => buildPromptGroups(getPromptItems(promptsData ?? []), restPromptsLabel),
+    () => buildPromptGroups(getPromptItems(promptsData), restPromptsLabel),
     [promptsData, restPromptsLabel],
   );
+
+  useEffect(() => {
+    if (activeGroup) setDisplayGroup(activeGroup);
+  }, [activeGroup]);
 
   useEffect(() => {
     if (!showForm && shouldRestoreFormCloseFocus) {
@@ -223,7 +248,7 @@ export function Prompts() {
             {intl.formatMessage({ id: "prompts.title" })}
           </h1>
 
-          {isLoading && (
+          {isLoading ? (
             <div
               role="status"
               aria-live="polite"
@@ -233,31 +258,37 @@ export function Prompts() {
               <span className="sr-only">{intl.formatMessage({ id: "prompts.loading" })}</span>
               <div className="h-8 w-8 animate-spin rounded-full border-4 border-gray-200 border-t-blue-600 dark:border-gray-700 dark:border-t-blue-400" />
             </div>
-          )}
-
-          {error && (
-            <div
-              className="mb-6 rounded-lg border border-red-200 bg-red-50 p-4 dark:border-red-800 dark:bg-red-900/20"
-              role="alert"
-              aria-live="assertive"
-            >
-              <h3 className="mb-1 font-semibold">
-                {intl.formatMessage({ id: "prompts.error.loading" })}
-              </h3>
-              <p className="text-red-800 dark:text-red-200">{error.message}</p>
-            </div>
-          )}
-
-          {!isLoading && (
-            <div className="grid grid-cols-1 gap-6 lg:grid-cols-2 2xl:grid-cols-3">
-              <AddPromptsCard onActivate={handleAddPrompt} cardRef={addPromptsCardRef} />
-              {groups.map((group) => (
-                <PromptGroupCard key={group.key} group={group} />
-              ))}
-            </div>
+          ) : (
+            <>
+              <div className="grid grid-cols-1 gap-6 lg:grid-cols-2 2xl:grid-cols-3">
+                <AddPromptsCard onActivate={handleAddPrompt} cardRef={addPromptsCardRef} />
+                {groups.map((group) => (
+                  <PromptGroupCard key={group.key} group={group} onViewDetails={setActiveGroup} />
+                ))}
+              </div>
+              {error && (
+                <div
+                  className="mb-6 rounded-lg border border-red-200 bg-red-50 p-4 dark:border-red-800 dark:bg-red-900/20"
+                  role="alert"
+                  aria-live="assertive"
+                >
+                  <h3 className="mb-1 font-semibold">
+                    {intl.formatMessage({ id: "prompts.error.loading" })}
+                  </h3>
+                  <p className="text-red-800 dark:text-red-200">{error.message}</p>
+                </div>
+              )}
+            </>
           )}
         </>
       )}
+
+      <PromptDetailsPanel
+        prompts={displayGroup?.prompts ?? []}
+        title={displayGroup?.label ?? ""}
+        open={activeGroup !== null}
+        onClose={() => setActiveGroup(null)}
+      />
     </div>
   );
 }

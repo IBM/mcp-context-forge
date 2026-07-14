@@ -5,7 +5,8 @@ import { useAuthContext } from "@/auth/AuthContext";
 import { useQuery } from "@/hooks/useQuery";
 import { parseApiError } from "@/lib/errorUtils";
 import { sanitizeString } from "@/lib/sanitize";
-import type { Prompt, PromptArgument, PromptFormErrors } from "@/types/prompts";
+import type { BodyCreatePromptV1PromptsPost, PromptArgument, PromptRead } from "@/generated/types";
+import type { PromptFormErrors } from "@/types/prompts";
 import type { Visibility } from "@/types/server";
 
 interface PromptFormValues {
@@ -18,19 +19,11 @@ interface PromptFormValues {
   teamId?: string;
 }
 
-interface CreatePromptPayload {
-  prompt: {
-    name: string;
-    description?: string;
-    template: string;
-    arguments: PromptArgument[];
-    tags?: string[];
-    visibility: Visibility;
-    team_id: string | null;
-  };
-  team_id: string | null;
-  visibility: Visibility;
-}
+// The generated `prompt` field is nullable to match the server's Optional
+// schema; the form always constructs a real object, so narrow it locally.
+type CreatePromptPayload = Omit<BodyCreatePromptV1PromptsPost, "prompt"> & {
+  prompt: NonNullable<BodyCreatePromptV1PromptsPost["prompt"]>;
+};
 
 export interface UsePromptFormReturn {
   name: string;
@@ -131,7 +124,7 @@ const createPromptFormSchema = (intl: ReturnType<typeof useIntl>) =>
           arguments: data.arguments,
           tags: data.tags,
           visibility: data.visibility,
-          team_id: teamId,
+          teamId,
         },
         team_id: teamId,
         visibility: data.visibility,
@@ -174,13 +167,13 @@ export function usePromptForm(): UsePromptFormReturn {
   const [tags, setTagsState] = useState(initialState.tags);
   const [errors, setErrors] = useState<PromptFormErrors>({});
   const teamId = visibility === "team" ? (selectedTeamId ?? undefined) : undefined;
-  const { execute: createPrompt, isLoading: isSubmitting } = useQuery<Prompt, CreatePromptPayload>(
-    "/prompts",
-    {
-      method: "POST",
-      enabled: false,
-    },
-  );
+  const { execute: createPrompt, isLoading: isSubmitting } = useQuery<
+    PromptRead,
+    CreatePromptPayload
+  >("/prompts", {
+    method: "POST",
+    enabled: false,
+  });
 
   const getFormValues = useCallback(
     (): PromptFormValues => ({
