@@ -177,10 +177,12 @@ class TenantPluginManagerFactory:
         new_config = None
         team_id = None
 
-        if CONTEXT_ID_SEPARATOR in context_id and DEFAULT_CONTEXT_ID not in context_id:
-            team_id = get_team_id_from_context(context_id)
-            async with self._lock:
-                new_config = await self.get_config_from_db(context_id)
+        # Parse context_id to check if it's a default context
+        if CONTEXT_ID_SEPARATOR in context_id:
+            team_id, tool_name = context_id.split(CONTEXT_ID_SEPARATOR, 1)
+            if tool_name != DEFAULT_CONTEXT_ID:
+                async with self._lock:
+                    new_config = await self.get_config_from_db(context_id)
 
         if new_config is None:
             async with self._lock:
