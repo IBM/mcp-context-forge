@@ -279,9 +279,9 @@ class OutputLengthGuardPlugin(Plugin):
                         "chars_per_token": cfg.chars_per_token,
                     },
                 )
-            return ToolPostInvokeResult(metadata={"mcp_result_processed": True, "items_modified": False, "structured_content_processed": False})
+            # structuredContent was within bounds: fall through to scan content array
 
-        # NO structuredContent: Process content array normally
+        # Always process content array regardless of whether structuredContent was present
         modified = False
         content_out: List[Any] = []
 
@@ -300,6 +300,26 @@ class OutputLengthGuardPlugin(Plugin):
                     content_out.append(new_item)
                 else:
                     content_out.append(item)
+            elif isinstance(item, dict) and item.get("type") == "resource":
+                resource = item.get("resource")
+                if isinstance(resource, dict) and isinstance(resource.get("text"), str):
+                    current_text = resource["text"]
+                    new_text, meta, violation = _handle_text(current_text, cfg, policy)
+
+                    if violation:
+                        return ToolPostInvokeResult(continue_processing=False, violation=violation, metadata=meta)
+
+                    if new_text != current_text:
+                        modified = True
+                        new_resource = dict(resource)
+                        new_resource["text"] = new_text
+                        new_item = dict(item)
+                        new_item["resource"] = new_resource
+                        content_out.append(new_item)
+                    else:
+                        content_out.append(item)
+                else:
+                    content_out.append(item)
             else:
                 content_out.append(item)
 
@@ -309,9 +329,9 @@ class OutputLengthGuardPlugin(Plugin):
 
             return ToolPostInvokeResult(
                 modified_payload=ToolPostInvokePayload(name=payload.name, result=new_result),
-                metadata={"mcp_result_processed": True, "items_modified": True, "structured_content_processed": False},
+                metadata={"mcp_result_processed": True, "items_modified": True, "structured_content_processed": struct_key is not None},
             )
-        return ToolPostInvokeResult(metadata={"mcp_result_processed": True, "items_modified": False})
+        return ToolPostInvokeResult(metadata={"mcp_result_processed": True, "items_modified": False, "structured_content_processed": struct_key is not None})
 
     def _handle_plain_string(self, payload: ToolPostInvokePayload, result: str) -> ToolPostInvokeResult:
         """Handle plain string result.
@@ -379,6 +399,26 @@ class OutputLengthGuardPlugin(Plugin):
                     new_item = dict(item)
                     new_item["text"] = new_text
                     mcp_out.append(new_item)
+                else:
+                    mcp_out.append(item)
+            elif isinstance(item, dict) and item.get("type") == "resource":
+                resource = item.get("resource")
+                if isinstance(resource, dict) and isinstance(resource.get("text"), str):
+                    current_text = resource["text"]
+                    new_text, meta, violation = _handle_text(current_text, self._cfg, self._policy)
+
+                    if violation:
+                        return ToolPostInvokeResult(continue_processing=False, violation=violation, metadata=meta)
+
+                    if new_text != current_text:
+                        modified = True
+                        new_resource = dict(resource)
+                        new_resource["text"] = new_text
+                        new_item = dict(item)
+                        new_item["resource"] = new_resource
+                        mcp_out.append(new_item)
+                    else:
+                        mcp_out.append(item)
                 else:
                     mcp_out.append(item)
             else:

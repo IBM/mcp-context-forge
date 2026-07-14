@@ -2005,24 +2005,29 @@ class TestPluginIntegration(BaseOutputLengthGuardTest):
         self.assertEqual(struct_result[2], "regular...")
 
     def test_content_field_not_truncated_after_regeneration(self):
-        """Test the critical v0.3.3 fix: regenerated content is not truncated."""
+        """Regenerated content from structuredContent is not double-truncated"""
         payload = Mock()
         payload.name = "test_tool"
-        payload.result = {"content": [{"type": "text", "text": "ignored"}], "structuredContent": {"result": ["sff", "dffd"]}}
+        # Both strings exceed max_chars=10, so struct_modified=True
+        payload.result = {
+            "content": [{"type": "text", "text": "ignored"}],
+            "structuredContent": {"result": ["longer than ten", "also long text"]},
+        }
 
         result = asyncio.run(self.plugin.tool_post_invoke(payload, self.mock_context))
 
-        # Check if plugin made modifications
-        if result.modified_payload is None:
-            # If no modification, check if original content is correct
-            self.skipTest("Plugin did not modify payload - may be working as intended")
-
+        self.assertIsNotNone(result.modified_payload, "Plugin should modify payload when structuredContent strings exceed max_chars")
         modified_result = result.modified_payload.result
-        content_text = modified_result["content"][0]["text"]
 
-        # Content should be the full JSON representation
-        expected = '["sff","dffd"]'
-        self.assertEqual(content_text, expected)
+        # structuredContent strings should each be truncated to max_chars=10
+        struct_items = modified_result["structuredContent"]["result"]
+        self.assertEqual(struct_items[0], "longer ...")
+        self.assertEqual(struct_items[1], "also lo...")
+
+        # content[0]["text"] must be the JSON of the truncated struct and must NOT
+        # be truncated again — it is 27 chars but should survive intact
+        content_text = modified_result["content"][0]["text"]
+        self.assertEqual(content_text, '["longer ...","also lo..."]')
 
     def test_null_structured_content_processes_content_array(self):
         """Test that structuredContent: null allows content array processing (Issue #20 fix).
@@ -3827,3 +3832,190 @@ class TestMalformedData:
         # Should handle gracefully
         assert isinstance(result, str)
         assert len(result) > 0
+
+
+# ============================================================================
+# SECTION: RESOURCE ITEM HANDLING TESTS (Issue #5602)
+# Bug 1: structuredContent within bounds caused early return, skipping content scan
+# Bug 2: type:"resource" items with resource.text were never length-checked
+# ============================================================================
+
+
+class TestResourceItemHandling(BaseOutputLengthGuardTest):
+    """Tests for Issue #5602: OutputLengthGuardPlugin bypasses embedded resource content.
+
+    Bug 1 — structuredContent present but within bounds → content array was silently skipped.
+    Bug 2 — type:"resource" items in content/mcp-list were passed through unchecked.
+    """
+
+    def setUp(self):
+        """Set up plugin with max_chars=20, truncate strategy."""
+        self.plugin = self.create_plugin(max_chars=20, strategy="truncate", ellipsis="...")
+        self.mock_context = Mock()
+        self.mock_context.logger = Mock()
+
+    # ------------------------------------------------------------------
+    # Bug 1: struct within bounds must not skip content scan
+    # ------------------------------------------------------------------
+
+    def test_struct_within_bounds_resource_text_truncated(self):
+        """structuredContent is small (within bounds); resource.text in content must still be truncated."""
+        large_text = "x" * 500
+        payload = Mock()
+        payload.name = "file_download"
+        payload.result = {
+            "structuredContent": {"sha": "abc123", "path": "config.json", "size": 500},
+            "content": [
+                {"type": "text", "text": "downloaded ok"},
+                {"type": "resource", "resource": {"uri": "file:///config.json", "text": large_text}},
+            ],
+        }
+
+        result = self.invoke_plugin(payload)
+
+        self.assertIsNotNone(result.modified_payload, "Plugin should modify payload")
+        content = result.modified_payload.result["content"]
+        resource_text = content[1]["resource"]["text"]
+        self.assertLessEqual(len(resource_text), 23, f"resource.text should be truncated, got length {len(resource_text)}")
+        self.assertTrue(resource_text.endswith("..."), "Truncated resource.text should end with ellipsis")
+
+    def test_struct_within_bounds_resource_text_blocked(self):
+        """structuredContent within bounds; oversized resource.text must be blocked when strategy=block."""
+        large_text = "y" * 500
+        plugin = self.create_plugin(max_chars=20, strategy="block", ellipsis="...")
+        payload = Mock()
+        payload.name = "file_download"
+        payload.result = {
+            "structuredContent": {"sha": "abc123"},
+            "content": [
+                {"type": "resource", "resource": {"text": large_text}},
+            ],
+        }
+
+        result = asyncio.run(plugin.tool_post_invoke(payload, self.mock_context))
+
+        self.assertIsNotNone(result.violation, "Plugin should raise a violation")
+        self.assertFalse(result.continue_processing)
+
+    def test_struct_within_bounds_text_item_still_enforced(self):
+        """Regression: structuredContent within bounds; type:text items in content still truncated."""
+        payload = Mock()
+        payload.name = "tool"
+        payload.result = {
+            "structuredContent": {"ok": True},
+            "content": [{"type": "text", "text": "this text is definitely too long for the limit"}],
+        }
+
+        result = self.invoke_plugin(payload)
+
+        self.assertIsNotNone(result.modified_payload)
+        content_text = result.modified_payload.result["content"][0]["text"]
+        self.assertLessEqual(len(content_text), 23)
+        self.assertTrue(content_text.endswith("..."))
+
+    def test_struct_within_bounds_metadata_reflects_struct_processed(self):
+        """structured_content_processed flag is True when structuredContent was present but within bounds."""
+        payload = Mock()
+        payload.name = "tool"
+        payload.result = {
+            "structuredContent": {"ok": True},
+            "content": [{"type": "text", "text": "short"}],
+        }
+
+        result = self.invoke_plugin(payload)
+
+        self.assertTrue(result.metadata.get("structured_content_processed"), "structured_content_processed should be True")
+
+    # ------------------------------------------------------------------
+    # Bug 2: type:"resource" items must be length-checked
+    # ------------------------------------------------------------------
+
+    def test_resource_item_text_truncated_no_struct(self):
+        """type:resource item with large resource.text is truncated (no structuredContent)."""
+        large_text = "z" * 500
+        payload = Mock()
+        payload.name = "tool"
+        payload.result = {
+            "content": [{"type": "resource", "resource": {"uri": "file:///data.txt", "text": large_text}}],
+        }
+
+        result = self.invoke_plugin(payload)
+
+        self.assertIsNotNone(result.modified_payload)
+        resource_text = result.modified_payload.result["content"][0]["resource"]["text"]
+        self.assertLessEqual(len(resource_text), 23)
+        self.assertTrue(resource_text.endswith("..."))
+
+    def test_resource_item_text_blocked_no_struct(self):
+        """type:resource item with large resource.text is blocked when strategy=block."""
+        large_text = "z" * 500
+        plugin = self.create_plugin(max_chars=20, strategy="block", ellipsis="...")
+        payload = Mock()
+        payload.name = "tool"
+        payload.result = {
+            "content": [{"type": "resource", "resource": {"text": large_text}}],
+        }
+
+        result = asyncio.run(plugin.tool_post_invoke(payload, self.mock_context))
+
+        self.assertIsNotNone(result.violation)
+        self.assertFalse(result.continue_processing)
+
+    def test_resource_item_within_bounds_passthrough(self):
+        """type:resource item whose resource.text is within bounds is passed through unchanged."""
+        short_text = "hello"
+        payload = Mock()
+        payload.name = "tool"
+        payload.result = {
+            "content": [{"type": "resource", "resource": {"uri": "file:///x", "text": short_text}}],
+        }
+
+        result = self.invoke_plugin(payload)
+
+        # No modification expected
+        self.assertIsNone(result.modified_payload)
+        self.assertFalse(result.metadata.get("items_modified", False))
+
+    def test_resource_item_no_text_field_passthrough(self):
+        """type:resource item without a text field (e.g. blob/uri resource) is passed through unchanged."""
+        payload = Mock()
+        payload.name = "tool"
+        payload.result = {
+            "content": [{"type": "resource", "resource": {"uri": "file:///image.png", "blob": "base64data=="}}],
+        }
+
+        result = self.invoke_plugin(payload)
+
+        # No modification — no text to check
+        self.assertIsNone(result.modified_payload)
+
+    def test_mcp_list_resource_item_truncated(self):
+        """_handle_mcp_list path: bare list containing a type:resource item truncates resource.text."""
+        large_text = "q" * 500
+        payload = Mock()
+        payload.name = "tool"
+        # A bare list (not wrapped in a dict) triggers _handle_mcp_list
+        payload.result = [
+            {"type": "text", "text": "ok"},
+            {"type": "resource", "resource": {"uri": "file:///data.txt", "text": large_text}},
+        ]
+
+        result = self.invoke_plugin(payload)
+
+        self.assertIsNotNone(result.modified_payload)
+        items = result.modified_payload.result
+        resource_text = items[1]["resource"]["text"]
+        self.assertLessEqual(len(resource_text), 23)
+        self.assertTrue(resource_text.endswith("..."))
+
+    def test_mcp_list_resource_item_within_bounds_passthrough(self):
+        """_handle_mcp_list: type:resource item within bounds is unchanged."""
+        payload = Mock()
+        payload.name = "tool"
+        payload.result = [
+            {"type": "resource", "resource": {"text": "tiny"}},
+        ]
+
+        result = self.invoke_plugin(payload)
+
+        self.assertIsNone(result.modified_payload)
