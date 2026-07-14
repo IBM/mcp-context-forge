@@ -110,3 +110,41 @@ def test_post_tools_non_string_header_key_returns_422(client):
     """
     response = client.post("/tools/", json=_create_payload("bad_key_type_tool", auth_type="authheaders", auth_headers=[{"key": 123, "value": "x"}]))
     assert response.status_code == 422, response.text
+
+
+def test_post_tools_excessive_headers_returns_422(client):
+    """More than 100 header entries is rejected through the real route, not persisted."""
+    headers = [{"key": f"X-Header-{i}", "value": f"v{i}"} for i in range(101)]
+    response = client.post("/tools/", json=_create_payload("too_many_headers_tool", auth_type="authheaders", auth_headers=headers))
+    assert response.status_code == 422, response.text
+
+
+def test_post_tools_persists_legacy_single_header_pair(client):
+    """The legacy auth_header_key/auth_header_value pair still persists through POST /tools."""
+    response = client.post(
+        "/tools/",
+        json=_create_payload("legacy_tool", auth_type="authheaders", auth_header_key="X-API-Key", auth_header_value="legacy-secret"),
+    )
+    assert response.status_code == 200, response.text
+
+    _, auth_value = _stored_auth("legacy_tool")
+    assert decode_auth(auth_value) == {"X-API-Key": "legacy-secret"}  # pragma: allowlist secret
+
+
+def test_put_tools_empty_array_preserves_stored_headers(client):
+    """PUT /tools/{id} with an empty auth_headers array leaves existing credentials intact.
+
+    The schema resolves an empty array to ``auth_value=None``, but ToolService.update_tool only
+    writes auth_value when it is non-null, so a partial update never wipes stored secrets. This
+    pins that behavior: an empty array is not an "unset headers" instruction, and clearing
+    credentials is not supported through this path.
+    """
+    created = client.post("/tools/", json=_create_payload("clear_tool", auth_type="authheaders", auth_headers=REPRO_HEADERS))
+    assert created.status_code == 200, created.text
+    tool_id = created.json()["id"]
+
+    response = client.put(f"/tools/{tool_id}", json={"auth_type": "authheaders", "auth_headers": []})
+    assert response.status_code == 200, response.text
+
+    _, auth_value = _stored_auth("clear_tool")
+    assert decode_auth(auth_value) == {"X-API-Key": "secret", "X-Tenant": "acme"}

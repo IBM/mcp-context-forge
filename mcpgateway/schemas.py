@@ -560,12 +560,16 @@ def _encode_auth_headers_list(auth_headers: List[Any]) -> Optional[str]:
     :class:`A2AAgentCreate` and :class:`A2AAgentUpdate` so the multi-header
     validation and encoding stay identical across every create/update path.
 
+    At most 100 entries may be supplied; the cap is enforced against the submitted list, before
+    any iteration, so an oversized payload is rejected without being walked (duplicate keys still
+    collapse to a single stored header, but they count towards the cap).
+
     Each element is expected to be a ``{"key": ..., "value": ...}`` dict. Non-dict
     elements and entries without a key are skipped, empty values are allowed, surrounding
     whitespace on a key is trimmed, and the last value wins on duplicate keys (a warning is
-    logged). Validation raises ``ValueError`` (surfaced as a 422 through the schemas) when a
-    key or value is not a string, when a key has an invalid format, when no entry carries a
-    usable key, or when more than 100 headers remain.
+    logged). Validation raises ``ValueError`` (surfaced as a 422 through the schemas) when more
+    than 100 entries are supplied, when a key or value is not a string, when a key has an invalid
+    format, or when no entry carries a usable key.
 
     Note:
         ``ToolCreate``/``ToolUpdate`` assemble auth in a ``mode="before"`` validator, so this
@@ -583,9 +587,8 @@ def _encode_auth_headers_list(auth_headers: List[Any]) -> Optional[str]:
         encoding is unavailable; this helper otherwise raises on invalid input).
 
     Raises:
-        ValueError: If a header key or value is not a string, a header key has an invalid
-            format, no valid header with a key is present, or more than 100 headers are
-            supplied.
+        ValueError: If more than 100 header entries are supplied, a header key or value is not a
+            string, a header key has an invalid format, or no valid header with a key is present.
 
     Examples:
         >>> from mcpgateway.utils.services_auth import decode_auth
@@ -609,7 +612,17 @@ def _encode_auth_headers_list(auth_headers: List[Any]) -> Optional[str]:
         Traceback (most recent call last):
             ...
         ValueError: Invalid header key type: 'int'. Header keys must be strings.
+        >>> _encode_auth_headers_list([{'key': f'X-H-{i}', 'value': 'v'} for i in range(101)])
+        Traceback (most recent call last):
+            ...
+        ValueError: Maximum of 100 headers allowed.
     """
+    # Enforce the cap on the submitted list before iterating: the tool schemas run this from a
+    # mode="before" validator on raw client JSON, so an arbitrarily long array would otherwise be
+    # walked in full before being rejected (CWE-770).
+    if len(auth_headers) > 100:
+        raise ValueError("Maximum of 100 headers allowed.")
+
     header_dict = {}
     duplicate_keys = set()
 
@@ -661,10 +674,6 @@ def _encode_auth_headers_list(auth_headers: List[Any]) -> Optional[str]:
     if duplicate_keys:
         logger.warning(f"Duplicate header keys detected (last value used): {', '.join(duplicate_keys)}")
 
-    # Check for excessive headers (prevent abuse).
-    if len(header_dict) > 100:
-        raise ValueError("Maximum of 100 headers allowed.")
-
     return encode_auth(header_dict)
 
 
@@ -680,8 +689,15 @@ def _assemble_tool_authheaders(values: Dict[str, Any]) -> Dict[str, Any]:
            :func:`_encode_auth_headers_list` (raises on invalid input, matching gateways).
         2. Otherwise the legacy ``auth_header_key``/``auth_header_value`` pair is encoded.
         3. An absent array **and** an empty/absent legacy pair — which includes the explicit
-           ``auth_headers=[]`` case, e.g. the admin UI clearing every header row — stores a
-           null ``auth_value`` rather than raising, so callers can unset headers.
+           ``auth_headers=[]`` case, e.g. the admin UI submitting only blank header rows —
+           yields a null ``auth_value`` rather than raising.
+
+    Note:
+        A null ``auth_value`` is not an "unset" instruction. On update,
+        :meth:`ToolService.update_tool` only writes ``auth_value`` when it is non-null, so a tool's
+        stored credentials survive a partial update that omits them (which is what keeps masked
+        values from wiping real secrets). Clearing headers on an existing tool is therefore not
+        supported through this path.
 
     Args:
         values: Raw (pre-validation) input values for a tool create/update.

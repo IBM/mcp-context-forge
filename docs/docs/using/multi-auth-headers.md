@@ -114,8 +114,9 @@ Gateways, tools and A2A agents share a single validator, so the same rules apply
 - Header keys may contain only alphanumeric characters, hyphens and underscores — anything else (including embedded spaces) is rejected with a 422
 - Surrounding whitespace on a header key is trimmed before storage
 - Duplicate header keys will use the last provided value
+- Header keys and values must be strings; any other JSON type is rejected with a 422
 - Header values can be empty strings if required by your authentication scheme, and may contain special characters
-- A maximum of 100 headers may be supplied
+- A maximum of 100 header entries may be submitted. The cap applies to the entries you send, before duplicates collapse — so 101 entries are rejected even if they resolve to fewer unique keys
 
 ### Best Practices
 1. **Use HTTPS**: Always use HTTPS URLs for your MCP servers to prevent header interception
