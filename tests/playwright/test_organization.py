@@ -14,6 +14,9 @@ import uuid
 import pytest
 from playwright.sync_api import expect
 
+# Local
+from .pages.admin_utils import wait_for_js_condition
+
 
 class TestTeams:
     """Tests for Team management features."""
@@ -124,9 +127,12 @@ class TestTeams:
         # Verify team is visible
         team_page.wait_for_team_visible(team_name)
 
-        # Wait for HTMX search to settle before interacting with cards
-        team_page.page.wait_for_function(
-            "() => !document.querySelector('#teams-loading.htmx-request')",
+        # Wait for HTMX search to settle before interacting with cards. evaluate()-based
+        # poll: wait_for_function's eval() mechanism is rejected by strict CSP
+        # (script-src 'self', no unsafe-eval) right after navigation/reload.
+        wait_for_js_condition(
+            team_page.page,
+            "!document.querySelector('#teams-loading.htmx-request')",
             timeout=15000,
         )
 
@@ -188,8 +194,11 @@ class TestTeams:
         team_search.fill(team_name)
         team_page.wait_for_team_visible(team_name)
 
-        team_page.page.wait_for_function(
-            "() => !document.querySelector('#teams-loading.htmx-request')",
+        # evaluate()-based poll: wait_for_function's eval() mechanism is rejected by
+        # strict CSP (script-src 'self', no unsafe-eval) right after navigation/reload.
+        wait_for_js_condition(
+            team_page.page,
+            "!document.querySelector('#teams-loading.htmx-request')",
             timeout=15000,
         )
 
@@ -296,9 +305,12 @@ class TestTeamSelectorDropdown:
         items_container = page.locator("#team-selector-items")
         expect(items_container).to_be_visible(timeout=10000)
 
-        # Wait for the loading message to be replaced with actual team buttons
-        page.wait_for_function(
-            "() => document.querySelectorAll('#team-selector-items .team-selector-item').length > 0",
+        # Wait for the loading message to be replaced with actual team buttons.
+        # evaluate()-based poll: wait_for_function's eval() mechanism is rejected by
+        # strict CSP (script-src 'self', no unsafe-eval) right after navigation.
+        wait_for_js_condition(
+            page,
+            "document.querySelectorAll('#team-selector-items .team-selector-item').length > 0",
             timeout=15000,
         )
 

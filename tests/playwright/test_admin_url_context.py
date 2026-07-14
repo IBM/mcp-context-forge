@@ -26,6 +26,7 @@ import pytest
 
 # Local
 from .conftest import _ensure_admin_logged_in
+from .pages.admin_utils import wait_for_js_condition
 
 # A placeholder team_id value; tests use it as a URL param and verify it survives
 # mutations.  In a real team-scoped deployment this would be a valid UUID.
@@ -69,8 +70,10 @@ def _wait_for_admin_function(page: Page, function_name: str, timeout: int = 1000
         pytest.skip: If the function is not available within timeout
     """
     try:
-        page.wait_for_function(f"typeof window.Admin !== 'undefined' && typeof window.Admin.{function_name} === 'function'", timeout=timeout, polling=100)
-    except PlaywrightTimeoutError:
+        # evaluate()-based poll: wait_for_function's eval() mechanism is rejected by
+        # strict CSP (script-src 'self', no unsafe-eval) right after navigation.
+        wait_for_js_condition(page, f"typeof window.Admin !== 'undefined' && typeof window.Admin.{function_name} === 'function'", timeout=timeout, polling=100)
+    except TimeoutError:
         admin_debug = page.evaluate("""() => {
             return {
                 adminExists: typeof window.Admin !== 'undefined',
@@ -979,13 +982,16 @@ class TestAdminIframeContext:
         except PlaywrightTimeoutError:
             pass
 
-        # Wait for admin JS to initialise inside iframe
+        # Wait for admin JS to initialise inside iframe. evaluate()-based poll:
+        # wait_for_function's eval() mechanism is rejected by strict CSP
+        # (script-src 'self', no unsafe-eval) right after navigation.
         try:
-            frame_obj.wait_for_function(
+            wait_for_js_condition(
+                frame_obj,
                 "typeof window.Admin !== 'undefined' && typeof window.Admin.searchTeamSelector === 'function'",
                 timeout=15000,
             )
-        except PlaywrightTimeoutError:
+        except TimeoutError:
             pytest.fail("Admin JS did not initialise inside iframe - window.Admin.searchTeamSelector not available")
 
         frame = page.frame_locator("#admin-frame")
@@ -1011,9 +1017,11 @@ class TestAdminIframeContext:
             items_container = frame.locator("#team-selector-items")
             items_container.wait_for(state="visible", timeout=10000)
 
-            # Wait for actual team buttons (not "Loading..." placeholder)
-            frame_obj.wait_for_function(
-                "() => document.querySelectorAll('#team-selector-items .team-selector-item').length > 0",
+            # Wait for actual team buttons (not "Loading..." placeholder). evaluate()-based
+            # poll: wait_for_function's eval() mechanism is rejected by strict CSP.
+            wait_for_js_condition(
+                frame_obj,
+                "document.querySelectorAll('#team-selector-items .team-selector-item').length > 0",
                 timeout=15000,
             )
 

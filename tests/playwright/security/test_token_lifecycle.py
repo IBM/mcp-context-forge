@@ -17,6 +17,7 @@ from __future__ import annotations
 
 # Standard
 import logging
+import time
 import uuid
 
 # Third-Party
@@ -179,20 +180,33 @@ class TestTokenRevokeUI:
         revoke_resp = admin_api.delete(f"/tokens/{token_id}")
         assert revoke_resp.status in (200, 204)
 
-        # Navigate to tokens tab with include_inactive=true so revoked token IS listed
-        tokens_page.navigate_to_tokens_tab()
-        # Enable "Show inactive" to make revoked tokens visible in the list
-        inactive_checkbox = tokens_page.page.locator("#tokens-inactive-toggle, [name='include_inactive']")
-        if inactive_checkbox.count() > 0 and not inactive_checkbox.first.is_checked():
-            inactive_checkbox.first.click()
-            tokens_page.page.wait_for_timeout(2000)
+        # Navigate to tokens tab with include_inactive=true so revoked token IS listed.
+        # The nginx admin-page cache has a 5s TTL keyed on URL+cookies (see
+        # infra/nginx/nginx.conf), so a GET for this exact listing issued by an
+        # earlier test in the same session can still be served stale here. Retry
+        # past that window instead of asserting on a single fetch.
+        deadline = time.monotonic() + 8
+        revoke_btn_count = None
+        token_card_count = None
+        while time.monotonic() < deadline:
+            tokens_page.navigate_to_tokens_tab()
+            # Enable "Show inactive" to make revoked tokens visible in the list
+            inactive_checkbox = tokens_page.page.locator("#tokens-inactive-toggle, [name='include_inactive']")
+            if inactive_checkbox.count() > 0 and not inactive_checkbox.first.is_checked():
+                inactive_checkbox.first.click()
+                tokens_page.page.wait_for_timeout(500)
+
+            token_card_count = tokens_page.page.locator(f"text={token_name}").count()
+            revoke_btn_count = tokens_page.get_token_revoke_btn(token_name).count()
+            if token_card_count == 0 or revoke_btn_count == 0:
+                break
+
+            tokens_page.page.reload(wait_until="domcontentloaded")
 
         # Verify the token card IS rendered (not vacuously absent)
-        token_card = tokens_page.page.locator(f"text={token_name}")
-        if token_card.count() > 0:
+        if token_card_count and token_card_count > 0:
             # Token is visible — the revoke button must NOT be present
-            revoke_btn = tokens_page.get_token_revoke_btn(token_name)
-            assert revoke_btn.count() == 0, "Revoke button should be hidden for already-revoked tokens"
+            assert revoke_btn_count == 0, "Revoke button should be hidden for already-revoked tokens"
         else:
             # If include_inactive toggle is not available, verify via API that token is truly revoked
             resp = admin_api.get(f"/tokens/{token_id}")

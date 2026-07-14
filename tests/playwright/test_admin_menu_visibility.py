@@ -32,6 +32,7 @@ import pytest
 from tests.helpers.api_helpers import ApiTestHelper
 from tests.helpers.auth import make_playwright_api_context, make_test_jwt
 from .conftest import BASE_URL
+from .pages.admin_utils import wait_for_js_condition
 
 logger = logging.getLogger(__name__)
 
@@ -154,13 +155,17 @@ def _wait_for_admin_shell(page: Page, timeout: int = 60000) -> None:
         if "Internal Server Error" in content:
             raise AssertionError("Admin page failed to load: Internal Server Error (500)")
         raise
-    # Wait for JS initialization
+    # Wait for JS initialization. Uses evaluate()-based polling rather than
+    # wait_for_function(), whose eval() mechanism strict CSP (script-src 'self',
+    # no unsafe-eval) rejects right after navigation. showTab lives on the
+    # Admin namespace, not as a bare global, since the JS bundling refactor.
     try:
-        page.wait_for_function(
-            "typeof window.showTab === 'function' && typeof window.htmx !== 'undefined'",
+        wait_for_js_condition(
+            page,
+            "typeof window.Admin !== 'undefined' && typeof window.Admin.showTab === 'function' && typeof window.htmx !== 'undefined'",
             timeout=30000,
         )
-    except PlaywrightTimeoutError:
+    except TimeoutError:
         pass
 
 

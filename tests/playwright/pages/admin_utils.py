@@ -10,15 +10,45 @@ Shared utility functions for admin page interactions.
 # Standard
 import logging
 import os
+import time
+from typing import Union
 import urllib.parse
 
 # Third-Party
-from playwright.sync_api import Page
+from playwright.sync_api import Frame, Page
 
 # Local
 from mcpgateway.admin import ADMIN_CSRF_COOKIE_NAME, ADMIN_CSRF_HEADER_NAME
 
 logger = logging.getLogger(__name__)
+
+
+def wait_for_js_condition(target: Union[Page, Frame], expression: str, timeout: int = 30000, polling: int = 100) -> None:
+    """Poll a boolean JS expression via ``evaluate()`` until it is truthy.
+
+    ``Page.wait_for_function``/``Frame.wait_for_function`` compile their predicate with
+    ``eval()``-equivalent semantics, which strict CSP (``script-src 'self'``, no
+    ``unsafe-eval``) rejects immediately with an ``EvalError`` right after navigation.
+    ``evaluate()`` is not subject to that restriction, so poll manually instead.
+
+    Args:
+        target: Page or Frame to evaluate the expression against.
+        expression: JS boolean expression to poll.
+        timeout: Maximum time to wait in milliseconds.
+        polling: Interval between polls in milliseconds.
+
+    Raises:
+        TimeoutError: If the expression never evaluates truthy within ``timeout``.
+    """
+    deadline = time.monotonic() + timeout / 1000
+    while time.monotonic() < deadline:
+        try:
+            if target.evaluate(expression):
+                return
+        except Exception:  # pylint: disable=broad-except
+            pass
+        target.wait_for_timeout(polling)
+    raise TimeoutError(f"Condition not met within {timeout}ms: {expression}")
 
 
 def _get_auth_headers(page: Page) -> dict:
