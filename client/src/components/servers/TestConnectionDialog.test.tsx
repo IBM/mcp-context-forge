@@ -337,6 +337,71 @@ describe("TestConnectionDialog", () => {
     });
   });
 
+  it("renders the URL error inline and marks the field invalid", async () => {
+    const user = userEvent.setup();
+    render(<TestConnectionDialog {...defaultProps} />);
+
+    const urlField = screen.getByLabelText(/^url/i);
+    await user.clear(urlField);
+    await user.click(screen.getByRole("button", { name: /^test connection$/i }));
+
+    await waitFor(() => expect(urlField).toHaveAttribute("aria-invalid", "true"));
+    // The error is associated with the field for assistive tech.
+    expect(urlField).toHaveAttribute("aria-describedby", "url-error");
+    expect(screen.getByText(/url is required/i)).toHaveAttribute("id", "url-error");
+  });
+
+  it("validates a field on blur, before any submit", async () => {
+    const user = userEvent.setup();
+    render(<TestConnectionDialog {...defaultProps} />);
+
+    const urlField = screen.getByLabelText(/^url/i);
+    await user.clear(urlField);
+    await user.type(urlField, "not-a-url");
+    await user.tab(); // blur
+
+    await waitFor(() => {
+      expect(screen.getByText(/url must start with http/i)).toBeInTheDocument();
+    });
+  });
+
+  it("clears a field's error as soon as it is edited", async () => {
+    const user = userEvent.setup();
+    render(<TestConnectionDialog {...defaultProps} />);
+
+    const urlField = screen.getByLabelText(/^url/i);
+    await user.clear(urlField);
+    await user.click(screen.getByRole("button", { name: /^test connection$/i }));
+    await waitFor(() => expect(screen.getByText(/url is required/i)).toBeInTheDocument());
+
+    await user.type(urlField, "https://example.com");
+    expect(screen.queryByText(/url is required/i)).not.toBeInTheDocument();
+  });
+
+  it("flags a scheme/host pasted into the Path field", async () => {
+    const user = userEvent.setup();
+    render(<TestConnectionDialog {...defaultProps} />);
+
+    const pathField = screen.getByLabelText(/^path/i);
+    await user.type(pathField, "https://evil.com/health");
+    await user.click(screen.getByRole("button", { name: /^test connection$/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/path shouldn't include a scheme or host/i)).toBeInTheDocument();
+    });
+  });
+
+  it("accepts a plain path without a scheme", async () => {
+    const user = userEvent.setup();
+    render(<TestConnectionDialog {...defaultProps} />);
+
+    const pathField = screen.getByLabelText(/^path/i);
+    await user.type(pathField, "/health");
+    await user.tab();
+
+    expect(screen.queryByText(/path shouldn't include a scheme or host/i)).not.toBeInTheDocument();
+  });
+
   it("does not auto-focus the pre-filled URL field on open", () => {
     render(<TestConnectionDialog {...defaultProps} />);
 
