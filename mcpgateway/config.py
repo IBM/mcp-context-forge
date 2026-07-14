@@ -399,6 +399,13 @@ class Settings(BaseSettings):
         description="Derive a per-environment HMAC signing key from JWT_SECRET_KEY so tokens minted in one environment fail signature verification in another (HS* algorithms only). Enabling re-keys tokens; treat as a key rotation.",
     )
 
+    jwt_user_identity_claim: str = Field(
+        default="sub",
+        description="JWT claim to use for user identity in API bearer token authentication (default: 'sub'). "
+        "Common values: 'sub', 'email', 'preferred_username', 'upn'. Must contain a unique identifier "
+        "that matches the user's email in the database. Does not affect SSO/UI login flow.",
+    )
+
     # CSRF Protection Configuration
     csrf_enabled: bool = Field(default=True, description="Enable CSRF protection for state-changing operations")
     csrf_secret_key: str = Field(default="", description="Secret key for CSRF token generation (falls back to jwt_secret_key if empty)")
