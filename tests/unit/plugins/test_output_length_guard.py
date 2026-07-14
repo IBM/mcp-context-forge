@@ -2005,13 +2005,7 @@ class TestPluginIntegration(BaseOutputLengthGuardTest):
         self.assertEqual(struct_result[2], "regular...")
 
     def test_content_field_not_truncated_after_regeneration(self):
-        """Regenerated content from structuredContent is not double-truncated (v0.3.3 fix).
-
-        When structuredContent strings exceed max_chars and get truncated, the plugin
-        replaces content[] with a JSON representation of the truncated struct.
-        That JSON text must NOT be run through the length guard a second time,
-        even though it is itself longer than max_chars.
-        """
+        """Regenerated content from structuredContent is not double-truncated"""
         payload = Mock()
         payload.name = "test_tool"
         # Both strings exceed max_chars=10, so struct_modified=True
