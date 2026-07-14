@@ -339,10 +339,18 @@ class TenantPluginManagerFactory:
 
         old = old_entry.manager if old_entry is not None else None
         if old is not None:
-            try:
-                await old.shutdown()
-            except Exception:
-                logger.exception("Failed to shutdown old manager for context_id=%s", context_id)
+            # Check if this manager is shared by other contexts before shutting down
+            is_shared = False
+            async with self._lock:
+                is_shared = any(entry.manager is old for entry in self._managers.values())
+
+            if is_shared:
+                logger.debug("reload_tenant: manager for context_id=%s is shared, skipping shutdown", context_id)
+            else:
+                try:
+                    await old.shutdown()
+                except Exception:
+                    logger.exception("Failed to shutdown old manager for context_id=%s", context_id)
 
         try:
             return await inflight
@@ -475,6 +483,6 @@ def make_context_id(team_id: str, tool_name: str) -> str:
 def get_team_id_from_context(context_id: str) -> Optional[str]:
     """Get team_id from context_id"""
     if CONTEXT_ID_SEPARATOR in context_id:
-        team_id, _ = context_id.split(CONTEXT_ID_SEPARATOR)
+        team_id, _ = context_id.split(CONTEXT_ID_SEPARATOR, 1)
         return team_id
     return None

@@ -812,6 +812,33 @@ class TestReloadTenant:
         ):
             result = await factory.reload_tenant("ctx")
 
+
+    @pytest.mark.asyncio
+    async def test_reload_does_not_shutdown_shared_manager(self, factory):
+        """When reloading a context that shares a manager, don't shutdown the shared manager."""
+        shared_manager = AsyncMock()
+        shared_manager.shutdown = AsyncMock()
+
+        # Two contexts sharing the same manager (simulating default manager fallback)
+        factory._managers["ctx1"] = _CachedManager(manager=shared_manager, created_at=0)
+        factory._managers["ctx2"] = _CachedManager(manager=shared_manager, created_at=0)
+
+        new_manager = AsyncMock()
+        new_manager.initialize = AsyncMock()
+
+        with (
+            patch.object(factory, "get_config_from_db", new_callable=AsyncMock, return_value=None),
+            patch.object(factory, "_apply_redis_mode_overrides", new_callable=AsyncMock, side_effect=lambda c: c),
+            patch("mcpgateway.plugins.gateway_plugin_manager.TenantPluginManager", return_value=new_manager),
+        ):
+            result = await factory.reload_tenant("ctx1")
+
+        assert result is new_manager
+        # Shared manager should NOT be shut down because ctx2 still references it
+        shared_manager.shutdown.assert_not_called()
+        assert factory._managers["ctx2"].manager is shared_manager
+
+
         assert result is new_manager
 
 

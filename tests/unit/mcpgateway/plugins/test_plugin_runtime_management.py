@@ -28,7 +28,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 # Third-Party
 import pytest
 from pydantic import ValidationError as _PydValidationError
-from cpex.framework import 
+from cpex.framework import
 
 # First-Party
 from mcpgateway.plugins._redis import set_shared_redis_provider
