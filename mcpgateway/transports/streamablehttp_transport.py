@@ -4682,18 +4682,15 @@ class SessionManagerWrapper:
         #   • initialize (no session) → stateful manager, gateway mints a session
         #   • session provided        → stateful manager, affinity/ownership enforced
         #   • anything else, no session → stateless manager, upstream decides
-        _use_stateless_path = (
-            settings.use_stateful_sessions
-            and mcp_session_id == "not-provided"
-            and peeked_rpc_method != "initialize"
-        )
+        _use_stateless_path = settings.use_stateful_sessions and mcp_session_id == "not-provided" and peeked_rpc_method != "initialize"
         active_manager = self.session_manager_stateless if _use_stateless_path else self.session_manager
 
         try:
             await active_manager.handle_request(scope, receive_with_initialize_trace, send_with_capture)
             logger.debug(
                 "[STATEFUL] Streamable HTTP completed | Session: %s | stateless-path: %s",
-                mcp_session_id, _use_stateless_path,
+                mcp_session_id,
+                _use_stateless_path,
             )
 
             if not _use_stateless_path:
