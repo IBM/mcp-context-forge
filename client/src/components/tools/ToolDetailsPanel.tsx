@@ -6,7 +6,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { Tool } from "@/types/tool";
-import { copyToClipboard, truncateMiddle } from "@/components/gateways/utils";
+import { copyToClipboard } from "@/lib/clipboard";
+import { truncateMiddle } from "@/components/gateways/utils";
 import { formatDateTime } from "@/utils/format";
 import { ToolsTable } from "@/components/tools/ToolsTable";
 
