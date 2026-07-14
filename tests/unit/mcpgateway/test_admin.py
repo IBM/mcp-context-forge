@@ -2613,12 +2613,32 @@ class TestAdminResourceRoutes:
         assert isinstance(result, JSONResponse)
         assert result.status_code == 409
 
+        # Test ResourceNameConflictError
+        from mcpgateway.services.resource_service import ResourceNameConflictError
+
+        mock_register_resource.side_effect = ResourceNameConflictError("test_resource")
+        result = await admin_add_resource(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 409
+        body = json.loads(result.body)
+        assert "test_resource" in body.get("message", "")
+
         # Test generic exception
         mock_register_resource.side_effect = Exception("Generic error")
 
         result = await admin_add_resource(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
         assert isinstance(result, JSONResponse)
         assert result.status_code == 500
+
+    @patch.object(ResourceService, "register_resource")
+    async def test_admin_add_resource_validation_error(self, mock_register_resource, mock_request, mock_db):
+        """ResourceValidationError in admin_add_resource returns 422 (lines 13169-13170)."""
+        from mcpgateway.services.resource_service import ResourceValidationError
+
+        mock_register_resource.side_effect = ResourceValidationError("invalid team id")
+        result = await admin_add_resource(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 422
 
     @patch.object(ResourceService, "register_resource")
     async def test_admin_add_resource_content_size_error(self, mock_register_resource, mock_request, mock_db, monkeypatch):
@@ -2827,6 +2847,24 @@ class TestAdminResourceRoutes:
         monkeypatch.setattr("mcpgateway.admin.resource_service.update_resource", mock_update)
         response = await admin_edit_resource("550e8400e29b41d4a7164466554400c1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})  # pragma: allowlist secret
         assert response.status_code == 409
+
+        # Test ResourceNameConflictError (lines 13307-13308)
+        from mcpgateway.services.resource_service import ResourceNameConflictError
+
+        mock_update = AsyncMock(side_effect=ResourceNameConflictError("dup-name"))
+        monkeypatch.setattr("mcpgateway.admin.resource_service.update_resource", mock_update)
+        response = await admin_edit_resource("550e8400e29b41d4a7164466554400c1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})  # pragma: allowlist secret
+        assert response.status_code == 409
+        body = json.loads(response.body)
+        assert "dup-name" in body.get("message", "")
+
+        # Test ResourceValidationError (lines 13304-13305)
+        from mcpgateway.services.resource_service import ResourceValidationError
+
+        mock_update = AsyncMock(side_effect=ResourceValidationError("bad team"))
+        monkeypatch.setattr("mcpgateway.admin.resource_service.update_resource", mock_update)
+        response = await admin_edit_resource("550e8400e29b41d4a7164466554400c1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})  # pragma: allowlist secret
+        assert response.status_code == 422
 
         # Test generic Exception
         mock_update = AsyncMock(side_effect=Exception("boom"))

@@ -4,13 +4,17 @@ Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
-Integration tests for the public resource-by-URI endpoint.
+Integration tests for resource management, exercised through the real HTTP
+endpoints (auth, RBAC, routing, service layer) rather than mocked handler
+internals.
 
-Covers the full ASGI middleware stack (auth, RBAC, routing) for:
-  GET /resources/test/{resource_uri:path}  (legacy prefix)
-  GET /v1/resources/test/{resource_uri:path}  (canonical v1 prefix)
-
-Issue #5356 acceptance criteria requires both unit **and** integration tests.
+Covers:
+  - GET /resources/test/{resource_uri:path}  (legacy prefix)
+  - GET /v1/resources/test/{resource_uri:path}  (canonical v1 prefix)
+    Issue #5356 acceptance criteria requires both unit **and** integration tests.
+  - POST /resources/ duplicate-name conflict handling (issue #4991): creating a
+    resource with a name that already exists must return 409 with a meaningful
+    conflict message, not an opaque IntegrityError.
 """
 
 # Future
@@ -30,12 +34,11 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 # First-Party
-from mcpgateway.main import app
-from mcpgateway.utils.verify_credentials import require_auth
 from mcpgateway.auth import get_current_user
-from mcpgateway.middleware.rbac import get_current_user_with_permissions
-from mcpgateway.middleware.rbac import get_db as rbac_get_db
-from mcpgateway.middleware.rbac import get_permission_service
+from mcpgateway.db import Base
+from mcpgateway.main import app
+from mcpgateway.middleware.rbac import get_current_user_with_permissions, get_db as rbac_get_db, get_permission_service
+from mcpgateway.utils.verify_credentials import require_auth
 
 # ---------------------------------------------------------------------------
 # Local helpers
@@ -45,8 +48,11 @@ from mcpgateway.middleware.rbac import get_permission_service
 class _PermissionServiceAlwaysGrant:
     """Minimal permission-service stand-in that grants every check.
 
-    Uses ``**kwargs`` so it stays compatible with the full
-    ``PermissionService.check_permission`` signature (which includes
+    `require_permission` instantiates `PermissionService(db)` directly inside
+    its wrapper rather than resolving it via FastAPI DI, so the class itself
+    must be patched -- overriding the `get_permission_service` dependency
+    alone is not enough. Uses ``**kwargs`` so it stays compatible with the
+    full ``PermissionService.check_permission`` signature (which includes
     ``token_teams``, ``allow_admin_bypass``, ``check_any_team``, etc.)
     without needing to mirror every parameter explicitly.
     """
@@ -80,11 +86,10 @@ def _auth_client():
     url = f"sqlite:///{path}"
 
     from mcpgateway.config import settings
-
-    mp.setattr(settings, "database_url", url, raising=False)
-
     import mcpgateway.db as db_mod
     import mcpgateway.main as main_mod
+
+    mp.setattr(settings, "database_url", url, raising=False)
 
     engine = create_engine(url, connect_args={"check_same_thread": False}, poolclass=StaticPool)
     TestSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -148,8 +153,93 @@ def _auth_client():
     os.unlink(path)
 
 
+@pytest.fixture
+def test_app():
+    """Wire the real app to an isolated (function-scoped) temp SQLite DB with
+    auth/RBAC overridden. Separate from `_auth_client` above because the
+    name-conflict tests below create real rows through the unmocked service
+    layer and need per-test isolation rather than a module-shared DB.
+    """
+    mp = MonkeyPatch()
+
+    fd, path = tempfile.mkstemp(suffix=".db")
+    url = f"sqlite:///{path}"
+
+    from mcpgateway.config import settings
+    import mcpgateway.db as db_mod
+    import mcpgateway.main as main_mod
+
+    mp.setattr(settings, "database_url", url, raising=False)
+
+    engine = create_engine(url, connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    mp.setattr(db_mod, "engine", engine, raising=False)
+    mp.setattr(db_mod, "SessionLocal", TestingSessionLocal, raising=False)
+    mp.setattr(main_mod, "SessionLocal", TestingSessionLocal, raising=False)
+    mp.setattr(main_mod, "engine", engine, raising=False)
+
+    Base.metadata.create_all(bind=engine)
+
+    mock_user = MagicMock()
+    mock_user.email = "test_user@example.com"
+    mock_user.full_name = "Test User"
+    mock_user.is_admin = True
+    mock_user.is_active = True
+
+    async def mock_user_with_permissions():
+        db_session = TestingSessionLocal()
+        try:
+            yield {
+                "email": "test_user@example.com",
+                "full_name": "Test User",
+                "is_admin": True,
+                "ip_address": "127.0.0.1",
+                "user_agent": "test-client",
+                "db": db_session,
+            }
+        finally:
+            db_session.close()
+
+    def override_get_db():
+        db = TestingSessionLocal()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    with patch("mcpgateway.middleware.rbac.PermissionService", _PermissionServiceAlwaysGrant):
+        app.dependency_overrides[require_auth] = lambda: "test_user"
+        app.dependency_overrides[get_current_user] = lambda: mock_user
+        app.dependency_overrides[get_current_user_with_permissions] = mock_user_with_permissions
+        app.dependency_overrides[get_permission_service] = _PermissionServiceAlwaysGrant
+        app.dependency_overrides[rbac_get_db] = override_get_db
+
+        yield app
+
+        app.dependency_overrides.pop(require_auth, None)
+        app.dependency_overrides.pop(get_current_user, None)
+        app.dependency_overrides.pop(get_current_user_with_permissions, None)
+        app.dependency_overrides.pop(get_permission_service, None)
+        app.dependency_overrides.pop(rbac_get_db, None)
+
+    mp.undo()
+    engine.dispose()
+    os.close(fd)
+    os.unlink(path)
+
+
+@pytest.fixture
+def client(test_app):
+    return TestClient(test_app)
+
+
+@pytest.fixture
+def auth_headers() -> dict:
+    return {"Authorization": "Bearer test.token.resource_management"}  # pragma: allowlist secret
+
+
 # ---------------------------------------------------------------------------
-# Integration test class
+# Integration test class: resource-by-URI endpoint (issue #5356)
 # ---------------------------------------------------------------------------
 
 
@@ -269,3 +359,118 @@ class TestResourceByUriIntegration:
             assert response.status_code == 401
         finally:
             app_with_temp_db.dependency_overrides.pop(get_current_user_with_permissions, None)
+
+
+# ---------------------------------------------------------------------------
+# Integration test class: duplicate resource-name conflict (issue #4991)
+# ---------------------------------------------------------------------------
+
+
+class TestResourceNameConflict:
+    """End-to-end coverage for issue #4991: duplicate resource name -> 409."""
+
+    def test_duplicate_resource_name_returns_409_with_message(self, client, auth_headers):
+        """Creating a resource, then creating another with the same name (public
+        visibility) must return 409 with a message naming the conflicting resource,
+        not a raw IntegrityError."""
+        body = {
+            "resource": {
+                "uri": "test://resource-one",
+                "name": "duplicate-name",
+                "description": "first resource",
+                "content": "hello",
+                "mime_type": "text/plain",
+            },
+            "visibility": "public",
+        }
+        first = client.post("/resources/", json=body, headers=auth_headers)
+        assert first.status_code == 200, first.text
+
+        dup_body = {
+            "resource": {
+                "uri": "test://resource-two",
+                "name": "duplicate-name",
+                "description": "second resource, different URI",
+                "content": "world",
+                "mime_type": "text/plain",
+            },
+            "visibility": "public",
+        }
+        second = client.post("/resources/", json=dup_body, headers=auth_headers)
+
+        assert second.status_code == 409, second.text
+        detail = second.json()["detail"]
+        assert "duplicate-name" in detail
+        assert "already exists" in detail
+
+    def test_different_names_do_not_conflict(self, client, auth_headers):
+        """Sanity check: distinct names never trigger the conflict path."""
+        for i in range(2):
+            body = {
+                "resource": {
+                    "uri": f"test://resource-{i}",
+                    "name": f"unique-name-{i}",
+                    "description": "resource",
+                    "content": "content",
+                    "mime_type": "text/plain",
+                },
+                "visibility": "public",
+            }
+            resp = client.post("/resources/", json=body, headers=auth_headers)
+            assert resp.status_code == 200, resp.text
+
+    def test_create_team_resource_without_team_id_returns_422(self, client, auth_headers):
+        """POST /resources with visibility=team but no resolvable team_id must
+        surface register_resource's ResourceValidationError as a 422, not an
+        unhandled 500."""
+        body = {
+            "resource": {
+                "uri": "test://team-resource-no-id",
+                "name": "team-resource-no-id",
+                "description": "team resource without team_id",
+                "content": "hello",
+                "mime_type": "text/plain",
+            },
+            "visibility": "team",
+        }
+        resp = client.post("/resources/", json=body, headers=auth_headers)
+        assert resp.status_code == 422, resp.text
+        assert "team_id" in resp.json()["detail"]
+
+    def test_rename_resource_to_duplicate_name_returns_409(self, client, auth_headers):
+        """PUT /resources/{id} that renames a resource to a name already used
+        by another (public) resource must return 409 with a meaningful
+        conflict message, not an opaque IntegrityError."""
+        first_body = {
+            "resource": {
+                "uri": "test://rename-target",
+                "name": "rename-target",
+                "description": "existing resource with the target name",
+                "content": "hello",
+                "mime_type": "text/plain",
+            },
+            "visibility": "public",
+        }
+        first = client.post("/resources/", json=first_body, headers=auth_headers)
+        assert first.status_code == 200, first.text
+
+        second_body = {
+            "resource": {
+                "uri": "test://rename-source",
+                "name": "rename-source",
+                "description": "resource to be renamed",
+                "content": "world",
+                "mime_type": "text/plain",
+            },
+            "visibility": "public",
+        }
+        second = client.post("/resources/", json=second_body, headers=auth_headers)
+        assert second.status_code == 200, second.text
+        second_id = second.json()["id"]
+
+        update_resp = client.put(f"/resources/{second_id}", json={"name": "rename-target"}, headers=auth_headers)
+
+        assert update_resp.status_code == 409, update_resp.text
+        detail = update_resp.json()["detail"]
+        assert "rename-target" in detail
+        assert "already exists" in detail
