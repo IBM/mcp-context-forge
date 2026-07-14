@@ -3,7 +3,7 @@ import { AlertCircle, CheckCircle2 } from "lucide-react";
 
 import { CodeBlock } from "@/components/ui/code-block";
 import { cn } from "@/lib/utils";
-import type { PromptPreviewState } from "./usePromptPreview";
+import type { PromptPreviewState } from "@/hooks/usePromptPreview";
 
 export interface PromptPreviewResultProps {
   preview: Pick<PromptPreviewState, "result" | "error" | "hasRun">;

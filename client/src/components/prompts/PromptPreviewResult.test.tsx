@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { screen } from "@testing-library/react";
 import { renderWithProviders as render } from "@/test/test-utils";
 import { PromptPreviewResult } from "./PromptPreviewResult";
-import type { PromptPreviewState } from "./usePromptPreview";
+import type { PromptPreviewState } from "@/hooks/usePromptPreview";
 
 function previewProps(
   overrides: Partial<Pick<PromptPreviewState, "result" | "error" | "hasRun">>,

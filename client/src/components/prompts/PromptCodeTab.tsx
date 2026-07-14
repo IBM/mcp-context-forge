@@ -5,7 +5,7 @@ import { PromptArgsForm } from "./PromptArgsForm";
 import { PromptPreviewButton } from "./PromptPreviewButton";
 import { PromptPreviewResult } from "./PromptPreviewResult";
 import { PromptSnippetTabs } from "./PromptSnippetTabs";
-import { usePromptPreview } from "./usePromptPreview";
+import { usePromptPreview } from "@/hooks/usePromptPreview";
 
 export interface PromptCodeTabProps {
   prompt: NonNullable<PromptRead>;

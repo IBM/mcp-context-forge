@@ -2,7 +2,7 @@ import { useIntl } from "react-intl";
 import { Loader2, Play } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import type { PromptPreviewState } from "./usePromptPreview";
+import type { PromptPreviewState } from "@/hooks/usePromptPreview";
 
 export interface PromptPreviewButtonProps {
   preview: Pick<PromptPreviewState, "run" | "isLoading" | "hasRun">;
