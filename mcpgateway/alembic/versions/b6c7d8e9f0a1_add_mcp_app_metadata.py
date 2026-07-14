@@ -2,7 +2,7 @@
 """Add MCP App metadata.
 
 Revision ID: b6c7d8e9f0a1
-Revises: e198602c3c1e
+Revises: 279184dfd71d
 Create Date: 2026-06-02 00:00:00.000000
 """
 
@@ -14,7 +14,7 @@ from alembic import op
 import sqlalchemy as sa
 
 revision: str = "b6c7d8e9f0a1"  # pragma: allowlist secret
-down_revision: Union[str, Sequence[str], None] = "e198602c3c1e"  # pragma: allowlist secret
+down_revision: Union[str, Sequence[str], None] = "279184dfd71d"  # pragma: allowlist secret
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
