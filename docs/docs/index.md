@@ -43,7 +43,7 @@ It currently supports:
 * **gRPC-to-MCP translation** via automatic reflection-based service discovery
 * Virtualization of legacy APIs as MCP-compliant tools and servers
 * Transport over HTTP, JSON-RPC, WebSocket, SSE (with configurable keepalive), stdio and streamable-HTTP
-* An Admin UI for real-time management, configuration, and log monitoring (with airgapped deployment support)
+* An Admin UI for real-time management, configuration, and log monitoring (with bundled JavaScript and optional air-gapped deployment for vendor libraries)
 * Built-in auth, retries, and rate-limiting with user-scoped OAuth tokens and unconditional X-Upstream-Authorization header support
 * **OpenTelemetry observability** with Phoenix, Jaeger, Zipkin, and other OTLP backends
 * Scalable deployments via Docker or PyPI, Redis-backed caching, and multi-cluster federation
@@ -379,7 +379,7 @@ Browse to **[http://localhost:4444/admin](http://localhost:4444/admin)** and log
       ghcr.io/ibm/mcp-context-forge:1.0.0
     ```
 
-    **Airgapped deployment** (no internet):
+    **Air-gapped deployment** (optional for vendor libraries):
 
     ```bash
     docker build -f Containerfile -t mcpgateway:airgapped .

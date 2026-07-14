@@ -399,27 +399,17 @@ MCP Gateway implements Subresource Integrity for all external CDN resources to c
 - CodeMirror (5.65.18) - Code editor (7 files)
 - Font Awesome (6.4.0) - Icon library
 
-**Verification**:
+**Updating Frontend Assets**:
 
-```bash
-# Verify all SRI hashes match current CDN content
-make sri-verify
+When updating Admin UI frontend dependencies:
 
-# Regenerate hashes (after updating CDN library versions)
-make sri-generate
-```
+1. Update the relevant npm dependencies in `package.json`
+2. Refresh the lockfile with `npm update` or `npm install`
+3. Rebuild the UI bundle with `make build-ui`
+4. Verify the generated assets load correctly in the Admin UI
+5. Commit the updated frontend source and lockfile changes
 
-**Updating CDN Libraries**:
-
-When updating a CDN library version:
-
-1. Update the URL in `scripts/cdn_resources.py`
-2. Run `make sri-generate` to calculate new hash
-3. Update the URL in templates (admin.html, login.html, etc.)
-4. Run `make sri-verify` to confirm hash matches
-5. Commit both `mcpgateway/sri_hashes.json` and template changes
-
-The CI pipeline automatically verifies SRI hashes on every build to detect unexpected changes.
+The CI pipeline verifies the frontend build as part of normal validation.
 
 **Security Checklist**:
 

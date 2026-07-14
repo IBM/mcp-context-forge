@@ -2,10 +2,7 @@
 
 The Admin experience is shipped as a Jinja template (`mcpgateway/templates/admin.html`)
 with supporting assets in `mcpgateway/static/`. It uses **HTMX** for
-request/response swaps, **Alpine.js** for light-weight reactivity, and the
-Tailwind CDN for styling. There are no environment-variable knobs for colors or
-layout—the way to customise it is to edit those files (or layer overrides during
-deployment).
+request/response swaps, **Alpine.js** for light-weight reactivity, and **Tailwind CSS** for styling. Admin UI vendor JavaScript is installed via npm and bundled/chunked with Vite for local serving and air-gapped deployments. There are no environment-variable knobs for colors or layout—the way to customise it is to edit those files (or layer overrides during deployment).
 
 ### Technology Stack
 
@@ -20,7 +17,7 @@ deployment).
 | DOMPurify | - | XSS sanitization |
 | Font Awesome | - | Icons |
 
-All vendor libraries are bundled locally in `mcpgateway/static/vendor/` for air-gapped deployments. Enable with `MCPGATEWAY_UI_AIRGAPPED=true`. See [Air-Gapped Mode](../overview/ui.md#air-gapped-mode).
+**HTMX** and **Alpine.js** are bundled into the main JavaScript bundle via npm/Vite, and the rest of the Admin UI vendor JavaScript is installed from npm and emitted through the Vite build. Enable `MCPGATEWAY_UI_AIRGAPPED=true` for offline deployments. See [Air-Gapped Mode](../overview/ui.md#air-gapped-mode).
 
 ---
 

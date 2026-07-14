@@ -1,6 +1,7 @@
 import { defineConfig } from 'vite';
 import path from 'path';
 import fs from 'fs';
+import viteCompression from 'vite-plugin-compression';
 
 // Plugin to clean up old bundle files before building
 function cleanOldBundles() {
@@ -15,6 +16,11 @@ function cleanOldBundles() {
           if (file.startsWith('bundle-') && file.endsWith('.js')) {
             fs.unlinkSync(path.join(outDir, file));
             console.log(`Removed old bundle: ${file}`);
+          }
+          // Remove old chunk files
+          if (file.startsWith('chunk-') && file.endsWith('.js')) {
+            fs.unlinkSync(path.join(outDir, file));
+            console.log(`Removed old chunk: ${file}`);
           }
         }
       }
@@ -38,31 +44,52 @@ export default defineConfig({
     },
     // Generate manifest for Python to read the hashed filename
     manifest: true,
-    // Use standard build mode instead of lib mode for direct script inclusion
     rollupOptions: {
       input: path.resolve(__dirname, 'mcpgateway/admin_ui/index.js'),
       output: {
         // Add content hash to filename for cache busting
         entryFileNames: 'bundle-[hash].js',
-        format: 'iife', // IIFE format for direct script inclusion
-        name: 'Admin', // Expose bundle as window.Admin
-        // Externalize dependencies that are loaded separately
-        globals: {
-          marked: 'marked',
-          DOMPurify: 'DOMPurify',
-          Chart: 'Chart',
-          CodeMirror: 'CodeMirror',
-        },
+        chunkFileNames: 'chunk-[name]-[hash].js',
+        format: 'es', // ES modules format for code splitting
+        // Manual chunks for code splitting (function-based for Vite 8/rolldown)
+        manualChunks(id) {
+          // Vendor chunks - heavy libraries
+          if (id.includes('node_modules/chart.js')) {
+            return 'vendor-charts';
+          }
+          if (id.includes('node_modules/codemirror') ||
+              id.includes('node_modules/@codemirror')) {
+            return 'vendor-editor';
+          }
+
+          // Feature chunks - genuinely lazy loaded on tab click (see
+          // lazy-loader.js featureModules). Each must stay in its own chunk,
+          // never grouped with a statically-imported module, or Rollup will
+          // pull it into the eager load graph too.
+          if (id.includes('mcpgateway/admin_ui/metrics.js')) {
+            return 'metrics';
+          }
+          if (id.includes('mcpgateway/admin_ui/llmChat.js')) {
+            return 'llm-chat';
+          }
+          // tools.js, servers.js, gateways.js, teams.js, logging.js,
+          // llmModels.js, and plugins.js are statically imported by
+          // admin.js (they cross-import each other and several other
+          // eagerly-loaded modules), so they are left to Rollup's default
+          // chunking rather than split out here.
+        }
       },
-      external: [
-        'marked',
-        'DOMPurify',
-        'Chart',
-        'CodeMirror',
-      ],
     },
     outDir: 'mcpgateway/static',
     emptyOutDir: false, // Don't clean the output directory
   },
-  plugins: [cleanOldBundles()],
+  plugins: [
+    cleanOldBundles(),
+    viteCompression({
+      algorithm: 'gzip',
+      ext: '.gz',
+      threshold: 10240, // Only compress files larger than 10KB
+      deleteOriginFile: false, // Keep original files
+    }),
+  ],
 });

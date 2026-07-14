@@ -1,15 +1,13 @@
 # syntax=docker/dockerfile:1.12
 
 ###############################################################################
-# ContextForge (lite) - OCI-compliant multi-stage container build
+# ContextForge - OCI-compliant multi-stage container build
 #
 # Purpose: Minimal runtime image using ubi10-minimal, supporting multiplatform
 # builds (amd64, arm64, s390x, ppc64le) with optional Rust native extensions.
 #
-# Distinction from Containerfile (standard):
-#   - This is the RECOMMENDED production build (lighter, faster, ubi10-minimal).
-#   - Containerfile (standard) is a simpler single-stage variant without Rust.
-#   - Containerfile.scratch is an ultra-slim scratch-based image.
+# This is the only production Containerfile (previously separate lite/scratch
+# variants were consolidated here).
 #
 # Key design points:
 #   - Builder stage has full DNF + devel headers for wheel compilation
@@ -334,15 +332,6 @@ COPY --from=node-builder /build/mcpgateway/static/css/tailwind.min.css /app/mcpg
 
 # Optional: Copy run.sh if it's needed in production
 COPY run.sh /app/
-
-# ----------------------------------------------------------------------------
-# Download CDN assets for airgapped deployment (writes into /app/mcpgateway/static/vendor/).
-# Placed here so app code changes below don't invalidate this network-bound step.
-# --chmod=0755 lets us skip a follow-up chmod layer.
-# ----------------------------------------------------------------------------
-COPY --chmod=0755 scripts/download-cdn-assets.sh /tmp/download-cdn-assets.sh
-RUN /tmp/download-cdn-assets.sh \
-    && rm /tmp/download-cdn-assets.sh
 
 # ----------------------------------------------------------------------------
 # Application files, ordered from least- to most-frequently-changing so that

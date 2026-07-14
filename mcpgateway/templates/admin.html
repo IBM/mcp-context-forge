@@ -147,88 +147,8 @@
     <!-- Password Validator (shared utility) -->
     <script defer src="{{ root_path }}/static/js/password-validator.js" nonce="{{ csp_nonce(request) }}"></script>
 
-    <!-- CodeMirror -->
-    {% if ui_airgapped %}
-    <script defer src="{{ root_path }}/static/vendor/codemirror/codemirror.min.js"></script>
-    <script defer src="{{ root_path }}/static/vendor/codemirror/addon/mode/simple.min.js"></script>
-    <script defer src="{{ root_path }}/static/vendor/codemirror/mode/javascript/javascript.min.js"></script>
-    <script defer src="{{ root_path }}/static/vendor/codemirror/mode/python/python.min.js"></script>
-    <script defer src="{{ root_path }}/static/vendor/codemirror/mode/shell/shell.min.js"></script>
-    <script defer src="{{ root_path }}/static/vendor/codemirror/mode/go/go.min.js"></script>
-    <script defer src="{{ root_path }}/static/vendor/codemirror/mode/rust/rust.min.js"></script>
-    {% else %}
-    <script
-      defer
-      src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.20/codemirror.min.js"
-      integrity="{{ sri_hashes.codemirror_js }}"
-      crossorigin="anonymous">
-    </script>
-    <script
-      defer
-      src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.20/addon/mode/simple.min.js"
-      integrity="{{ sri_hashes.codemirror_addon_simple }}"
-      crossorigin="anonymous">
-    </script>
-    <script
-      defer
-      src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.20/mode/javascript/javascript.min.js"
-      integrity="{{ sri_hashes.codemirror_mode_javascript }}"
-      crossorigin="anonymous">
-    </script>
-    <script
-      defer
-      src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.20/mode/python/python.min.js"
-      integrity="{{ sri_hashes.codemirror_mode_python }}"
-      crossorigin="anonymous">
-    </script>
-    <script
-      defer
-      src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.20/mode/shell/shell.min.js"
-      integrity="{{ sri_hashes.codemirror_mode_shell }}"
-      crossorigin="anonymous">
-    </script>
-    <script
-      defer
-      src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.20/mode/go/go.min.js"
-      integrity="{{ sri_hashes.codemirror_mode_go }}"
-      crossorigin="anonymous">
-    </script>
-    <script
-      defer
-      src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.20/mode/rust/rust.min.js"
-      integrity="{{ sri_hashes.codemirror_mode_rust }}"
-      crossorigin="anonymous">
-    </script>
-    {% endif %}
-    {% if is_admin %}
-    <!-- Chart.js -->
-    {% if ui_airgapped %}
-    <script defer src="{{ root_path }}/static/vendor/chartjs/chart.umd.min.js"></script>
-    {% else %}
-    <script
-      defer
-      src="https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js"
-      integrity="{{ sri_hashes.chartjs }}"
-      crossorigin="anonymous">
-    </script>
-    {% endif %}
-    {% endif %}
-    <!-- Markdown and Sanitization -->
-    {% if ui_airgapped %}
-    <script defer src="{{ root_path }}/static/vendor/marked/marked.min.js"></script>
-    <script defer src="{{ root_path }}/static/vendor/dompurify/purify.min.js"></script>
-    {% else %}
-    <script
-      src="https://cdn.jsdelivr.net/npm/marked@18.0.5/lib/marked.umd.js"
-      integrity="{{ sri_hashes.marked }}"
-      crossorigin="anonymous">
-    </script>
-    <script
-      src="https://cdn.jsdelivr.net/npm/dompurify@3.4.8/dist/purify.min.js"
-      integrity="{{ sri_hashes.dompurify }}"
-      crossorigin="anonymous">
-    </script>
-    {% endif %}
+    <!-- CodeMirror is now bundled in the main JS bundle via Vite -->
+    <!-- Chart.js, Markdown (marked), and DOMPurify are now bundled in the main JS bundle via Vite -->
     <!-- Configure HTMX to use CSP nonce for inline event handlers BEFORE bundle loads -->
     <!-- CRITICAL LOAD-ORDER DEPENDENCY: This script MUST execute before admin.js bundle loads.
          admin.js reads window.htmxConfig.inlineScriptNonce to configure HTMX.
@@ -240,46 +160,15 @@
       window.htmxConfig = window.htmxConfig || {};
       window.htmxConfig.inlineScriptNonce = "{{ csp_nonce(request) }}";
     </script>
-    <script defer src="{{ root_path }}/static/{{ bundle_js }}"></script>
+    <script type="module" src="{{ root_path }}/static/{{ bundle_js }}"></script>
     {% if is_admin %}
     <script defer src="{{ root_path }}/static/gantt-chart.js?v=3"></script>
     <script defer src="{{ root_path }}/static/flame-graph.js?v=1"></script>
     {% endif %}
-    <!-- CodeMirror CSS -->
-    {% if ui_airgapped %}
-    <link
-      href="{{ root_path }}/static/vendor/codemirror/codemirror.min.css"
-      rel="stylesheet"
-    />
-    <link
-      href="{{ root_path }}/static/vendor/codemirror/theme/monokai.min.css"
-      rel="stylesheet"
-    />
-    {% else %}
-    <link
-      href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.20/codemirror.min.css"
-      rel="stylesheet"
-      integrity="{{ sri_hashes.codemirror_css }}"
-      crossorigin="anonymous"
-    />
-    <link
-      href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.20/theme/monokai.min.css"
-      rel="stylesheet"
-      integrity="{{ sri_hashes.codemirror_theme_monokai }}"
-      crossorigin="anonymous"
-    />
-    {% endif %}
-    <!-- Font Awesome -->
-    {% if ui_airgapped %}
-    <link rel="stylesheet" href="{{ root_path }}/static/vendor/fontawesome/css/all.min.css" />
-    {% else %}
-    <link
-      rel="stylesheet"
-      href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/7.0.1/css/all.min.css"
-      integrity="{{ sri_hashes.fontawesome }}"
-      crossorigin="anonymous"
-    />
-    {% endif %}
+    <!-- Font Awesome + CodeMirror CSS are bundled via Vite (imported in admin_ui/admin.js) -->
+    {% for css_file in bundle_css %}
+    <link rel="stylesheet" href="{{ root_path }}/static/{{ css_file }}" />
+    {% endfor %}
     <link href="{{ root_path }}/static/admin.css" rel="stylesheet" />
     <link href="{{ root_path }}/static/gantt-chart.css" rel="stylesheet" />
     <link href="{{ root_path }}/static/flame-graph.css" rel="stylesheet" />
