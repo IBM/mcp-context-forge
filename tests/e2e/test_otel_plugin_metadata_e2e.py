@@ -197,7 +197,7 @@ UPSTREAM_TOOL_URL = "https://internal.e2e-fixture.invalid/echo"
 # never a real credential. Realistic enough in shape (``AKIA`` + 16 upper-alnum chars) to trip
 # the secrets_detection plugin's aws_access_key_id detector; the whole point of this test is to
 # prove this value (or any raw secret) never reaches /observability.
-RAW_SECRET_VALUE = "AKIAIOSFODNN7EXAMPLE"
+RAW_SECRET_VALUE = "AKIAIOSFODNN7EXAMPLE"  # pragma: allowlist secret
 
 SECRETS_TOOL_NAME = "secrets_probe_echo_tool"
 SECRETS_UPSTREAM_TOOL_URL = "https://internal.e2e-fixture.invalid/secrets-echo"
@@ -818,7 +818,7 @@ class TestOtelSecretsDetectionMetadataE2E:
         assert attrs.get("total_blocked", 0) == 0, f"Expected no blocked detections (block_on_detection=false), got attributes: {attrs}"
         # "secret_types" is the allowlisted string field for this plugin (see
         # mcpgateway/plugins/utils.py::_SAFE_STRING_FIELD_NAMES). Verified against the real
-        # plugin: RAW_SECRET_VALUE ("AKIAIOSFODNN7EXAMPLE") is classified as "aws_access_key_id".
+        # plugin: RAW_SECRET_VALUE (defined above) is classified as "aws_access_key_id".
         assert "aws_access_key_id" in str(attrs.get("secret_types", "")), f"Expected 'aws_access_key_id' in secret_types, got: {attrs.get('secret_types')}"
         assert secrets_metric_spans[0].get("resource_type") == "plugin"
         assert secrets_metric_spans[0].get("resource_name") == "secrets_detection"
