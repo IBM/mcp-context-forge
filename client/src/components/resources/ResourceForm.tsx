@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { useIntl } from "react-intl";
 import { Box } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -15,13 +16,31 @@ import {
   MIME_TYPES,
   type MimeType,
   type ResourceFormOptions,
+  type ResourceFormInitialValues,
 } from "@/hooks/useResourceForm";
 import type { Visibility } from "@/types/server";
+import type { ResourceRead } from "@/generated/types";
 
-interface ResourceFormProps extends ResourceFormOptions {
+interface ResourceFormProps extends Omit<ResourceFormOptions, "resourceId" | "initialValues"> {
   isOpen: boolean;
   onToggle: () => void;
-  onSuccess: () => void;
+  onSuccess: (name: string) => void;
+  resource?: NonNullable<ResourceRead>;
+}
+
+function resourceToInitialValues(
+  resource?: NonNullable<ResourceRead>,
+): ResourceFormInitialValues | undefined {
+  if (!resource) return undefined;
+  return {
+    uri: resource.uriTemplate || resource.uri,
+    name: resource.name,
+    content: (resource as { content?: string }).content ?? "",
+    description: resource.description ?? "",
+    mimeType: (resource.mimeType as MimeType | null) ?? "",
+    tags: (resource.tags ?? []).join(", "),
+    visibility: (resource.visibility as Visibility) ?? "public",
+  };
 }
 
 export function ResourceForm({
@@ -30,8 +49,11 @@ export function ResourceForm({
   onSuccess,
   onBeforeSubmit,
   onError,
+  resource,
 }: ResourceFormProps) {
   const intl = useIntl();
+  const isEditMode = Boolean(resource);
+  const headingRef = useRef<HTMLHeadingElement>(null);
   const {
     uri,
     name,
@@ -50,7 +72,19 @@ export function ResourceForm({
     setTags,
     setVisibility,
     handleSubmit,
-  } = useResourceForm({ onBeforeSubmit, onError });
+  } = useResourceForm({
+    onBeforeSubmit,
+    onError,
+    resourceId: resource?.id,
+    initialValues: resourceToInitialValues(resource),
+  });
+
+  useEffect(() => {
+    if (isOpen) headingRef.current?.focus();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const hasCustomMimeType = mimeType !== "" && !MIME_TYPES.includes(mimeType as MimeType);
 
   if (!isOpen) return null;
 
@@ -62,8 +96,14 @@ export function ResourceForm({
             <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-sm bg-[#ff5aff] shadow-sm">
               <Box className="h-4 w-4 text-black" />
             </div>
-            <h2 className="text-lg font-semibold tracking-tight text-neutral-950 dark:text-neutral-50">
-              {intl.formatMessage({ id: "resources.form.title" })}
+            <h2
+              ref={headingRef}
+              tabIndex={-1}
+              className="text-lg font-semibold tracking-tight text-neutral-950 dark:text-neutral-50"
+            >
+              {isEditMode
+                ? intl.formatMessage({ id: "resources.form.heading.edit" })
+                : intl.formatMessage({ id: "resources.form.title" })}
             </h2>
           </div>
           <p className="text-sm leading-6 text-neutral-600 dark:text-neutral-400">
@@ -161,6 +201,7 @@ export function ResourceForm({
                 />
               </SelectTrigger>
               <SelectContent>
+                {hasCustomMimeType && <SelectItem value={mimeType}>{mimeType}</SelectItem>}
                 {MIME_TYPES.map((type) => (
                   <SelectItem key={type} value={type}>
                     {type}
@@ -274,8 +315,12 @@ export function ResourceForm({
               className="h-10 rounded-md bg-neutral-950 px-4 text-sm font-medium text-white hover:enabled:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-neutral-100 dark:text-neutral-950 dark:hover:enabled:bg-neutral-200"
             >
               {isSubmitting
-                ? intl.formatMessage({ id: "resources.form.submitting" })
-                : intl.formatMessage({ id: "resources.form.submit" })}
+                ? isEditMode
+                  ? intl.formatMessage({ id: "resources.form.button.updating" })
+                  : intl.formatMessage({ id: "resources.form.submitting" })
+                : isEditMode
+                  ? intl.formatMessage({ id: "resources.form.button.update" })
+                  : intl.formatMessage({ id: "resources.form.submit" })}
             </Button>
           </div>
         </form>

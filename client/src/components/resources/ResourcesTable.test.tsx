@@ -57,6 +57,15 @@ describe("ResourcesTable", () => {
     expect(screen.getByText("Resource 3 Title")).toBeInTheDocument();
   });
 
+  it("gives each row's more-options trigger a unique accessible name", () => {
+    const resources = [createMockResource(1), createMockResource(2), createMockResource(3)];
+    render(<ResourcesTable resources={resources} onSelectResource={mockOnSelectResource} />);
+
+    expect(screen.getByLabelText("More options for Resource 1 Title")).toBeInTheDocument();
+    expect(screen.getByLabelText("More options for Resource 2 Title")).toBeInTheDocument();
+    expect(screen.getByLabelText("More options for Resource 3 Title")).toBeInTheDocument();
+  });
+
   it("displays title when available", () => {
     const resources = [createMockResource(1, { title: "Custom Title" })];
     render(<ResourcesTable resources={resources} onSelectResource={mockOnSelectResource} />);
@@ -229,7 +238,7 @@ describe("ResourcesTable", () => {
         />,
       );
 
-      const moreButton = screen.getByLabelText("More options");
+      const moreButton = screen.getByLabelText("More options for Resource 1 Title");
       await user.click(moreButton);
 
       expect(await screen.findByText("Delete")).toBeInTheDocument();
@@ -247,7 +256,7 @@ describe("ResourcesTable", () => {
         />,
       );
 
-      await user.click(screen.getByLabelText("More options"));
+      await user.click(screen.getByLabelText("More options for Resource 1 Title"));
       await user.click(await screen.findByText("Delete"));
 
       expect(mockOnDeleteResource).toHaveBeenCalledOnce();
@@ -266,7 +275,7 @@ describe("ResourcesTable", () => {
         />,
       );
 
-      await user.click(screen.getByLabelText("More options"));
+      await user.click(screen.getByLabelText("More options for Resource 1 Title"));
       await user.click(await screen.findByText("Delete"));
 
       expect(mockOnSelectResource).not.toHaveBeenCalled();
@@ -277,9 +286,101 @@ describe("ResourcesTable", () => {
       const resources = [createMockResource(1)];
       render(<ResourcesTable resources={resources} onSelectResource={mockOnSelectResource} />);
 
-      await user.click(screen.getByLabelText("More options"));
+      await user.click(screen.getByLabelText("More options for Resource 1 Title"));
 
       expect(screen.queryByText("Delete")).not.toBeInTheDocument();
+    });
+  });
+
+  describe("edit dropdown (onEditResource provided)", () => {
+    it("renders a dropdown instead of a plain button when onEditResource is provided", async () => {
+      const user = userEvent.setup();
+      const mockOnEditResource = vi.fn();
+      const resources = [createMockResource(1)];
+      render(
+        <ResourcesTable
+          resources={resources}
+          onSelectResource={mockOnSelectResource}
+          onEditResource={mockOnEditResource}
+        />,
+      );
+
+      const moreButton = screen.getByLabelText("More options for Resource 1 Title");
+      await user.click(moreButton);
+
+      expect(await screen.findByText("Edit")).toBeInTheDocument();
+    });
+
+    it("calls onEditResource with the resource when Edit is clicked", async () => {
+      const user = userEvent.setup();
+      const mockOnEditResource = vi.fn();
+      const resources = [createMockResource(1, { id: "resource-xyz" })];
+      render(
+        <ResourcesTable
+          resources={resources}
+          onSelectResource={mockOnSelectResource}
+          onEditResource={mockOnEditResource}
+        />,
+      );
+
+      await user.click(screen.getByLabelText("More options for Resource 1 Title"));
+      await user.click(await screen.findByText("Edit"));
+
+      expect(mockOnEditResource).toHaveBeenCalledOnce();
+      expect(mockOnEditResource).toHaveBeenCalledWith(resources[0]);
+    });
+
+    it("does not call onSelectResource when Edit is clicked", async () => {
+      const user = userEvent.setup();
+      const mockOnEditResource = vi.fn();
+      const resources = [createMockResource(1)];
+      render(
+        <ResourcesTable
+          resources={resources}
+          onSelectResource={mockOnSelectResource}
+          onEditResource={mockOnEditResource}
+        />,
+      );
+
+      await user.click(screen.getByLabelText("More options for Resource 1 Title"));
+      await user.click(await screen.findByText("Edit"));
+
+      expect(mockOnSelectResource).not.toHaveBeenCalled();
+    });
+
+    it("does not show Edit item when onEditResource is not provided", async () => {
+      const user = userEvent.setup();
+      const mockOnDeleteResource = vi.fn();
+      const resources = [createMockResource(1)];
+      render(
+        <ResourcesTable
+          resources={resources}
+          onSelectResource={mockOnSelectResource}
+          onDeleteResource={mockOnDeleteResource}
+        />,
+      );
+
+      await user.click(screen.getByLabelText("More options for Resource 1 Title"));
+
+      expect(screen.queryByText("Edit")).not.toBeInTheDocument();
+    });
+
+    it("shows both Edit and Delete items when both handlers are provided", async () => {
+      const user = userEvent.setup();
+      const resources = [createMockResource(1)];
+      render(
+        <ResourcesTable
+          resources={resources}
+          onSelectResource={mockOnSelectResource}
+          onEditResource={vi.fn()}
+          onDeleteResource={vi.fn()}
+        />,
+      );
+
+      await user.click(screen.getByLabelText("More options for Resource 1 Title"));
+
+      expect(await screen.findByText("Edit")).toBeInTheDocument();
+      expect(screen.getByText("Delete")).toBeInTheDocument();
     });
   });
 
