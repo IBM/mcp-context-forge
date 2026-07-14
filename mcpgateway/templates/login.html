@@ -6,8 +6,6 @@
     <title>Sign In - ContextForge</title>
     <!-- Tailwind CSS - Using precompiled CSS for strict CSP compliance -->
     <link rel="stylesheet" href="{{ root_path }}/static/css/tailwind.min.css" />
-    <!-- Custom animations - Previously defined via inline Tailwind config, now external for CSP compliance -->
-    <link rel="stylesheet" href="{{ root_path }}/static/css/auth-animations.css" />
     <!-- Font Awesome is bundled via Vite (imported in admin_ui/admin.js) -->
     {% for css_file in bundle_css %}
     <link rel="stylesheet" href="{{ root_path }}/static/{{ css_file }}" />
