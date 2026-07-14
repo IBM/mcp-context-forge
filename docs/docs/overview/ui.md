@@ -36,7 +36,7 @@ The Admin UI is built with **HTMX**, **Alpine.js**, and **Tailwind CSS**, offeri
 | **Security**      | DOMPurify          | XSS sanitization                                                        |
 | **Icons**         | Font Awesome       | Icon library                                                            |
 
-All vendor libraries are bundled locally for **air-gapped deployments** with CDN fallbacks. See [Air-Gapped Mode](#air-gapped-mode) below.
+All Admin UI JavaScript vendor libraries are installed via npm and bundled/chunked with Vite. See [Air-Gapped Mode](#air-gapped-mode) below for offline deployment details.
 
 It provides tabbed access to:
 
@@ -82,7 +82,7 @@ If running in development mode (`DEV_MODE=true` or `make run`), changes to templ
 
 ## 🔒 Air-Gapped Mode
 
-For environments without internet access, the Admin UI can load all CSS/JavaScript from local files instead of CDNs.
+For environments without internet access, the Admin UI serves its bundled CSS/JavaScript locally without requiring external asset fetches.
 
 ### Enable Air-Gapped Mode
 
@@ -94,15 +94,17 @@ MCPGATEWAY_UI_AIRGAPPED=true
 
 ### How It Works
 
-By default, the UI loads vendor libraries from CDNs (Tailwind, Chart.js, etc.). HTMX and Alpine.js are bundled via npm/Vite. When `MCPGATEWAY_UI_AIRGAPPED=true`:
+Admin UI vendor assets are installed via npm and bundled/chunked with Vite, so the UI does not depend on CDN-hosted JavaScript.
 
-- All libraries load from `mcpgateway/static/vendor/`
-- No external network requests for UI assets
-- Identical functionality, fully offline
+When `MCPGATEWAY_UI_AIRGAPPED=true`:
+
+- The UI runs without external asset fetches
+- No external network requests are required for Admin UI assets
+- Functionality remains available offline
 
 ### Container Builds (Recommended)
 
-`Containerfile` automatically downloads and bundles vendor assets during build:
+The production container build (`Containerfile`) includes the Vite-built Admin UI assets via the `frontend-builder` stage:
 
 ```bash
 docker build -f Containerfile -t mcpgateway:airgapped .
@@ -113,25 +115,12 @@ See [Container Deployment](../deployment/container.md#airgapped-deployments) for
 
 ### Local Development
 
-To test air-gapped mode locally without containers:
+The Admin UI bundle is built automatically via `make install-dev` or `make build-ui`. To test air-gapped mode locally:
 
 ```bash
-# Download vendor assets (one-time)
-./scripts/download-cdn-assets.sh
-
-# Run with air-gapped mode enabled
 MCPGATEWAY_UI_AIRGAPPED=true make dev
 ```
 
-The script downloads to `mcpgateway/static/vendor/`:
-
-| Library      | Version | Size                                         |
-| ------------ | ------- | -------------------------------------------- |
-| Tailwind CSS | CDN     | ~404KB                                       |
-| HTMX         | 2.0.3   | Bundled in main JS (included in bundle size) |
-| Alpine.js    | 3.x CSP | Bundled in main JS (included in bundle size) |
-| CodeMirror   | 5.65.18 | ~216KB                                       |
-| Chart.js     | 4.4.1   | ~208KB                                       |
-| Font Awesome | 6.4.0   | ~1.2MB                                       |
+All vendor JavaScript is installed via npm and bundled/chunked with Vite for local serving.
 
 ---

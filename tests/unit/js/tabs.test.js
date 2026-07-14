@@ -40,14 +40,8 @@ vi.mock("../../../mcpgateway/admin_ui/fileTransfer.js", () => ({
 vi.mock("../../../mcpgateway/admin_ui/initialization.js", () => ({
   initializeExportImport: vi.fn(),
 }));
-vi.mock("../../../mcpgateway/admin_ui/llmChat.js", () => ({
-  initializeLLMChat: vi.fn(),
-}));
 vi.mock("../../../mcpgateway/admin_ui/logging.js", () => ({
   searchStructuredLogs: vi.fn(),
-}));
-vi.mock("../../../mcpgateway/admin_ui/metrics.js", () => ({
-  loadAggregatedMetrics: vi.fn(),
 }));
 vi.mock("../../../mcpgateway/admin_ui/plugins.js", () => ({
   populatePluginFilters: vi.fn(),
@@ -68,6 +62,9 @@ vi.mock("../../../mcpgateway/admin_ui/utils.js", () => ({
   isAdminUser: vi.fn(() => true),
   safeGetElement: vi.fn((id, silent) => document.getElementById(id)),
   showErrorMessage: vi.fn(),
+}));
+vi.mock("../../../mcpgateway/admin_ui/lazy-loader.js", () => ({
+  loadFeature: vi.fn(() => Promise.resolve()),
 }));
 
 // ---------------------------------------------------------------------------
@@ -711,8 +708,9 @@ describe("showTab", () => {
   });
 
   test("loads metrics tab", async () => {
-    const { loadAggregatedMetrics } =
-      await import("../../../mcpgateway/admin_ui/metrics.js");
+    // metrics.js is lazy-loaded (see TAB_FEATURE_MAP); loadFeature() is mocked above and
+    // tabs.js calls the loaded feature via window.Admin rather than a static import.
+    window.Admin = { loadAggregatedMetrics: vi.fn() };
 
     const panel = document.createElement("div");
     panel.id = "metrics-panel";
@@ -727,14 +725,14 @@ describe("showTab", () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     showTab("metrics");
     vi.runAllTimers();
-
-    expect(loadAggregatedMetrics).toHaveBeenCalled();
+    await vi.waitFor(() => expect(window.Admin.loadAggregatedMetrics).toHaveBeenCalled());
     logSpy.mockRestore();
   });
 
   test("initializes llm-chat tab", async () => {
-    const { initializeLLMChat } =
-      await import("../../../mcpgateway/admin_ui/llmChat.js");
+    // llmChat.js is lazy-loaded (see TAB_FEATURE_MAP); loadFeature() is mocked above and
+    // tabs.js calls the loaded feature via window.Admin rather than a static import.
+    window.Admin = { initializeLLMChat: vi.fn() };
 
     const panel = document.createElement("div");
     panel.id = "llm-chat-panel";
@@ -749,8 +747,7 @@ describe("showTab", () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     showTab("llm-chat");
     vi.runAllTimers();
-
-    expect(initializeLLMChat).toHaveBeenCalled();
+    await vi.waitFor(() => expect(window.Admin.initializeLLMChat).toHaveBeenCalled());
     logSpy.mockRestore();
   });
 
@@ -775,8 +772,7 @@ describe("showTab", () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     showTab("logs");
     vi.runAllTimers();
-
-    expect(searchStructuredLogs).toHaveBeenCalled();
+    await vi.waitFor(() => expect(searchStructuredLogs).toHaveBeenCalled());
     logSpy.mockRestore();
   });
 

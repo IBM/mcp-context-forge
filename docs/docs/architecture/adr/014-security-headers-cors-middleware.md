@@ -166,14 +166,14 @@ nodejsscan:
 ### ❌ Trade-offs
 
 - **CSP Flexibility**: Using 'unsafe-inline' and 'unsafe-eval' for Admin UI compatibility
-- **CDN Dependencies**: CSP allows specific external CDN domains
+- **External Asset Allowlisting**: CSP may need to allow specific external origins when the UI adds third-party assets
 - **Configuration Complexity**: More environment variables to configure
 - **Development Overhead**: Additional middleware processing on every request
 
 ### 🔄 Maintenance
 
 - **CSP Updates**: May need updates if Admin UI adds new external dependencies
-- **CDN Changes**: CSP must be updated if CDN URLs change
+- **Asset Source Changes**: CSP must be updated if allowed external asset origins change
 - **Security Reviews**: Periodic review of CSP directives for security improvements
 - **Browser Updates**: Monitor browser CSP implementation changes
 
@@ -242,10 +242,8 @@ As part of the security enhancements, Subresource Integrity (SRI) has been imple
 
 ### Implementation Overview
 
-1. **Hash Generation**: `scripts/generate-sri-hashes.py` generates SHA-384 hashes for all CDN resources
-2. **Hash Storage**: Hashes stored in `mcpgateway/sri_hashes.json` and loaded via `load_sri_hashes()` in `admin.py`
-3. **Template Integration**: All CDN resources in templates include `integrity` and `crossorigin` attributes
-4. **CI Verification**: `scripts/verify-sri-hashes.py` validates hashes match CDN content in CI pipeline
+1. **Hash Storage**: SHA-384 hashes for all CDN resources stored in `mcpgateway/sri_hashes.json` and loaded via `load_sri_hashes()` in `admin.py`
+2. **Template Integration**: All CDN resources in templates include `integrity` and `crossorigin` attributes
 
 ### Protected Resources
 
@@ -263,28 +261,16 @@ All external CDN resources are protected with SRI hashes:
 
 - **CDN Compromise Protection**: Hash mismatch blocks execution
 - **MITM Attack Prevention**: Tampered content detected
-- **Version Drift Detection**: CI catches unexpected changes
-- **Automated Verification**: Every CI run validates hashes
 
-### Usage
+### Updating Frontend Assets
 
-```bash
-# Generate SRI hashes for all CDN resources
-make sri-generate
+When updating Admin UI frontend dependencies:
 
-# Verify hashes match current CDN content
-make sri-verify
-```
-
-### Updating CDN Libraries
-
-When updating a CDN library version:
-
-1. Update the URL in `scripts/cdn_resources.py`
-2. Run `make sri-generate` to calculate new hash
-3. Update the URL in templates (admin.html, login.html, etc.)
-4. Run `make sri-verify` to confirm hash matches
-5. Commit both `sri_hashes.json` and template changes
+1. Update the relevant npm dependencies in `package.json`
+2. Refresh the lockfile with `npm update` or `npm install`
+3. Rebuild the UI bundle with `make build-ui`
+4. Verify the generated assets load correctly in the Admin UI
+5. Commit the updated frontend source and lockfile changes
 
 ## Future Enhancements
 

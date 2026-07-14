@@ -79,9 +79,9 @@ All container builds include a Node.js stage that compiles Tailwind CSS from sou
 |-------|-------|---------|
 | `frontend-builder` | `node:lts-alpine` | Builds the Admin UI Vite bundle (JS/CSS) |
 | `node-builder` | `ubi10/nodejs-24` | Compiles `tailwind.src.css` → `tailwind.min.css` |
-| `rust-builder` (lite only) | `ubi10/ubi` | Builds optional Rust native extensions |
+| `rust-builder` | `ubi10/ubi` | Builds optional Rust native extensions (`ENABLE_RUST=true`) |
 | `builder` | `ubi10/ubi` | Installs Python dependencies into a venv |
-| `runtime` | `ubi10-minimal` or `scratch` | Final runtime image |
+| `runtime` | `ubi10-minimal` | Final runtime image |
 
 The Node.js builder uses the official Red Hat UBI10 Node.js 24 image (`registry.access.redhat.com/ubi10/nodejs-24`). It is a temporary build stage and does not affect the final runtime image size.
 
@@ -109,29 +109,19 @@ make watch-css
 
 ---
 
-## 🔒 Airgapped Deployments
+## 🔒 Air-Gapped Deployments (Optional)
 
-For environments without internet access, you can build a container with all UI assets bundled locally.
+All Admin UI vendor libraries (HTMX, Alpine.js, Tailwind CSS, CodeMirror, Chart.js, Font Awesome, etc.) are installed via npm and bundled/chunked into the JavaScript bundle by the `frontend-builder` stage — no CDN dependency, no separate build variant needed.
 
-### Build Airgapped Container
+### Build Air-Gapped Container
 
-Use `Containerfile` which automatically downloads CDN assets during build:
+The standard `Containerfile` build already bundles all vendor assets locally:
 
 ```bash
 docker build -f Containerfile -t mcpgateway:airgapped .
 ```
 
-This downloads and bundles:
-
-- Tailwind CSS (~404KB)
-- HTMX (bundled in main JS via npm/Vite)
-- Alpine.js CSP build (bundled in main JS via npm/Vite)
-- CodeMirror (~216KB)
-- Chart.js (~208KB)
-
-**Total: ~884KB of UI assets**
-
-### Run in Airgapped Mode
+### Run in Air-Gapped Mode
 
 ```bash
 docker run -d --name mcpgateway \
@@ -149,7 +139,7 @@ docker run -d --name mcpgateway \
 ```
 
 !!! success "Fully Offline UI"
-    With `MCPGATEWAY_UI_AIRGAPPED=true`, the Admin UI works completely offline with zero external dependencies. All CSS and JavaScript are served from local files bundled in the container.
+    With `MCPGATEWAY_UI_AIRGAPPED=true`, the Admin UI works completely offline with zero external dependencies. The main JavaScript bundle (HTMX + Alpine.js) is always local, and remaining vendor libraries (Tailwind CSS, CodeMirror, Chart.js, Font Awesome, etc.) are served from local files bundled in the container.
 
 ---
 

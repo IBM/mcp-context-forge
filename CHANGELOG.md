@@ -2492,7 +2492,7 @@ This release marks the first beta milestone toward 1.0.0 GA, delivering **multi-
 
 - **🏗️ Multi-Architecture Containers** - ARM64 and s390x architecture support for broader deployment options
 - **🔌 gRPC-to-MCP Translation** - Experimental gRPC service interface for MCP protocol operations
-- **🌐 Air-Gapped Deployment** - CDN asset bundling for fully offline/disconnected environments
+- **🌐 Air-Gapped Deployment** - Bundled frontend assets for fully offline/disconnected environments
 - **⚡ Performance Improvements** - Concurrent health checks and N+1 query optimizations reducing gateway operations latency by 10x+
 - **🔐 Security Enhancements** - Password expiration policies, one-time authentication, and input validation
 - **🛠️ Developer Experience** - Performance benchmarking framework, test resource buttons, and improved bulk import feedback
@@ -2539,9 +2539,8 @@ We've established the [contextforge-org](https://github.com/contextforge-org) Gi
 * **Optional Dependency** - Install with `pip install mcp-contextforge-gateway[grpc]`
 
 #### **🌐 Air-Gapped Environment Support** ([#932](https://github.com/IBM/mcp-context-forge/issues/932))
-* **CDN Asset Bundling** - All frontend assets (HTMX, Alpine.js, CSS) bundled in container image
+* **Bundled Frontend Assets** - Admin UI assets are packaged for offline/container use
 * **Offline Deployment** - No external network requests required for Admin UI
-* **Asset Download Script** - `scripts/download-cdn-assets.sh` for manual asset updates
 
 #### **🔐 Password Expiration & Security** ([#1282](https://github.com/IBM/mcp-context-forge/issues/1282), [#1387](https://github.com/IBM/mcp-context-forge/issues/1387))
 * **Configurable Password Expiration** - Set password validity periods via `PASSWORD_EXPIRY_DAYS`

@@ -7240,14 +7240,12 @@ test-full: coverage test-js test-ui-report
 # help: detect-secrets-scan    - detect-secrets scan for secrets in repository using baseline file .secrets.baseline
 # help: detect-secrets-audit   - detect-secrets audit for unverified secrets detected in baseline file .secrets.baseline
 # help: devskim-install-dotnet - Install .NET SDK and DevSkim CLI (security patterns scanner)
-# help: sri-generate        - Generate SRI hashes for CDN resources
-# help: sri-verify          - Verify SRI hashes match current CDN content
 # help: devskim             - Run DevSkim static analysis for security anti-patterns
 
 # List of security tools to run with security-all
-SECURITY_TOOLS := semgrep dodgy detect-secrets-scan interrogate prospector pip-audit devskim sri-verify
+SECURITY_TOOLS := semgrep dodgy detect-secrets-scan interrogate prospector pip-audit devskim
 
-.PHONY: security-all security-report security-fix $(SECURITY_TOOLS) pyupgrade devskim-install-dotnet devskim sri-generate sri-verify
+.PHONY: security-all security-report security-fix $(SECURITY_TOOLS) pyupgrade devskim-install-dotnet devskim
 
 ## --------------------------------------------------------------------------- ##
 ##  Master security target
@@ -7510,19 +7508,6 @@ devskim:                            ## 🛡️  Run DevSkim security patterns an
 		echo "   • Or install .NET SDK and run: dotnet tool install --global Microsoft.CST.DevSkim.CLI"; \
 		echo "   • Then add to PATH: export PATH=\"\$$PATH:\$$HOME/.dotnet/tools\""; \
 	fi
-
-## --------------------------------------------------------------------------- ##
-##  SRI (Subresource Integrity) Management
-## --------------------------------------------------------------------------- ##
-
-.PHONY: sri-generate sri-verify
-
-sri-generate:                       ## 🔐 Generate SRI hashes for CDN resources
-	@echo "🔐 Generating SRI hashes for CDN resources..."
-	@python3 scripts/generate-sri-hashes.py
-
-sri-verify:                         ## ✅ Verify SRI hashes match current CDN content
-	@python3 scripts/verify-sri-hashes.py
 
 ## --------------------------------------------------------------------------- ##
 ##  Security reporting and advanced targets

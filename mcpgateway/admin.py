@@ -411,6 +411,9 @@ UI_HIDE_SECTIONS_COOKIE_MAX_AGE = 30 * 24 * 60 * 60  # 30 days
 # Using a mutable dict to avoid the need for a global statement in the accessor function
 _bundle_js_cache: dict[str, Optional[str]] = {"filename": None}
 
+# Cache for the bundle's CSS asset paths (e.g. Font Awesome, CodeMirror) emitted by Vite
+_bundle_css_cache: dict[str, Optional[list]] = {"files": None}
+
 
 def get_bundle_js_filename() -> str:
     """Get the hashed bundle.js filename from Vite manifest.
@@ -450,6 +453,72 @@ def get_bundle_js_filename() -> str:
 
     LOGGER.error("No bundle-*.js found in %s — admin UI will not load", static_dir)
     return ""
+
+
+def get_bundle_css_files() -> list:
+    """Get the hashed CSS asset paths bundled with the admin entry from the Vite manifest.
+
+    Vite emits CSS pulled in via JS imports (Font Awesome, CodeMirror, etc.) as separate
+    files rather than inlining them into the JS bundle or the HTML automatically, so callers
+    must link them explicitly. CSS for a statically-imported chunk (e.g. the CodeMirror/
+    Font Awesome vendor chunk) is listed under that *chunk's own* manifest entry, not the
+    top-level entry, so the entry's "imports" graph must be walked to collect all of it.
+
+    Falls back to scanning ``assets/*.css`` on disk if the manifest is unreadable or has
+    no CSS for the entry, mirroring :func:`get_bundle_js_filename`'s disk fallback. Since a
+    single build can emit more than one CSS file (e.g. the CodeMirror/Font Awesome vendor
+    chunk plus the entry's own CSS), the fallback keeps every file whose mtime is within a
+    few seconds of the newest one, rather than just the single newest file, so it doesn't
+    pick only half of the current build's assets.
+
+    Returns:
+        list[str]: Paths relative to the static dir (e.g. ['assets/index-abc123.css']),
+            or an empty list if neither the manifest nor the assets directory has any CSS.
+    """
+    static_dir = Path(__file__).parent / "static"
+
+    cached = _bundle_css_cache.get("files")
+    if cached is not None and all((static_dir / f).exists() for f in cached):
+        return cached
+
+    manifest_path = static_dir / ".vite" / "manifest.json"
+    try:
+        if manifest_path.exists():
+            with open(manifest_path, "r", encoding="utf-8") as f:
+                manifest = orjson.loads(f.read())
+                entry_key = "mcpgateway/admin_ui/index.js"
+                if entry_key in manifest:
+                    css_files: list = []
+                    seen_chunks: set = set()
+                    queue = [entry_key]
+                    while queue:
+                        chunk_key = queue.pop()
+                        if chunk_key in seen_chunks or chunk_key not in manifest:
+                            continue
+                        seen_chunks.add(chunk_key)
+                        chunk = manifest[chunk_key]
+                        for css_path in chunk.get("css") or []:
+                            if css_path not in css_files:
+                                css_files.append(css_path)
+                        queue.extend(chunk.get("imports") or [])
+                    if css_files:
+                        _bundle_css_cache["files"] = css_files
+                        return css_files
+    except Exception as e:
+        LOGGER.warning(f"Failed to read Vite manifest for CSS assets: {e}")
+
+    # Manifest unreadable, missing, or missing the entry — find CSS assets directly on disk.
+    assets_dir = static_dir / "assets"
+    if assets_dir.exists():
+        css_paths = sorted(assets_dir.glob("*.css"), key=lambda p: p.stat().st_mtime, reverse=True)
+        if css_paths:
+            newest_mtime = css_paths[0].stat().st_mtime
+            recent_paths = [p for p in css_paths if newest_mtime - p.stat().st_mtime < 5]
+            css_files = [f"assets/{p.name}" for p in recent_paths]
+            _bundle_css_cache["files"] = css_files
+            return css_files
+
+    return []
 
 
 def _normalize_ui_hide_values(raw: Any, valid_values: frozenset[str], aliases: Optional[Dict[str, str]] = None) -> set[str]:
@@ -4116,6 +4185,7 @@ async def admin_ui(
             "include_inactive": include_inactive,
             "root_path": root_path,
             "bundle_js": get_bundle_js_filename(),
+            "bundle_css": get_bundle_css_files(),
             "max_name_length": max_name_length,
             "gateway_tool_name_separator": settings.gateway_tool_name_separator,
             "bulk_import_max_tools": settings.mcpgateway_bulk_import_max_tools,
@@ -4369,6 +4439,7 @@ async def admin_login_page(request: Request) -> Response:
             "prefill_email": prefill_email,
             "password_reset_enabled": getattr(settings, "password_reset_enabled", True),
             "sri_hashes": load_sri_hashes(),
+            "bundle_css": get_bundle_css_files(),
         },
     )
 
@@ -5046,6 +5117,7 @@ async def change_password_required_page(request: Request) -> HTMLResponse:
             "password_policy_enabled": getattr(settings, "password_policy_enabled", True),
             "password_requirements": password_requirements,
             "sri_hashes": load_sri_hashes(),
+            "bundle_css": get_bundle_css_files(),
         },
     )
     _set_admin_csrf_cookie(request, response)

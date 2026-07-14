@@ -6,19 +6,10 @@
     <title>Sign In - ContextForge</title>
     <!-- Tailwind CSS - Using precompiled CSS for strict CSP compliance -->
     <link rel="stylesheet" href="{{ root_path }}/static/css/tailwind.min.css" />
-    <!-- Custom animations - Previously defined via inline Tailwind config, now external for CSP compliance -->
-    <link rel="stylesheet" href="{{ root_path }}/static/css/auth-animations.css" />
-    <!-- Font Awesome -->
-    {% if ui_airgapped %}
-    <link rel="stylesheet" href="{{ root_path }}/static/vendor/fontawesome/css/all.min.css" />
-    {% else %}
-    <link
-      rel="stylesheet"
-      href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/7.0.1/css/all.min.css"
-      integrity="{{ sri_hashes.fontawesome }}"
-      crossorigin="anonymous"
-    />
-    {% endif %}
+    <!-- Font Awesome is bundled via Vite (imported in admin_ui/admin.js) -->
+    {% for css_file in bundle_css %}
+    <link rel="stylesheet" href="{{ root_path }}/static/{{ css_file }}" />
+    {% endfor %}
   </head>
   <body class="h-full bg-gray-50 dark:bg-gray-900 overflow-auto">
     <!-- Main Split Layout -->

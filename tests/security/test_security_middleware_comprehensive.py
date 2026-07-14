@@ -287,8 +287,8 @@ class TestCSPConfiguration:
             assert "frame-ancestors 'none'" in csp
             assert csp.endswith(";")
 
-    def test_csp_includes_admin_ui_cdns(self):
-        """Test CSP includes all required CDN domains for Admin UI."""
+    def test_csp_excludes_third_party_cdns(self):
+        """Test CSP does not allowlist third-party CDNs now that Admin UI assets are bundled locally via Vite."""
         app = FastAPI()
         app.add_middleware(SecurityHeadersMiddleware)
 
@@ -302,11 +302,10 @@ class TestCSPConfiguration:
 
             csp = response.headers["Content-Security-Policy"]
 
-            # Check all required CDN domains are allowed
-            required_domains = ["https://cdnjs.cloudflare.com", "https://cdn.jsdelivr.net"]
+            disallowed_domains = ["cdnjs.cloudflare.com", "cdn.jsdelivr.net", "unpkg.com"]
 
-            for domain in required_domains:
-                assert domain in csp, f"{domain} missing from CSP"
+            for domain in disallowed_domains:
+                assert domain not in csp, f"{domain} should not be present in CSP"
 
 
 class TestMiddlewareIntegration:
