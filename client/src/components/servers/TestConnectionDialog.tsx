@@ -432,8 +432,11 @@ export function TestConnectionDialog({ open, onOpenChange, serverUrl }: TestConn
             )}
           </Button>
 
-          <Button variant="ghost" onClick={handleClose} disabled={isTesting}>
-            Close
+          {/* Stays enabled during a test so it can cancel the in-flight request
+              (closing the dialog aborts it via the open→false effect); relabels
+              to "Cancel" to signal that action. */}
+          <Button variant="ghost" onClick={handleClose}>
+            {isTesting ? "Cancel" : "Close"}
           </Button>
         </DialogFooter>
       </DialogContent>
