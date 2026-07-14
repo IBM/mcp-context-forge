@@ -2,7 +2,7 @@
 
 ## Overview
 
-The plugin subsystem supports **context-scoped isolation** through a shared `TenantPluginManagerFactory`. Each resolved context gets its own `TenantPluginManager` instance with an independently merged plugin configuration, while the default `__global__` context continues to serve non-context-aware call sites.
+The plugin subsystem supports **context-scoped isolation** through a shared `TenantPluginManagerFactory`. Each resolved context gets its own `TenantPluginManager` instance with an independently merged plugin configuration, while the default `##global##` context continues to serve non-context-aware call sites.
 
 The factory is intentionally **context-agnostic**. The identifier passed to `get_manager()` can represent a virtual server, tenant, tool, user, or another scoping key. The factory does not interpret the value; it only uses it to:
 - look up an existing cached manager,
@@ -11,7 +11,7 @@ The factory is intentionally **context-agnostic**. The identifier passed to `get
 - cache the result for reuse.
 
 In the current gateway wiring, the primary runtime usage is:
-- `get_plugin_manager()` or `get_plugin_manager("__global__")` for shared/global plugin execution
+- `get_plugin_manager()` or `get_plugin_manager("##global##")` for shared/global plugin execution
 - `get_plugin_manager(server_id)` for server-scoped execution in services such as tools, prompts, and resources
 
 ---
@@ -83,7 +83,7 @@ flowchart TD
 flowchart TD
     APP["Application lifespan\n(mcpgateway.main)"]
     F["TenantPluginManagerFactory\n(singleton, holds base YAML config)"]
-    G["TenantPluginManager\ncontext = '__global__'\n(backward-compat global manager)"]
+    G["TenantPluginManager\ncontext = '##global##'\n(backward-compat global manager)"]
     S1["TenantPluginManager\ncontext = 'server-id-1'"]
     S2["TenantPluginManager\ncontext = 'server-id-2'"]
     DB["get_config_from_db(context_id)\n(fetch per-context overrides)"]
@@ -118,7 +118,7 @@ At startup, `mcpgateway.main.lifespan()`:
    - plugin timeout,
    - hook payload policies,
    - optional observability provider,
-3. calls `await get_plugin_manager()` to resolve the default `__global__` manager,
+3. calls `await get_plugin_manager()` to resolve the default `##global##` manager,
 4. leaves additional context-specific managers to be created lazily on first use.
 
 This means the factory is initialized eagerly, but most tenant/server managers are initialized on demand.
@@ -166,7 +166,7 @@ Defined in `mcpgateway/plugins/framework/manager.py`.
 
 | Method | Current behavior |
 | --- | --- |
-| `get_manager(context_id=None)` | Returns cached manager or creates one; defaults to `__global__` |
+| `get_manager(context_id=None)` | Returns cached manager or creates one; defaults to `##global##` |
 | `_build_manager(context_id)` | Fetches overrides, merges config, initializes manager, swaps cache entry |
 | `_merge_tenant_config(overrides)` | Applies per-plugin override values on top of base YAML config |
 | `reload_tenant(context_id)` | Evicts cached manager, rebuilds it, and shuts down the old one |
@@ -183,7 +183,7 @@ The public accessor lives in `mcpgateway/plugins/framework/__init__.py`.
 | --- | --- |
 | `enable_plugins(toggle)` | Enables or disables the plugin subsystem globally |
 | `init_plugin_manager_factory(...)` | Creates the singleton factory explicitly during startup |
-| `get_plugin_manager(server_id="__global__")` | Returns a context manager when plugins are enabled and the factory exists |
+| `get_plugin_manager(server_id="##global##")` | Returns a context manager when plugins are enabled and the factory exists |
 | `shutdown_plugin_manager_factory()` | Shuts down the factory and clears the singleton reference |
 | `reset_plugin_manager_factory()` | Clears the singleton reference for tests |
 
@@ -289,7 +289,7 @@ The current design preserves compatibility in a few important ways:
 
 - `PluginManager` still exists for Borg-based shared-state behavior.
 - `TenantPluginManager` keeps the same public lifecycle and hook invocation API as `PluginManager`.
-- `get_plugin_manager()` without arguments still resolves the global `__global__` manager.
+- `get_plugin_manager()` without arguments still resolves the global `##global##` manager.
 - Call sites that are not context-aware continue to function against the global manager.
 
 What changed is the wiring: the system now routes plugin access through the factory instead of a single shared manager instance.

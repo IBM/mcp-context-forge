@@ -42,7 +42,7 @@ if TYPE_CHECKING:
 _PLUGINS_ENABLED = False
 _plugin_manager_factory: Optional[TenantPluginManagerFactory] = None
 _observability_service: Optional[ObservabilityProvider] = None
-DEFAULT_SERVER_ID = "__global__"
+DEFAULT_SERVER_ID = "##global##"
 
 _REDIS_PLUGINS_ENABLED_KEY = "plugin:global:enabled"
 _REDIS_INVALIDATION_CHANNEL = "plugin:invalidation"

@@ -40,7 +40,7 @@ from mcpgateway.services.tool_plugin_binding_service import get_bindings_for_too
 logger = logging.getLogger(__name__)
 
 CONTEXT_ID_SEPARATOR = "::"
-DEFAULT_CONTEXT_ID = "__global__"
+DEFAULT_CONTEXT_ID = "##global##"
 
 _LEGACY_MODE_TO_PLUGIN_MODE: dict[str, tuple[PluginMode, Optional[OnError]]] = {
     "enforce": (PluginMode.SEQUENTIAL, None),
@@ -169,7 +169,7 @@ class TenantPluginManagerFactory:
         """Create, initialise, and cache a new manager for *context_id*.
 
         Fallback: When no DB config exists for a team context, reuses the team's
-        default manager (team_id::__global__). Multiple contexts may share the
+        default manager (team_id::DEFAULT_CONTEXT_ID). Multiple contexts may share the
         same manager instance. Invalidating a shared default affects all contexts
         referencing it.
         """
