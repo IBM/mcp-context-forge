@@ -9126,6 +9126,87 @@ class TestRustMcpExecutionPlan:
         mock_cache.set_negative = AsyncMock()
         return mock_cache
 
+    @pytest.mark.asyncio
+    async def test_invoke_tool_prefers_exact_name_over_original_name_collision(self, tool_service):
+        """Python invocation should prefer exact registered name before original_name fallback matches."""
+        cache = self._cache_mock(None)
+        selected_gateway = SimpleNamespace(id="gw-1", auth_value=None, auth_query_params=None, oauth_config=None)
+        exact_name_tool = SimpleNamespace(
+            id="exact-tool",
+            name="helper",
+            original_name="remote_helper",
+            enabled=True,
+            deprecated=False,
+            reachable=True,
+            visibility="public",
+            team_id=None,
+            owner_email=None,
+            gateway=selected_gateway,
+            auth_value=None,
+            oauth_config=None,
+        )
+        original_name_match = SimpleNamespace(
+            id="original-name-match",
+            name="gateway_prefix_helper",
+            original_name="helper",
+            enabled=True,
+            deprecated=False,
+            reachable=True,
+            visibility="team",
+            team_id="team-a",
+            owner_email="user@example.com",
+            gateway=selected_gateway,
+            auth_value=None,
+            oauth_config=None,
+        )
+        exact_payload = self._cache_payload(
+            id="exact-tool",
+            name="helper",
+            original_name="remote_helper",
+            integration_type="REST",
+            request_type="GET",
+            url="http://tool.example/invoke",
+            headers={},
+            auth_type=None,
+            auth_value=None,
+            visibility="public",
+            team_id=None,
+            owner_email=None,
+        )
+        db = MagicMock()
+        db.execute.return_value.first.return_value = ("exact-tool",)
+        db.commit = MagicMock()
+        db.close = MagicMock()
+        response = AsyncMock()
+        response.raise_for_status = Mock()
+        response.status_code = 200
+        response.json = Mock(return_value={"ok": True})
+        tool_service._http_client.get = AsyncMock(return_value=response)
+
+        with (
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=cache),
+            patch("mcpgateway.services.tool_service.global_config_cache.get_passthrough_headers", return_value=[]),
+            patch("mcpgateway.services.tool_service.create_span", MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False)))),
+            patch("mcpgateway.services.tool_service.create_child_span", MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False)))),
+            patch("mcpgateway.services.tool_service.metrics_buffer", MagicMock()),
+            patch.object(tool_service, "_load_invocable_tools", return_value=[original_name_match, exact_name_tool]),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(side_effect=[True, True, True])),
+            patch.object(tool_service, "_build_tool_cache_payload", return_value=exact_payload) as build_payload,
+            patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=None)),
+        ):
+            result = await tool_service.invoke_tool(
+                db,
+                "helper",
+                {},
+                server_id="server-1",
+                user_email="user@example.com",
+                token_teams=["team-a"],
+            )
+
+        build_payload.assert_called_once_with(exact_name_tool, selected_gateway)
+        tool_service._http_client.get.assert_awaited_once_with("http://tool.example/invoke", params={}, headers={})
+        assert result.content[0].text == '{\n  "ok": true\n}'
+
     def _setup_db_for_header_lookup(self, test_db, gateway, tool=None):
         """Set up execute() to return gateway on first call and tool on subsequent calls."""
         call_count = [0]
@@ -9595,6 +9676,68 @@ class TestRustMcpExecutionPlan:
         assert plan["eligible"] is True
         assert plan["gatewayId"] == "gw-1"
         assert plan["toolName"] == "tool-one"
+
+    @pytest.mark.asyncio
+    async def test_prepare_rust_mcp_tool_execution_prefers_exact_name_over_original_name_collision(self, tool_service):
+        """Same-server lookup should prefer exact registered name before original_name fallback matches."""
+        cache = self._cache_mock(None)
+        selected_gateway = SimpleNamespace(
+            id="gw-1",
+            name="gateway-one",
+            url="http://gateway.example/mcp",
+            auth_type=None,
+            auth_value=None,
+            auth_query_params=None,
+            oauth_config=None,
+            ca_certificate=None,
+            ca_certificate_sig=None,
+            passthrough_headers=[],
+        )
+        exact_name_tool = SimpleNamespace(
+            id="exact-tool",
+            name="helper",
+            original_name="remote_helper",
+            enabled=True,
+            deprecated=False,
+            reachable=True,
+            visibility="public",
+            team_id=None,
+            owner_email=None,
+            gateway=selected_gateway,
+        )
+        original_name_match = SimpleNamespace(
+            id="original-name-match",
+            name="gateway_prefix_helper",
+            original_name="helper",
+            enabled=True,
+            deprecated=False,
+            reachable=True,
+            visibility="team",
+            team_id="team-a",
+            owner_email="user@example.com",
+            gateway=selected_gateway,
+        )
+
+        with (
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=cache),
+            patch("mcpgateway.services.tool_service.current_trace_id", MagicMock(get=MagicMock(return_value=None))),
+            patch("mcpgateway.services.tool_service.global_config_cache.get_passthrough_headers", return_value=[]),
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", side_effect=lambda request_headers, headers, *_args, **_kwargs: headers),
+            patch.object(tool_service, "_load_invocable_tools", return_value=[original_name_match, exact_name_tool]),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(side_effect=[True, True, True])),
+            patch.object(tool_service, "_build_tool_cache_payload", return_value=self._cache_payload(id="exact-tool", gateway_id="gw-1")),
+            patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=None)),
+        ):
+            plan = await tool_service.prepare_rust_mcp_tool_execution(
+                MagicMock(),
+                "helper",
+                server_id="server-1",
+                user_email="user@example.com",
+                token_teams=["team-a"],
+            )
+
+        assert plan["eligible"] is True
+        assert plan["toolId"] == "exact-tool"
 
     @pytest.mark.asyncio
     async def test_prepare_rust_mcp_tool_execution_rejects_inaccessible_db_candidates(self, tool_service):

@@ -33,12 +33,13 @@ Examples:
 
 # Standard
 import asyncio
+import base64
 from contextlib import asynccontextmanager, AsyncExitStack, ExitStack
 import contextvars
 from dataclasses import dataclass
 from enum import Enum
 import re
-from typing import Any, assert_never, AsyncGenerator, ContextManager, Dict, List, Optional, Pattern, Tuple, Union
+from typing import Any, assert_never, AsyncGenerator, ContextManager, Dict, Iterable, List, Optional, Pattern, Tuple, Union
 from urllib.parse import urlsplit, urlunsplit
 from uuid import uuid4
 
@@ -51,6 +52,7 @@ import jwt
 from mcp import ClientSession, types
 from mcp.client.streamable_http import streamablehttp_client
 from mcp.server.lowlevel import Server
+from mcp.server.lowlevel.helper_types import ReadResourceContents
 from mcp.server.streamable_http import EventCallback, EventId, EventMessage, EventStore, StreamId
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from mcp.types import JSONRPCMessage, PaginatedRequestParams, ReadResourceRequest, ReadResourceRequestParams
@@ -75,6 +77,13 @@ from mcpgateway.observability import create_span
 from mcpgateway.services.completion_service import CompletionService
 from mcpgateway.services.http_client_service import get_http_client, get_http_limits
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.services.mcp_apps import (
+    apply_resource_meta,
+    apply_tool_meta,
+    build_mcp_apps_capabilities,
+    filter_model_visible_tools,
+    serialize_resource_content_for_mcp,
+)
 from mcpgateway.services.metrics import (
     mcp_auth_cache_events_counter,
     oauth_verify_events_counter,
@@ -188,6 +197,62 @@ def _safe_str_attr(obj: Any, attr: str) -> Optional[str]:
     return value if isinstance(value, str) else None
 
 
+def _to_mcp_tool(tool: Any, *, name: Optional[str] = None) -> types.Tool:
+    """Convert an internal tool record to the MCP transport model."""
+    payload: Dict[str, Any] = {
+        "name": name or tool.name,
+        "title": _safe_str_attr(tool, "title"),
+        "description": tool.description or "",
+        "inputSchema": tool.input_schema,
+        "outputSchema": tool.output_schema,
+        "annotations": tool.annotations,
+    }
+    apply_tool_meta(payload, getattr(tool, "extension_metadata", None))
+    return types.Tool.model_validate({key: value for key, value in payload.items() if value is not None})
+
+
+def _tools_for_client(tools: Iterable[Any]) -> List[types.Tool]:
+    """Serialize model-facing tools/list without exposing app-only helpers."""
+    return [_to_mcp_tool(tool) for tool in filter_model_visible_tools(tools)]
+
+
+def _to_mcp_resource(resource: Any) -> types.Resource:
+    """Convert an internal resource record to the MCP transport model."""
+    payload: Dict[str, Any] = {
+        "uri": resource.uri,
+        "name": resource.name,
+        "title": _safe_str_attr(resource, "title"),
+        "description": resource.description,
+        "mimeType": resource.mime_type,
+    }
+    apply_resource_meta(payload, getattr(resource, "extension_metadata", None))
+    return types.Resource.model_validate({key: value for key, value in payload.items() if value is not None})
+
+
+def _blob_payload_to_bytes(blob: Any) -> bytes:
+    """Return raw bytes for an MCP blob payload."""
+    if isinstance(blob, bytes):
+        return blob
+    if isinstance(blob, str):
+        try:
+            return base64.b64decode(blob, validate=True)
+        except ValueError:
+            return blob.encode("utf-8")
+    return bytes(blob)
+
+
+def _to_read_resource_contents(content: Any, *, fallback_uri: str) -> List[ReadResourceContents]:
+    """Convert service/proxy resource content into SDK read-resource helper contents."""
+    payload = serialize_resource_content_for_mcp(content, fallback_uri=fallback_uri)
+    mime_type = payload.get("mimeType")
+    meta = payload.get("_meta")
+    if payload.get("text") is not None:
+        return [ReadResourceContents(content=payload["text"], mime_type=mime_type, meta=meta)]
+    if payload.get("blob") is not None:
+        return [ReadResourceContents(content=_blob_payload_to_bytes(payload["blob"]), mime_type=mime_type, meta=meta)]
+    return [ReadResourceContents(content="", mime_type=mime_type, meta=meta)]
+
+
 def _to_mcp_prompt(prompt: Any) -> types.Prompt:
     """Convert an internal prompt object to the MCP transport model.
 
@@ -242,7 +307,24 @@ prompt_service: PromptService = PromptService()
 resource_service: ResourceService = ResourceService()
 completion_service: CompletionService = CompletionService()
 
-mcp_app: Server[Any] = Server("mcp-streamable-http")
+
+class ContextForgeMCPServer(Server[Any]):
+    """MCP server with ContextForge extension capability advertising."""
+
+    def get_capabilities(self, notification_options: Any, experimental_capabilities: dict[str, dict[str, Any]]) -> types.ServerCapabilities:
+        """Return SDK capabilities plus enabled ContextForge MCP extensions."""
+        capabilities = super().get_capabilities(notification_options, experimental_capabilities)
+        user_context = user_context_var.get()
+        extensions = build_mcp_apps_capabilities(authorized=bool(user_context))
+        if extensions:
+            current_extensions = getattr(capabilities, "extensions", None)
+            merged_extensions = dict(current_extensions) if isinstance(current_extensions, dict) else {}
+            merged_extensions.update(extensions)
+            capabilities.extensions = merged_extensions
+        return capabilities
+
+
+mcp_app: Server[Any] = ContextForgeMCPServer("mcp-streamable-http")
 
 server_id_var: contextvars.ContextVar[str] = contextvars.ContextVar("server_id", default="default_server_id")
 # First-Party
@@ -1361,13 +1443,18 @@ async def _close_streamable_http_session(
     return HTTP_200_OK, {"jsonrpc": "2.0", "result": {}}
 
 
-async def _proxy_list_tools_to_gateway(gateway: Any, request_headers: dict, user_context: dict, meta: Optional[Any] = None) -> List[types.Tool]:  # pylint: disable=unused-argument
+async def _proxy_list_tools_to_gateway(
+    gateway: Any,
+    request_headers: dict,
+    _user_context: dict,
+    meta: Optional[Any] = None,
+) -> List[types.Tool]:  # pylint: disable=unused-argument
     """Proxy tools/list request directly to remote MCP gateway using MCP SDK.
 
     Args:
         gateway: Gateway ORM instance
         request_headers: Request headers from client
-        user_context: User context (not used - _meta comes from MCP SDK)
+        _user_context: User context (not used - _meta comes from MCP SDK)
         meta: Request metadata (_meta) from the original request
 
     Returns:
@@ -1405,7 +1492,7 @@ async def _proxy_list_tools_to_gateway(gateway: Any, request_headers: dict, user
 
                 # List tools with _meta forwarded
                 result = await session.list_tools(params=_build_paginated_params(meta))
-                return result.tools
+                return filter_model_visible_tools(result.tools)
 
     except Exception as e:
         logger.exception("Error proxying tools/list to gateway %s: %s", gateway.id, e)
@@ -1631,7 +1718,6 @@ async def call_tool(
         <class 'dict'>
     """
     server_id, request_headers, user_context = await _get_request_context_or_default()
-
     meta_data = None
     # Extract _meta from request context if available
     try:
@@ -1833,6 +1919,7 @@ async def call_tool(
                 token_teams=token_teams,
                 server_id=server_id,
                 meta_data=meta_data,
+                require_model_visible=True,
             )
             if not result or not result.content:
                 logger.warning("No content returned by tool: %s", name)
@@ -2265,17 +2352,7 @@ async def list_tools() -> List[types.Tool]:
 
                 # Default cache mode: use database
                 tools = await tool_service.list_server_tools(db, server_id, user_email=user_email, token_teams=token_teams, _request_headers=request_headers)
-                return [
-                    types.Tool(
-                        name=tool.name,
-                        title=_safe_str_attr(tool, "title"),
-                        description=tool.description or "",
-                        inputSchema=tool.input_schema,
-                        outputSchema=tool.output_schema,
-                        annotations=tool.annotations,
-                    )
-                    for tool in tools
-                ]
+                return _tools_for_client(tools)
         except Exception as e:
             logger.error("Error listing tools:%s", e)
             return []
@@ -2283,17 +2360,7 @@ async def list_tools() -> List[types.Tool]:
         try:
             async with get_db() as db:
                 tools, _ = await tool_service.list_tools(db, include_inactive=False, limit=0, user_email=user_email, token_teams=token_teams, _request_headers=request_headers)
-                return [
-                    types.Tool(
-                        name=tool.name,
-                        title=_safe_str_attr(tool, "title"),
-                        description=tool.description or "",
-                        inputSchema=tool.input_schema,
-                        outputSchema=tool.output_schema,
-                        annotations=tool.annotations,
-                    )
-                    for tool in tools
-                ]
+                return _tools_for_client(tools)
         except Exception as e:
             logger.exception("Error listing tools:%s", e)
             return []
@@ -2523,10 +2590,7 @@ async def list_resources() -> List[types.Resource]:
 
                 # Default cache mode: use database
                 resources = await resource_service.list_server_resources(db, server_id, user_email=user_email, token_teams=token_teams)
-                return [
-                    types.Resource(uri=resource.uri, name=resource.name, title=_safe_str_attr(resource, "title"), description=resource.description, mimeType=resource.mime_type)
-                    for resource in resources
-                ]
+                return [_to_mcp_resource(resource) for resource in resources]
         except Exception as e:
             logger.exception("Error listing Resources:%s", e)
             return []
@@ -2534,17 +2598,14 @@ async def list_resources() -> List[types.Resource]:
         try:
             async with get_db() as db:
                 resources, _ = await resource_service.list_resources(db, include_inactive=False, limit=0, user_email=user_email, token_teams=token_teams)
-                return [
-                    types.Resource(uri=resource.uri, name=resource.name, title=_safe_str_attr(resource, "title"), description=resource.description, mimeType=resource.mime_type)
-                    for resource in resources
-                ]
+                return [_to_mcp_resource(resource) for resource in resources]
         except Exception as e:
             logger.exception("Error listing resources:%s", e)
             return []
 
 
 @mcp_app.read_resource()
-async def read_resource(resource_uri: str) -> Union[str, bytes]:
+async def read_resource(resource_uri: str) -> Union[str, bytes, Iterable[ReadResourceContents]]:
     """
     Reads the content of a resource specified by its URI.
 
@@ -2552,7 +2613,7 @@ async def read_resource(resource_uri: str) -> Union[str, bytes]:
         resource_uri (str): The URI of the resource to read.
 
     Returns:
-        Union[str, bytes]: The content of the resource as text or binary data.
+        Union[str, bytes, Iterable[ReadResourceContents]]: The resource content.
         Returns empty string on failure or if no content is found.
 
     Raises:
@@ -2566,7 +2627,7 @@ async def read_resource(resource_uri: str) -> Union[str, bytes]:
         >>> list(sig.parameters.keys())
         ['resource_uri']
         >>> sig.return_annotation
-        typing.Union[str, bytes]
+        typing.Union[str, bytes, typing.Iterable[mcp.server.lowlevel.helper_types.ReadResourceContents]]
     """
     server_id, request_headers, user_context = await _get_request_context_or_default()
 
@@ -2631,11 +2692,7 @@ async def read_resource(resource_uri: str) -> Union[str, bytes]:
                     contents = await _proxy_read_resource_to_gateway(gateway, str(resource_uri), user_context, meta_data)
                     if contents:
                         # Return first content (text or blob)
-                        first_content = contents[0]
-                        if hasattr(first_content, "text"):
-                            return first_content.text
-                        if hasattr(first_content, "blob"):
-                            return first_content.blob
+                        return _to_read_resource_contents(contents[0], fallback_uri=str(resource_uri))
                     return ""
                 if gateway:
                     logger.debug("Gateway %s found but not in direct_proxy mode (mode: %s), using cache mode", gateway_id, gateway.gateway_mode)
@@ -2660,12 +2717,12 @@ async def read_resource(resource_uri: str) -> Union[str, bytes]:
                 return ""
 
             # Return blob content if available (binary resources)
-            if result and result.blob:
-                return result.blob
+            if result and getattr(result, "blob", None):
+                return _to_read_resource_contents(result, fallback_uri=str(resource_uri))
 
             # Return text content if available (text resources)
-            if result and result.text:
-                return result.text
+            if result and getattr(result, "text", None):
+                return _to_read_resource_contents(result, fallback_uri=str(resource_uri))
 
             # No content found
             logger.warning("No content returned by resource: %s", resource_uri)
@@ -4434,7 +4491,7 @@ class SessionManagerWrapper:
                 message: ASGI message dict.
             """
             nonlocal captured_session_id
-            if message["type"] == "http.response.start" and settings.mcpgateway_session_affinity_enabled:
+            if message["type"] == "http.response.start" and settings.use_stateful_sessions:
                 # Look for mcp-session-id in response headers
                 response_headers = message.get("headers", [])
                 for header_name, header_value in response_headers:

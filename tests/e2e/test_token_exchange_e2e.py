@@ -39,11 +39,13 @@ async def test_transparent_exchange_emits_audit_without_token(caplog):
         "target_audience": "https://svc",
         "subject_token_source": "inbound_user_jwt",
     }
+    await svc._token_exchange_cache.invalidate("gw1", "u@e", "https://svc")
 
     with caplog.at_level(logging.INFO):
         header = await svc._resolve_token_exchange_header(cfg, "gw1", "gw", "u@e", {"authorization": f"Bearer {_FAKE_JWT}"})
 
     assert header == {"Authorization": "Bearer EXCHANGED"}
+    svc.oauth_manager.token_exchange.assert_awaited_once()
     # audit event present, references the principal + audience, and leaks no token material
     rec = next(r for r in caplog.records if hasattr(r, "token_exchange"))
     assert rec.token_exchange["user_email"] == "u@e"
