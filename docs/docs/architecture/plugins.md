@@ -752,41 +752,41 @@ In multi-tenant deployments, each tenant can have a separate plugin configuratio
 ```python
 class TenantPluginManagerFactory:
     """Factory for creating and caching tenant-specific plugin managers"""
-    
+
     def __init__(self, cache_ttl: int = 300):
         """
         Initialize factory with configurable cache TTL.
-        
+
         Args:
             cache_ttl: Cache time-to-live in seconds (default: 300 = 5 minutes)
         """
         self._managers: Dict[str, Tuple[PluginManager, float]] = {}
         self._cache_ttl = cache_ttl
-    
+
     async def get_manager(self, tenant_id: str) -> PluginManager:
         """
         Get or create a plugin manager for the specified tenant.
-        
+
         Managers are cached with TTL-based expiration. If a cached manager
         exists and hasn't expired, it is returned. Otherwise, a new manager
         is created from the tenant's plugin configuration.
-        
+
         Args:
             tenant_id: Unique tenant identifier
-            
+
         Returns:
             PluginManager instance for the tenant
         """
         ...
-    
+
     def reload_tenant(self, tenant_id: str) -> None:
         """
         Invalidate cached plugin manager for a tenant.
-        
+
         This forces the next get_manager() call to create a fresh manager
         with the latest configuration. Must be called when a tenant's
         plugin configuration changes.
-        
+
         Args:
             tenant_id: Tenant whose cache should be invalidated
         """
@@ -834,10 +834,10 @@ For deployments with many tenants, monitor memory usage and consider:
 async def test_plugin_config_change():
     # Update configuration
     await update_tenant_plugins(tenant_id, new_config)
-    
+
     # CRITICAL: Reload to simulate production behavior
     factory.reload_tenant(tenant_id)
-    
+
     # Verify new configuration is active
     manager = await factory.get_manager(tenant_id)
     assert manager.plugin_count == expected_count
