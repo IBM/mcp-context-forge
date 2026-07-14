@@ -429,7 +429,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
                 "default-src 'self'",
                 f"script-src-elem 'self' 'nonce-{csp_nonce}'",
                 "script-src-attr 'unsafe-inline'",
-                "script-src 'self' 'unsafe-eval'",
+                "script-src 'self'",
                 "style-src 'self' 'unsafe-inline'",
                 "img-src 'self' data: https:",
                 "font-src 'self' data:",
