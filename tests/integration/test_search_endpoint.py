@@ -24,9 +24,11 @@ Mirrors the pattern established for the public resource-by-URI endpoint in
 from __future__ import annotations
 
 # Standard
+from datetime import datetime, timezone
 import os
 import tempfile
 from unittest.mock import AsyncMock, MagicMock, patch
+import uuid
 
 # Third-Party
 from _pytest.monkeypatch import MonkeyPatch
@@ -228,3 +230,197 @@ class TestUnifiedSearchIntegration:
             assert client.get("/search?q=a").status_code == 401
         finally:
             app_with_temp_db.dependency_overrides.pop(get_current_user_with_permissions, None)
+
+
+# ---------------------------------------------------------------------------
+# Real-data RBAC / token-scoping regression
+# ---------------------------------------------------------------------------
+#
+# Unlike the tests above (which stub admin_search_* and grant all permissions),
+# these seed real rows and run the real handlers + real PermissionService so the
+# security claim is proven end-to-end: a caller only sees entities their token
+# scope permits. Layer 2 (tools.read) is a real but global pass-through so the
+# thing under test is Layer 1 visibility/token scoping, not the permission gate.
+#
+# Note: identity is injected (not full JWT-middleware validation). PermissionService,
+# admin_search_tools, and the DB rows are all real; a dedicated JWT-path test is a
+# separate concern.
+
+SEARCH_TERM = "zzzsearchable"
+
+
+@pytest.fixture
+def _real_data_env():
+    """Real app + temp DB seeded with teams, a non-admin member, and scoped tools.
+
+    Yields:
+        tuple: ``(app, TestSessionLocal, ids)`` where ``ids`` maps logical names
+        (public/teama/teamb tool ids, team_a/team_b ids, user_b email) to values.
+    """
+    mp = MonkeyPatch()
+
+    fd, path = tempfile.mkstemp(suffix=".db")
+    url = f"sqlite:///{path}"
+
+    from mcpgateway.config import settings
+
+    mp.setattr(settings, "database_url", url, raising=False)
+
+    import mcpgateway.db as db_mod
+    import mcpgateway.main as main_mod
+
+    engine = create_engine(url, connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    TestSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    mp.setattr(db_mod, "engine", engine, raising=False)
+    mp.setattr(db_mod, "SessionLocal", TestSessionLocal, raising=False)
+    mp.setattr(main_mod, "SessionLocal", TestSessionLocal, raising=False)
+    mp.setattr(main_mod, "engine", engine, raising=False)
+
+    db_mod.Base.metadata.create_all(bind=engine)
+
+    from mcpgateway.db import EmailTeam, EmailTeamMember, EmailUser, Role, Tool, UserRole
+
+    now = datetime.now(timezone.utc)
+    team_a = uuid.uuid4().hex
+    team_b = uuid.uuid4().hex
+    user_b = "user-b@example.com"
+    owner = "owner@example.com"  # owns the tools so user_b access is never via ownership
+
+    def _user(email):
+        return EmailUser(id=uuid.uuid4().hex, email=email, password_hash="x", full_name=email, is_admin=False, is_active=True, auth_provider="local", email_verified_at=now)  # pragma: allowlist secret
+
+    def _tool(name, visibility, team_id):
+        return Tool(
+            id=uuid.uuid4().hex,
+            original_name=name,
+            url=f"http://example.com/{name}",
+            owner_email=owner,
+            team_id=team_id,
+            visibility=visibility,
+            integration_type="REST",
+            request_type="GET",
+            input_schema={},
+            output_schema={},
+            enabled=True,
+            deprecated=False,
+            created_by=owner,
+            tags=[],
+        )
+
+    db = TestSessionLocal()
+    db.add_all([_user(user_b), _user(owner)])
+    db.add_all(
+        [
+            EmailTeam(id=team_a, name="Team A", slug="team-a", created_by=owner, is_personal=False, visibility="public"),
+            EmailTeam(id=team_b, name="Team B", slug="team-b", created_by=owner, is_personal=False, visibility="public"),
+        ]
+    )
+    db.commit()
+
+    # user_b is a real member of BOTH teams (so team-A is genuinely accessible),
+    # and holds a real GLOBAL tools.read role (Layer 2 pass-through).
+    role_id = uuid.uuid4().hex
+    db.add_all(
+        [
+            EmailTeamMember(id=uuid.uuid4().hex, team_id=team_a, user_email=user_b, role="member", is_active=True),
+            EmailTeamMember(id=uuid.uuid4().hex, team_id=team_b, user_email=user_b, role="member", is_active=True),
+            Role(id=role_id, name="test-tools-reader", scope="global", permissions=["tools.read"], created_by=owner, is_active=True),
+            UserRole(id=uuid.uuid4().hex, user_email=user_b, role_id=role_id, scope="global", scope_id=None, granted_by=owner, is_active=True),
+        ]
+    )
+
+    t_public = _tool(f"{SEARCH_TERM}-public", "public", None)
+    t_teama = _tool(f"{SEARCH_TERM}-teama", "team", team_a)
+    t_teamb = _tool(f"{SEARCH_TERM}-teamb", "team", team_b)
+    db.add_all([t_public, t_teama, t_teamb])
+    db.commit()
+
+    ids = {
+        "public": t_public.id,
+        "teama": t_teama.id,
+        "teamb": t_teamb.id,
+        "team_a": team_a,
+        "team_b": team_b,
+        "user_b": user_b,
+    }
+    db.close()
+
+    from mcpgateway.main import app
+
+    yield app, TestSessionLocal, ids
+
+    app.dependency_overrides.pop(get_current_user_with_permissions, None)
+    mp.undo()
+    engine.dispose()
+    os.close(fd)
+    os.unlink(path)
+
+
+def _inject_identity(app, TestSessionLocal, email, token_teams=None):
+    """Override the auth dependency to yield a non-admin context, optionally token-scoped.
+
+    Args:
+        app: The FastAPI app to override on.
+        TestSessionLocal: Session factory bound to the temp DB.
+        email (str): Caller email.
+        token_teams: When provided, narrows the caller's visible team scope
+            (list of team-id strings); when ``None``, the key is omitted so the
+            caller's full DB team membership applies.
+    """
+
+    async def _ctx():
+        session = TestSessionLocal()
+        try:
+            context = {"email": email, "is_admin": False, "ip_address": "127.0.0.1", "user_agent": "test-client", "db": session}
+            if token_teams is not None:
+                context["token_teams"] = token_teams
+            yield context
+        finally:
+            session.close()
+
+    app.dependency_overrides[get_current_user_with_permissions] = _ctx
+
+
+class TestUnifiedSearchRealDataScoping:
+    """Real-data tests proving /v1/search enforces token/team visibility scoping."""
+
+    def test_token_scope_hides_other_teams_private_tool(self, _real_data_env):
+        """A token scoped to team-B sees public + team-B tools, not team-A's private tool."""
+        app, TestSessionLocal, ids = _real_data_env
+        _inject_identity(app, TestSessionLocal, ids["user_b"], token_teams=[ids["team_b"]])
+
+        client = TestClient(app, raise_server_exceptions=False)
+        resp = client.get(f"/v1/search?q={SEARCH_TERM}&entity_types=tools", headers={"Authorization": "Bearer x"})
+
+        assert resp.status_code == 200
+        returned = {tool["id"] for tool in resp.json()["results"]["tools"]}
+        assert ids["public"] in returned  # public visible (positive)
+        assert ids["teamb"] in returned  # own-team visible (positive: search did not collapse)
+        assert ids["teama"] not in returned  # other-team private hidden (the deny)
+
+    def test_without_token_narrowing_member_sees_both_teams(self, _real_data_env):
+        """Contrast: same user, no token narrowing, sees team-A too (deny above was the token)."""
+        app, TestSessionLocal, ids = _real_data_env
+        _inject_identity(app, TestSessionLocal, ids["user_b"], token_teams=None)
+
+        client = TestClient(app, raise_server_exceptions=False)
+        resp = client.get(f"/v1/search?q={SEARCH_TERM}&entity_types=tools", headers={"Authorization": "Bearer x"})
+
+        assert resp.status_code == 200
+        returned = {tool["id"] for tool in resp.json()["results"]["tools"]}
+        assert ids["public"] in returned
+        assert ids["teamb"] in returned
+        assert ids["teama"] in returned  # visible now via real membership -> confirms the token caused the deny
+
+    def test_non_admin_users_entity_dropped_without_collapsing_search(self, _real_data_env):
+        """A non-admin requesting tools,users gets tools back and users silently dropped."""
+        app, TestSessionLocal, ids = _real_data_env
+        _inject_identity(app, TestSessionLocal, ids["user_b"], token_teams=[ids["team_b"]])
+
+        client = TestClient(app, raise_server_exceptions=False)
+        resp = client.get(f"/v1/search?q={SEARCH_TERM}&entity_types=tools,users", headers={"Authorization": "Bearer x"})
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert "users" not in body["entity_types"]  # restricted entity removed (no admin.user_management)
+        assert ids["teamb"] in {tool["id"] for tool in body["results"]["tools"]}  # tools still returned (positive)
