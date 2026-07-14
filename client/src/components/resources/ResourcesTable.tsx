@@ -23,11 +23,13 @@ export function ResourcesTable({
   resources,
   selectedResourceId,
   onSelectResource,
+  onEditResource,
   onDeleteResource,
 }: {
   resources: NonNullable<ResourceRead>[];
   selectedResourceId?: string | null;
   onSelectResource: (resource: NonNullable<ResourceRead>) => void;
+  onEditResource?: (resource: NonNullable<ResourceRead>) => void;
   onDeleteResource?: (resourceId: string) => void;
 }) {
   const intl = useIntl();
@@ -113,14 +115,17 @@ export function ResourcesTable({
             </TableCell>
 
             <TableCell className="px-4 py-3 text-center">
-              {onDeleteResource ? (
+              {onEditResource || onDeleteResource ? (
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <Button
                       type="button"
                       variant="ghost"
                       size="icon-xs"
-                      aria-label={intl.formatMessage({ id: "resources.table.moreOptions" })}
+                      aria-label={intl.formatMessage(
+                        { id: "resources.table.moreOptionsFor" },
+                        { name: resource.title || resource.name },
+                      )}
                       className="size-5 text-muted-foreground hover:text-foreground"
                       onClick={(e) => {
                         e.stopPropagation();
@@ -130,14 +135,26 @@ export function ResourcesTable({
                     </Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end">
-                    <DropdownMenuItem
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onDeleteResource(resource.id);
-                      }}
-                    >
-                      {intl.formatMessage({ id: "resources.table.delete" })}
-                    </DropdownMenuItem>
+                    {onEditResource && (
+                      <DropdownMenuItem
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onEditResource(resource);
+                        }}
+                      >
+                        {intl.formatMessage({ id: "resources.table.edit" })}
+                      </DropdownMenuItem>
+                    )}
+                    {onDeleteResource && (
+                      <DropdownMenuItem
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onDeleteResource(resource.id);
+                        }}
+                      >
+                        {intl.formatMessage({ id: "resources.table.delete" })}
+                      </DropdownMenuItem>
+                    )}
                   </DropdownMenuContent>
                 </DropdownMenu>
               ) : (
@@ -145,7 +162,10 @@ export function ResourcesTable({
                   type="button"
                   variant="ghost"
                   size="icon-xs"
-                  aria-label={intl.formatMessage({ id: "resources.table.moreOptions" })}
+                  aria-label={intl.formatMessage(
+                    { id: "resources.table.moreOptionsFor" },
+                    { name: resource.title || resource.name },
+                  )}
                   className="size-5 text-muted-foreground hover:text-foreground"
                   onClick={(e) => {
                     e.stopPropagation();

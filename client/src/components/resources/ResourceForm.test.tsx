@@ -6,7 +6,28 @@ import { http, HttpResponse } from "msw";
 import { server } from "@/test/mocks/server";
 import { I18nProvider } from "@/i18n";
 import { AuthProvider } from "@/auth/AuthContext";
+import type { ResourceRead } from "@/generated/types";
 import { ResourceForm } from "./ResourceForm";
+
+function createMockResource(
+  overrides: Partial<NonNullable<ResourceRead> & { content?: string }> = {},
+): NonNullable<ResourceRead> & { content?: string } {
+  return {
+    id: "resource-1",
+    uri: "resource://example/path",
+    name: "Existing Resource",
+    description: "existing description",
+    mimeType: "text/plain",
+    size: 10,
+    createdAt: "2024-01-01T00:00:00Z",
+    updatedAt: "2024-01-01T00:00:00Z",
+    enabled: true,
+    tags: ["a", "b"],
+    visibility: "public",
+    content: "existing content",
+    ...overrides,
+  };
+}
 
 function renderForm(props: Partial<React.ComponentProps<typeof ResourceForm>> = {}) {
   return render(
@@ -155,6 +176,55 @@ describe("ResourceForm", () => {
 
       await waitFor(() => {
         expect(screen.getByRole("alert")).toBeInTheDocument();
+      });
+    });
+  });
+
+  describe("Edit mode (resource prop provided)", () => {
+    beforeEach(() => {
+      server.use(
+        http.put("*/resources/resource-1", () =>
+          HttpResponse.json({ id: "resource-1", name: "Existing Resource" }, { status: 200 }),
+        ),
+      );
+    });
+
+    it("shows 'Edit resource' heading instead of 'Add resources'", () => {
+      renderForm({ resource: createMockResource() });
+      expect(screen.getByRole("heading", { name: "Edit resource" })).toBeInTheDocument();
+    });
+
+    it("moves focus to the heading on mount so opening the form is announced", () => {
+      renderForm({ resource: createMockResource() });
+      expect(screen.getByRole("heading", { name: "Edit resource" })).toHaveFocus();
+    });
+
+    it("shows 'Update resource' submit button instead of 'Add resources'", () => {
+      renderForm({ resource: createMockResource() });
+      expect(screen.getByRole("button", { name: "Update resource" })).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /Add resources/i })).not.toBeInTheDocument();
+    });
+
+    it("pre-populates name, uri, description, mimeType, tags, and content from the resource prop", () => {
+      renderForm({ resource: createMockResource() });
+      expect(screen.getByLabelText(/^Name/)).toHaveValue("Existing Resource");
+      expect(screen.getByLabelText(/^URI/)).toHaveValue("resource://example/path");
+      expect(screen.getByPlaceholderText(/optional description/i)).toHaveValue(
+        "existing description",
+      );
+      expect(screen.getByLabelText(/Content/)).toHaveValue("existing content");
+      expect(screen.getByLabelText(/Tags/)).toHaveValue("a, b");
+    });
+
+    it("calls onSuccess after a successful resource update", async () => {
+      const user = userEvent.setup();
+      const onSuccess = vi.fn();
+      renderForm({ resource: createMockResource(), onSuccess });
+
+      await user.click(screen.getByRole("button", { name: "Update resource" }));
+
+      await waitFor(() => {
+        expect(onSuccess).toHaveBeenCalledOnce();
       });
     });
   });
