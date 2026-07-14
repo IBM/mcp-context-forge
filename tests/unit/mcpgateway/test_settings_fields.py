@@ -61,6 +61,12 @@ def test_port_invalid(port):
         Settings(port=port)
 
 
+def test_dataplane_publisher_interval_rejects_zero():
+    """Dataplane publisher intervals must be at least one second."""
+    with pytest.raises(ValidationError):
+        Settings(dataplane_publisher_interval_seconds=0, _env_file=None)
+
+
 # --- log_detailed_sample_rate tests ---
 
 

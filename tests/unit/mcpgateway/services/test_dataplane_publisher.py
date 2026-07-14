@@ -8,7 +8,7 @@ Unit tests for DataplanePublisherService.
 """
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -478,7 +478,7 @@ def test_create_payload_handles_missing_references():
 @pytest.mark.asyncio
 async def test_publish_skips_when_redis_unavailable():
     """publish_to_redis() continues gracefully when Redis is unavailable."""
-    from mcpgateway.services.dataplane_publisher import REDIS_PUBLISHER_TIME, DataplanePublisherService
+    from mcpgateway.services.dataplane_publisher import DataplanePublisherService, get_publisher_interval
 
     service = DataplanePublisherService()
     real_sleep = asyncio.sleep
@@ -498,7 +498,7 @@ async def test_publish_skips_when_redis_unavailable():
         await service.shutdown()
 
         # Should not raise, just log and continue
-        mock_sleep.assert_awaited_once_with(REDIS_PUBLISHER_TIME)
+        mock_sleep.assert_awaited_once_with(get_publisher_interval())
 
 
 @pytest.mark.asyncio
@@ -555,7 +555,7 @@ async def test_publish_continues_when_lock_acquisition_raises():
 @pytest.mark.asyncio
 async def test_publish_skips_when_lock_not_acquired():
     """publish_to_redis() skips publishing when another worker holds the lock."""
-    from mcpgateway.services.dataplane_publisher import REDIS_PUBLISHER_TIME, DataplanePublisherService
+    from mcpgateway.services.dataplane_publisher import DataplanePublisherService, get_publisher_interval
 
     service = DataplanePublisherService()
     real_sleep = asyncio.sleep
@@ -581,7 +581,7 @@ async def test_publish_skips_when_lock_not_acquired():
         await service.shutdown()
 
         mock_redis.set.assert_awaited_once()
-        mock_sleep.assert_awaited_once_with(REDIS_PUBLISHER_TIME)
+        mock_sleep.assert_awaited_once_with(get_publisher_interval())
         mock_fetch.assert_not_awaited()
         mock_redis.pipeline.assert_not_called()
         mock_redis.eval.assert_not_awaited()
@@ -592,7 +592,7 @@ async def test_publish_writes_payload_releases_lock_and_exits_when_shutdown_wait
     """publish_to_redis() writes msgpack payloads and releases the worker lock."""
     import msgpack
 
-    from mcpgateway.services.dataplane_publisher import PUBLISHER_LOCK_KEY, PUBLISHER_TTL, REDIS_PUBLISHER_TIME, USER_CONFIG_KEY, DataplanePublisherService
+    from mcpgateway.services.dataplane_publisher import PUBLISHER_LOCK_KEY, USER_CONFIG_KEY, DataplanePublisherService, get_publisher_interval, get_publisher_ttl
 
     service = DataplanePublisherService()
     payload = {"user@example.com": {"virtual_hosts": {"server1": {"backends": {}}}}}
@@ -621,12 +621,44 @@ async def test_publish_writes_payload_releases_lock_and_exits_when_shutdown_wait
     key_arg, value_arg = pipe.set.call_args.args
     assert msgpack.unpackb(key_arg, raw=False) == [USER_CONFIG_KEY, "user@example.com"]
     assert msgpack.unpackb(value_arg, raw=False) == payload["user@example.com"]
-    assert pipe.set.call_args.kwargs == {"ex": PUBLISHER_TTL}
+    assert pipe.set.call_args.kwargs == {"ex": get_publisher_ttl()}
     pipe.execute.assert_awaited_once()
-    mock_redis.set.assert_awaited_once_with(PUBLISHER_LOCK_KEY, service.worker_id, nx=True, ex=REDIS_PUBLISHER_TIME + 30)
+    mock_redis.set.assert_awaited_once_with(PUBLISHER_LOCK_KEY, service.worker_id, nx=True, ex=get_publisher_interval() + 30)
     mock_redis.eval.assert_awaited_once()
     assert mock_redis.eval.await_args.args[1:] == (1, PUBLISHER_LOCK_KEY, service.worker_id)
     mock_wait_for.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_publish_uses_configured_interval_for_ttl_lock_and_wait():
+    """A runtime interval override propagates to every publisher timeout."""
+    from mcpgateway.services import dataplane_publisher
+
+    service = dataplane_publisher.DataplanePublisherService()
+    payload = {"user@example.com": {"virtual_hosts": {}}}
+
+    pipe = MagicMock()
+    pipe.execute = AsyncMock()
+    mock_redis = MagicMock()
+    mock_redis.set = AsyncMock(return_value=True)
+    mock_redis.pipeline.return_value = pipe
+    mock_redis.eval = AsyncMock()
+
+    async def _finish_cycle(awaitable, timeout):
+        del timeout
+        awaitable.close()
+
+    with (
+        patch.object(dataplane_publisher.settings, "dataplane_publisher_interval_seconds", 2),
+        patch.object(dataplane_publisher, "get_redis_client", new_callable=AsyncMock, return_value=mock_redis),
+        patch.object(dataplane_publisher.asyncio, "wait_for", new_callable=AsyncMock, side_effect=_finish_cycle) as mock_wait_for,
+        patch.object(service, "fetch_payload", new_callable=AsyncMock, return_value=payload),
+    ):
+        await service.publish_to_redis()
+
+    assert pipe.set.call_args.kwargs == {"ex": 14}
+    mock_redis.set.assert_awaited_once_with(dataplane_publisher.PUBLISHER_LOCK_KEY, service.worker_id, nx=True, ex=32)
+    mock_wait_for.assert_awaited_once_with(ANY, timeout=2)
 
 
 @pytest.mark.asyncio

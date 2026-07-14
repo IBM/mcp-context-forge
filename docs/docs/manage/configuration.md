@@ -221,6 +221,17 @@ For detailed guidance on embedding and section customization, see [Admin UI Cust
 - `MCPGATEWAY_A2A_ENABLED=false`: Completely disables A2A features (API endpoints return 404, admin tab hidden)
 - `MCPGATEWAY_A2A_METRICS_ENABLED=false`: Disables metrics collection while keeping functionality
 
+### Experimental Dataplane Publisher
+
+| Setting                                  | Description                                           | Default | Options |
+| ---------------------------------------- | ----------------------------------------------------- | ------- | ------- |
+| `DATAPLANE_PUBLISHER`                    | Publish gateway configuration for the Rust dataplane  | `false` | bool    |
+| `DATAPLANE_PUBLISHER_INTERVAL_SECONDS`   | Interval between configuration snapshots, in seconds | `60`    | int ≥ 1 |
+
+User configuration keys expire after twice the configured snapshot interval plus 10 seconds. Shorter intervals can reduce
+convergence time in test environments; production deployments should retain the default unless their Redis and database
+capacity has been sized for more frequent snapshots.
+
 ### Direct Proxy Mode
 
 | Setting                              | Description                                    | Default | Options |

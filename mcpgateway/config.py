@@ -2812,6 +2812,12 @@ class Settings(BaseSettings):
 
     dataplane_publisher: bool = Field(default=False, description="Send data from CF to Rust experimental dataplane")
 
+    dataplane_publisher_interval_seconds: int = Field(
+        default=60,
+        ge=1,
+        description="Seconds between dataplane publisher snapshots to Redis; UserConfig keys expire after two snapshot intervals plus 10 seconds",
+    )
+
     # Well-Known URI Configuration
     # ===================================
 
