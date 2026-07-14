@@ -20,14 +20,8 @@ from .helpers.compliance import resolve_tool, xfail_on
 pytestmark = [pytest.mark.protocol_compliance, pytest.mark.mcp_utilities]
 
 
-async def test_progress_notifications_delivered(connect, request) -> None:
+async def test_progress_notifications_delivered(connect) -> None:
     """progress_reporter tool emits progress events observable on the client."""
-    xfail_on(
-        request,
-        "gateway_proxy",
-        "gateway_virtual",
-        reason=("GAP-002: gateway does not relay progress notifications on the " "POST-correlated stream of the originating tool call (spec § " "Listening for Messages from the Server)."),
-    )
     events: list[tuple[float, float | None, str | None]] = []
 
     async def on_progress(progress, total, message):
