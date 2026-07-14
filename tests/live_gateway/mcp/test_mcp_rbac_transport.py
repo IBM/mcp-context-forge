@@ -40,9 +40,11 @@ from typing import Any, Generator
 import uuid
 
 # Third-Party
+import httpx
 import pytest
 from fastmcp.client import Client
 from fastmcp.client.auth import BearerAuth
+from mcp import McpError
 
 pw = pytest.importorskip("playwright", reason="playwright is not installed – pip install playwright")
 from playwright.sync_api import APIRequestContext, Playwright
@@ -68,6 +70,9 @@ STREAMABLE_HTTP_GATEWAY_NAME = f"{RBAC_PREFIX}-streamable-http-gw"
 # Must match docker-compose gateway JWT_SECRET_KEY
 _JWT_SECRET = os.getenv("JWT_SECRET_KEY", "my-test-key-but-now-longer-than-32-bytes")
 _CLIENT_TIMEOUT = float(os.getenv("MCP_E2E_CLIENT_TIMEOUT", "5.0"))
+# The default covers one 60-second publish interval plus 15 seconds of slack.
+_PER_SERVER_ACCESS_SYNC_DEADLINE_SECONDS = float(os.getenv("MCP_E2E_PUBLISHER_SYNC_DEADLINE", "75.0"))
+_PER_SERVER_ACCESS_RETRY_DELAY_SECONDS = 1.0
 
 
 # ---------------------------------------------------------------------------
@@ -465,6 +470,22 @@ def _mcp_tools_list(access_token: str, server_url: str = BASE_URL) -> list:
     return _run_async(_async_mcp_tools_list(access_token, server_url))
 
 
+def _mcp_tools_list_after_publisher_sync(access_token: str, server_url: str = BASE_URL) -> list:
+    """Retry allow-path discovery while new server config converges.
+
+    Deny-path checks intentionally bypass this helper so stale configuration
+    cannot delay or mask authorization failures.
+    """
+    deadline = time.monotonic() + _PER_SERVER_ACCESS_SYNC_DEADLINE_SECONDS
+    while True:
+        try:
+            return _mcp_tools_list(access_token, server_url=server_url)
+        except (httpx.HTTPError, McpError, RuntimeError, TimeoutError):
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(_PER_SERVER_ACCESS_RETRY_DELAY_SECONDS)
+
+
 def _mcp_resources_list(access_token: str, server_url: str = BASE_URL) -> list:
     return _run_async(_async_mcp_resources_list(access_token, server_url))
 
@@ -783,16 +804,18 @@ class TestMcpPerServerEndpoint:
         """Outsider can access the public server's per-server MCP endpoint."""
         server_id = visibility_servers["public"]["id"]
         server_url = f"{BASE_URL}/servers/{server_id}"
-        tools = _mcp_tools_list(outsider_user["access_token"], server_url=server_url)
+        tools = _mcp_tools_list_after_publisher_sync(outsider_user["access_token"], server_url=server_url)
         # May see only that server's tools
         print(f"    -> Outsider via /servers/{server_id}/mcp: {len(tools)} tools")
+        assert tools, "public server should advertise its associated tools, not an empty list"
 
     def test_team_member_accesses_team_server(self, test_users: dict, visibility_servers: dict) -> None:
         """Developer can access the team server's per-server endpoint."""
         server_id = visibility_servers["team"]["id"]
         server_url = f"{BASE_URL}/servers/{server_id}"
-        tools = _mcp_tools_list(test_users["developer"]["access_token"], server_url=server_url)
+        tools = _mcp_tools_list_after_publisher_sync(test_users["developer"]["access_token"], server_url=server_url)
         print(f"    -> Developer via /servers/{server_id}/mcp: {len(tools)} tools")
+        assert tools, "team server should advertise its associated tools, not an empty list"
 
     def test_outsider_denied_team_server(self, outsider_user: dict, visibility_servers: dict) -> None:
         """Outsider cannot access team server's per-server endpoint."""
