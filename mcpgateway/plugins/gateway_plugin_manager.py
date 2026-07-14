@@ -189,8 +189,7 @@ class TenantPluginManagerFactory:
                 if default is not None:
                     self._managers[context_id] = default
                     return default.manager
-                else:
-                    context_id = default_team_context
+                context_id = default_team_context
 
         try:
             config = self._merge_tenant_config(new_config)
@@ -434,7 +433,7 @@ class TenantPluginManagerFactory:
     async def invalidate_all(self) -> None:
         """Reload every cached manager concurrently, logging failures."""
         async with self._lock:
-            context_ids = [ctx_id for ctx_id in self._managers]
+            context_ids = list(self._managers)
         results = await asyncio.gather(
             *(self.reload_tenant(ctx_id) for ctx_id in context_ids),
             return_exceptions=True,
@@ -478,5 +477,4 @@ def get_team_id_from_context(context_id: str) -> Optional[str]:
     if CONTEXT_ID_SEPARATOR in context_id:
         team_id, _ = context_id.split(CONTEXT_ID_SEPARATOR)
         return team_id
-    else:
-        return None
+    return None
