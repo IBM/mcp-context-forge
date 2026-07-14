@@ -16,7 +16,8 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import type { ResourceRead } from "@/generated/types";
-import { copyToClipboard, truncateMiddle } from "@/components/gateways/utils";
+import { copyToClipboard } from "@/lib/clipboard";
+import { truncateMiddle } from "@/components/gateways/utils";
 
 export function ResourcesTable({
   resources,

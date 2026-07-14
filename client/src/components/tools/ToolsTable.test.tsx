@@ -3,7 +3,7 @@ import { screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderWithProviders as render } from "@/test/test-utils";
 import { ToolsTable } from "./ToolsTable";
-import * as gatewayUtils from "@/components/gateways/utils";
+import * as gatewayUtils from "@/lib/clipboard";
 import type { Tool } from "@/types/tool";
 
 // Helper to create mock tools

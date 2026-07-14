@@ -26,10 +26,6 @@ export function getVirtualServerEndpoint(serverId: string) {
   return `${window.location.origin}/servers/${encodedServerId}/mcp`;
 }
 
-export function copyToClipboard(value: string) {
-  void navigator.clipboard?.writeText(value);
-}
-
 export function getTagDisplay(
   tag: string | VirtualServerTag,
   index: number,

@@ -20,7 +20,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import type { MCPServer as BaseMCPServer, VirtualServerTag } from "@/types/server";
-import { copyToClipboard, truncateMiddle } from "@/components/gateways/utils";
+import { copyToClipboard } from "@/lib/clipboard";
+import { truncateMiddle } from "@/components/gateways/utils";
 import { useQuery } from "@/hooks/useQuery";
 
 interface MCPServer extends BaseMCPServer {
