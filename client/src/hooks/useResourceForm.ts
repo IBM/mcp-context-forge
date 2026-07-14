@@ -75,7 +75,10 @@ export interface UseResourceFormReturn {
   setTags: (value: string) => void;
   setVisibility: (value: Visibility) => void;
   validateForm: () => boolean;
-  handleSubmit: (event: FormEvent<HTMLFormElement>, onSuccess?: () => void) => Promise<void>;
+  handleSubmit: (
+    event: FormEvent<HTMLFormElement>,
+    onSuccess?: (name: string) => void,
+  ) => Promise<void>;
   getFormData: () => BodyCreateResourceV1ResourcesPost;
 }
 
@@ -158,7 +161,7 @@ export function useResourceForm(options: ResourceFormOptions = {}): UseResourceF
   }, [uri, name, content, description, mimeType, tags, schema]);
 
   const handleSubmit = useCallback(
-    async (event: FormEvent<HTMLFormElement>, onSuccess?: () => void) => {
+    async (event: FormEvent<HTMLFormElement>, onSuccess?: (name: string) => void) => {
       event.preventDefault();
 
       if (!validateForm()) return;
@@ -188,7 +191,7 @@ export function useResourceForm(options: ResourceFormOptions = {}): UseResourceF
           await createResource(formData);
         }
         setErrors({});
-        if (onSuccess) onSuccess();
+        if (onSuccess) onSuccess(formData.resource.name);
       } catch (error) {
         onError?.();
         const fallback = intl.formatMessage({

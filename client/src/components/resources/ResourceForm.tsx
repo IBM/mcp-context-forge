@@ -24,7 +24,7 @@ import type { ResourceRead } from "@/generated/types";
 interface ResourceFormProps extends Omit<ResourceFormOptions, "resourceId" | "initialValues"> {
   isOpen: boolean;
   onToggle: () => void;
-  onSuccess: () => void;
+  onSuccess: (name: string) => void;
   resource?: NonNullable<ResourceRead>;
 }
 
@@ -83,6 +83,8 @@ export function ResourceForm({
     if (isOpen) headingRef.current?.focus();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const hasCustomMimeType = mimeType !== "" && !MIME_TYPES.includes(mimeType as MimeType);
 
   if (!isOpen) return null;
 
@@ -199,6 +201,7 @@ export function ResourceForm({
                 />
               </SelectTrigger>
               <SelectContent>
+                {hasCustomMimeType && <SelectItem value={mimeType}>{mimeType}</SelectItem>}
                 {MIME_TYPES.map((type) => (
                   <SelectItem key={type} value={type}>
                     {type}

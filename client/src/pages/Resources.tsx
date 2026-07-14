@@ -227,13 +227,25 @@ export function Resources() {
       enabled: !isLoading,
     },
   );
-  const { data: editedResourceContent } = useQuery<{
+  const {
+    data: editedResourceContent,
+    isLoading: isLoadingResourceContent,
+    error: resourceContentError,
+    refetch: refetchResourceContent,
+  } = useQuery<{
     text?: string;
     blob?: string;
     mimeType?: string;
   }>(`/resources/${editingResource?.id}`, {
     enabled: Boolean(editingResource?.id),
   });
+
+  const isEditingBinaryResource = Boolean(
+    editingResource &&
+    editedResourceContent &&
+    !editedResourceContent.text &&
+    editedResourceContent.blob,
+  );
 
   const resourceForForm = useMemo(
     () =>
@@ -305,17 +317,21 @@ export function Resources() {
     setResourcesData((prev) => prev?.filter((r) => r?.id !== OPTIMISTIC_RESOURCE_ID) ?? []);
   }, [setResourcesData]);
 
-  const handleFormSuccess = async () => {
+  const handleFormSuccess = async (submittedName: string) => {
     setShouldRestoreFormCloseFocus(true);
     setShowForm(false);
     if (editingResource) {
-      toast.success(
-        intl.formatMessage({ id: "resources.edit.success" }, { name: editingResource.name }),
-      );
+      toast.success(intl.formatMessage({ id: "resources.edit.success" }, { name: submittedName }));
     }
     setEditingResource(null);
     await refetch();
   };
+
+  const handleCancelEdit = useCallback(() => {
+    setShouldRestoreFormCloseFocus(true);
+    setShowForm(false);
+    setEditingResource(null);
+  }, []);
 
   useEffect(() => {
     if (!showForm && shouldRestoreFormCloseFocus) {
@@ -423,20 +439,47 @@ export function Resources() {
 
   return (
     <div className="p-6">
-      {showForm ? (
+      {showForm && editingResource && isLoadingResourceContent ? (
+        <div className="mx-auto mt-6 flex w-full max-w-3xl items-center justify-center rounded-xl border border-neutral-200 bg-inherit p-12 shadow-[0_12px_40px_rgba(15,23,42,0.12)] dark:border-neutral-800">
+          <span className="sr-only">
+            {intl.formatMessage({ id: "resources.form.loadingContent" })}
+          </span>
+          <div className="h-8 w-8 animate-spin rounded-full border-4 border-gray-200 border-t-blue-600 dark:border-gray-700 dark:border-t-blue-400" />
+        </div>
+      ) : showForm && editingResource && resourceContentError ? (
+        <div className="mx-auto mt-6 w-full max-w-3xl rounded-xl border border-red-200 bg-red-50 p-6 dark:border-red-800 dark:bg-red-900/20">
+          <h3 className="mb-1 font-semibold">
+            {intl.formatMessage({ id: "resources.form.contentLoadError" })}
+          </h3>
+          <p className="mb-4 text-red-800 dark:text-red-200">{resourceContentError.message}</p>
+          <div className="flex justify-end gap-3">
+            <Button type="button" variant="ghost" onClick={handleCancelEdit}>
+              {intl.formatMessage({ id: "resources.form.cancel" })}
+            </Button>
+            <Button type="button" onClick={() => refetchResourceContent()}>
+              {intl.formatMessage({ id: "resources.form.contentLoadError.retry" })}
+            </Button>
+          </div>
+        </div>
+      ) : showForm && editingResource && isEditingBinaryResource ? (
+        <div className="mx-auto mt-6 w-full max-w-3xl rounded-xl border border-neutral-200 bg-inherit p-6 shadow-[0_12px_40px_rgba(15,23,42,0.12)] dark:border-neutral-800">
+          <h3 className="mb-1 font-semibold text-neutral-900 dark:text-white">
+            {intl.formatMessage({ id: "resources.form.binaryUnsupported" })}
+          </h3>
+          <p className="mb-4 text-sm text-neutral-600 dark:text-neutral-400">
+            {intl.formatMessage({ id: "resources.form.binaryUnsupportedDescription" })}
+          </p>
+          <div className="flex justify-end">
+            <Button type="button" variant="ghost" onClick={handleCancelEdit}>
+              {intl.formatMessage({ id: "resources.form.cancel" })}
+            </Button>
+          </div>
+        </div>
+      ) : showForm ? (
         <ResourceForm
-          // Remount once content arrives so the form re-seeds from it (initial state is set once, on mount).
-          key={
-            editingResource
-              ? `${editingResource.id}-${editedResourceContent ? "loaded" : "loading"}`
-              : "create"
-          }
+          key={editingResource ? editingResource.id : "create"}
           isOpen={showForm}
-          onToggle={() => {
-            setShouldRestoreFormCloseFocus(true);
-            setShowForm(false);
-            setEditingResource(null);
-          }}
+          onToggle={handleCancelEdit}
           onSuccess={handleFormSuccess}
           onBeforeSubmit={editingResource ? undefined : handleOptimisticAdd}
           onError={editingResource ? undefined : handleOptimisticRollback}

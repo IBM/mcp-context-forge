@@ -46,6 +46,15 @@ function CopyValue({ label, value }: { label: string; value: string }) {
   );
 }
 
+interface ResourceDetailsPanelProps {
+  resources: NonNullable<ResourceRead>[];
+  gatewaySlug: string;
+  open: boolean;
+  onClose: () => void;
+  onEditResource?: (resource: NonNullable<ResourceRead>) => void;
+  onDeleteResource?: (resourceId: string) => void;
+}
+
 export function ResourceDetailsPanel({
   resources,
   gatewaySlug,
@@ -53,14 +62,7 @@ export function ResourceDetailsPanel({
   onClose,
   onEditResource,
   onDeleteResource,
-}: {
-  resources: NonNullable<ResourceRead>[];
-  gatewaySlug: string;
-  open: boolean;
-  onClose: () => void;
-  onEditResource?: (resource: NonNullable<ResourceRead>) => void;
-  onDeleteResource?: (resourceId: string) => void;
-}) {
+}: ResourceDetailsPanelProps) {
   const intl = useIntl();
   const [selectedResource, setSelectedResource] = useState<NonNullable<ResourceRead> | null>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
