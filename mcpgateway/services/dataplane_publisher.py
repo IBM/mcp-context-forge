@@ -22,6 +22,7 @@ import msgpack
 from sqlalchemy import select
 
 # First-Party
+from mcpgateway.config import settings
 from mcpgateway.db import (
     EmailTeamMember,
     EmailUser,
@@ -42,15 +43,19 @@ from mcpgateway.utils.redis_client import get_redis_client
 logger = logging.getLogger(__name__)
 
 USER_CONFIG_KEY = "UserConfig"
-REDIS_PUBLISHER_TIME = 60  # Publish interval in seconds
-# Keys are not deleted explicitly; stale configs expire via Redis TTL. The
-# TTL must outlive a full missed publish cycle: under load the loop's timer
-# can fire late, and with only a few seconds of margin every UserConfig key
-# expires at once, taking dataplane config down for all subjects until the
-# next snapshot.
-PUBLISHER_TTL = REDIS_PUBLISHER_TIME * 2 + 10
-
 PUBLISHER_LOCK_KEY = "mcpgw:dataplane_publisher:lock"
+
+
+def get_publisher_interval() -> int:
+    """Return the configured interval between dataplane snapshots."""
+    return settings.dataplane_publisher_interval_seconds
+
+
+def get_publisher_ttl(publisher_interval: int | None = None) -> int:
+    """Return a key TTL for the given interval, or the current setting when omitted."""
+    if publisher_interval is None:
+        publisher_interval = get_publisher_interval()
+    return publisher_interval * 2 + 10
 
 
 class BackendConfig(TypedDict):
@@ -132,16 +137,18 @@ class DataplanePublisherService:
     async def publish_to_redis(self) -> None:
         """Continuously publish user configuration payloads to Redis."""
         while not self._shutdown_event.is_set():
+            publisher_interval = get_publisher_interval()
+            publisher_ttl = get_publisher_ttl(publisher_interval)
             redis = await get_redis_client()
             if redis is None:
-                logger.error("Redis client is unavailable; retrying in %s seconds.", REDIS_PUBLISHER_TIME)
-                await asyncio.sleep(REDIS_PUBLISHER_TIME)
+                logger.error("Redis client is unavailable; retrying in %s seconds.", publisher_interval)
+                await asyncio.sleep(publisher_interval)
                 continue
 
             acquired = False
             try:
                 # Try to acquire lock (atomic SET NX EX)
-                lock_ttl = REDIS_PUBLISHER_TIME + 30  # Lock expires 30s after publish interval
+                lock_ttl = publisher_interval + 30  # Lock expires 30s after publish interval
                 acquired = await redis.set(
                     PUBLISHER_LOCK_KEY,
                     self.worker_id,
@@ -152,7 +159,7 @@ class DataplanePublisherService:
                 if not acquired:
                     # Another worker holds the lock - skip this cycle
                     logger.debug("Another worker holds publisher lock, skipping cycle")
-                    await asyncio.sleep(REDIS_PUBLISHER_TIME)
+                    await asyncio.sleep(publisher_interval)
                     continue
 
                 # We hold the lock - publish data
@@ -168,7 +175,7 @@ class DataplanePublisherService:
                         pipe.set(
                             key,
                             msgpack.dumps(config, use_bin_type=True),
-                            ex=PUBLISHER_TTL,
+                            ex=publisher_ttl,
                         )
                     try:
                         await pipe.execute()
@@ -194,7 +201,7 @@ class DataplanePublisherService:
 
             # Wait for next cycle
             try:
-                await asyncio.wait_for(self._shutdown_event.wait(), timeout=REDIS_PUBLISHER_TIME)
+                await asyncio.wait_for(self._shutdown_event.wait(), timeout=publisher_interval)
                 break  # Shutdown signaled
             except asyncio.TimeoutError:
                 continue
