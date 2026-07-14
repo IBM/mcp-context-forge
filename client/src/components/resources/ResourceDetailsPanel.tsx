@@ -52,6 +52,7 @@ interface ResourceDetailsPanelProps {
   gatewaySlug: string;
   open: boolean;
   onClose: () => void;
+  onEditResource?: (resource: NonNullable<ResourceRead>) => void;
   onDeleteResource?: (resourceId: string) => void;
 }
 
@@ -60,6 +61,7 @@ export function ResourceDetailsPanel({
   gatewaySlug,
   open,
   onClose,
+  onEditResource,
   onDeleteResource,
 }: ResourceDetailsPanelProps) {
   const intl = useIntl();
@@ -174,6 +176,7 @@ export function ResourceDetailsPanel({
                 resources={resources}
                 selectedResourceId={selectedResource?.id}
                 onSelectResource={setSelectedResource}
+                onEditResource={onEditResource}
                 onDeleteResource={onDeleteResource}
               />
             </div>

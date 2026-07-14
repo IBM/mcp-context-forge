@@ -2,15 +2,23 @@ import { useState, useCallback, useMemo, type FormEvent } from "react";
 import { useIntl } from "react-intl";
 import { z } from "zod";
 import { useQuery } from "@/hooks/useQuery";
+import { resourcesApi } from "@/api/resources";
 import { sanitizeString } from "@/lib/sanitize";
 import { parseApiError } from "@/lib/errorUtils";
-import type { BodyCreateResourceV1ResourcesPost } from "@/generated/types";
+import type { BodyCreateResourceV1ResourcesPost, ResourceUpdate } from "@/generated/types";
 import type { Visibility } from "@/types/server";
 
 const createResourceFormSchema = (intl: ReturnType<typeof useIntl>) =>
   z.object({
     uri: z.string().min(1, intl.formatMessage({ id: "resources.form.error.uriRequired" })),
-    name: z.string().min(1, intl.formatMessage({ id: "resources.form.error.nameRequired" })),
+    name: z
+      .string()
+      .min(1, intl.formatMessage({ id: "resources.form.error.nameRequired" }))
+      .max(255, intl.formatMessage({ id: "resources.form.error.nameMax" }))
+      .regex(
+        /^[a-zA-Z0-9_.\- ]+$/,
+        intl.formatMessage({ id: "resources.form.error.nameInvalidChars" }),
+      ),
     content: z.string().min(1, intl.formatMessage({ id: "resources.form.error.contentRequired" })),
     description: z
       .string()
@@ -32,9 +40,21 @@ export interface ResourceFormErrors {
   submit?: string;
 }
 
+export interface ResourceFormInitialValues {
+  uri?: string;
+  name?: string;
+  content?: string;
+  description?: string;
+  mimeType?: MimeType | "";
+  tags?: string;
+  visibility?: Visibility;
+}
+
 export interface ResourceFormOptions {
   onBeforeSubmit?: (data: BodyCreateResourceV1ResourcesPost) => void;
   onError?: () => void;
+  resourceId?: string;
+  initialValues?: ResourceFormInitialValues;
 }
 
 export interface UseResourceFormReturn {
@@ -55,7 +75,10 @@ export interface UseResourceFormReturn {
   setTags: (value: string) => void;
   setVisibility: (value: Visibility) => void;
   validateForm: () => boolean;
-  handleSubmit: (event: FormEvent<HTMLFormElement>, onSuccess?: () => void) => Promise<void>;
+  handleSubmit: (
+    event: FormEvent<HTMLFormElement>,
+    onSuccess?: (name: string) => void,
+  ) => Promise<void>;
   getFormData: () => BodyCreateResourceV1ResourcesPost;
 }
 
@@ -72,23 +95,26 @@ export const MIME_TYPES = [
 export type MimeType = (typeof MIME_TYPES)[number];
 
 export function useResourceForm(options: ResourceFormOptions = {}): UseResourceFormReturn {
-  const { onBeforeSubmit, onError } = options;
+  const { onBeforeSubmit, onError, resourceId, initialValues } = options;
   const intl = useIntl();
   const schema = useMemo(() => createResourceFormSchema(intl), [intl]);
 
-  const [uri, setUri] = useState("");
-  const [name, setName] = useState("");
-  const [content, setContent] = useState("");
-  const [description, setDescription] = useState("");
-  const [mimeType, setMimeType] = useState<MimeType | "">("");
-  const [tags, setTags] = useState("");
-  const [visibility, setVisibility] = useState<Visibility>("public");
+  const [uri, setUri] = useState(initialValues?.uri ?? "");
+  const [name, setName] = useState(initialValues?.name ?? "");
+  const [content, setContent] = useState(initialValues?.content ?? "");
+  const [description, setDescription] = useState(initialValues?.description ?? "");
+  const [mimeType, setMimeType] = useState<MimeType | "">(initialValues?.mimeType ?? "");
+  const [tags, setTags] = useState(initialValues?.tags ?? "");
+  const [visibility, setVisibility] = useState<Visibility>(initialValues?.visibility ?? "public");
   const [errors, setErrors] = useState<ResourceFormErrors>({});
+  const [isUpdating, setIsUpdating] = useState(false);
 
-  const { execute: createResource, isLoading: isSubmitting } = useQuery<
+  const { execute: createResource, isLoading: isCreating } = useQuery<
     unknown,
     BodyCreateResourceV1ResourcesPost
   >("/resources", { method: "POST", enabled: false });
+
+  const isSubmitting = isCreating || isUpdating;
 
   const getFormData = useCallback((): BodyCreateResourceV1ResourcesPost => {
     return {
@@ -135,7 +161,7 @@ export function useResourceForm(options: ResourceFormOptions = {}): UseResourceF
   }, [uri, name, content, description, mimeType, tags, schema]);
 
   const handleSubmit = useCallback(
-    async (event: FormEvent<HTMLFormElement>, onSuccess?: () => void) => {
+    async (event: FormEvent<HTMLFormElement>, onSuccess?: (name: string) => void) => {
       event.preventDefault();
 
       if (!validateForm()) return;
@@ -144,16 +170,39 @@ export function useResourceForm(options: ResourceFormOptions = {}): UseResourceF
       onBeforeSubmit?.(formData);
 
       try {
-        await createResource(formData);
+        if (resourceId) {
+          const { resource } = formData;
+          const updatePayload: ResourceUpdate = {
+            uri: resource.uri,
+            name: resource.name,
+            content: resource.content,
+            description: resource.description,
+            mimeType: resource.mimeType,
+            tags: resource.tags,
+            visibility: resource.visibility,
+          };
+          setIsUpdating(true);
+          try {
+            await resourcesApi.update(resourceId, updatePayload);
+          } finally {
+            setIsUpdating(false);
+          }
+        } else {
+          await createResource(formData);
+        }
         setErrors({});
-        if (onSuccess) onSuccess();
+        if (onSuccess) onSuccess(formData.resource.name);
       } catch (error) {
         onError?.();
-        const fallback = intl.formatMessage({ id: "resources.form.error.createFailed" });
+        const fallback = intl.formatMessage({
+          id: resourceId
+            ? "resources.form.error.updateFailed"
+            : "resources.form.error.createFailed",
+        });
         setErrors({ submit: parseApiError(error, fallback) });
       }
     },
-    [validateForm, getFormData, onBeforeSubmit, createResource, onError, intl],
+    [validateForm, getFormData, onBeforeSubmit, createResource, resourceId, onError, intl],
   );
 
   return {
