@@ -2,11 +2,9 @@
 """Location: ./mcpgateway/alembic/versions/7ab59991e017_fix_oauth_tokens_unique_constraint.py
 Copyright 2026
 SPDX-License-Identifier: Apache-2.0
-Authors: Bogdan-Marius Catanus
+Authors: mcp-contextforge-team
 
 fix_oauth_tokens_unique_constraint
-
-Fixes bug #5191: oauth_tokens unique constraint blocks multi-user OAuth for DCR clients
 
 The migration 14ac971cee42 added app_user_email column and created a unique index
 idx_oauth_gateway_user on (gateway_id, app_user_email), but failed to drop the
@@ -20,10 +18,9 @@ This migration:
 2. Creates the new UniqueConstraint 'uq_oauth_gateway_user' on (gateway_id, app_user_email)
 3. Keeps idx_oauth_gateway_user as a regular index for query performance
 
-Revision ID: 7ab59991e017
-Revises: 0a089912b5f0
-Create Date: 2026-06-12 10:18:32.623237
-"""
+    Revision ID: 7ab59991e017
+    Revises: b6c7d8e9f0a1
+    Create Date: 2026-06-12 10:18:32.623237"""
 
 # Standard
 from typing import Sequence, Union
@@ -34,7 +31,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = "7ab59991e017"
-down_revision: Union[str, Sequence[str], None] = "0a089912b5f0"
+down_revision: Union[str, Sequence[str], None] = "b6c7d8e9f0a1"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
@@ -55,65 +52,25 @@ def upgrade() -> None:
     dialect_name = conn.dialect.name.lower()
 
     # Check if old constraint exists before trying to drop it
-    old_constraint_exists = False
-    if dialect_name == "postgresql":
-        result = conn.execute(sa.text("SELECT 1 FROM pg_constraint WHERE conname = 'unique_gateway_user' " "AND conrelid = 'oauth_tokens'::regclass")).fetchone()
-        old_constraint_exists = result is not None
-    elif dialect_name == "sqlite":
-        # SQLite stores constraints in the table definition
-        # We need to check the schema
-        result = conn.execute(sa.text("SELECT sql FROM sqlite_master WHERE type='table' AND name='oauth_tokens'")).fetchone()
-        if result:
-            table_sql = result[0]
-            old_constraint_exists = "unique_gateway_user" in table_sql.lower()
+    inspector = sa.inspect(conn)  # Refresh inspector for current state
+    unique_constraints = inspector.get_unique_constraints("oauth_tokens")
+    old_constraint_exists = any(uc.get("name") == "unique_gateway_user" for uc in unique_constraints)
 
     # For SQLite and PostgreSQL, handle constraint migration differently
     if dialect_name == "sqlite":
         # SQLite requires table recreation to change constraints
-        # Alembic's batch mode doesn't always properly handle constraint changes,
-        # so we use manual table recreation for reliability
+        # Use batch_alter_table which handles this automatically
         if old_constraint_exists:
-            print("SQLite detected: Recreating table to fix constraints...")
-
-            # Step 1: Rename old table
-            op.rename_table("oauth_tokens", "oauth_tokens_old")
-
-            # Step 2: Create new table with correct constraint
-            op.create_table(
-                "oauth_tokens",
-                sa.Column("id", sa.String(36), primary_key=True),
-                sa.Column("gateway_id", sa.String(36), nullable=False),
-                sa.Column("user_id", sa.String(255), nullable=False),
-                sa.Column("app_user_email", sa.String(255), nullable=False),
-                sa.Column("access_token", sa.Text, nullable=False),
-                sa.Column("refresh_token", sa.Text, nullable=True),
-                sa.Column("token_type", sa.String(50), server_default="Bearer"),
-                sa.Column("expires_at", sa.DateTime(timezone=True), nullable=True),
-                sa.Column("scopes", sa.JSON, nullable=True),
-                sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now()),
-                sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), onupdate=sa.func.now()),
-                sa.ForeignKeyConstraint(["gateway_id"], ["gateways.id"], ondelete="CASCADE"),
-                sa.ForeignKeyConstraint(["app_user_email"], ["email_users.email"], ondelete="CASCADE"),
-                sa.UniqueConstraint("gateway_id", "app_user_email", name="uq_oauth_gateway_user"),
-            )
-
-            # Step 3: Copy data from old table
-            conn.execute(sa.text("INSERT INTO oauth_tokens SELECT * FROM oauth_tokens_old"))
-
-            # Step 4: Drop old table
-            op.drop_table("oauth_tokens_old")
-
-            # Step 5: Recreate index (non-unique since constraint handles uniqueness)
-            op.create_index("idx_oauth_gateway_user", "oauth_tokens", ["gateway_id", "app_user_email"], unique=False)
-
+            print("SQLite detected: Using batch mode to fix constraints...")
+            with op.batch_alter_table("oauth_tokens", schema=None) as batch_op:
+                batch_op.drop_constraint("unique_gateway_user", type_="unique")
+                batch_op.create_unique_constraint("uq_oauth_gateway_user", ["gateway_id", "app_user_email"])
             print("✓ Dropped 'unique_gateway_user' and created 'uq_oauth_gateway_user'")
         else:
             # Old constraint doesn't exist, just check if we need to create the new one
-            result = conn.execute(sa.text("SELECT sql FROM sqlite_master WHERE type='table' AND name='oauth_tokens'")).fetchone()
-            new_constraint_exists = False
-            if result:
-                table_sql = result[0]
-                new_constraint_exists = "uq_oauth_gateway_user" in table_sql.lower()
+            inspector = sa.inspect(conn)  # Refresh inspector after batch operation
+            unique_constraints = inspector.get_unique_constraints("oauth_tokens")
+            new_constraint_exists = any(uc.get("name") == "uq_oauth_gateway_user" for uc in unique_constraints)
 
             if not new_constraint_exists:
                 with op.batch_alter_table("oauth_tokens", schema=None) as batch_op:
@@ -130,8 +87,9 @@ def upgrade() -> None:
             print("Old UniqueConstraint 'unique_gateway_user' not found (already dropped or never existed)")
 
         # Check if new constraint already exists
-        result = conn.execute(sa.text("SELECT 1 FROM pg_constraint WHERE conname = 'uq_oauth_gateway_user' " "AND conrelid = 'oauth_tokens'::regclass")).fetchone()
-        new_constraint_exists = result is not None
+        inspector = sa.inspect(conn)  # Refresh inspector after constraint drop
+        unique_constraints = inspector.get_unique_constraints("oauth_tokens")
+        new_constraint_exists = any(uc.get("name") == "uq_oauth_gateway_user" for uc in unique_constraints)
 
         if not new_constraint_exists:
             op.create_unique_constraint("uq_oauth_gateway_user", "oauth_tokens", ["gateway_id", "app_user_email"])
@@ -160,15 +118,9 @@ def downgrade() -> None:
     dialect_name = conn.dialect.name.lower()
 
     # Check if new constraint exists before trying to drop it
-    new_constraint_exists = False
-    if dialect_name == "postgresql":
-        result = conn.execute(sa.text("SELECT 1 FROM pg_constraint WHERE conname = 'uq_oauth_gateway_user' " "AND conrelid = 'oauth_tokens'::regclass")).fetchone()
-        new_constraint_exists = result is not None
-    elif dialect_name == "sqlite":
-        result = conn.execute(sa.text("SELECT sql FROM sqlite_master WHERE type='table' AND name='oauth_tokens'")).fetchone()
-        if result:
-            table_sql = result[0]
-            new_constraint_exists = "uq_oauth_gateway_user" in table_sql.lower()
+    inspector = sa.inspect(conn)  # Refresh inspector for current state
+    unique_constraints = inspector.get_unique_constraints("oauth_tokens")
+    new_constraint_exists = any(uc.get("name") == "uq_oauth_gateway_user" for uc in unique_constraints)
 
     # Drop the new UniqueConstraint if it exists
     if new_constraint_exists:
@@ -183,15 +135,9 @@ def downgrade() -> None:
         print("UniqueConstraint 'uq_oauth_gateway_user' not found")
 
     # Check if old constraint already exists
-    old_constraint_exists = False
-    if dialect_name == "postgresql":
-        result = conn.execute(sa.text("SELECT 1 FROM pg_constraint WHERE conname = 'unique_gateway_user' " "AND conrelid = 'oauth_tokens'::regclass")).fetchone()
-        old_constraint_exists = result is not None
-    elif dialect_name == "sqlite":
-        result = conn.execute(sa.text("SELECT sql FROM sqlite_master WHERE type='table' AND name='oauth_tokens'")).fetchone()
-        if result:
-            table_sql = result[0]
-            old_constraint_exists = "unique_gateway_user" in table_sql.lower()
+    inspector = sa.inspect(conn)  # Refresh inspector after constraint drop
+    unique_constraints = inspector.get_unique_constraints("oauth_tokens")
+    old_constraint_exists = any(uc.get("name") == "unique_gateway_user" for uc in unique_constraints)
 
     # Restore the old UniqueConstraint if it doesn't exist
     if not old_constraint_exists:
