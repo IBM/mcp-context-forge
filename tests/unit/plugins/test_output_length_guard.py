@@ -2005,24 +2005,35 @@ class TestPluginIntegration(BaseOutputLengthGuardTest):
         self.assertEqual(struct_result[2], "regular...")
 
     def test_content_field_not_truncated_after_regeneration(self):
-        """Test the critical v0.3.3 fix: regenerated content is not truncated."""
+        """Regenerated content from structuredContent is not double-truncated (v0.3.3 fix).
+
+        When structuredContent strings exceed max_chars and get truncated, the plugin
+        replaces content[] with a JSON representation of the truncated struct.
+        That JSON text must NOT be run through the length guard a second time,
+        even though it is itself longer than max_chars.
+        """
         payload = Mock()
         payload.name = "test_tool"
-        payload.result = {"content": [{"type": "text", "text": "ignored"}], "structuredContent": {"result": ["sff", "dffd"]}}
+        # Both strings exceed max_chars=10, so struct_modified=True
+        payload.result = {
+            "content": [{"type": "text", "text": "ignored"}],
+            "structuredContent": {"result": ["longer than ten", "also long text"]},
+        }
 
         result = asyncio.run(self.plugin.tool_post_invoke(payload, self.mock_context))
 
-        # Check if plugin made modifications
-        if result.modified_payload is None:
-            # If no modification, check if original content is correct
-            self.skipTest("Plugin did not modify payload - may be working as intended")
-
+        self.assertIsNotNone(result.modified_payload, "Plugin should modify payload when structuredContent strings exceed max_chars")
         modified_result = result.modified_payload.result
-        content_text = modified_result["content"][0]["text"]
 
-        # Content should be the full JSON representation
-        expected = '["sff","dffd"]'
-        self.assertEqual(content_text, expected)
+        # structuredContent strings should each be truncated to max_chars=10
+        struct_items = modified_result["structuredContent"]["result"]
+        self.assertEqual(struct_items[0], "longer ...")
+        self.assertEqual(struct_items[1], "also lo...")
+
+        # content[0]["text"] must be the JSON of the truncated struct and must NOT
+        # be truncated again — it is 27 chars but should survive intact
+        content_text = modified_result["content"][0]["text"]
+        self.assertEqual(content_text, '["longer ...","also lo..."]')
 
     def test_null_structured_content_processes_content_array(self):
         """Test that structuredContent: null allows content array processing (Issue #20 fix).
@@ -3854,12 +3865,7 @@ class TestResourceItemHandling(BaseOutputLengthGuardTest):
     # ------------------------------------------------------------------
 
     def test_struct_within_bounds_resource_text_truncated(self):
-        """structuredContent is small (within bounds); resource.text in content must still be truncated.
-
-        This is the primary regression from Issue #5602: when structuredContent was
-        present and passed the length check, the plugin returned early and never
-        enforced limits on the content array, allowing large resource.text through.
-        """
+        """structuredContent is small (within bounds); resource.text in content must still be truncated."""
         large_text = "x" * 500
         payload = Mock()
         payload.name = "file_download"
