@@ -52,6 +52,61 @@ const testUrlSchema = z
     { message: "URL must start with http:// or https://." },
   );
 
+type FieldErrors = {
+  url?: string;
+  path?: string;
+  headers?: string;
+  body?: string;
+};
+
+// Field-level validators. Each returns an error message, or undefined when the
+// value is acceptable. Shared by the on-blur checks and the pre-submit sweep so
+// the two never drift.
+function validateUrl(value: string): string | undefined {
+  const result = testUrlSchema.safeParse(value);
+  return result.success ? undefined : result.error.issues[0].message;
+}
+
+// Path is a suffix appended to the base URL; the backend normalizes leading and
+// trailing slashes, so we don't police those. This is a soft guard against the
+// common fat-finger of pasting a full URL (scheme + host) into the Path field.
+function validatePath(value: string): string | undefined {
+  return value.includes("://")
+    ? "Path shouldn't include a scheme or host (e.g. https://…)."
+    : undefined;
+}
+
+function validateHeaders(value: string): string | undefined {
+  if (!value.trim()) return undefined;
+  try {
+    const parsed = JSON.parse(value);
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      return "Headers must be a JSON object.";
+    }
+  } catch (e) {
+    return `Invalid headers JSON: ${e instanceof Error ? e.message : "Parse error"}`;
+  }
+  return undefined;
+}
+
+function sendsBodyFor(method: string): boolean {
+  return method !== "Get" && method !== "HEAD";
+}
+
+// Only JSON bodies are validated; form-encoded (and other) content types are
+// sent verbatim, so there is nothing to parse.
+function validateBody(value: string, method: string, contentType: string): string | undefined {
+  if (!sendsBodyFor(method) || !value.trim() || contentType !== "application/json") {
+    return undefined;
+  }
+  try {
+    JSON.parse(value);
+  } catch (e) {
+    return `Invalid body JSON: ${e instanceof Error ? e.message : "Parse error"}`;
+  }
+  return undefined;
+}
+
 function FieldLabel({
   htmlFor,
   children,
@@ -88,6 +143,7 @@ export function TestConnectionDialog({ open, onOpenChange, serverUrl }: TestConn
   const [body, setBody] = useState<string>("");
   const [response, setResponse] = useState<GatewayTestResponse>(null);
   const [error, setError] = useState<string>("");
+  const [errors, setErrors] = useState<FieldErrors>({});
   const titleRef = useRef<HTMLHeadingElement>(null);
   // Tracks the in-flight test request so it can be cancelled when the dialog is
   // closed, reopened, or unmounted (prevents state updates on a stale request).
@@ -110,7 +166,14 @@ export function TestConnectionDialog({ open, onOpenChange, serverUrl }: TestConn
     setBody("");
     setResponse(null);
     setError("");
+    setErrors({});
   }, [open, serverUrl]);
+
+  // Drop a field's inline error as soon as the user edits it; validation runs
+  // again on blur and on submit.
+  const clearError = useCallback((field: keyof FieldErrors) => {
+    setErrors((prev) => (prev[field] ? { ...prev, [field]: undefined } : prev));
+  }, []);
 
   // Cancel any in-flight request on unmount.
   useEffect(() => () => abortRef.current?.abort(), []);
@@ -119,51 +182,35 @@ export function TestConnectionDialog({ open, onOpenChange, serverUrl }: TestConn
     setResponse(null);
     setError("");
 
-    // URL is required and must be an http/https URL before sending.
-    const urlResult = testUrlSchema.safeParse(url);
-    if (!urlResult.success) {
-      setStatus("error");
-      setError(urlResult.error.issues[0].message);
+    // Validate every field up front and surface problems inline; don't send a
+    // request while anything is invalid.
+    const nextErrors: FieldErrors = {
+      url: validateUrl(url),
+      path: validatePath(path),
+      headers: validateHeaders(headers),
+      body: validateBody(body, method, contentType),
+    };
+    setErrors(nextErrors);
+    if (nextErrors.url || nextErrors.path || nextErrors.headers || nextErrors.body) {
       return;
     }
 
-    // Validate and capture the headers JSON before it would be sent.
-    let parsedHeaders: Record<string, string> | undefined;
-    if (headers.trim()) {
-      try {
-        const parsed = JSON.parse(headers);
-        if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-          throw new Error("Headers must be a JSON object");
-        }
-        parsedHeaders = parsed as Record<string, string>;
-      } catch (e) {
-        setStatus("error");
-        setError(`Invalid headers JSON: ${e instanceof Error ? e.message : "Parse error"}`);
-        return;
-      }
-    }
+    // Fields are valid — parse the JSON payloads for sending. JSON bodies are
+    // parsed to an object so the backend forwards them as JSON; form-encoded
+    // bodies are sent as-is.
+    const parsedHeaders: Record<string, string> | undefined = headers.trim()
+      ? (JSON.parse(headers) as Record<string, string>)
+      : undefined;
 
-    // Validate and capture the request body. JSON bodies are parsed to an object
-    // so the backend forwards them as JSON; form-encoded bodies are sent as-is.
-    const sendsBody = method !== "Get" && method !== "HEAD";
     let parsedBody: string | Record<string, unknown> | undefined;
-    if (sendsBody && body.trim()) {
-      if (contentType === "application/json") {
-        try {
-          parsedBody = JSON.parse(body);
-        } catch (e) {
-          setStatus("error");
-          setError(`Invalid body JSON: ${e instanceof Error ? e.message : "Parse error"}`);
-          return;
-        }
-      } else {
-        parsedBody = body;
-      }
+    if (sendsBodyFor(method) && body.trim()) {
+      parsedBody =
+        contentType === "application/json" ? (JSON.parse(body) as Record<string, unknown>) : body;
     }
 
     const payload: GatewayTestRequest = {
       method: method.toUpperCase(),
-      baseUrl: urlResult.data,
+      baseUrl: url.trim(),
       path: path.trim(),
       contentType,
       ...(parsedHeaders ? { headers: parsedHeaders } : {}),
@@ -250,11 +297,22 @@ export function TestConnectionDialog({ open, onOpenChange, serverUrl }: TestConn
               <Input
                 id="url"
                 value={url}
-                onChange={(e) => setUrl(e.target.value)}
+                onChange={(e) => {
+                  setUrl(e.target.value);
+                  clearError("url");
+                }}
+                onBlur={() => setErrors((prev) => ({ ...prev, url: validateUrl(url) }))}
                 placeholder="https://mcp.github.com/mcp"
                 disabled={isTesting}
+                aria-invalid={!!errors.url}
+                aria-describedby={errors.url ? "url-error" : undefined}
                 className="bg-transparent dark:bg-transparent"
               />
+              {errors.url && (
+                <p id="url-error" className="text-sm text-red-500">
+                  {errors.url}
+                </p>
+              )}
             </div>
 
             {/* Method */}
@@ -293,11 +351,22 @@ export function TestConnectionDialog({ open, onOpenChange, serverUrl }: TestConn
               <Input
                 id="path"
                 value={path}
-                onChange={(e) => setPath(e.target.value)}
+                onChange={(e) => {
+                  setPath(e.target.value);
+                  clearError("path");
+                }}
+                onBlur={() => setErrors((prev) => ({ ...prev, path: validatePath(path) }))}
                 placeholder="/health"
                 disabled={isTesting}
+                aria-invalid={!!errors.path}
+                aria-describedby={errors.path ? "path-error" : undefined}
                 className="bg-transparent dark:bg-transparent"
               />
+              {errors.path && (
+                <p id="path-error" className="text-sm text-red-500">
+                  {errors.path}
+                </p>
+              )}
             </div>
 
             {/* Content type */}
@@ -327,11 +396,22 @@ export function TestConnectionDialog({ open, onOpenChange, serverUrl }: TestConn
               <Textarea
                 id="headers"
                 value={headers}
-                onChange={(e) => setHeaders(e.target.value)}
+                onChange={(e) => {
+                  setHeaders(e.target.value);
+                  clearError("headers");
+                }}
+                onBlur={() => setErrors((prev) => ({ ...prev, headers: validateHeaders(headers) }))}
                 placeholder="Add request headers as JSON..."
                 className="min-h-[96px] bg-transparent font-mono text-sm focus-visible:ring-1 focus-visible:ring-offset-0"
                 disabled={isTesting}
+                aria-invalid={!!errors.headers}
+                aria-describedby={errors.headers ? "headers-error" : undefined}
               />
+              {errors.headers && (
+                <p id="headers-error" className="text-sm text-red-500">
+                  {errors.headers}
+                </p>
+              )}
             </div>
 
             {/* Body — not applicable to GET requests */}
@@ -343,11 +423,27 @@ export function TestConnectionDialog({ open, onOpenChange, serverUrl }: TestConn
                 <Textarea
                   id="body"
                   value={body}
-                  onChange={(e) => setBody(e.target.value)}
+                  onChange={(e) => {
+                    setBody(e.target.value);
+                    clearError("body");
+                  }}
+                  onBlur={() =>
+                    setErrors((prev) => ({
+                      ...prev,
+                      body: validateBody(body, method, contentType),
+                    }))
+                  }
                   placeholder="Add request body as JSON..."
                   className="min-h-[116px] bg-transparent font-mono text-sm focus-visible:ring-1 focus-visible:ring-offset-0"
                   disabled={isTesting}
+                  aria-invalid={!!errors.body}
+                  aria-describedby={errors.body ? "body-error" : undefined}
                 />
+                {errors.body && (
+                  <p id="body-error" className="text-sm text-red-500">
+                    {errors.body}
+                  </p>
+                )}
               </div>
             )}
           </div>
