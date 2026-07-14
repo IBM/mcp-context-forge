@@ -40,6 +40,7 @@ from mcpgateway.services.tool_plugin_binding_service import get_bindings_for_too
 logger = logging.getLogger(__name__)
 
 CONTEXT_ID_SEPARATOR = "::"
+DEFAULT_CONTEXT_ID = "__global__"
 
 _LEGACY_MODE_TO_PLUGIN_MODE: dict[str, tuple[PluginMode, Optional[OnError]]] = {
     "enforce": (PluginMode.SEQUENTIAL, None),
@@ -129,13 +130,13 @@ class TenantPluginManagerFactory:
 
     async def get_manager(self, context_id: Optional[str] = None) -> TenantPluginManager:
         """Get or create a TenantPluginManager for the given context."""
-        context_id = context_id or "__global__"
+        context_id = context_id or DEFAULT_CONTEXT_ID
         expired = None
 
         async with self._lock:
             entry = self._managers.get(context_id)
             if entry is not None:
-                if entry.is_expired(self._cache_ttl):
+                if entry.is_expired(self._cache_ttl) and context_id != DEFAULT_CONTEXT_ID:
                     expired = self._managers.pop(context_id, None)
                     logger.debug("Cache TTL expired for context_id=%s, rebuilding", context_id)
                 else:
@@ -165,10 +166,33 @@ class TenantPluginManagerFactory:
                     self._inflight.pop(context_id, None)
 
     async def _build_manager(self, context_id: str) -> TenantPluginManager:
-        """Create, initialise, and cache a new manager for *context_id*."""
+        """Create, initialise, and cache a new manager for *context_id*.
+
+        Fallback: When no DB config exists for a team context, reuses the team's
+        default manager (team_id::__global__). Multiple contexts may share the
+        same manager instance. Invalidating a shared default affects all contexts
+        referencing it.
+        """
         manager = None
+        new_config = None
+        team_id = None
+
+        if CONTEXT_ID_SEPARATOR in context_id and DEFAULT_CONTEXT_ID not in context_id:
+            team_id = get_team_id_from_context(context_id)
+            async with self._lock:
+                new_config = await self.get_config_from_db(context_id)
+
+        if new_config is None:
+            async with self._lock:
+                default_team_context = make_context_id(team_id, DEFAULT_CONTEXT_ID) if team_id else DEFAULT_CONTEXT_ID
+                default = self._managers.get(default_team_context)
+                if default is not None:
+                    self._managers[context_id] = default
+                    return default.manager
+                else:
+                    context_id = default_team_context
+
         try:
-            new_config = await self.get_config_from_db(context_id)
             config = self._merge_tenant_config(new_config)
             config = await self._apply_redis_mode_overrides(config)
 
@@ -331,7 +355,8 @@ class TenantPluginManagerFactory:
     async def shutdown(self) -> None:
         """Shut down all cached managers and cancel in-flight build tasks."""
         async with self._lock:
-            entries = list(self._managers.values())
+            # Deduplicate managers to avoid multiple shutdowns when shared
+            unique_managers = {entry.manager for entry in self._managers.values()}
             inflight = list(self._inflight.values())
             self._managers.clear()
             self._inflight.clear()
@@ -342,9 +367,9 @@ class TenantPluginManagerFactory:
         if inflight:
             await asyncio.gather(*inflight, return_exceptions=True)
 
-        for entry in entries:
+        for manager in unique_managers:
             try:
-                await entry.manager.shutdown()
+                await manager.shutdown()
             except Exception:
                 logger.exception("Failed to shutdown plugin manager")
 
@@ -409,7 +434,7 @@ class TenantPluginManagerFactory:
     async def invalidate_all(self) -> None:
         """Reload every cached manager concurrently, logging failures."""
         async with self._lock:
-            context_ids = list(self._managers.keys())
+            context_ids = [ctx_id for ctx_id in self._managers]
         results = await asyncio.gather(
             *(self.reload_tenant(ctx_id) for ctx_id in context_ids),
             return_exceptions=True,
@@ -446,3 +471,12 @@ GatewayTenantPluginManagerFactory = TenantPluginManagerFactory
 def make_context_id(team_id: str, tool_name: str) -> str:
     """Build the context_id string expected by TenantPluginManagerFactory."""
     return f"{team_id}{CONTEXT_ID_SEPARATOR}{tool_name}"
+
+
+def get_team_id_from_context(context_id: str) -> Optional[str]:
+    """Get team_id from context_id"""
+    if CONTEXT_ID_SEPARATOR in context_id:
+        team_id, _ = context_id.split(CONTEXT_ID_SEPARATOR)
+        return team_id
+    else:
+        return None

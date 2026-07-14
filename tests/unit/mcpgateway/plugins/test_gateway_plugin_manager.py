@@ -473,9 +473,13 @@ class TestBuildManager:
 
     @pytest.mark.asyncio
     async def test_build_manager_happy_path(self, factory):
+        from mcpgateway.plugins.gateway_plugin_manager import DEFAULT_CONTEXT_ID
         mock_manager = AsyncMock()
         mock_manager.initialize = AsyncMock()
         mock_manager.shutdown = AsyncMock()
+
+
+        default_team_context_id = f"team::{DEFAULT_CONTEXT_ID}"
 
         with (
             patch.object(factory, "get_config_from_db", new_callable=AsyncMock, return_value=None),
@@ -486,7 +490,7 @@ class TestBuildManager:
 
         assert result is mock_manager
         mock_manager.initialize.assert_awaited_once()
-        assert "team::tool" in factory._managers
+        assert default_team_context_id in factory._managers
 
     @pytest.mark.asyncio
     async def test_build_manager_shuts_down_old_manager(self, factory):
@@ -497,8 +501,10 @@ class TestBuildManager:
         new_manager = AsyncMock()
         new_manager.initialize = AsyncMock()
 
+        config_override = [PluginConfigOverride(name="test_plugin", config={}, mode=PluginMode.SEQUENTIAL)]
+
         with (
-            patch.object(factory, "get_config_from_db", new_callable=AsyncMock, return_value=None),
+            patch.object(factory, "get_config_from_db", new_callable=AsyncMock, return_value=config_override),
             patch.object(factory, "_apply_redis_mode_overrides", new_callable=AsyncMock, side_effect=lambda c: c),
             patch("mcpgateway.plugins.gateway_plugin_manager.TenantPluginManager", return_value=new_manager),
         ):
@@ -650,8 +656,98 @@ class TestGetManager:
 
         assert result is cached_manager
 
+    @pytest.mark.asyncio
+    async def test_distinct_default_manager_for_each_team(self, db_session):
+        from mcpgateway.plugins.gateway_plugin_manager import DEFAULT_CONTEXT_ID, TenantPluginManagerFactory
+        import os
 
-# ---------------------------------------------------------------------------
+        yaml_path = os.path.join(os.path.dirname(__file__), "fixtures/configs/valid_no_plugin.yaml")
+        factory = TenantPluginManagerFactory(
+            yaml_path=yaml_path,
+            db_factory=lambda: db_session,
+        )
+        manager_a_1 = await factory.get_manager("team_a::tool_1")
+        manager_a_2 = await factory.get_manager("team_a::tool_2")
+        manager_b_1 = await factory.get_manager("team_b::tool_1")
+
+        assert manager_a_1 is manager_a_2
+        assert manager_a_1 is not manager_b_1
+
+
+    @pytest.mark.asyncio
+    async def test_default_manager_is_not_applied_when_context_id_has_config(self, db_session):
+
+        from mcpgateway.plugins.gateway_plugin_manager import DEFAULT_CONTEXT_ID, TenantPluginManagerFactory
+        import os
+
+        yaml_path = os.path.join(os.path.dirname(__file__), "fixtures/configs/valid_single_filter_plugin.yaml")
+        factory = TenantPluginManagerFactory(
+            yaml_path=yaml_path,
+            db_factory=lambda: db_session,
+        )
+
+        manager_a_1 = await factory.get_manager("team_a::tool_1")
+        manager_a_2 = await factory.get_manager("team_a::tool_1")
+        manager_a_3 = await factory.get_manager("team_a::tool_2")
+
+        new_config = [PluginConfigOverride(
+            name="DenyListPlugin",
+            config={},
+            mode=PluginMode.SEQUENTIAL
+        )]
+
+        with patch.object(factory, "get_config_from_db", new_callable=AsyncMock, return_value=new_config):
+            await factory.reload_tenant("team_a::tool_1") # Called when API is called with new bindings
+            manager_a_1 = await factory.get_manager("team_a::tool_1")
+
+        assert manager_a_1 is not manager_a_2
+        assert manager_a_2 is manager_a_3
+
+
+    @pytest.mark.asyncio
+    async def test_default_context_never_expires_from_cache(self, factory):
+        """Default context entry is never evicted due to TTL expiry."""
+        from mcpgateway.plugins.gateway_plugin_manager import DEFAULT_CONTEXT_ID
+
+        default_manager = AsyncMock()
+        import time
+
+        # Create an expired entry for default context
+        factory._managers[DEFAULT_CONTEXT_ID] = _CachedManager(
+            manager=default_manager,
+            created_at=time.monotonic() - 1000  # Very old
+        )
+
+        # Should return cached manager even though TTL expired
+        result = await factory.get_manager(DEFAULT_CONTEXT_ID)
+        assert result is default_manager
+
+
+    @pytest.mark.asyncio
+    async def test_fallback_to_default_manager_when_no_tenant_config(self, factory):
+        """When tenant has no config and default manager exists, reuse default manager."""
+        from mcpgateway.plugins.gateway_plugin_manager import DEFAULT_CONTEXT_ID
+        import time
+
+        team_x_default = f"team-x::{DEFAULT_CONTEXT_ID}"
+
+        default_manager = AsyncMock()
+        factory._managers[team_x_default] = _CachedManager(
+            manager=default_manager,
+            created_at=time.monotonic()
+        )
+
+        # Mock get_config_from_db to return None (no tenant config)
+        with patch.object(factory, "get_config_from_db", new_callable=AsyncMock, return_value=None):
+            result = await factory.get_manager("team-x::tool-y")
+
+        # Should return the default manager
+        assert result is default_manager
+        # Verify it was cached for the tenant context
+        assert "team-x::tool-y" in factory._managers
+        assert factory._managers["team-x::tool-y"].manager is default_manager
+
+
 # reload_tenant
 # ---------------------------------------------------------------------------
 
@@ -766,7 +862,24 @@ class TestShutdown:
         assert len(factory._managers) == 0
 
 
-# ---------------------------------------------------------------------------
+    @pytest.mark.asyncio
+    async def test_shutdown_deduplicates_shared_managers(self, factory):
+        """When multiple contexts share a manager, shutdown is called only once."""
+        shared_manager = AsyncMock()
+        shared_manager.shutdown = AsyncMock()
+
+        # Multiple contexts sharing the same manager instance
+        factory._managers["ctx1"] = _CachedManager(manager=shared_manager, created_at=0)
+        factory._managers["ctx2"] = _CachedManager(manager=shared_manager, created_at=0)
+        factory._managers["ctx3"] = _CachedManager(manager=shared_manager, created_at=0)
+
+        await factory.shutdown()
+
+        # Shutdown should be called exactly once despite 3 contexts
+        shared_manager.shutdown.assert_awaited_once()
+        assert len(factory._managers) == 0
+
+
 # _apply_redis_mode_overrides
 # ---------------------------------------------------------------------------
 
@@ -1009,7 +1122,6 @@ class TestEnforceIgnoreErrorDbBinding:
 # ---------------------------------------------------------------------------
 # invalidate_team prefix collision safety
 # ---------------------------------------------------------------------------
-
 
 class TestInvalidateTeamPrefixSafety:
     @pytest.mark.asyncio
