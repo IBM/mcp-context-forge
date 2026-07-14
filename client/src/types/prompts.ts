@@ -1,4 +1,4 @@
-import { PromptRead } from "@/generated/types";
+import type { PromptRead } from "@/generated/types";
 
 export interface PromptGroup<T = PromptRead> {
   /** Stable key for React lists (gateway slug, or the REST-prompts label). */
