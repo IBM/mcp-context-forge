@@ -2574,10 +2574,10 @@ async def test_session_manager_wrapper_initialization_stateful(monkeypatch):
         async def handle_request(self, scope, receive, send):
             self.called = True
 
-    captured_config = {}
+    captured_configs = []
 
     def capture_manager(**kwargs):
-        captured_config.update(kwargs)
+        captured_configs.append(dict(kwargs))
         return DummySessionManager(**kwargs)
 
     # Mock settings to enable stateful sessions with InMemoryEventStore
@@ -2590,10 +2590,17 @@ async def test_session_manager_wrapper_initialization_stateful(monkeypatch):
 
     wrapper = SessionManagerWrapper()
 
-    # Verify that stateful configuration was used
-    assert captured_config["stateless"] is False
-    assert captured_config["event_store"] is not None
-    assert isinstance(captured_config["event_store"], tr.InMemoryEventStore)
+    # Verify that the stateful manager (first call) was configured correctly.
+    # Task 1 added session_manager_stateless (second call, stateless=True).
+    assert len(captured_configs) >= 2, "Expected two StreamableHTTPSessionManager instantiations"
+    stateful_config = captured_configs[0]
+    assert stateful_config["stateless"] is False
+    assert stateful_config["event_store"] is not None
+    assert isinstance(stateful_config["event_store"], tr.InMemoryEventStore)
+    # Verify the stateless companion manager (second call)
+    stateless_config = captured_configs[1]
+    assert stateless_config["stateless"] is True
+    assert stateless_config["event_store"] is None
 
     await wrapper.initialize()
     await wrapper.shutdown()
@@ -6752,7 +6759,8 @@ async def test_session_manager_wrapper_redis_event_store(monkeypatch):
     captured_config = {}
 
     def capture_manager(**kwargs):
-        captured_config.update(kwargs)
+        if not captured_config:  # capture first (stateful) manager only
+            captured_config.update(kwargs)
         dummy = MagicMock()
         dummy.run = MagicMock(return_value=asynccontextmanager(lambda: (yield dummy))())
         return dummy
@@ -6782,7 +6790,8 @@ async def test_session_manager_wrapper_rust_event_store(monkeypatch):
     captured_config = {}
 
     def capture_manager(**kwargs):
-        captured_config.update(kwargs)
+        if not captured_config:  # capture first (stateful) manager only
+            captured_config.update(kwargs)
         dummy = MagicMock()
         dummy.run = MagicMock(return_value=asynccontextmanager(lambda: (yield dummy))())
         return dummy
@@ -6811,7 +6820,8 @@ async def test_session_manager_wrapper_redis_event_store_when_rust_event_store_d
     captured_config = {}
 
     def capture_manager(**kwargs):
-        captured_config.update(kwargs)
+        if not captured_config:  # capture first (stateful) manager only
+            captured_config.update(kwargs)
         dummy = MagicMock()
         dummy.run = MagicMock(return_value=asynccontextmanager(lambda: (yield dummy))())
         return dummy
@@ -6839,7 +6849,8 @@ async def test_session_manager_wrapper_falls_back_to_python_event_store_when_ses
     captured_config = {}
 
     def capture_manager(**kwargs):
-        captured_config.update(kwargs)
+        if not captured_config:  # capture first (stateful) manager only
+            captured_config.update(kwargs)
         dummy = MagicMock()
         dummy.run = MagicMock(return_value=asynccontextmanager(lambda: (yield dummy))())
         return dummy
@@ -10054,7 +10065,7 @@ async def test_send_with_capture_registers_session(monkeypatch):
         patch("mcpgateway.services.session_affinity.get_session_affinity", return_value=mock_pool),
         patch("mcpgateway.services.session_affinity.WORKER_ID", "worker-1"),
     ):
-        await wrapper.handle_streamable_http(scope, _make_receive(b""), send)
+        await wrapper.handle_streamable_http(scope, _make_receive(b'{"jsonrpc":"2.0","method":"initialize","id":1}'), send)
 
     await wrapper.shutdown()
     mock_pool.register_session_owner.assert_called_once_with("new-session-id")
@@ -10097,7 +10108,7 @@ async def test_send_with_capture_str_headers_and_non_matching_header(monkeypatch
         patch("mcpgateway.services.session_affinity.get_session_affinity", return_value=mock_pool),
         patch("mcpgateway.services.session_affinity.WORKER_ID", "worker-1"),
     ):
-        await wrapper.handle_streamable_http(scope, _make_receive(b""), send)
+        await wrapper.handle_streamable_http(scope, _make_receive(b'{"jsonrpc":"2.0","method":"initialize","id":1}'), send)
 
     await wrapper.shutdown()
     mock_pool.register_session_owner.assert_called_once_with("new-session-id")
@@ -10140,7 +10151,7 @@ async def test_send_with_capture_registration_failure_logged(monkeypatch, caplog
         patch("mcpgateway.services.session_affinity.WORKER_ID", "worker-1"),
         caplog.at_level("WARNING", logger="mcpgateway.transports.streamablehttp_transport"),
     ):
-        await wrapper.handle_streamable_http(scope, _make_receive(b""), send)
+        await wrapper.handle_streamable_http(scope, _make_receive(b'{"jsonrpc":"2.0","method":"initialize","id":1}'), send)
 
     await wrapper.shutdown()
     assert "Failed to register session ownership" in caplog.text
@@ -10227,7 +10238,7 @@ async def test_send_with_capture_claims_owner_for_new_session(monkeypatch):
                 }
             )
             try:
-                await wrapper.handle_streamable_http(scope, _make_receive(b""), send)
+                await wrapper.handle_streamable_http(scope, _make_receive(b'{"jsonrpc":"2.0","method":"initialize","id":1}'), send)
             finally:
                 tr.user_context_var.reset(token)
 
@@ -14710,7 +14721,7 @@ async def test_session_owner_mismatch_logs_warning(monkeypatch, caplog):
             )
             try:
                 with caplog.at_level(logging.WARNING, logger="mcpgateway.transports.streamablehttp_transport"):
-                    await wrapper.handle_streamable_http(scope, _make_receive(b""), send)
+                    await wrapper.handle_streamable_http(scope, _make_receive(b'{"jsonrpc":"2.0","method":"initialize","id":1}'), send)
             finally:
                 tr.user_context_var.reset(token)
 

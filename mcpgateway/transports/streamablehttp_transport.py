@@ -4608,6 +4608,7 @@ class SessionManagerWrapper:
         # collapse this case to -32600 "Missing session ID". Peek only small,
         # single-message JSON-RPC requests; known methods and malformed/large
         # bodies fall through to the SDK's normal transport/session checks.
+        peeked_rpc_method: Optional[str] = None
         if method == "POST" and mcp_session_id == "not-provided" and is_mcp_path and not is_internally_forwarded:
             peek = await _drain_request_body(receive)
             if peek.disconnected:
@@ -4621,7 +4622,8 @@ class SessionManagerWrapper:
                 except orjson.JSONDecodeError:
                     payload = None
                 if isinstance(payload, dict):
-                    rpc_method = payload.get("method")
+                    peeked_rpc_method = payload.get("method")  # NEW — save for routing
+                    rpc_method = peeked_rpc_method
                     if isinstance(rpc_method, str) and "id" in payload and "/" in rpc_method and not _is_known_mcp_request_method(rpc_method):
                         await _send_streamable_http_json_response(
                             send,
@@ -4676,80 +4678,95 @@ class SessionManagerWrapper:
 
         span_exit_exc: tuple[Any, Any, Any] = (None, None, None)
 
+        # Routing decision:
+        #   • initialize (no session) → stateful manager, gateway mints a session
+        #   • session provided        → stateful manager, affinity/ownership enforced
+        #   • anything else, no session → stateless manager, upstream decides
+        _use_stateless_path = (
+            settings.use_stateful_sessions
+            and mcp_session_id == "not-provided"
+            and peeked_rpc_method != "initialize"
+        )
+        active_manager = self.session_manager_stateless if _use_stateless_path else self.session_manager
+
         try:
-            await self.session_manager.handle_request(scope, receive_with_initialize_trace, send_with_capture)
-            logger.debug("[STATEFUL] Streamable HTTP request completed successfully | Session: %s", mcp_session_id)
-
-            # Register ownership for the session we just handled
-            # This captures both existing sessions (mcp_session_id from request)
-            # and new sessions (captured_session_id from response)
+            await active_manager.handle_request(scope, receive_with_initialize_trace, send_with_capture)
             logger.debug(
-                "[HTTP_AFFINITY_DEBUG] affinity_enabled=%s stateful=%s captured=%s mcp_session_id=%s",
-                settings.mcpgateway_session_affinity_enabled,
-                settings.use_stateful_sessions,
-                captured_session_id,
-                mcp_session_id,
+                "[STATEFUL] Streamable HTTP completed | Session: %s | stateless-path: %s",
+                mcp_session_id, _use_stateless_path,
             )
-            # Two distinct writes happen here:
-            #
-            #   * Claim the *logical owner* in the shared session registry.
-            #     This is what `_validate_streamable_session_access` reads on
-            #     subsequent POST/DELETE/GET requests, so it MUST fire whether
-            #     or not multi-worker affinity is enabled — single-node
-            #     deployments still need ownership recorded for the GET-stream
-            #     gate to recognise the legitimate owner.
-            #
-            #   * Register the *worker-affinity* mapping. This only matters
-            #     when multi-worker affinity is on and stays gated.
-            session_to_register: Optional[str] = None
-            requester_email = user_context.get("email") if isinstance(user_context, dict) else None
-            if settings.use_stateful_sessions:
-                if captured_session_id:
-                    session_to_register = captured_session_id
-                    if requester_email:
-                        effective_owner = await _claim_streamable_session_owner(captured_session_id, requester_email)
-                        if effective_owner and effective_owner != requester_email and not bool(user_context.get("is_admin", False)):
-                            logger.warning(
-                                "Session owner mismatch for %s... (requester=%s, owner=%s)",
-                                captured_session_id[:8],
-                                requester_email,
-                                effective_owner,
-                            )
-                elif mcp_session_id != "not-provided":
-                    # Existing client-provided IDs may only refresh ownership
-                    # when they are already bound to the caller's principal.
-                    session_allowed, _deny_status, _deny_detail = await _validate_streamable_session_access(
-                        mcp_session_id=mcp_session_id,
-                        user_context=user_context,
-                        rpc_method=None,
-                    )
-                    if session_allowed:
-                        session_to_register = mcp_session_id
 
-            logger.debug(
-                "[HTTP_AFFINITY_DEBUG] affinity_enabled=%s stateful=%s captured=%s mcp_session_id=%s session_to_register=%s",
-                settings.mcpgateway_session_affinity_enabled,
-                settings.use_stateful_sessions,
-                captured_session_id,
-                mcp_session_id,
-                session_to_register,
-            )
-            if session_to_register and settings.mcpgateway_session_affinity_enabled:
-                try:
-                    # First-Party - lazy import to avoid circular dependencies
-                    # First-Party
-                    from mcpgateway.services.session_affinity import get_session_affinity, WORKER_ID  # pylint: disable=import-outside-toplevel
+            if not _use_stateless_path:
+                # Register ownership for the session we just handled
+                # This captures both existing sessions (mcp_session_id from request)
+                # and new sessions (captured_session_id from response)
+                logger.debug(
+                    "[HTTP_AFFINITY_DEBUG] affinity_enabled=%s stateful=%s captured=%s mcp_session_id=%s",
+                    settings.mcpgateway_session_affinity_enabled,
+                    settings.use_stateful_sessions,
+                    captured_session_id,
+                    mcp_session_id,
+                )
+                # Two distinct writes happen here:
+                #
+                #   * Claim the *logical owner* in the shared session registry.
+                #     This is what `_validate_streamable_session_access` reads on
+                #     subsequent POST/DELETE/GET requests, so it MUST fire whether
+                #     or not multi-worker affinity is enabled — single-node
+                #     deployments still need ownership recorded for the GET-stream
+                #     gate to recognise the legitimate owner.
+                #
+                #   * Register the *worker-affinity* mapping. This only matters
+                #     when multi-worker affinity is on and stays gated.
+                session_to_register: Optional[str] = None
+                requester_email = user_context.get("email") if isinstance(user_context, dict) else None
+                if settings.use_stateful_sessions:
+                    if captured_session_id:
+                        session_to_register = captured_session_id
+                        if requester_email:
+                            effective_owner = await _claim_streamable_session_owner(captured_session_id, requester_email)
+                            if effective_owner and effective_owner != requester_email and not bool(user_context.get("is_admin", False)):
+                                logger.warning(
+                                    "Session owner mismatch for %s... (requester=%s, owner=%s)",
+                                    captured_session_id[:8],
+                                    requester_email,
+                                    effective_owner,
+                                )
+                    elif mcp_session_id != "not-provided":
+                        # Existing client-provided IDs may only refresh ownership
+                        # when they are already bound to the caller's principal.
+                        session_allowed, _deny_status, _deny_detail = await _validate_streamable_session_access(
+                            mcp_session_id=mcp_session_id,
+                            user_context=user_context,
+                            rpc_method=None,
+                        )
+                        if session_allowed:
+                            session_to_register = mcp_session_id
 
-                    pool = get_session_affinity()
-                    await pool.register_session_owner(session_to_register)
-                    logger.debug(
-                        "[HTTP_AFFINITY_SDK] Worker %s | Session %s... | Registered ownership after SDK handling",
-                        WORKER_ID,
-                        session_to_register[:8],
-                    )
-                except Exception as e:
-                    logger.debug("[HTTP_AFFINITY_DEBUG] Exception during registration: %s", e)
-                    logger.warning("Failed to register session ownership: %s", e)
+                logger.debug(
+                    "[HTTP_AFFINITY_DEBUG] affinity_enabled=%s stateful=%s captured=%s mcp_session_id=%s session_to_register=%s",
+                    settings.mcpgateway_session_affinity_enabled,
+                    settings.use_stateful_sessions,
+                    captured_session_id,
+                    mcp_session_id,
+                    session_to_register,
+                )
+                if session_to_register and settings.mcpgateway_session_affinity_enabled:
+                    try:
+                        # First-Party - lazy import to avoid circular dependencies
+                        # First-Party
+                        from mcpgateway.services.session_affinity import get_session_affinity, WORKER_ID  # pylint: disable=import-outside-toplevel
+
+                        pool = get_session_affinity()
+                        await pool.register_session_owner(session_to_register)
+                        logger.debug(
+                            "[HTTP_AFFINITY_SDK] Worker %s | Session %s... | Registered ownership after SDK handling",
+                            WORKER_ID,
+                            session_to_register[:8],
+                        )
+                    except Exception as e:
+                        logger.debug("[HTTP_AFFINITY_DEBUG] Exception during registration: %s", e)
+                        logger.warning("Failed to register session ownership: %s", e)
 
         except anyio.ClosedResourceError:
             # Expected when client closes one side of the stream (normal lifecycle)
