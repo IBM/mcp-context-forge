@@ -96,7 +96,7 @@ plugins:
         "tool_post_invoke",
       ]
     tags: ["security", "pii", "compliance", "filter", "gdpr", "hipaa"]
-    mode: "disabled" # enforce | enforce_ignore_error | permissive | disabled
+    mode: "enforce" # enforce | enforce_ignore_error | permissive | disabled
     priority: 50 # Lower number = higher priority (runs first)
     conditions:
       - prompts: [] # Empty list = apply to all prompts

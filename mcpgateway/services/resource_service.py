@@ -21,6 +21,7 @@ Examples:
 """
 
 # Standard
+import asyncio
 import binascii
 from datetime import datetime, timezone
 from functools import lru_cache
@@ -67,6 +68,7 @@ from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.content_security import ContentPatternError, ContentSizeError, ContentTypeError, get_content_security_service
 from mcpgateway.services.event_service import EventService
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.services.mcp_apps import apply_resource_meta, optional_extension_metadata, validate_ui_resource
 from mcpgateway.services.metrics_buffer_service import get_metrics_buffer_service
 from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batches, pause_rollup_during_purge
 from mcpgateway.services.oauth_manager import OAuthManager
@@ -434,6 +436,7 @@ class ResourceService(BaseService):
         resource_dict["updated_at"] = getattr(resource, "updated_at", None)
         resource_dict["version"] = getattr(resource, "version", None)
         resource_dict["gateway_id"] = getattr(resource, "gateway_id", None)
+        resource_dict["extension_metadata"] = optional_extension_metadata(getattr(resource, "extension_metadata", None))
         return ResourceRead.model_validate(resource_dict)
 
     def _get_team_name(self, db: Session, team_id: Optional[str]) -> Optional[str]:
@@ -509,6 +512,7 @@ class ResourceService(BaseService):
             >>> resource.uri = "test://example"
             >>> resource.content = "test content"
             >>> resource.mime_type = None
+            >>> resource.extension_metadata = None
             >>> db.execute.return_value.scalar_one_or_none.return_value = None
             >>> db.add = MagicMock()
             >>> db.commit = MagicMock()
@@ -617,6 +621,8 @@ class ResourceService(BaseService):
 
             # Determine content storage (mime_type already detected above)
             is_text = mime_type and mime_type.startswith("text/") or isinstance(resource.content, str)
+            resource_extension_metadata = getattr(resource, "extension_metadata", None)
+            validate_ui_resource(resource.uri, mime_type, resource_extension_metadata)
 
             # Create DB model
             db_resource = DbResource(
@@ -630,6 +636,7 @@ class ResourceService(BaseService):
                 binary_content=(resource.content.encode() if is_text and isinstance(resource.content, str) else resource.content if isinstance(resource.content, bytes) else None),
                 size=len(resource.content) if resource.content else 0,
                 tags=resource.tags or [],
+                extension_metadata=resource_extension_metadata,
                 created_by=created_by,
                 created_from_ip=created_from_ip,
                 created_via=created_via,
@@ -980,6 +987,8 @@ class ResourceService(BaseService):
                         resource_owner_email = owner_email or getattr(resource, "owner_email", None) or created_by
                         resource_visibility = visibility if visibility is not None else getattr(resource, "visibility", "public")
                         resource_gateway_id = getattr(resource, "gateway_id", None)
+                        resource_extension_metadata = getattr(resource, "extension_metadata", None)
+                        validate_ui_resource(resource.uri, getattr(resource, "mime_type", None), resource_extension_metadata)
 
                         # Check for duplicate name before URI conflict (mirrors register_resource logic),
                         # using the batched lookup built above instead of a per-item query.
@@ -1016,6 +1025,7 @@ class ResourceService(BaseService):
                                 existing_resource.size = getattr(resource, "size", None)
                                 existing_resource.uri_template = resource.uri_template
                                 existing_resource.tags = resource.tags or []
+                                existing_resource.extension_metadata = resource_extension_metadata
                                 existing_resource.modified_by = created_by
                                 existing_resource.modified_from_ip = created_from_ip
                                 existing_resource.modified_via = created_via
@@ -1038,6 +1048,7 @@ class ResourceService(BaseService):
                                     uri_template=resource.uri_template,
                                     gateway_id=getattr(resource, "gateway_id", None),
                                     tags=resource.tags or [],
+                                    extension_metadata=resource_extension_metadata,
                                     created_by=created_by,
                                     created_from_ip=created_from_ip,
                                     created_via=created_via,
@@ -1067,6 +1078,7 @@ class ResourceService(BaseService):
                                 uri_template=resource.uri_template,
                                 gateway_id=getattr(resource, "gateway_id", None),
                                 tags=resource.tags or [],
+                                extension_metadata=resource_extension_metadata,
                                 created_by=created_by,
                                 created_from_ip=created_from_ip,
                                 created_via=created_via,
@@ -2095,6 +2107,28 @@ class ResourceService(BaseService):
                             if isinstance(user_identity, UserCtx):
                                 headers.update(build_identity_headers(user_identity))
 
+                        async def _read_resource_text_with_retry(session: "ClientSession", uri: str, transport_name: str) -> str:
+                            """Retry remote resource reads on an already established MCP session."""
+                            max_read_attempts = 2
+                            for attempt in range(1, max_read_attempts + 1):
+                                try:
+                                    resource_response = await _read_resource_with_meta(session, uri, meta_data)
+                                    return getattr(getattr(resource_response, "contents")[0], "text")
+                                except Exception as exc:
+                                    if attempt == max_read_attempts:
+                                        raise
+                                    sanitized_error = sanitize_exception_message(str(exc), auth_query_params_decrypted)
+                                    logger.debug(
+                                        "Retrying resource read after empty upstream response for %s over %s (attempt %d/%d): %s",
+                                        uri,
+                                        transport_name,
+                                        attempt + 1,
+                                        max_read_attempts,
+                                        sanitized_error,
+                                    )
+                                    await asyncio.sleep(0.05)
+                            raise RuntimeError("Resource read retry loop exhausted")
+
                         async def connect_to_sse_session(server_url: str, uri: str, authentication: Optional[Dict[str, str]] = None) -> str | None:
                             """
                             Connect to an SSE-based gateway and retrieve the text content of a resource.
@@ -2136,6 +2170,8 @@ class ResourceService(BaseService):
                             """
                             if authentication is None:
                                 authentication = {}
+                            resource_text: Optional[str] = None
+                            resource_received = False
                             try:
                                 # #4205: Registry path is taken when the caller has a downstream
                                 # Mcp-Session-Id; upstream state is then bound 1:1 to that
@@ -2158,8 +2194,8 @@ class ResourceService(BaseService):
                                         transport_type=TransportType.SSE,
                                         httpx_client_factory=_get_httpx_client_factory,
                                     ) as upstream:
-                                        resource_response = await _read_resource_with_meta(upstream.session, uri, meta_data)
-                                        return getattr(getattr(resource_response, "contents")[0], "text")
+                                        resource_text = await _read_resource_text_with_retry(upstream.session, uri, "SSE")
+                                        resource_received = True
                                 else:
                                     # Fallback: per-call session when no downstream session id is in scope.
                                     async with sse_client(url=server_url, headers=authentication, timeout=settings.health_check_timeout, httpx_client_factory=_get_httpx_client_factory) as (
@@ -2168,13 +2204,17 @@ class ResourceService(BaseService):
                                     ):
                                         async with ClientSession(read_stream, write_stream) as session:
                                             _ = await session.initialize()
-                                            resource_response = await _read_resource_with_meta(session, uri, meta_data)
-                                            return getattr(getattr(resource_response, "contents")[0], "text")
+                                            resource_text = await _read_resource_text_with_retry(session, uri, "SSE")
+                                            resource_received = True
                             except Exception as e:
                                 # Sanitize error message to prevent URL secrets from leaking in logs
                                 sanitized_error = sanitize_exception_message(str(e), auth_query_params_decrypted)
+                                if resource_received:
+                                    logger.warning("Ignoring SSE teardown error after resource content was received: %s", sanitized_error)
+                                    return resource_text
                                 logger.debug("Exception while connecting to sse gateway: %s", sanitized_error)
                                 return None
+                            return resource_text
 
                         async def connect_to_streamablehttp_server(server_url: str, uri: str, authentication: Optional[Dict[str, str]] = None) -> str | None:
                             """
@@ -2216,6 +2256,8 @@ class ResourceService(BaseService):
                             """
                             if authentication is None:
                                 authentication = {}
+                            resource_text: Optional[str] = None
+                            resource_received = False
                             try:
                                 # #4205: see SSE path above; same 1:1 binding rationale.
                                 downstream_session_id = _downstream_session_id_from_request()
@@ -2236,8 +2278,8 @@ class ResourceService(BaseService):
                                         transport_type=TransportType.STREAMABLE_HTTP,
                                         httpx_client_factory=_get_httpx_client_factory,
                                     ) as upstream:
-                                        resource_response = await _read_resource_with_meta(upstream.session, uri, meta_data)
-                                        return getattr(getattr(resource_response, "contents")[0], "text")
+                                        resource_text = await _read_resource_text_with_retry(upstream.session, uri, "StreamableHTTP")
+                                        resource_received = True
                                 else:
                                     # Fallback: per-call session when no downstream session id is in scope.
                                     async with streamablehttp_client(url=server_url, headers=authentication, timeout=settings.health_check_timeout, httpx_client_factory=_get_httpx_client_factory) as (
@@ -2247,24 +2289,25 @@ class ResourceService(BaseService):
                                     ):
                                         async with ClientSession(read_stream, write_stream) as session:
                                             _ = await session.initialize()
-                                            resource_response = await _read_resource_with_meta(session, uri, meta_data)
-                                            return getattr(getattr(resource_response, "contents")[0], "text")
+                                            resource_text = await _read_resource_text_with_retry(session, uri, "StreamableHTTP")
+                                            resource_received = True
                             except Exception as e:
                                 # Sanitize error message to prevent URL secrets from leaking in logs
                                 sanitized_error = sanitize_exception_message(str(e), auth_query_params_decrypted)
+                                if resource_received:
+                                    logger.warning("Ignoring StreamableHTTP teardown error after resource content was received: %s", sanitized_error)
+                                    return resource_text
                                 logger.debug("Exception while connecting to streamablehttp gateway: %s", sanitized_error)
                                 return None
+                            return resource_text
 
                         if span:
                             set_span_attribute(span, "success", True)
                             set_span_attribute(span, "duration.ms", (time.monotonic() - start_time) * 1000)
 
-                        resource_text = ""
                         if (gateway_transport).lower() == "sse":
-                            # Note: meta_data not passed - MCP SDK 1.25.0 read_resource() doesn't support it
                             resource_text = await connect_to_sse_session(server_url=gateway_url, authentication=headers, uri=uri)
                         else:
-                            # Note: meta_data not passed - MCP SDK 1.25.0 read_resource() doesn't support it
                             resource_text = await connect_to_streamablehttp_server(server_url=gateway_url, authentication=headers, uri=uri)
                         if span and resource_text is not None and is_output_capture_enabled("resource.read"):
                             set_span_attribute(span, "langfuse.observation.output", serialize_trace_payload({"content": resource_text}))
@@ -2801,6 +2844,12 @@ class ResourceService(BaseService):
                     if post_result.modified_payload:
                         content = post_result.modified_payload.content
 
+                if resource_db and getattr(resource_db, "extension_metadata", None) and hasattr(content, "meta"):
+                    meta_payload: Dict[str, Any] = {}
+                    apply_resource_meta(meta_payload, resource_db.extension_metadata)
+                    if meta_payload.get("_meta"):
+                        content.meta = meta_payload["_meta"]
+
                 if span and content is not None and is_output_capture_enabled("resource.read"):
                     set_span_attribute(span, "langfuse.observation.output", serialize_trace_payload(content))
 
@@ -3319,6 +3368,15 @@ class ResourceService(BaseService):
             # Update tags if provided
             if resource_update.tags is not None:
                 resource.tags = resource_update.tags
+
+            resource_update_extension_metadata = optional_extension_metadata(resource_update.extension_metadata)
+            final_extension_metadata = (
+                resource_update_extension_metadata if resource_update.extension_metadata is not None else optional_extension_metadata(getattr(resource, "extension_metadata", None))
+            )
+            if resource_update.extension_metadata is not None or str(resource.uri).startswith("ui://"):
+                validate_ui_resource(resource.uri, resource.mime_type, final_extension_metadata)
+            if resource_update.extension_metadata is not None:
+                resource.extension_metadata = resource_update_extension_metadata
 
             # Update team assignment if provided, validating ownership
             if resource_update.team_id is not None:

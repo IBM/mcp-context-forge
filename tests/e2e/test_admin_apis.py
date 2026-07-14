@@ -646,7 +646,7 @@ class TestAdminResourceAPIs:
         created_resources: list[tuple[str, str]] = []
         for mime_value in accepted_mime_types:
             resource_name = f"Parameterized MIME Resource {uuid.uuid4().hex[:8]}"
-            resource_uri = f"ui://resource-{uuid.uuid4().hex[:8]}"
+            resource_uri = f"resource://resource-{uuid.uuid4().hex[:8]}"
 
             form_data = {
                 "uri": resource_uri,

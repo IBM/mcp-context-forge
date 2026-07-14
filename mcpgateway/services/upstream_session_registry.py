@@ -272,6 +272,7 @@ class UpstreamSession:
     created_at: float = field(default_factory=time.time)
     last_used: float = field(default_factory=time.time)
     use_count: int = 0
+    operation_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False, compare=False)
     _closed: bool = field(default=False, repr=False)
     _owner_task: Optional[asyncio.Task] = field(default=None, repr=False)
     _shutdown_event: Optional[asyncio.Event] = field(default=None, repr=False)
@@ -442,6 +443,10 @@ class UpstreamSessionRegistry:
     wall-clock TTL; staleness is handled by a health probe on reuse after the
     idle validation window.
 
+    Calls through one reused MCP SDK ClientSession are serialized. The SDK
+    request-id counter is not locked, so concurrent send_request() calls can
+    reuse an id and deliver a resources/read response to a tools/call waiter.
+
     The registry is purely in-process. Multi-worker stickiness for a given
     downstream session is provided by the session-affinity layer in
     streamablehttp_transport; the registry on each worker only sees requests
@@ -488,10 +493,9 @@ class UpstreamSessionRegistry:
     ) -> AsyncIterator[UpstreamSession]:
         """Get or create the upstream session for ``(downstream_session_id, gateway_id)``.
 
-        Concurrent acquires for the same key serialize on the per-key lock only
-        across the check-or-create phase. Once a session is chosen, the lock is
-        released and the yielded ClientSession multiplexes concurrent requests
-        over its transport via MCP request ids.
+        Concurrent acquires for the same key serialize on the per-key lock
+        across the check-or-create phase, then on the per-session operation lock
+        while the caller uses the yielded ClientSession.
         """
         if not downstream_session_id:
             raise ValueError("downstream_session_id is required; caller must pin an upstream session to a downstream one")
@@ -538,13 +542,15 @@ class UpstreamSessionRegistry:
             session.last_used = time.time()
             session.use_count += 1
 
-        # Hand out the session with no lock held: MCP ClientSession multiplexes
-        # concurrent requests over its transport via JSON-RPC ids, so there's no
-        # reason to serialize callers. If the caller's body raises a transport-
-        # level error (server closed the stream, socket broke), evict so the
-        # next acquire rebuilds instead of handing out a dead session.
+        # Hand out the session with the operation lock held. MCP SDK
+        # ClientSession.send_request() mutates its JSON-RPC id counter without
+        # synchronization, so concurrent callers on one session can cross-wire
+        # responses. If the caller's body raises a transport-level error (server
+        # closed the stream, socket broke), evict so the next acquire rebuilds
+        # instead of handing out a dead session.
         try:
-            yield session
+            async with session.operation_lock:
+                yield session
         except (OSError, anyio.ClosedResourceError, anyio.BrokenResourceError) as exc:
             logger.info(
                 "acquire() caller raised %s for gateway=%s; evicting upstream so next acquire rebuilds",
@@ -698,31 +704,32 @@ class UpstreamSessionRegistry:
         (``AttributeError`` from SDK drift, etc.) propagate so they surface in
         telemetry instead of silently triggering a reconnect loop.
         """
-        for method in _HEALTH_CHECK_CHAIN:
-            try:
-                if method == "skip":
+        async with upstream.operation_lock:
+            for method in _HEALTH_CHECK_CHAIN:
+                try:
+                    if method == "skip":
+                        return True
+                    with anyio.fail_after(self._health_check_timeout_seconds):
+                        if method == "ping":
+                            await upstream.session.send_ping()
+                        elif method == "list_tools":
+                            await upstream.session.list_tools()
+                        elif method == "list_prompts":
+                            await upstream.session.list_prompts()
+                        elif method == "list_resources":
+                            await upstream.session.list_resources()
                     return True
-                with anyio.fail_after(self._health_check_timeout_seconds):
-                    if method == "ping":
-                        await upstream.session.send_ping()
-                    elif method == "list_tools":
-                        await upstream.session.list_tools()
-                    elif method == "list_prompts":
-                        await upstream.session.list_prompts()
-                    elif method == "list_resources":
-                        await upstream.session.list_resources()
-                return True
-            except McpError as exc:
-                if exc.error.code == _METHOD_NOT_FOUND:
-                    continue  # Server doesn't support this probe; try the next one.
-                self._metrics.health_check_failures += 1
-                return False
-            except TimeoutError:
-                continue
-            except OSError:
-                # Socket / stream error — upstream is dead.
-                self._metrics.health_check_failures += 1
-                return False
+                except McpError as exc:
+                    if exc.error.code == _METHOD_NOT_FOUND:
+                        continue  # Server doesn't support this probe; try the next one.
+                    self._metrics.health_check_failures += 1
+                    return False
+                except TimeoutError:
+                    continue
+                except OSError:
+                    # Socket / stream error — upstream is dead.
+                    self._metrics.health_check_failures += 1
+                    return False
         self._metrics.health_check_failures += 1
         return False
 

@@ -445,6 +445,15 @@ class Settings(BaseSettings):
         description="Paths exempt from CSRF protection",
     )
 
+    @field_validator("csrf_exempt_paths", mode="after")
+    @classmethod
+    def ensure_internal_mcp_csrf_exempt(cls, v: List[str]) -> List[str]:
+        """Keep trusted loopback MCP dispatch CSRF-exempt even with env overrides."""
+        required_path = "/_internal/mcp/"
+        if required_path in v:
+            return v
+        return [*v, required_path]
+
     # JSON Schema Validation for registration (Tool Input Schemas, Prompt schemas, etc)
     json_schema_validation_strict: bool = Field(default=True, description="Strict schema validation mode - reject invalid JSON schemas")
 
@@ -1144,6 +1153,13 @@ class Settings(BaseSettings):
     mcpgateway_elicitation_enabled: bool = Field(default=True, description="Enable elicitation passthrough support (MCP 2025-06-18)")
     mcpgateway_elicitation_timeout: int = Field(default=60, description="Default timeout for elicitation requests in seconds")
     mcpgateway_elicitation_max_concurrent: int = Field(default=100, description="Maximum concurrent elicitation requests")
+
+    # MCP Apps support (disabled by default)
+    mcpgateway_mcp_apps_enabled: bool = Field(default=False, description="Enable MCP Apps support through capabilities.extensions")
+    mcpgateway_mcp_apps_session_ttl: int = Field(default=900, ge=1, le=86400, description="AppBridge session TTL in seconds")
+    mcpgateway_mcp_apps_session_cleanup_enabled: bool = Field(default=True, description="Enable automatic cleanup of expired AppBridge sessions")
+    mcpgateway_mcp_apps_session_cleanup_interval_seconds: int = Field(default=300, ge=60, le=86400, description="Seconds between expired AppBridge session cleanup runs")
+    mcpgateway_mcp_apps_session_cleanup_batch_size: int = Field(default=1000, ge=1, le=100000, description="Maximum expired AppBridge sessions to delete per cleanup batch")
 
     # Security
     skip_ssl_verify: bool = Field(

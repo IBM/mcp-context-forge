@@ -262,6 +262,7 @@ class ResourceContent(BaseModelWithConfigDict):
     mime_type: Optional[str] = Field(None, alias="mimeType")
     text: Optional[str] = None
     blob: Optional[bytes] = None
+    meta: Optional[Dict[str, Any]] = Field(None, alias="_meta")
 
 
 ContentType = Union[TextContent, ImageContent, ResourceContent]
@@ -366,12 +367,14 @@ class ClientCapabilities(BaseModel):
         roots (Optional[Dict[str, Any]]): Capabilities related to root management.
         sampling (Optional[Dict[str, Any]]): Capabilities related to LLM sampling.
         elicitation (Optional[Dict[str, Any]]): Capabilities related to elicitation (MCP 2025-06-18).
+        extensions (Optional[Dict[str, Dict[str, Any]]]): Extension capabilities.
         experimental (Optional[Dict[str, Dict[str, Any]]]): Experimental capabilities.
     """
 
     roots: Optional[Dict[str, Any]] = None
     sampling: Optional[Dict[str, Any]] = None
     elicitation: Optional[Dict[str, Any]] = None
+    extensions: Optional[Dict[str, Dict[str, Any]]] = None
     experimental: Optional[Dict[str, Dict[str, Any]]] = None
 
 
@@ -384,6 +387,7 @@ class ServerCapabilities(BaseModel):
         tools (Optional[Dict[str, Any]]): Capability for tool support.
         logging (Optional[Dict[str, Any]]): Capability for logging support.
         completions (Optional[Dict[str, Any]]): Capability for completion support.
+        extensions (Optional[Dict[str, Dict[str, Any]]]): Extension capabilities.
         experimental (Optional[Dict[str, Dict[str, Any]]]): Experimental capabilities.
     """
 
@@ -392,6 +396,7 @@ class ServerCapabilities(BaseModel):
     tools: Optional[Dict[str, Any]] = None
     logging: Optional[Dict[str, Any]] = None
     completions: Optional[Dict[str, Any]] = None
+    extensions: Optional[Dict[str, Dict[str, Any]]] = None
     experimental: Optional[Dict[str, Dict[str, Any]]] = None
 
 
