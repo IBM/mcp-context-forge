@@ -8,7 +8,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { copyToClipboard } from "@/components/gateways/utils";
+import { copyToClipboard } from "@/lib/clipboard";
 import { JsonHighlighter } from "@/components/ui/json-highlighter";
 import type { Tool } from "@/types/tool";
 

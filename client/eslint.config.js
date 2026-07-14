@@ -56,6 +56,18 @@ export default tseslint.config(
 
       "react/react-in-jsx-scope": "off",
       "react/prop-types": "off",
+
+      // Allow `_`-prefixed locals to signal intentional discard (destructured
+      // rest patterns that strip a key, unused catch bindings, etc).
+      "@typescript-eslint/no-unused-vars": [
+        "error",
+        {
+          argsIgnorePattern: "^_",
+          varsIgnorePattern: "^_",
+          caughtErrorsIgnorePattern: "^_",
+          destructuredArrayIgnorePattern: "^_",
+        },
+      ],
     },
     settings: {
       react: { version: "detect" },

@@ -114,7 +114,7 @@ describe("PromptForm", () => {
             arguments: [],
             tags: ["greeting", "example"],
             visibility: "public",
-            team_id: null,
+            teamId: null,
           },
           team_id: null,
           visibility: "public",
