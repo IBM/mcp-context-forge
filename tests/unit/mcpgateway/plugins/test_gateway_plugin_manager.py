@@ -18,18 +18,22 @@ Tests cover:
 
 # Standard
 import asyncio
+import os
 import time
+import uuid
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
 import pytest
+from pydantic import ValidationError
 from sqlalchemy import create_engine
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 # First-Party
-from mcpgateway.db import Base
+from mcpgateway.db import Base, ToolPluginBinding, utc_now
 from mcpgateway.plugins import reload_plugin_context, set_global_observability
 from mcpgateway.plugins.gateway_plugin_manager import (
     CONTEXT_ID_SEPARATOR,
@@ -288,9 +292,6 @@ class TestGetConfigFromDb:
     @pytest.mark.asyncio
     async def test_invalid_on_error_rejected_by_db_constraint(self, db_session):
         """An invalid on_error value is rejected by the DB CHECK constraint."""
-        from mcpgateway.db import ToolPluginBinding, utc_now
-        from sqlalchemy.exc import IntegrityError
-        import uuid
 
         row = ToolPluginBinding(
             id=uuid.uuid4().hex,
@@ -390,7 +391,6 @@ class TestMergeTenantConfigOnError:
     """Verify that _merge_tenant_config propagates on_error from overrides."""
 
     def _make_factory_with_base_config(self):
-        from mcpgateway.plugins.gateway_plugin_manager import TenantPluginManagerFactory
 
         factory = TenantPluginManagerFactory.__new__(TenantPluginManagerFactory)
         factory._base_config = MagicMock()
@@ -408,8 +408,6 @@ class TestMergeTenantConfigOnError:
         return factory, plugin, captured_updates
 
     def test_on_error_applied_when_present(self):
-        from cpex.framework import OnError
-        from mcpgateway.plugins.gateway_plugin_manager import PluginConfigOverride
 
         factory, _plugin, captured = self._make_factory_with_base_config()
         overrides = [PluginConfigOverride(name="TestPlugin", on_error=OnError.IGNORE)]
@@ -419,7 +417,6 @@ class TestMergeTenantConfigOnError:
         assert captured[0].get("on_error") == OnError.IGNORE
 
     def test_on_error_not_applied_when_none(self):
-        from mcpgateway.plugins.gateway_plugin_manager import PluginConfigOverride
 
         factory, _plugin, captured = self._make_factory_with_base_config()
         overrides = [PluginConfigOverride(name="TestPlugin")]
@@ -475,7 +472,6 @@ class TestBuildManager:
 
     @pytest.mark.asyncio
     async def test_build_manager_happy_path(self, factory):
-        from mcpgateway.plugins.gateway_plugin_manager import DEFAULT_CONTEXT_ID
         mock_manager = AsyncMock()
         mock_manager.initialize = AsyncMock()
         mock_manager.shutdown = AsyncMock()
@@ -638,7 +634,6 @@ class TestGetManager:
     @pytest.mark.asyncio
     async def test_get_manager_returns_cached(self, factory):
         mock_manager = AsyncMock()
-        import time
 
         factory._managers["ctx"] = _CachedManager(manager=mock_manager, created_at=time.monotonic())
         result = await factory.get_manager("ctx")
@@ -669,7 +664,6 @@ class TestGetManager:
         cached_manager = AsyncMock()
 
         async def build_and_inject(context_id):
-            import time
             factory._managers[context_id] = _CachedManager(manager=cached_manager, created_at=time.monotonic())
             return mock_manager
 
@@ -680,8 +674,6 @@ class TestGetManager:
 
     @pytest.mark.asyncio
     async def test_distinct_default_manager_for_each_team(self, db_session):
-        from mcpgateway.plugins.gateway_plugin_manager import DEFAULT_CONTEXT_ID, TenantPluginManagerFactory
-        import os
 
         yaml_path = os.path.join(os.path.dirname(__file__), "fixtures/configs/valid_no_plugin.yaml")
         factory = TenantPluginManagerFactory(
@@ -699,8 +691,6 @@ class TestGetManager:
     @pytest.mark.asyncio
     async def test_default_manager_is_not_applied_when_context_id_has_config(self, db_session):
 
-        from mcpgateway.plugins.gateway_plugin_manager import DEFAULT_CONTEXT_ID, TenantPluginManagerFactory
-        import os
 
         yaml_path = os.path.join(os.path.dirname(__file__), "fixtures/configs/valid_single_filter_plugin.yaml")
         factory = TenantPluginManagerFactory(
@@ -729,10 +719,8 @@ class TestGetManager:
     @pytest.mark.asyncio
     async def test_default_context_never_expires_from_cache(self, factory):
         """Default context entry is never evicted due to TTL expiry."""
-        from mcpgateway.plugins.gateway_plugin_manager import DEFAULT_CONTEXT_ID
 
         default_manager = AsyncMock()
-        import time
 
         # Create an expired entry for default context
         factory._managers[DEFAULT_CONTEXT_ID] = _CachedManager(
@@ -748,8 +736,6 @@ class TestGetManager:
     @pytest.mark.asyncio
     async def test_fallback_to_default_manager_when_no_tenant_config(self, factory):
         """When tenant has no config and default manager exists, reuse default manager."""
-        from mcpgateway.plugins.gateway_plugin_manager import DEFAULT_CONTEXT_ID
-        import time
 
         team_x_default = f"team-x::{DEFAULT_CONTEXT_ID}"
 
@@ -1060,7 +1046,6 @@ class TestApplyRedisModeOverrides:
 
     @pytest.mark.asyncio
     async def test_validation_error_skipped(self, factory):
-        from pydantic import ValidationError
 
         config, plugin = self._make_config_with_plugin()
         plugin.model_copy = MagicMock(side_effect=ValidationError.from_exception_data("test", []))
@@ -1159,9 +1144,8 @@ class TestCachedManagerExpiry:
             assert entry.is_expired(30) is True
 
     def test_ttl_positive_not_expired_before_deadline(self):
-        import time as _time
 
-        now = _time.monotonic()
+        now = time.monotonic()
         entry = _CachedManager(manager=MagicMock(), created_at=now)
         assert entry.is_expired(9999) is False
 
@@ -1175,8 +1159,6 @@ class TestEnforceIgnoreErrorDbBinding:
     @pytest.mark.asyncio
     async def test_enforce_ignore_error_from_db_binding(self, db_session):
         """DB bindings with mode='enforce_ignore_error' map to SEQUENTIAL + OnError.IGNORE."""
-        from mcpgateway.db import ToolPluginBinding, utc_now
-        import uuid
 
         binding = ToolPluginBinding(
             id=str(uuid.uuid4()),
