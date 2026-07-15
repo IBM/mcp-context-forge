@@ -2274,10 +2274,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 token_source = "shared path (Admin UI)"
 
                 if not access_token:
-                    raise GatewayConnectionError(
-                        f"No OAuth token found for user {app_user_email} in shared path. "
-                        f"Please authorize this gateway via the Admin UI."
-                    )
+                    raise GatewayConnectionError(f"No OAuth token found for user {app_user_email} in shared path. Please authorize this gateway via the Admin UI.")
             else:
                 # API flow: check ONLY team-scoped path
                 user_context = {
@@ -2291,8 +2288,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
                 if not access_token:
                     raise GatewayConnectionError(
-                        f"No OAuth token found for user {app_user_email} in team-scoped path (teams: {teams}). "
-                        f"Please authorize this gateway via API with the appropriate team context."
+                        f"No OAuth token found for user {app_user_email} in team-scoped path (teams: {teams}). Please authorize this gateway via API with the appropriate team context."
                     )
 
             logger.info("Retrieved OAuth token for user=%s, gateway=%s from %s", app_user_email, gateway.name, token_source)
@@ -2441,7 +2437,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 SecurityValidator.sanitize_log_message(gateway_id),
                 str(actual_error),
                 type(actual_error).__name__,
-                exc_info=True  # Include full traceback
+                exc_info=True,  # Include full traceback
             )
             raise GatewayConnectionError(f"Failed to fetch tools after OAuth: {str(actual_error)}")
 
