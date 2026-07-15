@@ -465,7 +465,10 @@ export function useToolForm({
   const validateForm = useCallback((): boolean => {
     const schemaErrors: FormErrors = {};
 
-    if (inputSchema.trim()) {
+    if (schemaMode !== "none" && !inputSchema.trim()) {
+      schemaErrors.schema = intl.formatMessage({ id: "tools.form.error.inputSchemaRequired" });
+    }
+    if (!schemaErrors.schema && inputSchema.trim()) {
       try {
         JSON.parse(inputSchema);
       } catch {
@@ -523,6 +526,7 @@ export function useToolForm({
     teamId,
     inputSchema,
     outputSchema,
+    schemaMode,
     intl,
     toolFormSchema,
   ]);
@@ -676,6 +680,10 @@ export function useToolForm({
   );
 
   const isValid = useMemo(() => {
+    // Input schema is required whenever it is visible (manual mode or edit mode).
+    if (schemaMode !== "none") {
+      if (!inputSchema.trim()) return false;
+    }
     if (inputSchema.trim()) {
       try {
         JSON.parse(inputSchema);
@@ -713,6 +721,7 @@ export function useToolForm({
     teamId,
     inputSchema,
     outputSchema,
+    schemaMode,
     toolFormSchema,
   ]);
 

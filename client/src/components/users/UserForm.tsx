@@ -1,6 +1,7 @@
 import React from "react";
 import { ChevronDown, User } from "lucide-react";
 import { useIntl } from "react-intl";
+import { BackButton } from "@/components/ui/back-button";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -127,8 +128,10 @@ export function UserForm({
   if (!isOpen) return null;
 
   return (
-    <>
-      <div className="mx-auto mt-6 w-full max-w-3xl rounded-xl border border-neutral-200 bg-inherit p-0 shadow-[0_12px_40px_rgba(15,23,42,0.12)] dark:border-neutral-800">
+    <div className="mx-auto w-full max-w-3xl">
+      <BackButton onClick={onToggle} />
+
+      <div className="rounded-xl border border-neutral-200 bg-inherit p-0 shadow-[0_12px_40px_rgba(15,23,42,0.12)] dark:border-neutral-800">
         <div className="flex flex-col gap-8 p-6 sm:p-8">
           <div className="flex flex-col gap-4">
             <div className="flex items-center gap-3">
@@ -318,6 +321,6 @@ export function UserForm({
           </form>
         </div>
       </div>
-    </>
+    </div>
   );
 }

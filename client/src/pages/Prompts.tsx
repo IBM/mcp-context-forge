@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type Ref } from "react";
-import { MessageSquareCode, MoreHorizontal, Plus } from "lucide-react";
+import { MessageSquareCode, MoreVertical, Plus } from "lucide-react";
 import { useIntl } from "react-intl";
 import { PromptForm } from "@/components/prompts/PromptForm";
 import { Button } from "@/components/ui/button";
@@ -110,7 +110,7 @@ function PromptGroupCard({
                 )}
                 className="h-7 w-7 p-0"
               >
-                <MoreHorizontal className="h-4 w-4" />
+                <MoreVertical className="h-4 w-4" />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
@@ -316,6 +316,11 @@ export function Prompts() {
         </>
       )}
 
+      {/*
+        onEdit/onDelete are intentionally not wired yet — the panel's overflow
+        menu stays hidden until a follow-up PR adds PromptForm edit mode and a
+        delete flow. The props exist (and are tested) so wiring is a one-liner.
+      */}
       <PromptDetailsPanel
         prompts={displayGroup?.prompts ?? []}
         title={displayGroup?.label ?? ""}

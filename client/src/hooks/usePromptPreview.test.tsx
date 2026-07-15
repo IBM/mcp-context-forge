@@ -72,6 +72,31 @@ describe("usePromptPreview", () => {
     expect(toast.error).toHaveBeenCalledTimes(1);
   });
 
+  it("unwraps ApiError.body.message when body.detail is absent", async () => {
+    const { toast } = await import("sonner");
+    vi.mocked(promptsApi.render).mockRejectedValue(
+      new ApiError(
+        422,
+        {
+          message:
+            "Failed to fetch prompt 'web_search_help' from gateway: unhandled errors in a TaskGroup (1 sub-exception)",
+        },
+        "HTTP 422",
+      ),
+    );
+    const { result } = setup();
+
+    await act(async () => {
+      await result.current.run();
+    });
+
+    expect(result.current.error?.message).toBe(
+      "Failed to fetch prompt 'web_search_help' from gateway: unhandled errors in a TaskGroup (1 sub-exception)",
+    );
+    expect(result.current.error?.status).toBe(422);
+    expect(toast.error).toHaveBeenCalledTimes(1);
+  });
+
   it("leaves error.status as null for non-Api errors (e.g. network failures)", async () => {
     vi.mocked(promptsApi.render).mockRejectedValue(new Error("network offline"));
     const { result } = setup();

@@ -1307,8 +1307,9 @@ describe("Tools", () => {
         expect(screen.getByText("test-gateway")).toBeInTheDocument();
       });
 
-      // displayName is used in the details panel table, not in the card view
-      expect(screen.getByText("Tool 1")).toBeInTheDocument();
+      // displayName is preferred over name in card badges
+      expect(screen.getByText("Custom Display Name")).toBeInTheDocument();
+      expect(screen.queryByText("Tool 1")).not.toBeInTheDocument();
     });
 
     it("handles tools with url field", async () => {
