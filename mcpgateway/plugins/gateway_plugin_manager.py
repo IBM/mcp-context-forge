@@ -480,11 +480,3 @@ GatewayTenantPluginManagerFactory = TenantPluginManagerFactory
 def make_context_id(team_id: str, tool_name: str) -> str:
     """Build the context_id string expected by TenantPluginManagerFactory."""
     return f"{team_id}{CONTEXT_ID_SEPARATOR}{tool_name}"
-
-
-def get_team_id_from_context(context_id: str) -> Optional[str]:
-    """Get team_id from context_id"""
-    if CONTEXT_ID_SEPARATOR in context_id:
-        team_id, _ = context_id.split(CONTEXT_ID_SEPARATOR, 1)
-        return team_id
-    return None
