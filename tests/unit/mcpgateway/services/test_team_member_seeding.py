@@ -175,6 +175,77 @@ class TestMemberSeedRouting:
         assert membership.role == "owner"
 
 
+class TestMixedCaseEmailNormalisation:
+    """Seed emails with uppercase characters are handled as their lowercase canonical form."""
+
+    @pytest.mark.asyncio
+    async def test_uppercase_active_user_is_matched_and_added(self, service, test_db):
+        """An active user whose address is supplied in mixed-case is added as a member.
+
+        Regression: before the fix, str(seed.email).strip() preserved case, so the
+        EmailUser.email.in_([...]) query returned nothing for 'ALICE@example.com'
+        (the canonical record is 'alice@example.com'), and the seed fell through to
+        the invitation path — storing 'ALICE@example.com' in the invitation.  That
+        invitation could never be accepted because accept_invitation() compares
+        invitation.email against the lowercase authenticated identity.
+        """
+        make_user(test_db, "alice@example.com")
+
+        result = await service.create_team_with_members(
+            name="Engineering",
+            description=None,
+            created_by=CREATOR,
+            visibility="private",
+            members=[TeamMemberSeed(email="ALICE@example.com", role="member")],
+        )
+
+        # Must be a membership, not an invitation
+        assert [m.email for m in result.members_added] == ["alice@example.com"]
+        assert result.invitations_sent == []
+
+        # Canonical lowercase address stored in the membership row
+        member = test_db.query(EmailTeamMember).filter(EmailTeamMember.team_id == result.team.id, EmailTeamMember.user_email == "alice@example.com").one()
+        assert member.role == "member"
+
+    @pytest.mark.asyncio
+    async def test_uppercase_unknown_email_invitation_is_stored_lowercase(self, service, test_db):
+        """An unknown address supplied in mixed-case is invited using its canonical lowercase form."""
+        result = await service.create_team_with_members(
+            name="Engineering",
+            description=None,
+            created_by=CREATOR,
+            visibility="private",
+            members=[TeamMemberSeed(email="External@Partner.com", role="member")],
+        )
+
+        assert result.members_added == []
+        assert [i.email for i in result.invitations_sent] == ["external@partner.com"]
+
+        invitation = test_db.query(EmailTeamInvitation).filter(EmailTeamInvitation.team_id == result.team.id).one()
+        assert invitation.email == "external@partner.com"
+
+    @pytest.mark.asyncio
+    async def test_mixed_case_duplicate_is_rejected(self, service, test_db):
+        """alice@example.com and ALICE@example.com are the same address and must be de-duped."""
+        make_user(test_db, "alice@example.com")
+
+        with pytest.raises(TeamMemberSeedError) as exc_info:
+            await service.create_team_with_members(
+                name="Engineering",
+                description=None,
+                created_by=CREATOR,
+                visibility="private",
+                members=[
+                    TeamMemberSeed(email="alice@example.com", role="member"),
+                    TeamMemberSeed(email="ALICE@example.com", role="owner"),
+                ],
+            )
+
+        assert exc_info.value.index == 1
+        assert "already listed at members[0]" in str(exc_info.value)
+        assert not team_exists(test_db, "Engineering")
+
+
 class TestMemberSeedAtomicity:
     """A bad row leaves nothing behind — no team, no members, no invitations."""
 

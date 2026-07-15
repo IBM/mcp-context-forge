@@ -600,16 +600,17 @@ class TeamManagementService:
         seen: Dict[str, int] = {}
 
         for index, seed in enumerate(members):
-            email = str(seed.email).strip()
-            key = email.lower()
+            # Canonicalise to lowercase so DB lookups, dedup checks, and invitation
+            # storage all use the same form as EmailUser.email (always lowercase).
+            email = str(seed.email).strip().lower()
 
-            if key == creator:
+            if email == creator:
                 continue
 
-            if key in seen:
-                raise TeamMemberSeedError(index, email, f"duplicate address, already listed at members[{seen[key]}]")
+            if email in seen:
+                raise TeamMemberSeedError(index, email, f"duplicate address, already listed at members[{seen[email]}]")
 
-            seen[key] = index
+            seen[email] = index
             seeds.append(_NormalizedSeed(index=index, email=email, role=seed.role))
 
         return seeds
