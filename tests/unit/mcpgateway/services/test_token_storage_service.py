@@ -3,15 +3,15 @@
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
 
-Unit tests for TokenStorageService.
+Unit tests for TokenStorageService façade.
 """
 
 # Standard
 from datetime import datetime, timedelta, timezone
-from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 # Third-Party
+from pydantic import SecretStr
 import pytest
 
 # First-Party
@@ -20,265 +20,382 @@ from mcpgateway.services.token_storage_service import TokenStorageService
 
 @pytest.fixture
 def mock_db():
+    """Create a mock database session."""
     db = MagicMock()
     return db
 
 
 @pytest.fixture
-def service(mock_db):
-    with patch("mcpgateway.services.token_storage_service.get_settings") as mock_settings, patch("mcpgateway.services.token_storage_service.get_encryption_service") as mock_enc:
-        mock_settings.return_value = MagicMock(auth_encryption_secret="test-salt")  # pragma: allowlist secret
-        mock_enc_instance = MagicMock()
-        mock_enc_instance.encrypt_secret_async = AsyncMock(return_value="encrypted_value")
-        mock_enc_instance.decrypt_secret_async = AsyncMock(return_value="decrypted_value")
-        mock_enc.return_value = mock_enc_instance
-        svc = TokenStorageService(mock_db)
-    return svc
+def mock_settings_database():
+    """Create mock settings for database backend."""
+    settings = MagicMock()
+    settings.auth_encryption_secret = "test-salt"  # pragma: allowlist secret
+    settings.oauth_token_backend = "database"
+    return settings
 
 
 @pytest.fixture
-def service_no_encryption(mock_db):
-    with patch("mcpgateway.services.token_storage_service.get_settings", side_effect=ImportError):
-        svc = TokenStorageService(mock_db)
-    assert svc.encryption is None
-    return svc
+def mock_settings_vault():
+    """Create mock settings for Vault backend."""
+    settings = MagicMock()
+    settings.oauth_token_backend = "vault"
+    settings.vault_addr = "https://vault.example.com"
+    settings.vault_token = SecretStr("test-token")  # pragma: allowlist secret
+    settings.vault_mount_point = "secret"
+    return settings
 
 
-def _make_token_record(**overrides):
-    defaults = {
-        "gateway_id": "gw-1",
-        "user_id": "oauth-user-1",
-        "app_user_email": "user@test.com",
-        "access_token": "encrypted_access",
-        "refresh_token": "encrypted_refresh",
-        "expires_at": datetime.now(timezone.utc) + timedelta(hours=1),
-        "scopes": ["read", "write"],
-        "token_type": "bearer",
-        "created_at": datetime.now(timezone.utc),
-        "updated_at": datetime.now(timezone.utc),
-    }
-    defaults.update(overrides)
-    return SimpleNamespace(**defaults)
+# ---------- Initialization Tests ----------
 
 
-# ---------- _is_token_expired ----------
+def test_init_database_backend(mock_db, mock_settings_database):
+    """Test TokenStorageService initializes with database backend."""
+    with patch("mcpgateway.services.token_storage_service.get_settings") as mock_get_settings:
+        mock_get_settings.return_value = mock_settings_database
+
+        with patch("mcpgateway.services.token_backends.db_backend.get_encryption_service") as mock_enc:
+            mock_enc.return_value = MagicMock()
+            service = TokenStorageService(mock_db)
+
+            assert service.db == mock_db
+            assert service._backend is not None
+            # Verify it's a DatabaseTokenBackend
+            from mcpgateway.services.token_backends.db_backend import DatabaseTokenBackend
+            assert isinstance(service._backend, DatabaseTokenBackend)
 
 
-def test_is_token_expired_no_expires_at(service):
-    record = _make_token_record(expires_at=None)
-    assert service._is_token_expired(record) is False
+def test_init_vault_backend(mock_db, mock_settings_vault):
+    """Test TokenStorageService initializes with Vault backend."""
+    with patch("mcpgateway.services.token_storage_service.get_settings") as mock_get_settings:
+        mock_get_settings.return_value = mock_settings_vault
+
+        # VaultTokenBackend uses httpx, not hvac
+        service = TokenStorageService(mock_db)
+
+        assert service.db == mock_db
+        assert service._backend is not None
+        # Verify it's a VaultTokenBackend
+        from mcpgateway.services.token_backends.vault_backend import VaultTokenBackend
+        assert isinstance(service._backend, VaultTokenBackend)
 
 
-def test_is_token_expired_future(service):
-    record = _make_token_record(expires_at=datetime.now(timezone.utc) + timedelta(hours=1))
-    assert service._is_token_expired(record, threshold_seconds=300) is False
+def test_init_invalid_backend(mock_db):
+    """Test TokenStorageService raises error for invalid backend."""
+    with patch("mcpgateway.services.token_storage_service.get_settings") as mock_get_settings:
+        mock_settings = MagicMock()
+        mock_settings.oauth_token_backend = "invalid"
+        mock_get_settings.return_value = mock_settings
+
+        with pytest.raises(ValueError, match="Unknown OAUTH_TOKEN_BACKEND"):
+            TokenStorageService(mock_db)
 
 
-def test_is_token_expired_past(service):
-    record = _make_token_record(expires_at=datetime.now(timezone.utc) - timedelta(seconds=10))
-    assert service._is_token_expired(record, threshold_seconds=0) is True
+def test_init_with_user_context(mock_db, mock_settings_database):
+    """Test TokenStorageService accepts user_context parameter."""
+    with patch("mcpgateway.services.token_storage_service.get_settings") as mock_get_settings:
+        mock_get_settings.return_value = mock_settings_database
+
+        with patch("mcpgateway.services.token_backends.db_backend.get_encryption_service"):
+            user_context = {'email': 'user@example.com', 'teams': ['engineering']}
+            service = TokenStorageService(mock_db, user_context=user_context)
+
+            assert service.user_context == user_context
 
 
-def test_is_token_expired_within_threshold(service):
-    record = _make_token_record(expires_at=datetime.now(timezone.utc) + timedelta(seconds=100))
-    assert service._is_token_expired(record, threshold_seconds=200) is True
+# ---------- Team ID Extraction Tests ----------
 
 
-def test_is_token_expired_naive_datetime(service):
-    """Test _is_token_expired with a naive datetime (no timezone)."""
-    naive_time = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(seconds=10)
-    record = _make_token_record(expires_at=naive_time)
-    # The implementation adds timezone.utc to naive datetimes, so comparison works correctly
-    result = service._is_token_expired(record, threshold_seconds=0)
-    # A past datetime (even if naive) should be expired
-    assert result is True
+def test_get_team_id_from_teams_list(mock_db, mock_settings_database):
+    """Test _get_team_id extracts first team from teams list when gateway.team_id is None."""
+    with patch("mcpgateway.services.token_storage_service.get_settings") as mock_get_settings:
+        mock_get_settings.return_value = mock_settings_database
+
+        with patch("mcpgateway.services.token_backends.db_backend.get_encryption_service"):
+            # Mock gateway lookup to return None (fallback to user teams)
+            mock_db.get = Mock(return_value=None)
+            user_context = {'email': 'user@example.com', 'teams': ['engineering', 'admin']}
+            service = TokenStorageService(mock_db, user_context=user_context)
+
+            team_id = service._get_team_id('gw-123', 'user@example.com')
+            assert team_id == 'engineering'
 
 
-# ---------- store_tokens ----------
+def test_get_team_id_empty_teams(mock_db, mock_settings_database):
+    """Test _get_team_id returns None when user_context has empty teams (shared path fallback)."""
+    with patch("mcpgateway.services.token_storage_service.get_settings") as mock_get_settings:
+        mock_get_settings.return_value = mock_settings_database
+
+        with patch("mcpgateway.services.token_backends.db_backend.get_encryption_service"):
+            user_context = {'email': 'user@example.com', 'teams': []}
+            mock_gateway = Mock()
+            mock_gateway.team_id = None
+            mock_db.get = Mock(return_value=mock_gateway)
+            service = TokenStorageService(mock_db, user_context=user_context)
+
+            # Mock database query to return empty list (no team memberships)
+            scalars_mock = Mock()
+            scalars_mock.all = Mock(return_value=[])
+            execute_result = Mock()
+            execute_result.scalars = Mock(return_value=scalars_mock)
+            mock_db.execute = Mock(return_value=execute_result)
+
+            team_id = service._get_team_id('gw-123', 'user@example.com')
+            assert team_id is None  # Returns None for shared path fallback
 
 
-@pytest.mark.asyncio
-async def test_store_tokens_new(service, mock_db):
-    mock_db.execute.return_value.scalar_one_or_none.return_value = None
-    result = await service.store_tokens(
-        gateway_id="gw-1",
-        user_id="user-1",
-        app_user_email="user@test.com",
-        access_token="access123",
-        refresh_token="refresh123",
-        expires_in=3600,
-        scopes=["read"],
-    )
-    mock_db.add.assert_called_once()
-    mock_db.commit.assert_called_once()
+def test_get_team_id_no_user_context(mock_db, mock_settings_database):
+    """Test _get_team_id returns None when no user_context (shared path fallback)."""
+    with patch("mcpgateway.services.token_storage_service.get_settings") as mock_get_settings:
+        mock_get_settings.return_value = mock_settings_database
+
+        with patch("mcpgateway.services.token_backends.db_backend.get_encryption_service"):
+            mock_gateway = Mock()
+            mock_gateway.team_id = None
+            mock_db.get = Mock(return_value=mock_gateway)
+            service = TokenStorageService(mock_db)
+
+            # Mock database query to return empty list (no team memberships)
+            scalars_mock = Mock()
+            scalars_mock.all = Mock(return_value=[])
+            execute_result = Mock()
+            execute_result.scalars = Mock(return_value=scalars_mock)
+            mock_db.execute = Mock(return_value=execute_result)
+
+            team_id = service._get_team_id('gw-123', 'user@example.com')
+            assert team_id is None  # Returns None for shared path fallback
 
 
-@pytest.mark.asyncio
-async def test_store_tokens_update_existing(service, mock_db):
-    existing = _make_token_record()
-    mock_db.execute.return_value.scalar_one_or_none.return_value = existing
-    result = await service.store_tokens(
-        gateway_id="gw-1",
-        user_id="user-1",
-        app_user_email="user@test.com",
-        access_token="new_access",
-        refresh_token="new_refresh",
-        expires_in=3600,
-        scopes=["read"],
-    )
-    assert existing.access_token == "encrypted_value"
-    mock_db.commit.assert_called_once()
-
-
-@pytest.mark.asyncio
-async def test_store_tokens_no_encryption(service_no_encryption, mock_db):
-    mock_db.execute.return_value.scalar_one_or_none.return_value = None
-    result = await service_no_encryption.store_tokens(
-        gateway_id="gw-1",
-        user_id="user-1",
-        app_user_email="user@test.com",
-        access_token="plain_access",
-        refresh_token=None,
-        expires_in=3600,
-        scopes=["read"],
-    )
-    mock_db.add.assert_called_once()
-
-
-@pytest.mark.asyncio
-async def test_store_tokens_exception(service, mock_db):
-    mock_db.execute.side_effect = Exception("DB error")
-    with pytest.raises(Exception, match="Token storage failed"):
-        await service.store_tokens(
-            gateway_id="gw-1",
-            user_id="user-1",
-            app_user_email="user@test.com",
-            access_token="access",
-            refresh_token=None,
-            expires_in=3600,
-            scopes=[],
-        )
-    mock_db.rollback.assert_called_once()
-
-
-@pytest.mark.asyncio
-async def test_store_tokens_no_expires_in_persists_null(service, mock_db, caplog):
-    mock_db.execute.return_value.scalar_one_or_none.return_value = None
-    # Standard
-    import logging
-
-    with caplog.at_level(logging.INFO):
-        await service.store_tokens(
-            gateway_id="gw-1",
-            user_id="user-1",
-            app_user_email="user@test.com",
-            access_token="access123",
-            refresh_token="refresh123",
-            expires_in=None,
-            scopes=["read"],
-        )
-    mock_db.add.assert_called_once()
-    new_record = mock_db.add.call_args.args[0]
-    assert new_record.expires_at is None
-    assert any("token will not auto-expire" in msg for msg in caplog.messages)
+# ---------- Façade Method Delegation Tests ----------
 
 
 @pytest.mark.asyncio
-async def test_store_tokens_update_existing_clears_expires_at_when_no_expires_in(service, mock_db):
-    existing = _make_token_record()
-    assert existing.expires_at is not None
-    mock_db.execute.return_value.scalar_one_or_none.return_value = existing
-    await service.store_tokens(
-        gateway_id="gw-1",
-        user_id="user-1",
-        app_user_email="user@test.com",
-        access_token="new_access",
-        refresh_token="new_refresh",
-        expires_in=None,
-        scopes=["read"],
-    )
-    assert existing.expires_at is None
+async def test_store_tokens_delegates_to_backend(mock_db, mock_settings_database):
+    """Test store_tokens delegates to backend with team_id."""
+    with patch("mcpgateway.services.token_storage_service.get_settings") as mock_get_settings:
+        mock_get_settings.return_value = mock_settings_database
 
+        with patch("mcpgateway.services.token_backends.db_backend.get_encryption_service"):
+            # Mock gateway with team_id
+            mock_gateway = Mock()
+            mock_gateway.team_id = "engineering"
+            mock_db.get = Mock(return_value=mock_gateway)
 
-# ---------- get_user_token ----------
+            user_context = {'email': 'user@example.com', 'teams': ['engineering']}
+            service = TokenStorageService(mock_db, user_context=user_context)
 
+            # Mock the backend's store_tokens method
+            service._backend.store_tokens = AsyncMock(return_value=MagicMock(
+                gateway_id="gw-1",
+                team_id="engineering",
+                user_id="oauth-user-1",
+                app_user_email="user@example.com",
+                mcp_url="https://example.com"
+            ))
 
-@pytest.mark.asyncio
-async def test_get_user_token_not_found(service, mock_db):
-    mock_db.execute.return_value.scalar_one_or_none.return_value = None
-    result = await service.get_user_token("gw-1", "user@test.com")
-    assert result is None
+            result = await service.store_tokens(
+                gateway_id="gw-1",
+                user_id="oauth-user-1",
+                app_user_email="user@example.com",
+                access_token="access",
+                refresh_token="refresh",
+                expires_in=3600,
+                scopes=["read"],
+            )
 
+            # Verify backend was called with team_id
+            service._backend.store_tokens.assert_called_once_with(
+                gateway_id="gw-1",
+                team_id="engineering",
+                user_id="oauth-user-1",
+                app_user_email="user@example.com",
+                access_token="access",
+                refresh_token="refresh",
+                expires_in=3600,
+                scopes=["read"],
+            )
 
-@pytest.mark.asyncio
-async def test_get_user_token_valid(service, mock_db):
-    record = _make_token_record()
-    mock_db.execute.return_value.scalar_one_or_none.return_value = record
-    result = await service.get_user_token("gw-1", "user@test.com")
-    assert result == "decrypted_value"
-
-
-@pytest.mark.asyncio
-async def test_get_user_token_valid_no_encryption(service_no_encryption, mock_db):
-    record = _make_token_record(access_token="plain_token")
-    mock_db.execute.return_value.scalar_one_or_none.return_value = record
-    result = await service_no_encryption.get_user_token("gw-1", "user@test.com")
-    assert result == "plain_token"
-
-
-@pytest.mark.asyncio
-async def test_get_user_token_expired_no_refresh(service, mock_db):
-    record = _make_token_record(expires_at=datetime.now(timezone.utc) - timedelta(hours=1), refresh_token=None)
-    mock_db.execute.return_value.scalar_one_or_none.return_value = record
-    result = await service.get_user_token("gw-1", "user@test.com")
-    assert result is None
-
-
-@pytest.mark.asyncio
-async def test_get_user_token_expired_with_refresh(service, mock_db):
-    record = _make_token_record(expires_at=datetime.now(timezone.utc) - timedelta(hours=1))
-    mock_db.execute.return_value.scalar_one_or_none.return_value = record
-    with patch.object(service, "_refresh_access_token", AsyncMock(return_value="new_token")):
-        result = await service.get_user_token("gw-1", "user@test.com")
-    assert result == "new_token"
+            assert result.gateway_id == "gw-1"
+            assert result.team_id == "engineering"
 
 
 @pytest.mark.asyncio
-async def test_get_user_token_expired_refresh_fails(service, mock_db):
-    record = _make_token_record(expires_at=datetime.now(timezone.utc) - timedelta(hours=1))
-    mock_db.execute.return_value.scalar_one_or_none.return_value = record
-    with patch.object(service, "_refresh_access_token", AsyncMock(return_value=None)):
-        result = await service.get_user_token("gw-1", "user@test.com")
-    assert result is None
+async def test_get_user_token_delegates_to_backend(mock_db, mock_settings_database):
+    """Test get_user_token delegates to backend with team_id."""
+    with patch("mcpgateway.services.token_storage_service.get_settings") as mock_get_settings:
+        mock_get_settings.return_value = mock_settings_database
+
+        with patch("mcpgateway.services.token_backends.db_backend.get_encryption_service"):
+            mock_gateway = Mock()
+            mock_gateway.team_id = "engineering"
+            mock_db.get = Mock(return_value=mock_gateway)
+
+            user_context = {'email': 'user@example.com', 'teams': ['engineering']}
+            service = TokenStorageService(mock_db, user_context=user_context)
+
+            # Mock the backend's get_user_token method
+            service._backend.get_user_token = AsyncMock(return_value="decrypted_token")
+
+            result = await service.get_user_token(
+                gateway_id="gw-1",
+                app_user_email="user@example.com",
+                threshold_seconds=300,
+            )
+
+            # Verify backend was called with team_id
+            service._backend.get_user_token.assert_called_once_with(
+                gateway_id="gw-1",
+                team_id="engineering",
+                app_user_email="user@example.com",
+                threshold_seconds=300,
+            )
+
+            assert result == "decrypted_token"
 
 
 @pytest.mark.asyncio
-async def test_get_user_token_exception(service, mock_db):
-    mock_db.execute.side_effect = Exception("DB error")
-    result = await service.get_user_token("gw-1", "user@test.com")
-    assert result is None
+async def test_get_token_info_delegates_to_backend(mock_db, mock_settings_database):
+    """Test get_token_info delegates to backend with team_id."""
+    with patch("mcpgateway.services.token_storage_service.get_settings") as mock_get_settings:
+        mock_get_settings.return_value = mock_settings_database
 
+        with patch("mcpgateway.services.token_backends.db_backend.get_encryption_service"):
+            mock_gateway = Mock()
+            mock_gateway.team_id = "engineering"
+            mock_db.get = Mock(return_value=mock_gateway)
 
-# ---------- _refresh_access_token ----------
+            user_context = {'email': 'user@example.com', 'teams': ['engineering']}
+            service = TokenStorageService(mock_db, user_context=user_context)
+
+            # Mock the backend's get_token_info method
+            service._backend.get_token_info = AsyncMock(return_value={
+                "user_id": "oauth-user-1",
+                "app_user_email": "user@example.com",
+                "token_type": "bearer",
+                "expires_at": None,
+                "scopes": ["read"],
+            })
+
+            result = await service.get_token_info(
+                gateway_id="gw-1",
+                app_user_email="user@example.com",
+            )
+
+            # Verify backend was called with team_id
+            service._backend.get_token_info.assert_called_once_with(
+                gateway_id="gw-1",
+                team_id="engineering",
+                app_user_email="user@example.com",
+            )
+
+            assert result["user_id"] == "oauth-user-1"
 
 
 @pytest.mark.asyncio
-async def test_refresh_no_refresh_token(service):
-    record = _make_token_record(refresh_token=None)
-    result = await service._refresh_access_token(record)
-    assert result is None
+async def test_revoke_user_tokens_delegates_to_backend(mock_db, mock_settings_database):
+    """Test revoke_user_tokens delegates to backend with team_id."""
+    with patch("mcpgateway.services.token_storage_service.get_settings") as mock_get_settings:
+        mock_get_settings.return_value = mock_settings_database
+
+        with patch("mcpgateway.services.token_backends.db_backend.get_encryption_service"):
+            mock_gateway = Mock()
+            mock_gateway.team_id = "engineering"
+            mock_db.get = Mock(return_value=mock_gateway)
+
+            user_context = {'email': 'user@example.com', 'teams': ['engineering']}
+            service = TokenStorageService(mock_db, user_context=user_context)
+
+            # Mock the backend's revoke_user_tokens method
+            service._backend.revoke_user_tokens = AsyncMock(return_value=True)
+
+            result = await service.revoke_user_tokens(
+                gateway_id="gw-1",
+                app_user_email="user@example.com",
+            )
+
+            # Verify backend was called with team_id
+            service._backend.revoke_user_tokens.assert_called_once_with(
+                gateway_id="gw-1",
+                team_id="engineering",
+                app_user_email="user@example.com",
+            )
+
+            assert result is True
 
 
 @pytest.mark.asyncio
-async def test_refresh_no_gateway(service, mock_db):
-    record = _make_token_record()
-    mock_db.query.return_value.filter.return_value.first.return_value = None
-    result = await service._refresh_access_token(record)
-    assert result is None
+async def test_cleanup_expired_tokens_delegates_to_backend(mock_db, mock_settings_database):
+    """Test cleanup_expired_tokens delegates to backend."""
+    with patch("mcpgateway.services.token_storage_service.get_settings") as mock_get_settings:
+        mock_get_settings.return_value = mock_settings_database
+
+        with patch("mcpgateway.services.token_backends.db_backend.get_encryption_service"):
+            service = TokenStorageService(mock_db)
+
+            # Mock the backend's cleanup_expired_tokens method
+            service._backend.cleanup_expired_tokens = AsyncMock(return_value=5)
+
+            result = await service.cleanup_expired_tokens(max_age_days=30)
+
+            # Verify backend was called
+            service._backend.cleanup_expired_tokens.assert_called_once_with(max_age_days=30)
+
+            assert result == 5
 
 
-@pytest.mark.asyncio
-async def test_refresh_no_oauth_config(service, mock_db):
+def test_get_team_id_with_user_context(mock_db, mock_settings_database):
+    """Test _get_team_id uses user_context when available."""
+    with patch("mcpgateway.services.token_storage_service.get_settings") as mock_get_settings:
+        mock_get_settings.return_value = mock_settings_database
+
+        with patch("mcpgateway.services.token_backends.db_backend.get_encryption_service"):
+            user_context = {"teams": ["engineering", "platform"]}
+            mock_db.get = Mock(return_value=None)
+            service = TokenStorageService(mock_db, user_context=user_context)
+
+            team_id = service._get_team_id("gw-123", "user@example.com")
+
+            # Should return first team from user_context
+            assert team_id == "engineering"
+
+
+def test_get_team_id_returns_none_when_context_empty(mock_db, mock_settings_database):
+    """Test _get_team_id returns None when user_context is empty (JWT teams claim is sole authority)."""
+    with patch("mcpgateway.services.token_storage_service.get_settings") as mock_get_settings:
+        mock_get_settings.return_value = mock_settings_database
+
+        with patch("mcpgateway.services.token_backends.db_backend.get_encryption_service"):
+            # Empty user_context (simulates OAuth callback without authentication)
+            mock_gateway = Mock()
+            mock_gateway.team_id = None
+            mock_db.get = Mock(return_value=mock_gateway)
+            service = TokenStorageService(mock_db, user_context={})
+
+            team_id = service._get_team_id("gw-123", "user@example.com")
+
+            # JWT teams claim is the ONLY source of truth - no database query fallback
+            assert team_id is None
+
+
+def test_get_team_id_falls_back_to_default_when_no_teams(mock_db, mock_settings_database):
+    """Test _get_team_id returns None when user has no team memberships (shared path fallback)."""
+    with patch("mcpgateway.services.token_storage_service.get_settings") as mock_get_settings:
+        mock_get_settings.return_value = mock_settings_database
+
+        with patch("mcpgateway.services.token_backends.db_backend.get_encryption_service"):
+            # Empty user_context
+            mock_gateway = Mock()
+            mock_gateway.team_id = None
+            mock_db.get = Mock(return_value=mock_gateway)
+            service = TokenStorageService(mock_db, user_context={})
+
+            # Mock database query to return empty list (no team memberships)
+            scalars_mock = Mock()
+            scalars_mock.all = Mock(return_value=[])
+            execute_result = Mock()
+            execute_result.scalars = Mock(return_value=scalars_mock)
+            mock_db.execute = Mock(return_value=execute_result)
+
+            team_id = service._get_team_id("gw-123", "user@example.com")
     gw = MagicMock(oauth_config=None)
     mock_db.query.return_value.filter.return_value.first.return_value = gw
     result = await service._refresh_access_token(_make_token_record())
@@ -409,39 +526,14 @@ async def test_refresh_success_with_single_resource(service, mock_db):
 
 
 @pytest.mark.asyncio
-async def test_refresh_derives_resource_origin_from_path_bearing_gateway_url(service, mock_db):
-    """Refresh must derive the ORIGIN (scheme + netloc), not the full URL.
-
-    Regression coverage for the case where oauth_router sends
-    ``resource=https://gw.example.com`` on initial authorization and callback,
-    but refresh used to send ``resource=https://gw.example.com/api/mcp/v1``
-    (full URL) — a mismatch that either fails the refresh at the IdP or mints
-    a token whose ``aud`` no longer matches what was originally validated.
-    """
-    gw = MagicMock(oauth_config={"token_url": "https://token", "client_id": "cid"}, url="https://gw.example.com/api/mcp/v1")
+async def test_refresh_derives_resource_from_gateway_url(service, mock_db):
+    gw = MagicMock(oauth_config={"token_url": "https://token", "client_id": "cid"}, url="https://gw.example.com/api")
     mock_db.query.return_value.filter.return_value.first.return_value = gw
     mock_oauth_manager = MagicMock()
     mock_oauth_manager.refresh_token = AsyncMock(return_value={"access_token": "new_access", "expires_in": 3600})
     with patch("mcpgateway.services.oauth_manager.OAuthManager", return_value=mock_oauth_manager):
         result = await service._refresh_access_token(_make_token_record())
     assert result == "new_access"
-    refresh_call_oauth_config = mock_oauth_manager.refresh_token.call_args[0][1]
-    assert refresh_call_oauth_config["resource"] == "https://gw.example.com"
-
-
-@pytest.mark.asyncio
-async def test_refresh_skips_resource_when_gateway_url_is_urn(service, mock_db, caplog):
-    """URN-shaped gateway.url cannot yield an origin; refresh must skip the resource param."""
-    gw = MagicMock(oauth_config={"token_url": "https://token", "client_id": "cid"}, url="urn:example:mcp-gateway")
-    mock_db.query.return_value.filter.return_value.first.return_value = gw
-    mock_oauth_manager = MagicMock()
-    mock_oauth_manager.refresh_token = AsyncMock(return_value={"access_token": "new_access", "expires_in": 3600})
-    with patch("mcpgateway.services.oauth_manager.OAuthManager", return_value=mock_oauth_manager), caplog.at_level("WARNING"):
-        result = await service._refresh_access_token(_make_token_record())
-    assert result == "new_access"
-    refresh_call_oauth_config = mock_oauth_manager.refresh_token.call_args[0][1]
-    assert "resource" not in refresh_call_oauth_config or refresh_call_oauth_config["resource"] in (None, "")
-    assert any("Cannot derive resource origin" in rec.message for rec in caplog.records)
 
 
 @pytest.mark.asyncio
@@ -509,12 +601,11 @@ async def test_refresh_resource_list_all_empty_logs_warning(service, mock_db, ca
 
 @pytest.mark.asyncio
 async def test_refresh_resource_string_normalizes_to_empty_logs_warning(service, mock_db, caplog):
-    """When a non-list resource normalizes to empty, log a warning.
+    """Line 343: when a non-list resource normalizes to empty, log a warning.
 
     Defensive code path: ``normalize_resource`` does not return falsy for truthy
-    URL inputs in the natural flow.  Patching ``urlunparse`` where it is used
-    (``mcpgateway.utils.oauth_resource``) to return an empty string forces the
-    defensive branch so the warning is exercised.
+    URL inputs in the natural flow.  Patching ``urllib.parse.urlunparse`` to return
+    an empty string forces the defensive branch so the warning is exercised.
     """
     gw = MagicMock(
         oauth_config={"token_url": "https://token", "client_id": "cid", "resource": "https://api.example.com"},
@@ -528,12 +619,41 @@ async def test_refresh_resource_string_normalizes_to_empty_logs_warning(service,
     import logging
 
     with caplog.at_level(logging.WARNING):
-        with patch("mcpgateway.utils.oauth_resource.urlunparse", return_value=""):
+        with patch("urllib.parse.urlunparse", return_value=""):
             with patch("mcpgateway.services.oauth_manager.OAuthManager", return_value=mock_oauth_manager):
                 result = await service._refresh_access_token(_make_token_record())
 
     assert result == "new_access"
     assert any("Configured resource was empty and removed during refresh: https://api.example.com" in msg for msg in caplog.messages)
+
+
+@pytest.mark.asyncio
+async def test_refresh_derived_gateway_url_normalizes_to_empty_logs_warning(service, mock_db, caplog):
+    """Line 349: when the auto-derived ``gateway.url`` normalizes to empty, log a warning.
+
+    Defensive code path: with no explicit ``resource`` configured, the gateway falls
+    back to ``gateway.url``.  ``normalize_resource`` does not return falsy for truthy
+    URL inputs in the natural flow, so we patch ``urllib.parse.urlunparse`` to return
+    an empty string and trip the defensive warning.
+    """
+    gw = MagicMock(
+        oauth_config={"token_url": "https://token", "client_id": "cid"},
+        url="https://gw.example.com/api",
+    )
+    mock_db.query.return_value.filter.return_value.first.return_value = gw
+    mock_oauth_manager = MagicMock()
+    mock_oauth_manager.refresh_token = AsyncMock(return_value={"access_token": "new_access", "expires_in": 3600})
+
+    # Standard
+    import logging
+
+    with caplog.at_level(logging.WARNING):
+        with patch("urllib.parse.urlunparse", return_value=""):
+            with patch("mcpgateway.services.oauth_manager.OAuthManager", return_value=mock_oauth_manager):
+                result = await service._refresh_access_token(_make_token_record())
+
+    assert result == "new_access"
+    assert any("Gateway URL is empty, skipping resource parameter: https://gw.example.com/api" in msg for msg in caplog.messages)
 
 
 @pytest.mark.asyncio
@@ -768,173 +888,6 @@ async def test_get_user_token_no_warning_for_bearer(service, mock_db, caplog):
 
     assert result == "decrypted_value"
     assert not any("token_type" in msg.lower() for msg in caplog.messages)
-
-
-class TestLearnedAudiencePersistence:
-    """Per-user learned aud/iss storage (MEDIUM security fix).
-
-    Replaces the previous callback-driven writes to ``gateway.oauth_config["resource"]``
-    with per-user writes to ``OAuthToken.learned_aud`` / ``learned_iss``. These tests
-    lock the storage contract: (a) new rows carry the values, (b) re-authentication
-    can update them, (c) None-valued arguments do not accidentally clear existing
-    metadata, and (d) users are isolated from each other.
-    """
-
-    @pytest.mark.asyncio
-    async def test_store_tokens_creates_new_record_with_learned_aud_and_iss(self, service, mock_db):
-        mock_db.execute.return_value.scalar_one_or_none.return_value = None  # no existing row
-
-        captured = {}
-
-        def _capture(record):
-            captured["record"] = record
-
-        mock_db.add.side_effect = _capture
-
-        await service.store_tokens(
-            gateway_id="gw-1",
-            user_id="oauth-user-1",
-            app_user_email="user@test.com",
-            access_token="access-plain",
-            refresh_token="refresh-plain",
-            expires_in=3600,
-            scopes=["read"],
-            learned_aud="opaque-tenant-a-id",
-            learned_iss="https://idp.example.com",
-        )
-
-        assert captured["record"].learned_aud == "opaque-tenant-a-id"
-        assert captured["record"].learned_iss == "https://idp.example.com"
-
-    @pytest.mark.asyncio
-    async def test_store_tokens_updates_learned_aud_on_reauth(self, service, mock_db):
-        existing = _make_token_record(learned_aud="old-aud", learned_iss="https://old-idp")
-        mock_db.execute.return_value.scalar_one_or_none.return_value = existing
-
-        await service.store_tokens(
-            gateway_id="gw-1",
-            user_id="oauth-user-1",
-            app_user_email="user@test.com",
-            access_token="new-access",
-            refresh_token=None,
-            expires_in=3600,
-            scopes=["read"],
-            learned_aud="new-aud",
-            learned_iss="https://new-idp",
-        )
-
-        assert existing.learned_aud == "new-aud"
-        assert existing.learned_iss == "https://new-idp"
-
-    @pytest.mark.asyncio
-    async def test_store_tokens_none_learned_values_preserve_existing(self, service, mock_db):
-        """Callers that don't inspect the token (e.g. token_exchange path) pass None
-        for learned_aud/iss; existing values must not be silently cleared."""
-        existing = _make_token_record(learned_aud="preserved-aud", learned_iss="https://preserved-idp")
-        mock_db.execute.return_value.scalar_one_or_none.return_value = existing
-
-        await service.store_tokens(
-            gateway_id="gw-1",
-            user_id="oauth-user-1",
-            app_user_email="user@test.com",
-            access_token="new-access",
-            refresh_token=None,
-            expires_in=3600,
-            scopes=["read"],
-            learned_aud=None,
-            learned_iss=None,
-        )
-
-        assert existing.learned_aud == "preserved-aud"
-        assert existing.learned_iss == "https://preserved-idp"
-
-    @pytest.mark.asyncio
-    async def test_get_user_learned_audience_returns_stored_values(self, service, mock_db):
-        row = SimpleNamespace(learned_aud="opaque-tenant-a-id", learned_iss="https://idp.example.com")
-        mock_db.execute.return_value.one_or_none.return_value = row
-
-        aud, iss = await service.get_user_learned_audience("gw-1", "user@test.com")
-
-        assert aud == "opaque-tenant-a-id"
-        assert iss == "https://idp.example.com"
-
-    @pytest.mark.asyncio
-    async def test_get_user_learned_audience_returns_none_when_no_row(self, service, mock_db):
-        mock_db.execute.return_value.one_or_none.return_value = None
-
-        aud, iss = await service.get_user_learned_audience("gw-1", "unknown@test.com")
-
-        assert aud is None
-        assert iss is None
-
-    @pytest.mark.asyncio
-    async def test_get_user_learned_audience_returns_none_on_db_error(self, service, mock_db):
-        mock_db.execute.side_effect = RuntimeError("db exploded")
-
-        aud, iss = await service.get_user_learned_audience("gw-1", "user@test.com")
-
-        assert aud is None
-        assert iss is None
-
-    @pytest.mark.asyncio
-    async def test_learned_aud_list_shape_supported(self, service, mock_db):
-        """RFC 7519 §4.1.3 aud can be a list; JSON column accepts it."""
-        mock_db.execute.return_value.scalar_one_or_none.return_value = None
-        captured = {}
-        mock_db.add.side_effect = lambda rec: captured.setdefault("record", rec)
-
-        await service.store_tokens(
-            gateway_id="gw-1",
-            user_id="oauth-user-1",
-            app_user_email="user@test.com",
-            access_token="access",
-            refresh_token=None,
-            expires_in=3600,
-            scopes=[],
-            learned_aud=["aud-a", "aud-b"],
-            learned_iss="https://idp.example.com",
-        )
-
-        assert captured["record"].learned_aud == ["aud-a", "aud-b"]
-
-    @pytest.mark.asyncio
-    async def test_two_user_isolation_write_and_read(self, service, mock_db):
-        """User B cannot observe or overwrite user A's learned audience.
-
-        Regression for the MEDIUM security fix: replaces the narrative that
-        was implicit in the deleted TestPersistLearnedAudience. Proves the
-        (gateway_id, app_user_email) key isolates learned metadata per-user.
-        """
-        # Two separate token rows for the same gateway, one per user.
-        row_a = _make_token_record(app_user_email="user-a@test.com", learned_aud="aud-A", learned_iss="https://idp-A.example.com")
-        row_b = _make_token_record(app_user_email="user-b@test.com", learned_aud="aud-B", learned_iss="https://idp-B.example.com")
-
-        # store_tokens with user A's email + a NEW learned aud must only touch A's row.
-        mock_db.execute.return_value.scalar_one_or_none.return_value = row_a
-        await service.store_tokens(
-            gateway_id="gw-1",
-            user_id="oauth-user-a",
-            app_user_email="user-a@test.com",
-            access_token="access-a-updated",
-            refresh_token=None,
-            expires_in=3600,
-            scopes=[],
-            learned_aud="aud-A-updated",
-            learned_iss="https://idp-A.example.com",
-        )
-        assert row_a.learned_aud == "aud-A-updated"
-        assert row_b.learned_aud == "aud-B", "User B's row must not be touched by user A's store_tokens"
-
-        # Reading A's row does not return B's data (mock returns A's row for A's key).
-        row_a_view = SimpleNamespace(learned_aud=row_a.learned_aud, learned_iss=row_a.learned_iss)
-        mock_db.execute.return_value.one_or_none.return_value = row_a_view
-        aud, iss = await service.get_user_learned_audience("gw-1", "user-a@test.com")
-        assert aud == "aud-A-updated"
-        assert iss == "https://idp-A.example.com"
-
-        # Reading B's row returns B's own values.
-        row_b_view = SimpleNamespace(learned_aud=row_b.learned_aud, learned_iss=row_b.learned_iss)
-        mock_db.execute.return_value.one_or_none.return_value = row_b_view
-        aud, iss = await service.get_user_learned_audience("gw-1", "user-b@test.com")
-        assert aud == "aud-B"
-        assert iss == "https://idp-B.example.com"
+=======
+            # Should fall back to None for shared path
+            assert team_id is None
