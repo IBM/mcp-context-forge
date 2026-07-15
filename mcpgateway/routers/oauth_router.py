@@ -809,12 +809,12 @@ async def oauth_callback(
             gateway_id, code, state, oauth_config_with_resource, ca_certificate=gateway.ca_certificate, client_cert=gateway.client_cert, client_key=gateway.client_key
         )
 
-        # Learn the IdP's audience mapping from the token and persist as resource.
-        # RFC 8707 Section 2: "The authorization server may use the exact resource value
-        # as the audience or it may map from that value to a more general URI or abstract
-        # identifier for the given resource."  We persist whatever the IdP chose so that
-        # subsequent token validation matches.
-        await _persist_learned_audience(gateway, result, db)
+        # Token's aud/iss claims (best-effort, unverified) are persisted per-user by
+        # TokenStorageService.store_tokens as OAuthToken.learned_aud / learned_iss so
+        # subsequent validation can be authoritative for THIS USER without letting
+        # anyone with gateway access mutate globally-shared gateway config. See
+        # OAuthManager.complete_authorization_code_flow and
+        # token_validation_service._validate_audience for the full trust model.
 
         logger.info(f"Completed OAuth flow for gateway {SecurityValidator.sanitize_log_message(gateway_id)}, user {SecurityValidator.sanitize_log_message(str(result.get('user_id')))}")
 

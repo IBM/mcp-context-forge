@@ -771,3 +771,131 @@ async def test_get_user_token_no_warning_for_bearer(service, mock_db, caplog):
 
     assert result == "decrypted_value"
     assert not any("token_type" in msg.lower() for msg in caplog.messages)
+
+
+class TestLearnedAudiencePersistence:
+    """Per-user learned aud/iss storage (MEDIUM security fix).
+
+    Replaces the previous callback-driven writes to ``gateway.oauth_config["resource"]``
+    with per-user writes to ``OAuthToken.learned_aud`` / ``learned_iss``. These tests
+    lock the storage contract: (a) new rows carry the values, (b) re-authentication
+    can update them, (c) None-valued arguments do not accidentally clear existing
+    metadata, and (d) users are isolated from each other.
+    """
+
+    @pytest.mark.asyncio
+    async def test_store_tokens_creates_new_record_with_learned_aud_and_iss(self, service, mock_db):
+        mock_db.execute.return_value.scalar_one_or_none.return_value = None  # no existing row
+
+        captured = {}
+
+        def _capture(record):
+            captured["record"] = record
+
+        mock_db.add.side_effect = _capture
+
+        await service.store_tokens(
+            gateway_id="gw-1",
+            user_id="oauth-user-1",
+            app_user_email="user@test.com",
+            access_token="access-plain",
+            refresh_token="refresh-plain",
+            expires_in=3600,
+            scopes=["read"],
+            learned_aud="opaque-tenant-a-id",
+            learned_iss="https://idp.example.com",
+        )
+
+        assert captured["record"].learned_aud == "opaque-tenant-a-id"
+        assert captured["record"].learned_iss == "https://idp.example.com"
+
+    @pytest.mark.asyncio
+    async def test_store_tokens_updates_learned_aud_on_reauth(self, service, mock_db):
+        existing = _make_token_record(learned_aud="old-aud", learned_iss="https://old-idp")
+        mock_db.execute.return_value.scalar_one_or_none.return_value = existing
+
+        await service.store_tokens(
+            gateway_id="gw-1",
+            user_id="oauth-user-1",
+            app_user_email="user@test.com",
+            access_token="new-access",
+            refresh_token=None,
+            expires_in=3600,
+            scopes=["read"],
+            learned_aud="new-aud",
+            learned_iss="https://new-idp",
+        )
+
+        assert existing.learned_aud == "new-aud"
+        assert existing.learned_iss == "https://new-idp"
+
+    @pytest.mark.asyncio
+    async def test_store_tokens_none_learned_values_preserve_existing(self, service, mock_db):
+        """Callers that don't inspect the token (e.g. token_exchange path) pass None
+        for learned_aud/iss; existing values must not be silently cleared."""
+        existing = _make_token_record(learned_aud="preserved-aud", learned_iss="https://preserved-idp")
+        mock_db.execute.return_value.scalar_one_or_none.return_value = existing
+
+        await service.store_tokens(
+            gateway_id="gw-1",
+            user_id="oauth-user-1",
+            app_user_email="user@test.com",
+            access_token="new-access",
+            refresh_token=None,
+            expires_in=3600,
+            scopes=["read"],
+            learned_aud=None,
+            learned_iss=None,
+        )
+
+        assert existing.learned_aud == "preserved-aud"
+        assert existing.learned_iss == "https://preserved-idp"
+
+    @pytest.mark.asyncio
+    async def test_get_user_learned_audience_returns_stored_values(self, service, mock_db):
+        row = SimpleNamespace(learned_aud="opaque-tenant-a-id", learned_iss="https://idp.example.com")
+        mock_db.execute.return_value.one_or_none.return_value = row
+
+        aud, iss = await service.get_user_learned_audience("gw-1", "user@test.com")
+
+        assert aud == "opaque-tenant-a-id"
+        assert iss == "https://idp.example.com"
+
+    @pytest.mark.asyncio
+    async def test_get_user_learned_audience_returns_none_when_no_row(self, service, mock_db):
+        mock_db.execute.return_value.one_or_none.return_value = None
+
+        aud, iss = await service.get_user_learned_audience("gw-1", "unknown@test.com")
+
+        assert aud is None
+        assert iss is None
+
+    @pytest.mark.asyncio
+    async def test_get_user_learned_audience_returns_none_on_db_error(self, service, mock_db):
+        mock_db.execute.side_effect = RuntimeError("db exploded")
+
+        aud, iss = await service.get_user_learned_audience("gw-1", "user@test.com")
+
+        assert aud is None
+        assert iss is None
+
+    @pytest.mark.asyncio
+    async def test_learned_aud_list_shape_supported(self, service, mock_db):
+        """RFC 7519 §4.1.3 aud can be a list; JSON column accepts it."""
+        mock_db.execute.return_value.scalar_one_or_none.return_value = None
+        captured = {}
+        mock_db.add.side_effect = lambda rec: captured.setdefault("record", rec)
+
+        await service.store_tokens(
+            gateway_id="gw-1",
+            user_id="oauth-user-1",
+            app_user_email="user@test.com",
+            access_token="access",
+            refresh_token=None,
+            expires_in=3600,
+            scopes=[],
+            learned_aud=["aud-a", "aud-b"],
+            learned_iss="https://idp.example.com",
+        )
+
+        assert captured["record"].learned_aud == ["aud-a", "aud-b"]

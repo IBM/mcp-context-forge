@@ -560,15 +560,6 @@ async def _encrypt_oauth_secret_value(value: Any, existing_value: Any, encryptio
     return await encryption.encrypt_secret_async(value)
 
 
-# Keys whose stored value must be preserved when the caller submits an
-# oauth_config dict that omits them, to avoid a stale UI save silently
-# wiping data written asynchronously by the OAuth callback (e.g., the
-# audience learned from the IdP's first token). Callers who genuinely
-# want to clear one of these fields must send it with an explicit
-# ``None`` value (see ``mcpgateway/admin.py::_parse_oauth_resource``).
-_OAUTH_CONFIG_RACE_PRONE_KEYS = frozenset({"resource"})
-
-
 async def _protect_oauth_config_value(value: Any, existing_value: Any, encryption: EncryptionService) -> Any:
     """Recursively encrypt sensitive oauth_config values.
 
@@ -589,10 +580,6 @@ async def _protect_oauth_config_value(value: Any, existing_value: Any, encryptio
                 protected[key] = await _encrypt_oauth_secret_value(item, existing_item, encryption)
             else:
                 protected[key] = await _protect_oauth_config_value(item, existing_item, encryption)
-        for key in _OAUTH_CONFIG_RACE_PRONE_KEYS:
-            if key in protected or key not in existing_dict:
-                continue
-            protected[key] = existing_dict[key]
         return protected
 
     if isinstance(value, list):

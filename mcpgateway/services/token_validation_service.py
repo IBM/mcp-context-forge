@@ -169,28 +169,44 @@ def _normalize_scope(scope_input: Any) -> set[str]:
     return scopes
 
 
-def _validate_audience(claims: Dict[str, Any], oauth_config: Dict[str, Any], gateway_url: str, gateway_name: str, result: TokenValidationResult) -> None:
+def _validate_audience(
+    claims: Dict[str, Any],
+    oauth_config: Dict[str, Any],
+    gateway_url: str,
+    gateway_name: str,
+    result: TokenValidationResult,
+    learned_aud: Optional[Any] = None,
+) -> None:
     """Check the ``aud`` claim against the expected audience.
 
-    The check is *authoritative* (mismatch is blocking) when ``oauth_config``
-    has a ``resource`` value -- whether the admin set it explicitly via the UI
-    or it was auto-learned from a previous IdP token.  When no ``resource`` is
-    configured and the validator falls back to ``gateway_url``, the check is
-    *advisory* by default: a mismatch is recorded as a warning but is not
-    blocking, so the upstream MCP server is allowed to be the authoritative
-    validator.  Set ``OAUTH_REQUIRE_CONFIGURED_RESOURCE=true`` to make even
-    the auto-derived check blocking.  See
-    :class:`TokenValidationResult.blocking_errors` for the full rule.
+    Precedence for the expected value (first match wins):
+
+    1. ``oauth_config["resource"]`` -- admin explicitly configured. Authoritative.
+    2. ``learned_aud`` -- per-user value captured from THIS USER'S prior OAuth
+       callback (stored on OAuthToken). Authoritative for this user only.
+    3. ``gateway_url`` -- auto-derived fallback. Advisory by default; set
+       ``OAUTH_REQUIRE_CONFIGURED_RESOURCE=true`` to make it authoritative.
+
+    Per-user learned audience prevents (a) cross-tenant DoS when a single gateway
+    serves multiple IdP tenants with per-tenant aud values, and (b) RBAC bypass
+    where a user without ``gateways.update`` could otherwise mutate shared
+    gateway config via the OAuth callback path.
+
+    See :class:`TokenValidationResult.blocking_errors` for the blocking rule.
 
     Args:
         claims: Decoded JWT claims.
         oauth_config: Gateway OAuth configuration.
-        gateway_url: Fallback audience when ``resource`` is not configured.
+        gateway_url: Fallback audience when neither ``resource`` nor
+            ``learned_aud`` is available.
         gateway_name: Gateway name for log messages.
         result: Validation result to update in-place.
+        learned_aud: Per-user learned audience from a prior OAuth callback
+            for this user (from ``OAuthToken.learned_aud``). ``None`` when
+            no per-user learned value is available.
     """
     configured_resource = oauth_config.get("resource")
-    expected = configured_resource or gateway_url
+    expected = configured_resource or learned_aud or gateway_url
     if not expected:
         return
 
@@ -207,12 +223,13 @@ def _validate_audience(claims: Dict[str, Any], oauth_config: Dict[str, Any], gat
         result.audience_match = True
     else:
         result.audience_match = False
-        # Authoritative iff the admin or auto-learn supplied a non-empty resource,
-        # OR the operator opted into strict validation for auto-derived audiences
-        # via OAUTH_REQUIRE_CONFIGURED_RESOURCE. Falling back to gateway_url with
-        # the setting off is advisory -- a mismatch is logged but does not block
-        # forwarding, leaving the upstream MCP server as the authority.
-        result.audience_authoritative = bool(configured_resource) or settings.oauth_require_configured_resource
+        # Authoritative when the expected value came from admin config OR from
+        # the user's own learned aud OR when the operator opted into strict
+        # validation via OAUTH_REQUIRE_CONFIGURED_RESOURCE. Falling back to
+        # gateway_url with the setting off is advisory — a mismatch is logged
+        # but does not block forwarding, leaving the upstream MCP server as
+        # the authority.
+        result.audience_authoritative = bool(configured_resource) or bool(learned_aud) or settings.oauth_require_configured_resource
         result.warnings.append("Token audience mismatch: token aud does not match expected resource or gateway URL")
 
 
@@ -287,19 +304,21 @@ def validate_oauth_token_claims(
     gateway_url: str,
     gateway_name: str,
     token_type: str = "Bearer",  # nosec B107
+    learned_aud: Optional[Any] = None,
 ) -> TokenValidationResult:
     """Validate JWT claims on an OAuth access token before forwarding to an MCP server.
-
-    This is a best-effort, advisory validation.  The upstream MCP server is
-    the authoritative token validator.  Warnings are logged but do not block
-    token forwarding.
 
     Args:
         access_token: The OAuth access token (JWT or opaque).
         oauth_config: The gateway's OAuth configuration dict (contains scopes, resource, token_url, issuer).
-        gateway_url: The gateway URL, used as fallback audience if ``resource`` is not configured.
+        gateway_url: The gateway URL, used as fallback audience if neither
+            ``oauth_config["resource"]`` nor ``learned_aud`` is available.
         gateway_name: The gateway name, used for log messages.
         token_type: The stored token type (from OAuthToken model).
+        learned_aud: Per-user learned audience for THIS caller (from
+            ``OAuthToken.learned_aud``). Takes precedence over ``gateway_url``
+            fallback and is treated as authoritative for this user. See
+            :func:`_validate_audience` for the full precedence rule.
 
     Returns:
         TokenValidationResult with validation details and any warnings.
@@ -335,7 +354,7 @@ def validate_oauth_token_claims(
 
     result.is_jwt = True
 
-    _validate_audience(claims, oauth_config, gateway_url, gateway_name, result)
+    _validate_audience(claims, oauth_config, gateway_url, gateway_name, result, learned_aud=learned_aud)
     _validate_scopes(claims, oauth_config, gateway_name, result)
     _validate_issuer(claims, oauth_config, gateway_name, result)
 

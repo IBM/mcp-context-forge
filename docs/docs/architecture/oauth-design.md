@@ -111,34 +111,36 @@ RFC 8707 introduces the `resource` parameter, which allows the client to specify
 
 Some IdPs (ServiceNow, Authentik, Salesforce, Azure AD in multi-tenant configurations) do not strictly honor RFC 8707. They may map the requested `resource` to a different `aud` claim (typically the `client_id` or another abstract identifier). RFC 8707 §2 explicitly permits this mapping.
 
-#### Three-stage audience handling
+#### Three-stage audience handling (per-user)
 
-The gateway resolves the expected audience in three stages to maximize compatibility:
+The gateway resolves the expected audience via a three-level precedence, with per-user isolation on stage 2 to prevent cross-tenant DoS and RBAC bypass:
 
-1.  **Explicit admin configuration** — the admin sets `oauth_config.resource` explicitly via the Admin UI or API. This value is authoritative and blocking.
-2.  **Auto-learning** — on the first successful OAuth callback, the gateway decodes the access token's `aud` and `iss` claims (best-effort, unverified) and persists the learned audience to the gateway's configuration. This is a **first-write-only** operation, and two hardening rules apply before any persistence:
-    -   The `aud` claim must be a non-empty string or a non-empty list of non-empty strings (malformed shapes are silently dropped).
-    -   If `oauth_config.issuer` is configured, the token's `iss` claim must match it (trailing slashes normalized) — this prevents cross-IdP audience bleed.
-3.  **Auto-derived origin fallback** — if no resource is configured or learned, the gateway derives the origin (`scheme://netloc`, not the full path) from the gateway's URL as a fallback audience. Real-world providers (Salesforce, Azure AD, Okta) typically issue origin-level audiences.
+1.  **Explicit admin configuration** — the admin sets `oauth_config.resource` explicitly via the Admin UI or API. Authoritative and blocking. Global to the gateway.
+2.  **Per-user auto-learning** — on each user's OAuth callback, the gateway decodes the access token's `aud` and `iss` claims (best-effort, unverified) and persists them on **the user's own `OAuthToken` row** (columns `learned_aud`, `learned_iss`). Subsequent validation for THAT USER checks their token against their own learned value. Authoritative and blocking for that user only. Not shared across users.
+3.  **Auto-derived origin fallback** — if no resource is configured *and* no learned value exists for this user (e.g. first authentication), the gateway derives the origin (`scheme://netloc`, not the full path) from the gateway's URL. Real-world providers (Salesforce, Azure AD, Okta) typically issue origin-level audiences.
+
+#### Why per-user (and not per-gateway)?
+
+The earlier design persisted learned audience on shared `gateway.oauth_config.resource`, which created two problems:
+
+-   **Cross-tenant DoS**: a single gateway serving multiple IdP tenants (each returning different `aud` values) would have its `resource` pinned by whichever user authenticated first; other tenants' tokens then failed validation until an admin manually cleared the field.
+-   **RBAC bypass**: the OAuth callback path only enforces gateway *access* (visibility/team membership), not `gateways.update`. Allowing every authenticated callback to mutate shared config let users without the update permission alter global state on behalf of all users.
+
+Per-user storage eliminates both: each user's callback only writes to their own row (permission-scoped by construction), and each user's validation only reads their own learned value (no cross-tenant interference).
 
 #### Authoritative vs. advisory validation
 
 The gateway performs local validation of the token's audience before forwarding it to the upstream MCP server:
 
--   **Authoritative (blocking)** — when a `resource` is explicitly configured or auto-learned, an audience mismatch raises `GatewayConnectionError` and the token is not forwarded.
--   **Advisory (non-blocking, default)** — when the audience is auto-derived from the gateway URL fallback, a mismatch is advisory. A warning is logged, but the token is still forwarded so the upstream MCP server can act as the authority. Operators can force the auto-derived case to be authoritative too via `OAUTH_REQUIRE_CONFIGURED_RESOURCE=true`.
-
-#### Race safety on config updates
-
-`oauth_config.resource` is unusual among OAuth config keys because it can be written asynchronously by the OAuth callback (`_persist_learned_audience`) independent of any admin edit. To prevent a stale admin save from silently wiping a callback-learned resource, `_protect_oauth_config_value` in `mcpgateway/services/encryption_service.py` backfills `resource` from the stored config whenever the caller's new `oauth_config` dict omits the key. An API caller that genuinely wants to clear the field must send `resource: null` explicitly.
+-   **Authoritative (blocking)** — mismatch raises `GatewayConnectionError` and the token is not forwarded. This is the case when either (a) `oauth_config.resource` is admin-configured, or (b) the user has a `learned_aud` from a prior successful callback.
+-   **Advisory (non-blocking, default)** — mismatch is logged as a warning and the token is still forwarded so the upstream MCP server can act as the authority. Only applies when the user has neither of the above and the validator falls back to the gateway URL origin. Set `OAUTH_REQUIRE_CONFIGURED_RESOURCE=true` to make this case authoritative too.
 
 #### Implementation references
 
--   Origin extraction: `_derive_resource_origin` in `mcpgateway/routers/oauth_router.py`.
+-   Origin extraction (outbound `resource` parameter fallback): `_derive_resource_origin` in `mcpgateway/routers/oauth_router.py`.
 -   Single-decode claim extraction (aud + iss): `_extract_aud_and_iss` in `mcpgateway/services/oauth_manager.py`.
--   Audience persistence (first-write-only + shape check + issuer pinning): `_persist_learned_audience` in `mcpgateway/routers/oauth_router.py`.
--   Advisory / authoritative split: `_validate_audience` in `mcpgateway/services/token_validation_service.py`.
--   Race-safe backfill: `_OAUTH_CONFIG_RACE_PRONE_KEYS` in `mcpgateway/services/encryption_service.py`.
+-   Per-user learned-audience storage: `OAuthToken.learned_aud` / `learned_iss` in `mcpgateway/db.py`; write via `TokenStorageService.store_tokens` (called from `OAuthManager.complete_authorization_code_flow`); read via `TokenStorageService.get_user_learned_audience`.
+-   Precedence + advisory / authoritative split: `_validate_audience` in `mcpgateway/services/token_validation_service.py`.
 -   Trust model for the unverified JWT decode used at learning time: `_decode_token_claims_unverified` in `mcpgateway/services/oauth_manager.py`.
 
 !!! warning "Security: unverified JWT decode trust boundary"

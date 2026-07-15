@@ -115,7 +115,18 @@ class TokenStorageService:
             logger.warning("OAuth encryption not available, using plain text storage")
             self.encryption = None
 
-    async def store_tokens(self, gateway_id: str, user_id: str, app_user_email: str, access_token: str, refresh_token: Optional[str], expires_in: Optional[int], scopes: List[str]) -> OAuthToken:
+    async def store_tokens(
+        self,
+        gateway_id: str,
+        user_id: str,
+        app_user_email: str,
+        access_token: str,
+        refresh_token: Optional[str],
+        expires_in: Optional[int],
+        scopes: List[str],
+        learned_aud: Optional[Any] = None,
+        learned_iss: Optional[str] = None,
+    ) -> OAuthToken:
         """Store OAuth tokens for a gateway-user combination.
 
         Args:
@@ -126,6 +137,12 @@ class TokenStorageService:
             refresh_token: Refresh token from OAuth provider (optional)
             expires_in: Token expiration time in seconds, or None if the provider does not specify expiration
             scopes: List of OAuth scopes granted
+            learned_aud: The ``aud`` claim (string or list) extracted best-effort from the
+                access token; used later by token_validation_service to authoritatively
+                validate this user's subsequent tokens. Stored per-user to avoid cross-tenant
+                DoS and to prevent RBAC bypass via callback-driven writes to shared config.
+            learned_iss: The ``iss`` claim from the access token, stored alongside
+                learned_aud to enable issuer-pinned validation.
 
         Returns:
             OAuthToken record
@@ -163,6 +180,14 @@ class TokenStorageService:
                 token_record.expires_at = expires_at
                 token_record.scopes = scopes
                 token_record.updated_at = datetime.now(timezone.utc)
+                # Refresh learned aud/iss on re-authentication so a re-auth with a changed
+                # tenant / audience updates this user's own row. Only overwrite when the
+                # caller supplied non-None values so callers that don't inspect the token
+                # (e.g. token_exchange) do not accidentally clear learned metadata.
+                if learned_aud is not None:
+                    token_record.learned_aud = learned_aud
+                if learned_iss is not None:
+                    token_record.learned_iss = learned_iss
                 logger.info(
                     "Updated OAuth tokens for gateway %s, app user %s, OAuth user %s",
                     SecurityValidator.sanitize_log_message(gateway_id),
@@ -172,7 +197,15 @@ class TokenStorageService:
             else:
                 # Create new record
                 token_record = OAuthToken(
-                    gateway_id=gateway_id, user_id=user_id, app_user_email=app_user_email, access_token=encrypted_access, refresh_token=encrypted_refresh, expires_at=expires_at, scopes=scopes
+                    gateway_id=gateway_id,
+                    user_id=user_id,
+                    app_user_email=app_user_email,
+                    access_token=encrypted_access,
+                    refresh_token=encrypted_refresh,
+                    expires_at=expires_at,
+                    scopes=scopes,
+                    learned_aud=learned_aud,
+                    learned_iss=learned_iss,
                 )
                 self.db.add(token_record)
                 logger.info(
@@ -189,6 +222,32 @@ class TokenStorageService:
             self.db.rollback()
             logger.error("Failed to store OAuth tokens: %s", str(e))
             raise OAuthError(f"Token storage failed: {str(e)}")
+
+    async def get_user_learned_audience(self, gateway_id: str, app_user_email: str) -> tuple[Optional[Any], Optional[str]]:
+        """Return the per-user learned ``aud`` and ``iss`` for a gateway-user pair.
+
+        Used by :func:`mcpgateway.services.token_validation_service.validate_oauth_token_claims`
+        to authoritatively validate a user's token audience against the value learned from
+        their own prior OAuth callback, rather than a globally-shared gateway.oauth_config
+        value.
+
+        Args:
+            gateway_id: ID of the gateway.
+            app_user_email: ContextForge user email.
+
+        Returns:
+            Tuple of ``(learned_aud, learned_iss)``. Either element may be ``None`` if
+            no token record exists for the pair or if the fields were never populated
+            (e.g. opaque tokens, decode failures, or pre-migration rows).
+        """
+        try:
+            token_record = self.db.execute(select(OAuthToken.learned_aud, OAuthToken.learned_iss).where(OAuthToken.gateway_id == gateway_id, OAuthToken.app_user_email == app_user_email)).one_or_none()
+            if token_record is None:
+                return (None, None)
+            return (token_record.learned_aud, token_record.learned_iss)
+        except Exception as e:
+            logger.debug("Failed to retrieve learned audience for gateway %s: %s", SecurityValidator.sanitize_log_message(gateway_id), e)
+            return (None, None)
 
     async def get_user_token(self, gateway_id: str, app_user_email: str, threshold_seconds: int = 300) -> Optional[str]:
         """Get a valid access token for a specific ContextForge user, refreshing if necessary.
