@@ -248,11 +248,140 @@ describe("PromptDetailsPanel", () => {
     expect(screen.getByText("Local prompt · private · 1 argument")).toBeInTheDocument();
   });
 
+  it("renders the overflow menu button when onEdit is provided", () => {
+    render(
+      <PromptDetailsPanel
+        prompts={[mockPrompt()]}
+        title="hugging-face"
+        open={true}
+        onClose={vi.fn()}
+        onEdit={vi.fn()}
+      />,
+    );
+
+    expect(
+      screen.getByRole("button", { name: /more options for greet_user/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("renders the overflow menu button when onDelete is provided", () => {
+    render(
+      <PromptDetailsPanel
+        prompts={[mockPrompt()]}
+        title="hugging-face"
+        open={true}
+        onClose={vi.fn()}
+        onDelete={vi.fn()}
+      />,
+    );
+
+    expect(
+      screen.getByRole("button", { name: /more options for greet_user/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("does not render the overflow menu when neither onEdit nor onDelete is provided", () => {
+    render(
+      <PromptDetailsPanel
+        prompts={[mockPrompt()]}
+        title="hugging-face"
+        open={true}
+        onClose={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByRole("button", { name: /more options/i })).not.toBeInTheDocument();
+  });
+
+  it("calls onEdit with the selected prompt when Edit is clicked", async () => {
+    const onEdit = vi.fn();
+    const user = userEvent.setup();
+    const prompt = mockPrompt();
+    render(
+      <PromptDetailsPanel
+        prompts={[prompt]}
+        title="hugging-face"
+        open={true}
+        onClose={vi.fn()}
+        onEdit={onEdit}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: /more options for greet_user/i }));
+    await user.click(screen.getByRole("menuitem", { name: /^edit$/i }));
+    expect(onEdit).toHaveBeenCalledWith(prompt);
+  });
+
+  it("calls onDelete with the selected prompt when Delete is clicked", async () => {
+    const onDelete = vi.fn();
+    const user = userEvent.setup();
+    const prompt = mockPrompt();
+    render(
+      <PromptDetailsPanel
+        prompts={[prompt]}
+        title="hugging-face"
+        open={true}
+        onClose={vi.fn()}
+        onDelete={onDelete}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: /more options for greet_user/i }));
+    await user.click(screen.getByRole("menuitem", { name: /^delete$/i }));
+    expect(onDelete).toHaveBeenCalledWith(prompt);
+  });
+
+  it("renders Technical name and Prompt ID with copy buttons", () => {
+    render(
+      <PromptDetailsPanel
+        prompts={[mockPrompt()]}
+        title="hugging-face"
+        open={true}
+        onClose={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("Technical name")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /copy technical name/i })).toBeInTheDocument();
+    expect(screen.getByText("Prompt ID")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /copy prompt id/i })).toBeInTheDocument();
+  });
+
+  it("renders Source URL with copy button when federationSource is set", () => {
+    const prompt = mockPrompt({ federationSource: "https://mcp.example.com/prompts" });
+    render(<PromptDetailsPanel prompts={[prompt]} title="test" open={true} onClose={vi.fn()} />);
+
+    expect(screen.getByText("Source URL")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /copy source url/i })).toBeInTheDocument();
+  });
+
+  it("omits Source URL when federationSource is not set", () => {
+    render(
+      <PromptDetailsPanel prompts={[mockPrompt()]} title="test" open={true} onClose={vi.fn()} />,
+    );
+
+    expect(screen.queryByText("Source URL")).not.toBeInTheDocument();
+  });
+
+  it("renders Version when version is set", () => {
+    const prompt = mockPrompt({ version: 3 });
+    render(<PromptDetailsPanel prompts={[prompt]} title="test" open={true} onClose={vi.fn()} />);
+
+    expect(screen.getByText("Version")).toBeInTheDocument();
+    expect(screen.getByText("3")).toBeInTheDocument();
+  });
+
+  it("omits Version when version is null", () => {
+    const prompt = mockPrompt({ version: null });
+    render(<PromptDetailsPanel prompts={[prompt]} title="test" open={true} onClose={vi.fn()} />);
+
+    expect(screen.queryByText("Version")).not.toBeInTheDocument();
+  });
+
   it("calls onAddTag with the merged, de-duplicated tag list", async () => {
     const user = userEvent.setup();
     const onAddTag = vi.fn().mockResolvedValue(undefined);
     const prompt = mockPrompt({ id: "p1", tags: [{ id: "dev", label: "dev" }] });
-
     render(
       <PromptDetailsPanel
         prompts={[prompt]}

@@ -10,6 +10,7 @@
   "common.button.confirm": "Confirm",
   "common.button.back": "Back",
   "common.button.submitting": "Submitting...",
+  "common.copyValue": "Copy {label}",
   "common.loading": "Loading...",
   "common.error": "Error",
   "common.success": "Success",

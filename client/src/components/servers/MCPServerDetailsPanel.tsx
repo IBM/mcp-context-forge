@@ -17,11 +17,11 @@ import { MCPIcon } from "@/components/icons/MCPIcon";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { InlineTagAdd } from "@/components/ui/inline-tag-add";
+import { CopyValue } from "@/components/ui/copy-value";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import type { MCPServer as BaseMCPServer, VirtualServerTag } from "@/types/server";
 import { copyToClipboard } from "@/lib/clipboard";
-import { truncateMiddle } from "@/components/gateways/utils";
 import { useQuery } from "@/hooks/useQuery";
 
 interface MCPServer extends BaseMCPServer {
@@ -76,24 +76,6 @@ function DetailRow({
     <div className={`grid grid-cols-[96px_minmax(0,1fr)] items-start gap-4 ${className ?? ""}`}>
       <dt className="text-muted-foreground">{label}</dt>
       <dd className="min-w-0 text-foreground">{children}</dd>
-    </div>
-  );
-}
-
-function CopyValue({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex min-w-0 items-center gap-2">
-      <span className="min-w-0 flex-1 truncate font-mono text-[12px]">{truncateMiddle(value)}</span>
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon-xs"
-        className="size-5 text-muted-foreground"
-        aria-label={`Copy ${label}`}
-        onClick={() => copyToClipboard(value)}
-      >
-        <Copy className="size-3.5" />
-      </Button>
     </div>
   );
 }
