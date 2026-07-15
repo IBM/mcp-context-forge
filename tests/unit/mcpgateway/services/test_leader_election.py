@@ -8,6 +8,7 @@ Tests for the primary-worker elector (filelock + redis backends).
 
 # Standard
 import asyncio
+import logging
 
 # Third-Party
 import fakeredis
@@ -210,6 +211,44 @@ class _RenewBoomRedis:
 
     async def aclose(self):
         """No-op close."""
+
+
+class _LeakyRenewRedis(_RenewBoomRedis):
+    """Like ``_RenewBoomRedis`` but its error message embeds a DSN with a password."""
+
+    SECRET = "sup3rs3cr3t"  # pragma: allowlist secret
+
+    async def eval(self, *args, **kwargs):
+        """Fail with a message that embeds credentials (as some redis errors do).
+
+        Args:
+            *args: Ignored.
+            **kwargs: Ignored.
+
+        Raises:
+            ConnectionError: Always, with an embedded DSN.
+        """
+        raise ConnectionError(f"Error connecting to redis://user:{self.SECRET}@host:6379")  # pragma: allowlist secret
+
+
+async def test_redis_error_logs_do_not_leak_credentials(caplog):
+    """CWE-532: redis-unavailable/maintenance warnings log the exception type, not str(exc) (no DSN leak)."""
+    e = PrimaryWorkerElector(
+        backend="redis",
+        redis_key="k",
+        unavailable_policy="fail_closed",
+        lease_ttl=30,
+        heartbeat_interval=0.1,
+        redis_client=_LeakyRenewRedis(),
+    )
+    with caplog.at_level(logging.WARNING, logger="mcpgateway.services.leader_election"):
+        await e.start()
+        assert e.is_primary is True
+        await asyncio.sleep(0.3)  # heartbeat eval raises with the embedded secret
+        assert e.is_primary is False
+        await e.stop()
+    assert _LeakyRenewRedis.SECRET not in caplog.text  # password never reaches the log
+    assert "ConnectionError" in caplog.text  # the exception type is still logged
 
 
 async def test_redis_maintenance_error_fail_closed():

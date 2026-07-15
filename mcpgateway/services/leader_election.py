@@ -134,7 +134,7 @@ class PrimaryWorkerElector:
             except asyncio.CancelledError:
                 pass
             except Exception as exc:  # best-effort: don't let a task error break the shutdown sequence
-                logger.warning("elector maintenance task raised on cancel: %s", exc)
+                logger.warning("elector maintenance task raised on cancel: %s", type(exc).__name__)
             self._task = None
         if self._redis is not None:
             try:
@@ -143,7 +143,7 @@ class PrimaryWorkerElector:
                 if self._owns_redis:
                     await self._redis.aclose()
             except Exception as exc:  # best-effort cleanup
-                logger.warning("elector stop cleanup failed: %s", exc)
+                logger.warning("elector stop cleanup failed: %s", type(exc).__name__)
             finally:
                 # Drop the client we own so a repeat stop() doesn't touch a closed
                 # one; keep an injected client (tests) since we didn't open it.
@@ -190,11 +190,13 @@ class PrimaryWorkerElector:
 
     def _handle_redis_unavailable(self, exc: Exception) -> None:
         """Apply the configured policy when Redis can't be reached."""
+        # Log only the exception TYPE, never str(exc): a redis.asyncio connection
+        # error can stringify the DSN and leak credentials from REDIS_URL (CWE-532).
         if self._policy == "filelock_fallback":
-            logger.warning("redis unavailable (%s); falling back to per-host filelock", exc)
+            logger.warning("redis unavailable (%s); falling back to per-host filelock", type(exc).__name__)
             self._acquire_filelock()
         else:
-            logger.warning("redis unavailable (%s); failing closed (non-primary)", exc)
+            logger.warning("redis unavailable (%s); failing closed (non-primary)", type(exc).__name__)
             self._is_primary = False
 
     async def _maintain(self) -> None:
@@ -219,7 +221,7 @@ class PrimaryWorkerElector:
                 # expires unrenewed and a follower would take it -> two primaries).
                 # Apply the same policy as the initial connect: fail_closed demotes;
                 # filelock_fallback re-elects per host (and demotes if it can't).
-                logger.warning("election maintenance error pid=%d: %s", os.getpid(), exc)
+                logger.warning("election maintenance error pid=%d: %s", os.getpid(), type(exc).__name__)  # type only, not str(exc) (CWE-532)
                 self._handle_redis_unavailable(exc)
 
 
