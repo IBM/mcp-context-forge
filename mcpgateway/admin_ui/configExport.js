@@ -155,21 +155,6 @@ export const generateConfig = function (server, configType) {
     .replace(/^-|-$/g, "");
 
   switch (configType) {
-    case "stdio":
-      return {
-        mcpServers: {
-          "mcpgateway-wrapper": {
-            command: "python",
-            args: ["-m", "mcpgateway.wrapper"],
-            env: {
-              MCP_AUTH: "Bearer <your-token-here>",
-              MCP_SERVER_URL: `${baseUrl}/servers/${server.id}`,
-              MCP_TOOL_CALL_TIMEOUT: "120",
-            },
-          },
-        },
-      };
-
     case "sse":
       return {
         servers: {

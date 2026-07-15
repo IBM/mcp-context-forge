@@ -24,9 +24,7 @@ ARG PYTHON_VERSION=3.12
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
-# Build toolchain: compilers, OpenSSL, autotools, and Rust (tiktoken,
-# pydantic-core, cryptography, etc. all need a Rust toolchain to build from
-# source on these architectures).
+# Build toolchain: compilers, OpenSSL, autotools.
 # hadolint ignore=DL3041,DL3013
 RUN microdnf update -y && \
     microdnf install -y \
@@ -44,11 +42,7 @@ RUN microdnf update -y && \
         findutils && \
     microdnf clean all && \
     update-alternatives --install /usr/bin/python3 python3 /usr/bin/python${PYTHON_VERSION} 1 && \
-    python3 -m pip install --no-cache-dir --upgrade pip uv && \
-    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -o ./rustup.sh && \
-    bash ./rustup.sh -y
-
-ENV PATH="/root/.cargo/bin:$PATH"
+    python3 -m pip install --no-cache-dir --upgrade pip uv
 
 # s390x/ppc64le do not support BoringSSL — force grpcio to build against OpenSSL.
 ENV GRPC_PYTHON_BUILD_SYSTEM_OPENSSL=True

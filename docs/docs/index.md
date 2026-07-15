@@ -238,33 +238,7 @@ curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
 
     # 6️⃣  Client HTTP endpoint - use MCP Inspector
     npx -y @modelcontextprotocol/inspector
-    # Transport Type: Streamable HTTP, URL: http://localhost:4444/servers/UUID_OF_SERVER_1/mcp
-    ```
-
-??? example "Using the stdio wrapper (mcpgateway-wrapper)"
-
-    ```bash
-    export MCP_AUTH="Bearer ${MCPGATEWAY_BEARER_TOKEN}"
-    export MCP_SERVER_URL=http://localhost:4444/servers/UUID_OF_SERVER_1/mcp
-    python3 -m mcpgateway.wrapper  # Ctrl-C to exit
-    ```
-
-    When using a MCP Client such as Claude with stdio:
-
-    ```json
-    {
-      "mcpServers": {
-        "mcpgateway-wrapper": {
-          "command": "python",
-          "args": ["-m", "mcpgateway.wrapper"],
-          "env": {
-            "MCP_AUTH": "Bearer your-token-here",
-            "MCP_SERVER_URL": "http://localhost:4444/servers/UUID_OF_SERVER_1",
-            "MCP_TOOL_CALL_TIMEOUT": "120"
-          }
-        }
-      }
-    }
+    # Transport Type: Streamable HTTP, URL: http://localhost:4444/servers/UUID_OF_SERVER_1/mcp/
     ```
 
 ---

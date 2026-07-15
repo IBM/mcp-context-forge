@@ -23,8 +23,7 @@ docker build -t mcpgateway:latest -f Containerfile .
 ```
 
 `Containerfile` is the canonical multi-stage build (UBI builder → ubi-minimal
-runtime) supporting amd64, arm64, s390x, and ppc64le, with optional Rust runtime
-support (`--build-arg ENABLE_RUST=true`) and profiling tools
+runtime) supporting amd64, arm64, s390x, and ppc64le, with profiling tools
 (`--build-arg ENABLE_PROFILING=true`).
 
 ---

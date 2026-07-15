@@ -18,11 +18,19 @@
     | **HTTP / JSON-RPC** | Low-latency request-response, default for most REST clients | Simple tool invocations |
     | **WebSocket** | Bi-directional, full-duplex | Streaming chat or incremental tool results |
     | **Server-Sent Events (SSE)** | Uni-directional server → client stream | LLM completions or real-time updates |
-    | **STDIO** | Local process pipes via `mcpgateway-wrapper` | Editor plugins, headless CLI clients |
+    | **Local Stdio** | Bridge to MCP clients via `mcpgateway.translate` (stdio ↔ SSE/HTTP) | Editor plugins, headless CLI clients |
 
-??? example "Try it: SSE from curl"
+??? example "Try it: Streamable HTTP from curl"
 
     ```bash
+    # Request tools catalog (POST to Streamable HTTP endpoint)
+    curl -s -X POST \
+         -H "Authorization: Bearer $TOKEN" \
+         -H "Content-Type: application/json" \
+         -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' \
+         http://localhost:4444/mcp/
+
+    # Or register and connect a client via SSE (upstream only)
     curl -N -H "Accept: text/event-stream" \
          -H "Authorization: Bearer $TOKEN" \
          http://localhost:4444/servers/UUID_OF_SERVER_1/sse

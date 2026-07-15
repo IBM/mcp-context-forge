@@ -6,7 +6,7 @@
 
 ## 🔧 MCP Support
 
-Experimental support for MCP integration is available via custom `ToolAgent` wrappers that call MCP tools via HTTP or `mcpgateway-wrapper`.
+Experimental support for MCP integration is available via custom `ToolAgent` wrappers that call MCP tools via HTTP.
 
 Minimal example using HTTP JSON-RPC with `requests`:
 
@@ -33,8 +33,6 @@ def call_tool(name: str, arguments: dict):
 result = call_tool("get_system_time", {"timezone": "Europe/Dublin"})
 print(result)
 ```
-
-For stdio-based integration, launch `mcpgateway-wrapper` and connect AutoGen via a subprocess bridge.
 
 ---
 

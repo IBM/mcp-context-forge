@@ -188,13 +188,12 @@ If not using Dev Containers, set up manually:
 
 ## 🤖 Client Integration
 
-???+ check "Run wrapper and test transports"
+???+ check "Test transports"
 
-    - [ ] Run: `python3 -m mcpgateway.wrapper` (stdio support)
     - [ ] Test transports:
 
-        - Streamable HTTP
-        - Server-Sent Events (SSE)
+        - **Streamable HTTP** (canonical client transport)
+        - Server-Sent Events (SSE) (upstream server registration)
 
     - [ ] Optional: Integrate with Claude, Copilot, Continue ([usage guide](../using/index.md))
 

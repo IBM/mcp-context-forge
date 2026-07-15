@@ -81,15 +81,12 @@ allowlist = [
   { name = "docutils", reason = "BSD/Public-Domain dual-licensed; metadata missing in sub-venvs" },
   { name = "ptyprocess", reason = "ISC licensed; metadata missing in some installs" },
   { name = "cedarpy", reason = "Apache-2.0; AWS Cedar policy engine bindings" },
-  # Local Rust crate missing license declaration in Cargo.toml.
-  { name = "filesystem-server", reason = "local crate, Apache-2.0 (repo license)" },
 ]
 
 [scan]
 check_pyproject_licenses = true
 check_pip_dependencies = true
 check_go_dependencies = true
-check_rust_dependencies = true
 ignore_dev_dependency_group_names = [
   "dev",
   "development",

@@ -72,7 +72,7 @@ This diagram showcases the performance-optimized architecture of ContextForge, h
                                              │
                                              ▼
 ┌─────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-│                                    RUST-POWERED COMPONENTS                                              │
+│                                  CORE APPLICATION COMPONENTS                                             │
 │                                                                                                         │
 │  ┌─────────────────────────────────────────────────────────────────────────────────────────────────────┐│
 │  │                                      FASTAPI APPLICATION                                            ││

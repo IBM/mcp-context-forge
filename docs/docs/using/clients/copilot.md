@@ -9,8 +9,7 @@ With Copilot → MCP you can:
 * 📂 pull live resources (configs, docs, snippets)
 * 🧩 render prompts or templates directly inside the IDE
 
-Copilot supports **SSE** streams out-of-the-box; for environments that forbid long-lived
-HTTP or require local stdio, you can insert the bundled **`mcpgateway.wrapper`** bridge.
+Copilot supports for MCP integration via Streamable HTTP.
 
 !!! tip "Gateway URL"
     - Direct installs (`uvx`, pip, or `docker run`): `http://localhost:4444`
@@ -27,7 +26,7 @@ HTTP or require local stdio, you can insert the bundled **`mcpgateway.wrapper`**
 
 ---
 
-## 🔗 Option 1 - Direct SSE (best for prod / remote)
+## 🔗 Streamable HTTP (recommended)
 
 ### 1 - Create `.vscode/mcp.json`
 
@@ -35,8 +34,8 @@ HTTP or require local stdio, you can insert the bundled **`mcpgateway.wrapper`**
 {
   "servers": {
     "mcp-gateway": {
-      "type": "sse",
-      "url": "https://mcpgateway.example.com/servers/UUID_OF_SERVER_1/sse",
+      "type": "http",
+      "url": "https://mcpgateway.example.com/servers/UUID_OF_SERVER_1/mcp/",
       "headers": {
         "Authorization": "Bearer <YOUR_JWT_TOKEN>"
       }
@@ -50,8 +49,6 @@ HTTP or require local stdio, you can insert the bundled **`mcpgateway.wrapper`**
 ```bash
 python3 -m mcpgateway.utils.create_jwt_token -u admin@example.com --exp 10080 --secret my-test-key-but-now-longer-than-32-bytes
 ```
-
-## 🔗 Option 2 - Streamable HTTP (best for prod / remote)
 
 ### 2 - Create `.vscode/mcp.json`
 
@@ -71,62 +68,6 @@ python3 -m mcpgateway.utils.create_jwt_token -u admin@example.com --exp 10080 --
 
 ---
 
-## 🔗 Option 3 - Local stdio bridge (`mcpgateway.wrapper`)
-
-Perfect when:
-
-* the IDE cannot add HTTP headers, or
-* you're offline / behind a corp proxy.
-
-### 1 - Install the wrapper (one-liner)
-
-```bash
-pipx install --include-deps mcp-contextforge-gateway          # isolates in ~/.local/pipx/venvs
-#   - or -
-uv pip install mcp-contextforge-gateway                       # inside any uv/venv you like
-```
-
-### 2 - Create `.vscode/mcp.json`
-
-```json
-{
-  "servers": {
-    "mcp-wrapper": {
-      "type": "stdio",
-      "command": "python3",
-      "args": ["-m", "mcpgateway.wrapper"],
-      "env": {
-        "MCP_SERVER_URL": "http://localhost:4444/servers/UUID_OF_SERVER_1/mcp",
-        "MCP_AUTH": "Bearer <YOUR_JWT_TOKEN>",
-        "MCP_TOOL_CALL_TIMEOUT": "120"
-      }
-    }
-  }
-}
-```
-
-That's it - VS Code spawns the stdio process, pipes JSON-RPC, and you're ready to roll.
-
-<details>
-<summary><strong>🐳 Docker alternative</strong></summary>
-
-```jsonc
-{
-  "command": "docker",
-  "args": [
-    "run", "--rm", "--network=host", "-i",
-    "-e", "MCP_SERVER_URL=http://localhost:4444/servers/UUID_OF_SERVER_1",
-    "-e", "MCP_AUTH=<Bearer YOUR_JWT_TOKEN>",
-    "ghcr.io/ibm/mcp-context-forge:1.0.0-RC-3",
-    "python3", "-m", "mcpgateway.wrapper"
-  ]
-}
-```
-
-</details>
-
----
-
 ## 🧪 Verify inside Copilot
 
 1. Open **Copilot Chat** → switch to *Agent* mode.
@@ -143,7 +84,7 @@ Copilot routes the call → Gateway → tool, and prints the reply.
 
 ## 📝 Good to know
 
-* **Use SSE for production**, stdio for local/offline.
+    * **Streamable HTTP** - preferred for all production connections.
 * You can manage servers, tools and prompts from the Gateway **Admin UI** (`/admin`).
 * Need a bearer quickly?
   `export MCP_AUTH=$(python3 -m mcpgateway.utils.create_jwt_token -u admin@example.com --secret my-test-key-but-now-longer-than-32-bytes)`

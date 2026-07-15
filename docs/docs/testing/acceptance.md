@@ -7,7 +7,7 @@ graph TB
     subgraph "TESTER WORKSTATION"
         PIP[pip install mcp-contextforge-gateway]
         JWT[mcpgateway.utils.create_jwt_token<br/>Generates Bearer Token]
-        WRAPPER[mcpgateway.wrapper<br/>stdio to HTTP bridge]
+│ Tests Streamable HTTP, SSE, and WebSocket transport coverage. |
         VSC_SSE[VS Code with SSE/HTTP<br/>Direct connection]
         INSPECTOR[MCP Inspector]
         AGENTS[AI Agents<br/>LangChain / CrewAI]
@@ -160,18 +160,16 @@ graph TB
 |---------|-----|----------|-----------------|--------|-------|
 | Create REST Tool | `curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" -H "Content-Type: application/json" -d '{"name": "weather_api", "url": "https://api.openweathermap.org/data/2.5/weather", "description": "Get current weather data", "integrationType": "REST", "requestType": "GET", "headers": {"X-API-Key": "demo-key"}, "input_schema": {"type": "object", "properties": {"q": {"type": "string", "description": "City name"}, "units": {"type": "string", "enum": ["metric", "imperial"]}}, "required": ["q"]}}' $GW_URL/tools \| jq` | Virtualize REST API | Success (201) | ☐ | REST as MCP tool |
 
-## 8. MCP Wrapper Testing
+## 8. MCP Transport Testing
 
 | Feature | URL | Commands | Expected Result | Status | Notes |
 |---------|-----|----------|-----------------|--------|-------|
-| Install Package | `pip install mcp-contextforge-gateway` | Install for wrapper | Package installed | ☐ | If not already done |
-| Set Environment | `export MCP_SERVER_URL="$GW_URL/servers/$TIME_SERVER_UUID" && export MCP_AUTH=$MCPGATEWAY_BEARER_TOKEN` | Configure wrapper | Environment set | ☐ | Point to virtual server |
-| Test Wrapper Init | `echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}' \| python3 -m mcpgateway.wrapper 2>/dev/null \| jq` | Initialize via stdio | Returns capabilities with tools | ☐ | Stdio to HTTP bridge |
-| List Tools via Wrapper | `echo '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}' \| python3 -m mcpgateway.wrapper 2>/dev/null \| jq` | List tools via stdio | Returns tool list | ☐ | Wrapper functionality |
+| Initialize | `curl -s -H "Authorization: Bearer $TOKEN" http://localhost:4444/rpc -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}' | Initialize connection | Returns server capabilities | ☐ | HTTP transport |
+| Tool List via HTTP | `curl -s -H "Authorization: Bearer $TOKEN" http://localhost:4444/rpc -d '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' | List tools via http | Returns tool list | ☐ | HTTP transport |
 
 ## 9. VS Code Integration Testing
 
-### 9.1. VS Code with MCP Wrapper (stdio)
+### 9.1. VS Code with Streamable HTTP
 
 | Feature | Configuration | Actions | Expected Result | Status | Notes |
 |---------|--------------|---------|-----------------|--------|-------|
@@ -180,11 +178,10 @@ graph TB
 {
   "mcp.servers": {
     "gateway-virtual": {
-      "command": "python",
-      "args": ["-m", "mcpgateway.wrapper"],
-      "env": {
-        "MCP_SERVER_URL": "$GW_URL/servers/$TIME_SERVER_UUID",
-        "MCP_AUTH": "$MCPGATEWAY_BEARER_TOKEN"
+      "type": "http",
+      "url": "$GW_URL/servers/$TIME_SERVER_UUID/mcp/",
+      "headers": {
+        "Authorization": "Bearer $MCPGATEWAY_BEARER_TOKEN"
       }
     }
   }

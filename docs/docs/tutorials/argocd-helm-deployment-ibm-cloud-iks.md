@@ -63,7 +63,7 @@ flowchart TD
     kms    -- "encryption"    --> iks
     logs   -- "audit logs"    --> iks
     gateway-- "SSE/HTTP"      --> vscode
-    gateway-- "stdio wrapper" --> claude
+    gateway-- "SSE/HTTP" --> claude
     gateway-- "HTTP API"      --> langchain
 ```
 
@@ -688,7 +688,7 @@ curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
 
 ## 9. Configure AI Clients
 
-### 9.1. VS Code Copilot Integration
+### 9.1. VS Code Copilot Integration (Streamable HTTP)
 
 Add this to your VS Code `settings.json`:
 
@@ -697,8 +697,8 @@ Add this to your VS Code `settings.json`:
   "chat.mcp.enabled": true,
   "mcp.servers": {
     "mcp-gateway": {
-      "type": "sse",
-      "url": "https://mcp-gateway.<CLUSTER_INGRESS_SUBDOMAIN>/servers/UUID_OF_SERVER_1/sse",
+      "type": "http",
+      "url": "https://mcp-gateway.<CLUSTER_INGRESS_SUBDOMAIN>/servers/UUID_OF_SERVER_1/mcp/",
       "headers": {
         "Authorization": "Bearer <MCPGATEWAY_BEARER_TOKEN>"
       }
@@ -709,36 +709,50 @@ Add this to your VS Code `settings.json`:
 
 ### 9.2. Claude Desktop Configuration
 
-Add to your Claude Desktop configuration:
+Add to your Claude Desktop configuration (Streamable HTTP transport recommended):
 
 ```json
 {
   "mcpServers": {
     "mcp-gateway": {
-      "command": "python",
-      "args": ["-m", "mcpgateway.wrapper"],
-      "env": {
-        "MCP_AUTH": "<MCPGATEWAY_BEARER_TOKEN>",
-        "MCP_SERVER_URL": "https://mcp-gateway.<CLUSTER_INGRESS_SUBDOMAIN>/servers/UUID_OF_SERVER_1/mcp"
+      "type": "http",
+      "url": "https://mcp-gateway.<CLUSTER_INGRESS_SUBDOMAIN>/servers/UUID_OF_SERVER_1/mcp/",
+      "headers": {
+        "Authorization": "Bearer <MCPGATEWAY_BEARER_TOKEN>"
       }
     }
   }
 }
 ```
 
-### 9.3. LangChain Agent Integration
+### 9.3. Claude Desktop Configuration (Streamable HTTP fallback)
+
+```json
+{
+  "mcpServers": {
+    "mcp-gateway": {
+      "type": "http",
+      "url": "https://mcp-gateway.<CLUSTER_INGRESS_SUBDOMAIN>/servers/UUID_OF_SERVER_1/mcp/",
+      "headers": {
+        "Authorization": "Bearer <MCPGATEWAY_BEARER_TOKEN>"
+      }
+    }
+  }
+}
+```
+
+### 9.4. LangChain Agent Integration
 
 ```python
-from mcpgateway_wrapper import MCPClient
+from httpx import AsyncClient
 
-client = MCPClient(
-    catalog_urls=["https://mcp-gateway.<CLUSTER_INGRESS_SUBDOMAIN>/servers/UUID_OF_SERVER_1"],
-    token="<MCPGATEWAY_BEARER_TOKEN>",
-)
-
-# List available tools
-tools = client.tools_list()
-print(tools)
+async def list_tools():
+    async with AsyncClient(headers={"Authorization": f"Bearer <MCPGATEWAY_BEARER_TOKEN>"}) as client:
+        resp = await client.get(
+            f"https://mcp-gateway.<CLUSTER_INGRESS_SUBDOMAIN>/servers/UUID_OF_SERVER_1/mcp/",
+            content_type="application/json",
+        )
+        print(resp.json())
 ```
 
 ---

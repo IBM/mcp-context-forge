@@ -37,7 +37,7 @@ charts/                     # Helm charts (see charts/AGENTS.md)
 docs/                       # Architecture and usage documentation (see docs/AGENTS.md)
 a2a-agents/                 # A2A agent implementations (used for testing/examples)
 mcp-servers/                # MCP server templates (see mcp-servers/AGENTS.md)
-crates/                     # Direct Rust crate folders (runtime and wrapper)
+
 llms/                       # End-user LLM guidance (not for code agents)
 ```
 
@@ -67,8 +67,7 @@ make pre-commit
 # Before committing, use ty, mypy and pyrefly to check just the new files, then run:
 make ruff bandit interrogate pylint verify
 
-# Before committing: run rustfmt check, clippy, and cargo test for any Rust crates
-cargo fmt --check && cargo clippy -- -D warnings && cargo test
+
 ```
 
 #### Secret Detection (detect-secrets)

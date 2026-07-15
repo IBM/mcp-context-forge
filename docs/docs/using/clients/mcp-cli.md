@@ -11,8 +11,6 @@ With mcp-cli → ContextForge Gateway you can:
 * 📜 **Automate workflows** with scriptable command-line operations
 * 🛠️ **Compare modes** - chat vs. interactive vs. command-line automation
 
-The mcp-cli supports **stdio** connections out-of-the-box through the bundled **`mcpgateway.wrapper`** bridge, with optional direct SSE access for production environments.
-
 !!! tip "Gateway URL"
     - Direct installs (`uvx`, pip, or `docker run`): `http://localhost:4444`
     - Docker Compose (nginx proxy): `http://localhost:8080`
@@ -76,18 +74,18 @@ make venv install serve
 
 Create a `server_config.json` file to define your ContextForge Gateway connection:
 
-### Basic Configuration (Local Development)
+### Basic Configuration (Direct HTTP)
 
 ```json
 {
   "mcpServers": {
-    "mcpgateway-wrapper": {
-      "command": "/path/to/mcp-context-forge/.venv/bin/python",
-      "args": ["-m", "mcpgateway.wrapper"],
-      "env": {
-        "MCP_AUTH": "Bearer <YOUR_AUTH_TOKEN_HERE>",
-        "MCP_SERVER_URL": "http://localhost:4444",
-        "MCP_TOOL_CALL_TIMEOUT": "120"
+    "contextforge": {
+      "transport": {
+        "type": "http",
+        "url": "http://localhost:4444/servers/UUID_OF_SERVER_1/mcp",
+        "headers": {
+          "Authorization": "Bearer <YOUR_AUTH_TOKEN_HERE>"
+        }
       }
     }
   }
@@ -99,26 +97,13 @@ Create a `server_config.json` file to define your ContextForge Gateway connectio
 ```json
 {
   "mcpServers": {
-    "mcpgateway-wrapper": {
-      "command": "docker",
-      "args": [
-        "run",
-        "--rm",
-        "-i",
-        "-e",
-        "MCP_SERVER_URL=http://host.docker.internal:4444",
-        "-e",
-        "MCP_AUTH=${MCPGATEWAY_BEARER_TOKEN}",
-        "--entrypoint",
-        "uv",
-        "ghcr.io/ibm/mcp-context-forge:1.0.0-RC-3",
-        "run",
-        "--directory",
-        "mcpgateway-wrapper",
-        "mcpgateway-wrapper"
-      ],
-      "env": {
-        "MCPGATEWAY_BEARER_TOKEN": "your-jwt-token-here"
+    "contextforge": {
+      "transport": {
+        "type": "http",
+        "url": "http://host.docker.internal:4444/servers/UUID_OF_SERVER_1/mcp",
+        "headers": {
+          "Authorization": "Bearer ${MCPGATEWAY_BEARER_TOKEN}"
+        }
       }
     }
   }
@@ -133,9 +118,7 @@ python3 -m mcpgateway.utils.create_jwt_token -u admin@example.com --exp 10080 --
 ```
 
 > **⚠️ Important Notes**
-> - Use the **full path** to your virtual environment's Python to avoid import errors
 > - Make sure your ContextForge Gateway is running on the correct port (default: 4444)
-> - The wrapper requires `MCP_SERVER_URL` environment variable
 
 ---
 
@@ -146,16 +129,19 @@ python3 -m mcpgateway.utils.create_jwt_token -u admin@example.com --exp 10080 --
 Natural language interface where LLMs automatically use available tools:
 
 ```bash
-# Default chat mode with OpenAI
+# Default chat mode with OpenAI (using HTTP transport)
 export OPENAI_API_KEY="your-api-key"
-mcp-cli chat --server mcpgateway-wrapper
+export MCP_SERVER_URL="http://localhost:4444/servers/UUID_OF_SERVER_1/mcp"
+mcp-cli chat --server contextforge
 
 # Using Ollama (recommended to avoid OpenAI tool name length limits)
-mcp-cli chat --server mcpgateway-wrapper --provider ollama --model mistral-nemo:latest
+export MCP_SERVER_URL="http://localhost:4444/servers/UUID_OF_SERVER_1/mcp"
+mcp-cli chat --server contextforge --provider ollama --model mistral-nemo:latest
 
 # Using Anthropic
 export ANTHROPIC_API_KEY="your-api-key"
-mcp-cli chat --server mcpgateway-wrapper --provider anthropic --model claude-sonnet-4-20250514
+export MCP_SERVER_URL="http://localhost:4444/servers/UUID_OF_SERVER_1/mcp"
+mcp-cli chat --server contextforge --provider anthropic --model claude-sonnet-4-20250514
 ```
 
 ### 2. Interactive Mode
@@ -163,7 +149,8 @@ mcp-cli chat --server mcpgateway-wrapper --provider anthropic --model claude-son
 Command-driven shell interface for direct server operations:
 
 ```bash
-mcp-cli interactive --server mcpgateway-wrapper
+export MCP_SERVER_URL="http://localhost:4444/servers/UUID_OF_SERVER_1/mcp"
+mcp-cli interactive --server contextforge
 ```
 
 ### 3. Command Mode
@@ -171,14 +158,16 @@ mcp-cli interactive --server mcpgateway-wrapper
 Unix-friendly interface for automation and pipeline integration:
 
 ```bash
+export MCP_SERVER_URL="http://localhost:4444/servers/UUID_OF_SERVER_1/mcp"
+
 # Process content with LLM
-mcp-cli cmd --server mcpgateway-wrapper --input document.md --prompt "Summarize: {{input}}"
+mcp-cli cmd --server contextforge --input document.md --prompt "Summarize: {{input}}"
 
 # Direct tool invocation
-mcp-cli cmd --server mcpgateway-wrapper --tool github-server-list-notifications --raw
+mcp-cli cmd --server contextforge --tool github-server-list-notifications --raw
 
 # Search for GitHub issues
-mcp-cli cmd --server mcpgateway-wrapper --tool github-server-search-issues --tool-args '{"q":"assignee:@me"}' --raw
+mcp-cli cmd --server contextforge --tool github-server-search-issues --tool-args '{"q":"assignee:@me"}' --raw
 ```
 
 ### 4. Direct Commands
@@ -186,17 +175,19 @@ mcp-cli cmd --server mcpgateway-wrapper --tool github-server-search-issues --too
 Run individual commands without entering interactive mode:
 
 ```bash
+export MCP_SERVER_URL="http://localhost:4444/servers/UUID_OF_SERVER_1/mcp"
+
 # List available tools
-mcp-cli tools list --server mcpgateway-wrapper
+mcp-cli tools list --server contextforge
 
 # Ping the gateway
-mcp-cli ping --server mcpgateway-wrapper
+mcp-cli ping --server contextforge
 
 # List available prompts
-mcp-cli prompts list --server mcpgateway-wrapper
+mcp-cli prompts list --server contextforge
 
 # List available resources
-mcp-cli resources list --server mcpgateway-wrapper
+mcp-cli resources list --server contextforge
 ```
 
 ---
@@ -205,9 +196,9 @@ mcp-cli resources list --server mcpgateway-wrapper
 
 Once connected to your ContextForge Gateway, mcp-cli automatically discovers all available tools:
 
-1. **Test connection:** `mcp-cli ping --server mcpgateway-wrapper`
-2. **List tools:** `mcp-cli tools list --server mcpgateway-wrapper`
-3. **Start Chat Mode:** `mcp-cli chat --server mcpgateway-wrapper --provider ollama --model mistral-nemo:latest`
+1. **Test connection:** `mcp-cli ping --server contextforge`
+2. **List tools:** `mcp-cli tools list --server contextforge`
+3. **Start Chat Mode:** `mcp-cli chat --server contextforge --provider ollama --model mistral-nemo:latest`
 4. **Type `/tools`** - your Gateway tools should list automatically
 5. **Try asking:** `"What tools are available?"` and the LLM will show discovered tools
 6. **Test GitHub integration:** `"What issues have been assigned to me?"`
@@ -222,7 +213,8 @@ The CLI auto-discovers tools from your Gateway and makes them available across a
 
 ```bash
 export OPENAI_API_KEY="sk-your-api-key-here"
-mcp-cli chat --server mcpgateway-wrapper --provider openai --model gpt-4o-mini
+export MCP_SERVER_URL="http://localhost:4444/servers/UUID_OF_SERVER_1/mcp"
+mcp-cli chat --server contextforge --provider openai --model gpt-4o-mini
 ```
 
 **⚠️ Known Issue:** OpenAI has a 64-character limit for tool names, but some ContextForge tools exceed this limit (e.g., `github-server-add-pull-request-review-comment-to-pending-review` is 69 characters).
@@ -239,14 +231,16 @@ ollama pull mistral-nemo:latest
 ollama pull llama3.2:latest
 
 # Use with mcp-cli
-mcp-cli chat --server mcpgateway-wrapper --provider ollama --model mistral-nemo:latest
+export MCP_SERVER_URL="http://localhost:4444/servers/UUID_OF_SERVER_1/mcp"
+mcp-cli chat --server contextforge --provider ollama --model mistral-nemo:latest
 ```
 
 ### Anthropic Claude
 
 ```bash
 export ANTHROPIC_API_KEY="sk-ant-your-api-key-here"
-mcp-cli chat --server mcpgateway-wrapper --provider anthropic --model claude-3-sonnet
+export MCP_SERVER_URL="http://localhost:4444/servers/UUID_OF_SERVER_1/mcp"
+mcp-cli chat --server contextforge --provider anthropic --model claude-3-sonnet
 ```
 
 ---
@@ -341,15 +335,19 @@ export LLM_MODEL="mistral-nemo:latest"
 
 #### "ModuleNotFoundError: No module named 'mcpgateway'"
 
-**Solution:** Use the full path to your virtual environment's Python:
+**Solution:** Ensure the mcp-cli package is correctly installed and the gateway is running.
 
 ```json
 {
   "mcpServers": {
-    "mcpgateway-wrapper": {
-      "command": "/Users/username/path/to/mcp-context-forge/.venv/bin/python",
-      "args": ["-m", "mcpgateway.wrapper"],
-      "env": { ... }
+    "contextforge": {
+      "transport": {
+        "type": "http",
+        "url": "http://localhost:4444/servers/UUID_OF_SERVER_1/mcp",
+        "headers": {
+          "Authorization": "Bearer <your-jwt-token>"
+        }
+      }
     }
   }
 }
@@ -357,7 +355,7 @@ export LLM_MODEL="mistral-nemo:latest"
 
 #### "MCP_SERVER_URL environment variable is required"
 
-**Solution:** Ensure your `server_config.json` includes the required environment variables in the `env` section.
+**Solution:** Ensure your server configuration includes the correct transport URL in the config file.
 
 #### OpenAI Tool Name Length Error
 
@@ -366,7 +364,8 @@ export LLM_MODEL="mistral-nemo:latest"
 **Solution:** Use Ollama or Anthropic instead:
 
 ```bash
-mcp-cli chat --server mcpgateway-wrapper --provider ollama --model mistral-nemo:latest
+export MCP_SERVER_URL="http://localhost:4444/servers/UUID_OF_SERVER_1/mcp"
+mcp-cli chat --server contextforge --provider ollama --model mistral-nemo:latest
 ```
 
 #### Model doesn't support tools
@@ -381,7 +380,8 @@ ollama pull mistral-nemo:latest
 ollama pull llama3.2:latest
 
 # Use in mcp-cli
-mcp-cli chat --server mcpgateway-wrapper --provider ollama --model mistral-nemo:latest
+export MCP_SERVER_URL="http://localhost:4444/servers/UUID_OF_SERVER_1/mcp"
+mcp-cli chat --server contextforge --provider ollama --model mistral-nemo:latest
 ```
 
 ---
@@ -391,56 +391,64 @@ mcp-cli chat --server mcpgateway-wrapper --provider ollama --model mistral-nemo:
 ### GitHub Integration
 
 ```bash
+export MCP_SERVER_URL="http://localhost:4444/servers/UUID_OF_SERVER_1/mcp"
+
 # Get your GitHub profile
-mcp-cli cmd --server mcpgateway-wrapper --tool github-server-get-me --raw
+mcp-cli cmd --server contextforge --tool github-server-get-me --raw
 
 # List notifications
-mcp-cli cmd --server mcpgateway-wrapper --tool github-server-list-notifications --raw
+mcp-cli cmd --server contextforge --tool github-server-list-notifications --raw
 
 # Search for issues assigned to you
-mcp-cli cmd --server mcpgateway-wrapper --tool github-server-search-issues \
+mcp-cli cmd --server contextforge --tool github-server-search-issues \
   --tool-args '{"q":"assignee:@me is:open"}' --raw
 
 # Create a new issue
-mcp-cli cmd --server mcpgateway-wrapper --tool github-server-create-issue \
+mcp-cli cmd --server contextforge --tool github-server-create-issue \
   --tool-args '{"owner":"username","repo":"repository","title":"New Issue","body":"Issue description"}' --raw
 ```
 
 ### File System Operations
 
 ```bash
+export MCP_SERVER_URL="http://localhost:4444/servers/UUID_OF_SERVER_1/mcp"
+
 # List allowed directories
-mcp-cli cmd --server mcpgateway-wrapper --tool filesystem-downloads-list-allowed-directories --raw
+mcp-cli cmd --server contextforge --tool filesystem-downloads-list-allowed-directories --raw
 
 # Read a file
-mcp-cli cmd --server mcpgateway-wrapper --tool filesystem-downloads-read-file \
+mcp-cli cmd --server contextforge --tool filesystem-downloads-read-file \
   --tool-args '{"path":"/path/to/file.txt"}' --raw
 
 # Search for files
-mcp-cli cmd --server mcpgateway-wrapper --tool filesystem-downloads-search-files \
+mcp-cli cmd --server contextforge --tool filesystem-downloads-search-files \
   --tool-args '{"path":"/Users/username/Downloads","pattern":"*.pdf"}' --raw
 ```
 
 ### Memory Management
 
 ```bash
+export MCP_SERVER_URL="http://localhost:4444/servers/UUID_OF_SERVER_1/mcp"
+
 # Store a memory
-mcp-cli cmd --server mcpgateway-wrapper --tool memory-server-store-memory \
+mcp-cli cmd --server contextforge --tool memory-server-store-memory \
   --tool-args '{"content":"Important project note","bucket":"work"}' --raw
 
 # Get memories
-mcp-cli cmd --server mcpgateway-wrapper --tool memory-server-get-memories \
+mcp-cli cmd --server contextforge --tool memory-server-get-memories \
   --tool-args '{"bucket":"work"}' --raw
 ```
 
 ### Time Operations
 
 ```bash
+export MCP_SERVER_URL="http://localhost:4444/servers/UUID_OF_SERVER_1/mcp"
+
 # Get current time
-mcp-cli cmd --server mcpgateway-wrapper --tool time-server-get-system-time --raw
+mcp-cli cmd --server contextforge --tool time-server-get-system-time --raw
 
 # Convert time zones
-mcp-cli cmd --server mcpgateway-wrapper --tool time-server-convert-time \
+mcp-cli cmd --server contextforge --tool time-server-convert-time \
   --tool-args '{"from_timezone":"UTC","to_timezone":"America/New_York","time":"2025-01-01T12:00:00Z"}' --raw
 ```
 
@@ -448,7 +456,7 @@ mcp-cli cmd --server mcpgateway-wrapper --tool time-server-convert-time \
 
 ## 🔗 Integration with ContextForge Gateway
 
-The mcp-cli integrates with ContextForge Gateway through multiple connection methods:
+The mcp-cli integrates with ContextForge Gateway through HTTP transport:
 
 ### Local Development Setup
 
@@ -458,16 +466,17 @@ The mcp-cli integrates with ContextForge Gateway through multiple connection met
    make serve  # Starts on http://localhost:4444
    ```
 
-2. **Configure mcp-cli:**
+2. **Configure mcp-cli** (create `server_config.json`):
    ```json
    {
      "mcpServers": {
-       "mcpgateway-wrapper": {
-         "command": "/path/to/mcp-context-forge/.venv/bin/python",
-         "args": ["-m", "mcpgateway.wrapper"],
-         "env": {
-           "MCP_AUTH": "Bearer <your-jwt-token>",
-           "MCP_SERVER_URL": "http://localhost:4444"
+       "contextforge": {
+         "transport": {
+           "type": "http",
+           "url": "http://localhost:4444/servers/UUID_OF_SERVER_1/mcp",
+           "headers": {
+             "Authorization": "Bearer <your-jwt-token>"
+           }
          }
        }
      }
@@ -476,7 +485,7 @@ The mcp-cli integrates with ContextForge Gateway through multiple connection met
 
 3. **Test the connection:**
    ```bash
-   mcp-cli ping --server mcpgateway-wrapper
+   mcp-cli ping --server contextforge
    ```
 
 ### Production Docker Setup
@@ -563,7 +572,7 @@ Your ContextForge Gateway provides these tool categories:
 - [ ] Start gateway: `make serve` (runs on localhost:4444)
 - [ ] Create `server_config.json` with correct Python path
 - [ ] Generate JWT token for authentication
-- [ ] Test connection: `mcp-cli ping --server mcpgateway-wrapper`
+- [ ] Test connection: `mcp-cli ping --server contextforge`
 - [ ] Install Ollama and pull a compatible model (recommended)
-- [ ] Start chat: `mcp-cli chat --server mcpgateway-wrapper --provider ollama --model mistral-nemo:latest`
+- [ ] Start chat: `export MCP_SERVER_URL="http://localhost:4444/servers/UUID_OF_SERVER_1/mcp" && mcp-cli chat --server contextforge --provider ollama --model mistral-nemo:latest`
 - [ ] Try asking: "What tools are available?" or "What issues have been assigned to me?"

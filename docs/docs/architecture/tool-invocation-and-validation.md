@@ -9,7 +9,7 @@ ContextForge invokes tools across several very different backends — federated 
 ## High-level flow
 
 ```
- Downstream MCP client (e.g. mcp-cli via mcpgateway.wrapper)
+ Downstream MCP client (e.g. any HTTP-based MCP client)
                    │  tools/call (JSON-RPC)
                    ▼
  ┌──────────────────────────────────────────────────────────┐

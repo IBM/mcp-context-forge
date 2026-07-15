@@ -71,7 +71,6 @@ MANIFEST
 *.spec
 .wily/
 .pdm-build
-target/
 
 # Installer logs
 pip-log.txt
@@ -202,6 +201,7 @@ aider*
 .claude/*
 CLAUDE.local.md
 .continue
+.omo
 
 # ========================================
 # Security & Static Analysis
@@ -263,8 +263,6 @@ uv.lock
 .uv-cache/
 .uv-tmp/
 
-*.rs.bk
-
 # ========================================
 # Project-Specific (ContextForge)
 # ========================================
@@ -312,7 +310,6 @@ artifacts/
 artifacts/upgrade-validation*/
 
 # Debug & profiling artifacts
-debug_login_page.png
 docs/pstats.png
 docs/docs/coverage/
 docs/docs/images/coverage.svg

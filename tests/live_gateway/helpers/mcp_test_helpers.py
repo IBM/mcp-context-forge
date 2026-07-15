@@ -5,17 +5,12 @@ SPDX-License-Identifier: Apache-2.0
 
 Shared MCP protocol test helpers for E2E tests.
 
-Provides utilities for testing MCP JSON-RPC protocol via the mcpgateway.wrapper
-stdio transport plus the mcp-cli CLI. Used by the remaining subprocess-based
-E2E suites (``test_mcp_rbac_transport.py`` — multi-user RBAC + multi-transport,
-and ``test_langfuse_traces.py`` — tracing integration).
+Provides utilities for testing MCP JSON-RPC protocol via the mcp-cli CLI and
+raw JSON-RPC HTTP endpoints. Used by:
 
-New protocol-level E2E tests should prefer the FastMCP ``Client``-based pattern
-in ``test_mcp_protocol_e2e.py`` (no subprocess, no external CLI). The helpers
-below are retained for the suites that still need mcp-cli / wrapper semantics
-and are candidates for removal once those suites migrate.
+- ``test_mcp_rbac_transport.py`` — multi-user RBAC + multi-transport E2E
+- ``test_mcp_protocol_e2e.py`` — MCP protocol via FastMCP client
 """
-
 # Future
 from __future__ import annotations
 
@@ -24,9 +19,6 @@ import json
 import os
 import shutil
 import subprocess
-import sys
-import threading
-import time
 from typing import Any
 
 # Third-Party
@@ -42,9 +34,7 @@ JWT_SECRET = os.getenv("JWT_SECRET_KEY", "my-test-key-but-now-longer-than-32-byt
 ADMIN_EMAIL = os.getenv("PLATFORM_ADMIN_EMAIL", "admin@example.com")
 TOKEN_EXPIRY = os.getenv("MCP_CLI_TOKEN_EXPIRY", "60")  # minutes
 MCP_CLI_TIMEOUT = int(os.getenv("MCP_CLI_TIMEOUT", "30"))  # seconds per command
-WRAPPER_PYTHON = os.getenv("MCP_CLI_PYTHON", sys.executable)
 TEST_PASSWORD = "SecureTest!Xy9#Qw2@Kp5"  # pragma: allowlist secret
-
 
 # ---------------------------------------------------------------------------
 # Skip conditions
@@ -123,96 +113,8 @@ def extract_json_from_output(text: str) -> Any:
 
 
 # ---------------------------------------------------------------------------
-# JSON-RPC via wrapper helpers
-# ---------------------------------------------------------------------------
-def send_jsonrpc_via_wrapper(
-    env: dict[str, str],
-    messages: list[dict[str, Any]],
-    timeout: int = 15,
-    settle_seconds: float = 3.0,
-) -> list[dict[str, Any]]:
-    """Send JSON-RPC messages to mcpgateway.wrapper via Popen.
-
-    The wrapper cancels in-flight requests when stdin closes (EOF triggers shutdown).
-    We use Popen to write messages, wait for responses to arrive, then close stdin.
-    """
-    proc = subprocess.Popen(
-        [WRAPPER_PYTHON, "-m", "mcpgateway.wrapper"],
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        env=env,
-    )
-
-    # Collect stdout lines in a background thread
-    stdout_lines: list[str] = []
-    read_done = threading.Event()
-
-    def _reader() -> None:
-        assert proc.stdout is not None
-        for raw_line in proc.stdout:
-            stdout_lines.append(raw_line.rstrip("\n"))
-        read_done.set()
-
-    reader_thread = threading.Thread(target=_reader, daemon=True)
-    reader_thread.start()
-
-    def _parsed_response_ids() -> set[Any]:
-        """Return currently observed JSON-RPC response ids from stdout lines."""
-        response_ids: set[Any] = set()
-        for line in stdout_lines:
-            line = line.strip()
-            if not line or not line.startswith("{"):
-                continue
-            try:
-                payload = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if "id" in payload:
-                response_ids.add(payload["id"])
-        return response_ids
-
-    expected_response_ids = {msg["id"] for msg in messages if "id" in msg}
-
-    # Write all messages
-    assert proc.stdin is not None
-    for msg in messages:
-        proc.stdin.write(json.dumps(msg) + "\n")
-        proc.stdin.flush()
-
-    # Wait for responses to arrive before closing stdin. On a freshly recreated
-    # stack, tool/prompt calls can take longer than a fixed short sleep.
-    deadline = time.time() + timeout
-
-    while time.time() < deadline:
-        if expected_response_ids.issubset(_parsed_response_ids()):
-            break
-        time.sleep(0.1)
-
-    # Close stdin to trigger graceful shutdown
-    proc.stdin.close()
-
-    # Wait for process to finish
-    try:
-        proc.wait(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        proc.wait()
-
-    read_done.wait(timeout=5)
-
-    # Parse JSON-RPC responses
-    responses = []
-    for line in stdout_lines:
-        line = line.strip()
-        if line and line.startswith("{"):
-            try:
-                responses.append(json.loads(line))
-            except json.JSONDecodeError:
-                pass
-    return responses
-
+# JSON-RPC helpers (raw HTTP path via FastMCP or httpx)
+# ------------------------------------------------------------------BLOCK:call_tool
 
 def build_initialize(request_id: int = 1) -> dict[str, Any]:
     return {
@@ -224,16 +126,6 @@ def build_initialize(request_id: int = 1) -> dict[str, Any]:
             "capabilities": {},
             "clientInfo": {"name": "mcp-cli-test", "version": "1.0.0"},
         },
-    }
-
-
-def build_wrapper_env(access_token: str, server_url: str = BASE_URL) -> dict[str, str]:
-    """Build environment dict for mcpgateway.wrapper with the given token."""
-    return {
-        **os.environ,
-        "MCP_AUTH": f"Bearer {access_token}",
-        "MCP_SERVER_URL": server_url,
-        "MCP_TOOL_CALL_TIMEOUT": "30",
     }
 
 

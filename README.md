@@ -326,56 +326,6 @@ npx -y @modelcontextprotocol/inspector
 
 </details>
 
-<details>
-<summary><strong>🖧 Using the stdio wrapper (mcpgateway-wrapper)</strong></summary>
-
-```bash
-export MCP_AUTH="Bearer ${MCPGATEWAY_BEARER_TOKEN}"
-export MCP_SERVER_URL=http://localhost:4444/servers/UUID_OF_SERVER_1/mcp
-python3 -m mcpgateway.wrapper  # Ctrl-C to exit
-```
-
-You can also run it with `uv` or inside Docker/Podman - see the *Containers* section above.
-
-In MCP Inspector, define `MCP_AUTH` and `MCP_SERVER_URL` env variables, and select `python3` as the Command, and `-m mcpgateway.wrapper` as Arguments.
-
-```bash
-echo $PWD/.venv/bin/python3 # Using the Python3 full path ensures you have a working venv
-export MCP_SERVER_URL='http://localhost:4444/servers/UUID_OF_SERVER_1/mcp'
-export MCP_AUTH="Bearer ${MCPGATEWAY_BEARER_TOKEN}"
-npx -y @modelcontextprotocol/inspector
-```
-
-or
-
-Pass the url and auth as arguments (no need to set environment variables)
-```bash
-npx -y @modelcontextprotocol/inspector
-command as `python`
-Arguments as `-m mcpgateway.wrapper --url "http://localhost:4444/servers/UUID_OF_SERVER_1/mcp" --auth "Bearer <your token>"`
-```
-
-
-When using a MCP Client such as Claude with stdio:
-
-```json
-{
-  "mcpServers": {
-    "mcpgateway-wrapper": {
-      "command": "python",
-      "args": ["-m", "mcpgateway.wrapper"],
-      "env": {
-        "MCP_AUTH": "Bearer your-token-here",
-        "MCP_SERVER_URL": "http://localhost:4444/servers/UUID_OF_SERVER_1",
-        "MCP_TOOL_CALL_TIMEOUT": "120"
-      }
-    }
-  }
-}
-```
-
-</details>
-
 ---
 
 ## Quick Start - Containers
@@ -648,34 +598,6 @@ curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
 
 ---
 
-<details>
-<summary><strong>🖧 Running ContextForge stdio wrapper</strong></summary>
-
-The `mcpgateway.wrapper` lets you connect to the gateway over **stdio** while keeping JWT authentication. You should run this from the MCP Client. The example below is just for testing.
-
-```bash
-# JWT_SECRET_KEY must be set — see "Docker (Single Container)" for how to generate it
-export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
-  --username admin@example.com --exp 10080 --secret "${JWT_SECRET_KEY}")
-export MCP_AUTH="Bearer ${MCPGATEWAY_BEARER_TOKEN}"
-export MCP_SERVER_URL='http://localhost:4444/servers/UUID_OF_SERVER_1/mcp'
-export MCP_TOOL_CALL_TIMEOUT=120
-export MCP_WRAPPER_LOG_LEVEL=DEBUG  # or OFF to disable logging
-
-docker run --rm -i \
-  -e MCP_AUTH="${MCP_AUTH}" \
-  -e MCP_SERVER_URL=http://host.docker.internal:4444/servers/UUID_OF_SERVER_1/mcp \
-  -e MCP_TOOL_CALL_TIMEOUT=120 \
-  -e MCP_WRAPPER_LOG_LEVEL=DEBUG \
-  ghcr.io/ibm/mcp-context-forge:latest \
-  python3 -m mcpgateway.wrapper
-```
-
-</details>
-
----
-
-
 ## Quick Start: VS Code Dev Container
 
 Clone the repo and open in VS Code—it will detect `.devcontainer` and prompt to **"Reopen in Container"**. The container includes Python 3.11, Docker CLI, and all project dependencies.
@@ -690,11 +612,6 @@ For detailed setup, workflows, and GitHub Codespaces instructions, see **[Develo
 make venv install-dev      # create .venv + install deps + build Admin UI
 make serve                 # gunicorn on :4444
 ```
-
-Rust workspace note:
-- Workspace-owned Rust crates live under `crates/` and are picked up by the root `Cargo.toml` via `crates/*`.
-- Run `cargo build`, `cargo test`, and `cargo check` from the repo root to cover the shared workspace.
-- `make venv install-dev` creates the root `.venv`, which is also reused by the workspace's PyO3/maturin builds.
 
 <details>
 <summary><strong>Alternative: UV or pip</strong></summary>

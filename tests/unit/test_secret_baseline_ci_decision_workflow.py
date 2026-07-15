@@ -306,7 +306,6 @@ def test_pr_workflows_gate_heavy_jobs_on_ci_decision() -> None:
         Path(".github/workflows/pytest.yml"),
         Path(".github/workflows/python-package.yml"),
         Path(".github/workflows/vitest.yml"),
-        Path(".github/workflows/rust.yml"),
     ]
     expected_gate = "needs.ci-decision.outputs.run-full-ci != 'false'"
 

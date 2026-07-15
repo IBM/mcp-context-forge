@@ -264,40 +264,9 @@ curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" $BASE_URL/servers | 
 ```bash
 # Optional: Connect interactively via MCP Inspector
 npx -y @modelcontextprotocol/inspector
-# Transport SSE → URL $BASE_URL/servers/UUID_OF_SERVER_1/sse
+# Transport Streamable HTTP → URL $BASE_URL/servers/UUID_OF_SERVER_1/mcp/
 # Header Authorization → Bearer $MCPGATEWAY_BEARER_TOKEN
 ```
-
----
-
-## Connect via `mcpgateway-wrapper` (stdio)
-
-```bash
-export MCP_AUTH="Bearer ${MCPGATEWAY_BEARER_TOKEN}"
-export MCP_SERVER_URL=$BASE_URL/servers/UUID_OF_SERVER_1/mcp
-python3 -m mcpgateway.wrapper   # behaves as a local MCP stdio server - run from MCP client
-```
-
-Use this in GUI clients (Claude Desktop, Continue, etc.) that prefer stdio. Example:
-
-```jsonc
-{
-  "mcpServers": {
-    "mcpgateway-wrapper": {
-      "command": "python3",
-      "args": ["-m", "mcpgateway.wrapper"],
-      "env": {
-        // Use http://localhost:8080 if you're running docker-compose with nginx.
-        "MCP_SERVER_URL": "http://localhost:4444/servers/UUID_OF_SERVER_1/mcp",
-        "MCP_AUTH": "Bearer <YOUR_JWT_TOKEN>",
-        "MCP_TOOL_CALL_TIMEOUT": "120"
-      }
-    }
-  }
-}
-```
-
-For more information see [MCP Clients](../using/index.md)
 
 ---
 
@@ -310,7 +279,8 @@ Use the `BASE_URL` you set above (for example `http://localhost:4444` or `http:/
 | `${BASE_URL}/admin` | Admin UI (login: `PLATFORM_ADMIN_EMAIL` / `PLATFORM_ADMIN_PASSWORD`) |
 | `${BASE_URL}/tools` | Tool registry (GET) |
 | `${BASE_URL}/servers` | Virtual servers (GET) |
-| `${BASE_URL}/servers/<id>/sse` | SSE endpoint for that server |
+| `${BASE_URL}/mcp/` | **Streamable HTTP** endpoint for clients (canonical transport) |
+| `${BASE_URL}/servers/<id>/sse` | SSE endpoint for upstream server registration |
 | `${BASE_URL}/docs`, `${BASE_URL}/redoc` | Swagger / ReDoc (JWT-protected by default; set `DOCS_ALLOW_BASIC_AUTH=true` to allow Basic auth) |
 | `${BASE_URL}/openapi.json` | OpenAPI schema (JWT-protected by default) |
 
@@ -321,9 +291,8 @@ Use the `BASE_URL` you set above (for example `http://localhost:4444` or `http:/
 * [Features Overview](features.md) - deep dive on transports, federation, caching
 * [Admin UI Guide](ui.md)
 * [Deployment to K8s / AWS / GCP / Azure](../deployment/index.md)
-* [Wrap any client via `mcpgateway-wrapper`](../using/mcpgateway-wrapper.md)
 * Tweak **`.env`** - see [example](https://github.com/IBM/mcp-context-forge/blob/main/.env.example)
 
 !!! success "Gateway is ready!"
-You now have an authenticated ContextForge proxying a live tool, exposed via SSE **and** stdio.
+You now have an authenticated ContextForge proxying a live tool, exposed via **Streamable HTTP** for clients and stdio.
 Jump into the Admin UI or start wiring it into your agents and clients!

@@ -334,7 +334,7 @@ make yamllint tomllint jsonlint
 | Target | What it checks |
 |--------|----------------|
 | `yamllint` | YAML syntax and style (compose files, CI workflows, plugin config) |
-| `tomllint` | TOML syntax (`pyproject.toml`, Rust `Cargo.toml`) |
+| `tomllint` | TOML syntax (`pyproject.toml`) |
 | `jsonlint` | JSON syntax (`package.json`, test fixtures, schemas) |
 
 ### 4.4 Web code linters
@@ -1288,14 +1288,14 @@ Repeat with **Streamable HTTP**:
 
 Create a `.vscode/mcp.json` in a test workspace to verify the IDE integration end-to-end.
 
-**SSE configuration:**
+**Streamable HTTP configuration (recommended):**
 
 ```json
 {
   "servers": {
-    "contextforge-sse": {
-      "type": "sse",
-      "url": "http://localhost:8080/servers/<VIRTUAL_SERVER_UUID>/sse",
+    "contextforge": {
+      "type": "http",
+      "url": "http://localhost:8080/mcp/",
       "headers": {
         "Authorization": "Bearer <YOUR_JWT_TOKEN>"
       }
@@ -1304,12 +1304,12 @@ Create a `.vscode/mcp.json` in a test workspace to verify the IDE integration en
 }
 ```
 
-**Streamable HTTP configuration:**
+> **Per-server variant** - if you need to target a specific virtual server, use the per-server URL:
 
 ```json
 {
   "servers": {
-    "contextforge-http": {
+    "contextforge-per-server": {
       "type": "http",
       "url": "http://localhost:8080/servers/<VIRTUAL_SERVER_UUID>/mcp/",
       "headers": {
@@ -1326,7 +1326,7 @@ Verify in VS Code (requires VS Code >= 1.99 with `"chat.mcp.enabled": true`):
 2. Confirm the MCP server status indicator shows connected
 3. Ask Copilot to use one of the registered tools (e.g., "What time is it?")
 4. Verify the tool call executes and returns a valid response
-5. Test with both SSE and Streamable HTTP configurations
+5. Test Streamable HTTP configuration
 
 ### 14.7 Cleanup
 
@@ -1440,8 +1440,7 @@ python .github/tools/update_dependencies.py --file pyproject.toml
 make install-dev
 make pip-audit
 
-# 2. Rust / Go / JS / CDN dependency updates
-cargo update --workspace
+# 2. Go / JS / CDN dependency updates
 # ... go get -u ./... && go mod tidy for all go.mod dirs ...
 make linting-go-gosec linting-go-govulncheck
 npm update && npm audit && npm audit fix

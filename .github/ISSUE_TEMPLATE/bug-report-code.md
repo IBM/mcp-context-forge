@@ -1,6 +1,6 @@
 ---
 name: Bug report (code)
-about: Report a bug or unexpected behavior in the gateway, wrapper, API, UI, or services
+about: Report a bug or unexpected behavior in the gateway, API, UI, or services
 title: "[BUG]: "
 labels: bug, triage
 assignees: ''
@@ -17,7 +17,7 @@ Select the area of the project impacted:
 
 - [ ] `mcpgateway` - API
 - [ ] `mcpgateway` - UI (admin panel)
-- [ ] `mcpgateway.wrapper` - stdio wrapper
+
 - [ ] Federation or Transports
 - [ ] CLI, Makefiles, or shell scripts
 - [ ] Container setup (Docker/Podman/Compose)

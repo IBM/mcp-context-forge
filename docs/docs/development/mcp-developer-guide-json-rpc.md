@@ -471,37 +471,6 @@ curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
 }
 ```
 
-## STDIO Transport
-
-For command-line integration and desktop client compatibility, use the STDIO wrapper:
-
-### Setting Up STDIO Environment
-
-```bash
-# Configure environment variables
-export MCP_AUTH="Bearer ${MCPGATEWAY_BEARER_TOKEN}"
-export MCP_SERVER_URL="http://localhost:4444/servers/your-server-id"
-export MCP_TOOL_CALL_TIMEOUT=120
-export MCP_WRAPPER_LOG_LEVEL=INFO
-
-# Run the wrapper
-python3 -m mcpgateway.wrapper
-```
-
-### STDIO Communication
-
-Feed multiple JSON-RPC messages in one stream (the wrapper exits when STDIN closes):
-
-```bash
-python3 -m mcpgateway.wrapper <<'EOF'
-{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"stdio-client","version":"1.0"}}}
-{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}
-{"jsonrpc":"2.0","id":2,"method":"tools/list"}
-EOF
-```
-
-Run it interactively (without the here-doc) if you prefer to type requests by hand.
-
 ## Complete Session Examples
 
 ### HTTP JSON-RPC Complete Session
@@ -1165,7 +1134,6 @@ module.exports = MCPGatewayClient;
 
 - Use HTTP JSON-RPC for simple request-response patterns
 - Use SSE for real-time communication and long-running operations
-- Use STDIO for desktop client integration
 
 ### 4. Error Handling
 
@@ -1185,4 +1153,3 @@ module.exports = MCPGatewayClient;
 - [JSON-RPC 2.0 Specification](https://www.jsonrpc.org/specification)
 - [ContextForge Documentation](https://ibm.github.io/mcp-context-forge/)
 - [ContextForge Admin UI Guide](../manage/index.md)
-- [ContextForge Wrapper Documentation](../using/mcpgateway-wrapper.md)

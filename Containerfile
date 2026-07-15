@@ -4,7 +4,7 @@
 # ContextForge - OCI-compliant multi-stage container build
 #
 # Purpose: Minimal runtime image using ubi10-minimal, supporting multiplatform
-# builds (amd64, arm64, s390x, ppc64le) with optional Rust native extensions.
+# builds (amd64, arm64, s390x, ppc64le).
 #
 # This is the only production Containerfile (previously separate lite/scratch
 # variants were consolidated here).
@@ -12,7 +12,6 @@
 # Key design points:
 #   - Builder stage has full DNF + devel headers for wheel compilation
 #   - Runtime stage uses ubi10-minimal for cross-platform compatibility
-#   - Optional Rust builder stage for native extensions (ENABLE_RUST=true)
 #   - Development headers are dropped from the final image
 #   - Hadolint DL3041 is suppressed to allow "latest patch" RPM usage
 ###############################################################################
@@ -22,8 +21,6 @@
 ###########################
 # Python major.minor series to track
 ARG PYTHON_VERSION=3.12
-ARG ENABLE_RUST=false
-ARG ENABLE_RUST_MCP_RMCP=false
 # Enable profiling tools (memray, py-spy) - off by default for smaller images
 # To enable: docker build --build-arg ENABLE_PROFILING=true -f Containerfile .
 # Usage after enabling:
@@ -59,86 +56,6 @@ ARG UBI_MINIMAL=registry.access.redhat.com/ubi10/ubi-minimal:10.2-1784669047
 ARG WHEELS_REF=${UBI_MINIMAL}
 FROM ${WHEELS_REF} AS wheels
 RUN mkdir -p /wheels
-
-###############################################################################
-# Rust builder stage - builds Rust MCP runtime and local native extensions
-# To build WITH Rust: docker build --build-arg ENABLE_RUST=true -f Containerfile .
-# To build WITHOUT Rust (default): docker build -f Containerfile .
-###############################################################################
-FROM ${UBI_BASE} AS rust-builder
-ARG PYTHON_VERSION=3.12
-ARG ENABLE_RUST
-ARG ENABLE_RUST_MCP_RMCP
-
-# Set shell with pipefail for safety
-SHELL ["/bin/bash", "-o", "pipefail", "-c"]
-
-# Only build if ENABLE_RUST=true
-RUN if [ "$ENABLE_RUST" != "true" ]; then \
-        echo "⏭️  Rust builds disabled (set --build-arg ENABLE_RUST=true to enable)"; \
-        mkdir -p /build/native-extension-wheels /build/target/release; \
-    fi
-
-# Install system deps + Rust toolchain in a single layer (only if ENABLE_RUST=true)
-# hadolint ignore=DL3041
-RUN if [ "$ENABLE_RUST" = "true" ]; then \
-        dnf upgrade -y && \
-        dnf install -y \
-            python${PYTHON_VERSION} \
-            python${PYTHON_VERSION}-devel \
-            python${PYTHON_VERSION}-pip \
-            gcc \
-            gcc-c++ \
-            openssl-devel \
-            postgresql-devel \
-            libpq-devel \
-            findutils \
-            curl && \
-        update-alternatives --install /usr/bin/python3 python3 /usr/bin/python${PYTHON_VERSION} 1 && \
-        dnf clean all && \
-        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable; \
-    fi
-ENV PATH="/root/.cargo/bin:$PATH"
-
-WORKDIR /build
-
-# Copy workspace and crates (only if ENABLE_RUST=true)
-COPY Cargo.toml Cargo.lock /build/
-COPY crates/ /build/crates/
-
-# Build local native extensions from maturin crates under crates/
-# hadolint ignore=DL3013
-RUN if [ "$ENABLE_RUST" = "true" ]; then \
-        mkdir -p /build/native-extension-wheels && \
-        python3 -m pip install --no-cache-dir --upgrade pip "maturin==1.12.6" && \
-        printf '%s\n' \
-            'import pathlib' \
-            'import subprocess' \
-            'import sys' \
-            'import tomllib' \
-            '' \
-            'crates_root = pathlib.Path("/build/crates")' \
-            'wheel_dir = pathlib.Path("/build/native-extension-wheels")' \
-            'for cargo_toml in sorted(crates_root.rglob("Cargo.toml")):' \
-            '    pyproject_toml = cargo_toml.with_name("pyproject.toml")' \
-            '    if not pyproject_toml.exists():' \
-            '        continue' \
-            '    pyproject = tomllib.loads(pyproject_toml.read_text(encoding="utf-8"))' \
-            '    build_system = pyproject.get("build-system", {})' \
-            '    backend = str(build_system.get("build-backend", ""))' \
-            '    requires = [str(item) for item in build_system.get("requires", [])]' \
-            '    if "maturin" not in backend and not any("maturin" in item for item in requires):' \
-            '        continue' \
-            '    crate_dir = cargo_toml.parent' \
-            '    print(f"🦀 Building local native extension: {crate_dir.name}")' \
-            '    subprocess.run([sys.executable, "-m", "maturin", "build", "--release", "--manifest-path", str(cargo_toml), "--out", str(wheel_dir)], check=True)' \
-            'print("✅ Local native extensions built successfully")' \
-            > /tmp/build_local_native_extensions.py && \
-        python3 /tmp/build_local_native_extensions.py && \
-        rm -f /tmp/build_local_native_extensions.py \
-    else \
-        echo "⏭️  Skipping local native extension build"; \
-    fi
 
 ###############################################################################
 # Node.js builder stage - builds Tailwind CSS
@@ -251,17 +168,15 @@ RUN if [ "$(uname -m)" = "s390x" ] || [ "$(uname -m)" = "ppc64le" ]; then \
 #      so setuptools must be able to import it while resolving "."'s build
 #      metadata below — copy just this module's import chain, not the rest of
 #      mcpgateway/, to keep the dep layer cache intact for normal source edits)
-#   3. Native extension wheels from rust-builder (consumed by venv install)
-# Everything else (rust binaries, frontend static, app code) is copied AFTER
-# the heavy venv install so those changes don't invalidate the dep layer.
+#   3. Prebuilt wheels from the wheels stage (consumed by venv install)
+# Everything else (frontend static, app code) is copied AFTER the heavy venv
+# install so those changes don't invalidate the dep layer.
 # ----------------------------------------------------------------------------
 COPY pyproject.toml /app/
 COPY mcpgateway/__init__.py /app/mcpgateway/__init__.py
 COPY mcpgateway/tools/builder/__init__.py /app/mcpgateway/tools/builder/__init__.py
 COPY mcpgateway/tools/builder/build_hooks.py /app/mcpgateway/tools/builder/build_hooks.py
-COPY --from=rust-builder /build/native-extension-wheels/ /tmp/local-native-extension-wheels/
 COPY --from=wheels /wheels /tmp/wheels
-COPY --chmod=0755 scripts/verify-native-extensions.py /tmp/verify-native-extensions.py
 
 # ----------------------------------------------------------------------------
 # Create and populate virtual environment
@@ -269,13 +184,10 @@ COPY --chmod=0755 scripts/verify-native-extensions.py /tmp/verify-native-extensi
 #  - Install project dependencies and package
 #  - Include observability packages for OpenTelemetry support
 #  - Install plugins from PyPI (cpex-* packages)
-#  - Install local native extensions from pre-built wheels (if built)
 #  - Optionally install profiling tools (memray, py-spy) if ENABLE_PROFILING=true
 #  - Remove build tools but keep runtime dist-info
 #  - Remove build caches and build artifacts
 # ----------------------------------------------------------------------------
-ARG ENABLE_RUST=false
-ARG ENABLE_RUST_MCP_RMCP=false
 ARG ENABLE_PROFILING=false
 RUN set -euo pipefail \
     && . /etc/profile.d/use-openssl.sh \
@@ -288,14 +200,7 @@ RUN set -euo pipefail \
         /app/.venv/bin/uv pip install ".[redis,postgres,observability,plugins,llmchat]"; \
     fi \
     && echo "✅ Plugins installed from PyPI via [plugins] extra" \
-    && if [ "$ENABLE_RUST" = "true" ] && ls "/tmp/local-native-extension-wheels/"*.whl 1> /dev/null 2>&1; then \
-        echo "🦀 Installing local native extensions..."; \
-        /app/.venv/bin/uv pip install --no-cache-dir "/tmp/local-native-extension-wheels/"*.whl && \
-        /app/.venv/bin/python3 /tmp/verify-native-extensions.py && rm /tmp/verify-native-extensions.py; \
-    else \
-        echo "⏭️  No local native extensions discovered"; \
-    fi \
-    && rm -rf /tmp/local-native-extension-wheels /tmp/wheels \
+    && rm -rf /tmp/wheels \
     && if [ "$ENABLE_PROFILING" = "true" ]; then \
         echo "📊 Installing profiling tools (memray, py-spy)..."; \
         /app/.venv/bin/uv pip install --no-cache-dir "memray>=1.17.0" && \
@@ -354,8 +259,6 @@ FROM ${UBI_MINIMAL} AS runtime
 ARG ENABLE_FIPS=false
 
 ARG PYTHON_VERSION=3.12
-ARG ENABLE_RUST=false
-ARG ENABLE_RUST_MCP_RMCP=false
 ARG ENABLE_PROFILING=false
 
 # ----------------------------------------------------------------------------

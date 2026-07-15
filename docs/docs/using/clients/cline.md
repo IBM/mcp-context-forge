@@ -35,36 +35,27 @@
 
 ## 🔗 Connecting to ContextForge
 
-To integrate Cline with your ContextForge:
+To integrate Cline with your ContextForge, use the **Streamable HTTP** transport:
 
 1. **Configure MCP Server**:
 
    - Open the Cline settings in VS Code.
    - Navigate to the MCP Servers section.
-   - Add a new MCP server with the following configuration under mcpServers as shown below:
+   - Add a new MCP server with the following configuration:
 
-     ```json
-     "mcpServers": {
-         "mcpgateway-wrapper": {
-            "disabled": true,
-            "timeout": 60,
-            "type": "stdio",
-            "command": "uv",
-            "args": [
-            "run",
-            "--directory",
-            "REPLACE_WITH_PATH_TO_REPO",
-            "-m",
-            "mcpgateway.wrapper"
-            ],
-            "env": {
-               "MCP_SERVER_URL": "http://localhost:4444",
-               "MCP_AUTH": "Bearer REPLACE_WITH_MCPGATEWAY_BEARER_TOKEN",
-               "MCP_WRAPPER_LOG_LEVEL": "OFF"
+      ```json
+      {
+        "mcpServers": {
+          "mcp-gateway": {
+            "type": "http",
+            "url": "http://localhost:4444/servers/UUID_OF_SERVER_1/mcp/",
+            "headers": {
+              "Authorization": "Bearer REPLACE_WITH_MCPGATEWAY_BEARER_TOKEN"
             }
-         }
+          }
+        }
       }
-     ```
+      ```
 
 2. **Enable the MCP Server**:
 

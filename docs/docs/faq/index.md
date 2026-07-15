@@ -343,26 +343,24 @@
 
 ## 🖧 Stdio Wrapper
 
-???+ example "🧰 How do I use the stdio wrapper with Claude Desktop?"
-    Configure a stdio server in your client:
+???+ example "🧰 How do I connect Claude Desktop to ContextForge?"
+    Use **Streamable HTTP** for client connections:
 
     ```json
     {
       "mcpServers": {
-        "mcpgateway-wrapper": {
-          "command": "python3",
-          "args": ["-m", "mcpgateway.wrapper"],
-          "env": {
-            "MCP_AUTH": "Bearer <your-token>",
-            "MCP_SERVER_URL": "http://localhost:4444/servers/UUID_OF_SERVER_1/mcp",
-            "MCP_TOOL_CALL_TIMEOUT": "120"
+        "mcp-gateway": {
+          "type": "http",
+          "url": "http://localhost:4444/servers/UUID_OF_SERVER_1/mcp/",
+          "headers": {
+            "Authorization": "Bearer <YOUR_JWT_TOKEN>"
           }
         }
       }
     }
     ```
 
-    See: [mcpgateway.wrapper](../using/mcpgateway-wrapper.md).
+See the [MCP Clients guide](../using/clients/index.md).
 
 ---
 

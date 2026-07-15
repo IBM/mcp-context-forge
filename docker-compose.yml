@@ -1772,7 +1772,7 @@ services:
     profiles: ["resilience"]
 
   ###############################################################################
-  # Fast Test Server - Ultra-fast Rust MCP server for performance testing
+  # Fast Test Server - Ultra-fast MCP server for performance testing
   # Provides: echo, get_system_time, get_stats tools via MCP Streamable HTTP
   # Also exposes REST API endpoints for baseline comparison
   # Usage: docker compose --profile testing up -d
@@ -1785,7 +1785,6 @@ services:
       - "8880:8880"    # Port 8880 (avoids conflict with benchmark servers on 9000+)
     environment:
       - BIND_ADDRESS=0.0.0.0:8880
-      - RUST_LOG=info
     # TCP kernel tuning for high-concurrency load testing
     sysctls:
       - net.ipv4.tcp_fin_timeout=15          # Faster cleanup of FIN_WAIT2 sockets
