@@ -899,3 +899,45 @@ class TestLearnedAudiencePersistence:
         )
 
         assert captured["record"].learned_aud == ["aud-a", "aud-b"]
+
+    @pytest.mark.asyncio
+    async def test_two_user_isolation_write_and_read(self, service, mock_db):
+        """User B cannot observe or overwrite user A's learned audience.
+
+        Regression for the MEDIUM security fix: replaces the narrative that
+        was implicit in the deleted TestPersistLearnedAudience. Proves the
+        (gateway_id, app_user_email) key isolates learned metadata per-user.
+        """
+        # Two separate token rows for the same gateway, one per user.
+        row_a = _make_token_record(app_user_email="user-a@test.com", learned_aud="aud-A", learned_iss="https://idp-A.example.com")
+        row_b = _make_token_record(app_user_email="user-b@test.com", learned_aud="aud-B", learned_iss="https://idp-B.example.com")
+
+        # store_tokens with user A's email + a NEW learned aud must only touch A's row.
+        mock_db.execute.return_value.scalar_one_or_none.return_value = row_a
+        await service.store_tokens(
+            gateway_id="gw-1",
+            user_id="oauth-user-a",
+            app_user_email="user-a@test.com",
+            access_token="access-a-updated",
+            refresh_token=None,
+            expires_in=3600,
+            scopes=[],
+            learned_aud="aud-A-updated",
+            learned_iss="https://idp-A.example.com",
+        )
+        assert row_a.learned_aud == "aud-A-updated"
+        assert row_b.learned_aud == "aud-B", "User B's row must not be touched by user A's store_tokens"
+
+        # Reading A's row does not return B's data (mock returns A's row for A's key).
+        row_a_view = SimpleNamespace(learned_aud=row_a.learned_aud, learned_iss=row_a.learned_iss)
+        mock_db.execute.return_value.one_or_none.return_value = row_a_view
+        aud, iss = await service.get_user_learned_audience("gw-1", "user-a@test.com")
+        assert aud == "aud-A-updated"
+        assert iss == "https://idp-A.example.com"
+
+        # Reading B's row returns B's own values.
+        row_b_view = SimpleNamespace(learned_aud=row_b.learned_aud, learned_iss=row_b.learned_iss)
+        mock_db.execute.return_value.one_or_none.return_value = row_b_view
+        aud, iss = await service.get_user_learned_audience("gw-1", "user-b@test.com")
+        assert aud == "aud-B"
+        assert iss == "https://idp-B.example.com"

@@ -54,12 +54,18 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    """Drop learned_aud and learned_iss from oauth_tokens.
+    """Drop the per-user learned_aud and learned_iss columns from oauth_tokens.
 
-    Callback-driven persistence reverts to writing gateway.oauth_config.resource
-    on downgrade (the pre-PR behavior). Any per-user learned values in the
-    dropped columns are lost — this is acceptable because learned aud/iss are
-    auto-populated on the next OAuth flow.
+    This is a **schema rollback only**. It removes the columns but does not
+    restore the pre-redesign callback-driven writes to
+    ``gateway.oauth_config.resource`` (that code was removed from
+    ``mcpgateway/routers/oauth_router.py`` in the same PR that added these
+    columns). To fully revert learned-audience behavior to the pre-redesign
+    model, roll back the application image as well as run this downgrade.
+
+    Any per-user learned values in the dropped columns are lost. After a full
+    rollback (schema + code), those values will re-populate on each user's
+    next OAuth flow via the restored callback path.
     """
     inspector = sa.inspect(op.get_bind())
 
