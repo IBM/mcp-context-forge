@@ -2229,40 +2229,27 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 user_context = {
                     "email": app_user_email,
                     "teams": None,  # Shared path
-                    "is_admin": is_admin
+                    "is_admin": is_admin,
                 }
                 token_storage = TokenStorageService(db, user_context=user_context)
                 access_token = await token_storage.get_user_token(gateway.id, app_user_email)
                 token_source = "shared path (Admin UI)"
 
                 if not access_token:
-                    raise GatewayConnectionError(
-                        f"No OAuth token found for user {app_user_email} in shared path. "
-                        f"Please authorize this gateway via the Admin UI."
-                    )
+                    raise GatewayConnectionError(f"No OAuth token found for user {app_user_email} in shared path. Please authorize this gateway via the Admin UI.")
             else:
                 # API flow: check ONLY team-scoped path
-                user_context = {
-                    "email": app_user_email,
-                    "teams": teams,
-                    "is_admin": is_admin
-                }
+                user_context = {"email": app_user_email, "teams": teams, "is_admin": is_admin}
                 token_storage = TokenStorageService(db, user_context=user_context)
                 access_token = await token_storage.get_user_token(gateway.id, app_user_email)
                 token_source = f"team-scoped (teams: {teams})"
 
                 if not access_token:
                     raise GatewayConnectionError(
-                        f"No OAuth token found for user {app_user_email} in team-scoped path (teams: {teams}). "
-                        f"Please authorize this gateway via API with the appropriate team context."
+                        f"No OAuth token found for user {app_user_email} in team-scoped path (teams: {teams}). Please authorize this gateway via API with the appropriate team context."
                     )
 
-            logger.info(
-                "Retrieved OAuth token for user=%s, gateway=%s from %s",
-                app_user_email,
-                gateway.name,
-                token_source
-            )
+            logger.info("Retrieved OAuth token for user=%s, gateway=%s from %s", app_user_email, gateway.name, token_source)
 
             # Debug: Check if token was decrypted
             if access_token.startswith("Z0FBQUFBQm"):  # Encrypted tokens start with this
@@ -2329,18 +2316,10 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 used_team_token = token_source and "team-scoped" in token_source
 
                 if is_auth_error and used_team_token and teams:
-                    logger.warning(
-                        "Team-scoped OAuth token failed with 401 for user=%s, gateway=%s. Retrying with shared path token.",
-                        app_user_email,
-                        gateway.name
-                    )
+                    logger.warning("Team-scoped OAuth token failed with 401 for user=%s, gateway=%s. Retrying with shared path token.", app_user_email, gateway.name)
 
                     # Try shared path as fallback
-                    user_context_shared = {
-                        "email": app_user_email,
-                        "teams": None,
-                        "is_admin": is_admin
-                    }
+                    user_context_shared = {"email": app_user_email, "teams": None, "is_admin": is_admin}
                     token_storage_shared = TokenStorageService(db, user_context=user_context_shared)
                     shared_token = await token_storage_shared.get_user_token(gateway.id, app_user_email)
 
@@ -2423,7 +2402,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 SecurityValidator.sanitize_log_message(gateway_id),
                 str(actual_error),
                 type(actual_error).__name__,
-                exc_info=True  # Include full traceback
+                exc_info=True,  # Include full traceback
             )
             raise GatewayConnectionError(f"Failed to fetch tools after OAuth: {str(actual_error)}")
 

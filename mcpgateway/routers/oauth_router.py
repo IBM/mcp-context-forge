@@ -607,7 +607,7 @@ async def oauth_callback(
     error: QueryErrorCode = None,
     error_description: Annotated[str | None, Query(max_length=500, description="OAuth provider error description")] = None,
     # Remove the gateway_id parameter requirement
-    request: Request = None,
+    request: Request | None = None,
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
     """Handle the OAuth callback and complete the authorization process.
@@ -1156,12 +1156,10 @@ async def fetch_tools_after_oauth(
     except HTTPException:
         raise
     except GatewayConnectionError as e:
-        logger.error("FETCH-TOOLS FAILED [GatewayConnectionError] gateway=%s error=%s",
-                     SecurityValidator.sanitize_log_message(gateway_id), e)
+        logger.error("FETCH-TOOLS FAILED [GatewayConnectionError] gateway=%s error=%s", SecurityValidator.sanitize_log_message(gateway_id), e)
         raise HTTPException(status_code=400, detail=f"Failed to fetch tools: {e}")
     except Exception as e:
-        logger.error("FETCH-TOOLS FAILED [Exception] gateway=%s error=%s",
-                     SecurityValidator.sanitize_log_message(gateway_id), e, exc_info=True)
+        logger.error("FETCH-TOOLS FAILED [Exception] gateway=%s error=%s", SecurityValidator.sanitize_log_message(gateway_id), e, exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to fetch tools: {e}")
 
 
