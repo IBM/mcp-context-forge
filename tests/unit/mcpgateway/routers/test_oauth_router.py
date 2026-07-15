@@ -1559,6 +1559,69 @@ class TestOAuthRouterAdditionalCoverage:
         assert mock_gateway.oauth_config["resource"] == "api://admin-configured-audience"
 
     @pytest.mark.asyncio
+    async def test_initiate_oauth_flow_dcr_preserves_blank_stored_resource(self, mock_db, mock_request, mock_current_user):
+        """Documents the current DCR-persist semantics for ``stored_resource == ""``.
+
+        The strip logic uses ``if stored_resource is None: pop`` else preserve.  An
+        empty string is falsy but NOT ``None``, so the ``else`` branch runs and the
+        blank stored value is persisted as-is (not replaced by origin derivation).
+        This locks the intent: blank is treated as "explicit admin state" rather
+        than "no admin config".  If empty resource is later declared invalid, the
+        fix belongs in the gateway config validation layer, not in this DCR strip.
+        """
+        mock_gateway = Mock(spec=Gateway)
+        mock_gateway.id = "gateway123"
+        mock_gateway.name = "Gateway"
+        mock_gateway.url = "https://mcp.example.com/deep/path"
+        mock_gateway.visibility = "public"
+        mock_gateway.team_id = None
+        mock_gateway.auth_type = None
+        mock_gateway.oauth_config = {
+            "grant_type": "authorization_code",
+            "issuer": "https://issuer.example.com",
+            "redirect_uri": "https://gateway.example.com/oauth/callback",
+            "resource": "",
+        }
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+
+        auth_data = {"authorization_url": "https://issuer.example.com/auth"}
+
+        class _Registered:
+            client_id = "client-123"
+            client_secret_encrypted = None
+            token_endpoint_auth_method = "client_secret_post"
+
+        class _FakeDcrService:
+            async def get_or_register_client(self, **_kwargs):
+                return _Registered()
+
+            async def discover_as_metadata(self, _issuer):
+                return {"authorization_endpoint": "https://issuer.example.com/auth", "token_endpoint": "https://issuer.example.com/token"}
+
+        with patch("mcpgateway.routers.oauth_router.DcrService", return_value=_FakeDcrService()):
+            with patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_mgr:
+                mock_mgr = Mock()
+                mock_mgr.initiate_authorization_code_flow = AsyncMock(return_value=auth_data)
+                mock_oauth_mgr.return_value = mock_mgr
+
+                with patch("mcpgateway.routers.oauth_router.TokenStorageService"):
+                    from mcpgateway.routers.oauth_router import initiate_oauth_flow
+
+                    with patch("mcpgateway.routers.oauth_router.settings") as mock_settings:
+                        mock_settings.dcr_enabled = True
+                        mock_settings.dcr_auto_register_on_missing_credentials = True
+                        mock_settings.dcr_default_scopes = ["openid"]
+
+                        await initiate_oauth_flow("gateway123", mock_request, mock_current_user, mock_db)
+
+        # Blank stored resource must survive DCR persistence — the origin-derived value
+        # is stripped even though the stored value is falsy. This is the intentional
+        # "preserve explicit admin state" branch of the strip logic in
+        # oauth_router.initiate_oauth_flow's persist_dict block.
+        assert "resource" in mock_gateway.oauth_config
+        assert mock_gateway.oauth_config["resource"] == ""
+
+    @pytest.mark.asyncio
     async def test_initiate_oauth_flow_team_access_denied(self, mock_db, mock_request, mock_current_user):
         mock_gateway = Mock(spec=Gateway)
         mock_gateway.id = "gateway123"

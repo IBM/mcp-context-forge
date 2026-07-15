@@ -2428,3 +2428,46 @@ class TestExtractTokenClaims:
         with caplog.at_level("DEBUG", logger="mcpgateway.services.oauth_manager"):
             assert OAuthManager._extract_token_audience("") is None
         assert not any("Unverified JWT decode failed" in record.message for record in caplog.records)
+
+    # ---------- _coerce_aud_claim direct empty-shape rejection (Fix 3) ----------
+
+    @pytest.mark.parametrize(
+        "malformed_aud",
+        [
+            "",
+            "   ",
+            "\t\n",
+            [],
+            [""],
+            ["  ", "\t"],
+            ["valid", ""],
+            ["valid", "   "],
+        ],
+    )
+    def test_coerce_aud_claim_rejects_empty_shapes(self, malformed_aud):
+        """Malformed / empty aud shapes are coerced to None so they cannot overwrite
+        a previously-learned per-user audience via ``TokenStorageService.store_tokens``
+        (whose ``if learned_aud is not None`` guard would otherwise pass them through
+        and silently clobber good state).
+        """
+        assert OAuthManager._coerce_aud_claim(malformed_aud) is None
+
+    @pytest.mark.parametrize(
+        "valid_aud,expected",
+        [
+            ("api://valid-audience", "api://valid-audience"),
+            (["api://a", "api://b"], ["api://a", "api://b"]),
+            (["opaque-client-id"], ["opaque-client-id"]),
+        ],
+    )
+    def test_coerce_aud_claim_passes_valid_shapes(self, valid_aud, expected):
+        """Non-empty strings and non-empty lists of non-empty strings pass through unchanged."""
+        assert OAuthManager._coerce_aud_claim(valid_aud) == expected
+
+    @pytest.mark.parametrize(
+        "non_string_aud",
+        [None, 42, 3.14, {"k": "v"}, ["valid", 42], [None]],
+    )
+    def test_coerce_aud_claim_rejects_non_string_types(self, non_string_aud):
+        """Non-string / non-list-of-strings inputs are rejected as None."""
+        assert OAuthManager._coerce_aud_claim(non_string_aud) is None
