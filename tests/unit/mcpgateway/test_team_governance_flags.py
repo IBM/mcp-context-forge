@@ -707,3 +707,109 @@ class TestUpdateUserEmailVerified:
         await service.update_user(email="user@example.com", email_verified=False)
 
         assert mock_user.email_verified_at is None
+
+
+class TestCreateTeamWithMembersDenyPaths:
+    """Deny-path regression tests for POST /teams with members.
+
+    AGENTS.md requires security-sensitive changes to include deny-path coverage
+    for unauthenticated, insufficient-permission, and feature-flag-disabled paths.
+    """
+
+    @pytest.fixture(autouse=True)
+    async def drain_fire_and_forget_tasks(self):
+        """Give fire-and-forget cache invalidation tasks one loop turn to complete."""
+        yield
+        await asyncio.sleep(0)
+
+    @pytest.mark.asyncio
+    @patch("mcpgateway.routers.teams.settings")
+    @patch("mcpgateway.routers.teams.PermissionService")
+    async def test_unauthenticated_create_with_members_raises_401(self, MockPermissionService, mock_settings):
+        """create_team with members raises 401 when the caller is not authenticated.
+
+        The RBAC decorator (@require_permission) raises 401/403 before the
+        function body runs.  We reproduce that by having PermissionService raise
+        HTTPException(401).
+        """
+        mock_settings.allow_team_creation = True
+        mock_perm_service = AsyncMock()
+        mock_perm_service.check_platform_admin_permission = AsyncMock(side_effect=HTTPException(status_code=401, detail="Not authenticated"))
+        MockPermissionService.return_value = mock_perm_service
+
+        from mcpgateway.routers.teams import create_team
+        from mcpgateway.schemas import TeamCreateRequest, TeamMemberSeed
+
+        request = TeamCreateRequest(
+            name="Engineering",
+            visibility="private",
+            members=[TeamMemberSeed(email="alice@example.com", role="member")],
+        )
+        db = MagicMock(spec=Session)
+
+        with pytest.raises(HTTPException) as exc_info:
+            await create_team(request=request, current_user_ctx={"email": "", "token_teams": None}, db=db)
+        assert exc_info.value.status_code == 401
+
+    @pytest.mark.asyncio
+    @patch("mcpgateway.routers.teams.settings")
+    @patch("mcpgateway.routers.teams.PermissionService")
+    async def test_team_creation_disabled_with_members_raises_403(self, MockPermissionService, mock_settings):
+        """POST /teams with members returns 403 for non-admin when ALLOW_TEAM_CREATION=false."""
+        mock_settings.allow_team_creation = False
+        mock_perm_service = AsyncMock()
+        mock_perm_service.check_platform_admin_permission = AsyncMock(return_value=False)
+        MockPermissionService.return_value = mock_perm_service
+
+        from mcpgateway.routers.teams import create_team
+        from mcpgateway.schemas import TeamCreateRequest, TeamMemberSeed
+
+        request = TeamCreateRequest(
+            name="Engineering",
+            visibility="private",
+            members=[TeamMemberSeed(email="alice@example.com", role="member")],
+        )
+        db = MagicMock(spec=Session)
+
+        with pytest.raises(HTTPException) as exc_info:
+            await create_team(request=request, current_user_ctx={"email": "user@example.com", "token_teams": None}, db=db)
+        assert exc_info.value.status_code == 403
+        assert "disabled" in exc_info.value.detail.lower()
+
+    @pytest.mark.asyncio
+    @patch("mcpgateway.routers.teams.TeamManagementService")
+    @patch("mcpgateway.routers.teams.settings")
+    @patch("mcpgateway.routers.teams.PermissionService")
+    async def test_invitations_disabled_with_unknown_seed_raises_400(self, MockPermissionService, mock_settings, MockTeamService):
+        """POST /teams with an unknown seed address raises 400 when ALLOW_TEAM_INVITATIONS=false.
+
+        The service raises TeamMemberSeedError (subclass of TeamManagementError),
+        which the router converts to HTTP 400.
+        """
+        mock_settings.allow_team_creation = True
+        mock_perm_service = AsyncMock()
+        mock_perm_service.check_platform_admin_permission = AsyncMock(return_value=False)
+        MockPermissionService.return_value = mock_perm_service
+
+        from mcpgateway.services.team_management_service import TeamMemberSeedError
+
+        mock_service = AsyncMock()
+        mock_service.create_team_with_members = AsyncMock(
+            side_effect=TeamMemberSeedError(0, "external@partner.com", "invitations are currently disabled")
+        )
+        MockTeamService.return_value = mock_service
+
+        from mcpgateway.routers.teams import create_team
+        from mcpgateway.schemas import TeamCreateRequest, TeamMemberSeed
+
+        request = TeamCreateRequest(
+            name="Engineering",
+            visibility="private",
+            members=[TeamMemberSeed(email="external@partner.com", role="member")],
+        )
+        db = MagicMock(spec=Session)
+
+        with pytest.raises(HTTPException) as exc_info:
+            await create_team(request=request, current_user_ctx={"email": "user@example.com", "token_teams": None}, db=db)
+        assert exc_info.value.status_code == 400
+        assert "invitations are currently disabled" in exc_info.value.detail
