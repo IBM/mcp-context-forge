@@ -70,8 +70,7 @@ def _wait_for_admin_function(page: Page, function_name: str, timeout: int = 1000
         pytest.skip: If the function is not available within timeout
     """
     try:
-        # evaluate()-based poll: wait_for_function's eval() mechanism is rejected by
-        # strict CSP (script-src 'self', no unsafe-eval) right after navigation.
+        # See wait_for_js_condition() docstring for why evaluate()-based polling is used.
         wait_for_js_condition(page, f"typeof window.Admin !== 'undefined' && typeof window.Admin.{function_name} === 'function'", timeout=timeout, polling=100)
     except PlaywrightTimeoutError:
         admin_debug = page.evaluate("""() => {
@@ -982,9 +981,7 @@ class TestAdminIframeContext:
         except PlaywrightTimeoutError:
             pass
 
-        # Wait for admin JS to initialise inside iframe. evaluate()-based poll:
-        # wait_for_function's eval() mechanism is rejected by strict CSP
-        # (script-src 'self', no unsafe-eval) right after navigation.
+        # Wait for admin JS to initialise inside iframe (see wait_for_js_condition() docstring).
         try:
             wait_for_js_condition(
                 frame_obj,
@@ -1017,8 +1014,8 @@ class TestAdminIframeContext:
             items_container = frame.locator("#team-selector-items")
             items_container.wait_for(state="visible", timeout=10000)
 
-            # Wait for actual team buttons (not "Loading..." placeholder). evaluate()-based
-            # poll: wait_for_function's eval() mechanism is rejected by strict CSP.
+            # Wait for actual team buttons (not "Loading..." placeholder); see
+            # wait_for_js_condition() docstring for why evaluate()-based polling is used.
             wait_for_js_condition(
                 frame_obj,
                 "document.querySelectorAll('#team-selector-items .team-selector-item').length > 0",

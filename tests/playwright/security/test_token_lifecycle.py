@@ -17,13 +17,15 @@ from __future__ import annotations
 
 # Standard
 import logging
-import time
 import uuid
 
 # Third-Party
 from playwright.sync_api import APIRequestContext, expect
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 import pytest
+
+# Local
+from ..pages.admin_utils import wait_for_ui_condition
 
 logger = logging.getLogger(__name__)
 
@@ -182,18 +184,13 @@ class TestTokenRevokeUI:
         assert revoke_resp.status in (200, 204)
 
         # Navigate to tokens tab with include_inactive=true so revoked token IS listed.
-        # The nginx admin-page cache has a 5s TTL keyed on URL+cookies (see
-        # infra/nginx/nginx.conf), so a GET for this exact listing issued by an
-        # earlier test in the same session can still be served stale here. Retry
-        # past that window instead of asserting on a single fetch.
-        deadline = time.monotonic() + 8
-        revoke_btn_count = None
-        token_card_count = None
-        while time.monotonic() < deadline:
+        counts = {"card": None, "revoke": None}
+
+        def _settled() -> bool:
             tokens_page.page.reload(wait_until="domcontentloaded")
             tokens_page.navigate_to_tokens_tab()
             # Enable "Show inactive" to make revoked tokens visible in the list
-            inactive_checkbox = tokens_page.page.locator("#tokens-inactive-toggle, [name='include_inactive']")
+            inactive_checkbox = tokens_page.page.locator("#show-inactive-tokens")
             if inactive_checkbox.count() > 0 and not inactive_checkbox.first.is_checked():
                 inactive_checkbox.first.click()
 
@@ -207,10 +204,17 @@ class TestTokenRevokeUI:
             except (PlaywrightTimeoutError, AssertionError):
                 pass
 
-            token_card_count = token_card.count()
-            revoke_btn_count = tokens_page.get_token_revoke_btn(token_name).count()
-            if token_card_count == 0 or revoke_btn_count == 0:
-                break
+            counts["card"] = token_card.count()
+            counts["revoke"] = tokens_page.get_token_revoke_btn(token_name).count()
+            return counts["card"] == 0 or counts["revoke"] == 0
+
+        # The nginx admin-page cache has a 5s TTL keyed on URL+cookies (see
+        # infra/nginx/nginx.conf), so a GET for this exact listing issued by an
+        # earlier test in the same session can still be served stale here. Retry
+        # past that window instead of asserting on a single fetch.
+        wait_for_ui_condition(tokens_page.page, _settled, deadline_seconds=8)
+        token_card_count = counts["card"]
+        revoke_btn_count = counts["revoke"]
 
         # Verify the token card IS rendered (not vacuously absent)
         if token_card_count and token_card_count > 0:

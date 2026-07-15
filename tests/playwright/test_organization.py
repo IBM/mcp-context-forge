@@ -127,9 +127,8 @@ class TestTeams:
         # Verify team is visible
         team_page.wait_for_team_visible(team_name)
 
-        # Wait for HTMX search to settle before interacting with cards. evaluate()-based
-        # poll: wait_for_function's eval() mechanism is rejected by strict CSP
-        # (script-src 'self', no unsafe-eval) right after navigation/reload.
+        # Wait for HTMX search to settle before interacting with cards
+        # (see wait_for_js_condition() docstring for why evaluate()-based polling is used).
         wait_for_js_condition(
             team_page.page,
             "!document.querySelector('#teams-loading.htmx-request')",
@@ -194,8 +193,7 @@ class TestTeams:
         team_search.fill(team_name)
         team_page.wait_for_team_visible(team_name)
 
-        # evaluate()-based poll: wait_for_function's eval() mechanism is rejected by
-        # strict CSP (script-src 'self', no unsafe-eval) right after navigation/reload.
+        # See wait_for_js_condition() docstring for why evaluate()-based polling is used.
         wait_for_js_condition(
             team_page.page,
             "!document.querySelector('#teams-loading.htmx-request')",
@@ -305,9 +303,8 @@ class TestTeamSelectorDropdown:
         items_container = page.locator("#team-selector-items")
         expect(items_container).to_be_visible(timeout=10000)
 
-        # Wait for the loading message to be replaced with actual team buttons.
-        # evaluate()-based poll: wait_for_function's eval() mechanism is rejected by
-        # strict CSP (script-src 'self', no unsafe-eval) right after navigation.
+        # Wait for the loading message to be replaced with actual team buttons
+        # (see wait_for_js_condition() docstring for why evaluate()-based polling is used).
         wait_for_js_condition(
             page,
             "document.querySelectorAll('#team-selector-items .team-selector-item').length > 0",

@@ -318,8 +318,7 @@ def _ensure_admin_logged_in(page: Page, base_url: str) -> None:
         raise
 
     # Wait for JS initialization (showTab + HTMX + event delegation) before any tab clicks.
-    # evaluate()-based poll: wait_for_function's eval() mechanism is rejected by strict
-    # CSP (script-src 'self', no unsafe-eval) right after navigation.
+    # See wait_for_js_condition() docstring for why evaluate()-based polling is used here.
     try:
         wait_for_js_condition(
             page,

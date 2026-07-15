@@ -155,10 +155,9 @@ def _wait_for_admin_shell(page: Page, timeout: int = 60000) -> None:
         if "Internal Server Error" in content:
             raise AssertionError("Admin page failed to load: Internal Server Error (500)")
         raise
-    # Wait for JS initialization. Uses evaluate()-based polling rather than
-    # wait_for_function(), whose eval() mechanism strict CSP (script-src 'self',
-    # no unsafe-eval) rejects right after navigation. showTab lives on the
-    # Admin namespace, not as a bare global, since the JS bundling refactor.
+    # Wait for JS initialization (see wait_for_js_condition() docstring for why
+    # evaluate()-based polling is used). showTab lives on the Admin namespace,
+    # not as a bare global, since the JS bundling refactor.
     try:
         wait_for_js_condition(
             page,

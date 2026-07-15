@@ -139,12 +139,31 @@ All extend `BasePage` which provides `SidebarComponent` for tab navigation. Use 
 
 Fixtures in `conftest.py` handle login automatically (JWT cookie injection by default).
 
+### CSP-Safe JS Polling
+
+Strict CSP (`script-src 'self'`, no `unsafe-eval`) rejects `Page.wait_for_function()`/`Frame.wait_for_function()` immediately after navigation. Use `wait_for_js_condition()` instead — it polls via `evaluate()`, which isn't subject to that restriction:
+
+```python
+from .pages.admin_utils import wait_for_js_condition
+wait_for_js_condition(page, "typeof window.Admin !== 'undefined'", timeout=30000)
+```
+
 ### Writing New Playwright Tests
 
 1. Create a page object in `tests/playwright/pages/` extending `BasePage`
 2. Add a fixture in `tests/playwright/conftest.py`
 3. Create test file in `tests/playwright/test_<feature>.py`
 4. Use `pytest.skip()` when prerequisites aren't met (e.g., plugins not enabled)
+
+### Handling Async DB Operations
+
+After a DELETE, use `wait_for_entity_deleted()` to ride out DB commit propagation lag instead of asserting immediately:
+
+```python
+from .pages.admin_utils import wait_for_entity_deleted
+assert delete_resource(page, resource_id)
+assert wait_for_entity_deleted(page, "resources", resource_name)
+```
 
 ## JavaScript Unit Tests
 
