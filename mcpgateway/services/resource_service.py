@@ -2665,6 +2665,7 @@ class ResourceService(BaseService):
                         # it internally checks which uri matches the pattern of modified uri and fetches
                         # the one which matches else raises ResourceNotFoundError
                         try:
+                            # First-Party
                             from mcpgateway.auth_context import get_user_email  # pylint: disable=import-outside-toplevel
 
                             template_user_email = None if user is None else get_user_email(user)
