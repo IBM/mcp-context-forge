@@ -48,7 +48,7 @@ from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.display_name import generate_display_name
-from mcpgateway.utils.grpc_validation import GrpcServiceError, _validate_grpc_target, _validate_tls_path
+from mcpgateway.utils.grpc_validation import _validate_grpc_target, _validate_tls_path, GrpcServiceError
 from mcpgateway.utils.pagination import unified_paginate
 
 # Initialize logging

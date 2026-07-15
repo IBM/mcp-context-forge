@@ -181,6 +181,7 @@ async def test_full_payload_generation_with_mock_db():
     gateway1.url = "http://localhost:9000"
     gateway1.transport = "STREAMABLEHTTP"
     gateway1.passthrough_headers = ["Authorization"]
+    gateway1.capabilities = {"resources": {"subscribe": True}}
     gateway1.owner_email = "user1@example.com"
     gateway1.team_id = "team1"
     gateway1.visibility = "public"
@@ -197,6 +198,7 @@ async def test_full_payload_generation_with_mock_db():
     resource1 = Mock()
     resource1.id = "r1"
     resource1.name = "Resource 1"
+    resource1.uri = "resource://one"
     resource1.owner_email = "user1@example.com"
     resource1.team_id = "team1"
     resource1.visibility = "public"
@@ -279,8 +281,10 @@ async def test_full_payload_generation_with_mock_db():
         assert backend["url"] == "http://localhost:9000"
         assert backend["transport"] == "STREAMABLEHTTP"
         assert backend["passthrough_headers"] == ["Authorization"]
+        assert backend["capabilities"] == {"resources": {"subscribe": True}}
         assert backend["allowed_tool_names"] == ["public_tool", "private_tool"]
         assert backend["allowed_resource_names"] == ["Resource 1"]
+        assert backend["allowed_resource_uris"] == ["resource://one"]
         assert backend["allowed_prompt_names"] == ["Prompt 1"]
 
         # Verify user2 sees public server but not private server from user1
@@ -444,6 +448,7 @@ def test_create_payload_normalizes_null_passthrough_headers():
 
     backend = result["user@example.com"]["virtual_hosts"]["server1"]["backends"]["gateway1"]
     assert backend["passthrough_headers"] == []
+    assert backend["capabilities"] == {}
 
 
 def test_create_payload_handles_missing_references():
