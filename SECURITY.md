@@ -97,7 +97,7 @@ Our security pipeline operates at multiple levels:
 
 **Code Review Security**: All code changes undergo mandatory peer review with security-focused review criteria, ensuring that security considerations are evaluated by human experts in addition to automated tooling.
 
-**Supply Chain Security**: We maintain strict oversight of our software supply chain through automated dependency vulnerability scanning, Software Bill of Materials (SBOM) generation, and license compliance checking to ensure all components meet security standards. Automated dependency update PRs are managed via Renovate bot, and Snyk custom rules enforce detection of hardcoded JWT secrets and basic auth credentials (CWE-798). License policies explicitly deny strong-copyleft licenses (GPL-3.0, AGPL-3.0, SSPL) and flag licenses requiring review (MPL-2.0, LGPL-2.0, CC-BY-SA-4.0).
+**Supply Chain Security**: We maintain strict oversight of our software supply chain through automated dependency vulnerability scanning, Software Bill of Materials (SBOM) generation, and license compliance checking to ensure all components meet security standards. Dependency vulnerability findings are surfaced via Dependabot and regularly reviewed and addressed by contributors. Snyk custom rules enforce detection of hardcoded JWT secrets and basic auth credentials (CWE-798). License policies explicitly deny strong-copyleft licenses (GPL-3.0, AGPL-3.0, SSPL) and flag licenses requiring review (MPL-2.0, LGPL-2.0, CC-BY-SA-4.0).
 
 **Container Security Hardening**: Our containerized deployments follow security best practices including multi-stage builds, minimal base images (UBI Micro) with the latest updates, non-root user execution, read-only filesystems, and SBOM-based review with complementary dependency and OS/package analysis where configured.
 
@@ -592,7 +592,7 @@ flowchart TD
     O --> O3[Supply Chain Security]
     O --> O4[pip-audit - Python CVEs]
     O --> O5[Snyk - Custom Security Rules]
-    O --> O6[Renovate - Automated Updates]
+    O --> O6[Dependabot - Vulnerability Findings]
 
     P --> P1[pytest Unit Tests]
     P --> P2[Coverage Analysis]
