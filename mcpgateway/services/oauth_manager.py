@@ -994,6 +994,8 @@ class OAuthManager:
                 refresh_token=token_response.get("refresh_token"),
                 expires_in=parse_expires_in(token_response),
                 scopes=scopes_list,
+                learned_aud=token_aud,
+                learned_iss=token_iss,
             )
 
             return {

@@ -136,111 +136,6 @@ def _derive_resource_origin(url: str | None) -> str | None:
     return f"{parsed.scheme}://{parsed.netloc}"
 
 
-def _is_well_formed_audience(value: Any) -> bool:
-    """Return True if *value* is a usable audience claim shape.
-
-    Accepts a non-empty string or a non-empty list of non-empty strings; any
-    other shape (None, empty container, mixed types, numbers, dicts) is
-    rejected so a malformed IdP response cannot pollute persisted state.
-
-    Args:
-        value: Candidate audience value pulled from a token claim.
-
-    Returns:
-        ``True`` iff the value is a well-formed audience identifier.
-    """
-    if isinstance(value, str):
-        return bool(value.strip())
-    if isinstance(value, list):
-        return bool(value) and all(isinstance(item, str) and item.strip() for item in value)
-    return False
-
-
-async def _persist_learned_audience(gateway: Gateway, oauth_result: Dict[str, Any], db: Session) -> None:
-    """Learn the IdP's audience identifier from the token and persist it.
-
-    Many IdPs (ServiceNow, Authentik, etc.) do not honor RFC 8707 and set the
-    ``aud`` claim to an abstract identifier (often the ``client_id``) rather than
-    the ``resource`` URL sent in the authorization request.  By persisting the
-    actual ``aud`` value as ``resource`` in the gateway's ``oauth_config``, we
-    ensure that subsequent token validation in ``_validate_audience`` succeeds
-    and that future OAuth requests use the IdP's preferred audience identifier.
-
-    Persistence is **first-write-only**: the learned audience is written only
-    when ``oauth_config["resource"]`` is currently unset.  The OAuth callback
-    path enforces gateway access (read-equivalent) but not ``gateways.update``,
-    so allowing every authenticated callback to overwrite shared gateway
-    configuration would let any user with gateway access mutate global state on
-    behalf of all other users.  To re-learn a stale audience after an IdP
-    change, an admin must clear the ``resource`` field via the gateway update
-    API (which does enforce ``gateways.update``).
-
-    Two additional defensive checks run before any write:
-
-    * **Shape validation** -- the candidate ``token_aud`` must be a non-empty
-      string or non-empty list of non-empty strings.  Anything else (numbers,
-      empty containers, mixed types) is silently dropped so a malformed IdP
-      response cannot pollute persisted state.
-    * **Issuer pinning** -- when ``oauth_config["issuer"]`` is configured, the
-      token's ``iss`` claim must match it.  This prevents a stale or misrouted
-      token from a different AS from injecting an audience for the wrong IdP.
-      The check is skipped when no issuer is configured (preserves existing
-      behavior for non-OIDC / non-discovery setups).
-
-    This is a best-effort operation: opaque tokens, missing ``aud`` claims,
-    malformed shapes, mismatched issuers, and already-set resources are all
-    silently skipped.  Each skip path emits a DEBUG log so operators tracing
-    "audience never learned" reports can distinguish the cause.
-
-    Args:
-        gateway: The gateway ORM object (will be mutated and flushed).
-        oauth_result: The result dict from ``complete_authorization_code_flow``,
-            expected to contain ``token_aud`` and ``token_iss``.
-        db: Active database session.
-
-    Returns:
-        ``None``.  Persistence is a side effect on ``gateway.oauth_config``
-        (mutated in place via reassignment) and the database session
-        (``db.flush()``).
-    """
-    token_aud = oauth_result.get("token_aud")
-    if not _is_well_formed_audience(token_aud):
-        logger.debug("Skipping audience persistence for gateway %s: token_aud absent or malformed", gateway.name)
-        return
-
-    # First-write-only: do not overwrite an existing usable resource.  Empty
-    # strings, empty lists, and lists of empty strings are treated as unset so
-    # an admin can clear the field via the gateway update API to trigger
-    # re-learning on the next callback.  See docstring for the authorization
-    # rationale.
-    oauth_config = gateway.oauth_config or {}
-    if _is_well_formed_audience(oauth_config.get("resource")):
-        logger.debug("Skipping audience persistence for gateway %s: resource already set", gateway.name)
-        return
-
-    # Issuer pinning: refuse to persist an audience drawn from a token whose
-    # iss claim does not match the configured issuer.  Trailing slashes are
-    # stripped for comparison so ``https://idp.example.com`` and
-    # ``https://idp.example.com/`` are treated as equivalent (matches the
-    # convention used by token_validation_service for issuer comparison).
-    # See docstring for the cross-IdP bleed scenario this prevents.
-    configured_issuer = oauth_config.get("issuer")
-    if configured_issuer:
-        token_iss = oauth_result.get("token_iss")
-        if not isinstance(token_iss, str) or token_iss.rstrip("/") != configured_issuer.rstrip("/"):
-            logger.debug(
-                "Skipping audience persistence for gateway %s: token iss does not match configured issuer",
-                gateway.name,
-            )
-            return
-
-    updated_config = dict(oauth_config)
-    updated_config["resource"] = token_aud
-    gateway.oauth_config = updated_config
-    db.flush()
-    logger.info("Learned OAuth audience from IdP token for gateway %s; persisted as resource", gateway.name)
-
-
 oauth_router = APIRouter(prefix="/oauth", tags=["oauth"])
 
 
@@ -703,12 +598,12 @@ async def oauth_callback(
             gateway_id, code, state, oauth_config_with_resource, ca_certificate=gateway.ca_certificate, client_cert=gateway.client_cert, client_key=gateway.client_key
         )
 
-        # Learn the IdP's audience mapping from the token and persist as resource.
-        # RFC 8707 Section 2: "The authorization server may use the exact resource value
-        # as the audience or it may map from that value to a more general URI or abstract
-        # identifier for the given resource."  We persist whatever the IdP chose so that
-        # subsequent token validation matches.
-        await _persist_learned_audience(gateway, result, db)
+        # Token's aud/iss claims (best-effort, unverified) are persisted per-user by
+        # TokenStorageService.store_tokens as OAuthToken.learned_aud / learned_iss so
+        # subsequent validation can be authoritative for THIS USER without letting
+        # anyone with gateway access mutate globally-shared gateway config. See
+        # OAuthManager.complete_authorization_code_flow and
+        # token_validation_service._validate_audience for the full trust model.
 
         logger.info(f"Completed OAuth flow for gateway {SecurityValidator.sanitize_log_message(gateway_id)}, user {SecurityValidator.sanitize_log_message(str(result.get('user_id')))}")
 

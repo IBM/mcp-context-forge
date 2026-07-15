@@ -12,27 +12,21 @@ The IdP uses this parameter to mint an access token with a matching `aud` (audie
 
 In most cases, you don't need to manually configure the resource field. ContextForge uses a two-stage automatic process:
 
-1.  **Auto-Derivation**: If no resource is configured, the gateway automatically derives the origin (`scheme://netloc`) from its own URL to use as a fallback audience. Real-world providers (Salesforce, Azure AD, Okta) typically issue origin-level audiences, so origin-derivation maximizes first-flow success.
-2.  **Auto-Learning**: On the first successful OAuth flow, the gateway inspects the returned access token, "learns" the actual audience used by the IdP, and persists it to the gateway configuration.
+1.  **Auto-Derivation** (outbound): If no resource is configured, the gateway automatically derives the origin (`scheme://netloc`) from its own URL and sends it to the IdP as the RFC 8707 `resource` parameter. Real-world providers (Salesforce, Azure AD, Okta) typically issue origin-level audiences, so origin-derivation maximizes first-flow success.
+2.  **Per-User Auto-Learning** (inbound validation): On each user's OAuth callback, the gateway inspects the returned access token's `aud` (and `iss`) claims and persists them **on that user's own OAuth token row** (`OAuthToken.learned_aud`). Subsequent validation for THAT USER checks their token's `aud` against their own learned value.
 
-This "zero-config" approach works out of the box for most providers, including Salesforce, Azure AD, Okta, Auth0, and Authentik.
+This "zero-config" approach works out of the box for most providers, including Salesforce, Azure AD, Okta, Auth0, and Authentik, without any shared-config mutation.
+
+### Why per-user learning?
+
+Storing learned audience per-user (instead of on shared gateway config) prevents two failure modes:
+
+-   **Multi-tenant DoS**: A single gateway can serve users from multiple IdP tenants with per-tenant `aud` values. Each tenant's users get their own learned value; one tenant cannot lock out others by pinning the audience for everyone.
+-   **RBAC bypass**: The OAuth callback path only enforces gateway *access* (visibility/team membership), not `gateways.update`. Per-user storage keeps writes scoped to the caller's own OAuthToken row, so no user can mutate config on behalf of others.
 
 ### Auto-Learning Failure Recovery
 
-If the IdP does not return an RFC 8707-compliant response on the first OAuth callback (e.g., the token has no `aud` claim, or the claim is malformed), the auto-learning step is silently skipped. The gateway will continue to use the auto-derived origin fallback for subsequent requests. This fallback remains in effect until:
-
--   An admin explicitly sets the **Resource** field in the gateway configuration, or
--   A future OAuth callback succeeds with a well-formed audience that can be learned
-
-The gateway logs a DEBUG-level message when auto-learning is skipped. Set `LOG_LEVEL=DEBUG` to see these messages. Typical formats:
-
-```
-DEBUG - Skipping audience persistence for gateway X: token_aud absent or malformed
-DEBUG - Skipping audience persistence for gateway X: resource already set
-DEBUG - Skipping audience persistence for gateway X: token iss does not match configured issuer
-```
-
-No manual intervention is required — the system will automatically recover when a valid audience becomes available.
+If the IdP returns a token whose `aud` cannot be extracted (opaque tokens, decode failures, missing claims), the learned value stays `None` for that user. The validator then falls back to `oauth_config.resource` if configured, or to the gateway URL origin (advisory). The next successful OAuth flow for that user will populate their learned value.
 
 ## When to Configure Explicitly
 
@@ -65,28 +59,40 @@ ContextForge will send multiple `resource` parameters in the OAuth request. Duri
 
 ## Forcing a Re-learn
 
-If your IdP configuration changes (e.g., you migrate to a new tenant or rotate client IDs) and the persisted audience becomes stale, **clearing the Admin UI field does not wipe the stored value**. This is a deliberate race-safety guard: an admin dialog opened before the OAuth callback ran can otherwise silently overwrite the callback's learned value on save.
+Two scenarios, two workflows:
 
-To explicitly clear a stored resource and trigger re-learning on the next OAuth flow, use the API with an explicit `null`:
+**Per-user learned audience is stale for one user** (typical case: IdP config changed, that user's next login will still match their old learned value):
+
+- Nothing to do — that user simply re-authenticates. The next OAuth callback overwrites their `OAuthToken.learned_aud` with the new audience. No admin action needed.
+
+**Admin-configured `oauth_config.resource` is stale** (typical case: you set it explicitly and now want to clear it):
+
+1.  Open the **Admin UI**, edit the affected gateway or A2A agent.
+2.  Clear the **Resource** field.
+3.  Save.
+
+The stored `oauth_config.resource` is wiped. Subsequent OAuth flows fall back to origin derivation for the outbound `resource` parameter, and inbound validation uses per-user learned values (or the origin fallback for users who haven't authenticated yet).
+
+Equivalent API workflow:
 
 ```bash
 curl -X PUT -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"oauth_config": {"resource": null, "grant_type": "authorization_code", "client_id": "...", "token_url": "...", "authorization_url": "...", "redirect_uri": "..."}}' \
+  -d '{"oauth_config": {"resource": null, "grant_type": "authorization_code", "client_id": "..."}}' \
   https://gateway.example.com/gateways/<gateway_id>
 ```
 
-The next successful OAuth flow will re-trigger auto-learning and persist the new audience. Any oauth_config fields you omit from the PUT payload are preserved (backfilled) from the stored config, so a minimal payload targeting only `resource` works.
-
-!!! tip "Debugging Auto-Learning"
-    The gateway logs DEBUG-level messages when audience persistence is skipped (e.g., `Skipping audience persistence for gateway X: ...`). These messages are invisible at the default `LOG_LEVEL=ERROR` or `INFO`. Set `LOG_LEVEL=DEBUG` in your environment configuration to see these diagnostic messages.
-
 ## Validation Behavior
 
-ContextForge performs local validation of the token audience before forwarding:
+ContextForge performs local validation of the token audience before forwarding, with a three-level precedence:
 
--   **Authoritative (Blocking)**: If you have explicitly set a resource or if one has been auto-learned, validation is authoritative. Tokens that don't match are rejected locally with a `GatewayConnectionError` and never reach the upstream MCP server.
--   **Advisory (Non-blocking, default)**: If the gateway is using the auto-derived fallback (no resource configured or learned yet), validation is advisory. A warning is logged, but the token is still forwarded to the MCP server, which remains the final authority.
+| Precedence | Source | Severity |
+|---|---|---|
+| 1 (highest) | `oauth_config.resource` — admin-configured | Authoritative (blocking on mismatch) |
+| 2 | `OAuthToken.learned_aud` — this user's own learned value | Authoritative (blocking on mismatch for THIS USER) |
+| 3 (fallback) | Gateway URL origin — auto-derived | Advisory (warning-only; upstream MCP server is the final authority) |
+
+The advisory fallback (#3) only applies to users whose OAuth flow has not yet successfully populated a learned value. Once a user completes at least one successful OAuth flow, their subsequent tokens are validated authoritatively against their own learned audience.
 
 To make the auto-derived-fallback case authoritative too — that is, to have ContextForge itself reject audience mismatches in strict deployments — set:
 

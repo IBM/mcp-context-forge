@@ -10113,13 +10113,15 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                             placeholder="https://api.example.com or your-client-id"
                           />
                           <p class="mt-1 text-sm text-gray-500">
-                            RFC 8707 resource indicator. Leave blank to auto-derive
-                            from gateway URL and auto-learn from IdP. Set explicitly
-                            for IdPs that return an opaque audience identifier.
-                            To trigger re-learning, use the API with
-                            <code>oauth_config.resource = null</code> — clearing the
-                            UI field preserves the stored value to avoid stale-save
-                            races with the OAuth callback.
+                            RFC 8707 resource indicator sent to the IdP. When admins
+                            leave this blank, the gateway derives it from the gateway URL
+                            origin, and each user's actual token audience is auto-learned
+                            per-user on their own OAuth callback. Set explicitly here to
+                            force a global (all-user) audience — for example, when you
+                            need a specific Application ID URI in multi-tenant Entra ID.
+                            To make a stored value take effect again, users simply
+                            re-authenticate; to clear this admin-configured value,
+                            blank the field and save.
                           </p>
                         </div>
 
@@ -10620,13 +10622,15 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                             placeholder="https://api.example.com or your-client-id"
                           />
                           <p class="mt-1 text-sm text-gray-500">
-                            RFC 8707 resource indicator. Leave blank to auto-derive
-                            from gateway URL and auto-learn from IdP. Set explicitly
-                            for IdPs that return an opaque audience identifier.
-                            To trigger re-learning, use the API with
-                            <code>oauth_config.resource = null</code> — clearing the
-                            UI field preserves the stored value to avoid stale-save
-                            races with the OAuth callback.
+                            RFC 8707 resource indicator sent to the IdP. When admins
+                            leave this blank, the gateway derives it from the gateway URL
+                            origin, and each user's actual token audience is auto-learned
+                            per-user on their own OAuth callback. Set explicitly here to
+                            force a global (all-user) audience — for example, when you
+                            need a specific Application ID URI in multi-tenant Entra ID.
+                            To make a stored value take effect again, users simply
+                            re-authenticate; to clear this admin-configured value,
+                            blank the field and save.
                           </p>
                           </div>
 

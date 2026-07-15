@@ -5339,6 +5339,14 @@ class OAuthToken(Base):
     token_type: Mapped[str] = mapped_column(String(50), default="Bearer")
     expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     scopes: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True)
+    # Per-user learned OAuth audience/issuer (RFC 7519 §4.1.3 aud is string OR list).
+    # Populated from the token's unverified aud/iss claims on the OAuth callback; used
+    # by the token_validation_service to authoritatively validate THIS USER'S subsequent
+    # tokens. Kept per-user (rather than on gateway.oauth_config) so multi-tenant IdPs
+    # with per-tenant aud values do not create cross-tenant DoS, and so a user without
+    # gateways.update cannot mutate shared gateway config via the callback path.
+    learned_aud: Mapped[Optional[Any]] = mapped_column(JSON, nullable=True)
+    learned_iss: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
 

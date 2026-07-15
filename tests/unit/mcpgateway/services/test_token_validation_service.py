@@ -568,3 +568,70 @@ class TestOAuthRequireConfiguredResourceSetting:
 
         assert result.audience_match is True
         assert result.blocking_errors == []
+
+
+class TestLearnedAudPrecedence:
+    """Per-user learned aud precedence (MEDIUM security fix).
+
+    ``validate_oauth_token_claims`` accepts ``learned_aud`` sourced from the
+    caller's own OAuthToken row. The precedence is
+    ``oauth_config.resource`` > ``learned_aud`` > ``gateway_url``, with the
+    first two authoritative and the last advisory (unless the strict setting
+    is on). These tests lock the ordering + the authoritative flag behavior
+    for the per-user learned path so a regression cannot silently drop the
+    per-user check to advisory.
+    """
+
+    def test_learned_aud_used_when_no_configured_resource(self):
+        token = _make_jwt({"aud": "opaque-tenant-a-id"})
+        result = validate_oauth_token_claims(token, {}, "https://gw.example.com", "test-gw", learned_aud="opaque-tenant-a-id")
+
+        assert result.audience_match is True
+        assert result.audience_authoritative is True
+        assert result.blocking_errors == []
+
+    def test_learned_aud_mismatch_is_authoritative(self):
+        token = _make_jwt({"aud": "wrong-aud"})
+        result = validate_oauth_token_claims(token, {}, "https://gw.example.com", "test-gw", learned_aud="opaque-tenant-a-id")
+
+        assert result.audience_match is False
+        assert result.audience_authoritative is True
+        assert len(result.blocking_errors) == 1
+
+    def test_configured_resource_beats_learned_aud(self):
+        """Admin config always wins — even a matching learned_aud cannot rescue a config-mismatched token."""
+        token = _make_jwt({"aud": "learned-value"})
+        result = validate_oauth_token_claims(token, {"resource": "configured-value"}, "https://gw.example.com", "test-gw", learned_aud="learned-value")
+
+        assert result.audience_match is False
+        assert result.audience_authoritative is True
+        assert len(result.blocking_errors) == 1
+
+    def test_learned_aud_list_shape_supported(self):
+        """RFC 7519 §4.1.3 aud can be a list; learned_aud list is checked correctly."""
+        token = _make_jwt({"aud": "id-b"})
+        result = validate_oauth_token_claims(token, {}, "https://gw.example.com", "test-gw", learned_aud=["id-a", "id-b"])
+
+        assert result.audience_match is True
+
+    def test_no_learned_aud_falls_back_to_gateway_url_advisory(self):
+        """Explicit None learned_aud → gateway URL fallback → advisory mismatch."""
+        with patch("mcpgateway.services.token_validation_service.settings") as mock_settings:
+            mock_settings.oauth_require_configured_resource = False
+            token = _make_jwt({"aud": "unrelated"})
+            result = validate_oauth_token_claims(token, {}, "https://gw.example.com", "test-gw", learned_aud=None)
+
+        assert result.audience_match is False
+        assert result.audience_authoritative is False
+        assert result.blocking_errors == []
+
+    def test_empty_learned_aud_falls_back_to_gateway_url(self):
+        """Empty string learned_aud (falsy) treated as absent → falls back to gateway URL."""
+        with patch("mcpgateway.services.token_validation_service.settings") as mock_settings:
+            mock_settings.oauth_require_configured_resource = False
+            token = _make_jwt({"aud": "unrelated"})
+            result = validate_oauth_token_claims(token, {}, "https://gw.example.com", "test-gw", learned_aud="")
+
+        assert result.audience_match is False
+        assert result.audience_authoritative is False
+        assert result.blocking_errors == []
