@@ -282,30 +282,10 @@ class TokenStorageService:
             threshold_seconds=threshold_seconds,
         )
 
-        except Exception as e:
-            logger.error("Failed to retrieve OAuth token: %s", str(e))
-            return None
-
     # REMOVED: get_any_valid_token() - This was a security vulnerability
     # All OAuth tokens MUST be user-specific to prevent cross-user token access
 
-    async def get_token_info(
-        """Refresh an expired access token using refresh token.
-
-        Args:
-            token_record: OAuth token record to refresh
-
-        Returns:
-            New access token or None if refresh failed
-        """
-        try:
-            if not token_record.refresh_token:
-                logger.warning("No refresh token available for gateway %s", token_record.gateway_id)
-                return None
-
-            # Get the gateway configuration to retrieve OAuth settings
-            # First-Party
-            from mcpgateway.db import Gateway  # pylint: disable=import-outside-toplevel
+    async def get_user_auth_headers(
 
             gateway = self.db.query(Gateway).filter(Gateway.id == token_record.gateway_id).first()
 
@@ -558,6 +538,33 @@ class TokenStorageService:
         if expires_at.tzinfo is None:
             expires_at = expires_at.replace(tzinfo=timezone.utc)
         return datetime.now(timezone.utc) + timedelta(seconds=threshold_seconds) >= expires_at
+=======
+    async def get_user_auth_headers(
+        self,
+        gateway_id: str,
+        app_user_email: str,
+    ) -> Optional[Dict[str, str]]:
+        """Get per-user non-OAuth auth headers (bearer/basic/authheaders) for a user.
+
+        Only the Vault backend stores these (written by ICA as a ``headers`` dict at the
+        per-user path). Returns None for backends that don't support it.
+
+        Args:
+            gateway_id: ID of the gateway
+            app_user_email: ContextForge user email (required)
+
+        Returns:
+            The ``{header: value}`` dict, or None.
+        """
+        backend_getter = getattr(self._backend, "get_user_auth_headers", None)
+        if backend_getter is None:
+            return None
+        team_id = self._get_team_id(gateway_id, app_user_email)
+        return await backend_getter(
+            gateway_id=gateway_id,
+            team_id=team_id,
+            app_user_email=app_user_email,
+        )
 
     async def get_token_info(
         self,
