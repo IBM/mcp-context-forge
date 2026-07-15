@@ -105,7 +105,7 @@ function ToolGroupCard({
         <div className="flex flex-wrap gap-1">
           {visibleTools.map((tool) => (
             <CardTag key={tool.id} tooltip={tool.description}>
-              {tool.name}
+              {tool.displayName || tool.name}
             </CardTag>
           ))}
           {remainingCount > 0 && (

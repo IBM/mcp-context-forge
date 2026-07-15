@@ -125,14 +125,18 @@ describe("PromptForm", () => {
     expect(onSuccess).toHaveBeenCalled();
   });
 
-  it("renders required field errors after submit", async () => {
+  it("disables the submit button when required fields are empty", () => {
     renderPromptForm();
 
-    await userEvent.setup().click(screen.getByRole("button", { name: "Add prompt" }));
-
-    expect(screen.getByText("Name is required")).toBeInTheDocument();
-    expect(screen.getByText("Template is required")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add prompt" })).toBeDisabled();
     expect(mockPost).not.toHaveBeenCalled();
+  });
+
+  it("enables the submit button once all required fields are filled", async () => {
+    renderPromptForm();
+    await fillRequiredFields();
+
+    expect(screen.getByRole("button", { name: "Add prompt" })).toBeEnabled();
   });
 
   it("requires an active team when visibility is set to team", async () => {

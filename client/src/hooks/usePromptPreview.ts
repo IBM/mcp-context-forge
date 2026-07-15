@@ -4,6 +4,7 @@ import { toast } from "sonner";
 
 import { ApiError } from "@/api/client";
 import { promptsApi, type RenderedPrompt } from "@/api/prompts";
+import { parseApiError } from "@/lib/errorUtils";
 
 export interface PreviewSuccess {
   rendered: RenderedPrompt;
@@ -79,14 +80,7 @@ export function usePromptPreview(
       if (controller.signal.aborted) return;
       const renderTimeMs = Math.round(performance.now() - startedAt);
       const status = err instanceof ApiError ? err.status : null;
-      const message =
-        err instanceof ApiError
-          ? typeof err.body === "object" && err.body !== null && "detail" in err.body
-            ? String((err.body as { detail: unknown }).detail)
-            : err.message
-          : err instanceof Error
-            ? err.message
-            : "Unknown error";
+      const message = parseApiError(err, err instanceof Error ? err.message : "Unknown error");
       setError({ message, renderTimeMs, status });
       setResult(null);
       toast.error(intl.formatMessage({ id: "prompts.details.preview.error" }));
