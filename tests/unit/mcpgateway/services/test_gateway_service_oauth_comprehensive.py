@@ -476,6 +476,16 @@ class TestGatewayServiceOAuthComprehensive:
         mock_gateway_result = MagicMock()
         mock_gateway_result.scalar_one_or_none.return_value = mock_oauth_auth_code_gateway
 
+        # Mock EmailUser and EmailTeamMember queries for user_context building
+        mock_user = MagicMock()
+        mock_user.is_admin = False
+        mock_team_member = MagicMock()
+        mock_team_member.team_id = "team-123"
+        team_result = MagicMock()
+        team_result.scalars.return_value.all.return_value = [mock_team_member]
+        user_result = MagicMock()
+        user_result.scalar_one_or_none.return_value = mock_user
+
         # Mock database execute for helper method queries (finding existing tools)
         mock_tool_result = MagicMock()
         mock_tool_result.scalar_one_or_none.return_value = None  # No existing tool found
@@ -483,6 +493,8 @@ class TestGatewayServiceOAuthComprehensive:
         # Set up side effect for multiple database calls
         test_db.execute.side_effect = [
             mock_gateway_result,  # First call to get gateway
+            team_result,  # EmailTeamMember query for user_context
+            user_result,  # EmailUser query for is_admin flag
             mock_tool_result,  # Call from _update_or_create_tools helper method
         ]
 
@@ -569,9 +581,25 @@ class TestGatewayServiceOAuthComprehensive:
     async def test_fetch_tools_after_oauth_no_token_available(self, gateway_service, mock_oauth_auth_code_gateway, test_db):
         """Test fetch tools after OAuth when no token is available."""
         # Mock database execute to return the gateway
-        mock_result = MagicMock()
-        mock_result.scalar_one_or_none.return_value = mock_oauth_auth_code_gateway
-        test_db.execute.return_value = mock_result
+        mock_gateway_result = MagicMock()
+        mock_gateway_result.scalar_one_or_none.return_value = mock_oauth_auth_code_gateway
+
+        # Mock EmailUser and EmailTeamMember queries for user_context building
+        mock_user = MagicMock()
+        mock_user.is_admin = False
+        mock_team_member = MagicMock()
+        mock_team_member.team_id = "team-123"
+        team_result = MagicMock()
+        team_result.scalars.return_value.all.return_value = [mock_team_member]
+        user_result = MagicMock()
+        user_result.scalar_one_or_none.return_value = mock_user
+
+        # Set up side effect for multiple database calls
+        test_db.execute.side_effect = [
+            mock_gateway_result,  # First call to get gateway
+            team_result,  # EmailTeamMember query for user_context
+            user_result,  # EmailUser query for is_admin flag
+        ]
 
         # Mock TokenStorageService to return None
         with patch("mcpgateway.services.token_storage_service.TokenStorageService") as mock_token_service_class:
@@ -583,7 +611,7 @@ class TestGatewayServiceOAuthComprehensive:
             with pytest.raises(GatewayConnectionError) as exc_info:
                 await gateway_service.fetch_tools_after_oauth(test_db, "2", "test@example.com")
 
-            assert "No OAuth tokens found" in str(exc_info.value)
+            assert "No OAuth token found" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_fetch_tools_after_oauth_initialization_failure(self, gateway_service, mock_oauth_auth_code_gateway, test_db):
@@ -713,7 +741,17 @@ class TestFetchToolsAfterOauthTokenValidation:
         mock_oauth_auth_code_gateway.oauth_config["resource"] = "api://correct-app"
         token = pyjwt.encode({"aud": "api://wrong-app", "scope": "read write"}, "k", algorithm="HS256")
 
-        test_db.execute.return_value = _make_execute_result(scalar=mock_oauth_auth_code_gateway)
+        # Mock EmailUser and EmailTeamMember queries
+        mock_user = MagicMock()
+        mock_user.is_admin = False
+        mock_team_member = MagicMock()
+        mock_team_member.team_id = "team-123"
+
+        test_db.execute.side_effect = [
+            _make_execute_result(scalar=mock_oauth_auth_code_gateway),  # Gateway query
+            _make_execute_result(scalars_list=[mock_team_member]),  # EmailTeamMember query
+            _make_execute_result(scalar=mock_user),  # EmailUser query
+        ]
 
         with (
             patch("mcpgateway.services.token_storage_service.TokenStorageService") as MockTSS,
@@ -732,7 +770,17 @@ class TestFetchToolsAfterOauthTokenValidation:
     @pytest.mark.asyncio
     async def test_opaque_token_no_warnings(self, gateway_service, mock_oauth_auth_code_gateway, test_db):
         """Opaque (non-JWT) token proceeds without JWT-related validation warnings."""
-        test_db.execute.return_value = _make_execute_result(scalar=mock_oauth_auth_code_gateway)
+        # Mock EmailUser and EmailTeamMember queries
+        mock_user = MagicMock()
+        mock_user.is_admin = False
+        mock_team_member = MagicMock()
+        mock_team_member.team_id = "team-123"
+
+        test_db.execute.side_effect = [
+            _make_execute_result(scalar=mock_oauth_auth_code_gateway),  # Gateway query
+            _make_execute_result(scalars_list=[mock_team_member]),  # EmailTeamMember query
+            _make_execute_result(scalar=mock_user),  # EmailUser query
+        ]
 
         with (
             patch("mcpgateway.services.token_storage_service.TokenStorageService") as MockTSS,
@@ -758,7 +806,18 @@ class TestFetchToolsAfterOauthTokenValidation:
 
         mock_oauth_auth_code_gateway.oauth_config["resource"] = "api://correct"
         token = pyjwt.encode({"aud": "api://wrong"}, "k", algorithm="HS256")
-        test_db.execute.return_value = _make_execute_result(scalar=mock_oauth_auth_code_gateway)
+
+        # Mock EmailUser and EmailTeamMember queries
+        mock_user = MagicMock()
+        mock_user.is_admin = False
+        mock_team_member = MagicMock()
+        mock_team_member.team_id = "team-123"
+
+        test_db.execute.side_effect = [
+            _make_execute_result(scalar=mock_oauth_auth_code_gateway),  # Gateway query
+            _make_execute_result(scalars_list=[mock_team_member]),  # EmailTeamMember query
+            _make_execute_result(scalar=mock_user),  # EmailUser query
+        ]
 
         with (
             patch("mcpgateway.services.token_storage_service.TokenStorageService") as MockTSS,
@@ -806,7 +865,19 @@ class TestFetchToolsAfterOauthTokenValidation:
         from mcpgateway.services.token_validation_service import TokenValidationResult
 
         mock_oauth_auth_code_gateway.transport = "streamablehttp"
-        test_db.execute.return_value = _make_execute_result(scalar=mock_oauth_auth_code_gateway)
+
+        # Mock EmailUser and EmailTeamMember queries for user_context building
+        mock_user = MagicMock()
+        mock_user.is_admin = False
+        mock_team_member = MagicMock()
+        mock_team_member.team_id = "team-123"
+
+        # Set up side effect for multiple database calls
+        test_db.execute.side_effect = [
+            _make_execute_result(scalar=mock_oauth_auth_code_gateway),  # Gateway query
+            _make_execute_result(scalars_list=[mock_team_member]),  # EmailTeamMember query
+            _make_execute_result(scalar=mock_user),  # EmailUser query
+        ]
 
         # Create a validation result with advisory (non-blocking) warnings
         advisory_result = TokenValidationResult(is_jwt=True, token_type_valid=True)
@@ -832,7 +903,19 @@ class TestFetchToolsAfterOauthTokenValidation:
     async def test_streamablehttp_generic_error_no_diagnostics(self, gateway_service, mock_oauth_auth_code_gateway, test_db):
         """StreamableHTTP non-auth errors do not include validation diagnostics."""
         mock_oauth_auth_code_gateway.transport = "streamablehttp"
-        test_db.execute.return_value = _make_execute_result(scalar=mock_oauth_auth_code_gateway)
+
+        # Mock EmailUser and EmailTeamMember queries for user_context building
+        mock_user = MagicMock()
+        mock_user.is_admin = False
+        mock_team_member = MagicMock()
+        mock_team_member.team_id = "team-123"
+
+        # Set up side effect for multiple database calls
+        test_db.execute.side_effect = [
+            _make_execute_result(scalar=mock_oauth_auth_code_gateway),  # Gateway query
+            _make_execute_result(scalars_list=[mock_team_member]),  # EmailTeamMember query
+            _make_execute_result(scalar=mock_user),  # EmailUser query
+        ]
 
         with (
             patch("mcpgateway.services.token_storage_service.TokenStorageService") as MockTSS,
