@@ -5306,6 +5306,10 @@ class ToolService(BaseService):
                     gateway_grant_type = gateway_oauth_config.get("grant_type", "client_credentials")
 
                 if tool_integration_type == "REST":
+                    # Track missing stored OAuth credentials until after pre-invoke
+                    # hooks have had a chance to inject an Authorization header.
+                    oauth_authcode_no_db_token = False
+
                     # Handle OAuth authentication for REST tools
                     if tool_auth_type == "oauth" and isinstance(tool_oauth_config, dict) and tool_oauth_config:
                         try:
@@ -5321,6 +5325,28 @@ class ToolService(BaseService):
                         except Exception as e:
                             logger.error("Failed to obtain OAuth access token for tool %s: %s", tool_name_computed, e)
                             raise ToolInvocationError(f"OAuth authentication failed: {str(e)}")
+                    elif has_gateway and gateway_auth_type == "oauth" and gateway_grant_type == "authorization_code":
+                        try:
+                            with fresh_db_session() as token_db:
+                                token_storage = TokenStorageService(token_db)
+
+                                if not app_user_email:
+                                    raise ToolInvocationError(f"User authentication required for OAuth-protected gateway '{gateway_name}'. Please ensure you are authenticated.")
+
+                                access_token = await token_storage.get_user_token(gateway_id_str, app_user_email)
+
+                            if access_token:
+                                headers["Authorization"] = f"Bearer {access_token}"
+                            else:
+                                oauth_authcode_no_db_token = True
+                                logger.info(
+                                    "OAuth authorization_code gateway '%s' invoked without DB-stored token; deferring auth check to allow plugin injection",
+                                    gateway_name,
+                                    extra={"gateway_id": gateway_id_str, "user": app_user_email or "<unknown>"},
+                                )
+                        except Exception as e:
+                            logger.error("Failed to obtain stored OAuth token for gateway %s: %s", gateway_name, e)
+                            raise ToolInvocationError(f"OAuth token retrieval failed for gateway: {str(e)}")
                     else:
                         credentials = decode_auth(tool_auth_value) if tool_auth_value else {}
                         # Filter out empty header names/values to avoid "Illegal header name" errors
@@ -5334,7 +5360,7 @@ class ToolService(BaseService):
                             headers,
                             passthrough_allowed,
                             gateway_auth_type=None,
-                            gateway_passthrough_headers=None,  # REST tools don't use gateway auth here
+                            gateway_passthrough_headers=None,  # Preserve REST's global passthrough configuration
                         )
                         # Read MCP-Session-Id from downstream client (MCP protocol header)
                         # and normalize to x-mcp-session-id for our internal session affinity logic
@@ -5374,6 +5400,9 @@ class ToolService(BaseService):
                             arguments = payload.args
                             if payload.headers is not None:
                                 headers = payload.headers.model_dump()
+
+                    if oauth_authcode_no_db_token and not any(hk.lower() == "authorization" for hk in headers):
+                        raise ToolInvocationError(f"Please authorize {gateway_name} first. Visit /oauth/authorize/{gateway_id_str} to complete OAuth flow.")
 
                     # Build the payload based on integration type
                     payload = arguments.copy()

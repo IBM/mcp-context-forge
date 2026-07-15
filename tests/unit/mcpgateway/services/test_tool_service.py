@@ -4365,6 +4365,154 @@ class TestToolService:
         # Verify result
         assert result.content[0].text == '{\n  "result": "OAuth success"\n}'
 
+    async def test_invoke_tool_rest_gateway_oauth_authorization_code_uses_stored_user_token(self, tool_service, mock_tool, mock_gateway, mock_global_config_obj, test_db):
+        """REST tools should forward a stored user token from an OAuth gateway."""
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "POST"
+        mock_tool.auth_type = None
+        mock_tool.oauth_config = None
+        mock_gateway.auth_type = "oauth"
+        mock_gateway.oauth_config = {"grant_type": "authorization_code"}
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+        tool_service.oauth_manager.get_access_token = AsyncMock()
+
+        token_storage = MagicMock()
+        token_storage.get_user_token = AsyncMock(return_value="stored-token")
+        fresh_session = MagicMock()
+
+        @contextmanager
+        def _fresh_db_session():
+            yield fresh_session
+
+        mock_response = AsyncMock()
+        mock_response.raise_for_status = Mock()
+        mock_response.status_code = 200
+        mock_response.json = Mock(return_value={"result": "OAuth success"})
+        tool_service._http_client.request.return_value = mock_response
+        tool_service._record_tool_metric_sync = Mock()
+
+        with (
+            patch("mcpgateway.services.tool_service.TokenStorageService", return_value=token_storage),
+            patch("mcpgateway.services.tool_service.fresh_db_session", _fresh_db_session),
+            patch("mcpgateway.services.tool_service.extract_using_jq", return_value={"result": "OAuth success"}),
+        ):
+            await tool_service.invoke_tool(
+                test_db,
+                "test_tool",
+                {"param": "value"},
+                request_headers=None,
+                app_user_email="user@example.com",
+            )
+
+        token_storage.get_user_token.assert_awaited_once_with("1", "user@example.com")
+        tool_service.oauth_manager.get_access_token.assert_not_awaited()
+        headers = tool_service._http_client.request.call_args.kwargs["headers"]
+        assert headers["Authorization"] == "Bearer stored-token"
+
+    async def test_invoke_tool_rest_gateway_oauth_authorization_code_requires_prior_authorization(self, tool_service, mock_tool, mock_gateway, mock_global_config_obj, test_db):
+        """REST gateway OAuth should fail locally when no user token is available."""
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "POST"
+        mock_tool.auth_type = None
+        mock_tool.oauth_config = None
+        mock_gateway.auth_type = "oauth"
+        mock_gateway.oauth_config = {"grant_type": "authorization_code"}
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        token_storage = MagicMock()
+        token_storage.get_user_token = AsyncMock(return_value=None)
+        fresh_session = MagicMock()
+
+        @contextmanager
+        def _fresh_db_session():
+            yield fresh_session
+
+        mock_response = AsyncMock()
+        mock_response.raise_for_status = Mock()
+        mock_response.status_code = 200
+        mock_response.json = Mock(return_value={"result": "unexpected"})
+        tool_service._http_client.request.return_value = mock_response
+        tool_service._record_tool_metric_sync = Mock()
+
+        with (
+            patch("mcpgateway.services.tool_service.TokenStorageService", return_value=token_storage),
+            patch("mcpgateway.services.tool_service.fresh_db_session", _fresh_db_session),
+            patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=None)),
+        ):
+            with pytest.raises(ToolInvocationError, match="Please authorize test_gateway first"):
+                await tool_service.invoke_tool(
+                    test_db,
+                    "test_tool",
+                    {"param": "value"},
+                    request_headers=None,
+                    app_user_email="user@example.com",
+                )
+
+        token_storage.get_user_token.assert_awaited_once_with("1", "user@example.com")
+        tool_service._http_client.request.assert_not_awaited()
+
+    async def test_invoke_tool_rest_gateway_oauth_authorization_code_allows_plugin_auth(self, tool_service, mock_tool, mock_gateway, mock_global_config_obj, test_db):
+        """REST gateway OAuth should allow pre-invoke plugins to supply auth."""
+        # Third-Party
+        from cpex.framework import HttpHeaderPayload, ToolPreInvokePayload
+
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "POST"
+        mock_tool.auth_type = None
+        mock_tool.oauth_config = None
+        mock_gateway.auth_type = "oauth"
+        mock_gateway.oauth_config = {"grant_type": "authorization_code"}
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        token_storage = MagicMock()
+        token_storage.get_user_token = AsyncMock(return_value=None)
+        fresh_session = MagicMock()
+
+        @contextmanager
+        def _fresh_db_session():
+            yield fresh_session
+
+        mock_pm = MagicMock()
+        mock_pm.has_hooks_for = MagicMock(side_effect=lambda hook_type: hook_type == ToolHookType.TOOL_PRE_INVOKE)
+        mock_pm.invoke_hook = AsyncMock(
+            return_value=(
+                PluginResult(
+                    modified_payload=ToolPreInvokePayload(
+                        name="test_tool",
+                        args={"param": "value"},
+                        headers=HttpHeaderPayload(root={"Authorization": "Bearer plugin-token"}),
+                    ),
+                    continue_processing=True,
+                ),
+                {},
+            )
+        )
+
+        mock_response = AsyncMock()
+        mock_response.raise_for_status = Mock()
+        mock_response.status_code = 200
+        mock_response.json = Mock(return_value={"result": "OAuth success"})
+        tool_service._http_client.request.return_value = mock_response
+        tool_service._record_tool_metric_sync = Mock()
+
+        with (
+            patch("mcpgateway.services.tool_service.TokenStorageService", return_value=token_storage),
+            patch("mcpgateway.services.tool_service.fresh_db_session", _fresh_db_session),
+            patch("mcpgateway.services.tool_service.extract_using_jq", return_value={"result": "OAuth success"}),
+            patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=mock_pm)),
+        ):
+            await tool_service.invoke_tool(
+                test_db,
+                "test_tool",
+                {"param": "value"},
+                request_headers=None,
+                app_user_email="user@example.com",
+            )
+
+        token_storage.get_user_token.assert_awaited_once_with("1", "user@example.com")
+        headers = tool_service._http_client.request.call_args.kwargs["headers"]
+        assert headers["Authorization"] == "Bearer plugin-token"
+
     async def test_invoke_tool_rest_oauth_failure(self, tool_service, mock_tool, mock_global_config_obj, test_db):
         """Test invoking REST tool with failed OAuth authentication."""
         # Configure tool with OAuth
