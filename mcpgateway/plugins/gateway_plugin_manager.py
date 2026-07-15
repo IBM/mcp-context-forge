@@ -201,7 +201,7 @@ class TenantPluginManagerFactory:
 
         # Parse context_id to check if it's a default context
         if CONTEXT_ID_SEPARATOR in context_id:
-            team_id, tool_name = context_id.split(CONTEXT_ID_SEPARATOR, 1)
+            team_id, _ = context_id.split(CONTEXT_ID_SEPARATOR, 1)
 
             if not self._is_default_context(context_id):
                 async with self._lock:
