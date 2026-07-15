@@ -204,8 +204,8 @@ describe("Dialog Components", () => {
 
       const content = screen.getByTestId("content");
       expect(content).toHaveClass("fixed");
-      expect(content).toHaveClass("left-[50%]");
-      expect(content).toHaveClass("top-[50%]");
+      expect(content).toHaveClass("inset-0");
+      expect(content).toHaveClass("m-auto");
       expect(content).toHaveClass("z-50");
     });
 
