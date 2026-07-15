@@ -37,7 +37,7 @@ class TestTeamResolutionWithDatabaseBackend:
         with patch("mcpgateway.services.token_storage_service.get_settings") as mock_settings:
             settings = MagicMock()
             settings.oauth_token_backend = "database"
-            settings.auth_encryption_secret = "test-secret-key"
+            settings.auth_encryption_secret = "test-secret-key"  # pragma: allowlist secret
             mock_settings.return_value = settings
 
             service = TokenStorageService(mock_db, user_context)
@@ -90,7 +90,7 @@ class TestTeamResolutionWithDatabaseBackend:
         with patch("mcpgateway.services.token_storage_service.get_settings") as mock_settings:
             settings = MagicMock()
             settings.oauth_token_backend = "database"
-            settings.auth_encryption_secret = "test-secret-key"
+            settings.auth_encryption_secret = "test-secret-key"  # pragma: allowlist secret
             mock_settings.return_value = settings
 
             service = TokenStorageService(mock_db, user_context)
@@ -286,7 +286,7 @@ class TestSharedPathFallback:
         with patch("mcpgateway.services.token_storage_service.get_settings") as mock_settings:
             settings = MagicMock()
             settings.oauth_token_backend = "database"
-            settings.auth_encryption_secret = "test-secret-key"
+            settings.auth_encryption_secret = "test-secret-key"  # pragma: allowlist secret
             mock_settings.return_value = settings
 
             service = TokenStorageService(mock_db, user_context)
