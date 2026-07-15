@@ -22,3 +22,15 @@ plugins:
     priority: 50
     conditions: []
     config: {}
+
+  - name: "PrimaryWorkerE2EHook"
+    kind: "tests.live_gateway.fixtures.hook_marker.PrimaryWorkerE2EHookPlugin"
+    description: "E2E control: ungated HOOK plugin; must load on every worker"
+    version: "0.0.1"
+    author: "tests"
+    hooks: ["http_pre_request"]
+    tags: ["test", "e2e"]
+    mode: "permissive"
+    priority: 50
+    conditions: []
+    config: {}
