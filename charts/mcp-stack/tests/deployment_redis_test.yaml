@@ -1,0 +1,60 @@
+suite: redis deployment
+templates:
+  - templates/deployment-redis.yaml
+
+tests:
+  - it: renders when redis enabled and not external
+    set:
+      redis.enabled: true
+      redis.external.enabled: false
+    asserts:
+      - isKind:
+          of: Deployment
+
+  - it: does not render when redis disabled
+    set:
+      redis.enabled: false
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: does not render when external redis enabled
+    set:
+      redis.enabled: true
+      redis.external.enabled: true
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: passes --maxclients flag with default value when persistence disabled
+    set:
+      redis.enabled: true
+      redis.external.enabled: false
+      redis.persistence.enabled: false
+    asserts:
+      - matchRegex:
+          path: spec.template.spec.containers[0].command[2]
+          pattern: "--maxclients 15000"
+
+  - it: passes --maxclients flag with custom value when persistence disabled
+    set:
+      redis.enabled: true
+      redis.external.enabled: false
+      redis.persistence.enabled: false
+      redis.maxclients: 20000
+    asserts:
+      - matchRegex:
+          path: spec.template.spec.containers[0].command[2]
+          pattern: "--maxclients 20000"
+
+  - it: mounts redis-config volume when persistence enabled
+    set:
+      redis.enabled: true
+      redis.external.enabled: false
+      redis.persistence.enabled: true
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content:
+            name: redis-config
+            mountPath: /usr/local/etc/redis

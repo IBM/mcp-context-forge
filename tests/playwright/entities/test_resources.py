@@ -8,7 +8,7 @@ CRUD tests for Resources entity in ContextForge Admin UI.
 """
 
 # Local
-from ..pages.admin_utils import delete_resource, find_resource
+from ..pages.admin_utils import delete_resource, find_resource, wait_for_entity_deleted
 from ..pages.resources_page import ResourcesPage
 
 
@@ -50,5 +50,5 @@ class TestResourcesCRUD:
         # Delete using API helper
         assert delete_resource(resources_page.page, created_resource["id"])
 
-        # Verify deletion
-        assert find_resource(resources_page.page, test_resource_data["name"]) is None
+        # Verify deletion (retry to handle DB commit propagation lag)
+        assert wait_for_entity_deleted(resources_page.page, "resources", test_resource_data["name"]), f"Resource '{test_resource_data['name']}' still exists after deletion"

@@ -35,7 +35,9 @@ When using `CACHE_TYPE=redis`, tune the connection pool for your workload:
 **High-concurrency production settings:**
 
 ```bash
-REDIS_MAX_CONNECTIONS=100
+# Pool size: replicas × workers × REDIS_MAX_CONNECTIONS must stay below Redis maxclients (15000)
+# Example: 10 replicas × 24 workers × 50 = 12,000 < 15,000 ✅
+REDIS_MAX_CONNECTIONS=50
 REDIS_SOCKET_TIMEOUT=1.0
 REDIS_SOCKET_CONNECT_TIMEOUT=1.0
 REDIS_HEALTH_CHECK_INTERVAL=15
@@ -699,7 +701,7 @@ Each network connection requires a file descriptor. Containers default to 1024 s
 |-----------|---------------------|-----------|
 | **PgBouncer** | `65536` | `MAX_CLIENT_CONN + MAX_DB_CONNECTIONS + overhead` |
 | **PostgreSQL** | `8192` | `max_connections + internal FDs` |
-| **Redis** | `65536` | `maxclients + overhead` |
+| **Redis** | `65536` | `maxclients (15000) + overhead` |
 | **Gateway** | `65536` | `HTTP connections + DB connections + MCP sessions` |
 | **Nginx** | `65535` | `worker_connections × workers` |
 
@@ -840,8 +842,8 @@ environment:
   - HTTPX_MAX_KEEPALIVE_CONNECTIONS=100
   - HTTPX_READ_TIMEOUT=120.0
 
-  # Redis
-  - REDIS_MAX_CONNECTIONS=150
+  # Redis — keep replicas × workers × pool < maxclients (15000)
+  - REDIS_MAX_CONNECTIONS=50
 
   # Performance
   - LOG_LEVEL=ERROR

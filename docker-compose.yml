@@ -276,8 +276,8 @@ services:
       # - REDIS_SSL_CHECK_HOSTNAME=true
       # Redis parser: hiredis (C extension ~83x faster for large responses)
       - REDIS_PARSER=hiredis
-      # Redis connection pool tuning for load testing (3 replicas × 24 workers × 100 = 7200 < 10000 maxclients)
-      - REDIS_MAX_CONNECTIONS=100
+      # Redis connection pool tuning for load testing (3 replicas × 24 workers × 50 = 3600 < 15000 maxclients)
+      - REDIS_MAX_CONNECTIONS=50
       - REDIS_SOCKET_TIMEOUT=5.0
       - REDIS_SOCKET_CONNECT_TIMEOUT=5.0
       - REDIS_HEALTH_CHECK_INTERVAL=30
@@ -1140,7 +1140,7 @@ services:
       - "--tcp-keepalive"
       - "300"
       - "--maxclients"
-      - "10000"
+      - "15000"
     # ── TLS (disabled) — uncomment to enable ──────────────────────────────────
     # volumes:
     #   - ./certs:/certs:ro          # host path containing ca.crt, server.crt, server.key
@@ -1169,7 +1169,7 @@ services:
     #   - "--tcp-keepalive"
     #   - "300"
     #   - "--maxclients"
-    #   - "10000"
+    #   - "15000"
     # ──────────────────────────────────────────────────────────────────────────
     healthcheck:
       # Try TLS port 6380 first (TLS mode); fall back to plain TCP 6379 (non-TLS mode).
