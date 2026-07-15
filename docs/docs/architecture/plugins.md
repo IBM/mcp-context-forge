@@ -741,11 +741,26 @@ class PluginInstanceRegistry:
     def unregister(self, name: str) -> None:
         """Unregister a plugin by name"""
 
+    def get_plugin(self, name: str) -> Optional[PluginRef]:
+        """Get plugin reference by name"""
+
+    def get_plugins_for_hook(self, hook_type: HookType) -> list[PluginRef]:
+        """Get all plugins registered for a specific hook"""
+
+    def get_all_plugins(self) -> list[PluginRef]:
+        """Get all registered plugins"""
+
+    @property
+    def plugin_count(self) -> int:
+        """Number of registered plugins"""
+
+    async def shutdown(self) -> None:
+        """Shutdown all registered plugins"""
 ```
 
-# Multi-Tenant Plugin Manager
+### Multi-Tenant Plugin Manager
 
-In multi-tenant deployments, each tenant can have a separate plugin configuration. The `TenantPluginManagerFactory` manages per-tenant plugin manager instances with automatic caching and lifecycle management.
+In multi-tenant deployments, each context (tenant, server, tool) can have a separate plugin configuration. The `TenantPluginManagerFactory` manages context-specific plugin manager instances with automatic caching and lifecycle management. When no context-specific configuration is provided, the factory reuses a shared default manager per team to optimize memory usage.
 
 #### Architecture
 
@@ -864,25 +879,6 @@ This optimization:
 - Maintains team isolation with separate default managers per team
 - Maintains isolation through tool-specific contexts during execution
 - Automatically handles cleanup without double-shutdown errors during factory shutdown
-
-
-
-    def get_plugin(self, name: str) -> Optional[PluginRef]:
-        """Get plugin reference by name"""
-
-    def get_plugins_for_hook(self, hook_type: HookType) -> list[PluginRef]:
-        """Get all plugins registered for a specific hook"""
-
-    def get_all_plugins(self) -> list[PluginRef]:
-        """Get all registered plugins"""
-
-    @property
-    def plugin_count(self) -> int:
-        """Number of registered plugins"""
-
-    async def shutdown(self) -> None:
-        """Shutdown all registered plugins"""
-```
 
 ### Plugin Reference System
 
