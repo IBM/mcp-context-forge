@@ -21,11 +21,16 @@ function createMockTool(id: number, overrides?: Partial<Tool>): Tool {
     customNameSlug: `tool-${id}`,
     enabled: true,
     reachable: true,
+    deprecated: false,
     executionCount: 0,
-    tags: ["tag1", "tag2"],
+    tags: [{ label: "tag1" }, { label: "tag2" }],
     integrationType: "MCP",
     requestType: "http",
     url: `https://example.com/tool-${id}`,
+    headers: {},
+    annotations: {},
+    jsonpathFilter: null,
+    auth: null,
     version: 1,
     visibility: "team",
     team: "Engineering",
@@ -324,7 +329,11 @@ describe("ToolDetailsPanel", () => {
   });
 
   it("displays tool tags", async () => {
-    const tools = [createMockTool(1, { tags: ["production", "critical", "v2"] })];
+    const tools = [
+      createMockTool(1, {
+        tags: [{ label: "production" }, { label: "critical" }, { label: "v2" }],
+      }),
+    ];
     render(
       <ToolDetailsPanel
         tools={tools}

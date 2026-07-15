@@ -122,7 +122,7 @@ export function ToolDetailsPanel({
   }, [open, onClose]);
 
   const getVisibilityLabel = useCallback(
-    (value?: string) => {
+    (value?: string | null) => {
       if (value === "team") return intl.formatMessage({ id: "tools.details.visibility.team" });
       if (value === "public") return intl.formatMessage({ id: "tools.details.visibility.public" });
       if (value === "private")
