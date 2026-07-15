@@ -3,7 +3,7 @@
 """A script to check and enforce standardized license and authorship headers.
 
 Location: ./.github/tools/fix_file_headers.py
-Copyright 2025
+Copyright contributors to the mcp-context-forge project
 SPDX-License-Identifier: Apache-2.0
 Authors: Arnav Bhattacharya, Mihai Criveti
 
@@ -25,7 +25,7 @@ Attributes:
     PROJECT_ROOT (Path): The root directory of the project.
     INCLUDE_DIRS (List[str]): Directories to include in the scan.
     EXCLUDE_DIRS (Set[str]): Directories to exclude from the scan.
-    COPYRIGHT_YEAR (int): The current year for copyright notices.
+    COPYRIGHT_LINE (str): The copyright line for file headers.
     AUTHORS (str): Default author name(s) for headers.
     LICENSE (str): The project's license identifier.
 
@@ -60,7 +60,6 @@ Testing:
 # Standard
 import argparse
 import ast
-from datetime import datetime
 import difflib
 import os
 from pathlib import Path
@@ -72,8 +71,8 @@ from typing import Any, Dict, Generator, List, Optional, Set, Tuple
 PROJECT_ROOT: Path = Path(__file__).parent.parent.parent.resolve()
 INCLUDE_DIRS: List[str] = ["mcpgateway", "tests"]
 EXCLUDE_DIRS: Set[str] = {".git", ".venv", "venv", "__pycache__", "build", "dist", ".idea", ".vscode", "node_modules", ".tox", ".pytest_cache", ".mypy_cache", ".ruff_cache"}
-COPYRIGHT_YEAR: int = datetime.now().year
-AUTHORS: str = "Mihai Criveti"
+COPYRIGHT_LINE: str = "Copyright contributors to the MCP-CONTEXT-FORGE project"
+AUTHORS: str = "Contributors to the MCP-CONTEXT-FORGE project"
 LICENSE: str = "Apache-2.0"
 
 # Constants for header validation
@@ -197,7 +196,7 @@ def get_header_template(relative_path: str, authors: str = AUTHORS, include_sheb
         True
         >>> "Authors: John Doe" in header
         True
-        >>> f"Copyright {COPYRIGHT_YEAR}" in header
+        >>> COPYRIGHT_LINE in header
         True
 
         >>> header_no_shebang = get_header_template("test/example.py", "John Doe", include_shebang=False)
@@ -215,7 +214,7 @@ def get_header_template(relative_path: str, authors: str = AUTHORS, include_sheb
 
     lines.append(f'''"""Module Description.
 Location: ./{relative_path}
-Copyright {COPYRIGHT_YEAR}
+{COPYRIGHT_LINE}
 SPDX-License-Identifier: {LICENSE}
 Authors: {authors}
 
@@ -241,10 +240,12 @@ def _write_file(file_path: Path, content: str) -> None:
         ...     tmp_path = Path(tmp.name)
         >>> _write_file(tmp_path, "test content")
         >>> tmp_path.read_text()
-        'test content'
+        'test content\\n'
         >>> tmp_path.unlink()
     """
     try:
+        if not content.endswith("\n"):
+            content += "\n"
         file_path.write_text(content, encoding="utf-8")
     except Exception as e:
         raise IOError(f"Failed to write file {file_path}: {e}")
@@ -480,7 +481,7 @@ def process_file(
         elif location_match.group(1) != relative_path_str:
             issues.append(f"Incorrect 'Location' line: expected './{relative_path_str}', found './{location_match.group(1)}'")
 
-        if f"Copyright {COPYRIGHT_YEAR}" not in docstring_node:
+        if COPYRIGHT_LINE not in docstring_node:
             issues.append("Missing 'Copyright' line")
 
         if f"SPDX-License-Identifier: {LICENSE}" not in docstring_node:
@@ -548,7 +549,7 @@ def process_file(
                     # Always use correct location path
                     new_header_lines.append(f"Location: ./{relative_path_str}")
                     # Always use the expected copyright year (don't preserve incorrect year)
-                    new_header_lines.append(f"Copyright {COPYRIGHT_YEAR}")
+                    new_header_lines.append(COPYRIGHT_LINE)
                     # Always use the expected license (don't preserve incorrect license)
                     new_header_lines.append(f"SPDX-License-Identifier: {LICENSE}")
                     # Preserve existing Authors field if it exists, otherwise use the provided authors
@@ -711,7 +712,7 @@ def parse_arguments(argv: Optional[List[str]] = None) -> argparse.Namespace:
     )
     header_group.add_argument("--require-encoding", action="store_true", default=True, help="Require encoding line. Default: True")
     header_group.add_argument("--no-encoding", action="store_false", dest="require_encoding", help="Don't require encoding line.")
-    header_group.add_argument("--copyright-year", type=int, default=COPYRIGHT_YEAR, help=f"Copyright year to use. Default: {COPYRIGHT_YEAR}")
+    header_group.add_argument("--copyright-line", type=str, default=COPYRIGHT_LINE, help=f"Copyright line to use. Default: {COPYRIGHT_LINE!r}")
     header_group.add_argument("--license", type=str, default=LICENSE, help=f"License identifier to use. Default: {LICENSE}")
 
     return parser.parse_args(argv)
@@ -901,12 +902,12 @@ def main(argv: Optional[List[str]] = None) -> None:
         ...     e.code == 1
         True
     """
-    global COPYRIGHT_YEAR, LICENSE
+    global COPYRIGHT_LINE, LICENSE
 
     args = parse_arguments(argv)
 
     # Update global config from arguments
-    COPYRIGHT_YEAR = args.copyright_year
+    COPYRIGHT_LINE = args.copyright_line
     LICENSE = args.license
 
     # Validate --fix requires --path
