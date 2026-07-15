@@ -73,7 +73,7 @@ def _wait_for_admin_function(page: Page, function_name: str, timeout: int = 1000
         # evaluate()-based poll: wait_for_function's eval() mechanism is rejected by
         # strict CSP (script-src 'self', no unsafe-eval) right after navigation.
         wait_for_js_condition(page, f"typeof window.Admin !== 'undefined' && typeof window.Admin.{function_name} === 'function'", timeout=timeout, polling=100)
-    except TimeoutError:
+    except PlaywrightTimeoutError:
         admin_debug = page.evaluate("""() => {
             return {
                 adminExists: typeof window.Admin !== 'undefined',
@@ -991,7 +991,7 @@ class TestAdminIframeContext:
                 "typeof window.Admin !== 'undefined' && typeof window.Admin.searchTeamSelector === 'function'",
                 timeout=15000,
             )
-        except TimeoutError:
+        except PlaywrightTimeoutError:
             pytest.fail("Admin JS did not initialise inside iframe - window.Admin.searchTeamSelector not available")
 
         frame = page.frame_locator("#admin-frame")

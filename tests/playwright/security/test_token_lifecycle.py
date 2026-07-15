@@ -21,7 +21,8 @@ import time
 import uuid
 
 # Third-Party
-from playwright.sync_api import APIRequestContext
+from playwright.sync_api import APIRequestContext, expect
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 import pytest
 
 logger = logging.getLogger(__name__)
@@ -189,19 +190,27 @@ class TestTokenRevokeUI:
         revoke_btn_count = None
         token_card_count = None
         while time.monotonic() < deadline:
+            tokens_page.page.reload(wait_until="domcontentloaded")
             tokens_page.navigate_to_tokens_tab()
             # Enable "Show inactive" to make revoked tokens visible in the list
             inactive_checkbox = tokens_page.page.locator("#tokens-inactive-toggle, [name='include_inactive']")
             if inactive_checkbox.count() > 0 and not inactive_checkbox.first.is_checked():
                 inactive_checkbox.first.click()
-                tokens_page.page.wait_for_timeout(500)
 
-            token_card_count = tokens_page.page.locator(f"text={token_name}").count()
+            # Wait for the list to actually settle before reading counts. Without this,
+            # a not-yet-rendered list (0 cards) is indistinguishable from a genuinely
+            # absent token, and the loop below would break on the first pass and fall
+            # through to the API-only check — skipping the UI assertion entirely.
+            token_card = tokens_page.page.locator(f"text={token_name}")
+            try:
+                expect(token_card.first).to_be_visible(timeout=3000)
+            except (PlaywrightTimeoutError, AssertionError):
+                pass
+
+            token_card_count = token_card.count()
             revoke_btn_count = tokens_page.get_token_revoke_btn(token_name).count()
             if token_card_count == 0 or revoke_btn_count == 0:
                 break
-
-            tokens_page.page.reload(wait_until="domcontentloaded")
 
         # Verify the token card IS rendered (not vacuously absent)
         if token_card_count and token_card_count > 0:

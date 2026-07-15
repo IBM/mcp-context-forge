@@ -11,11 +11,11 @@ Shared utility functions for admin page interactions.
 import logging
 import os
 import time
-from typing import Union
 import urllib.parse
 
 # Third-Party
 from playwright.sync_api import Frame, Page
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 # Local
 from mcpgateway.admin import ADMIN_CSRF_COOKIE_NAME, ADMIN_CSRF_HEADER_NAME
@@ -23,7 +23,7 @@ from mcpgateway.admin import ADMIN_CSRF_COOKIE_NAME, ADMIN_CSRF_HEADER_NAME
 logger = logging.getLogger(__name__)
 
 
-def wait_for_js_condition(target: Union[Page, Frame], expression: str, timeout: int = 30000, polling: int = 100) -> None:
+def wait_for_js_condition(target: Page | Frame, expression: str, timeout: int = 30000, polling: int = 100) -> None:
     """Poll a boolean JS expression via ``evaluate()`` until it is truthy.
 
     ``Page.wait_for_function``/``Frame.wait_for_function`` compile their predicate with
@@ -38,17 +38,21 @@ def wait_for_js_condition(target: Union[Page, Frame], expression: str, timeout: 
         polling: Interval between polls in milliseconds.
 
     Raises:
-        TimeoutError: If the expression never evaluates truthy within ``timeout``.
+        PlaywrightTimeoutError: If the expression never evaluates truthy within ``timeout``.
     """
     deadline = time.monotonic() + timeout / 1000
-    while time.monotonic() < deadline:
+    last_exc: Exception | None = None
+    while True:
         try:
             if target.evaluate(expression):
                 return
-        except Exception:  # pylint: disable=broad-except
-            pass
+            last_exc = None
+        except Exception as exc:  # pylint: disable=broad-except
+            last_exc = exc
+        if time.monotonic() >= deadline:
+            break
         target.wait_for_timeout(polling)
-    raise TimeoutError(f"Condition not met within {timeout}ms: {expression}")
+    raise PlaywrightTimeoutError(f"Condition not met within {timeout}ms: {expression}") from last_exc
 
 
 def _get_auth_headers(page: Page) -> dict:

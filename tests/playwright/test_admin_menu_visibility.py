@@ -165,7 +165,7 @@ def _wait_for_admin_shell(page: Page, timeout: int = 60000) -> None:
             "typeof window.Admin !== 'undefined' && typeof window.Admin.showTab === 'function' && typeof window.htmx !== 'undefined'",
             timeout=30000,
         )
-    except TimeoutError:
+    except PlaywrightTimeoutError:
         pass
 
 
