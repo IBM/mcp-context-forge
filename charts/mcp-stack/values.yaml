@@ -1336,6 +1336,11 @@ redis:
       # backup.velero.io/backup-volumes: "redis-data"
       # backup.policy/schedule: "daily"
 
+  # ─── Redis server configuration ───
+  maxclients: 15000             # Maximum client connections
+                                # Formula: replicas × workers × REDIS_MAX_CONNECTIONS × 1.2
+                                # Example: 10 × 24 × 50 × 1.2 = 14400 → 15000
+
 ########################################################################
 # PGADMIN - Web UI for Postgres
 ########################################################################
