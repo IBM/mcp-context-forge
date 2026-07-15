@@ -1,14 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { useIntl } from "react-intl";
-import { Activity, Copy, FileText, Globe, PanelRightClose } from "lucide-react";
+import { Activity, FileText, Globe, PanelRightClose } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { CopyValue } from "@/components/ui/copy-value";
 import { InlineTagAdd } from "@/components/ui/inline-tag-add";
 import { cn } from "@/lib/utils";
 import type { ResourceRead } from "@/generated/types";
-import { copyToClipboard } from "@/lib/clipboard";
-import { truncateMiddle } from "@/components/gateways/utils";
 import { formatBytes, formatDateTime } from "@/utils/format";
 import { ResourcesTable } from "@/components/resources/ResourcesTable";
 
@@ -25,25 +24,6 @@ function DetailRow({
     <div className={`grid grid-cols-[96px_minmax(0,1fr)] items-start gap-4 ${className ?? ""}`}>
       <dt className="text-muted-foreground">{label}</dt>
       <dd className="min-w-0 text-foreground">{children}</dd>
-    </div>
-  );
-}
-
-function CopyValue({ label, value }: { label: string; value: string }) {
-  const intl = useIntl();
-  return (
-    <div className="flex min-w-0 items-center gap-2">
-      <span className="min-w-0 flex-1 truncate font-mono text-[12px]">{truncateMiddle(value)}</span>
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon-xs"
-        className="size-5 text-muted-foreground"
-        aria-label={intl.formatMessage({ id: "resources.details.copyValue" }, { label })}
-        onClick={() => copyToClipboard(value)}
-      >
-        <Copy className="size-3.5" />
-      </Button>
     </div>
   );
 }
