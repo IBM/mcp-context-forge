@@ -1,0 +1,66 @@
+# ===============================================================
+# Pyright Type Check — PR gate for changed Python files
+# ===============================================================
+#
+#   Runs Pyright in standard mode (inherits pyrightconfig.json)
+#   on Python files changed by this PR only.
+#
+#   NOTE: This workflow intentionally checks only files changed in
+#   the PR, not the full project. The full project currently has
+#   ~6,400 pyright errors in standard mode that pre-date this
+#   workflow. Once those are resolved, change the run step from
+#   `make pyright-pr` to `make pyright` to enforce whole-project
+#   type checking on every PR.
+#
+#   Triggered on PRs to main only (not merge queue).
+#   Must pass before a PR can be merged.
+# ---------------------------------------------------------------
+
+name: Pyright Type Check
+
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review]
+    branches: ["main"]
+    paths:
+      - "**/*.py"
+      - "pyrightconfig.json"
+      - "pyproject.toml"
+      - ".github/workflows/pyright-check.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  pyright:
+    name: Pyright Type Check
+    if: "!github.event.pull_request.draft"
+    runs-on: ubuntu-slim
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Run Pyright on changed files
+        run: BASE_BRANCH=origin/${{ github.base_ref }} make pyright-pr
