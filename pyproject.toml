@@ -15,16 +15,47 @@ build_py = "mcpgateway.tools.builder.build_hooks.BuildPyWithUI"
 exclude-newer = "10 days"
 
 [tool.uv.exclude-newer-package]
-cpex = "2026-07-13T23:59:59Z"
-cpex-url-reputation = "2026-07-13T23:59:59Z"
-cpex-rate-limiter = "2026-07-13T23:59:59Z"
-cpex-encoded-exfil-detection = "2026-07-13T23:59:59Z"
+cpex = "2026-07-14T23:59:59Z"
+# cpex-url-reputation pinned past its normal soak cutoff: 0.3.5 (2026-07-14) is the first
+# release that emits result.metadata["url_reputation"] for resource_pre_fetch, which
+# tests/integration/plugins/test_plugin_metrics_consumer_integration.py and
+# tests/e2e/test_otel_plugin_metadata_e2e.py depend on. Vetted ahead of the usual window for
+# this reason.
+cpex-url-reputation = "2026-07-14T23:59:59Z"
+# cpex-rate-limiter pinned past its normal soak cutoff: 0.1.7 (2026-07-14) is the first
+# release that emits result.metadata["rate_limiter"] for prompt_pre_fetch/tool_pre_invoke, which
+# tests/integration/plugins/test_plugin_metrics_consumer_integration.py and
+# tests/e2e/test_otel_plugin_metadata_e2e.py depend on. Vetted ahead of the usual window for
+# this reason.
+cpex-rate-limiter = "2026-07-14T23:59:59Z"
+# cpex-encoded-exfil-detection pinned past its normal soak cutoff: 0.3.6 (2026-07-14) is the
+# first release that emits result.metadata["encoded_exfil_detection"] for
+# tool_post_invoke/tool_pre_invoke/resource hooks, which
+# tests/integration/plugins/test_plugin_metrics_consumer_integration.py and
+# tests/e2e/test_otel_plugin_metadata_e2e.py depend on. Vetted ahead of the usual window for
+# this reason.
+cpex-encoded-exfil-detection = "2026-07-14T23:59:59Z"
 # cpex-pii-filter pinned past its normal soak cutoff: 0.3.6 (2026-07-07) is the first
 # release that emits result.metadata for tool_post_invoke, which tests/e2e/test_otel_plugin_metadata_e2e.py
 # depends on. Vetted ahead of the usual window for this reason.
 cpex-pii-filter = "2026-07-07T23:59:59Z"
-cpex-retry-with-backoff = "2026-07-13T23:59:59Z"
-cpex-secrets-detection = "2026-07-13T23:59:59Z"
+# cpex-retry-with-backoff pinned past its normal soak cutoff: 0.3.7 (2026-07-15) is required.
+# 0.3.6 first emitted result.metadata["retry_with_backoff"] for tool_post_invoke (which
+# tests/integration/plugins/test_plugin_metrics_consumer_integration.py and
+# tests/e2e/test_otel_plugin_metadata_e2e.py depend on) but shipped a retry-detection
+# regression: is_failure read the tool_post_invoke result via PyDict::get_item (C-level dict
+# storage), which silently misses every key on the gateway's CopyOnWriteDict payload-isolation
+# wrapper (its data lives in a Python-level overlay) -- every retryable failure looked like a
+# success and the plugin never retried. 0.3.7 fixes this by reading through the Python mapping
+# protocol instead. See IBM/cpex-plugins#124 / #137. Vetted ahead of the usual window for both
+# reasons.
+cpex-retry-with-backoff = "2026-07-15T23:59:59Z"
+# cpex-secrets-detection pinned past its normal soak cutoff: 0.3.7 (2026-07-14) is the first
+# release that emits result.metadata["secrets_detection"] for tool_post_invoke, which
+# tests/integration/plugins/test_plugin_metrics_consumer_integration.py and
+# tests/e2e/test_otel_plugin_metadata_e2e.py depend on. Vetted ahead of the usual window for
+# this reason.
+cpex-secrets-detection = "2026-07-14T23:59:59Z"
 
 
 [tool.uv.sources]
@@ -275,12 +306,12 @@ templating = [
 # External plugin packages (optional)
 # Install with: pip install mcp-contextforge-gateway[plugins]
 plugins = [
-    "cpex-encoded-exfil-detection>=0.3.5",
+    "cpex-encoded-exfil-detection>=0.3.6",  # 0.3.6 is the first release that emits result.metadata
     "cpex-pii-filter>=0.3.6",  # 0.3.6 is the first release that emits result.metadata on tool_post_invoke
-    "cpex-rate-limiter>=0.1.6",
-    "cpex-retry-with-backoff>=0.3.1,<0.3.2",
-    "cpex-secrets-detection>=0.3.6",
-    "cpex-url-reputation>=0.3.4",
+    "cpex-rate-limiter>=0.1.7",  # 0.1.7 is the first release that emits result.metadata
+    "cpex-retry-with-backoff>=0.3.7",  # 0.3.7 fixes a retry-detection regression against the gateway's CopyOnWriteDict payload isolation (IBM/cpex-plugins#124); 0.3.6 added the result.metadata emission but never actually retried in the gateway. Prior <0.3.2 CI pin (from #5332) is superseded.
+    "cpex-secrets-detection>=0.3.7",  # 0.3.7 is the first release that emits result.metadata
+    "cpex-url-reputation>=0.3.5",  # 0.3.5 is the first release that emits result.metadata
 ]
 
 # gRPC Support (EXPERIMENTAL - optional, disabled by default)

@@ -277,9 +277,28 @@ plugins:
     conditions: []
     config: {}
 
-  # Rate limiter (cpex-rate-limiter package)
+  # Rate limiter (cpex-rate-limiter package) — Rust-backed request rate limiter (fixed-window,
+  # redis or in-memory backend), trace-aware. Reads extensions.request.trace_id (see
+  # mcpgateway/plugins/utils.py:build_request_extensions) and, when a trace is active, emits
+  # result.metadata["rate_limiter"] (per-call allowed/throttled 0-or-1 values plus backend, since
+  # prompt_pre_fetch/tool_pre_invoke each evaluate one request at a time -- never the request
+  # identity/key itself) for mcpgateway/plugins/utils.py:record_plugin_metrics() to persist as a
+  # dedicated `plugin.metrics.rate_limiter` observability span. Requires
+  # cpex-rate-limiter>=0.1.7 (see pyproject.toml) -- earlier releases do not emit metrics.
+  #
+  # Left mode: "disabled" deliberately, unlike PIIFilter: this plugin ships with by_user/by_tenant
+  # limits below and hooks prompt_pre_fetch/tool_pre_invoke, so flipping mode to "sequential"
+  # would not just newly enable metrics -- per cpex.framework.PluginMode, "disabled" plugins are
+  # never instantiated or registered (see cpex/framework/manager.py load_plugins(): `if
+  # plugin_config.mode != PluginMode.DISABLED: ... else: logger.info("Plugin: %s is disabled.
+  # Ignoring.", ...)`), so today this plugin's hooks never run at all. Enabling it would newly
+  # start THROTTLING prompts/tool calls for every existing deployment using the default
+  # config.yaml once by_user/by_tenant limits are exceeded -- a materially bigger behavior change
+  # than PIIFilter (whose block_on_detection defaults to false even once enabled). That is an
+  # opt-in decision for operators to make explicitly; do not flip silently.
   - name: "RateLimiterPlugin"
     kind: "cpex_rate_limiter.RateLimiterPlugin"
+    version: "0.1.7"
     hooks: ["prompt_pre_fetch", "tool_pre_invoke"]
     tags: ["limits", "throttle"]
     mode: "disabled"
@@ -360,9 +379,30 @@ plugins:
       ttl: 300
       key_fields: {}
 
-  # URL reputation static checks
+  # URL Reputation (CPEX pilot) — Rust-backed static reputation checks for resource URLs,
+  # trace-aware. Reads extensions.request.trace_id (see
+  # mcpgateway/plugins/utils.py:build_request_extensions) and, when a trace is active, emits
+  # result.metadata["url_reputation"] (total_checked/total_blocked counters plus
+  # reputation_categories violation-reason slugs, never the checked URL/domain itself) for
+  # mcpgateway/plugins/utils.py:record_plugin_metrics() to persist as a dedicated
+  # `plugin.metrics.url_reputation` observability span. Requires cpex-url-reputation>=0.3.5 (see
+  # pyproject.toml) -- earlier releases do not emit metrics.
+  #
+  # Left mode: "disabled" deliberately, unlike PIIFilter: this plugin ships with
+  # blocked_domains/blocked_patterns below and only hooks resource_pre_fetch, so flipping mode to
+  # "sequential" would not just newly enable metrics -- per cpex.framework.PluginMode, "disabled"
+  # plugins are never instantiated or registered (see cpex/framework/manager.py load_plugins():
+  # `if plugin_config.mode != PluginMode.DISABLED: ... else: logger.info("Plugin: %s is disabled.
+  # Ignoring.", ...)`), so today this plugin's hooks never run at all. Enabling it would newly
+  # start BLOCKING resource fetches for every existing deployment using the default config.yaml
+  # whose target URL matches blocked_domains/blocked_patterns or trips the plugin's other
+  # reputation checks (insecure scheme, high-entropy domain, illegal TLD, unicode spoofing,
+  # malformed URL/domain) -- a materially bigger behavior/security-posture change than PIIFilter
+  # (whose block_on_detection defaults to false even once enabled). That is an opt-in decision for
+  # operators to make explicitly; do not flip silently.
   - name: "URLReputationPlugin"
     kind: "cpex_url_reputation.URLReputationPlugin"
+    version: "0.3.5"
     hooks: ["resource_pre_fetch"]
     tags: ["security", "url", "reputation"]
     mode: "disabled"
@@ -389,9 +429,33 @@ plugins:
         ["text/plain", "text/markdown", "text/html", "application/json"]
       allowed_extensions: [".md", ".txt", ".html", ".json"]
 
-  # Retry with exponential backoff — triggers real gateway re-invocation
+  # Retry with Backoff (CPEX pilot) — Rust-backed exponential-backoff retry wrapper that triggers
+  # real gateway re-invocation on tool_post_invoke, trace-aware. Reads extensions.request.trace_id
+  # (see mcpgateway/plugins/utils.py:build_request_extensions) and, when a trace is active, emits
+  # result.metadata["retry_with_backoff"] (retry_count: consecutive failures recorded so far for
+  # this tool call; retry_delay_ms: the per-attempt backoff delay just computed -- not a
+  # cumulative total, 0 in the success/exhausted-budget branches) for
+  # mcpgateway/plugins/utils.py:record_plugin_metrics() to persist as a dedicated
+  # `plugin.metrics.retry_with_backoff` observability span. Requires
+  # cpex-retry-with-backoff>=0.3.7 (see pyproject.toml) -- 0.3.6 added the metrics emission above
+  # but never actually retried against this gateway (is_failure read the result via C-level
+  # PyDict::get_item, which misses everything on the CopyOnWriteDict payload-isolation wrapper
+  # the gateway uses -- IBM/cpex-plugins#124). 0.3.7 fixes retry detection; earlier releases do
+  # not emit metrics at all.
+  #
+  # Left mode: "disabled" deliberately, unlike PIIFilter: this plugin ships with
+  # retry_on_status/max_retries below and hooks tool_post_invoke, so flipping mode to "sequential"
+  # would not just newly enable metrics -- per cpex.framework.PluginMode, "disabled" plugins are
+  # never instantiated or registered (see cpex/framework/manager.py load_plugins(): `if
+  # plugin_config.mode != PluginMode.DISABLED: ... else: logger.info("Plugin: %s is disabled.
+  # Ignoring.", ...)`), so today this plugin's hooks never run at all. Enabling it would newly
+  # start RE-INVOKING tool calls (real gateway re-invocation, not a dry-run) that return one of
+  # retry_on_status for every existing deployment using the default config.yaml -- a materially
+  # bigger behavior change than PIIFilter (whose block_on_detection defaults to false even once
+  # enabled). That is an opt-in decision for operators to make explicitly; do not flip silently.
   - name: "RetryWithBackoffPlugin"
     kind: "cpex_retry_with_backoff.RetryWithBackoffPlugin"
+    version: "0.3.7"
     hooks: ["tool_post_invoke"]
     tags: ["retry", "backoff", "resilience"]
     mode: "disabled"
@@ -761,9 +825,27 @@ plugins:
       require_parameterization: false
       block_on_violation: true
 
-  # Secrets Detection - regex-based detector for common secrets/keys
+  # Secrets Detection (CPEX pilot) — Rust-backed regex/entropy detector for common secrets/keys,
+  # trace-aware. Reads extensions.request.trace_id (see
+  # mcpgateway/plugins/utils.py:build_request_extensions) and, when a trace is active, emits
+  # result.metadata["secrets_detection"] (counts/type-names only, never raw matched values) for
+  # mcpgateway/plugins/utils.py:record_plugin_metrics() to persist as a dedicated
+  # `plugin.metrics.secrets_detection` observability span. Requires cpex-secrets-detection>=0.3.7
+  # (see pyproject.toml) -- earlier releases do not emit metrics.
+  #
+  # Left mode: "disabled" deliberately, unlike PIIFilter above: this plugin ships with
+  # block_on_detection: true and min_findings_to_block: 1 below, so flipping mode to "sequential"
+  # would not just newly enable metrics -- per cpex.framework.PluginMode, "disabled" plugins are
+  # never instantiated or registered (see cpex/framework/manager.py load_plugins(): `if
+  # plugin_config.mode != PluginMode.DISABLED: ... else: logger.info("Plugin: %s is disabled.
+  # Ignoring.", ...)`), so today this plugin's hooks never run at all. Enabling it would newly
+  # start BLOCKING tool calls/prompts/resources containing secret-shaped strings for every
+  # existing deployment using the default config.yaml -- a materially bigger behavior/security-
+  # posture change than PIIFilter (whose block_on_detection defaults to false even once enabled).
+  # That is an opt-in decision for operators to make explicitly; do not flip silently.
   - name: "SecretsDetection"
     kind: "cpex_secrets_detection.SecretsDetectionPlugin"
+    version: "0.3.7"
     hooks: ["prompt_pre_fetch", "tool_post_invoke", "resource_post_fetch"]
     tags: ["security", "secrets", "dlp"]
     mode: "disabled"
@@ -784,12 +866,30 @@ plugins:
       block_on_detection: true
       min_findings_to_block: 1
 
-  # Encoded Exfil Detector - detect suspicious encoded payloads in prompts, tool outputs, and resources
+  # Encoded Exfil Detector (CPEX pilot) — Rust-backed detector for suspicious encoded payloads in
+  # prompts, tool outputs, and resources, trace-aware. Reads extensions.request.trace_id (see
+  # mcpgateway/plugins/utils.py:build_request_extensions) and, when a trace is active, emits
+  # result.metadata["encoded_exfil_detection"] (counts/encoding-type-names only, never raw matched
+  # content) for mcpgateway/plugins/utils.py:record_plugin_metrics() to persist as a dedicated
+  # `plugin.metrics.encoded_exfil_detection` observability span. Requires
+  # cpex-encoded-exfil-detection>=0.3.6 (see pyproject.toml) -- earlier releases do not emit
+  # metrics.
+  #
+  # Left mode: "disabled" deliberately, unlike PIIFilter: this plugin ships with
+  # block_on_detection: true and min_findings_to_block: 1 below, so flipping mode to "sequential"
+  # would not just newly enable metrics -- per cpex.framework.PluginMode, "disabled" plugins are
+  # never instantiated or registered (see cpex/framework/manager.py load_plugins(): `if
+  # plugin_config.mode != PluginMode.DISABLED: ... else: logger.info("Plugin: %s is disabled.
+  # Ignoring.", ...)`), so today this plugin's hooks never run at all. Enabling it would newly
+  # start BLOCKING tool calls/prompts/resources containing encoded-payload-shaped strings for
+  # every existing deployment using the default config.yaml -- a materially bigger behavior/
+  # security-posture change than PIIFilter (whose block_on_detection defaults to false even once
+  # enabled). That is an opt-in decision for operators to make explicitly; do not flip silently.
   - name: "EncodedExfilDetector"
     kind: "cpex_encoded_exfil_detection.EncodedExfilDetectorPlugin"
+    version: "0.3.6"
     hooks: ["prompt_pre_fetch", "tool_post_invoke", "resource_post_fetch"]
     tags: ["security", "exfiltration", "dlp", "encoding"]
-    # mode: "sequential"
     mode: "disabled"
     priority: 52
     conditions: []
