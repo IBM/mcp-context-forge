@@ -23,7 +23,7 @@ function SchemaSection({
   schema,
 }: {
   title: string;
-  schema: Record<string, unknown> | undefined;
+  schema: Record<string, unknown> | null | undefined;
 }) {
   const schemaText = schema ? JSON.stringify(schema, null, 2) : "{}";
 
