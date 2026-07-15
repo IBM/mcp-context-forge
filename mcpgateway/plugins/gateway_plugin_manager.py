@@ -173,7 +173,7 @@ class TenantPluginManagerFactory:
         if context_id == DEFAULT_CONTEXT_ID:
             shared_manager = True
         elif CONTEXT_ID_SEPARATOR in context_id:
-            team_id, tool_name = context_id.split(CONTEXT_ID_SEPARATOR, 1)
+            _ , tool_name = context_id.split(CONTEXT_ID_SEPARATOR, 1)
             shared_manager = tool_name == DEFAULT_CONTEXT_ID
         return shared_manager
 
