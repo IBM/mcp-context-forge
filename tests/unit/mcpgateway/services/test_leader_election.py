@@ -323,3 +323,19 @@ async def test_singleton_start_get_stop():
     finally:
         await stop_primary_worker_elector()
     assert get_primary_worker_elector() is None
+
+
+# --- shutdown robustness -----------------------------------------------------
+
+
+async def test_stop_swallows_maintenance_task_error(tmp_path):
+    """stop() is best-effort: a maintenance-task error (not CancelledError) must not propagate."""
+    e = PrimaryWorkerElector(backend="filelock", lock_path=str(tmp_path / "x.lock"))
+
+    async def _boom():
+        raise RuntimeError("maintenance blew up")
+
+    e._task = asyncio.create_task(_boom())  # pylint: disable=protected-access
+    await asyncio.sleep(0.05)  # let the task run and fail before stop() awaits it
+    await e.stop()  # must not raise
+    assert e.started is False
