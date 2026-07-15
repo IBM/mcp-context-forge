@@ -4,6 +4,7 @@ Base interface for pluggable token storage backends.
 This module defines the abstract interface that all token storage backends
 must implement, plus a plain dataclass for token records (no SQLAlchemy).
 """
+
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime

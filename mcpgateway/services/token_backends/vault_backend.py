@@ -5,6 +5,7 @@ Stores OAuth tokens in HashiCorp Vault KV v2 using httpx for HTTP API calls.
 Path structure: {mount}/data/{prefix}/{team_id}/{server_id}/{url-encoded-email}
 where server_id is SHA-256 hash of gateways.url (mcp_url).
 """
+
 import asyncio
 import hashlib
 import logging
@@ -200,8 +201,7 @@ class VaultTokenBackend(AbstractTokenBackend):
                     if not resp.content:
                         if method != "DELETE":
                             logger.warning(
-                                "Vault returned empty body for %s %s (status=%d); "
-                                "check mount path and path prefix configuration",
+                                "Vault returned empty body for %s %s (status=%d); check mount path and path prefix configuration",
                                 method,
                                 SecurityValidator.sanitize_log_message(path),
                                 resp.status_code,
@@ -539,9 +539,7 @@ class VaultTokenBackend(AbstractTokenBackend):
         if not VaultTokenBackend._cleanup_warned:
             VaultTokenBackend._cleanup_warned = True
             logger.info(
-                "cleanup_expired_tokens is a no-op for Vault backend. "
-                "Configure Vault KV TTL or retention policies to handle cleanup. "
-                "This warning is logged only once per process.",
+                "cleanup_expired_tokens is a no-op for Vault backend. Configure Vault KV TTL or retention policies to handle cleanup. This warning is logged only once per process.",
             )
         return 0
 
@@ -569,8 +567,7 @@ class VaultTokenBackend(AbstractTokenBackend):
 
             if not result or "data" not in result:
                 logger.debug(
-                    "No OAuth credentials found in Vault for team=%s, mcp_url=%s. "
-                    "Will fall back to gateway.oauth_config from database.",
+                    "No OAuth credentials found in Vault for team=%s, mcp_url=%s. Will fall back to gateway.oauth_config from database.",
                     SecurityValidator.sanitize_log_message(team_id),
                     SecurityValidator.sanitize_log_message(mcp_url),
                 )
@@ -586,8 +583,7 @@ class VaultTokenBackend(AbstractTokenBackend):
 
         except Exception as e:
             logger.warning(
-                "Failed to retrieve OAuth credentials from Vault for team=%s, mcp_url=%s: %s. "
-                "Will fall back to gateway.oauth_config from database.",
+                "Failed to retrieve OAuth credentials from Vault for team=%s, mcp_url=%s: %s. Will fall back to gateway.oauth_config from database.",
                 SecurityValidator.sanitize_log_message(team_id),
                 SecurityValidator.sanitize_log_message(mcp_url),
                 SecurityValidator.sanitize_log_message(str(e)),
