@@ -2556,6 +2556,26 @@ class Settings(BaseSettings):
     # filelock_fallback degrades to per-host.
     primary_worker_redis_unavailable_policy: Literal["fail_closed", "filelock_fallback"] = "fail_closed"
 
+    @model_validator(mode="after")
+    def validate_primary_worker_timing(self) -> Self:
+        """Warn when the primary-worker heartbeat is too slow to keep the redis lease alive.
+
+        The lease must be renewed at least twice per TTL to tolerate a single missed
+        heartbeat; ``heartbeat_interval >= lease_ttl / 2`` lets the lease expire before
+        renewal, causing continuous primary re-election across instances. Only relevant
+        to the redis backend. Warns (does not raise) to avoid breaking existing configs.
+
+        Returns:
+            Self for chaining.
+        """
+        if self.primary_worker_election_backend == "redis" and self.primary_worker_heartbeat_interval * 2 >= self.primary_worker_lease_ttl:
+            logger.warning(
+                "⚠️  PRIMARY_WORKER_HEARTBEAT_INTERVAL (%ss) should be < PRIMARY_WORKER_LEASE_TTL/2 (%ss); otherwise the redis lease can expire before it is renewed, causing continuous primary re-election.",
+                self.primary_worker_heartbeat_interval,
+                self.primary_worker_lease_ttl,
+            )
+        return self
+
     # Default Roots
     default_roots: List[str] = []
 
