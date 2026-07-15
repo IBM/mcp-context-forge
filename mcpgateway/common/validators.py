@@ -716,7 +716,6 @@ class SecurityValidator:
     @classmethod
     def validate_uuid(cls, value: str, field_name: str = "UUID") -> str:
         """Validate UUID format
-
         Args:
             value (str): Value to validate
             field_name (str): Name of field being validated

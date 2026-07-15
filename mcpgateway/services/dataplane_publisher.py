@@ -65,9 +65,11 @@ class BackendConfig(TypedDict):
     url: str
     transport: str
     passthrough_headers: list[str]
+    capabilities: dict[str, Any]
     allowed_tool_names: list[str]
     tool_name_aliases: dict[str, str]
     allowed_resource_names: list[str]
+    allowed_resource_uris: list[str]
     allowed_prompt_names: list[str]
 
 
@@ -230,7 +232,8 @@ class DataplanePublisherService:
             gateways = user_data["gateways"]
             prompts = user_data["prompts"]
             resources = user_data["resources"]
-            resource_map = {resource["id"]: resource["name"] for resource in resources}
+            resource_names_by_id = {resource["id"]: resource["name"] for resource in resources}
+            resource_uris_by_id = {resource["id"]: resource["uri"] for resource in resources if resource.get("uri")}
 
             prompt_map = {prompt["id"]: prompt["name"] for prompt in prompts}
 
@@ -244,6 +247,7 @@ class DataplanePublisherService:
                     "url": gateway["url"],
                     "transport": gateway["transport"],
                     "passthrough_headers": gateway["passthrough_headers"] or [],
+                    "capabilities": gateway.get("capabilities") or {},
                 }
                 for gateway in gateways
                 if (gateway["transport"] or "").upper() == "STREAMABLEHTTP"
@@ -259,7 +263,8 @@ class DataplanePublisherService:
                     if gateway_config is None:
                         continue
 
-                    allowed_resource_names = [resource_map[resource_id] for resource_id in backend_items["resources"] if resource_id in resource_map]
+                    allowed_resource_names = [resource_names_by_id[resource_id] for resource_id in backend_items["resources"] if resource_id in resource_names_by_id]
+                    allowed_resource_uris = [resource_uris_by_id[resource_id] for resource_id in backend_items["resources"] if resource_id in resource_uris_by_id]
                     allowed_prompt_names = [prompt_map[prompt_id] for prompt_id in backend_items["prompts"] if prompt_id in prompt_map]
                     if not backend_items["tools"] and not allowed_resource_names and not allowed_prompt_names:
                         continue
@@ -269,9 +274,11 @@ class DataplanePublisherService:
                         "url": gateway_config["url"],
                         "transport": gateway_config["transport"],
                         "passthrough_headers": gateway_config["passthrough_headers"],
+                        "capabilities": gateway_config["capabilities"],
                         "allowed_tool_names": backend_items["tools"],
                         "tool_name_aliases": backend_items.get("tool_name_aliases", {}),
                         "allowed_resource_names": allowed_resource_names,
+                        "allowed_resource_uris": allowed_resource_uris,
                         "allowed_prompt_names": allowed_prompt_names,
                     }
 
@@ -316,6 +323,7 @@ class DataplanePublisherService:
                         DbGateway.url,
                         DbGateway.transport,
                         DbGateway.passthrough_headers,
+                        DbGateway.capabilities,
                         DbGateway.owner_email,
                         DbGateway.team_id,
                         DbGateway.visibility,
@@ -323,7 +331,7 @@ class DataplanePublisherService:
                 ).all()
                 prompt_rows = db.execute(select(DbPrompt.id, DbPrompt.name, DbPrompt.owner_email, DbPrompt.team_id, DbPrompt.visibility).where(DbPrompt.enabled.is_(True))).all()
                 resource_rows = db.execute(
-                    select(DbResource.id, DbResource.name, DbResource.owner_email, DbResource.team_id, DbResource.visibility).where(
+                    select(DbResource.id, DbResource.name, DbResource.uri, DbResource.owner_email, DbResource.team_id, DbResource.visibility).where(
                         DbResource.enabled.is_(True),
                         DbResource.uri_template.is_(None),
                     )
@@ -381,12 +389,13 @@ class DataplanePublisherService:
                     "url": gateway.url,
                     "transport": gateway.transport,
                     "passthrough_headers": gateway.passthrough_headers,
+                    "capabilities": gateway.capabilities or {},
                 }
                 for gateway in gateway_rows
                 if self._filter_for_user(gateway, user_email, team_ids, is_admin=is_admin)
             ],
             "prompts": [{"id": prompt.id, "name": prompt.name} for prompt in prompt_rows if self._filter_for_user(prompt, user_email, team_ids, is_admin=is_admin)],
-            "resources": [{"id": resource.id, "name": resource.name} for resource in resource_rows if self._filter_for_user(resource, user_email, team_ids, is_admin=is_admin)],
+            "resources": [{"id": resource.id, "name": resource.name, "uri": resource.uri} for resource in resource_rows if self._filter_for_user(resource, user_email, team_ids, is_admin=is_admin)],
         }
 
     @staticmethod

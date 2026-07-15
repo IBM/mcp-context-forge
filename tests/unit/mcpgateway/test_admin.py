@@ -11733,7 +11733,7 @@ async def test_admin_tools_partial_html_gateway_filters_and_access_conditions(mo
     monkeypatch.setattr(
         "mcpgateway.admin.paginate_query",
         AsyncMock(
-            return_value={"data": [SimpleNamespace(id="550e8400e29b41d4a7164466554400b1", team_id="team-1", name="Tool 1")], "pagination": pagination, "links": None}
+            return_value={"data": [SimpleNamespace(id="550e8400e29b41d4a7164466554400b1", team_id="team-1", name="Tool 1")], "pagination": pagination, "links": None}  # pragma: allowlist secret
         ),  # pragma: allowlist secret
     )
     setup_team_service(monkeypatch, ["team-1"])
@@ -18150,7 +18150,7 @@ async def test_admin_edit_a2a_agent_oauth_with_audience(monkeypatch, mock_db):
             "auth_type": "oauth",
             "oauth_grant_type": "authorization_code",
             "oauth_client_id": "client-id",
-            "oauth_client_secret": "client-secret",
+            "oauth_client_secret": "client-secret",  # pragma: allowlist secret
             "oauth_audience": "api.atlassian.com",
             "oauth_scopes": "read:jira-work write:jira-work",
         }
