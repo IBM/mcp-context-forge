@@ -967,7 +967,7 @@ class TestResourceManagement:
 
         with patch.object(resource_service, "_notify_resource_activated", new_callable=AsyncMock), patch.object(resource_service, "convert_resource_to_read") as mock_convert:
             mock_convert.return_value = ResourceRead(
-                id="39334ce0ed2644d79ede8913a66930c9",
+                id="39334ce0ed2644d79ede8913a66930c9",  # pragma: allowlist secret
                 uri=mock_inactive_resource.uri,
                 name=mock_inactive_resource.name,
                 description=mock_inactive_resource.description or "",

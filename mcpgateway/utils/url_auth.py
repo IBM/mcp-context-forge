@@ -115,7 +115,7 @@ def sanitize_url_for_logging(
     Example:
         >>> sanitize_url_for_logging(
         ...     "https://api.tavily.com/mcp?tavilyApiKey=secret123",
-        ...     {"tavilyApiKey": "secret123"}  # pragma: allowlist secret
+        ...     {"tavilyApiKey": "secret123"}
         ... )
         'https://api.tavily.com/mcp?tavilyApiKey=REDACTED'
 

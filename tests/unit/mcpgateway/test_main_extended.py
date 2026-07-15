@@ -2827,7 +2827,7 @@ class TestAdminAuthMiddleware:
         mock_auth_service.get_user_by_email = AsyncMock(return_value=mock_user)
         mock_permission_service = MagicMock()
         mock_permission_service.has_admin_permission = AsyncMock(return_value=True)
-        request.state.token_teams = ["a1b2c3d4e5f6789012345678abcdef01"]
+        request.state.token_teams = ["a1b2c3d4e5f6789012345678abcdef01"]  # pragma: allowlist secret
 
         with (
             patch("mcpgateway.main.get_db", _db_gen),

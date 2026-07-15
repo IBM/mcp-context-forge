@@ -280,7 +280,7 @@ class TestTeamSelectorDropdownE2E:
                 try {
                     const resp = await fetch(
                         (window.ROOT_PATH || '') + '/admin/teams/partial?page=1&per_page=20&render=selector',
-                        { credentials: 'same-origin' }
+                        { credentials: 'same-origin' }  # pragma: allowlist secret
                     );
                     if (!resp.ok) {
                         return { skipped: true, reason: 'HTTP ' + resp.status };

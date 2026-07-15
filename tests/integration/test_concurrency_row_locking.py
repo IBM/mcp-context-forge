@@ -55,7 +55,7 @@ def is_postgresql() -> bool:
 SKIP_IF_NOT_POSTGRES = pytest.mark.skipif(not is_postgresql(), reason="Row-level locking only works on PostgreSQL")
 
 
-TEST_JWT_SECRET = "integration-test-jwt-secret-key-with-minimum-32-bytes"
+TEST_JWT_SECRET = "integration-test-jwt-secret-key-with-minimum-32-bytes"  # pragma: allowlist secret
 
 TEST_JWT_TOKEN = make_test_jwt(
     "admin@example.com",

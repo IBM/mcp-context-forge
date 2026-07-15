@@ -1614,6 +1614,7 @@ def validate_password_strength(password: str, email: str = "", is_admin: bool = 
     if not getattr(settings, "password_policy_enabled", True):
         return True, ""
 
+    # First-Party
     from mcpgateway.services.password_policy_service import PasswordPolicyError
 
     with SessionLocal() as db:

@@ -338,7 +338,7 @@ def test_admin_create(ctx: TestContext):
         "/auth/email/admin/users",
         {
             "email": email,
-            "password": "SecurePass123!",
+            "password": "SecurePass123!",  # pragma: allowlist secret
             "full_name": "Duplicate",
         },
     )

@@ -1158,6 +1158,7 @@ class SessionAffinity:
 
             # First-Party - lazy imports avoid a circular dependency with main/transport.
             # The forwarded envelope was already verified above, before any field was decoded.
+            # First-Party
             from mcpgateway.auth_context import _expected_internal_mcp_runtime_auth_header  # pylint: disable=import-outside-toplevel,protected-access
             from mcpgateway.main import app  # pylint: disable=import-outside-toplevel,cyclic-import
             from mcpgateway.utils.passthrough_headers import safe_extract_and_filter_for_loopback  # pylint: disable=import-outside-toplevel

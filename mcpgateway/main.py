@@ -185,9 +185,9 @@ from mcpgateway.services.mcp_apps import (
     build_mcp_apps_capabilities,
     filter_model_visible_tools,
     get_mcp_app_session_cleanup_service,
-    MCPAppsValidationError,
     mcp_app_session_service,
     mcp_apps_enabled,
+    MCPAppsValidationError,
     serialize_resource_content_for_mcp,
 )
 from mcpgateway.services.metrics import setup_metrics
