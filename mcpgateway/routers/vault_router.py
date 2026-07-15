@@ -83,9 +83,9 @@ def _resolve_oauth_gateway(
 
 @vault_router.get("/authorize/{server_id}")
 async def vault_authorize(
+    request: Request,
     server_id: str,
     gateway_url: Annotated[str | None, Query(max_length=500, description="Optional: select specific gateway URL for multi-gateway servers")] = None,
-    request: Request | None = None,
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user_with_permissions),
 ) -> RedirectResponse:
