@@ -648,6 +648,120 @@ ContextForge-specific attributes use the `contextforge.` prefix:
 When `emit_baggage_prefixed_attributes` is disabled for allowlisted baggage keys,
 the same baggage values are emitted as `tenant.id` and `user.id`.
 
+## Upstream Session Error Diagnostics
+
+### Overview
+
+When MCP sessions are enabled (`MCP_SESSION_POOL_ENABLED=true` or when using the upstream session registry), ContextForge automatically categorizes upstream connection failures into 13 distinct error categories. This enhancement replaces generic "unhandled errors in a TaskGroup" messages with specific, actionable diagnostics that enable operators to quickly identify root causes.
+
+### Error Categories
+
+| Category | Description | Common Causes |
+|----------|-------------|---------------|
+| `connection_refused` | Upstream server refused connection | Server not running, wrong port, firewall |
+| `timeout` | Connection or read timeout | Network latency, unresponsive server, slow response |
+| `ssl_tls` | SSL/TLS certificate or handshake failure | Expired cert, self-signed cert, protocol mismatch |
+| `auth_unauthorized` | HTTP 401 response | Invalid or expired token, missing credentials |
+| `auth_forbidden` | HTTP 403 response | Insufficient permissions, token lacks required scopes |
+| `not_found` | HTTP 404 response | Wrong endpoint URL, server not registered |
+| `upstream_server_error` | HTTP 5xx response | Server crash, database failure, internal error |
+| `http_error` | Other HTTP error status | Rate limiting (429), client error (4xx) |
+| `dns_resolution` | DNS lookup failure | Invalid hostname, DNS server down |
+| `connection_reset` | Connection reset by peer | Network interruption, server restart |
+| `connection_error` | General connection failure | Network unavailable, routing issue |
+| `network_error` | Low-level network error | Socket error, OS-level failure |
+| `unknown` | Unclassified error | Unexpected exception type |
+
+### Error Message Format
+
+Errors surface to clients with the following format:
+
+```
+Failed to create upstream MCP session for <url>: [<category>] <ExceptionType>: <message>
+```
+
+**Examples:**
+
+```
+Failed to create upstream MCP session for https://api.example.com/mcp: [auth_unauthorized] HTTPStatusError: 401 Unauthorized
+Failed to create upstream MCP session for https://upstream.internal/mcp: [connection_refused] ConnectionRefusedError: Connection refused
+Failed to create upstream MCP session for https://secure.example.com/mcp: [ssl_tls] SSLError: certificate verify failed
+Failed to create upstream MCP session for https://slow.example.com/mcp: [timeout] TimeoutError: Connection timeout after 30.0s
+```
+
+### Structured Logging
+
+In addition to standard Python logging with full tracebacks, each upstream session failure is logged to the structured logging sink with rich metadata for aggregation systems (Datadog, Splunk, ELK):
+
+**Metadata Schema:**
+
+```json
+{
+  "level": "ERROR",
+  "message": "Upstream MCP session creation failed",
+  "component": "upstream_session_registry",
+  "metadata": {
+    "url": "https://upstream.example.com/mcp",
+    "downstream_session_id": "session-abc123",
+    "gateway_id": "gateway-456",
+    "transport_type": "streamablehttp",
+    "error_category": "auth_unauthorized",
+    "exception_type": "HTTPStatusError",
+    "exception_message": "401 Unauthorized"
+  }
+}
+```
+
+### Monitoring and Alerting Examples
+
+#### Alert on Authentication Failures
+
+```promql
+# Alert when auth failures exceed threshold
+rate(upstream_session_errors{error_category=~"auth_unauthorized|auth_forbidden"}[5m]) > 10
+```
+
+#### Group Errors by Category
+
+```datadog
+# Group upstream errors by category
+source:contextforge component:upstream_session_registry 
+| group by error_category
+```
+
+#### Track SSL Issues by Gateway
+
+```splunk
+component="upstream_session_registry" error_category="ssl_tls"
+| stats count by gateway_id
+```
+
+### ExceptionGroup Unwrapping
+
+The MCP SDK uses Python 3.11+ `asyncio.TaskGroup` which wraps exceptions in `ExceptionGroup` or `BaseExceptionGroup`. ContextForge automatically unwraps nested exception groups to extract the root cause before categorization:
+
+```python
+# Generic TaskGroup message (before unwrapping):
+"unhandled errors in a TaskGroup (1 sub-exception)"
+
+# Specific categorized message (after unwrapping):
+"[connection_refused] ConnectionRefusedError: Connection refused by server"
+```
+
+This ensures operators see actionable error information without needing to parse TaskGroup exception hierarchies.
+
+### Fallback Behavior
+
+When MCP sessions are **disabled** (`MCP_SESSION_POOL_ENABLED=false`), the per-call session path in `tool_service.py` performs its own ExceptionGroup unwrapping. Both paths now provide consistent error diagnostics.
+
+### Observability Best Practices
+
+1. **Enable Structured Logging**: Set `STRUCTURED_LOGGING_DATABASE_ENABLED=true` to persist error metadata
+2. **Monitor Error Categories**: Track error category distribution to identify systemic issues
+3. **Alert on Spikes**: Configure alerts for sudden increases in specific error categories
+4. **Correlate with Gateways**: Use `gateway_id` to identify problematic upstream servers
+5. **Trace Full Context**: Use `downstream_session_id` to correlate errors with client requests
+
 ## Plugin Server Tracing
 
 External plugin servers can enable OTEL tracing:

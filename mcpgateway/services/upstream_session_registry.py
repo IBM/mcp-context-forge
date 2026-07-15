@@ -384,6 +384,9 @@ async def _default_session_factory(req: SessionCreateRequest) -> tuple[ClientSes
             # exception type (ConnectionRefusedError, TimeoutError, SSLError, etc.).
             root_cause: Exception = exc
             if isinstance(exc, BaseExceptionGroup):
+                # BaseExceptionGroup.exceptions is tuple[BaseException | BaseExceptionGroup, ...]
+                # We iteratively unwrap until we reach a non-group exception. The type checker
+                # cannot infer that the final value is a concrete Exception, so we use type: ignore.
                 while isinstance(root_cause, BaseExceptionGroup) and root_cause.exceptions:
                     root_cause = root_cause.exceptions[0]  # type: ignore[assignment]
 
