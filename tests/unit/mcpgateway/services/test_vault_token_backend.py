@@ -847,7 +847,7 @@ class TestVaultTokenBackendGetOAuthCredentials:
             "data": {
                 "data": {
                     "client_id": "oauth_client_id",
-                    "client_secret": "oauth_client_secret",
+                    "client_secret": "oauth_client_secret",  # pragma: allowlist secret
                     "authorization_endpoint": "https://oauth.example.com/authorize",
                     "token_endpoint": "https://oauth.example.com/token",
                     "scopes": ["read", "write"]
@@ -982,7 +982,7 @@ class TestVaultTokenBackendStoreOAuthCredentials:
 
             credentials = {
                 "client_id": "oauth_client_id",
-                "client_secret": "oauth_client_secret",
+                "client_secret": "oauth_client_secret",  # pragma: allowlist secret
                 "authorization_endpoint": "https://oauth.example.com/authorize",
                 "token_endpoint": "https://oauth.example.com/token",
                 "scopes": ["read", "write"]
@@ -1021,7 +1021,7 @@ class TestVaultTokenBackendStoreOAuthCredentials:
 
             credentials = {
                 "client_id": "oauth_client_id",
-                "client_secret": "oauth_client_secret",
+                "client_secret": "oauth_client_secret",  # pragma: allowlist secret
                 "authorization_endpoint": "https://oauth.example.com/authorize",
                 "token_endpoint": "https://oauth.example.com/token",
                 "scopes": ["read", "write"]

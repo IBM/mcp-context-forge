@@ -564,7 +564,7 @@ class TestOAuthRouter:
         mock_gateway.oauth_config = {
             "grant_type": "authorization_code",
             "client_id": "client-id",
-            "client_secret": "secret",
+            "client_secret": "secret",  # pragma: allowlist secret
             "authorization_url": "https://auth.example.com/authorize",
             "token_url": "https://auth.example.com/token",
             "redirect_uri": "https://gateway.example.com/oauth/callback",
@@ -599,7 +599,7 @@ class TestOAuthRouter:
         mock_gateway.oauth_config = {
             "grant_type": "authorization_code",
             "client_id": "client-id",
-            "client_secret": "secret",
+            "client_secret": "secret",  # pragma: allowlist secret
             "authorization_url": "https://auth.example.com/authorize",
             "token_url": "https://auth.example.com/token",
             "redirect_uri": "https://gateway.example.com/oauth/callback",
@@ -670,7 +670,7 @@ class TestOAuthRouter:
             mock_settings.dcr_enabled = True
             mock_settings.dcr_auto_register_on_missing_credentials = True
             mock_settings.dcr_default_scopes = ["openid"]
-            mock_settings.auth_encryption_secret = "secret"
+            mock_settings.auth_encryption_secret = "secret"  # pragma: allowlist secret
 
             mock_dcr = Mock()
             mock_dcr.get_or_register_client = AsyncMock(side_effect=Exception("boom"))
@@ -764,7 +764,7 @@ class TestOAuthRouter:
         mock_gateway.oauth_config = {
             "grant_type": "authorization_code",
             "client_id": "client-id",
-            "client_secret": "secret",
+            "client_secret": "secret",  # pragma: allowlist secret
             "authorization_url": "https://auth.example.com/authorize",
             "token_url": "https://auth.example.com/token",
             "redirect_uri": "https://gateway.example.com/oauth/callback",
