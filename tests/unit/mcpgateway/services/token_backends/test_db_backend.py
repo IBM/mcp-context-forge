@@ -502,7 +502,7 @@ async def test_refresh_token_with_client_secret_decrypt_failure(backend_with_enc
     mock_gateway = MagicMock()
     mock_gateway.oauth_config = {
         "client_id": "test",
-        "client_secret": "encrypted_secret"
+        "client_secret": "encrypted_secret"  # pragma: allowlist secret
     }
     mock_gateway.visibility = "public"
     mock_gateway.url = "https://mcp.example.com"
@@ -681,7 +681,7 @@ async def test_refresh_access_token_success(backend_with_encryption, mock_db):
     mock_gateway = MagicMock()
     mock_gateway.oauth_config = {
         "client_id": "test",
-        "client_secret": "encrypted_secret",
+        "client_secret": "encrypted_secret",  # pragma: allowlist secret
         "token_url": "https://oauth.example.com/token"
     }
     mock_gateway.visibility = "public"

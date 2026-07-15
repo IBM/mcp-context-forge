@@ -6789,7 +6789,7 @@ class TestOAuthFunctionality:
         oauth_config = {
             "grant_type": "client_credentials",
             "client_id": "edit-client-id",
-            "client_secret": "",  # Empty secret
+            "client_secret": "",  # Empty secret  # pragma: allowlist secret
             "token_url": "https://auth.example.com/oauth/token",
         }
 
@@ -14248,7 +14248,7 @@ class TestAdminAdditionalCoverage:
             MagicMock(return_value={"modified_by": "user", "modified_from_ip": "127.0.0.1", "modified_via": "ui", "modified_user_agent": "test"}),
         )
 
-        oauth_config = json.dumps({"grant_type": "client_credentials", "client_id": "id", "client_secret": "secret"})
+        oauth_config = json.dumps({"grant_type": "client_credentials", "client_id": "id", "client_secret": "secret"  # pragma: allowlist secret})
         form_data = FakeForm(
             {
                 "name": "Agent Updated",
@@ -17776,7 +17776,7 @@ async def test_admin_add_a2a_agent_oauth_auto_detect(monkeypatch, mock_db):
         {
             "name": "Agent",
             "endpoint_url": "http://agent.example.com",
-            "oauth_config": json.dumps({"client_secret": "secret", "client_id": "cid", "grant_type": "client_credentials"}),
+            "oauth_config": json.dumps({"client_secret": "secret"  # pragma: allowlist secret, "client_id": "cid", "grant_type": "client_credentials"}),
             "passthrough_headers": "X-Req-Id, X-Trace",
             "auth_headers": "{bad json",
         }

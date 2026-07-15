@@ -7520,7 +7520,7 @@ class TestUpdateGatewayAdvanced:
             oauth_config={
                 "grant_type": "password",
                 "client_id": "cid",
-                "client_secret": "secret",
+                "client_secret": "secret",  # pragma: allowlist secret
                 "password": "pw",  # pragma: allowlist secret
                 "token_url": "https://auth.example.com/token",
             },
@@ -7556,7 +7556,7 @@ class TestUpdateGatewayAdvanced:
         mock_gateway.tags = []
         encryption = get_encryption_service(settings.auth_encryption_secret)
         existing_secret = await encryption.encrypt_secret_async("existing-secret")
-        mock_gateway.oauth_config = {"grant_type": "client_credentials", "client_secret": existing_secret}
+        mock_gateway.oauth_config = {"grant_type": "client_credentials", "client_secret": existing_secret  # pragma: allowlist secret}
 
         update_data = _make_gateway(
             auth_type=None,
@@ -7564,7 +7564,7 @@ class TestUpdateGatewayAdvanced:
             url="http://example.com/gateway",
             passthrough_headers=None,
             visibility=None,
-            oauth_config={"grant_type": "client_credentials", "client_secret": settings.masked_auth_value},
+            oauth_config={"grant_type": "client_credentials", "client_secret": settings.masked_auth_value  # pragma: allowlist secret},
         )
         update_data.auth_token = None
         update_data.auth_password = None
