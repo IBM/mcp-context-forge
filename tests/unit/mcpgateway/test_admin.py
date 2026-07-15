@@ -1991,6 +1991,18 @@ class TestAdminToolRoutes:
         result = _build_auth_obj_from_form(form)
         assert result is None
 
+    @pytest.mark.parametrize("scalar_json", ["5", "null", "true", "3.14", '"a string"', '{"key": "X-API-Key"}'])
+    def test_build_auth_obj_from_form_non_list_json(self, scalar_json, mock_request, mock_db):
+        """A non-list JSON value for auth_headers is treated as "no headers", not a 500.
+
+        ``orjson.loads`` accepts any valid JSON scalar/object, so guarding against a non-list
+        value keeps a body like ``auth_headers=5`` from raising an uncaught TypeError when the
+        header list is iterated.
+        """
+        form = FakeForm({"auth_type": "authheaders", "auth_headers": scalar_json})
+        # No usable headers and no legacy key/value pair -> None (never raises).
+        assert _build_auth_obj_from_form(form) is None
+
     def test_build_auth_obj_from_form_basic_missing_password(self, mock_request, mock_db):
         """_build_auth_obj_from_form returns None for basic auth with missing password."""
         form = FakeForm({"auth_type": "basic", "auth_username": "user"})

@@ -11801,9 +11801,13 @@ def _build_auth_obj_from_form(form: Any) -> Optional[dict[str, Any]]:
     auth_headers: list[dict[str, Any]] = []
     if auth_headers_json:
         try:
-            auth_headers = orjson.loads(auth_headers_json)
+            parsed_headers = orjson.loads(auth_headers_json)
         except (orjson.JSONDecodeError, ValueError):
-            auth_headers = []
+            parsed_headers = []
+        # orjson.loads accepts any JSON scalar (e.g. "5", "null", "true"), so guard against a
+        # non-list value here rather than letting it reach the list comprehension below and raise
+        # an uncaught TypeError (500). A non-list body simply means "no custom headers".
+        auth_headers = parsed_headers if isinstance(parsed_headers, list) else []
 
     auth_type = form.get("auth_type", "")
     if auth_type and auth_type.lower() == "oauth":
