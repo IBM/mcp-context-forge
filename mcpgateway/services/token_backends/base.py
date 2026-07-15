@@ -93,7 +93,6 @@ class AbstractTokenBackend(ABC):
 
         Returns TokenRecord with plain-text tokens for immediate use.
         """
-        ...
 
     @abstractmethod
     async def get_user_token(
@@ -115,7 +114,6 @@ class AbstractTokenBackend(ABC):
         - If refresh succeeds, store new token and return it
         - If refresh fails, return None (user must re-authorize)
         """
-        ...
 
     @abstractmethod
     async def get_token_info(
@@ -136,7 +134,6 @@ class AbstractTokenBackend(ABC):
         Returns None if no token found.
         Does NOT return actual token values.
         """
-        ...
 
     @abstractmethod
     async def revoke_user_tokens(
@@ -154,7 +151,6 @@ class AbstractTokenBackend(ABC):
 
         Returns True if deleted, False if not found.
         """
-        ...
 
     @abstractmethod
     async def cleanup_expired_tokens(
@@ -169,7 +165,6 @@ class AbstractTokenBackend(ABC):
 
         Returns count of deleted tokens.
         """
-        ...
 
     async def get_oauth_credentials(self, team_id: str | None, mcp_url: str) -> dict | None:  # pylint: disable=unused-argument
         """
