@@ -16,22 +16,18 @@ server ID, without needing to know internal gateway details.
 """
 
 import logging
-from html import escape
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from mcpgateway.common.query_params import QueryErrorCode
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.db import Gateway, Server, Tool, get_db, server_tool_association
 from mcpgateway.middleware.rbac import get_current_user_with_permissions
 from mcpgateway.services.oauth_manager import OAuthManager
-from mcpgateway.services.token_backends.base import normalize_resource_url
 from mcpgateway.services.token_storage_service import TokenStorageService
-from mcpgateway.utils.log_sanitizer import sanitize_for_log
 from mcpgateway.utils.paths import resolve_root_path
 
 logger = logging.getLogger(__name__)
@@ -68,11 +64,7 @@ def _resolve_oauth_gateway(
         return None
 
     # Filter to OAuth-enabled gateways
-    gateways_result = db.execute(
-        select(Gateway)
-        .where(Gateway.id.in_(gateway_ids))
-        .where(Gateway.auth_type == "oauth")
-    )
+    gateways_result = db.execute(select(Gateway).where(Gateway.id.in_(gateway_ids)).where(Gateway.auth_type == "oauth"))
     gateways = list(gateways_result.scalars().all())
 
     if not gateways:
@@ -93,7 +85,7 @@ def _resolve_oauth_gateway(
 async def vault_authorize(
     server_id: str,
     gateway_url: Annotated[str | None, Query(max_length=500, description="Optional: select specific gateway URL for multi-gateway servers")] = None,
-    request: Request = None,
+    request: Request | None = None,
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user_with_permissions),
 ) -> RedirectResponse:
