@@ -165,8 +165,13 @@ mcpContextForge:
     capabilities:
       drop:
         - ALL
-    readOnlyRootFilesystem: true  # Read-only root filesystem for security
-
+    readOnlyRootFilesystem: true
+    volumeMounts:
+      - name: tmp
+        mountPath: /tmp
+    volumes:
+     - name: tmp
+       emptyDir: {}
 
   # Optional ingress for HTTP traffic
   ingress:
@@ -1494,7 +1499,7 @@ mcpFastTimeServer:
   replicaCount: 2
   image:
     repository: ghcr.io/ibm/fast-time-server
-    tag: "1.0.3"
+    tag: "0.8.0"
     pullPolicy: Always
   port: 8080
   # Docker Compose parity flags (optional override)
