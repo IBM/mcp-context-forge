@@ -63,6 +63,17 @@ async def test_redis_single_primary_across_instances():
             await e.stop()
 
 
+async def test_redis_concurrent_start_elects_one_primary():
+    """Even when many electors start() concurrently, exactly one wins the lease (SET NX is atomic)."""
+    server = fakeredis.FakeServer()
+    electors = [_redis_elector(server, lease_ttl=30) for _ in range(5)]
+    await asyncio.gather(*(e.start() for e in electors))
+    try:
+        assert sum(e.is_primary for e in electors) == 1
+    finally:
+        await asyncio.gather(*(e.stop() for e in electors))
+
+
 async def test_redis_release_on_stop_lets_another_acquire():
     """Stopping the primary frees the lease for a new elector."""
     server = fakeredis.FakeServer()
@@ -400,3 +411,15 @@ async def test_stop_swallows_maintenance_task_error(tmp_path):
     await asyncio.sleep(0.05)  # let the task run and fail before stop() awaits it
     await e.stop()  # must not raise
     assert e.started is False
+
+
+async def test_stop_swallows_redis_release_error():
+    """stop() is best-effort: a Redis error while releasing the lease must not propagate."""
+    # _RenewBoomRedis: SET succeeds (we become primary), eval raises. With the heartbeat
+    # off, is_primary stays True until stop(), whose release eval then raises and is swallowed.
+    e = PrimaryWorkerElector(backend="redis", redis_key="k", lease_ttl=30, heartbeat_interval=10, redis_client=_RenewBoomRedis())
+    await e.start()
+    assert e.is_primary is True  # initial acquire succeeded
+    await e.stop()  # release eval raises -> swallowed, no propagation
+    assert e.started is False
+    assert e.is_primary is False
