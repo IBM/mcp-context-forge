@@ -11,7 +11,6 @@ from unittest.mock import patch
 
 # Third-Party
 import jwt
-import pytest
 
 # First-Party
 from mcpgateway.services.token_validation_service import (
@@ -517,3 +516,55 @@ class TestValidateOauthTokenClaims:
 
         # Should not crash
         assert result.is_jwt is True
+
+
+class TestOAuthRequireConfiguredResourceSetting:
+    """Reviewer HIGH-severity finding: setting must flip advisory audience mismatch to blocking.
+
+    When OAUTH_REQUIRE_CONFIGURED_RESOURCE=true, even auto-derived audience
+    mismatches (no explicit resource configured, validator falls back to
+    gateway_url) become authoritative — this is the strict deployment mode
+    where the gateway rejects cross-resource tokens itself rather than
+    relying on the upstream MCP server to check ``aud``.
+    """
+
+    def test_default_off_keeps_auto_derived_advisory(self):
+        with patch("mcpgateway.services.token_validation_service.settings") as mock_settings:
+            mock_settings.oauth_require_configured_resource = False
+            token = _make_jwt({"aud": "wrong-aud"})
+            result = validate_oauth_token_claims(token, {}, "https://gw.example.com", "test-gw")
+
+        assert result.audience_match is False
+        assert result.audience_authoritative is False
+        assert result.blocking_errors == []
+
+    def test_enabled_makes_auto_derived_authoritative(self):
+        with patch("mcpgateway.services.token_validation_service.settings") as mock_settings:
+            mock_settings.oauth_require_configured_resource = True
+            token = _make_jwt({"aud": "wrong-aud"})
+            result = validate_oauth_token_claims(token, {}, "https://gw.example.com", "test-gw")
+
+        assert result.audience_match is False
+        assert result.audience_authoritative is True
+        assert len(result.blocking_errors) == 1
+
+    def test_setting_does_not_downgrade_configured_resource(self):
+        """When resource is explicitly configured, mismatch is always authoritative — setting is a no-op."""
+        with patch("mcpgateway.services.token_validation_service.settings") as mock_settings:
+            mock_settings.oauth_require_configured_resource = False
+            token = _make_jwt({"aud": "wrong-aud"})
+            result = validate_oauth_token_claims(token, {"resource": "configured"}, "https://gw.example.com", "test-gw")
+
+        assert result.audience_match is False
+        assert result.audience_authoritative is True
+        assert len(result.blocking_errors) == 1
+
+    def test_setting_only_affects_mismatches(self):
+        """Enabling the setting with a matching aud has no effect (no false blocking)."""
+        with patch("mcpgateway.services.token_validation_service.settings") as mock_settings:
+            mock_settings.oauth_require_configured_resource = True
+            token = _make_jwt({"aud": "https://gw.example.com"})
+            result = validate_oauth_token_claims(token, {}, "https://gw.example.com", "test-gw")
+
+        assert result.audience_match is True
+        assert result.blocking_errors == []

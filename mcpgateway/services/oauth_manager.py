@@ -970,12 +970,10 @@ class OAuthManager:
         # Extract user information from token response
         user_id = self._extract_user_id(token_response, credentials)
 
-        # Extract aud and iss from the token (best-effort, no signature verification)
+        # Single decode extracts both aud and iss (best-effort, no signature verification)
         # so the callback path can learn the IdP's audience mapping and pin it to the
         # token's issuer.  See _decode_token_claims_unverified for the trust model.
-        access_token_for_claims = token_response.get("access_token", "")
-        token_aud = self._extract_token_audience(access_token_for_claims)
-        token_iss = self._extract_token_issuer(access_token_for_claims)
+        token_aud, token_iss = self._extract_aud_and_iss(token_response.get("access_token", ""))
 
         # Store tokens if storage service is available
         if self.token_storage:
@@ -1913,21 +1911,15 @@ class OAuthManager:
         return claims if isinstance(claims, dict) else {}
 
     @staticmethod
-    def _extract_token_audience(access_token: str) -> Optional[Union[str, List[str]]]:
-        """Extract the ``aud`` claim from a JWT access token (best-effort).
-
-        Returns the ``aud`` value when it is a string or a list of strings.
-        Anything else (including missing claim, opaque token, decode failure,
-        or unexpected types) yields ``None``.  No signature verification is
-        performed; see ``_decode_token_claims_unverified`` for the trust model.
+    def _coerce_aud_claim(aud: Any) -> Optional[Union[str, List[str]]]:
+        """Coerce a raw ``aud`` claim to a well-shaped audience value or ``None``.
 
         Args:
-            access_token: The raw access token string.
+            aud: Raw claim value.
 
         Returns:
             The ``aud`` claim as ``str`` or ``list[str]``, otherwise ``None``.
         """
-        aud = OAuthManager._decode_token_claims_unverified(access_token).get("aud")
         if isinstance(aud, str):
             return aud
         if isinstance(aud, list) and all(isinstance(item, str) for item in aud):
@@ -1935,14 +1927,53 @@ class OAuthManager:
         return None
 
     @staticmethod
+    def _coerce_iss_claim(iss: Any) -> Optional[str]:
+        """Coerce a raw ``iss`` claim to a non-empty string or ``None``.
+
+        Args:
+            iss: Raw claim value.
+
+        Returns:
+            The ``iss`` claim as a non-empty string, otherwise ``None``.
+        """
+        if isinstance(iss, str) and iss:
+            return iss
+        return None
+
+    @staticmethod
+    def _extract_aud_and_iss(access_token: str) -> tuple[Optional[Union[str, List[str]]], Optional[str]]:
+        """Extract ``aud`` and ``iss`` from a JWT access token in a single decode.
+
+        The callback path needs both claims (audience learning + issuer pinning),
+        and each decode is measurable overhead on every OAuth callback. Sharing
+        one decode halves that cost. No signature verification is performed;
+        see ``_decode_token_claims_unverified`` for the trust model.
+
+        Args:
+            access_token: The raw access token string.
+
+        Returns:
+            ``(aud, iss)`` where each element follows the same shape rules as
+            :meth:`_coerce_aud_claim` / :meth:`_coerce_iss_claim`.
+        """
+        claims = OAuthManager._decode_token_claims_unverified(access_token)
+        return OAuthManager._coerce_aud_claim(claims.get("aud")), OAuthManager._coerce_iss_claim(claims.get("iss"))
+
+    @staticmethod
+    def _extract_token_audience(access_token: str) -> Optional[Union[str, List[str]]]:
+        """Extract the ``aud`` claim from a JWT access token (best-effort).
+
+        Args:
+            access_token: The raw access token string.
+
+        Returns:
+            The ``aud`` claim as ``str`` or ``list[str]``, otherwise ``None``.
+        """
+        return OAuthManager._extract_aud_and_iss(access_token)[0]
+
+    @staticmethod
     def _extract_token_issuer(access_token: str) -> Optional[str]:
         """Extract the ``iss`` claim from a JWT access token (best-effort).
-
-        Used by the callback path to pin a learned ``resource`` to a specific
-        issuer so a future config edit (or accidental re-pointing) can't carry
-        a stale audience across IdPs.  Returns ``None`` for opaque tokens,
-        decode failures, missing claim, or unexpected types.  No signature
-        verification is performed; see ``_decode_token_claims_unverified``.
 
         Args:
             access_token: The raw access token string.
@@ -1950,10 +1981,7 @@ class OAuthManager:
         Returns:
             The ``iss`` claim as a non-empty string, otherwise ``None``.
         """
-        iss = OAuthManager._decode_token_claims_unverified(access_token).get("iss")
-        if isinstance(iss, str) and iss:
-            return iss
-        return None
+        return OAuthManager._extract_aud_and_iss(access_token)[1]
 
 
 class OAuthError(Exception):

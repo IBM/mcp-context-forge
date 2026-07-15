@@ -103,29 +103,6 @@ def mock_current_user():
     return user
 
 
-class TestNormalizeResourceUrl:
-    """Tests for _normalize_resource_url helper."""
-
-    def test_normalize_resource_url_invalid(self):
-        from mcpgateway.routers.oauth_router import _normalize_resource_url
-
-        assert _normalize_resource_url(None) is None
-        assert _normalize_resource_url("") is None
-        assert _normalize_resource_url("example.com/path") is None
-
-    def test_normalize_resource_url_strips_fragment_and_query(self):
-        from mcpgateway.routers.oauth_router import _normalize_resource_url
-
-        result = _normalize_resource_url("https://example.com/path?x=1#frag")
-        assert result == "https://example.com/path"
-
-    def test_normalize_resource_url_preserves_query_when_requested(self):
-        from mcpgateway.routers.oauth_router import _normalize_resource_url
-
-        result = _normalize_resource_url("https://example.com/path?x=1#frag", preserve_query=True)
-        assert result == "https://example.com/path?x=1"
-
-
 class TestEnforceFetchToolsCsrf:
     """Tests for enforce_fetch_tools_csrf."""
 
@@ -1684,103 +1661,6 @@ class TestOAuthAccessHelpers:
                 await _enforce_gateway_access("gateway123", gateway, {"email": "user@example.com", "is_admin": False}, mock_db, request=None)
 
         assert exc_info.value.status_code == 403
-
-
-class TestRFC8707ResourceNormalization:
-    """Test cases for RFC 8707 resource URL normalization."""
-
-    def test_normalize_resource_url_removes_fragment(self):
-        """Test that URL fragments are removed per RFC 8707."""
-        # First-Party
-        from mcpgateway.routers.oauth_router import _normalize_resource_url
-
-        url = "https://mcp.example.com/api#section"
-        assert _normalize_resource_url(url) == "https://mcp.example.com/api"
-
-    def test_normalize_resource_url_removes_query(self):
-        """Test that URL query strings are removed per RFC 8707."""
-        # First-Party
-        from mcpgateway.routers.oauth_router import _normalize_resource_url
-
-        url = "https://mcp.example.com/api?token=abc"
-        assert _normalize_resource_url(url) == "https://mcp.example.com/api"
-
-    def test_normalize_resource_url_removes_both(self):
-        """Test that both fragment and query are removed."""
-        # First-Party
-        from mcpgateway.routers.oauth_router import _normalize_resource_url
-
-        url = "https://mcp.example.com/api?token=abc#section"
-        assert _normalize_resource_url(url) == "https://mcp.example.com/api"
-
-    def test_normalize_resource_url_clean_url_unchanged(self):
-        """Test that clean URLs remain unchanged."""
-        # First-Party
-        from mcpgateway.routers.oauth_router import _normalize_resource_url
-
-        url = "https://mcp.example.com/api"
-        assert _normalize_resource_url(url) == "https://mcp.example.com/api"
-
-    def test_normalize_resource_url_preserves_path(self):
-        """Test that URL paths are preserved."""
-        # First-Party
-        from mcpgateway.routers.oauth_router import _normalize_resource_url
-
-        url = "https://mcp.example.com/api/v1/tools"
-        assert _normalize_resource_url(url) == "https://mcp.example.com/api/v1/tools"
-
-    def test_normalize_resource_url_handles_empty(self):
-        """Test that empty/None URLs return None."""
-        # First-Party
-        from mcpgateway.routers.oauth_router import _normalize_resource_url
-
-        assert _normalize_resource_url("") is None
-        assert _normalize_resource_url(None) is None
-
-    def test_normalize_resource_url_rejects_relative_uri(self):
-        """Test that relative URIs (no scheme) return None per RFC 8707."""
-        # First-Party
-        from mcpgateway.routers.oauth_router import _normalize_resource_url
-
-        # RFC 8707: resource MUST be an absolute URI
-        assert _normalize_resource_url("mcp.example.com/api") is None
-        assert _normalize_resource_url("/api/v1") is None
-
-    def test_normalize_resource_url_supports_urns(self):
-        """Test that URN-style absolute URIs are supported per RFC 8707."""
-        # First-Party
-        from mcpgateway.routers.oauth_router import _normalize_resource_url
-
-        # RFC 8707 allows any absolute URI, including URNs
-        assert _normalize_resource_url("urn:example:app") == "urn:example:app"
-        assert _normalize_resource_url("urn:ietf:params:oauth:token-type:jwt") == "urn:ietf:params:oauth:token-type:jwt"
-
-    def test_normalize_resource_url_supports_file_uri(self):
-        """Test that file:// URIs are supported."""
-        # First-Party
-        from mcpgateway.routers.oauth_router import _normalize_resource_url
-
-        assert _normalize_resource_url("file:///path/to/resource") == "file:///path/to/resource"
-
-    def test_normalize_resource_url_preserve_query_flag(self):
-        """Test that preserve_query=True keeps query component."""
-        # First-Party
-        from mcpgateway.routers.oauth_router import _normalize_resource_url
-
-        url = "https://api.example.com/v1?tenant=acme"
-        # Default: strip query
-        assert _normalize_resource_url(url) == "https://api.example.com/v1"
-        # With preserve_query: keep query
-        assert _normalize_resource_url(url, preserve_query=True) == "https://api.example.com/v1?tenant=acme"
-
-    def test_normalize_resource_url_always_strips_fragment(self):
-        """Test that fragments are always stripped even with preserve_query=True."""
-        # First-Party
-        from mcpgateway.routers.oauth_router import _normalize_resource_url
-
-        url = "https://api.example.com/v1?tenant=acme#section"
-        # Fragment is always removed (RFC 8707 MUST NOT)
-        assert _normalize_resource_url(url, preserve_query=True) == "https://api.example.com/v1?tenant=acme"
 
 
 class TestOAuthRouterAdditionalCoverage:

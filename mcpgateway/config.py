@@ -927,6 +927,18 @@ class Settings(BaseSettings):
     # OAuth Configuration
     oauth_request_timeout: int = Field(default=30, description="OAuth request timeout in seconds")
     oauth_max_retries: int = Field(default=3, description="Maximum retries for OAuth token requests")
+    oauth_require_configured_resource: bool = Field(
+        default=False,
+        description=(
+            "When true, treat audience mismatches as blocking even when the expected "
+            "resource was auto-derived from the gateway URL (no explicit resource "
+            "configured and none learned from a prior IdP token). Default false keeps "
+            "the auto-derived audience check advisory so brand-new gateways forward "
+            "tokens for upstream validation. Enable in strict environments where the "
+            "gateway must reject cross-resource tokens itself rather than relying on "
+            "the upstream MCP server to validate ``aud``."
+        ),
+    )
 
     # ===================================
     # Dynamic Client Registration (DCR) - Client Mode

@@ -934,6 +934,62 @@ def _form_team_id(form: Any) -> Optional[str]:
     return str(raw).strip() or None
 
 
+def _parse_oauth_resource(raw: Any) -> Union[str, List[str], None]:
+    """Parse the ``oauth_resource`` form field into a single URI or list of URIs.
+
+    Splits on whitespace, newlines, or commas, but only accepts the multi-value
+    interpretation when every resulting piece is a well-formed absolute URI (has
+    a scheme).  This preserves single resource URIs that legitimately contain
+    commas in their path or query component (RFC 3986 pchar) rather than
+    silently corrupting them into two bogus entries.
+
+    Storage convention: single value is stored as ``str``, multiple as
+    ``list[str]``, matching the shapes that IdPs use for the ``aud`` claim
+    (RFC 7519 §4.1.3).
+
+    Args:
+        raw: Value pulled from a form field (typically ``form.get("oauth_resource")``).
+            Non-string values, empty strings, and whitespace-only strings all
+            yield ``None``.
+
+    Returns:
+        ``None`` for empty input, a ``str`` for a single resource, or a
+        ``list[str]`` for multiple.
+
+    Examples:
+        >>> _parse_oauth_resource(None) is None
+        True
+        >>> _parse_oauth_resource("") is None
+        True
+        >>> _parse_oauth_resource("   ") is None
+        True
+        >>> _parse_oauth_resource("https://api.example.com")
+        'https://api.example.com'
+        >>> _parse_oauth_resource("https://a.example.com, https://b.example.com")
+        ['https://a.example.com', 'https://b.example.com']
+        >>> _parse_oauth_resource("https://a.example.com\\nhttps://b.example.com")
+        ['https://a.example.com', 'https://b.example.com']
+        >>> _parse_oauth_resource("https://api.example.com/path?x=1,y=2")
+        'https://api.example.com/path?x=1,y=2'
+    """
+    if not isinstance(raw, str):
+        return None
+    stripped = raw.strip()
+    if not stripped:
+        return None
+    pieces = [p.strip() for p in re.split(r"[,\s]+", stripped) if p.strip()]
+    if not pieces:
+        return None
+    if len(pieces) == 1:
+        return pieces[0]
+    # Multi-value only accepted when every piece parses as an absolute URI.
+    # Falling back to single-value protects URIs containing unencoded commas
+    # (RFC 3986 pchar allows ',' in path and query components).
+    if all(urllib.parse.urlparse(p).scheme for p in pieces):
+        return pieces
+    return stripped
+
+
 async def _parse_gateway_data_from_request(request: Request) -> dict[str, Any]:
     """Parse gateway data from either JSON body or form data.
 
@@ -1029,10 +1085,10 @@ async def _parse_gateway_data_from_request(request: Request) -> dict[str, Any]:
             oauth_username = str(data.get("oauth_username", ""))
             oauth_password = str(data.get("oauth_password", ""))
             oauth_scopes_str = str(data.get("oauth_scopes", ""))
-            oauth_audience = str(data.get("oauth_audience", ""))
+            oauth_audience = str(data.get("oauth_audience", "")).strip()
+            oauth_resource = _parse_oauth_resource(data.get("oauth_resource"))
 
-            # If any OAuth field is provided, assemble oauth_config
-            if any([oauth_grant_type, oauth_issuer, oauth_token_url, oauth_authorization_url, oauth_client_id]):
+            if any([oauth_grant_type, oauth_issuer, oauth_token_url, oauth_authorization_url, oauth_client_id, oauth_resource]):
                 oauth_config = {}
                 if oauth_grant_type:
                     oauth_config["grant_type"] = oauth_grant_type
@@ -1052,15 +1108,15 @@ async def _parse_gateway_data_from_request(request: Request) -> dict[str, Any]:
                     oauth_config["username"] = oauth_username
                 if oauth_password:
                     oauth_config["password"] = oauth_password
-                # Add audience parameter (for Atlassian, Auth0, and other non-RFC-8707 providers)
                 if oauth_audience:
                     oauth_config["audience"] = oauth_audience
+                if oauth_resource:
+                    oauth_config["resource"] = oauth_resource
                 if oauth_scopes_str:
                     scopes = [s.strip() for s in oauth_scopes_str.replace(",", " ").split() if s.strip()]
                     if scopes:
                         oauth_config["scopes"] = scopes
 
-        # Only set oauth_config if it's a non-empty dict
         if oauth_config:
             data["oauth_config"] = oauth_config
 
@@ -13048,10 +13104,9 @@ async def admin_edit_gateway(
             oauth_password = str(form.get("oauth_password", ""))
             oauth_scopes_str = str(form.get("oauth_scopes", ""))
             oauth_audience = str(form.get("oauth_audience", "")).strip()
-            oauth_resource_str = str(form.get("oauth_resource", ""))
+            oauth_resource = _parse_oauth_resource(form.get("oauth_resource"))
 
-            # If any OAuth field is provided, assemble oauth_config
-            if any([oauth_grant_type, oauth_issuer, oauth_token_url, oauth_authorization_url, oauth_client_id, oauth_resource_str]):
+            if any([oauth_grant_type, oauth_issuer, oauth_token_url, oauth_authorization_url, oauth_client_id, oauth_resource]):
                 oauth_config = {}
 
                 if oauth_grant_type:
@@ -13059,43 +13114,32 @@ async def admin_edit_gateway(
                 if oauth_issuer:
                     oauth_config["issuer"] = oauth_issuer
                 if oauth_token_url:
-                    oauth_config["token_url"] = oauth_token_url  # OAuthManager expects 'token_url', not 'token_endpoint'
+                    oauth_config["token_url"] = oauth_token_url
                 if oauth_authorization_url:
-                    oauth_config["authorization_url"] = oauth_authorization_url  # OAuthManager expects 'authorization_url', not 'authorization_endpoint'
+                    oauth_config["authorization_url"] = oauth_authorization_url
                 if oauth_redirect_uri:
                     oauth_config["redirect_uri"] = oauth_redirect_uri
                 if oauth_client_id:
                     oauth_config["client_id"] = oauth_client_id
                 if oauth_client_secret:
-                    # Encrypt the client secret
                     encryption = get_encryption_service(settings.auth_encryption_secret)
                     oauth_config["client_secret"] = await encryption.encrypt_secret_async(oauth_client_secret)
 
-                # Add username and password for password grant type
                 if oauth_username:
                     oauth_config["username"] = oauth_username
                 if oauth_password:
                     oauth_config["password"] = oauth_password
 
-                # Add audience parameter (for Atlassian, Auth0, and other non-RFC-8707 providers)
                 if oauth_audience:
                     oauth_config["audience"] = oauth_audience
 
-                # Parse scopes (comma or space separated)
                 if oauth_scopes_str:
                     scopes = [s.strip() for s in oauth_scopes_str.replace(",", " ").split() if s.strip()]
                     if scopes:
                         oauth_config["scopes"] = scopes
 
-                # Parse resource (RFC 8707 audience indicator); single value or
-                # comma-separated for multi-resource flows.  Stored as str when one
-                # value, list when multiple, to match the IdP's aud-claim shape.
-                if oauth_resource_str.strip():
-                    resources = [r.strip() for r in oauth_resource_str.split(",") if r.strip()]
-                    if len(resources) == 1:
-                        oauth_config["resource"] = resources[0]
-                    elif resources:
-                        oauth_config["resource"] = resources
+                if oauth_resource:
+                    oauth_config["resource"] = oauth_resource
 
                 LOGGER.info(f"✅ Assembled OAuth config from UI form fields (edit): grant_type={oauth_grant_type}, issuer={oauth_issuer}")
 
@@ -16061,10 +16105,9 @@ async def admin_add_a2a_agent(
             oauth_password = str(form.get("oauth_password", ""))
             oauth_scopes_str = str(form.get("oauth_scopes", ""))
             oauth_audience = str(form.get("oauth_audience", "")).strip()
-            oauth_resource_str = str(form.get("oauth_resource", ""))
+            oauth_resource = _parse_oauth_resource(form.get("oauth_resource"))
 
-            # If any OAuth field is provided, assemble oauth_config
-            if any([oauth_grant_type, oauth_issuer, oauth_token_url, oauth_authorization_url, oauth_client_id, oauth_resource_str]):
+            if any([oauth_grant_type, oauth_issuer, oauth_token_url, oauth_authorization_url, oauth_client_id, oauth_resource]):
                 oauth_config = {}
 
                 if oauth_grant_type:
@@ -16072,46 +16115,34 @@ async def admin_add_a2a_agent(
                 if oauth_issuer:
                     oauth_config["issuer"] = oauth_issuer
                 if oauth_token_url:
-                    oauth_config["token_url"] = oauth_token_url  # OAuthManager expects 'token_url', not 'token_endpoint'
+                    oauth_config["token_url"] = oauth_token_url
                 if oauth_authorization_url:
-                    oauth_config["authorization_url"] = oauth_authorization_url  # OAuthManager expects 'authorization_url', not 'authorization_endpoint'
+                    oauth_config["authorization_url"] = oauth_authorization_url
                 if oauth_redirect_uri:
                     oauth_config["redirect_uri"] = oauth_redirect_uri
                 if oauth_client_id:
                     oauth_config["client_id"] = oauth_client_id
                 if oauth_client_secret:
-                    # Encrypt the client secret
                     encryption = get_encryption_service(settings.auth_encryption_secret)
                     oauth_config["client_secret"] = await encryption.encrypt_secret_async(oauth_client_secret)
 
-                # Add username and password for password grant type
                 if oauth_username:
                     oauth_config["username"] = oauth_username
                 if oauth_password:
                     oauth_config["password"] = oauth_password
 
-                # Add audience parameter (for Atlassian, Auth0, and other non-RFC-8707 providers)
                 if oauth_audience:
                     oauth_config["audience"] = oauth_audience
 
-                # Parse scopes (comma or space separated)
                 if oauth_scopes_str:
                     scopes = [s.strip() for s in oauth_scopes_str.replace(",", " ").split() if s.strip()]
                     if scopes:
                         oauth_config["scopes"] = scopes
 
-                # Parse resource (RFC 8707 audience indicator); single value or
-                # comma-separated for multi-resource flows.  Stored as str when one
-                # value, list when multiple, to match the IdP's aud-claim shape.
-                if oauth_resource_str.strip():
-                    resources = [r.strip() for r in oauth_resource_str.split(",") if r.strip()]
-                    if len(resources) == 1:
-                        oauth_config["resource"] = resources[0]
-                    elif resources:
-                        oauth_config["resource"] = resources
+                if oauth_resource:
+                    oauth_config["resource"] = oauth_resource
 
                 LOGGER.info(f"✅ Assembled OAuth config from UI form fields: grant_type={oauth_grant_type}, issuer={oauth_issuer}")
-                LOGGER.info(f"DEBUG: Complete oauth_config = {oauth_config}")
 
         passthrough_headers = str(form.get("passthrough_headers"))
         if passthrough_headers and passthrough_headers.strip():
@@ -16342,10 +16373,9 @@ async def admin_edit_a2a_agent(
             oauth_password = str(form.get("oauth_password", ""))
             oauth_scopes_str = str(form.get("oauth_scopes", ""))
             oauth_audience = str(form.get("oauth_audience", "")).strip()
-            oauth_resource_str = str(form.get("oauth_resource", ""))
+            oauth_resource = _parse_oauth_resource(form.get("oauth_resource"))
 
-            # If any OAuth field is provided, assemble oauth_config
-            if any([oauth_grant_type, oauth_issuer, oauth_token_url, oauth_authorization_url, oauth_client_id, oauth_resource_str]):
+            if any([oauth_grant_type, oauth_issuer, oauth_token_url, oauth_authorization_url, oauth_client_id, oauth_resource]):
                 oauth_config = {}
 
                 if oauth_grant_type:
@@ -16353,43 +16383,32 @@ async def admin_edit_a2a_agent(
                 if oauth_issuer:
                     oauth_config["issuer"] = oauth_issuer
                 if oauth_token_url:
-                    oauth_config["token_url"] = oauth_token_url  # OAuthManager expects 'token_url', not 'token_endpoint'
+                    oauth_config["token_url"] = oauth_token_url
                 if oauth_authorization_url:
-                    oauth_config["authorization_url"] = oauth_authorization_url  # OAuthManager expects 'authorization_url', not 'authorization_endpoint'
+                    oauth_config["authorization_url"] = oauth_authorization_url
                 if oauth_redirect_uri:
                     oauth_config["redirect_uri"] = oauth_redirect_uri
                 if oauth_client_id:
                     oauth_config["client_id"] = oauth_client_id
                 if oauth_client_secret:
-                    # Encrypt the client secret
                     encryption = get_encryption_service(settings.auth_encryption_secret)
                     oauth_config["client_secret"] = await encryption.encrypt_secret_async(oauth_client_secret)
 
-                # Add username and password for password grant type
                 if oauth_username:
                     oauth_config["username"] = oauth_username
                 if oauth_password:
                     oauth_config["password"] = oauth_password
 
-                # Add audience parameter (for Atlassian, Auth0, and other non-RFC-8707 providers)
                 if oauth_audience:
                     oauth_config["audience"] = oauth_audience
 
-                # Parse scopes (comma or space separated)
                 if oauth_scopes_str:
                     scopes = [s.strip() for s in oauth_scopes_str.replace(",", " ").split() if s.strip()]
                     if scopes:
                         oauth_config["scopes"] = scopes
 
-                # Parse resource (RFC 8707 audience indicator); single value or
-                # comma-separated for multi-resource flows.  Stored as str when one
-                # value, list when multiple, to match the IdP's aud-claim shape.
-                if oauth_resource_str.strip():
-                    resources = [r.strip() for r in oauth_resource_str.split(",") if r.strip()]
-                    if len(resources) == 1:
-                        oauth_config["resource"] = resources[0]
-                    elif resources:
-                        oauth_config["resource"] = resources
+                if oauth_resource:
+                    oauth_config["resource"] = oauth_resource
 
                 LOGGER.info(f"✅ Assembled OAuth config from UI form fields (edit): grant_type={oauth_grant_type}, issuer={oauth_issuer}")
 

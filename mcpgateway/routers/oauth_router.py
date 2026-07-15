@@ -18,7 +18,7 @@ import logging
 import re
 import secrets
 from typing import Annotated, Any, Dict
-from urllib.parse import urlparse, urlunparse
+from urllib.parse import urlparse
 
 # Third-Party
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -102,37 +102,6 @@ async def enforce_fetch_tools_csrf(request: Request) -> None:
         raise HTTPException(status_code=403, detail="CSRF validation failed")
     if not secrets.compare_digest(csrf_header, csrf_cookie):
         raise HTTPException(status_code=403, detail="CSRF validation failed")
-
-
-def _normalize_resource_url(url: str | None, *, preserve_query: bool = False) -> str | None:
-    """Normalize URL for use as RFC 8707 resource parameter.
-
-    Per RFC 8707 Section 2:
-    - resource MUST be an absolute URI (scheme required; supports both URLs and URNs)
-    - resource MUST NOT include a fragment component
-    - resource SHOULD NOT include a query component (but allowed when necessary)
-
-    Args:
-        url: The resource URL to normalize
-        preserve_query: If True, preserve query component (for explicitly configured resources).
-                       If False, strip query (for auto-derived resources per RFC 8707 SHOULD NOT).
-
-    Returns:
-        Normalized URL suitable for RFC 8707 resource parameter, or None if invalid
-    """
-    if not url:
-        return None
-    parsed = urlparse(url)
-    # RFC 8707: resource MUST be an absolute URI (requires scheme)
-    # Support both hierarchical URIs (https://...) and URNs (urn:example:app)
-    if not parsed.scheme:
-        logger.warning(f"Invalid resource URL (must be absolute URI with scheme): {url}")
-        return None
-    # Remove fragment (MUST NOT per RFC 8707)
-    # Query: strip for auto-derived (SHOULD NOT), preserve for explicit config (allowed when necessary)
-    query = parsed.query if preserve_query else ""
-    normalized = urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, query, ""))
-    return normalized
 
 
 def _derive_resource_origin(url: str | None) -> str | None:

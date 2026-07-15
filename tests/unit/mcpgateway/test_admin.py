@@ -54,6 +54,8 @@ from mcpgateway.admin import (  # admin_get_metrics,
     _normalize_team_id,
     _normalize_ui_hide_values,
     _owner_access_condition,
+    _parse_gateway_data_from_request,
+    _parse_oauth_resource,
     _parse_tag_filter_groups,
     _read_request_json,
     _render_user_card_html,
@@ -25913,3 +25915,108 @@ class TestAdminPersonalTeamFiltering:
             # CRITICAL: Admin should see their pending request
             assert team_data.pending_request is not None, "Admin should see their pending join request"
             assert team_data.pending_request.status == "pending", f"Pending request status should be 'pending', got '{team_data.pending_request.status}'"
+
+
+class TestParseOAuthResource:
+    """Unit tests for the shared _parse_oauth_resource helper (PR #4476 review)."""
+
+    @pytest.mark.parametrize("raw", [None, "", "   ", "\n\t"])
+    def test_empty_returns_none(self, raw):
+        assert _parse_oauth_resource(raw) is None
+
+    @pytest.mark.parametrize("raw", [42, 3.14, ["already", "a", "list"], {"k": "v"}])
+    def test_non_string_returns_none(self, raw):
+        assert _parse_oauth_resource(raw) is None
+
+    def test_single_uri_passes_through(self):
+        assert _parse_oauth_resource("https://api.example.com") == "https://api.example.com"
+
+    def test_single_uri_stripped(self):
+        assert _parse_oauth_resource("   https://api.example.com  \n") == "https://api.example.com"
+
+    def test_multi_value_comma_separated(self):
+        result = _parse_oauth_resource("https://a.example.com, https://b.example.com")
+        assert result == ["https://a.example.com", "https://b.example.com"]
+
+    def test_multi_value_whitespace_separated(self):
+        result = _parse_oauth_resource("https://a.example.com https://b.example.com")
+        assert result == ["https://a.example.com", "https://b.example.com"]
+
+    def test_multi_value_newline_separated(self):
+        result = _parse_oauth_resource("https://a.example.com\nhttps://b.example.com")
+        assert result == ["https://a.example.com", "https://b.example.com"]
+
+    def test_uri_containing_comma_is_preserved_as_single(self):
+        """Regression: reviewer finding #3 — comma-in-URI must not be corrupted into two entries."""
+        raw = "https://api.example.com/path?filter=a,b"
+        assert _parse_oauth_resource(raw) == raw
+
+    def test_urns_supported(self):
+        result = _parse_oauth_resource("urn:example:app-a, urn:example:app-b")
+        assert result == ["urn:example:app-a", "urn:example:app-b"]
+
+    def test_mixed_valid_and_relative_falls_back_to_single(self):
+        """When splitting produces at least one piece without a URI scheme, treat as single."""
+        raw = "https://api.example.com, api.example.com/other"
+        assert _parse_oauth_resource(raw) == raw
+
+
+class TestParseGatewayDataOAuthResource:
+    """Regression tests for reviewer finding #1: gateway CREATE form must persist oauth_resource."""
+
+    async def _parse_form(self, form_dict):
+        request = MagicMock(spec=Request)
+        request.headers = {"content-type": "multipart/form-data"}
+        request.form = AsyncMock(return_value=FakeForm(form_dict))
+        return await _parse_gateway_data_from_request(request)
+
+    @pytest.mark.asyncio
+    async def test_create_form_persists_single_resource(self):
+        data = await self._parse_form(
+            {
+                "name": "gw",
+                "url": "https://gw.example.com",
+                "oauth_grant_type": "authorization_code",
+                "oauth_client_id": "cid",
+                "oauth_resource": "https://api.example.com",
+            }
+        )
+        assert data["oauth_config"]["resource"] == "https://api.example.com"
+
+    @pytest.mark.asyncio
+    async def test_create_form_persists_multi_resource(self):
+        data = await self._parse_form(
+            {
+                "name": "gw",
+                "url": "https://gw.example.com",
+                "oauth_grant_type": "authorization_code",
+                "oauth_client_id": "cid",
+                "oauth_resource": "https://a.example.com, https://b.example.com",
+            }
+        )
+        assert data["oauth_config"]["resource"] == ["https://a.example.com", "https://b.example.com"]
+
+    @pytest.mark.asyncio
+    async def test_create_form_omits_empty_resource(self):
+        data = await self._parse_form(
+            {
+                "name": "gw",
+                "url": "https://gw.example.com",
+                "oauth_grant_type": "authorization_code",
+                "oauth_client_id": "cid",
+                "oauth_resource": "",
+            }
+        )
+        assert "resource" not in data["oauth_config"]
+
+    @pytest.mark.asyncio
+    async def test_create_form_resource_alone_triggers_oauth_config(self):
+        """Setting only oauth_resource still assembles oauth_config (any-field gate covers resource)."""
+        data = await self._parse_form(
+            {
+                "name": "gw",
+                "url": "https://gw.example.com",
+                "oauth_resource": "https://api.example.com",
+            }
+        )
+        assert data["oauth_config"] == {"resource": "https://api.example.com"}

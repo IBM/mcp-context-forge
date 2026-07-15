@@ -23,6 +23,9 @@ from urllib.parse import urlparse
 # Third-Party
 import jwt
 
+# First-Party
+from mcpgateway.config import settings
+
 logger = logging.getLogger(__name__)
 
 
@@ -173,9 +176,11 @@ def _validate_audience(claims: Dict[str, Any], oauth_config: Dict[str, Any], gat
     has a ``resource`` value -- whether the admin set it explicitly via the UI
     or it was auto-learned from a previous IdP token.  When no ``resource`` is
     configured and the validator falls back to ``gateway_url``, the check is
-    *advisory*: a mismatch is recorded as a warning but is not blocking, so
-    the upstream MCP server is allowed to be the authoritative validator.
-    See :class:`TokenValidationResult.blocking_errors` for the full rule.
+    *advisory* by default: a mismatch is recorded as a warning but is not
+    blocking, so the upstream MCP server is allowed to be the authoritative
+    validator.  Set ``OAUTH_REQUIRE_CONFIGURED_RESOURCE=true`` to make even
+    the auto-derived check blocking.  See
+    :class:`TokenValidationResult.blocking_errors` for the full rule.
 
     Args:
         claims: Decoded JWT claims.
@@ -194,18 +199,20 @@ def _validate_audience(claims: Dict[str, Any], oauth_config: Dict[str, Any], gat
         logger.debug("OAuth token for gateway %s has no 'aud' claim", gateway_name)
         return
 
-    # Normalize both sides to lists for a simple membership check.
-    # Per RFC 7519 Section 4.1.3, aud can be a string or array.
+    # Per RFC 7519 Section 4.1.3, aud can be a string or array. Normalize both
+    # sides to lists for a simple membership check.
     expected_list = expected if isinstance(expected, list) else [expected]
     aud_list = token_aud if isinstance(token_aud, list) else [token_aud]
     if any(a in expected_list for a in aud_list):
         result.audience_match = True
     else:
         result.audience_match = False
-        # Authoritative iff the admin or auto-learn supplied a non-empty resource.
-        # Falling back to gateway_url (no configured resource) is advisory -- a
-        # mismatch is logged but does not block forwarding.
-        result.audience_authoritative = bool(configured_resource)
+        # Authoritative iff the admin or auto-learn supplied a non-empty resource,
+        # OR the operator opted into strict validation for auto-derived audiences
+        # via OAUTH_REQUIRE_CONFIGURED_RESOURCE. Falling back to gateway_url with
+        # the setting off is advisory -- a mismatch is logged but does not block
+        # forwarding, leaving the upstream MCP server as the authority.
+        result.audience_authoritative = bool(configured_resource) or settings.oauth_require_configured_resource
         result.warnings.append("Token audience mismatch: token aud does not match expected resource or gateway URL")
 
 

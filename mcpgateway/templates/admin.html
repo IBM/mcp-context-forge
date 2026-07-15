@@ -10116,7 +10116,10 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                             RFC 8707 resource indicator. Leave blank to auto-derive
                             from gateway URL and auto-learn from IdP. Set explicitly
                             for IdPs that return an opaque audience identifier.
-                            Clear this field to trigger re-learning on next OAuth flow.
+                            To trigger re-learning, use the API with
+                            <code>oauth_config.resource = null</code> — clearing the
+                            UI field preserves the stored value to avoid stale-save
+                            races with the OAuth callback.
                           </p>
                         </div>
 
@@ -10600,6 +10603,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                                 title="Auto-discover token &amp; authorization endpoints from issuer metadata"
                               >🔍 Discover</button>
                             </div>
+                            <div class="oauth-discover-status mt-1 hidden"></div>
                           </div>
 
                           <div>
@@ -10619,9 +10623,11 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                             RFC 8707 resource indicator. Leave blank to auto-derive
                             from gateway URL and auto-learn from IdP. Set explicitly
                             for IdPs that return an opaque audience identifier.
-                            Clear this field to trigger re-learning on next OAuth flow.
+                            To trigger re-learning, use the API with
+                            <code>oauth_config.resource = null</code> — clearing the
+                            UI field preserves the stored value to avoid stale-save
+                            races with the OAuth callback.
                           </p>
-                          <div class="oauth-discover-status mt-1 hidden"></div>
                           </div>
 
                           <div>

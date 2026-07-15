@@ -9366,3 +9366,127 @@ class TestTokenExchangeAdminOnlyGate:
             mock_check.return_value = False
             with pytest.raises(PermissionError, match="platform administrator"):
                 await gateway_service.register_gateway(test_db, cfg, owner_email="developer@example.com")
+
+
+class TestFetchToolsAfterOAuthEnforcementPoint:
+    """Reviewer's HIGH-severity test-coverage gap: advisory vs. blocking audience mismatch at the enforcement point.
+
+    ``gateway_service.fetch_tools_after_oauth`` is the sole production caller
+    of ``TokenValidationResult.blocking_errors``. Without these tests, a
+    regression in the advisory/authoritative split at
+    ``token_validation_service._validate_audience`` would go undetected —
+    tokens minted for the wrong resource might silently reach the upstream
+    MCP server (advisory case) or block on the wrong condition (authoritative
+    case).
+    """
+
+    @staticmethod
+    def _make_jwt(claims: dict) -> str:
+        # Third-Party
+        import jwt as pyjwt  # pylint: disable=import-outside-toplevel
+
+        return pyjwt.encode(claims, "test-key", algorithm="HS256")
+
+    @staticmethod
+    def _mock_gateway(oauth_config: dict, url: str = "https://mcp.example.com/deep/path") -> MagicMock:
+        gateway = MagicMock(spec=DbGateway)
+        gateway.id = "gw123"
+        gateway.name = "test-gw"
+        gateway.url = url
+        gateway.oauth_config = oauth_config
+        gateway.transport = "STREAMABLEHTTP"
+        gateway.ca_certificate = None
+        gateway.client_cert = None
+        gateway.client_key = None
+        return gateway
+
+    @pytest.mark.asyncio
+    async def test_advisory_mismatch_forwards_token(self):
+        """No configured resource + mismatched aud + setting off → advisory, tokens forwarded."""
+        gateway = self._mock_gateway({"grant_type": "authorization_code"})
+        db = MagicMock()
+        db.execute.return_value.scalar_one_or_none.return_value = gateway
+        access_token = self._make_jwt({"aud": "unrelated-audience"})
+
+        with patch("mcpgateway.services.token_storage_service.TokenStorageService") as mock_storage_cls, \
+             patch("mcpgateway.services.token_validation_service.settings") as mock_settings, \
+             patch.object(GatewayService, "connect_to_streamablehttp_server", new=AsyncMock(return_value=({}, [], [], [], None))) as mock_connect, \
+             patch.object(GatewayService, "_sync_gateway_catalog", return_value=MagicMock()), \
+             patch.object(GatewayService, "_reconcile_gateway_catalog", return_value=MagicMock(tools_added=0, resources_added=0, prompts_added=0)), \
+             patch("mcpgateway.services.gateway_service.register_gateway_capabilities_for_notifications"):
+            mock_settings.oauth_require_configured_resource = False
+            mock_storage = MagicMock()
+            mock_storage.get_user_token = AsyncMock(return_value=access_token)
+            mock_storage_cls.return_value = mock_storage
+
+            service = GatewayService()
+            await service.fetch_tools_after_oauth(db, "gw123", "user@example.com")
+
+            mock_connect.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_blocking_mismatch_with_configured_resource_refuses(self):
+        """Configured resource + mismatched aud → blocking, raises GatewayConnectionError."""
+        gateway = self._mock_gateway({"grant_type": "authorization_code", "resource": "https://api.example.com"})
+        db = MagicMock()
+        db.execute.return_value.scalar_one_or_none.return_value = gateway
+        access_token = self._make_jwt({"aud": "wrong-audience"})
+
+        with patch("mcpgateway.services.token_storage_service.TokenStorageService") as mock_storage_cls, \
+             patch.object(GatewayService, "connect_to_streamablehttp_server", new=AsyncMock()) as mock_connect:
+            mock_storage = MagicMock()
+            mock_storage.get_user_token = AsyncMock(return_value=access_token)
+            mock_storage_cls.return_value = mock_storage
+
+            service = GatewayService()
+            with pytest.raises(GatewayConnectionError) as exc_info:
+                await service.fetch_tools_after_oauth(db, "gw123", "user@example.com")
+
+            assert "Refusing to forward" in str(exc_info.value)
+            assert "audience" in str(exc_info.value).lower()
+            mock_connect.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_setting_enabled_makes_auto_derived_mismatch_blocking(self):
+        """OAUTH_REQUIRE_CONFIGURED_RESOURCE=true → auto-derived mismatch also blocks."""
+        gateway = self._mock_gateway({"grant_type": "authorization_code"})
+        db = MagicMock()
+        db.execute.return_value.scalar_one_or_none.return_value = gateway
+        access_token = self._make_jwt({"aud": "unrelated-audience"})
+
+        with patch("mcpgateway.services.token_storage_service.TokenStorageService") as mock_storage_cls, \
+             patch("mcpgateway.services.token_validation_service.settings") as mock_settings, \
+             patch.object(GatewayService, "connect_to_streamablehttp_server", new=AsyncMock()) as mock_connect:
+            mock_settings.oauth_require_configured_resource = True
+            mock_storage = MagicMock()
+            mock_storage.get_user_token = AsyncMock(return_value=access_token)
+            mock_storage_cls.return_value = mock_storage
+
+            service = GatewayService()
+            with pytest.raises(GatewayConnectionError) as exc_info:
+                await service.fetch_tools_after_oauth(db, "gw123", "user@example.com")
+
+            assert "Refusing to forward" in str(exc_info.value)
+            mock_connect.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_matching_audience_does_not_block(self):
+        """Well-formed matching aud → no blocking, tokens forwarded."""
+        gateway = self._mock_gateway({"grant_type": "authorization_code", "resource": "https://api.example.com"})
+        db = MagicMock()
+        db.execute.return_value.scalar_one_or_none.return_value = gateway
+        access_token = self._make_jwt({"aud": "https://api.example.com"})
+
+        with patch("mcpgateway.services.token_storage_service.TokenStorageService") as mock_storage_cls, \
+             patch.object(GatewayService, "connect_to_streamablehttp_server", new=AsyncMock(return_value=({}, [], [], [], None))) as mock_connect, \
+             patch.object(GatewayService, "_sync_gateway_catalog", return_value=MagicMock()), \
+             patch.object(GatewayService, "_reconcile_gateway_catalog", return_value=MagicMock(tools_added=0, resources_added=0, prompts_added=0)), \
+             patch("mcpgateway.services.gateway_service.register_gateway_capabilities_for_notifications"):
+            mock_storage = MagicMock()
+            mock_storage.get_user_token = AsyncMock(return_value=access_token)
+            mock_storage_cls.return_value = mock_storage
+
+            service = GatewayService()
+            await service.fetch_tools_after_oauth(db, "gw123", "user@example.com")
+
+            mock_connect.assert_awaited_once()
