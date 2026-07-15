@@ -1006,7 +1006,7 @@ The gateway includes built-in observability features for tracking HTTP requests,
     - docker-compose: Set via `--maxclients` argument
     - Helm: Set `redis.maxclients` in values.yaml
 
-    See [Scaling Guide](scale.md#redis-connection-capacity) for details.
+    See [Scaling Guide](scale.md#redis-sizing) for details.
 
 !!! tip "Cache Backend Selection"
 
