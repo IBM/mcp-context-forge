@@ -1540,5 +1540,3 @@ class TestOAuthManager:
                 assert result["access_token"] == "refreshed_token"
                 assert result["refresh_token"] == "new_refresh_token"
                 mock_get_ssl.assert_called_once_with(ca_cert, client_cert=client_cert, client_key=client_key)
-
-
