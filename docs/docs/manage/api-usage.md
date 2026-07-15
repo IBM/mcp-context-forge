@@ -1403,6 +1403,7 @@ Each `TeamMemberSeed` object:
 - Email addresses are normalised to lowercase before lookup; `ALICE@example.com` and `alice@example.com` are treated as the same address.
 - Duplicate addresses (case-insensitive) in a single request are rejected with a row-indexed error.
 - The whole operation is **atomic**: a failure on any seed rolls back the team and all prior seeds.
+- Deleting a team also deactivates its **pending invitations**, so an invitation cannot outlive (or be revived alongside) the team it points at.
 
 **Configuration notes:**
 

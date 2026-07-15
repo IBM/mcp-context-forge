@@ -284,6 +284,24 @@ class TestTeamsRouter:
             assert mock_service.create_team_with_members.call_args.kwargs["members"] == request.members
 
     @pytest.mark.asyncio
+    async def test_create_team_with_explicit_empty_members(self, mock_user_context, mock_team, mock_db):
+        """An explicit ``members=[]`` is passed through and returns empty result arrays, not None."""
+        request = TeamCreateRequest(name="New Team", visibility="private", members=[])
+
+        with mock_permission_check(is_admin=False), patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
+            mock_service = AsyncMock(spec=TeamManagementService)
+            mock_service.create_team_with_members = AsyncMock(return_value=TeamSeedResult(team=mock_team))
+            MockService.return_value = mock_service
+
+            from mcpgateway.routers.teams import create_team
+
+            result = await create_team(request, current_user_ctx=mock_user_context, db=mock_db)
+
+            assert result.members_added == []
+            assert result.invitations_sent == []
+            assert mock_service.create_team_with_members.call_args.kwargs["members"] == []
+
+    @pytest.mark.asyncio
     async def test_create_team_seed_failure_returns_400(self, mock_user_context, mock_db):
         """A member row the server cannot apply fails the whole request."""
         request = TeamCreateRequest(name="New Team", visibility="private", members=[{"email": "alice@example.com"}])

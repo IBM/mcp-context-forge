@@ -12,7 +12,7 @@ unit, and only a real transaction can show that.
 """
 
 # Standard
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
 import pytest
@@ -394,6 +394,25 @@ class TestSeedRollback:
         assert not team_exists(test_db, "Engineering")
 
     @pytest.mark.asyncio
+    async def test_creator_plus_seeds_exactly_at_the_limit_is_allowed(self, service, test_db):
+        """The boundary is inclusive: creator + seeds may equal max_members exactly."""
+        make_user(test_db, "alice@example.com")
+
+        # max_members=2 leaves room for the creator (owner) plus exactly one seed.
+        result = await service.create_team_with_members(
+            name="Engineering",
+            description=None,
+            created_by=CREATOR,
+            visibility="private",
+            max_members=2,
+            members=[TeamMemberSeed(email="alice@example.com", role="member")],
+        )
+
+        assert [m.email for m in result.members_added] == ["alice@example.com"]
+        members = test_db.query(EmailTeamMember).filter(EmailTeamMember.team_id == result.team.id, EmailTeamMember.is_active.is_(True)).count()
+        assert members == 2
+
+    @pytest.mark.asyncio
     async def test_failed_invitation_rolls_back_the_whole_team(self, service, test_db):
         """An invitation that cannot be sent takes the team and the members with it."""
         make_user(test_db, "alice@example.com")
@@ -477,6 +496,61 @@ class TestSeedingAReactivatedTeam:
         # Exactly one live invitation: the new one, not the resurrected old one
         active = test_db.query(EmailTeamInvitation).filter(EmailTeamInvitation.team_id == second.team.id, EmailTeamInvitation.is_active.is_(True)).all()
         assert [i.id for i in active] == [second.invitations_sent[0].invitation_id]
+
+
+class TestSeededMembershipCrossServiceEffects:
+    """Seeding a member must reach the same RBAC and cache side effects as add_member_to_team()."""
+
+    @pytest.mark.asyncio
+    async def test_seeded_members_get_an_rbac_role_invitees_do_not(self, service, test_db):
+        """Each added member is granted the matching RBAC role; invited addresses are not."""
+        make_user(test_db, "alice@example.com")
+        make_user(test_db, "lead@example.com")
+
+        with patch.object(service, "_assign_team_rbac_role", new_callable=AsyncMock) as assign_role:
+            result = await service.create_team_with_members(
+                name="Engineering",
+                description=None,
+                created_by=CREATOR,
+                visibility="private",
+                members=[
+                    TeamMemberSeed(email="alice@example.com", role="member"),
+                    TeamMemberSeed(email="lead@example.com", role="owner"),
+                    TeamMemberSeed(email="external@partner.com", role="member"),
+                ],
+            )
+
+        team_id = str(result.team.id)
+        granted = {(call.args[0], call.args[1], call.args[2]) for call in assign_role.call_args_list}
+        # Both known users are granted their seeded role against the new team.
+        assert ("alice@example.com", team_id, "member") in granted
+        assert ("lead@example.com", team_id, "owner") in granted
+        # The invited outsider never became a member, so no role is assigned for them.
+        assert not any(call.args[0] == "external@partner.com" for call in assign_role.call_args_list)
+
+    @pytest.mark.asyncio
+    async def test_auth_caches_are_invalidated_for_each_seeded_member(self, service, test_db):
+        """Adding a member must invalidate that member's auth caches, or a stale cache hides the new team."""
+        make_user(test_db, "alice@example.com")
+
+        with patch.object(service, "_invalidate_membership_caches", new=MagicMock()) as invalidate:
+            result = await service.create_team_with_members(
+                name="Engineering",
+                description=None,
+                created_by=CREATOR,
+                visibility="private",
+                members=[
+                    TeamMemberSeed(email="alice@example.com", role="member"),
+                    TeamMemberSeed(email="external@partner.com", role="member"),
+                ],
+            )
+
+        team_id = str(result.team.id)
+        invalidated = {call.args[0] for call in invalidate.call_args_list}
+        # The added member's caches are cleared; the invited outsider has no membership to clear.
+        assert "alice@example.com" in invalidated
+        assert "external@partner.com" not in invalidated
+        assert all(call.args[1] == team_id for call in invalidate.call_args_list)
 
 
 class TestCreateTeamUnchanged:
