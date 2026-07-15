@@ -299,6 +299,28 @@ async def test_redis_builds_own_client_and_closes_on_stop(monkeypatch):
     assert e.is_primary is True
     await e.stop()  # owns_redis -> aclose()
     assert closed["count"] == 1
+    # stop() is idempotent: the owned client was dropped, so a second call is a no-op.
+    assert e._redis is None  # pylint: disable=protected-access
+    await e.stop()
+    assert closed["count"] == 1  # not closed again
+
+
+async def test_start_is_idempotent_on_redis_backend():
+    """A second start() on the redis backend is a no-op: no self-demote, no orphaned task.
+
+    Without the guard, the second start re-issues SET NX (fails since we already
+    own the key) and would flip is_primary to False, and would overwrite the
+    maintenance task with a fresh one, orphaning the first.
+    """
+    server = fakeredis.FakeServer()
+    e = _redis_elector(server, lease_ttl=30)  # heartbeat off (interval=10) so the loop stays idle
+    await e.start()
+    assert e.is_primary is True
+    task = e._task  # pylint: disable=protected-access
+    await e.start()  # second call must be a no-op
+    assert e.is_primary is True  # still primary, not demoted
+    assert e._task is task  # same maintenance task, not replaced/orphaned  # pylint: disable=protected-access
+    await e.stop()
 
 
 # --- module singleton --------------------------------------------------------
