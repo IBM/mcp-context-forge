@@ -418,6 +418,39 @@ class VaultTokenBackend(AbstractTokenBackend):
 
         return access_token
 
+    async def get_user_auth_headers(
+        self,
+        gateway_id: str,
+        team_id: str,
+        app_user_email: str,
+    ) -> dict | None:
+        """Get per-user non-OAuth auth headers from Vault.
+
+        For non-OAuth credential types (bearer / basic / authheaders) ICA writes the
+        credential as a plain ``{header: value}`` dict under a ``headers`` field at the
+        SAME per-user Vault path used for OAuth tokens. This returns that dict so the
+        caller can merge it into the upstream request headers, exactly like the
+        gateway-wide static auth path does.
+
+        Args:
+            gateway_id: Gateway ID (resolved to mcp_url)
+            team_id: Team identifier
+            app_user_email: ContextForge user email
+
+        Returns:
+            The ``{header: value}`` dict, or None if no per-user record / no headers field.
+        """
+        mcp_url = self._resolve_mcp_url(gateway_id)
+        path = self._construct_vault_path(team_id, mcp_url, app_user_email)
+        result = await self._vault_request("GET", path)
+        if not result or "data" not in result:
+            return None
+        data = result["data"]["data"]
+        headers = data.get("headers")
+        if isinstance(headers, dict) and headers:
+            return {str(k): str(v) for k, v in headers.items() if k and v}
+        return None
+
     async def get_token_info(
         self,
         gateway_id: str,

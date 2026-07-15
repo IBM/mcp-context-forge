@@ -4409,7 +4409,31 @@ class ToolService(BaseService):
                     logger.error("Failed to obtain OAuth access token for gateway %s: %s", gateway_name, e)
                     raise ToolInvocationError(f"OAuth authentication failed for gateway: {str(e)}")
         else:
-            headers = decode_auth(gateway_auth_value) if gateway_auth_value else {}
+            # Non-OAuth auth types (bearer / basic / authheaders / none): resolve PER-USER creds
+            # from Vault FIRST, then fall back to the gateway-wide (admin-set) static auth. ICA
+            # writes the per-user credential as a plain {header: value} dict under a `headers` field
+            # at the same per-user Vault path used for OAuth tokens.
+            headers = {}
+            if app_user_email:
+                try:
+                    # First-Party
+                    from mcpgateway.services.token_storage_service import TokenStorageService, build_token_user_context  # pylint: disable=import-outside-toplevel
+
+                    with fresh_db_session() as token_db:
+                        token_storage_context = build_token_user_context(token_db, app_user_email, token_teams)
+                        token_storage = TokenStorageService(token_db, user_context=token_storage_context)
+                        user_headers = await token_storage.get_user_auth_headers(gateway_id_str, app_user_email)
+                    if user_headers:
+                        headers = user_headers
+                        logger.info(
+                            "Using per-user Vault auth headers for gateway '%s' (user=%s)",
+                            gateway_name,
+                            app_user_email,
+                        )
+                except Exception as e:  # pylint: disable=broad-except
+                    logger.warning("Per-user Vault auth-header lookup failed for gateway %s: %s; falling back to gateway auth", gateway_name, e)
+            if not headers:
+                headers = decode_auth(gateway_auth_value) if gateway_auth_value else {}
 
         if request_headers:
             # B3: when the gateway uses token-exchange, the exchanged Authorization header
@@ -5682,7 +5706,24 @@ class ToolService(BaseService):
                                 logger.error("Failed to obtain OAuth access token for gateway %s: %s", gateway_name, e)
                                 raise ToolInvocationError(f"OAuth authentication failed for gateway: {str(e)}")
                     else:
-                        headers = decode_auth(gateway_auth_value) if gateway_auth_value else {}
+                        # Non-OAuth: per-user Vault creds FIRST, then gateway-wide static auth.
+                        headers = {}
+                        if app_user_email:
+                            try:
+                                # First-Party
+                                from mcpgateway.services.token_storage_service import TokenStorageService, build_token_user_context  # pylint: disable=import-outside-toplevel
+
+                                with fresh_db_session() as token_db:
+                                    token_storage_context = build_token_user_context(token_db, app_user_email, token_teams)
+                                    token_storage = TokenStorageService(token_db, user_context=token_storage_context)
+                                    user_headers = await token_storage.get_user_auth_headers(gateway_id_str, app_user_email)
+                                if user_headers:
+                                    headers = user_headers
+                                    logger.info("Using per-user Vault auth headers for gateway '%s' (user=%s)", gateway_name, app_user_email)
+                            except Exception as e:  # pylint: disable=broad-except
+                                logger.warning("Per-user Vault auth-header lookup failed for gateway %s: %s; falling back to gateway auth", gateway_name, e)
+                        if not headers:
+                            headers = decode_auth(gateway_auth_value) if gateway_auth_value else {}
 
                     # Use cached passthrough headers (no DB query needed)
                     if request_headers:

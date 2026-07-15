@@ -283,6 +283,33 @@ class TokenStorageService:
             threshold_seconds=threshold_seconds,
         )
 
+    async def get_user_auth_headers(
+        self,
+        gateway_id: str,
+        app_user_email: str,
+    ) -> Optional[Dict[str, str]]:
+        """Get per-user non-OAuth auth headers (bearer/basic/authheaders) for a user.
+
+        Only the Vault backend stores these (written by ICA as a ``headers`` dict at the
+        per-user path). Returns None for backends that don't support it.
+
+        Args:
+            gateway_id: ID of the gateway
+            app_user_email: ContextForge user email (required)
+
+        Returns:
+            The ``{header: value}`` dict, or None.
+        """
+        backend_getter = getattr(self._backend, "get_user_auth_headers", None)
+        if backend_getter is None:
+            return None
+        team_id = self._get_team_id(gateway_id, app_user_email)
+        return await backend_getter(
+            gateway_id=gateway_id,
+            team_id=team_id,
+            app_user_email=app_user_email,
+        )
+
     async def get_token_info(
         self,
         gateway_id: str,
