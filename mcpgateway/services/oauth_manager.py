@@ -1907,24 +1907,33 @@ class OAuthManager:
             # DEBUG-only: opaque/non-JWT access tokens are normal for some IdPs,
             # so this is not a warning.  But operators chasing "audience never
             # learned" need a breadcrumb to distinguish "token was opaque" from
-            # "JWT library raised something unexpected".
-            logger.debug("Unverified JWT decode failed (%s): %s", type(exc).__name__, exc)
+            # "JWT library raised something unexpected".  Log only the exception
+            # class name — the exception's string form can echo attacker-controlled
+            # parsing details from malformed tokens.
+            logger.debug("Unverified JWT decode failed: %s", type(exc).__name__)
             return {}
         return claims if isinstance(claims, dict) else {}
 
     @staticmethod
     def _coerce_aud_claim(aud: Any) -> Optional[Union[str, List[str]]]:
-        """Coerce a raw ``aud`` claim to a well-shaped audience value or ``None``.
+        """Coerce a raw ``aud`` claim to a well-shaped, non-empty audience value or ``None``.
+
+        Empty strings, empty lists, and lists containing empty/whitespace-only strings
+        are rejected as ``None`` so a malformed IdP response cannot overwrite a
+        previously-learned per-user audience via ``TokenStorageService.store_tokens``
+        (whose ``if learned_aud is not None`` guard would otherwise pass through an
+        empty value and silently clobber good state).
 
         Args:
             aud: Raw claim value.
 
         Returns:
-            The ``aud`` claim as ``str`` or ``list[str]``, otherwise ``None``.
+            The ``aud`` claim as a non-empty ``str`` or non-empty ``list[str]`` of
+            non-empty strings, otherwise ``None``.
         """
         if isinstance(aud, str):
-            return aud
-        if isinstance(aud, list) and all(isinstance(item, str) for item in aud):
+            return aud if aud.strip() else None
+        if isinstance(aud, list) and aud and all(isinstance(item, str) and item.strip() for item in aud):
             return aud
         return None
 

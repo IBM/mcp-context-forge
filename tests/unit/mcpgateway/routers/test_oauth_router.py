@@ -1438,6 +1438,127 @@ class TestOAuthRouterAdditionalCoverage:
         mock_db.commit.assert_called()
 
     @pytest.mark.asyncio
+    async def test_initiate_oauth_flow_dcr_does_not_persist_request_local_resource(self, mock_db, mock_request, mock_current_user):
+        """Regression for the 2nd-review MEDIUM: DCR must not persist the request-local
+        auto-derived ``resource`` to shared ``gateway.oauth_config``.
+
+        This route enforces gateway *access* but not ``gateways.update``, so persisting
+        the auto-derived resource would let any authenticated caller pin the shared
+        audience for all users — the same RBAC-bypass class the callback-path
+        redesign eliminated by moving learned audience to OAuthToken.learned_aud.
+        """
+        mock_gateway = Mock(spec=Gateway)
+        mock_gateway.id = "gateway123"
+        mock_gateway.name = "Gateway"
+        mock_gateway.url = "https://mcp.example.com/deep/path"
+        mock_gateway.visibility = "public"
+        mock_gateway.team_id = None
+        mock_gateway.auth_type = None
+        # Gateway has issuer but no client_id (triggers DCR) and no admin-configured resource.
+        mock_gateway.oauth_config = {
+            "grant_type": "authorization_code",
+            "issuer": "https://issuer.example.com",
+            "redirect_uri": "https://gateway.example.com/oauth/callback",
+        }
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+
+        auth_data = {"authorization_url": "https://issuer.example.com/auth"}
+
+        class _Registered:
+            client_id = "client-123"
+            client_secret_encrypted = None
+            token_endpoint_auth_method = "client_secret_post"
+
+        class _FakeDcrService:
+            async def get_or_register_client(self, **_kwargs):
+                return _Registered()
+
+            async def discover_as_metadata(self, _issuer):
+                return {"authorization_endpoint": "https://issuer.example.com/auth", "token_endpoint": "https://issuer.example.com/token"}
+
+        with patch("mcpgateway.routers.oauth_router.DcrService", return_value=_FakeDcrService()):
+            with patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_mgr:
+                mock_mgr = Mock()
+                mock_mgr.initiate_authorization_code_flow = AsyncMock(return_value=auth_data)
+                mock_oauth_mgr.return_value = mock_mgr
+
+                with patch("mcpgateway.routers.oauth_router.TokenStorageService"):
+                    from mcpgateway.routers.oauth_router import initiate_oauth_flow
+
+                    with patch("mcpgateway.routers.oauth_router.settings") as mock_settings:
+                        mock_settings.dcr_enabled = True
+                        mock_settings.dcr_auto_register_on_missing_credentials = True
+                        mock_settings.dcr_default_scopes = ["openid"]
+
+                        await initiate_oauth_flow("gateway123", mock_request, mock_current_user, mock_db)
+
+        # DCR credentials + AS metadata MUST be persisted (this is the whole point of DCR).
+        assert mock_gateway.oauth_config["client_id"] == "client-123"
+        assert mock_gateway.oauth_config["token_endpoint_auth_method"] == "client_secret_post"
+        assert mock_gateway.oauth_config["authorization_url"] == "https://issuer.example.com/auth"
+        assert mock_gateway.oauth_config["token_url"] == "https://issuer.example.com/token"
+
+        # Request-local auto-derived resource MUST NOT be persisted to shared config.
+        # It was set in the request-local dict for the outbound RFC 8707 request,
+        # but must be stripped before writing to gateway.oauth_config.
+        assert "resource" not in mock_gateway.oauth_config, (
+            "DCR persist path leaked request-local `resource` to shared gateway.oauth_config — "
+            "this is the RBAC-bypass class of bug the DCR-path fix eliminated. See "
+            "oauth_router.initiate_oauth_flow's persist_dict logic."
+        )
+
+    @pytest.mark.asyncio
+    async def test_initiate_oauth_flow_dcr_preserves_admin_configured_resource(self, mock_db, mock_request, mock_current_user):
+        """Admin-configured ``resource`` must survive the DCR persistence path unchanged."""
+        mock_gateway = Mock(spec=Gateway)
+        mock_gateway.id = "gateway123"
+        mock_gateway.name = "Gateway"
+        mock_gateway.url = "https://mcp.example.com/deep/path"
+        mock_gateway.visibility = "public"
+        mock_gateway.team_id = None
+        mock_gateway.auth_type = None
+        mock_gateway.oauth_config = {
+            "grant_type": "authorization_code",
+            "issuer": "https://issuer.example.com",
+            "redirect_uri": "https://gateway.example.com/oauth/callback",
+            "resource": "api://admin-configured-audience",
+        }
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+
+        auth_data = {"authorization_url": "https://issuer.example.com/auth"}
+
+        class _Registered:
+            client_id = "client-123"
+            client_secret_encrypted = None
+            token_endpoint_auth_method = "client_secret_post"
+
+        class _FakeDcrService:
+            async def get_or_register_client(self, **_kwargs):
+                return _Registered()
+
+            async def discover_as_metadata(self, _issuer):
+                return {"authorization_endpoint": "https://issuer.example.com/auth", "token_endpoint": "https://issuer.example.com/token"}
+
+        with patch("mcpgateway.routers.oauth_router.DcrService", return_value=_FakeDcrService()):
+            with patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_mgr:
+                mock_mgr = Mock()
+                mock_mgr.initiate_authorization_code_flow = AsyncMock(return_value=auth_data)
+                mock_oauth_mgr.return_value = mock_mgr
+
+                with patch("mcpgateway.routers.oauth_router.TokenStorageService"):
+                    from mcpgateway.routers.oauth_router import initiate_oauth_flow
+
+                    with patch("mcpgateway.routers.oauth_router.settings") as mock_settings:
+                        mock_settings.dcr_enabled = True
+                        mock_settings.dcr_auto_register_on_missing_credentials = True
+                        mock_settings.dcr_default_scopes = ["openid"]
+
+                        await initiate_oauth_flow("gateway123", mock_request, mock_current_user, mock_db)
+
+        # Admin's explicit resource must be preserved exactly — not overwritten by origin derivation.
+        assert mock_gateway.oauth_config["resource"] == "api://admin-configured-audience"
+
+    @pytest.mark.asyncio
     async def test_initiate_oauth_flow_team_access_denied(self, mock_db, mock_request, mock_current_user):
         mock_gateway = Mock(spec=Gateway)
         mock_gateway.id = "gateway123"

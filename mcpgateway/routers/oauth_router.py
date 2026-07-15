@@ -115,10 +115,12 @@ def _derive_resource_origin(url: str | None) -> str | None:
     token's actual aud and produces validation failures.
 
     For an admin who has not explicitly configured ``oauth_config["resource"]``,
-    derive the URL's origin as a best-effort starting point.  The auto-learn
-    callback will overwrite it with the IdP's actual aud on the first
-    successful flow, but starting from the origin maximizes the chance the
-    initial flow succeeds against typical providers.
+    derive the URL's origin as a best-effort starting point for the *outbound*
+    RFC 8707 request parameter.  The derived value is used for THIS REQUEST
+    only and is not persisted to shared config; per-user inbound audience
+    validation uses ``OAuthToken.learned_aud`` populated on the callback (see
+    ``TokenStorageService.store_tokens`` and
+    ``token_validation_service._validate_audience``).
 
     Args:
         url: Gateway URL to extract the origin from.
@@ -126,7 +128,7 @@ def _derive_resource_origin(url: str | None) -> str | None:
     Returns:
         ``scheme://netloc`` for hierarchical URLs, or ``None`` for URNs / empty
         / scheme-less inputs (caller should treat as "no auto-fallback
-        possible" and rely on auto-learning).
+        possible" and rely on admin config or the per-user learned value).
     """
     if not url:
         return None
@@ -345,10 +347,13 @@ async def initiate_oauth_flow(gateway_id: str, request: Request, current_user: E
 
         oauth_config = gateway.oauth_config.copy()  # Work with a copy to avoid mutating the original
 
-        # RFC 8707: Set resource parameter for JWT access tokens.
-        # If resource was previously learned from the IdP's token aud claim, use it as-is.
-        # Otherwise derive the gateway URL's *origin* (not full path) since most OAuth
-        # providers issue tokens with origin-level audiences.  See _derive_resource_origin.
+        # RFC 8707: Set the outbound `resource` parameter for the IdP request.
+        # Admin-configured `oauth_config.resource` takes precedence; otherwise
+        # derive the gateway URL's *origin* (not full path) since most OAuth
+        # providers issue tokens with origin-level audiences.  This value is
+        # request-local — the DCR persist block below deliberately strips it
+        # before writing to shared config, and per-user inbound validation
+        # uses OAuthToken.learned_aud (populated on the callback).
         if not oauth_config.get("resource"):
             origin = _derive_resource_origin(gateway.url)
             if origin:
@@ -403,9 +408,22 @@ async def initiate_oauth_flow(gateway_id: str, request: Request, current_user: E
                         oauth_config["token_url"] = metadata.get("token_endpoint")
                         logger.info(f"Discovered OAuth endpoints for {issuer}")
 
-                    # Update gateway's oauth_config and auth_type in database for future use.
-                    # Protect sensitive fields before persistence to keep service-layer behavior consistent.
-                    gateway.oauth_config = await protect_oauth_config_for_storage(oauth_config, existing_oauth_config=gateway.oauth_config)
+                    # Persist only DCR-derived fields (client credentials + AS metadata) —
+                    # deliberately strip the request-local `resource` derivation before
+                    # writing to shared config. This route enforces gateway *access* but
+                    # not gateways.update, so persisting the auto-derived resource would
+                    # let any authenticated caller pin the shared audience for all users
+                    # — the same RBAC-bypass class of bug the callback-path redesign
+                    # eliminated by moving learned audience to OAuthToken.learned_aud.
+                    # Admin-configured resource (present in gateway.oauth_config before
+                    # this request) is preserved as-is.
+                    persist_dict = dict(oauth_config)
+                    stored_resource = (gateway.oauth_config or {}).get("resource")
+                    if stored_resource is None:
+                        persist_dict.pop("resource", None)
+                    else:
+                        persist_dict["resource"] = stored_resource
+                    gateway.oauth_config = await protect_oauth_config_for_storage(persist_dict, existing_oauth_config=gateway.oauth_config)
                     gateway.auth_type = "oauth"  # Ensure auth_type is set for OAuth-protected servers
                     db.commit()
 
@@ -584,10 +602,10 @@ async def oauth_callback(
 
         # Complete OAuth flow
 
-        # RFC 8707: Set resource parameter for the token exchange request.
-        # If resource was previously learned from the IdP's token aud claim, use it as-is.
-        # Otherwise derive the gateway URL's *origin* (not full path); see
-        # _derive_resource_origin for the rationale.
+        # RFC 8707: Set the outbound `resource` parameter for the token exchange.
+        # Admin-configured `oauth_config.resource` takes precedence; otherwise
+        # derive the gateway URL's *origin* (not full path).  Request-local
+        # only — not persisted (see _derive_resource_origin docstring).
         oauth_config_with_resource = gateway.oauth_config.copy()
         if not oauth_config_with_resource.get("resource"):
             origin = _derive_resource_origin(gateway.url)
