@@ -137,10 +137,7 @@ class TokenStorageService:
             self._backend = DatabaseTokenBackend(db, settings)
             logger.debug("Token storage backend: Database")
         else:
-            raise ValueError(
-                f"Unknown OAUTH_TOKEN_BACKEND: {settings.oauth_token_backend}. "
-                f"Expected 'database' or 'vault'."
-            )
+            raise ValueError(f"Unknown OAUTH_TOKEN_BACKEND: {settings.oauth_token_backend}. Expected 'database' or 'vault'.")
 
     def _get_team_id(self, gateway_id: str, app_user_email: str) -> Optional[str]:
         """
@@ -200,7 +197,7 @@ class TokenStorageService:
                 # same JWT. See: tests/unit/services/test_token_storage_service.py.
                 #
                 # Log a warning when multiple teams are present to aid debugging.
-                if len(teams) > 1 and hasattr(self._backend, '__class__') and 'Vault' in self._backend.__class__.__name__:
+                if len(teams) > 1 and hasattr(self._backend, "__class__") and "Vault" in self._backend.__class__.__name__:
                     logger.warning(
                         "User %s has %d teams; using teams[0]=%s for Vault OAuth token path. "
                         "Vault backend requires stable team ordering (guaranteed by AuthMiddleware DB query ordering). "
