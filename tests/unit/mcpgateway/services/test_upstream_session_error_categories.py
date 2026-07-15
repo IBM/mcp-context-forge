@@ -453,3 +453,145 @@ async def test_structured_logger_exception_handling(monkeypatch):
     assert "Structured logger is broken" not in error_msg
     # Verify the logger was actually invoked (confirming we hit the except block)
     assert logger_called, "Structured logger should have been called"
+
+
+@pytest.mark.asyncio
+async def test_logger_error_call_with_exc_info(monkeypatch, caplog):
+    """Verify that logger.error is called with exc_info=exc for tracebacks."""
+    # First-Party
+    from mcpgateway.services import upstream_session_registry as usr
+
+    def fake_stream(**_kw):
+        return _FakeTransportCtx(enter_exc=ConnectionRefusedError("Connection refused"))
+
+    monkeypatch.setattr(usr, "streamablehttp_client", fake_stream)
+    monkeypatch.setattr(usr, "ClientSession", _FakeClientSessionCM)
+
+    req = _make_request()
+
+    with caplog.at_level("ERROR"):
+        with pytest.raises(RuntimeError):
+            await usr._default_session_factory(req)  # pylint: disable=protected-access
+
+    # Verify logger.error was called with the categorized error message
+    assert any(
+        "connection_refused" in record.message
+        and "ConnectionRefusedError" in record.message
+        for record in caplog.records
+    ), "Logger should have recorded the categorized error"
+
+    # Verify exc_info was included (provides traceback for debugging)
+    assert any(
+        record.exc_info is not None
+        for record in caplog.records
+    ), "Logger should have included exc_info for traceback"
+
+
+@pytest.mark.asyncio
+async def test_structured_logger_metadata_payload(monkeypatch):
+    """Verify structured logger receives correct metadata payload."""
+    # First-Party
+    from mcpgateway.services import upstream_session_registry as usr
+
+    def fake_stream(**_kw):
+        # Create an HTTP 401 error for auth_unauthorized category
+        request = httpx.Request("GET", "https://upstream.example.com/mcp")
+        response = httpx.Response(401, request=request)
+        http_error = httpx.HTTPStatusError("Unauthorized", request=request, response=response)
+        return _FakeTransportCtx(enter_exc=http_error)
+
+    # Track structured logger calls
+    structured_log_calls = []
+
+    def fake_get_structured_logger():
+        class MockStructuredLogger:
+            def log(self, **kwargs):
+                structured_log_calls.append(kwargs)
+        return MockStructuredLogger()
+
+    monkeypatch.setattr(usr, "streamablehttp_client", fake_stream)
+    monkeypatch.setattr(usr, "ClientSession", _FakeClientSessionCM)
+
+    import mcpgateway.services.structured_logger
+    monkeypatch.setattr(
+        mcpgateway.services.structured_logger,
+        "get_structured_logger",
+        fake_get_structured_logger
+    )
+
+    req = _make_request()
+    with pytest.raises(RuntimeError):
+        await usr._default_session_factory(req)  # pylint: disable=protected-access
+
+    # Verify structured logger was called
+    assert len(structured_log_calls) == 1, "Structured logger should have been called once"
+
+    call = structured_log_calls[0]
+    # Verify required fields
+    assert call["level"] == "ERROR"
+    assert call["message"] == "Upstream MCP session creation failed"
+    assert call["component"] == "upstream_session_registry"
+
+    # Verify metadata payload
+    metadata = call["metadata"]
+    assert "url" in metadata
+    assert metadata["downstream_session_id"] == "test-session"
+    assert metadata["gateway_id"] == "test-gateway"
+    assert metadata["transport_type"] == "streamablehttp"
+    assert metadata["error_category"] == "auth_unauthorized"
+    assert metadata["exception_type"] == "HTTPStatusError"
+    assert "exception_message" in metadata
+
+
+@pytest.mark.asyncio
+async def test_cross_layer_error_message_consistency(monkeypatch):
+    """
+    Regression test for cross-layer consistency: verify that registry-created RuntimeError
+    surfaces the same categorized root-cause text through the tool_service consuming layer.
+
+    This ensures that the fix for the generic "unhandled errors in a TaskGroup" message
+    remains effective across the entire error propagation chain.
+    """
+    # First-Party
+    from mcpgateway.services import upstream_session_registry as usr
+
+    # Create a connection refused error as the root cause
+    def fake_stream(**_kw):
+        return _FakeTransportCtx(enter_exc=ConnectionRefusedError("Connection refused by server"))
+
+    monkeypatch.setattr(usr, "streamablehttp_client", fake_stream)
+    monkeypatch.setattr(usr, "ClientSession", _FakeClientSessionCM)
+
+    req = _make_request()
+
+    # The registry creates a RuntimeError with categorized error information
+    try:
+        await usr._default_session_factory(req)  # pylint: disable=protected-access
+        assert False, "Should have raised RuntimeError"
+    except RuntimeError as registry_error:
+        # Verify the registry error message contains:
+        # 1. Error category
+        # 2. Exception type
+        # 3. Original error message
+        error_msg = str(registry_error)
+
+        # Should NOT contain generic TaskGroup message
+        assert "unhandled errors in a TaskGroup" not in error_msg, \
+            "Generic TaskGroup message should be replaced with specific error"
+
+        # Should contain specific categorized error information
+        assert "[connection_refused]" in error_msg, \
+            "Error category should be present"
+        assert "ConnectionRefusedError" in error_msg, \
+            "Exception type should be present"
+        assert "Connection refused by server" in error_msg, \
+            "Original error message should be preserved"
+
+        # Verify format matches expected pattern:
+        # "Failed to create upstream MCP session for <url>: [<category>] <type>: <message>"
+        assert "Failed to create upstream MCP session for" in error_msg
+        assert "https://upstream.example.com/mcp" in error_msg
+
+        # This RuntimeError would be caught by tool_service.py which unwraps
+        # BaseExceptionGroup. Since we already unwrapped at registry level,
+        # the consuming layer receives a clean RuntimeError with actionable text.
