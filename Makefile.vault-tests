@@ -1,0 +1,149 @@
+# Makefile additions for Vault integration testing
+# Include this in your main Makefile or copy these targets
+
+.PHONY: vault-test-start
+vault-test-start:
+	@echo "🚀 Starting Vault test environment..."
+	@docker-compose -f docker-compose.vault-test.yml up -d
+	@echo "⏳ Waiting for Vault to be ready (15 seconds)..."
+	@sleep 15
+	@echo "✅ Vault ready at http://localhost:8200"
+	@echo "   Root Token: test-root-token"
+
+.PHONY: vault-test-stop
+vault-test-stop:
+	@echo "🛑 Stopping Vault test environment..."
+	@docker-compose -f docker-compose.vault-test.yml down -v
+	@echo "✅ Vault test environment stopped"
+
+.PHONY: vault-test-status
+vault-test-status:
+	@echo "📊 Vault Test Environment Status:"
+	@docker-compose -f docker-compose.vault-test.yml ps
+	@echo ""
+	@echo "🔍 Checking Vault health..."
+	@curl -s http://localhost:8200/v1/sys/health | python3 -m json.tool || echo "❌ Vault not accessible"
+
+.PHONY: vault-test-logs
+vault-test-logs:
+	@echo "📋 Vault Test Logs:"
+	@docker logs contextforge-vault-test --tail 50
+
+.PHONY: test-vault-integration
+test-vault-integration:
+	@echo "🧪 Running Vault integration tests..."
+	@if ! docker ps | grep -q contextforge-vault-test; then \
+		echo "⚠️  Vault not running. Starting it..."; \
+		$(MAKE) vault-test-start; \
+	fi
+	@export VAULT_ADDR=http://localhost:8200 && \
+	export VAULT_TOKEN=test-root-token && \
+	pytest tests/integration/test_vault_integration.py -v
+
+.PHONY: test-vault-integration-coverage
+test-vault-integration-coverage:
+	@echo "🧪 Running Vault integration tests with coverage..."
+	@if ! docker ps | grep -q contextforge-vault-test; then \
+		echo "⚠️  Vault not running. Starting it..."; \
+		$(MAKE) vault-test-start; \
+	fi
+	@export VAULT_ADDR=http://localhost:8200 && \
+	export VAULT_TOKEN=test-root-token && \
+	pytest tests/integration/test_vault_integration.py \
+	       --cov=mcpgateway.services.token_backends.vault_backend \
+	       --cov-report=term-missing --cov-report=html
+	@echo "📊 Coverage report generated: htmlcov/index.html"
+
+.PHONY: test-vault-integration-quick
+test-vault-integration-quick:
+	@echo "🧪 Running Vault integration tests (quick)..."
+	@if ! docker ps | grep -q contextforge-vault-test; then \
+		echo "⚠️  Vault not running. Starting it..."; \
+		$(MAKE) vault-test-start; \
+	fi
+	@export VAULT_ADDR=http://localhost:8200 && \
+	export VAULT_TOKEN=test-root-token && \
+	pytest tests/integration/test_vault_integration.py -v -x --tb=short
+
+.PHONY: test-vault-integration-specific
+test-vault-integration-specific:
+	@echo "🧪 Running specific Vault integration test class..."
+	@if [ -z "$(TEST)" ]; then \
+		echo "❌ Usage: make test-vault-integration-specific TEST=TestVaultIntegrationTokenStorage"; \
+		exit 1; \
+	fi
+	@if ! docker ps | grep -q contextforge-vault-test; then \
+		echo "⚠️  Vault not running. Starting it..."; \
+		$(MAKE) vault-test-start; \
+	fi
+	@export VAULT_ADDR=http://localhost:8200 && \
+	export VAULT_TOKEN=test-root-token && \
+	pytest tests/integration/test_vault_integration.py::$(TEST) -v
+
+.PHONY: test-all-token-storage
+test-all-token-storage:
+	@echo "🧪 Running ALL token storage tests (unit + integration)..."
+	@echo ""
+	@echo "1️⃣  Running unit tests..."
+	@pytest tests/unit/mcpgateway/services/test_token_storage_facade.py \
+	        tests/unit/mcpgateway/services/test_vault_token_backend.py -v
+	@echo ""
+	@echo "2️⃣  Running integration tests..."
+	@$(MAKE) test-vault-integration
+	@echo ""
+	@echo "✅ All token storage tests completed!"
+
+.PHONY: test-all-token-storage-coverage
+test-all-token-storage-coverage:
+	@echo "🧪 Running ALL token storage tests with coverage..."
+	@echo ""
+	@echo "1️⃣  Running unit tests..."
+	@pytest tests/unit/mcpgateway/services/test_token_storage_facade.py \
+	        tests/unit/mcpgateway/services/test_vault_token_backend.py \
+	        --cov=mcpgateway.services.token_storage_service \
+	        --cov=mcpgateway.services.token_backends \
+	        --cov-report=html --cov-report=term-missing
+	@echo ""
+	@echo "2️⃣  Running integration tests..."
+	@$(MAKE) test-vault-integration-coverage
+	@echo ""
+	@echo "✅ All tests completed! Coverage report: htmlcov/index.html"
+
+.PHONY: vault-test-shell
+vault-test-shell:
+	@echo "🐚 Opening shell in Vault container..."
+	@docker exec -it contextforge-vault-test sh
+
+.PHONY: vault-test-clean
+vault-test-clean:
+	@echo "🧹 Cleaning Vault test data..."
+	@docker-compose -f docker-compose.vault-test.yml down -v
+	@rm -f test_vault_integration.db
+	@rm -rf htmlcov/
+	@rm -f .coverage
+	@echo "✅ Cleanup complete"
+
+.PHONY: vault-test-help
+vault-test-help:
+	@echo "Vault Integration Testing Commands:"
+	@echo ""
+	@echo "  make vault-test-start                  - Start Vault test environment"
+	@echo "  make vault-test-stop                   - Stop Vault test environment"
+	@echo "  make vault-test-status                 - Check Vault status"
+	@echo "  make vault-test-logs                   - View Vault logs"
+	@echo ""
+	@echo "  make test-vault-integration            - Run all integration tests"
+	@echo "  make test-vault-integration-coverage   - Run with coverage report"
+	@echo "  make test-vault-integration-quick      - Run tests (stop on first failure)"
+	@echo "  make test-vault-integration-specific TEST=<class> - Run specific test class"
+	@echo ""
+	@echo "  make test-all-token-storage            - Run unit + integration tests"
+	@echo "  make test-all-token-storage-coverage   - Run all tests with coverage"
+	@echo ""
+	@echo "  make vault-test-shell                  - Open shell in Vault container"
+	@echo "  make vault-test-clean                  - Clean up test data"
+	@echo ""
+	@echo "Examples:"
+	@echo "  make test-vault-integration"
+	@echo "  make test-vault-integration-specific TEST=TestVaultIntegrationTokenStorage"
+	@echo "  make test-all-token-storage-coverage"

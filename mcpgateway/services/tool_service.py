@@ -91,7 +91,6 @@ from mcpgateway.services.performance_tracker import get_performance_tracker
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.services.token_exchange_cache import TokenExchangeCache
-from mcpgateway.services.token_storage_service import TokenStorageService
 from mcpgateway.services.upstream_session_registry import downstream_session_id_from_request_context, get_upstream_session_registry, RegistryNotInitializedError, TransportType
 from mcpgateway.transports.context import UserContext
 from mcpgateway.utils.admin_check import is_admin_bypass_granted, is_user_admin
@@ -4368,10 +4367,17 @@ class ToolService(BaseService):
             gateway_grant_type = grant_type
             if grant_type == "authorization_code":
                 try:
+                    # First-Party
+                    from mcpgateway.services.token_storage_service import TokenStorageService, build_token_user_context  # pylint: disable=import-outside-toplevel
+
+                    if not app_user_email:
+                        raise ToolInvocationError(f"User authentication required for OAuth-protected gateway '{gateway_name}'. Please ensure you are authenticated.")
+
                     with fresh_db_session() as token_db:
-                        token_storage = TokenStorageService(token_db)
-                        if not app_user_email:
-                            raise ToolInvocationError(f"User authentication required for OAuth-protected gateway '{gateway_name}'. Please ensure you are authenticated.")
+                        # build_token_user_context uses token_teams as-is (JWT sole authority)
+                        # and only queries DB for the non-scoped is_admin flag.
+                        token_storage_context = build_token_user_context(token_db, app_user_email, token_teams)
+                        token_storage = TokenStorageService(token_db, user_context=token_storage_context)
                         access_token = await token_storage.get_user_token(gateway_id_str, app_user_email)
 
                     if access_token:
@@ -5620,13 +5626,21 @@ class ToolService(BaseService):
                             # For Authorization Code flow, try to get stored tokens
                             # NOTE: Use fresh_db_session() since the original db was closed
                             try:
+                                # First-Party
+                                from mcpgateway.services.token_storage_service import TokenStorageService  # pylint: disable=import-outside-toplevel
+
+                                # Get user-specific OAuth token
+                                if not app_user_email:
+                                    raise ToolInvocationError(f"User authentication required for OAuth-protected gateway '{gateway_name}'. Please ensure you are authenticated.")
+
                                 with fresh_db_session() as token_db:
-                                    token_storage = TokenStorageService(token_db)
+                                    # First-Party
+                                    from mcpgateway.services.token_storage_service import TokenStorageService, build_token_user_context  # pylint: disable=import-outside-toplevel
 
-                                    # Get user-specific OAuth token
-                                    if not app_user_email:
-                                        raise ToolInvocationError(f"User authentication required for OAuth-protected gateway '{gateway_name}'. Please ensure you are authenticated.")
-
+                                    # build_token_user_context uses token_teams as-is (JWT sole authority)
+                                    # and only queries DB for the non-scoped is_admin flag.
+                                    token_storage_context = build_token_user_context(token_db, app_user_email, token_teams)
+                                    token_storage = TokenStorageService(token_db, user_context=token_storage_context)
                                     access_token = await token_storage.get_user_token(gateway_id_str, app_user_email)
 
                                 if access_token:

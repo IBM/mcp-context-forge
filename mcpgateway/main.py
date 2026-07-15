@@ -12803,6 +12803,22 @@ try:
 except ImportError:
     logger.debug("OAuth router not available")
 
+# Vault OAuth router (conditionally registered when OAUTH_TOKEN_BACKEND=vault)
+if settings.oauth_token_backend == "vault":
+    try:
+        # First-Party
+        from mcpgateway.routers.vault_router import vault_router  # pylint: disable=import-outside-toplevel
+
+        app.include_router(vault_router)
+        logger.info(
+            "Vault OAuth router included (oauth_token_backend=vault, vault_addr=%s)",
+            settings.vault_addr,
+        )
+    except ImportError as e:
+        logger.error("Vault OAuth router not available: %s", e)
+else:
+    logger.debug("Vault OAuth router skipped (oauth_token_backend=%s)", settings.oauth_token_backend)
+
 # A2A agent plugin bindings router
 try:
     # First-Party

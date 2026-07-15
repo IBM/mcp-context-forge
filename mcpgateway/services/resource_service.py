@@ -2030,13 +2030,25 @@ class ResourceService(BaseService):
                                 # For Authorization Code flow, try to get stored tokens
                                 try:
                                     # First-Party
-                                    from mcpgateway.services.token_storage_service import TokenStorageService  # pylint: disable=import-outside-toplevel
+                                    from mcpgateway.services.token_storage_service import TokenStorageService, build_token_user_context  # pylint: disable=import-outside-toplevel
 
                                     # Use fresh DB session for token lookup (original db was closed)
                                     access_token = None
                                     if oauth_user_email:
+                                        # SECURITY: token_teams from user_identity is the sole authority
+                                        # for team scope (Layer 1 invariant). We pass it directly to
+                                        # build_token_user_context which does NOT re-query DB teams.
+                                        # Background resource fetch has no request-scoped token_teams,
+                                        # so we extract it from user_identity if it's a dict, otherwise
+                                        # default to None (shared path) which is the safe fallback for
+                                        # contexts without an explicit team scope.
+                                        identity_token_teams: Optional[List[str]] = None
+                                        if isinstance(user_identity, dict):
+                                            identity_token_teams = user_identity.get("token_teams")
+
                                         with fresh_db_session() as token_db:
-                                            token_storage = TokenStorageService(token_db)
+                                            user_context = build_token_user_context(token_db, oauth_user_email, identity_token_teams)
+                                            token_storage = TokenStorageService(token_db, user_context=user_context)
                                             access_token = await token_storage.get_user_token(gateway_id, oauth_user_email)
 
                                     if access_token:

@@ -378,3 +378,37 @@ tools_rust/mcp_runtime/perf.data*
 
 # Git worktrees
 .worktrees/
+
+# ========================================
+# Branch workbench / dev artefacts
+# (pluggable-token-storage branch)
+# ========================================
+GITHUB_ISSUE_PLUGGABLE_TOKEN_STORAGE.md
+OAUTH_CREDENTIALS_VAULT_DESIGN.md
+TROUBLESHOOTING_OAUTH_VAULT.md
+IMPLEMENTATION_COMPLETE.md
+test-vault-oauth.sh
+architect-review-pluggable-token-storage.md
+contextforge-pluggable-token-storage-architect-design-document.html
+contextforge-pluggable-token-storage-architect-design-document.html.bak
+docs/oauth-fetch-tools-fix.md
+docs/oauth-teamless-session-fallback.md
+docs/oauth-tool-execution-shared-path.md
+docs/oauth-vault-team-isolation.md
+docs/testing-oauth-vault-credentials.md
+docs/testing-oauth-vault.md
+docs/vault-api-reference.md
+docs/vault-oauth-credentials-storage.md
+docs/vault-restart-workflow.md
+scripts/check-vault-structure.py
+scripts/clean-vault-oauth.sh
+scripts/debug-vault-token.sh
+scripts/get-oauth-credentials-vault.py
+scripts/list-team-tokens.sh
+scripts/query-oauth-tokens.sh
+scripts/restart-vault.sh
+scripts/stop-vault-gracefully.sh
+scripts/store-oauth-credentials-vault.sh
+scripts/test-oauth-team-mismatch.sh
+scripts/test-oauth-vault.sh
+scripts/vault-query-oauth.sh

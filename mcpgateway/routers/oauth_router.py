@@ -53,6 +53,85 @@ ADMIN_CSRF_COOKIE_NAME = "mcpgateway_csrf_token"
 ADMIN_CSRF_HEADER_NAME = "x-csrf-token"
 
 
+def _build_user_context(current_user: dict[str, Any] | EmailUserResponse | None, db: Session | None = None) -> dict:
+    """Build user_context dict for TokenStorageService from authenticated user.
+
+    OAuth token storage path selection:
+    ┌───────────┬───────────────────┬───────────────────────┐
+    │ Flow      │ JWT teams claim   │ Storage path          │
+    ├───────────┼───────────────────┼───────────────────────┤
+    │ Admin UI  │ absent            │ vault/oauth/shared/   │
+    ├───────────┼───────────────────┼───────────────────────┤
+    │ API       │ teams: []         │ vault/oauth/shared/   │
+    ├───────────┼───────────────────┼───────────────────────┤
+    │ API       │ teams: ["eng"]    │ vault/oauth/eng/      │
+    └───────────┴───────────────────┴───────────────────────┘
+
+    SECURITY: For session tokens (token_use="session"), we use the raw
+    ``jwt_teams_claim`` from the JWT rather than the RBAC-resolved
+    ``token_teams``. This is because ``resolve_session_teams`` correctly
+    returns ``None`` (admin bypass) for admin users, collapsing their
+    teams for RBAC/visibility purposes. But OAuth token storage path
+    selection needs the actual JWT claim — an admin who authorized with
+    ``teams=["engineering"]`` stored their tokens at the ``engineering/``
+    Vault path, so they must be retrieved from there too.
+
+    The raw ``jwt_teams_claim`` is stored in ``request.state.jwt_teams_claim``
+    by auth middleware and forwarded via ``current_user["jwt_teams_claim"]``
+    by the RBAC middleware. It is never used for permission checks.
+
+    Args:
+        current_user: Authenticated user from RBAC middleware (dict) or legacy EmailUserResponse
+        db: Database session (unused - kept for backward compatibility)
+
+    Returns:
+        User context dict with email, teams, is_admin
+    """
+    if not current_user:
+        return {}
+
+    # Handle dict-based current_user (from RBAC middleware)
+    if isinstance(current_user, dict):
+        email = current_user.get("email", "")
+        is_admin = current_user.get("is_admin", False)
+
+        logger.debug("_build_user_context: email=%s, token_use=%s", email, current_user.get("token_use"))
+
+        token_use = current_user.get("token_use")
+        if token_use == "session":
+            # For session tokens, use the raw JWT teams claim (not the RBAC-resolved
+            # token_teams which is None for admins due to admin bypass).
+            # jwt_teams_claim is the authoritative path selector: it matches what
+            # was used during /oauth/authorize when the tokens were stored.
+            jwt_teams_claim = current_user.get("jwt_teams_claim")
+            if jwt_teams_claim and isinstance(jwt_teams_claim, list):
+                filtered = [t for t in jwt_teams_claim if t and isinstance(t, str)]
+                if filtered:
+                    return {"email": email, "teams": filtered, "is_admin": is_admin}
+            # No JWT teams claim → Admin UI session → shared path
+            return {"email": email, "teams": None, "is_admin": is_admin}
+
+        # API / legacy token: use RBAC-resolved token_teams directly.
+        # - token_teams missing or []  → shared path (None)
+        # - token_teams = ["eng", ...] → team-scoped path
+        teams = current_user.get("token_teams")
+        if isinstance(teams, list):
+            teams = [t for t in teams if t and isinstance(t, str)] or None
+
+        return {
+            "email": email,
+            "teams": teams,
+            "is_admin": is_admin,
+        }
+
+    # Handle object-based current_user (legacy EmailUserResponse)
+    return {
+        "email": getattr(current_user, "email", ""),
+        "teams": getattr(current_user, "teams", []),
+        "is_admin": getattr(current_user, "is_admin", False),
+    }
+
+
 async def enforce_fetch_tools_csrf(request: Request) -> None:
     """Validate admin CSRF token for OAuth fetch-tools mutations.
 
@@ -496,7 +575,9 @@ async def initiate_oauth_flow(gateway_id: str, request: Request, current_user: E
 
         # Initiate OAuth flow with user context (now includes PKCE from existing implementation)
         requester_email = _extract_user_email(current_user)
-        oauth_manager = OAuthManager(token_storage=TokenStorageService(db))
+        user_context = _build_user_context(current_user, db=db)
+
+        oauth_manager = OAuthManager(token_storage=TokenStorageService(db, user_context))
         auth_data = await oauth_manager.initiate_authorization_code_flow(gateway_id, oauth_config, app_user_email=requester_email)
 
         logger.info(f"Initiated OAuth flow for gateway {SecurityValidator.sanitize_log_message(gateway_id)} by user {SecurityValidator.sanitize_log_message(requester_email)}")
@@ -624,13 +705,18 @@ async def oauth_callback(
             logger.warning("OAuth callback missing state parameter")
             return _invalid_state_response()
 
-        oauth_manager = OAuthManager(token_storage=TokenStorageService(db))
-        gateway_id = await oauth_manager.resolve_gateway_id_from_state(state, allow_legacy_fallback=False)
+        # SECURITY: Extract gateway_id without consuming state (no TOCTOU risk - just for lookup)
+        # complete_authorization_code_flow will atomically validate/consume state and return state_data
+        temp_user_context = _build_user_context(getattr(request.state, "user", None)) if request and hasattr(request, "state") else {}
+        temp_oauth_manager = OAuthManager(token_storage=TokenStorageService(db, temp_user_context))
+
+        # Extract gateway_id without consuming state
+        gateway_id = await temp_oauth_manager.resolve_gateway_id_from_state(state, allow_legacy_fallback=False)
         if not gateway_id:
             logger.warning("OAuth callback received invalid or unknown state token")
             return _invalid_state_response()
 
-        # Get gateway configuration
+        # Get gateway configuration (before consuming state, to validate OAuth config exists)
         gateway = db.execute(select(Gateway).where(Gateway.id == gateway_id)).scalar_one_or_none()
 
         if not gateway:
@@ -638,21 +724,74 @@ async def oauth_callback(
             return _invalid_state_response()
 
         if not gateway.oauth_config:
-            logger.warning("OAuth callback state resolved to gateway without OAuth configuration")
+            logger.warning("OAuth callback: no OAuth config in database for gateway %s", gateway_id)
             return _invalid_state_response()
 
-        # Complete OAuth flow
+        # SECURITY FIX (TOCTOU): Complete OAuth code exchange WITHOUT token storage first
+        # This atomically consumes state and returns state_data, eliminating the TOCTOU race
+        # from the previous _peek_state_data() approach
+        no_storage_oauth_manager = OAuthManager(token_storage=None)
+
+        oauth_config_with_resource = gateway.oauth_config.copy()
 
         # RFC 8707: Set resource parameter for the token exchange request.
         # If resource was previously learned from the IdP's token aud claim, use it as-is.
         # Otherwise derive from gateway.url for the first authorization request.
-        oauth_config_with_resource = gateway.oauth_config.copy()
         if not oauth_config_with_resource.get("resource"):
             oauth_config_with_resource["resource"] = _normalize_resource_url(gateway.url)
 
-        result = await oauth_manager.complete_authorization_code_flow(
+        # Complete flow WITHOUT storing tokens (atomically returns state_data + token_response)
+        result = await no_storage_oauth_manager.complete_authorization_code_flow(
             gateway_id, code, state, oauth_config_with_resource, ca_certificate=gateway.ca_certificate, client_cert=gateway.client_cert, client_key=gateway.client_key
         )
+
+        # Extract state_data from result (was atomically consumed and returned)
+        state_data = result.get("state_data", {})
+        app_user_email = state_data.get("app_user_email")
+        team_id = state_data.get("team_id")
+        logger.info(f"OAuth callback: extracted team_id={team_id} from state_data for user {app_user_email}")
+
+        # Now build properly-scoped TokenStorageService with team_id from state
+        # SECURITY: Use team_id from OAuth state (which came from original token scope)
+        #
+        # Token storage path mapping:
+        # - team_id present → teams=[team_id] → vault/oauth/{team_id}/...
+        # - team_id is None → teams=None → vault/oauth/shared/...
+        user_context = {
+            "email": app_user_email or "",
+            "teams": [team_id] if team_id else None,  # None = shared path
+            "is_admin": False,  # Callback doesn't have admin context from state
+        }
+
+        token_storage = TokenStorageService(db, user_context)
+
+        # Store the tokens we just obtained
+        if app_user_email and result.get("success"):
+            from mcpgateway.services.oauth_manager import parse_expires_in  # pylint: disable=import-outside-toplevel
+
+            token_response = result.get("token_response", {})
+            if not token_response or not token_response.get("access_token"):
+                logger.error("OAuth callback: complete_authorization_code_flow succeeded but no access_token in token_response")
+                return _invalid_state_response()
+
+            # Handle scope as either string or list (OAuth providers vary)
+            scope_value = token_response.get("scope", "")
+            if isinstance(scope_value, list):
+                scopes_list = [s for s in scope_value if isinstance(s, str)]
+            elif isinstance(scope_value, str):
+                scopes_list = scope_value.split() if scope_value else []
+            else:
+                scopes_list = []
+
+            await token_storage.store_tokens(
+                gateway_id=gateway_id,
+                user_id=result.get("user_id", ""),
+                app_user_email=app_user_email,
+                access_token=token_response["access_token"],
+                refresh_token=token_response.get("refresh_token"),
+                expires_in=parse_expires_in(token_response),
+                scopes=scopes_list,
+            )
 
         # Learn the IdP's audience mapping from the token and persist as resource.
         # RFC 8707 Section 2: "The authorization server may use the exact resource value
@@ -662,6 +801,22 @@ async def oauth_callback(
         await _persist_learned_audience(gateway, result, db)
 
         logger.info(f"Completed OAuth flow for gateway {SecurityValidator.sanitize_log_message(gateway_id)}, user {SecurityValidator.sanitize_log_message(str(result.get('user_id')))}")
+
+        # Create a temporary session JWT for the user to call fetch-tools endpoint
+        # This JWT is short-lived (5 minutes) and scoped to just this team
+        # First-Party
+        from mcpgateway.utils.create_jwt_token import create_jwt_token
+
+        jwt_payload = {
+            "email": app_user_email,
+            "token_use": "session",
+            "jti": secrets.token_urlsafe(16),
+        }
+        session_jwt = await create_jwt_token(
+            data=jwt_payload,
+            expires_in_minutes=5,
+            teams=[team_id] if team_id else [],
+        )
 
         # Return success page with option to return to admin
         # Get CSP nonce for inline script
@@ -781,6 +936,8 @@ async def oauth_callback(
         response = HTMLResponse(content=html_content)
         use_secure = (settings.environment == "production") or settings.secure_cookies
         max_age = max(300, settings.csrf_token_expiry)
+
+        # Set CSRF cookie for form protection
         response.set_cookie(
             key=ADMIN_CSRF_COOKIE_NAME,
             value=csrf_token,
@@ -790,6 +947,19 @@ async def oauth_callback(
             secure=use_secure,
             samesite="strict",
         )
+
+        # Set temporary session JWT cookie for fetch-tools API call
+        # Short-lived (5 minutes) and team-scoped
+        response.set_cookie(
+            key="jwt_token",
+            value=session_jwt,
+            max_age=300,  # 5 minutes
+            path=root_path or "/",
+            httponly=True,
+            secure=use_secure,
+            samesite="strict",
+        )
+
         return response
 
     except OAuthError as e:
@@ -960,11 +1130,25 @@ async def fetch_tools_after_oauth(
         requester_email = current_user.get("email") if isinstance(current_user, dict) else getattr(current_user, "email", None)
         await _enforce_gateway_access(gateway_id, gateway, current_user, db, request=request)
 
+        # Use _build_user_context so that jwt_teams_claim drives path selection
+        # for session tokens. Reading request.state.token_teams directly is wrong
+        # here because admin bypass in resolve_session_teams collapses it to None
+        # even when the 5-min callback JWT carries teams=["engineering"].
+        user_context = _build_user_context(current_user)
+        token_teams = user_context.get("teams")
+
+        logger.debug(
+            "fetch_tools_after_oauth: gateway=%s, token_use=%s, resolved_teams=%s",
+            gateway_id,
+            current_user.get("token_use") if isinstance(current_user, dict) else "n/a",
+            token_teams,
+        )
+
         # First-Party
         from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayService
 
         gateway_service = GatewayService()
-        result = await gateway_service.fetch_tools_after_oauth(db, gateway_id, requester_email)
+        result = await gateway_service.fetch_tools_after_oauth(db, gateway_id, requester_email, teams=token_teams)
         tools_count = len(result.get("tools", []))
 
         return {"success": True, "message": f"Successfully fetched and created {tools_count} tools"}
@@ -972,12 +1156,13 @@ async def fetch_tools_after_oauth(
     except HTTPException:
         raise
     except GatewayConnectionError as e:
-        # Configuration or token claim mismatch — 400 so operators know to fix oauth_config
-        logger.error(f"Failed to fetch tools after OAuth for gateway {SecurityValidator.sanitize_log_message(gateway_id)}: {e}")
-        raise HTTPException(status_code=400, detail="Failed to fetch tools")
+        logger.error("FETCH-TOOLS FAILED [GatewayConnectionError] gateway=%s error=%s",
+                     SecurityValidator.sanitize_log_message(gateway_id), e)
+        raise HTTPException(status_code=400, detail=f"Failed to fetch tools: {e}")
     except Exception as e:
-        logger.error(f"Failed to fetch tools after OAuth for gateway {SecurityValidator.sanitize_log_message(gateway_id)}: {e}")
-        raise HTTPException(status_code=500, detail="Failed to fetch tools")
+        logger.error("FETCH-TOOLS FAILED [Exception] gateway=%s error=%s",
+                     SecurityValidator.sanitize_log_message(gateway_id), e, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to fetch tools: {e}")
 
 
 # ============================================================================
