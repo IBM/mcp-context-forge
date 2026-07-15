@@ -594,6 +594,7 @@ async def initiate_oauth_flow(gateway_id: str, request: Request, current_user: E
 
 @oauth_router.get("/callback")
 async def oauth_callback(
+    request: Request,
     # NOTE on validation strategy for OAuth callback parameters:
     # - RFC 6749 defines `code` and `state` as opaque VSCHAR (%x20-7E) strings.
     #   Tight allow-lists (e.g. only [a-zA-Z0-9_-]) break Google (uses `/`), Microsoft
@@ -606,8 +607,6 @@ async def oauth_callback(
     state: Annotated[str | None, Query(max_length=2048, description="State parameter for CSRF protection")] = None,
     error: QueryErrorCode = None,
     error_description: Annotated[str | None, Query(max_length=500, description="OAuth provider error description")] = None,
-    # Remove the gateway_id parameter requirement
-    request: Request | None = None,
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
     """Handle the OAuth callback and complete the authorization process.
