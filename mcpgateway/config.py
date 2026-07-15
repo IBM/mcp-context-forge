@@ -638,6 +638,56 @@ class Settings(BaseSettings):
     #  Encryption key phrase for auth storage
     auth_encryption_secret: SecretStr = Field(default=SecretStr("changeme"))
 
+    # ===================================
+    # OAuth Token Storage Backend
+    # ===================================
+    # Pluggable token storage: 'database' (default) or 'vault' (HashiCorp Vault)
+
+    oauth_token_backend: str = Field(
+        default="database",
+        description="Token storage backend: 'database' or 'vault'. Unknown values raise ValueError at startup.",
+    )
+
+    # Vault Connection Settings (only used when oauth_token_backend='vault')
+    vault_addr: str = Field(
+        default="http://127.0.0.1:8200",
+        description="Vault server URL (e.g., https://vault.acme.com:8200).",
+    )
+    vault_token: Optional[SecretStr] = Field(
+        default=None,
+        description="Vault authentication token (Phase 1: static token; Phase 2: AppRole). Required when oauth_token_backend='vault'.",
+    )
+    vault_namespace: str = Field(
+        default="",
+        description="Vault namespace (Enterprise only; leave empty for CE).",
+    )
+    vault_kv_mount: str = Field(
+        default="secret",
+        description="Vault KV v2 mount path.",
+    )
+    vault_kv_path_prefix: str = Field(
+        default="contextforge/oauth",
+        description="Path prefix within KV mount. Full path: {mount}/data/{prefix}/{team_id}/{server_id}/{email}",
+    )
+    vault_tls_verify: bool = Field(
+        default=True,
+        description="Verify Vault TLS certificate (set false for local dev only).",
+    )
+
+    # Vault Token Cache (optional, Vault backend only)
+    vault_token_cache_enabled: bool = Field(
+        default=False,
+        description="Enable in-memory token cache to reduce Vault API calls. Reduces read latency from ~25ms to ~0.5ms on cache hits.",
+    )
+    vault_token_cache_ttl: int = Field(
+        default=300,
+        description="Cache TTL in seconds. Tokens may be stale within this window if rotated externally.",
+    )
+    vault_token_cache_max_size: int = Field(
+        default=10000,
+        description="Max cached entries before LRU eviction. Each entry ≈ 1 KB → 10 MB at default size.",
+    )
+
     # Query Parameter Authentication (INSECURE - disabled by default)
     insecure_allow_queryparam_auth: bool = Field(
         default=False,

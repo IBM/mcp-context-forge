@@ -16168,7 +16168,7 @@ async def test_admin_test_gateway_oauth_missing_token(monkeypatch, mock_db):
 
     token_storage = MagicMock()
     token_storage.get_user_token = AsyncMock(return_value=None)
-    monkeypatch.setattr("mcpgateway.services.token_storage_service.TokenStorageService", lambda db: token_storage, raising=True)
+    monkeypatch.setattr("mcpgateway.services.token_storage_service.TokenStorageService", lambda db, user_context=None: token_storage, raising=True)
 
     request = GatewayTestRequest(base_url="https://api.example.com", path="/test", method="GET", headers={}, body=None)
     response = await admin_test_gateway(request, None, user={"email": "user@example.com", "db": mock_db}, db=mock_db)
@@ -16182,7 +16182,7 @@ async def test_admin_test_gateway_oauth_authorization_code_missing_user_email(mo
     gateway = SimpleNamespace(id="gw-1", name="GW", auth_type="oauth", oauth_config={"grant_type": "authorization_code"})
     mock_db.execute.return_value.scalars.return_value.first.return_value = gateway
     monkeypatch.setattr("mcpgateway.auth_context.get_user_email", lambda _user: "", raising=True)
-    monkeypatch.setattr("mcpgateway.services.token_storage_service.TokenStorageService", lambda _db: MagicMock(), raising=True)
+    monkeypatch.setattr("mcpgateway.services.token_storage_service.TokenStorageService", lambda _db, user_context=None: MagicMock(), raising=True)
 
     request = GatewayTestRequest(base_url="https://api.example.com", path="/test", method="GET", headers={}, body=None)
     # Satisfy RBAC wrapper ("email" key must exist) while still exercising admin_test_gateway's missing-email branch.
@@ -16227,7 +16227,7 @@ async def test_admin_test_gateway_oauth_authorization_code_token_success_sets_he
 
     token_storage = MagicMock()
     token_storage.get_user_token = AsyncMock(return_value="tok")
-    monkeypatch.setattr("mcpgateway.services.token_storage_service.TokenStorageService", lambda db: token_storage, raising=True)
+    monkeypatch.setattr("mcpgateway.services.token_storage_service.TokenStorageService", lambda db, user_context=None: token_storage, raising=True)
 
     request = GatewayTestRequest(base_url="https://api.example.com", path="/test", method="GET", headers={}, body=None)
     response = await admin_test_gateway(request, None, user={"email": "user@example.com", "db": mock_db}, db=mock_db)
@@ -16247,7 +16247,7 @@ async def test_admin_test_gateway_oauth_authorization_code_token_exception_retur
 
     token_storage = MagicMock()
     token_storage.get_user_token = AsyncMock(side_effect=RuntimeError("boom"))
-    monkeypatch.setattr("mcpgateway.services.token_storage_service.TokenStorageService", lambda db: token_storage, raising=True)
+    monkeypatch.setattr("mcpgateway.services.token_storage_service.TokenStorageService", lambda db, user_context=None: token_storage, raising=True)
 
     request = GatewayTestRequest(base_url="https://api.example.com", path="/test", method="GET", headers={}, body=None)
     response = await admin_test_gateway(request, None, user={"email": "user@example.com", "db": mock_db}, db=mock_db)

@@ -3343,7 +3343,7 @@ requires-dist = [
     { name = "urllib3", specifier = ">=2.7.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.49.0" },
 ]
-provides-extras = ["redis", "redis-pure", "postgres", "llmchat", "observability", "granian", "aiosqlite", "asyncpg", "profiling", "templating", "plugins", "grpc", "all", "dev-all"]
+provides-extras = ["redis", "redis-pure", "postgres", "vault", "llmchat", "observability", "granian", "aiosqlite", "asyncpg", "profiling", "templating", "plugins", "grpc", "all", "dev-all"]
 
 [package.metadata.requires-dev]
 dev = [

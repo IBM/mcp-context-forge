@@ -254,6 +254,10 @@ postgres = [
     "psycopg[c,binary]>=3.3.4",
 ]
 
+# HashiCorp Vault integration uses httpx (already in main dependencies)
+# No additional dependencies needed for OAUTH_TOKEN_BACKEND=vault
+vault = []
+
 llmchat = [
     "langchain-core<=1.4.7",
     "langchain-mcp-adapters>=0.3.0",
