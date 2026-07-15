@@ -6,6 +6,16 @@
 
 - Rust MCP runtime sidecar, Rust A2A runtime sidecar, and ValidationMiddleware are deprecated as of 2026-06-11 and will sunset on 2026-07-07. Use the Python MCP transport path, the Python A2A invocation path, and endpoint-level Pydantic or protocol-specific validation instead. See [Deprecations](docs/docs/deprecations.md).
 
+## [Unreleased]
+
+### Fixed
+
+- **Custom Auth Headers on Tools** ([#5314](https://github.com/IBM/mcp-context-forge/pull/5314), [#5201](https://github.com/IBM/mcp-context-forge/issues/5201)) - `POST /tools` and `PUT /tools/{tool_id}` now persist the `auth_headers` array instead of silently storing `auth_value: null`. Invalid header keys/values are rejected with a 422 rather than an unhandled 500.
+
+### Changed
+
+- **Stricter `authheaders` Key Validation (Gateways, Tools, A2A Agents)** ([#5314](https://github.com/IBM/mcp-context-forge/pull/5314)) - Header-key validation is now shared across all create/update schemas and the admin form. Keys with embedded whitespace (e.g. `X Api Key`) were previously accepted and stored as invalid HTTP header names that failed at invocation time; they are now rejected with a 422 at config time, and surrounding whitespace is trimmed before storage. Gateway or A2A configs relying on the old behavior will need their header keys corrected on the next update.
+
 ## [1.0.5] - 2026-07-07 - API Versioning, Auth Hardening, A2A Compatibility, and Build Consolidation
 
 ### Overview

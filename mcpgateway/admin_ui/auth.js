@@ -321,7 +321,7 @@ export function updateAuthHeadersJSON(containerId) {
 
   // Check for excessive headers
   if (headers.length > 100) {
-    console.error("Maximum of 100 headers allowed per gateway");
+    console.error("Maximum of 100 headers allowed.");
     return;
   }
 
