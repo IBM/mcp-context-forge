@@ -491,6 +491,7 @@ class TestGatewayServiceOAuthComprehensive:
             mock_token_service = MagicMock()
             mock_token_service_class.return_value = mock_token_service
             mock_token_service.get_user_token = AsyncMock(return_value="oauth_callback_token")
+            mock_token_service.get_user_learned_audience = AsyncMock(return_value=(None, None))
 
             # Mock the connection methods - create properly configured tool mocks
             mock_tool = MagicMock(spec=ToolCreate)
@@ -721,6 +722,7 @@ class TestFetchToolsAfterOauthTokenValidation:
         ):
             mock_tss_inst = MockTSS.return_value
             mock_tss_inst.get_user_token = AsyncMock(return_value=token)
+            mock_tss_inst.get_user_learned_audience = AsyncMock(return_value=(None, None))
             mock_connect.return_value = ({}, [], [], [], [])
 
             with pytest.raises(GatewayConnectionError, match="audience"):
@@ -740,6 +742,7 @@ class TestFetchToolsAfterOauthTokenValidation:
         ):
             mock_tss_inst = MockTSS.return_value
             mock_tss_inst.get_user_token = AsyncMock(return_value="opaque-token-not-jwt")
+            mock_tss_inst.get_user_learned_audience = AsyncMock(return_value=(None, None))
             mock_connect.return_value = ({}, [], [], [], [])
 
             await gateway_service.fetch_tools_after_oauth(test_db, "gw-id", "user@example.com")
@@ -766,6 +769,7 @@ class TestFetchToolsAfterOauthTokenValidation:
         ):
             mock_tss_inst = MockTSS.return_value
             mock_tss_inst.get_user_token = AsyncMock(return_value=token)
+            mock_tss_inst.get_user_learned_audience = AsyncMock(return_value=(None, None))
 
             with pytest.raises(GatewayConnectionError, match="audience"):
                 await gateway_service.fetch_tools_after_oauth(test_db, "gw-id", "user@example.com")
@@ -824,6 +828,7 @@ class TestFetchToolsAfterOauthTokenValidation:
         ):
             mock_tss_inst = MockTSS.return_value
             mock_tss_inst.get_user_token = AsyncMock(return_value="opaque-token")
+            mock_tss_inst.get_user_learned_audience = AsyncMock(return_value=(None, None))
 
             with pytest.raises(GatewayConnectionError, match="Possible causes.*token_type"):
                 await gateway_service.fetch_tools_after_oauth(test_db, "gw-id", "user@example.com")
@@ -845,6 +850,7 @@ class TestFetchToolsAfterOauthTokenValidation:
         ):
             mock_tss_inst = MockTSS.return_value
             mock_tss_inst.get_user_token = AsyncMock(return_value="opaque-token")
+            mock_tss_inst.get_user_learned_audience = AsyncMock(return_value=(None, None))
 
             with pytest.raises(GatewayConnectionError, match="Failed to fetch tools after OAuth"):
                 await gateway_service.fetch_tools_after_oauth(test_db, "gw-id", "user@example.com")
