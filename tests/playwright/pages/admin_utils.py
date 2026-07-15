@@ -11,7 +11,7 @@ Shared utility functions for admin page interactions.
 import logging
 import os
 import time
-from typing import Callable, Optional
+from typing import Callable
 import urllib.parse
 
 # Third-Party
@@ -57,38 +57,63 @@ def wait_for_js_condition(target: Page | Frame, expression: str, timeout: int = 
     raise PlaywrightTimeoutError(f"Condition not met within {timeout}ms: {expression}") from last_exc
 
 
-def wait_for_ui_condition(
+def wait_for_ui_by_retries(
     page: Page,
     predicate: Callable[[], bool],
-    retries: Optional[int] = None,
-    deadline_seconds: Optional[float] = None,
-    delay_ms: Optional[Callable[[int], int]] = None,
+    retries: int,
+    delay_ms: Callable[[int], int] | None = None,
 ) -> bool:
-    """Poll ``predicate()`` until truthy, bounded by attempt count or wall-clock deadline.
+    """Poll ``predicate()`` until truthy, bounded by a fixed attempt count.
 
-    Give exactly one of ``retries``/``deadline_seconds`` as the stop condition — attempt
-    count for API-poll style retries, wall-clock deadline for loops that also perform
-    slow UI actions (navigation, reload) between checks.
+    Use for API-poll style retries where each attempt is cheap and uniform.
 
     Args:
         page: Playwright page, used for ``wait_for_timeout`` between attempts.
         predicate: Zero-arg callable returning a truthy value once polling should stop.
         retries: Maximum number of attempts.
+        delay_ms: Optional callable mapping the 0-indexed attempt number to a backoff
+            delay in milliseconds, applied before the next attempt.
+
+    Returns:
+        True if predicate() returned truthy before exhausting retries.
+    """
+    for attempt in range(retries):
+        if predicate():
+            return True
+        if attempt + 1 >= retries:
+            return False
+        if delay_ms is not None:
+            page.wait_for_timeout(delay_ms(attempt))
+    return False
+
+
+def wait_for_ui_by_deadline(
+    page: Page,
+    predicate: Callable[[], bool],
+    deadline_seconds: float,
+    delay_ms: Callable[[int], int] | None = None,
+) -> bool:
+    """Poll ``predicate()`` until truthy, bounded by a wall-clock deadline.
+
+    Use for loops that also perform slow UI actions (navigation, reload) between
+    checks, where attempt count isn't a meaningful bound.
+
+    Args:
+        page: Playwright page, used for ``wait_for_timeout`` between attempts.
+        predicate: Zero-arg callable returning a truthy value once polling should stop.
         deadline_seconds: Maximum wall-clock time to keep polling, in seconds.
         delay_ms: Optional callable mapping the 0-indexed attempt number to a backoff
             delay in milliseconds, applied before the next attempt.
 
     Returns:
-        True if predicate() returned truthy before exhausting retries/deadline.
+        True if predicate() returned truthy before the deadline elapsed.
     """
-    deadline = time.monotonic() + deadline_seconds if deadline_seconds is not None else None
+    deadline = time.monotonic() + deadline_seconds
     attempt = 0
     while True:
         if predicate():
             return True
-        if deadline is not None and time.monotonic() >= deadline:
-            return False
-        if retries is not None and attempt + 1 >= retries:
+        if time.monotonic() >= deadline:
             return False
         if delay_ms is not None:
             page.wait_for_timeout(delay_ms(attempt))
@@ -193,7 +218,7 @@ def wait_for_entity_deleted(page: Page, endpoint: str, name: str, retries: int =
         return not any(item.get("name") == name for item in data)
 
     _not_found.calls = 0
-    return wait_for_ui_condition(page, _not_found, retries=retries, delay_ms=lambda attempt: min(100 * (2**attempt), 800))
+    return wait_for_ui_by_retries(page, _not_found, retries=retries, delay_ms=lambda attempt: min(100 * (2**attempt), 800))
 
 
 def find_tool(page: Page, tool_name: str, retries: int = 5):

@@ -165,6 +165,22 @@ assert delete_resource(page, resource_id)
 assert wait_for_entity_deleted(page, "resources", resource_name)
 ```
 
+### Polling Utilities
+
+Lower-level primitives behind `wait_for_entity_deleted()`, for custom predicates:
+
+```python
+from .pages.admin_utils import wait_for_ui_by_retries, wait_for_ui_by_deadline
+
+# Fixed attempt count — API-poll style, each attempt cheap and uniform
+wait_for_ui_by_retries(page, lambda: check_something(), retries=5)
+
+# Wall-clock deadline — loops that also perform slow UI actions (navigation, reload)
+wait_for_ui_by_deadline(page, lambda: check_something(), deadline_seconds=8)
+```
+
+Both accept an optional `delay_ms(attempt) -> int` callable for backoff between attempts.
+
 ## JavaScript Unit Tests
 
 Admin UI JS logic is tested with Vitest (jsdom). Tests live in `tests/unit/js/`.

@@ -25,7 +25,7 @@ from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 import pytest
 
 # Local
-from ..pages.admin_utils import wait_for_ui_condition
+from ..pages.admin_utils import wait_for_ui_by_deadline
 
 logger = logging.getLogger(__name__)
 
@@ -212,7 +212,7 @@ class TestTokenRevokeUI:
         # infra/nginx/nginx.conf), so a GET for this exact listing issued by an
         # earlier test in the same session can still be served stale here. Retry
         # past that window instead of asserting on a single fetch.
-        wait_for_ui_condition(tokens_page.page, _settled, deadline_seconds=8)
+        wait_for_ui_by_deadline(tokens_page.page, _settled, deadline_seconds=8)
         token_card_count = counts["card"]
         revoke_btn_count = counts["revoke"]
 

@@ -37,7 +37,7 @@ from __future__ import annotations
 from typing import Any, Dict
 
 # Third-Party
-from playwright.sync_api import FrameLocator, Page
+from playwright.sync_api import Frame, FrameLocator, Page
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 import pytest
 
@@ -49,7 +49,7 @@ from ..pages.admin_utils import wait_for_js_condition
 # ---------------------------------------------------------------------------
 
 
-def _get_admin_frame(page: Page):
+def _get_admin_frame(page: Page) -> Frame:
     """Return the Frame object for the admin iframe.
 
     ``iframe_host`` yields a ``FrameLocator``.  To call ``evaluate()`` we
@@ -171,11 +171,12 @@ class TestTeamSelectorInIframe:
                 const btn = container.querySelector('.team-selector-item');
                 if (!btn) return { skipped: true, reason: 'button not found' };
 
-                // Spy on selectTeamFromSelector
+                // Spy on selectTeamFromSelector (exposed as window.Admin.selectTeamFromSelector,
+                // which is what eventDelegation.js's click handler dispatches to)
                 let called = false;
                 let calledWith = null;
-                const orig = window.selectTeamFromSelector;
-                window.selectTeamFromSelector = (el) => {
+                const orig = window.Admin.selectTeamFromSelector;
+                window.Admin.selectTeamFromSelector = (el) => {
                     called = true;
                     calledWith = el ? el.getAttribute('data-team-id') : null;
                 };
@@ -184,7 +185,7 @@ class TestTeamSelectorInIframe:
                     btn.click();
                     return { skipped: false, called, calledWith };
                 } finally {
-                    window.selectTeamFromSelector = orig;
+                    window.Admin.selectTeamFromSelector = orig;
                     container.innerHTML = '';
                 }
             }
