@@ -8,7 +8,7 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-07-04T14:31:59.426627692Z"
+exclude-newer = "2026-07-05T10:27:44.911750652Z"
 exclude-newer-span = "P10D"
 
 [options.exclude-newer-package]
@@ -17,7 +17,7 @@ cpex-url-reputation = "2026-07-14T23:59:59Z"
 cpex-rate-limiter = "2026-07-14T23:59:59Z"
 cpex-secrets-detection = "2026-07-14T23:59:59Z"
 cpex = "2026-07-14T23:59:59Z"
-cpex-retry-with-backoff = "2026-07-14T23:59:59Z"
+cpex-retry-with-backoff = "2026-07-15T23:59:59Z"
 cpex-encoded-exfil-detection = "2026-07-14T23:59:59Z"
 
 [[package]]
@@ -1021,20 +1021,20 @@ wheels = [
 
 [[package]]
 name = "cpex-retry-with-backoff"
-version = "0.3.6"
+version = "0.3.7"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cpex" },
     { name = "pydantic" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/94/46/0ef6e5bfa66c6e5d5b261dc9ca8c98179d155e83ebd2ea1c111f1b710fd0/cpex_retry_with_backoff-0.3.6.tar.gz", hash = "sha256:89f0716a176f096b1a7a996f5dfc06b91145014d372955969fd5b378f9bd1dcc", size = 40021, upload-time = "2026-07-14T14:26:14.589Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/7e/9b/a42bb78b2f6a7c0bcb927ed43ff74239dfa666693e1ef87c24dc7881ff05/cpex_retry_with_backoff-0.3.7.tar.gz", hash = "sha256:943d2434c896852669dd66949d6edde545650d4b46c3711e92b9c36aea41677d", size = 41916, upload-time = "2026-07-15T10:23:45.804Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/8d/8e/c84c0f3bf5ecc889a56828fd3691c254a1f4deec90dd149275f5b34520c7/cpex_retry_with_backoff-0.3.6-cp311-abi3-macosx_11_0_arm64.whl", hash = "sha256:0765e2d0c7e87e2208624437f7f277e038bc1d1ec264b4c328b40cb80cb69070", size = 260655, upload-time = "2026-07-14T14:26:05.856Z" },
-    { url = "https://files.pythonhosted.org/packages/8c/fd/70e7f1f83eeca21b0f00e690a9246e9e3b44db4bfa71328596e9830cad1e/cpex_retry_with_backoff-0.3.6-cp311-abi3-manylinux_2_34_aarch64.whl", hash = "sha256:c38fa0e3f0823787ce95e14869dc7ea015e9080f8ae6c7fc57e44cfa4d916aca", size = 272679, upload-time = "2026-07-14T14:26:07.571Z" },
-    { url = "https://files.pythonhosted.org/packages/de/12/122bcf86748d7431f251fb9deb37dfa5577d17d9ee3be7049268537b0f90/cpex_retry_with_backoff-0.3.6-cp311-abi3-manylinux_2_34_ppc64le.whl", hash = "sha256:0036413ce7a5dca13810a0766f1013c53ed2b6bcbc0864255a9528c589de85df", size = 314388, upload-time = "2026-07-14T14:26:09.013Z" },
-    { url = "https://files.pythonhosted.org/packages/3d/05/4186f836eee5f30927d1e2a1f2a331e19504820978a284c78db8ad0a7449/cpex_retry_with_backoff-0.3.6-cp311-abi3-manylinux_2_34_s390x.whl", hash = "sha256:b49c5c2840611c5127af27d7d35eb855ebcd802bc7f988a4a540e1a5b7644c8f", size = 315840, upload-time = "2026-07-14T14:26:10.417Z" },
-    { url = "https://files.pythonhosted.org/packages/e2/e5/13f77ecd5412d46f167a72b78f27f32b5affebd35538b995e454eb5d8ba8/cpex_retry_with_backoff-0.3.6-cp311-abi3-manylinux_2_34_x86_64.whl", hash = "sha256:8ba14b4f0d6520de272d304ba2535d5d0cd3939d9147640ddf106d57b6f1831a", size = 288150, upload-time = "2026-07-14T14:26:11.76Z" },
-    { url = "https://files.pythonhosted.org/packages/40/ec/a5d512633610762b56cca78220af3fb8a8919dc098cd7a5edab17cf3dbd2/cpex_retry_with_backoff-0.3.6-cp311-abi3-win_amd64.whl", hash = "sha256:2e093a1dba401d2c0695a542b037c58a99d0f98daf5e40f77325afbebe0dceaa", size = 205572, upload-time = "2026-07-14T14:26:13.278Z" },
+    { url = "https://files.pythonhosted.org/packages/f5/f2/4da58c74fb91a76e77d78e460d2b0cc32c0b5a64ab7a1e71f999090a1096/cpex_retry_with_backoff-0.3.7-cp311-abi3-macosx_11_0_arm64.whl", hash = "sha256:a53770002f437211bc0d56f1eb0e9eb8f24106cb1a04831d982861ade55c9345", size = 260884, upload-time = "2026-07-15T10:23:37.026Z" },
+    { url = "https://files.pythonhosted.org/packages/c2/af/e4a666b8ae7bd643a9b2deeee58c263d1489a4a340bfae209eace970ef35/cpex_retry_with_backoff-0.3.7-cp311-abi3-manylinux_2_34_aarch64.whl", hash = "sha256:59beefda7242d355667b315c95e34a4fe9554a8a3ccc4d79a021ec600eabd6d9", size = 272892, upload-time = "2026-07-15T10:23:38.566Z" },
+    { url = "https://files.pythonhosted.org/packages/ed/45/83e698933a191aa4197fe1416ff4405a611b339a6b1396791d61910fe723/cpex_retry_with_backoff-0.3.7-cp311-abi3-manylinux_2_34_ppc64le.whl", hash = "sha256:d951f7acdf0448b4041da966aa24571210603a2114a47e6aa303a2431569a46b", size = 314510, upload-time = "2026-07-15T10:23:40.104Z" },
+    { url = "https://files.pythonhosted.org/packages/3d/67/46459cac3cfe85679ab92dde99d4cc230abccb7b3128db31bd9958f8491d/cpex_retry_with_backoff-0.3.7-cp311-abi3-manylinux_2_34_s390x.whl", hash = "sha256:652334a92a4d4d2a5cd73997dd4cac4b2aa8f17f0bc2618f52b44fe36b0854fc", size = 316046, upload-time = "2026-07-15T10:23:41.539Z" },
+    { url = "https://files.pythonhosted.org/packages/bc/ac/b159110260d39e54c65e8a4d0e78ee8ae4f9ce5b2ff21ae45c3648a67ebf/cpex_retry_with_backoff-0.3.7-cp311-abi3-manylinux_2_34_x86_64.whl", hash = "sha256:0cdbf53ecd2811bc48ee6bb0068feb69732951e83cbc9e01de342824b8038658", size = 289201, upload-time = "2026-07-15T10:23:43.07Z" },
+    { url = "https://files.pythonhosted.org/packages/0a/c2/224ddb0db97922577cd908cf1a72e29920b92f9fd7bf1df4cb8d3c2bb039/cpex_retry_with_backoff-0.3.7-cp311-abi3-win_amd64.whl", hash = "sha256:3ffdb067b385344dcdd662ac94cc7b290363054068948852624779a6b5949cb2", size = 205814, upload-time = "2026-07-15T10:23:44.409Z" },
 ]
 
 [[package]]
@@ -3213,7 +3213,7 @@ requires-dist = [
     { name = "cpex-encoded-exfil-detection", marker = "extra == 'plugins'", specifier = ">=0.3.6" },
     { name = "cpex-pii-filter", marker = "extra == 'plugins'", specifier = ">=0.3.6" },
     { name = "cpex-rate-limiter", marker = "extra == 'plugins'", specifier = ">=0.1.7" },
-    { name = "cpex-retry-with-backoff", marker = "extra == 'plugins'", specifier = ">=0.3.6" },
+    { name = "cpex-retry-with-backoff", marker = "extra == 'plugins'", specifier = ">=0.3.7" },
     { name = "cpex-secrets-detection", marker = "extra == 'plugins'", specifier = ">=0.3.7" },
     { name = "cpex-url-reputation", marker = "extra == 'plugins'", specifier = ">=0.3.5" },
     { name = "cryptography", specifier = ">=49.0.0" },

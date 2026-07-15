@@ -437,7 +437,11 @@ plugins:
   # cumulative total, 0 in the success/exhausted-budget branches) for
   # mcpgateway/plugins/utils.py:record_plugin_metrics() to persist as a dedicated
   # `plugin.metrics.retry_with_backoff` observability span. Requires
-  # cpex-retry-with-backoff>=0.3.6 (see pyproject.toml) -- earlier releases do not emit metrics.
+  # cpex-retry-with-backoff>=0.3.7 (see pyproject.toml) -- 0.3.6 added the metrics emission above
+  # but never actually retried against this gateway (is_failure read the result via C-level
+  # PyDict::get_item, which misses everything on the CopyOnWriteDict payload-isolation wrapper
+  # the gateway uses -- IBM/cpex-plugins#124). 0.3.7 fixes retry detection; earlier releases do
+  # not emit metrics at all.
   #
   # Left mode: "disabled" deliberately, unlike PIIFilter: this plugin ships with
   # retry_on_status/max_retries below and hooks tool_post_invoke, so flipping mode to "sequential"
@@ -451,7 +455,7 @@ plugins:
   # enabled). That is an opt-in decision for operators to make explicitly; do not flip silently.
   - name: "RetryWithBackoffPlugin"
     kind: "cpex_retry_with_backoff.RetryWithBackoffPlugin"
-    version: "0.3.6"
+    version: "0.3.7"
     hooks: ["tool_post_invoke"]
     tags: ["retry", "backoff", "resilience"]
     mode: "disabled"
