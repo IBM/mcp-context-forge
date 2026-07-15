@@ -80,12 +80,16 @@ AUTH_ENCRYPTION_SECRET=<strong-random-key>
    - Client Secret (stored encrypted at rest)
    - Token URL
    - Scopes (space-separated)
-   - Audience (optional, for Atlassian, Auth0, and other non-RFC-8707 providers)
+   - Audience (optional, for Atlassian, Auth0, and other non-RFC-8707 providers that use an `audience` request parameter)
+   - Resource (optional, RFC 8707 audience indicator — see [OAuth Resource Configuration](oauth-resource-configuration.md))
    - Authorization URL and Redirect URI (required for Authorization Code)
 
 5. Save.
 
 Field mapping follows the architecture proposal and is used by the OAuth Manager service to request tokens.
+
+!!! tip "Resource (Audience) Configuration"
+    The **Resource** field controls the OAuth 2.0 `resource` parameter (RFC 8707) and token audience validation. In most cases you can leave it empty and let ContextForge auto-derive (from the gateway URL origin) and auto-learn (from the first successful token) the correct value. See [OAuth Resource Configuration](oauth-resource-configuration.md) for when to set it explicitly and how to force a re-learn.
 
 ---
 
@@ -155,6 +159,85 @@ The `audience` parameter:
 - Is included in both authorization and token exchange requests
 - Can coexist with `resource` parameter for providers that accept both
 - When set without `resource`, the RFC 8707 `resource` parameter is automatically omitted
+
+### Resource Parameter (RFC 8707) — audience learning, origin fallback, advisory validation
+
+!!! info "See also"
+    For a task-oriented guide (provider patterns, multi-resource configs, forcing a re-learn), see [OAuth Resource Configuration](oauth-resource-configuration.md). This section summarises the behaviour and links back to the implementation details.
+
+The `oauth_config.resource` field is the RFC 8707 audience indicator. ContextForge treats
+it as **the single source of truth** for what the JWT `aud` claim should equal when the
+token comes back from the IdP.
+
+**Three ways it gets populated:**
+
+1. **Explicit UI/API configuration** — the admin sets it (single URI or list) via the Admin
+   UI "Resource (Audience)" field or via the API `oauth_config.resource`.
+2. **Origin-derivation fallback** — when no `resource` is configured, the gateway URL's
+   *origin* (`scheme://netloc`, not the full path) is sent as `resource` on the
+   authorization request. Most real OAuth providers (Salesforce, Azure AD, Okta) issue
+   origin-level audiences rather than full-URL audiences, so this maximizes first-flow
+   success.
+3. **Audience learning** — when the first OAuth callback returns a token whose `aud`
+   claim doesn't match the configured/derived `resource`, the gateway learns and persists
+   the IdP's actual `aud` value so subsequent validation succeeds. Common for IdPs that
+   set `aud` to `client_id` or another opaque identifier (ServiceNow, Authentik).
+
+**First-write-only semantics.** Audience learning writes the persisted `resource` **only
+when the current value is unset or malformed**. Two hardening rules apply before any
+persistence: (a) the token's `aud` claim must be well-formed (non-empty string or
+non-empty list of non-empty strings — malformed shapes are silently dropped), and (b) if
+`oauth_config.issuer` is configured, the token's `iss` claim must match it (trailing
+slashes normalized). This prevents cross-IdP audience bleed. See
+[`_persist_learned_audience` in `oauth_router.py`](https://github.com/IBM/mcp-context-forge/blob/main/mcpgateway/routers/oauth_router.py) for the full flow.
+
+!!! warning "Multi-tenant caveat"
+    First-write-only means a single gateway that serves users from **different tenants of
+    the same IdP** with per-tenant `aud` values will pin the first tenant's audience.
+    Once pinned, other tenants' tokens fail audience validation (see below). If you serve
+    multiple tenants through one gateway, configure `resource` explicitly as a **list**
+    covering every expected audience:
+
+    ```json
+    "oauth_config": {
+      "resource": ["tenant-a-aud", "tenant-b-aud", "tenant-c-aud"]
+    }
+    ```
+
+**Advisory vs. blocking audience validation.** When a token comes back and its `aud`
+doesn't match the expected resource, the validator's behavior depends on where the
+expected value came from:
+
+| Expected `resource` source | Mismatch severity | Behavior |
+|---|---|---|
+| Explicitly configured | Blocking | `GatewayConnectionError` raised, token not forwarded |
+| Learned from prior IdP token | Blocking | `GatewayConnectionError` raised, token not forwarded |
+| Auto-derived from gateway URL origin (fallback) | Advisory (default) | Warning logged, token forwarded — upstream MCP server is the authority |
+
+The advisory default keeps a freshly-registered gateway (no explicit resource, no
+learned resource yet) forwarding tokens so the upstream MCP server can validate `aud`
+itself. If you cannot rely on the upstream to validate `aud`, enable strict mode:
+
+```bash
+# .env
+OAUTH_REQUIRE_CONFIGURED_RESOURCE=true
+```
+
+With `OAUTH_REQUIRE_CONFIGURED_RESOURCE=true`, auto-derived audience mismatches also
+become blocking, and the gateway rejects cross-resource tokens itself.
+
+**Triggering re-learning.** Clearing the "Resource (Audience)" field in the Admin UI
+**does not** trigger re-learning — the stored value is preserved to avoid stale-save
+races with the OAuth callback (an admin dialog opened before the callback ran can otherwise
+overwrite the callback's learned value on save). To explicitly clear a stored resource
+and trigger re-learning on the next OAuth flow, use the API with an explicit `null`:
+
+```bash
+curl -X PUT -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"oauth_config": {"resource": null, "grant_type": "authorization_code", ...}}' \
+  https://gateway.example.com/gateways/<gateway_id>
+```
 
 ---
 
