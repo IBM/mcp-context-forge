@@ -1807,6 +1807,7 @@ class EmailAuthService:
         password_change_required: Optional[bool] = None,
         password: Optional[str] = None,
         admin_origin_source: Optional[str] = None,
+        requesting_user_email: Optional[str] = None,
     ) -> EmailUser:
         """Update user information.
 
@@ -1819,12 +1820,13 @@ class EmailAuthService:
             password_change_required: Whether user must change password on next login (optional)
             password: New password (optional, will be hashed)
             admin_origin_source: Source of admin change for tracking (e.g. "api", "ui"). Callers should pass explicitly.
+            requesting_user_email: Email of the authenticated user making the change. Required when demoting or deactivating an active admin.
 
         Returns:
             EmailUser: Updated user object
 
         Raises:
-            ValueError: If user doesn't exist, if protect_all_admins blocks the change, or if it would remove the last active admin
+            ValueError: If user doesn't exist, an admin targets their own account, requester identity is missing, or the change would remove the last active admin
             PasswordValidationError: If password doesn't meet policy
         """
         try:
@@ -1839,14 +1841,21 @@ class EmailAuthService:
             if not user:
                 raise ValueError(f"User {email} not found")
 
-            # Admin protection guard
+            normalized_requester_email = requesting_user_email.lower().strip() if requesting_user_email else None
+
+            # Admin protection guard. Peer-admin changes are allowed; self-removal and
+            # removal of the last active admin are always denied.
             if user.is_admin and user.is_active:
                 would_lose_admin = (is_admin is not None and not is_admin) or (is_active is not None and not is_active)
                 if would_lose_admin:
-                    if settings.protect_all_admins:
-                        raise ValueError("Admin protection is enabled — cannot demote or deactivate any admin user")
+                    if not normalized_requester_email:
+                        raise ValueError("Requesting user email is required to demote or deactivate an admin user")
+                    if normalized_requester_email == email:
+                        raise ValueError("Administrators cannot demote or deactivate their own account")
                     if await self.is_last_active_admin(email):
                         raise ValueError("Cannot demote or deactivate the last remaining active admin user")
+
+            role_granter = normalized_requester_email or email
 
             # Update fields if provided
             if full_name is not None:
@@ -1875,7 +1884,7 @@ class EmailAuthService:
                             if admin_role:
                                 existing = await self.role_service.get_user_role_assignment(user_email=email, role_id=admin_role.id, scope="global", scope_id=None)
                                 if not existing or not existing.is_active:
-                                    await self.role_service.assign_role_to_user(user_email=email, role_id=admin_role.id, scope="global", scope_id=None, granted_by=email)
+                                    await self.role_service.assign_role_to_user(user_email=email, role_id=admin_role.id, scope="global", scope_id=None, granted_by=role_granter)
                                     logger.info("Assigned %s role to %s", admin_role_name, SecurityValidator.sanitize_log_message(email))
                             else:
                                 logger.warning("%s role not found, cannot assign to %s", admin_role_name, SecurityValidator.sanitize_log_message(email))
@@ -1894,7 +1903,7 @@ class EmailAuthService:
                             if user_role:
                                 existing = await self.role_service.get_user_role_assignment(user_email=email, role_id=user_role.id, scope="global", scope_id=None)
                                 if not existing or not existing.is_active:
-                                    await self.role_service.assign_role_to_user(user_email=email, role_id=user_role.id, scope="global", scope_id=None, granted_by=email)
+                                    await self.role_service.assign_role_to_user(user_email=email, role_id=user_role.id, scope="global", scope_id=None, granted_by=role_granter)
                                     logger.info("Assigned %s role to %s", SecurityValidator.sanitize_log_message(user_role_name), SecurityValidator.sanitize_log_message(email))
                             else:
                                 logger.warning("%s role not found, cannot assign to %s", SecurityValidator.sanitize_log_message(user_role_name), SecurityValidator.sanitize_log_message(email))

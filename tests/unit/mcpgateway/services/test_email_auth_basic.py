@@ -2315,12 +2315,13 @@ class TestEmailAuthServiceUserUpdates:
         mock_db.commit.assert_called()
 
     @pytest.mark.asyncio
-    async def test_update_user_protect_all_admins_blocks_demote(self, service, mock_db, monkeypatch):
-        """Test that protect_all_admins blocks demoting any admin (not just last)."""
+    @pytest.mark.parametrize("protect_all_admins", [True, False])
+    async def test_update_user_allows_peer_admin_demotion(self, service, mock_db, monkeypatch, protect_all_admins):
+        """Peer-admin demotion is independent of login lockout protection."""
         # First-Party
         from mcpgateway.config import settings
 
-        monkeypatch.setattr(settings, "protect_all_admins", True)
+        monkeypatch.setattr(settings, "protect_all_admins", protect_all_admins)
 
         admin_user = MagicMock(spec=EmailUser)
         admin_user.email = "admin@example.com"
@@ -2331,17 +2332,15 @@ class TestEmailAuthServiceUserUpdates:
         mock_result.scalar_one_or_none.return_value = admin_user
         mock_db.execute.return_value = mock_result
 
-        with pytest.raises(ValueError, match="Admin protection is enabled"):
-            await service.update_user(email="admin@example.com", is_admin=False)
+        with patch.object(service, "is_last_active_admin", new=AsyncMock(return_value=False)):
+            result = await service.update_user(email="admin@example.com", is_admin=False, requesting_user_email="other-admin@example.com")
+
+        assert result.is_admin is False
 
     @pytest.mark.asyncio
-    async def test_update_user_protect_all_admins_blocks_deactivate(self, service, mock_db, monkeypatch):
-        """Test that protect_all_admins blocks deactivating any admin."""
-        # First-Party
-        from mcpgateway.config import settings
-
-        monkeypatch.setattr(settings, "protect_all_admins", True)
-
+    @pytest.mark.parametrize("field", ["is_admin", "is_active"])
+    async def test_update_user_blocks_admin_self_removal_case_insensitive(self, service, mock_db, field):
+        """Admins cannot demote or deactivate themselves, regardless of email case."""
         admin_user = MagicMock(spec=EmailUser)
         admin_user.email = "admin@example.com"
         admin_user.is_admin = True
@@ -2351,8 +2350,23 @@ class TestEmailAuthServiceUserUpdates:
         mock_result.scalar_one_or_none.return_value = admin_user
         mock_db.execute.return_value = mock_result
 
-        with pytest.raises(ValueError, match="Admin protection is enabled"):
-            await service.update_user(email="admin@example.com", is_active=False)
+        with pytest.raises(ValueError, match="cannot demote or deactivate their own account"):
+            await service.update_user(email="Admin@Example.COM", requesting_user_email=" ADMIN@example.com ", **{field: False})
+
+    @pytest.mark.asyncio
+    async def test_update_user_admin_removal_requires_requester_identity(self, service, mock_db):
+        """Admin removal fails closed when authenticated requester identity is absent."""
+        admin_user = MagicMock(spec=EmailUser)
+        admin_user.email = "admin@example.com"
+        admin_user.is_admin = True
+        admin_user.is_active = True
+
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = admin_user
+        mock_db.execute.return_value = mock_result
+
+        with pytest.raises(ValueError, match="Requesting user email is required"):
+            await service.update_user(email="admin@example.com", is_admin=False)
 
     @pytest.mark.asyncio
     async def test_update_user_protect_all_admins_allows_other_updates(self, service, mock_db, monkeypatch):
@@ -2395,7 +2409,7 @@ class TestEmailAuthServiceUserUpdates:
 
         with patch.object(service, "is_last_active_admin", new=AsyncMock(return_value=True)):
             with pytest.raises(ValueError, match="last remaining active admin"):
-                await service.update_user(email="admin@example.com", is_admin=False)
+                await service.update_user(email="admin@example.com", is_admin=False, requesting_user_email="other-admin@example.com")
 
     @pytest.mark.asyncio
     async def test_update_user_password_history_fail_closed_on_exception(self, service, mock_db, mock_user, mock_password_service):

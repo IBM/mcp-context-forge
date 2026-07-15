@@ -10881,6 +10881,7 @@ async def test_admin_update_user_self_demotion_blocked(monkeypatch, mock_db, all
     auth_service.update_user.assert_called_once()
     call_kwargs = auth_service.update_user.call_args[1]
     assert call_kwargs["is_admin"] is True
+    assert call_kwargs["requesting_user_email"] == "admin@example.com"
 
 
 @pytest.mark.asyncio
@@ -10901,6 +10902,7 @@ async def test_admin_update_user_self_demotion_case_insensitive(monkeypatch, moc
     auth_service.update_user.assert_called_once()
     call_kwargs = auth_service.update_user.call_args[1]
     assert call_kwargs["is_admin"] is True
+    assert call_kwargs["requesting_user_email"] == "ADMIN@EXAMPLE.COM"
 
 
 @pytest.mark.asyncio
@@ -10921,6 +10923,7 @@ async def test_admin_update_user_can_demote_others(monkeypatch, mock_db, allow_p
     response = await admin_update_user("other%40example.com", request=request, db=mock_db, _user={"email": "admin@example.com", "db": mock_db})
     assert response.status_code == 200
     assert response.headers.get("HX-Trigger") is not None
+    assert auth_service.update_user.call_args.kwargs["requesting_user_email"] == "admin@example.com"
 
 
 @pytest.mark.asyncio
