@@ -473,7 +473,7 @@ async def _default_session_factory(req: SessionCreateRequest) -> tuple[ClientSes
                 # - Network connectivity problems
                 # - Upstream server errors
                 # - DNS resolution failures
-                ready.set_exception(RuntimeError(f"Failed to create upstream MCP session for {req.url}: " f"[{error_category}] {exception_type}: {exception_message}"))
+                ready.set_exception(RuntimeError(f"Failed to create upstream MCP session for {req.url}: [{error_category}] {exception_type}: {exception_message}"))
 
     task = asyncio.create_task(owner(), name=f"upstream-session-{sanitize_url_for_logging(req.url)}")
 
