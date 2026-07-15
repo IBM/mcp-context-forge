@@ -4,6 +4,7 @@ import { z } from "zod";
 import { useQuery } from "@/hooks/useQuery";
 import { useGenerateSchemaFromOpenapi } from "@/hooks/useGenerateSchemaFromOpenapi";
 import type { Visibility } from "@/types/server";
+import type { BodyCreateToolV1ToolsPost, ToolCreate, ToolUpdate } from "@/generated/types";
 import { sanitizeString, sanitizeUrl, sanitizePassword, sanitizeToken } from "@/lib/sanitize";
 
 export type RequestType = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
@@ -122,29 +123,44 @@ export interface ApiToolAuth {
   authHeaders?: Array<{ key: string; value: string }>;
 }
 
-export interface ApiToolPayload {
-  tool: {
-    name: string;
-    url?: string;
-    description?: string;
-    integration_type: string;
-    request_type: string;
-    inputSchema?: Record<string, unknown>;
-    outputSchema?: Record<string, unknown>;
-    jsonpath_filter?: string;
-    tags?: string[];
-    visibility?: string;
-    team_id?: string;
-    auth_type?: string;
-    auth_username?: string;
-    auth_password?: string; // pragma: allowlist secret
-    auth_token?: string;
-    auth_header_key?: string;
-    auth_header_value?: string;
-    auth_headers?: Array<{ key: string; value: string }>;
-  };
-  team_id?: string;
+/**
+ * Flat auth convenience fields.
+ *
+ * The gateway accepts tool auth either nested (as `AuthenticationValues`) or via
+ * these flat fields; the UI sends the flat form. They are not part of the
+ * generated `ToolCreate`/`ToolUpdate` request contracts (which only describe the
+ * nested `auth` object), so they are modelled here as an explicit extension over
+ * the generated types.
+ */
+interface FlatAuthFields {
+  auth_type?: string;
+  auth_username?: string;
+  auth_password?: string; // pragma: allowlist secret
+  auth_token?: string;
+  auth_header_key?: string;
+  auth_header_value?: string;
+  auth_headers?: Array<{ key: string; value: string }>;
 }
+
+/**
+ * Body for `POST /tools`.
+ *
+ * The generated `BodyCreateToolV1ToolsPost` wrapper (`{ tool, team_id }`) with
+ * the tool anchored to `ToolCreate` plus the flat-auth extension.
+ */
+export type ApiToolPayload = Omit<BodyCreateToolV1ToolsPost, "tool"> & {
+  tool: ToolCreate & FlatAuthFields;
+};
+
+/**
+ * Body for `PUT /tools/{id}`.
+ *
+ * The generated `ToolUpdate` plus the flat-auth extension and `jsonpath_filter`
+ * — the snake_case alias the UI sends (the generated `ToolUpdate` names the same
+ * field `jsonpathFilter`; the backend accepts both).
+ */
+export type ApiToolUpdatePayload = NonNullable<ToolUpdate> &
+  FlatAuthFields & { jsonpath_filter?: string | null };
 
 export interface FormErrors {
   name?: string;
@@ -339,7 +355,7 @@ export function useToolForm({
 
   // handleSubmit guards against a missing toolId before calling updateTool,
   // so this URL is only ever used when toolId is defined.
-  const { execute: updateTool, isLoading: isUpdating } = useQuery<unknown, Record<string, unknown>>(
+  const { execute: updateTool, isLoading: isUpdating } = useQuery<unknown, ApiToolUpdatePayload>(
     `/tools/${toolId}`,
     {
       method: "PUT",
@@ -597,8 +613,13 @@ export function useToolForm({
               visibility: formData.tool.visibility,
               customName: formData.tool.name,
               ...authFields,
-              ...(REST_METHODS.includes(request_type)
-                ? { requestType: request_type, integrationType: "REST" }
+              // Guarded by REST_METHODS, so request_type is a valid REST verb here;
+              // the cast bridges ToolCreate's wider request-type enum to ToolUpdate's.
+              ...(request_type !== undefined && REST_METHODS.includes(request_type)
+                ? {
+                    requestType: request_type as NonNullable<ToolUpdate>["requestType"],
+                    integrationType: "REST" as const,
+                  }
                 : {}),
             };
             response = await updateTool(updatePayload);
