@@ -27,6 +27,7 @@ from mcpgateway.config import Settings
 from tests.helpers.api_helpers import ApiTestHelper
 from tests.helpers.auth import make_test_jwt
 from .pages.admin_page import AdminPage
+from .pages.admin_utils import wait_for_js_condition
 from .pages.agents_page import AgentsPage
 from .pages.gateways_page import GatewaysPage
 from .pages.login_page import LoginPage
@@ -316,10 +317,13 @@ def _ensure_admin_logged_in(page: Page, base_url: str) -> None:
             raise AssertionError("Admin page failed to load: Internal Server Error (500)")
         raise
 
-    # Wait for JS initialization (showTab + HTMX + event delegation) before any tab clicks
+    # Wait for JS initialization (showTab + HTMX + event delegation) before any tab clicks.
+    # evaluate()-based poll: wait_for_function's eval() mechanism is rejected by strict
+    # CSP (script-src 'self', no unsafe-eval) right after navigation.
     try:
-        page.wait_for_function(
-            "typeof window.Admin.showTab === 'function' && typeof window.htmx !== 'undefined' && window.Admin.eventDelegationInitialized === true",
+        wait_for_js_condition(
+            page,
+            "typeof window.Admin !== 'undefined' && typeof window.Admin.showTab === 'function' && typeof window.htmx !== 'undefined' && window.Admin.eventDelegationInitialized === true",
             timeout=30000,
         )
     except PlaywrightTimeoutError:

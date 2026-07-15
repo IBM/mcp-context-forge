@@ -41,6 +41,9 @@ from playwright.sync_api import FrameLocator, Page
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 import pytest
 
+# Local
+from ..pages.admin_utils import wait_for_js_condition
+
 # ---------------------------------------------------------------------------
 # Helper: get the underlying Frame object from the iframe_host FrameLocator
 # ---------------------------------------------------------------------------
@@ -53,10 +56,20 @@ def _get_admin_frame(page: Page):
     need the underlying ``Frame`` object, which Playwright exposes via
     ``page.frames``.  The admin iframe is the first child frame of the host
     page (index 1; index 0 is the host page itself).
+
+    ``page.main_frame`` must always be skipped: the host page is built via
+    ``page.set_content()``, which replaces the DOM in place without a real
+    navigation, so ``page.main_frame.url`` keeps reporting whatever URL the
+    page had *before* ``set_content()`` ran (typically the real ``/admin/``
+    URL from the login flow) even though its ``window.Admin`` now belongs to
+    a torn-down document. Matching on that stale URL string would silently
+    hand callers the host frame instead of the actual embedded admin iframe.
     """
     # Wait until the iframe has navigated to /admin/
     for _ in range(30):
         for frame in page.frames:
+            if frame is page.main_frame:
+                continue
             if "/admin" in frame.url:
                 return frame
         page.wait_for_timeout(500)
@@ -357,6 +370,11 @@ class TestMetricsRetryInIframe:
         """showMetricsError() retry button must have data-action, not onclick, inside iframe."""
         frame = _get_admin_frame(page)
 
+        # metrics.js is lazy-loaded on demand; Admin.showMetricsError only becomes
+        # callable once the metrics tab has triggered its chunk load.
+        iframe_host.locator("#tab-metrics").click()
+        wait_for_js_condition(frame, "typeof window.Admin.showMetricsError === 'function'", timeout=15000)
+
         result: Dict[str, Any] = frame.evaluate("""
             () => {
                 let container = document.getElementById('aggregated-metrics-content');
@@ -390,6 +408,11 @@ class TestMetricsRetryInIframe:
     def test_metrics_error_retry_button_calls_retryLoadMetrics_inside_iframe(self, iframe_host: FrameLocator, page: Page) -> None:
         """Clicking the retry button inside the iframe must trigger retry behavior."""
         frame = _get_admin_frame(page)
+
+        # metrics.js is lazy-loaded on demand; Admin.showMetricsError only becomes
+        # callable once the metrics tab has triggered its chunk load.
+        iframe_host.locator("#tab-metrics").click()
+        wait_for_js_condition(frame, "typeof window.Admin.showMetricsError === 'function'", timeout=15000)
 
         result: Dict[str, Any] = frame.evaluate("""
             () => {
@@ -425,6 +448,11 @@ class TestMetricsRetryInIframe:
     def test_metrics_empty_state_refresh_button_has_data_action_inside_iframe(self, iframe_host: FrameLocator, page: Page) -> None:
         """displayMetrics({}) empty-state button must have data-action, not onclick, inside iframe."""
         frame = _get_admin_frame(page)
+
+        # metrics.js is lazy-loaded on demand; Admin.displayMetrics only becomes
+        # callable once the metrics tab has triggered its chunk load.
+        iframe_host.locator("#tab-metrics").click()
+        wait_for_js_condition(frame, "typeof window.Admin.displayMetrics === 'function'", timeout=15000)
 
         result: Dict[str, Any] = frame.evaluate("""
             () => {
