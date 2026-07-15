@@ -838,3 +838,82 @@ class TestOAuthConfigProtection:
 
         # Masked placeholders without existing values should become None.
         assert protected["id_token"] is None
+
+
+class TestOAuthConfigRaceProneKeyBackfill:
+    """Reviewer finding #4: preserve callback-written resource on stale UI saves.
+
+    Scenario: OAuth callback learns audience and persists ``resource``
+    asynchronously via :func:`_persist_learned_audience`. A concurrent admin
+    edit that submits an oauth_config dict omitting ``resource`` (for example
+    an API caller sending a partial JSON blob, or a UI dialog opened before
+    the callback ran) previously replaced the whole ``oauth_config`` and
+    silently wiped the learned value. The backfill guarantee is: keys listed
+    in ``_OAUTH_CONFIG_RACE_PRONE_KEYS`` present in the stored config are
+    preserved when the new dict omits them.
+    """
+
+    @pytest.mark.asyncio
+    async def test_resource_preserved_when_new_dict_omits_it(self):
+        stored = {"client_id": "cid", "resource": "https://learned.example.com"}
+        new = {"client_id": "cid", "grant_type": "authorization_code"}
+
+        protected = await protect_oauth_config_for_storage(new, existing_oauth_config=stored)
+
+        assert protected["resource"] == "https://learned.example.com"
+        assert protected["grant_type"] == "authorization_code"
+
+    @pytest.mark.asyncio
+    async def test_resource_list_preserved_when_new_dict_omits_it(self):
+        stored = {"resource": ["https://a.example.com", "https://b.example.com"]}
+        new = {"grant_type": "authorization_code"}
+
+        protected = await protect_oauth_config_for_storage(new, existing_oauth_config=stored)
+
+        assert protected["resource"] == ["https://a.example.com", "https://b.example.com"]
+
+    @pytest.mark.asyncio
+    async def test_resource_explicit_none_honors_clear_intent(self):
+        """API callers can still clear the learned resource by sending explicit None."""
+        stored = {"resource": "https://learned.example.com"}
+        new = {"resource": None, "grant_type": "authorization_code"}
+
+        protected = await protect_oauth_config_for_storage(new, existing_oauth_config=stored)
+
+        assert protected["resource"] is None
+
+    @pytest.mark.asyncio
+    async def test_resource_explicit_value_overrides_stored(self):
+        stored = {"resource": "https://old.example.com"}
+        new = {"resource": "https://new.example.com"}
+
+        protected = await protect_oauth_config_for_storage(new, existing_oauth_config=stored)
+
+        assert protected["resource"] == "https://new.example.com"
+
+    @pytest.mark.asyncio
+    async def test_no_backfill_when_stored_has_no_resource(self):
+        stored = {"client_id": "cid"}
+        new = {"client_id": "cid", "grant_type": "authorization_code"}
+
+        protected = await protect_oauth_config_for_storage(new, existing_oauth_config=stored)
+
+        assert "resource" not in protected
+
+    @pytest.mark.asyncio
+    async def test_no_backfill_when_no_existing_config(self):
+        new = {"client_id": "cid"}
+
+        protected = await protect_oauth_config_for_storage(new)
+
+        assert "resource" not in protected
+
+    @pytest.mark.asyncio
+    async def test_scopes_not_backfilled(self):
+        """Sanity check: non-race-prone keys still follow drop-on-missing semantics."""
+        stored = {"scopes": ["read", "write"]}
+        new = {"grant_type": "authorization_code"}
+
+        protected = await protect_oauth_config_for_storage(new, existing_oauth_config=stored)
+
+        assert "scopes" not in protected
