@@ -127,7 +127,7 @@ This diagram showcases the performance-optimized architecture of ContextForge, h
 │  │  │  │ MAX_DB_CONNECTIONS: 550  │  │   │                  │  │  │  ║   Up to 83x faster      ║  │  ││ │
 │  │  │  │ POOL_MODE: transaction   │  │   │                  │  │  │  ╚═════════════════════════╝  │  ││ │
 │  │  │  │ 8x connection reduction  │  │   │                  │  │  │  maxmemory: 1GB               │  ││ │
-│  │  │  └──────────────────────────┘  │   │                  │  │  │  maxclients: 10000            │  ││ │
+│  │  │  └──────────────────────────┘  │   │                  │  │  │  maxclients: 15000            │  ││ │
 │  │  └────────────────────────────────┘   │                  │  │  │  tcp-backlog: 2048            │  ││ │
 │  │                  │                    │                  │  │  │  allkeys-lru eviction         │  ││ │
 │  │                  ▼                    │                  │  │  └───────────────────────────────┘  ││ │

@@ -46,6 +46,8 @@ spec:
           imagePullPolicy: {{ .Values.redis.image.pullPolicy }}
 
           # Start Redis with optional persistence config and optional password auth.
+          # --maxclients is passed as a flag so it applies even when persistence
+          # is disabled and no redis.conf is mounted (the default install path).
           command:
             - /bin/sh
             - -ec
@@ -57,7 +59,7 @@ spec:
               if [ -f /usr/local/etc/redis/redis.conf ]; then
                 exec redis-server /usr/local/etc/redis/redis.conf $AUTH_ARGS
               fi
-              exec redis-server $AUTH_ARGS
+              exec redis-server --maxclients {{ .Values.redis.maxclients | default 15000 }} $AUTH_ARGS
 
           # Expose Redis TCP port inside the pod
           ports:
