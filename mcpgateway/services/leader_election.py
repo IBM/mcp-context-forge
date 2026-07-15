@@ -18,7 +18,6 @@ the cached flag for the redis backend.
 import asyncio
 import logging
 import os
-import tempfile
 import uuid
 from typing import Any, Optional
 
@@ -27,6 +26,7 @@ from filelock import FileLock, Timeout
 
 # First-Party
 from mcpgateway.config import settings
+from mcpgateway.utils.primary_worker import _lock_path as _default_lock_path  # canonical port-scoped lock path
 
 logger = logging.getLogger(__name__)
 
@@ -34,15 +34,6 @@ logger = logging.getLogger(__name__)
 _RENEW_LUA = "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('pexpire', KEYS[1], ARGV[2]) else return 0 end"
 # Atomic if-owner release.
 _RELEASE_LUA = "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end"
-
-
-def _default_lock_path() -> str:
-    """Port-scoped temp lock path (mirrors mcpgateway.utils.primary_worker).
-
-    Returns:
-        Absolute path to the file-lock.
-    """
-    return settings.primary_worker_lock_path or os.path.join(tempfile.gettempdir(), f"mcpgw_plugin_primary_{settings.port}.lock")
 
 
 class PrimaryWorkerElector:
@@ -73,12 +64,14 @@ class PrimaryWorkerElector:
             redis_client: Pre-built async Redis client (used by tests); when
                 omitted the redis backend builds one from ``redis_url``.
         """
-        self._backend = backend or settings.primary_worker_election_backend
-        self._redis_url = redis_url or settings.redis_url
-        self._redis_key = redis_key or settings.primary_worker_redis_key
-        self._lease_ttl = lease_ttl or settings.primary_worker_lease_ttl
-        self._heartbeat = heartbeat_interval or settings.primary_worker_heartbeat_interval
-        self._policy = unavailable_policy or settings.primary_worker_redis_unavailable_policy
+        # Use ``is None`` (not ``or``) so an explicit 0/"" is honored rather than
+        # silently replaced by the settings default.
+        self._backend = backend if backend is not None else settings.primary_worker_election_backend
+        self._redis_url = redis_url if redis_url is not None else settings.redis_url
+        self._redis_key = redis_key if redis_key is not None else settings.primary_worker_redis_key
+        self._lease_ttl = lease_ttl if lease_ttl is not None else settings.primary_worker_lease_ttl
+        self._heartbeat = heartbeat_interval if heartbeat_interval is not None else settings.primary_worker_heartbeat_interval
+        self._policy = unavailable_policy if unavailable_policy is not None else settings.primary_worker_redis_unavailable_policy
         self._lock_path = lock_path
         self._instance_id = str(uuid.uuid4())
         self._is_primary = False
@@ -132,6 +125,8 @@ class PrimaryWorkerElector:
                 await self._task
             except asyncio.CancelledError:
                 pass
+            except Exception as exc:  # best-effort: don't let a task error break the shutdown sequence
+                logger.warning("elector maintenance task raised on cancel: %s", exc)
             self._task = None
         if self._redis is not None:
             try:
