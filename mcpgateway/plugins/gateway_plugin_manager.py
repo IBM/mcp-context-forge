@@ -130,13 +130,15 @@ class TenantPluginManagerFactory:
 
     async def get_manager(self, context_id: Optional[str] = None) -> TenantPluginManager:
         """Get or create a TenantPluginManager for the given context."""
+
         context_id = context_id or DEFAULT_CONTEXT_ID
         expired = None
 
         async with self._lock:
             entry = self._managers.get(context_id)
             if entry is not None:
-                if entry.is_expired(self._cache_ttl) and context_id != DEFAULT_CONTEXT_ID:
+                # Shared managers should not expire
+                if entry.is_expired(self._cache_ttl) and not self._is_shared_manager(context_id):
                     expired = self._managers.pop(context_id, None)
                     logger.debug("Cache TTL expired for context_id=%s, rebuilding", context_id)
                 else:
@@ -164,6 +166,16 @@ class TenantPluginManagerFactory:
             async with self._lock:
                 if self._inflight.get(context_id) is inflight:
                     self._inflight.pop(context_id, None)
+
+    def _is_shared_manager(self, context_id: str) -> bool:
+        """Check if the manager is a shared manager by checking DEFAULT_CONTEXT_ID"""
+        shared_manager = False
+        if context_id == DEFAULT_CONTEXT_ID:
+            shared_manager = True
+        elif CONTEXT_ID_SEPARATOR in context_id:
+            team_id, tool_name = context_id.split(CONTEXT_ID_SEPARATOR, 1)
+            shared_manager = tool_name == DEFAULT_CONTEXT_ID
+        return shared_manager
 
     async def _build_manager(self, context_id: str) -> TenantPluginManager:
         """Create, initialise, and cache a new manager for *context_id*.

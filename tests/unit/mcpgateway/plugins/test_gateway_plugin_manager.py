@@ -18,6 +18,7 @@ Tests cover:
 
 # Standard
 import asyncio
+import time
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -32,6 +33,7 @@ from mcpgateway.db import Base
 from mcpgateway.plugins import reload_plugin_context, set_global_observability
 from mcpgateway.plugins.gateway_plugin_manager import (
     CONTEXT_ID_SEPARATOR,
+    DEFAULT_CONTEXT_ID,
     GatewayTenantPluginManagerFactory,
     PluginConfigOverride,
     TenantPluginManagerFactory,
@@ -766,6 +768,43 @@ class TestGetManager:
         # Verify it was cached for the tenant context
         assert "team-x::tool-y" in factory._managers
         assert factory._managers["team-x::tool-y"].manager is default_manager
+
+
+
+    @pytest.mark.asyncio
+    async def test_team_default_contexts_never_expire_from_cache(self, factory):
+        """Team-specific default context entries (team::DEFAULT_CONTEXT_ID) are never evicted due to TTL expiry."""
+
+        # Create expired entries for various default contexts
+        team_a_default = f"team_a::{DEFAULT_CONTEXT_ID}"
+        team_b_default = f"team_b::{DEFAULT_CONTEXT_ID}"
+
+        manager_team_a = AsyncMock()
+        manager_default = AsyncMock()
+        manager_team_b = AsyncMock()
+
+        # Create expired entries (very old timestamps)
+        factory._managers[team_a_default] = _CachedManager(
+            manager=manager_team_a,
+            created_at=time.monotonic() - 1000
+        )
+        factory._managers[DEFAULT_CONTEXT_ID] = _CachedManager(
+            manager=manager_default,
+            created_at=time.monotonic() - 1000
+        )
+        factory._managers[team_b_default] = _CachedManager(
+            manager=manager_team_b,
+            created_at=time.monotonic() - 1000
+        )
+
+        # Should return cached managers even though TTL expired
+        result_team_a = await factory.get_manager(team_a_default)
+        result_default = await factory.get_manager(DEFAULT_CONTEXT_ID)
+        result_team_b = await factory.get_manager(team_b_default)
+
+        assert result_team_a is manager_team_a
+        assert result_default is manager_default
+        assert result_team_b is manager_team_b
 
 
 # reload_tenant
