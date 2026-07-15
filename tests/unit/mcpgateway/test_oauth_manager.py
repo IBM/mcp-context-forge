@@ -1059,8 +1059,14 @@ class TestOAuthManager:
                         # This should work without token storage
                         result = await manager.complete_authorization_code_flow(gateway_id, code, state, credentials)
 
-                        expected = {"success": True, "user_id": "user123", "expires_at": None, "token_aud": None}  # No token storage means no expiration tracking
-                        assert result == expected
+                        # When no token storage, result includes state_data and token_response for caller to handle
+                        assert result["success"] is True
+                        assert result["user_id"] == "user123"
+                        assert result["expires_at"] is None
+                        assert result["token_aud"] is None
+                        assert "state_data" in result
+                        assert "token_response" in result
+                        assert result["token_response"] == token_response
 
                         # PKCE: Now includes code_verifier parameter and CA certificate parameters
                         mock_exchange.assert_called_once_with(credentials, code, code_verifier="test_verifier_abc123", ca_certificate=None, client_cert=None, client_key=None)
