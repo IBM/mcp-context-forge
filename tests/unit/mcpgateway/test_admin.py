@@ -1991,6 +1991,18 @@ class TestAdminToolRoutes:
         result = _build_auth_obj_from_form(form)
         assert result is None
 
+    @pytest.mark.parametrize("scalar_json", ["5", "null", "true", "3.14", '"a string"', '{"key": "X-API-Key"}'])
+    def test_build_auth_obj_from_form_non_list_json(self, scalar_json, mock_request, mock_db):
+        """A non-list JSON value for auth_headers is treated as "no headers", not a 500.
+
+        ``orjson.loads`` accepts any valid JSON scalar/object, so guarding against a non-list
+        value keeps a body like ``auth_headers=5`` from raising an uncaught TypeError when the
+        header list is iterated.
+        """
+        form = FakeForm({"auth_type": "authheaders", "auth_headers": scalar_json})
+        # No usable headers and no legacy key/value pair -> None (never raises).
+        assert _build_auth_obj_from_form(form) is None
+
     def test_build_auth_obj_from_form_basic_missing_password(self, mock_request, mock_db):
         """_build_auth_obj_from_form returns None for basic auth with missing password."""
         form = FakeForm({"auth_type": "basic", "auth_username": "user"})
@@ -2020,6 +2032,58 @@ class TestAdminToolRoutes:
             _build_auth_obj_from_form(form)
         assert exc_info.value.status_code == 422
         assert "oauth" in exc_info.value.detail.lower()
+
+    def test_build_auth_obj_from_form_authheaders_multi(self, mock_request, mock_db):
+        """_build_auth_obj_from_form encodes every populated header row."""
+        form = FakeForm(
+            {
+                "auth_type": "authheaders",
+                "auth_headers": json.dumps([{"key": "X-API-Key", "value": "secret"}, {"key": "X-Tenant", "value": "acme"}]),
+            }
+        )
+        auth_obj = _build_auth_obj_from_form(form)
+        assert auth_obj["auth_type"] == "authheaders"
+        assert decode_auth(auth_obj["auth_value"]) == {"X-API-Key": "secret", "X-Tenant": "acme"}
+
+    def test_build_auth_obj_from_form_authheaders_invalid_key_raises_422(self, mock_request, mock_db):
+        """The admin form rejects malformed header keys with a 422, matching POST /tools."""
+        from fastapi import HTTPException
+
+        form = FakeForm(
+            {
+                "auth_type": "authheaders",
+                "auth_headers": json.dumps([{"key": "Bad@Key!", "value": "secret"}]),
+            }
+        )
+        with pytest.raises(HTTPException) as exc_info:
+            _build_auth_obj_from_form(form)
+        assert exc_info.value.status_code == 422
+        assert "Invalid header key format" in exc_info.value.detail
+
+    def test_build_auth_obj_from_form_authheaders_excessive_headers_raises_422(self, mock_request, mock_db):
+        """The admin form enforces the same 100-header cap as POST /tools."""
+        from fastapi import HTTPException
+
+        form = FakeForm(
+            {
+                "auth_type": "authheaders",
+                "auth_headers": json.dumps([{"key": f"X-Header-{i}", "value": f"v{i}"} for i in range(101)]),
+            }
+        )
+        with pytest.raises(HTTPException) as exc_info:
+            _build_auth_obj_from_form(form)
+        assert exc_info.value.status_code == 422
+        assert "Maximum of 100 headers allowed" in exc_info.value.detail
+
+    def test_build_auth_obj_from_form_authheaders_blank_rows_still_none(self, mock_request, mock_db):
+        """Blank header rows submitted by the admin form still mean 'no auth', not a 422."""
+        form = FakeForm(
+            {
+                "auth_type": "authheaders",
+                "auth_headers": json.dumps([{"key": "", "value": ""}, {"key": "", "value": ""}]),
+            }
+        )
+        assert _build_auth_obj_from_form(form) is None
 
     @patch.object(ToolService, "set_tool_state")
     async def test_admin_set_tool_state_various_activate_values(self, mock_toggle_status, mock_request, mock_db):
