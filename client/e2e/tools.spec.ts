@@ -1,6 +1,42 @@
+import type { Page } from "@playwright/test";
 import { test, expect } from "./fixtures/api-mock";
 import { APP } from "./utils/paths";
 import type { Tool } from "../src/types/tool";
+
+/** Payload the create form POSTs to `/tools` (see useToolForm.getFormData). */
+interface CreateToolPayload {
+  tool: Record<string, unknown>;
+  team_id?: string;
+}
+
+/** Flat payload the edit form PUTs to `/tools/{id}` (see useToolForm.handleSubmit). */
+interface UpdateToolPayload {
+  name?: string;
+  url?: string;
+  customName?: string;
+  [key: string]: unknown;
+}
+
+/** Stub the tools list endpoint (`/tools?limit=0&include_inactive=true`). */
+async function routeToolsList(page: Page, tools: Tool[]) {
+  await page.route("**/tools?*", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(tools),
+    });
+  });
+}
+
+async function openAddToolForm(page: Page) {
+  await page.getByText("Add tools").click();
+  await expect(page.getByRole("heading", { name: "Add tool" })).toBeVisible();
+}
+
+async function fillToolBasics(page: Page, name: string, url: string) {
+  await page.locator("#tool-name").fill(name);
+  await page.locator("#tool-url").fill(url);
+}
 
 function makeTool(id: string, gatewaySlug: string, overrides: Partial<Tool> = {}): Tool {
   return {
@@ -16,11 +52,17 @@ function makeTool(id: string, gatewaySlug: string, overrides: Partial<Tool> = {}
     customNameSlug: id.toLowerCase(),
     enabled: true,
     reachable: true,
+    deprecated: false,
     executionCount: 0,
     tags: [],
     integrationType: "mcp",
     requestType: "http",
     url: `https://example.com/${id}`,
+    headers: {},
+    inputSchema: { type: "object", properties: {} },
+    annotations: {},
+    jsonpathFilter: null,
+    auth: null,
     createdAt: "2026-04-10T10:00:00Z",
     updatedAt: "2026-04-10T10:00:00Z",
     ...overrides,
@@ -533,5 +575,434 @@ test.describe("Tools page", () => {
     await page.keyboard.press("Enter");
 
     await expect(page.getByRole("heading", { name: "Add tool" })).toBeVisible();
+  });
+
+  // ---------------------------------------------------------------------------
+  // Create
+  // ---------------------------------------------------------------------------
+
+  test("creates a REST tool and POSTs the expected payload", async ({ page }) => {
+    let createBody: CreateToolPayload | null = null;
+
+    await routeToolsList(page, []);
+    await page.route("**/tools", async (route) => {
+      if (route.request().method() === "POST") {
+        createBody = route.request().postDataJSON() as CreateToolPayload;
+        await route.fulfill({
+          status: 201,
+          contentType: "application/json",
+          body: JSON.stringify({ id: "list_users" }),
+        });
+      } else {
+        await route.fallback();
+      }
+    });
+
+    await page.goto(APP.TOOLS);
+    await page.waitForLoadState("networkidle");
+
+    await openAddToolForm(page);
+    await fillToolBasics(page, "list_users", "https://api.example.com/users");
+
+    await page.getByRole("button", { name: "Add tool" }).click();
+
+    await expect.poll(() => createBody).not.toBeNull();
+    const tool = createBody!.tool;
+    expect(tool.name).toBe("list_users");
+    expect(tool.url).toBe("https://api.example.com/users");
+    expect(tool.integration_type).toBe("REST");
+    expect(tool.request_type).toBe("POST");
+    expect(tool.auth_type).toBeUndefined();
+
+    // Form closes and returns to the grid on success.
+    await expect(page.getByRole("heading", { name: "Tools" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Add tool" })).not.toBeVisible();
+  });
+
+  test("chosen request type is sent in the create payload", async ({ page }) => {
+    let createBody: CreateToolPayload | null = null;
+
+    await routeToolsList(page, []);
+    await page.route("**/tools", async (route) => {
+      if (route.request().method() === "POST") {
+        createBody = route.request().postDataJSON() as CreateToolPayload;
+        await route.fulfill({ status: 201, contentType: "application/json", body: "{}" });
+      } else {
+        await route.fallback();
+      }
+    });
+
+    await page.goto(APP.TOOLS);
+    await page.waitForLoadState("networkidle");
+
+    await openAddToolForm(page);
+    await fillToolBasics(page, "get_user", "https://api.example.com/users/1");
+
+    // The request-type segmented control is a radiogroup of GET/POST/PUT/PATCH/DELETE.
+    await page.locator('label[for="request-GET"]').click();
+    await page.getByRole("button", { name: "Add tool" }).click();
+
+    await expect.poll(() => createBody).not.toBeNull();
+    expect(createBody!.tool.request_type).toBe("GET");
+  });
+
+  test("shows a submit error when the create API fails", async ({ page }) => {
+    await routeToolsList(page, []);
+    await page.route("**/tools", async (route) => {
+      if (route.request().method() === "POST") {
+        await route.fulfill({
+          status: 403,
+          contentType: "application/json",
+          body: JSON.stringify({ message: "You do not have permission to create tools" }),
+        });
+      } else {
+        await route.fallback();
+      }
+    });
+
+    await page.goto(APP.TOOLS);
+    await page.waitForLoadState("networkidle");
+
+    await openAddToolForm(page);
+    await fillToolBasics(page, "denied_tool", "https://api.example.com/denied");
+    await page.getByRole("button", { name: "Add tool" }).click();
+
+    await expect(page.getByText(/You do not have permission to create tools/i)).toBeVisible();
+    // Stays on the form so the user can correct/retry.
+    await expect(page.getByRole("heading", { name: "Add tool" })).toBeVisible();
+  });
+
+  // ---------------------------------------------------------------------------
+  // Create — authentication types
+  // ---------------------------------------------------------------------------
+
+  const authScenarios: Array<{
+    label: string;
+    authLabelFor: string | null;
+    fillCreds: (page: Page) => Promise<void>;
+    expectAuth: (tool: Record<string, unknown>) => void;
+  }> = [
+    {
+      label: "no authentication",
+      authLabelFor: null,
+      fillCreds: async () => {},
+      expectAuth: (tool) => {
+        expect(tool.auth_type).toBeUndefined();
+      },
+    },
+    {
+      label: "basic authentication",
+      authLabelFor: "auth-basic",
+      fillCreds: async (page) => {
+        await page.locator("#basic-auth-username").fill("api_user");
+        await page.locator("#basic-auth-password").fill("s3cret_pass");
+      },
+      expectAuth: (tool) => {
+        expect(tool.auth_type).toBe("basic");
+        expect(tool.auth_username).toBe("api_user");
+        expect(tool.auth_password).toBe("s3cret_pass");
+      },
+    },
+    {
+      label: "bearer token authentication",
+      authLabelFor: "auth-bearer",
+      fillCreds: async (page) => {
+        await page.locator("#bearer-token").fill("tok_abc123");
+      },
+      expectAuth: (tool) => {
+        expect(tool.auth_type).toBe("bearer");
+        expect(tool.auth_token).toBe("tok_abc123");
+      },
+    },
+    {
+      label: "custom header authentication",
+      authLabelFor: "auth-custom",
+      fillCreds: async (page) => {
+        await page.getByRole("button", { name: "Add header" }).click();
+        await page.locator("#header-key-0").fill("X-API-Key");
+        await page.locator("#header-value-0").fill("key_value_123");
+      },
+      expectAuth: (tool) => {
+        expect(tool.auth_type).toBe("authheaders");
+        expect(tool.auth_header_key).toBe("X-API-Key");
+        expect(tool.auth_header_value).toBe("key_value_123");
+      },
+    },
+  ];
+
+  for (const scenario of authScenarios) {
+    test(`creates a tool with ${scenario.label}`, async ({ page }) => {
+      let createBody: CreateToolPayload | null = null;
+
+      await routeToolsList(page, []);
+      await page.route("**/tools", async (route) => {
+        if (route.request().method() === "POST") {
+          createBody = route.request().postDataJSON() as CreateToolPayload;
+          await route.fulfill({ status: 201, contentType: "application/json", body: "{}" });
+        } else {
+          await route.fallback();
+        }
+      });
+
+      await page.goto(APP.TOOLS);
+      await page.waitForLoadState("networkidle");
+
+      await openAddToolForm(page);
+      await fillToolBasics(page, "auth_tool", "https://api.example.com/secure");
+
+      if (scenario.authLabelFor) {
+        await page.getByRole("button", { name: "Advanced settings" }).click();
+        await page.locator(`label[for="${scenario.authLabelFor}"]`).click();
+        await scenario.fillCreds(page);
+      }
+
+      await page.getByRole("button", { name: "Add tool" }).click();
+
+      await expect.poll(() => createBody).not.toBeNull();
+      scenario.expectAuth(createBody!.tool);
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Edit
+  // ---------------------------------------------------------------------------
+
+  test("edits a tool and PUTs the updated fields", async ({ page }) => {
+    const TOOL = makeTool("editable_tool", "edit-gw", {
+      integrationType: "REST",
+      requestType: "POST",
+      inputSchema: { type: "object", properties: {} },
+    });
+    let putBody: UpdateToolPayload | null = null;
+
+    await routeToolsList(page, [TOOL]);
+    await page.route(`**/tools/${TOOL.id}`, async (route) => {
+      const method = route.request().method();
+      if (method === "GET") {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify(TOOL),
+        });
+      } else if (method === "PUT") {
+        putBody = route.request().postDataJSON() as UpdateToolPayload;
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({ ...TOOL, customName: putBody.customName }),
+        });
+      } else {
+        await route.fallback();
+      }
+    });
+
+    await page.goto(APP.TOOLS);
+    await page.waitForLoadState("networkidle");
+
+    await page.getByRole("button", { name: "More options for edit-gw" }).click();
+    await page.getByRole("menuitem", { name: "View Details" }).click();
+
+    const panel = page.getByRole("region", { name: /Tools for edit-gw/i });
+    await expect(panel).toBeVisible();
+
+    await panel.getByRole("button", { name: "More options" }).first().click();
+    await page.getByRole("menuitem", { name: "Edit" }).click();
+
+    await expect(page.getByRole("heading", { name: "Edit tool" })).toBeVisible();
+
+    const nameInput = page.locator("#tool-name");
+    await expect(nameInput).toHaveValue("editable_tool");
+    await nameInput.fill("editable_tool_renamed");
+
+    await page.getByRole("button", { name: "Update tool" }).click();
+
+    await expect.poll(() => putBody).not.toBeNull();
+    expect(putBody!.name).toBe("editable_tool_renamed");
+    expect(putBody!.customName).toBe("editable_tool_renamed");
+
+    // Form closes back to the grid on success.
+    await expect(page.getByRole("heading", { name: "Tools" })).toBeVisible();
+  });
+
+  // ---------------------------------------------------------------------------
+  // View schema
+  // ---------------------------------------------------------------------------
+
+  test("view schema dialog shows input and output schemas", async ({ page }) => {
+    const TOOL = makeTool("schema_tool", "schema-gw", {
+      inputSchema: { type: "object", properties: { query: { type: "string" } } },
+      outputSchema: { type: "object", properties: { result: { type: "string" } } },
+    });
+
+    await routeToolsList(page, [TOOL]);
+
+    await page.goto(APP.TOOLS);
+    await page.waitForLoadState("networkidle");
+
+    await page.getByRole("button", { name: "More options for schema-gw" }).click();
+    await page.getByRole("menuitem", { name: "View Details" }).click();
+
+    const panel = page.getByRole("region", { name: /Tools for schema-gw/i });
+    await expect(panel).toBeVisible();
+
+    await panel.getByRole("button", { name: "View schema" }).first().click();
+
+    const dialog = page.getByRole("dialog");
+    await expect(dialog.getByText("Tool schema")).toBeVisible();
+    await expect(dialog.getByRole("heading", { name: "Input" })).toBeVisible();
+    await expect(dialog.getByRole("heading", { name: "Output" })).toBeVisible();
+    await expect(dialog.locator("pre").first()).toContainText("query");
+    await expect(dialog.locator("pre").nth(1)).toContainText("result");
+
+    await dialog.getByRole("button", { name: "Close" }).first().click();
+    await expect(dialog).not.toBeVisible();
+  });
+
+  // ---------------------------------------------------------------------------
+  // Activate / Deactivate
+  // ---------------------------------------------------------------------------
+
+  test("deactivates an active tool and reflects the inactive status", async ({ page }) => {
+    const TOOL = makeTool("toggle_tool", "toggle-gw", { enabled: true, reachable: true });
+    let activateParam: string | null = null;
+
+    await routeToolsList(page, [TOOL]);
+    await page.route(`**/tools/${TOOL.id}/state*`, async (route) => {
+      if (route.request().method() === "POST") {
+        activateParam = new URL(route.request().url()).searchParams.get("activate");
+        await route.fulfill({ status: 200, contentType: "application/json", body: "{}" });
+      } else {
+        await route.fallback();
+      }
+    });
+    await page.route(`**/tools/${TOOL.id}`, async (route) => {
+      if (route.request().method() === "GET") {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({ ...TOOL, enabled: false, reachable: false }),
+        });
+      } else {
+        await route.fallback();
+      }
+    });
+
+    await page.goto(APP.TOOLS);
+    await page.waitForLoadState("networkidle");
+
+    await page.getByRole("button", { name: "More options for toggle-gw" }).click();
+    await page.getByRole("menuitem", { name: "View Details" }).click();
+
+    const panel = page.getByRole("region", { name: /Tools for toggle-gw/i });
+    await expect(panel).toBeVisible();
+    await expect(panel.getByText("Active", { exact: true })).toBeVisible();
+
+    await panel.getByRole("button", { name: "More options" }).first().click();
+    await page.getByRole("menuitem", { name: "Deactivate" }).click();
+
+    await expect(
+      page.locator("[data-sonner-toast]").filter({ hasText: /toggle_tool.*deactivated/i }),
+    ).toBeVisible();
+    await expect.poll(() => activateParam).toBe("false");
+    await expect(panel.getByText("Inactive", { exact: true })).toBeVisible();
+
+    // The menu now offers re-activation.
+    await panel.getByRole("button", { name: "More options" }).first().click();
+    await expect(page.getByRole("menuitem", { name: "Activate" })).toBeVisible();
+  });
+
+  test("activates an inactive tool and reflects the active status", async ({ page }) => {
+    const TOOL = makeTool("inactive_tool", "activate-gw", { enabled: false, reachable: false });
+    let activateParam: string | null = null;
+
+    await routeToolsList(page, [TOOL]);
+    await page.route(`**/tools/${TOOL.id}/state*`, async (route) => {
+      if (route.request().method() === "POST") {
+        activateParam = new URL(route.request().url()).searchParams.get("activate");
+        await route.fulfill({ status: 200, contentType: "application/json", body: "{}" });
+      } else {
+        await route.fallback();
+      }
+    });
+    await page.route(`**/tools/${TOOL.id}`, async (route) => {
+      if (route.request().method() === "GET") {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({ ...TOOL, enabled: true, reachable: true }),
+        });
+      } else {
+        await route.fallback();
+      }
+    });
+
+    await page.goto(APP.TOOLS);
+    await page.waitForLoadState("networkidle");
+
+    await page.getByRole("button", { name: "More options for activate-gw" }).click();
+    await page.getByRole("menuitem", { name: "View Details" }).click();
+
+    const panel = page.getByRole("region", { name: /Tools for activate-gw/i });
+    await expect(panel).toBeVisible();
+    await expect(panel.getByText("Inactive", { exact: true })).toBeVisible();
+
+    await panel.getByRole("button", { name: "More options" }).first().click();
+    await page.getByRole("menuitem", { name: "Activate" }).click();
+
+    await expect(
+      page.locator("[data-sonner-toast]").filter({ hasText: /inactive_tool.*activated/i }),
+    ).toBeVisible();
+    await expect.poll(() => activateParam).toBe("true");
+    await expect(panel.getByText("Active", { exact: true })).toBeVisible();
+  });
+
+  test("shows an error toast and keeps status when activation fails", async ({ page }) => {
+    const TOOL = makeTool("toggle_fail_tool", "fail-gw", { enabled: true, reachable: true });
+    let getCount = 0;
+
+    await routeToolsList(page, [TOOL]);
+    await page.route(`**/tools/${TOOL.id}/state*`, async (route) => {
+      if (route.request().method() === "POST") {
+        await route.fulfill({
+          status: 403,
+          contentType: "application/json",
+          body: JSON.stringify({ detail: "Forbidden" }),
+        });
+      } else {
+        await route.fallback();
+      }
+    });
+    await page.route(`**/tools/${TOOL.id}`, async (route) => {
+      if (route.request().method() === "GET") {
+        getCount += 1;
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify(TOOL),
+        });
+      } else {
+        await route.fallback();
+      }
+    });
+
+    await page.goto(APP.TOOLS);
+    await page.waitForLoadState("networkidle");
+
+    await page.getByRole("button", { name: "More options for fail-gw" }).click();
+    await page.getByRole("menuitem", { name: "View Details" }).click();
+
+    const panel = page.getByRole("region", { name: /Tools for fail-gw/i });
+    await expect(panel).toBeVisible();
+
+    await panel.getByRole("button", { name: "More options" }).first().click();
+    await page.getByRole("menuitem", { name: "Deactivate" }).click();
+
+    await expect(
+      page.locator("[data-sonner-toast]").filter({ hasText: /Forbidden/i }),
+    ).toBeVisible();
+
+    // A failed toggle never re-fetches the tool and leaves the status untouched.
+    await expect(panel.getByText("Active", { exact: true })).toBeVisible();
+    expect(getCount).toBe(0);
   });
 });
