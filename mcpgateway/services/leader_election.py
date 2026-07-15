@@ -109,7 +109,15 @@ class PrimaryWorkerElector:
         return self._instance_id
 
     async def start(self) -> None:
-        """Run the initial election (and launch the redis maintenance loop)."""
+        """Run the initial election (and launch the redis maintenance loop).
+
+        Idempotent: a second call is a no-op. Re-running the redis path would
+        re-issue ``SET NX`` (which fails because we already own the key) and
+        wrongly demote us, and would create a second maintenance task that
+        orphans the first.
+        """
+        if self._started:
+            return
         if self._backend == "redis":
             await self._start_redis()
         else:
@@ -136,6 +144,11 @@ class PrimaryWorkerElector:
                     await self._redis.aclose()
             except Exception as exc:  # best-effort cleanup
                 logger.warning("elector stop cleanup failed: %s", exc)
+            finally:
+                # Drop the client we own so a repeat stop() doesn't touch a closed
+                # one; keep an injected client (tests) since we didn't open it.
+                if self._owns_redis:
+                    self._redis = None
         self._is_primary = False
         self._started = False
 
