@@ -7,6 +7,7 @@ This is purely code reorganization to enable the façade pattern.
 
 Phase 2 (future): Add team_id column to oauth_tokens table and use it in queries.
 """
+
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -134,9 +135,7 @@ class DatabaseTokenBackend(AbstractTokenBackend):
                 expires_at = None
 
             # PHASE 1: Query by (gateway_id, app_user_email) - team_id IGNORED
-            token_record = self.db.execute(
-                select(OAuthToken).where(OAuthToken.gateway_id == gateway_id, OAuthToken.app_user_email == app_user_email)
-            ).scalar_one_or_none()
+            token_record = self.db.execute(select(OAuthToken).where(OAuthToken.gateway_id == gateway_id, OAuthToken.app_user_email == app_user_email)).scalar_one_or_none()
 
             now = datetime.now(timezone.utc)
 
@@ -218,9 +217,7 @@ class DatabaseTokenBackend(AbstractTokenBackend):
         """
         try:
             # PHASE 1: Query by (gateway_id, app_user_email) - team_id IGNORED
-            token_record = self.db.execute(
-                select(OAuthToken).where(OAuthToken.gateway_id == gateway_id, OAuthToken.app_user_email == app_user_email)
-            ).scalar_one_or_none()
+            token_record = self.db.execute(select(OAuthToken).where(OAuthToken.gateway_id == gateway_id, OAuthToken.app_user_email == app_user_email)).scalar_one_or_none()
 
             if not token_record:
                 logger.debug(
@@ -282,9 +279,7 @@ class DatabaseTokenBackend(AbstractTokenBackend):
         """
         try:
             # PHASE 1: Query by (gateway_id, app_user_email) - team_id IGNORED
-            token_record = self.db.execute(
-                select(OAuthToken).where(OAuthToken.gateway_id == gateway_id, OAuthToken.app_user_email == app_user_email)
-            ).scalar_one_or_none()
+            token_record = self.db.execute(select(OAuthToken).where(OAuthToken.gateway_id == gateway_id, OAuthToken.app_user_email == app_user_email)).scalar_one_or_none()
 
             if not token_record:
                 return None
@@ -331,9 +326,7 @@ class DatabaseTokenBackend(AbstractTokenBackend):
         """
         try:
             # PHASE 1: Query by (gateway_id, app_user_email) - team_id IGNORED
-            token_record = self.db.execute(
-                select(OAuthToken).where(OAuthToken.gateway_id == gateway_id, OAuthToken.app_user_email == app_user_email)
-            ).scalar_one_or_none()
+            token_record = self.db.execute(select(OAuthToken).where(OAuthToken.gateway_id == gateway_id, OAuthToken.app_user_email == app_user_email)).scalar_one_or_none()
 
             if token_record:
                 self.db.delete(token_record)
