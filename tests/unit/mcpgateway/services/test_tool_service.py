@@ -4461,7 +4461,7 @@ class TestToolService:
         tool_service._http_client.request.return_value = mock_response
 
         # Mock compute_passthrough_headers_cached to return modified headers
-        def mock_passthrough(req_headers, base_headers, allowed_headers, gateway_auth_type=None, gateway_passthrough_headers=None):
+        def mock_passthrough(req_headers, base_headers, allowed_headers, gateway_auth_type=None, gateway_passthrough_headers=None, is_token_exchange=False):
             combined = base_headers.copy()
             combined["X-Request-ID"] = req_headers.get("X-Request-ID", "test-123")
             return combined
@@ -4515,7 +4515,7 @@ class TestToolService:
         sse_ctx.__aenter__.return_value = ("read", "write")
 
         # Mock compute_passthrough_headers_cached to return modified headers
-        def mock_passthrough(req_headers, base_headers, allowed_headers, gateway_auth_type=None, gateway_passthrough_headers=None):
+        def mock_passthrough(req_headers, base_headers, allowed_headers, gateway_auth_type=None, gateway_passthrough_headers=None, is_token_exchange=False):
             combined = base_headers.copy()
             combined["X-Custom-Header"] = req_headers.get("X-Custom-Header", "default")
             return combined
@@ -4585,6 +4585,54 @@ class TestToolService:
 
         # Verify result
         assert result.content[0].text == '{\n  "result": "original response"\n}'
+
+    async def test_invoke_tool_pre_invoke_hook_receives_trace_extensions(self, tool_service, mock_tool, mock_global_config_obj, test_db):
+        """G0: TOOL_PRE_INVOKE (and POST_INVOKE) invoke_hook() calls must receive a CPEX
+        Extensions object carrying the active trace_id/span_id from the observability
+        ContextVars, so plugin hooks can correlate their execution with the request trace.
+        """
+        # Third-Party
+        from cpex.framework import ToolHookType
+        from cpex.framework.models import PluginResult
+
+        # First-Party
+        from mcpgateway.services.observability_service import current_span_id, current_trace_id
+
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "POST"
+        mock_tool.auth_value = None
+
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        mock_response = AsyncMock()
+        mock_response.raise_for_status = Mock()
+        mock_response.status_code = 200
+        mock_response.json = Mock(return_value={"result": "ok"})
+        tool_service._http_client.request.return_value = mock_response
+
+        mock_pm = Mock()
+        mock_pm.invoke_hook = AsyncMock(return_value=(PluginResult(continue_processing=True, violation=None, modified_payload=None), None))
+
+        trace_token = current_trace_id.set("trace-g0-abc")
+        span_token = current_span_id.set("span-g0-xyz")
+        try:
+            with (
+                patch("mcpgateway.services.tool_service.decode_auth", return_value={}),
+                patch("mcpgateway.services.tool_service.extract_using_jq", return_value={"result": "ok"}),
+                patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=mock_pm)),
+            ):
+                await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None)
+        finally:
+            current_trace_id.reset(trace_token)
+            current_span_id.reset(span_token)
+
+        assert mock_pm.invoke_hook.call_count == 2  # Pre and post invoke
+        for hook_call in mock_pm.invoke_hook.await_args_list:
+            assert hook_call.args[0] in (ToolHookType.TOOL_PRE_INVOKE, ToolHookType.TOOL_POST_INVOKE)
+            extensions = hook_call.kwargs["extensions"]
+            assert extensions is not None
+            assert extensions.request.trace_id == "trace-g0-abc"
+            assert extensions.request.span_id == "span-g0-xyz"
 
     async def test_invoke_tool_with_plugin_post_invoke_modified_payload(self, tool_service, mock_tool, mock_global_config_obj, test_db):
         """Test invoking tool with plugin post-invoke hook modifying payload."""
@@ -9006,7 +9054,6 @@ class TestInvokeToolDirectProxyViaHeader:
                     {},
                     request_headers=request_headers,
                 )
-
 
 
 class TestGrpcToolInvocation:
