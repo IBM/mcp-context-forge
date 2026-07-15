@@ -138,17 +138,18 @@ class TenantPluginManagerFactory:
             entry = self._managers.get(context_id)
             if entry is not None:
                 # Shared managers should not expire
-                if entry.is_expired(self._cache_ttl) and not self._is_shared_manager(context_id):
+                if entry.is_expired(self._cache_ttl) and not self._is_default_context(context_id):
                     expired = self._managers.pop(context_id, None)
                     logger.debug("Cache TTL expired for context_id=%s, rebuilding", context_id)
                 else:
                     return entry.manager
 
             if expired is not None:
-                try:
-                    await expired.manager.shutdown()
-                except Exception:
-                    logger.warning("Failed to shutdown expired manager for context_id=%s", context_id, exc_info=True)
+                if not self._is_manager_referenced(expired.manager):
+                    try:
+                        await expired.manager.shutdown()
+                    except Exception:
+                        logger.warning("Failed to shutdown expired manager for context_id=%s", context_id, exc_info=True)
 
             inflight = self._inflight.get(context_id)
             if inflight is None:
@@ -167,8 +168,8 @@ class TenantPluginManagerFactory:
                 if self._inflight.get(context_id) is inflight:
                     self._inflight.pop(context_id, None)
 
-    def _is_shared_manager(self, context_id: str) -> bool:
-        """Check if the manager is a shared manager by checking DEFAULT_CONTEXT_ID"""
+    def _is_default_context(self, context_id: str) -> bool:
+        """Check if the context_id is a team or global DEFAULT_CONTEXT_ID"""
         shared_manager = False
         if context_id == DEFAULT_CONTEXT_ID:
             shared_manager = True
@@ -176,6 +177,15 @@ class TenantPluginManagerFactory:
             _, tool_name = context_id.split(CONTEXT_ID_SEPARATOR, 1)
             shared_manager = tool_name == DEFAULT_CONTEXT_ID
         return shared_manager
+
+    def _is_manager_referenced(self, manager: TenantPluginManager) -> bool:
+        """Check if a manager instance is referenced by any entry in the cache.
+        Args:
+            manager: The manager instance to check
+        Returns:
+            True if the manager is referenced by at least one cache entry
+        """
+        return any(entry.manager is manager for entry in self._managers.values())
 
     async def _build_manager(self, context_id: str) -> TenantPluginManager:
         """Create, initialise, and cache a new manager for *context_id*.
@@ -192,7 +202,8 @@ class TenantPluginManagerFactory:
         # Parse context_id to check if it's a default context
         if CONTEXT_ID_SEPARATOR in context_id:
             team_id, tool_name = context_id.split(CONTEXT_ID_SEPARATOR, 1)
-            if tool_name != DEFAULT_CONTEXT_ID:
+
+            if not self._is_default_context(context_id):
                 async with self._lock:
                     new_config = await self.get_config_from_db(context_id)
 
@@ -356,7 +367,7 @@ class TenantPluginManagerFactory:
             # Check if this manager is shared by other contexts before shutting down
             is_shared = False
             async with self._lock:
-                is_shared = any(entry.manager is old for entry in self._managers.values())
+                is_shared = self._is_manager_referenced(old)
 
             if is_shared:
                 logger.debug("reload_tenant: manager for context_id=%s is shared, skipping shutdown", context_id)
