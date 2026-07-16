@@ -23,7 +23,7 @@ from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import get_settings
 from mcpgateway.db import OAuthToken
 from mcpgateway.services.encryption_service import get_encryption_service
-from mcpgateway.services.oauth_manager import OAuthError
+from mcpgateway.services.oauth_manager import OAuthError, OAuthInvalidGrantError
 
 logger = logging.getLogger(__name__)
 
@@ -290,26 +290,22 @@ class TokenStorageService:
                     logger.error("Failed to decrypt refresh token: %s", str(e))
                     return None
 
-            # Decrypt client_secret if it's encrypted
+            # Decrypt client_secret if encryption is available.
+            # Always attempt decryption rather than using an is_encrypted() heuristic
             oauth_config = gateway.oauth_config.copy()
             if "client_secret" in oauth_config and oauth_config["client_secret"]:
                 if self.encryption:
                     client_secret_value = oauth_config["client_secret"]
-                    # Check if the value appears to be encrypted
-                    if self.encryption.is_encrypted(client_secret_value):
-                        try:
-                            oauth_config["client_secret"] = await self.encryption.decrypt_secret_async(client_secret_value)
-                        except Exception as decrypt_error:
-                            # Decryption failed on what appears to be encrypted data
-                            # This is a configuration error - fail explicitly rather than silently
-                            logger.error(
-                                "Failed to decrypt client_secret for gateway %s: %s. Token refresh cannot proceed. "
-                                "This may indicate a configuration issue (wrong encryption key or corrupted data).",
-                                token_record.gateway_id,
-                                str(decrypt_error),
-                            )
-                            raise OAuthError(f"Failed to decrypt client_secret for gateway {token_record.gateway_id}: {str(decrypt_error)}") from decrypt_error
-                    # else: value is not encrypted, use as-is (handles plaintext secrets from API registration)
+                    try:
+                        oauth_config["client_secret"] = await self.encryption.decrypt_secret_async(client_secret_value)
+                    except Exception as decrypt_error:
+                        logger.warning(
+                            "client_secret decryption failed for gateway %s (using raw value): %s. "
+                            "If refresh fails with invalid_client, check that the secret was stored "
+                            "with the current AUTH_ENCRYPTION_SECRET.",
+                            token_record.gateway_id,
+                            str(decrypt_error),
+                        )
 
             # RFC 8707: Set resource parameter for JWT access tokens during refresh
             # Standard
@@ -435,32 +431,32 @@ class TokenStorageService:
 
             return new_access_token
 
+        except OAuthInvalidGrantError as e:
+            # RFC 6749 §5.2: invalid_grant is a permanent failure — the refresh
+            # token has been revoked, expired, or does not match the grant.
+            # OAuthInvalidGrantError is raised by OAuthManager only when the
+            # token endpoint explicitly returns {"error": "invalid_grant"}, so
+            # this match is based on structured type, not substring heuristics.
+            logger.warning(
+                "Refresh token is permanently invalid for gateway %s (invalid_grant). "
+                "Deleting token to force re-authorization. Error: %s",
+                token_record.gateway_id,
+                str(e),
+            )
+            self.db.delete(token_record)
+            self.db.commit()
+            return None
         except OAuthError as e:
-            # OAuth-specific errors from OAuthManager
-            logger.error("Failed to refresh OAuth token for gateway %s: %s", token_record.gateway_id, str(e))
-
-            # Only delete tokens on permanent OAuth grant failures.
-            # RFC 6749 §5.2: invalid_grant means the refresh token is invalid, expired,
-            # revoked, or does not match the authorization grant. This is permanent.
-            # Do NOT delete tokens for:
-            # - invalid_client (wrong client_secret - configuration issue, not token issue)
-            # - invalid_request (malformed request - our bug, not token issue)
-            # - Transient network/server failures
-            error_str = str(e).lower()
-            if "invalid_grant" in error_str:
-                logger.warning(
-                    "Refresh token is permanently invalid for gateway %s (invalid_grant). " "Deleting token to force re-authorization. Error: %s",
-                    token_record.gateway_id,
-                    str(e),
-                )
-                self.db.delete(token_record)
-                self.db.commit()
-            else:
-                logger.warning(
-                    "Token refresh failed for gateway %s but error does not indicate invalid refresh token. " "Preserving token for retry. Error: %s",
-                    token_record.gateway_id,
-                    str(e),
-                )
+            # All other OAuth errors (invalid_client, invalid_request, network
+            # failures wrapped as OAuthError, decryption failure, etc.).
+            # These are configuration or transient errors — NOT a permanent
+            # token failure.  Preserve the token so a later retry can succeed.
+            logger.error(
+                "Token refresh failed for gateway %s but error does not indicate invalid refresh token. "
+                "Preserving token for retry. Error: %s",
+                token_record.gateway_id,
+                str(e),
+            )
             return None
         except Exception as e:
             # Non-OAuth errors (network, parsing, encryption, etc.)

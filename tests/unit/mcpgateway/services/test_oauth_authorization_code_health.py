@@ -29,6 +29,7 @@ import pytest
 from mcpgateway.db import Gateway as DbGateway, OAuthToken
 from mcpgateway.services.gateway_service import GatewayService
 from mcpgateway.services.oauth_manager import OAuthError
+from mcpgateway.services.oauth_manager import OAuthInvalidGrantError
 from mcpgateway.services.token_storage_service import TokenStorageService
 
 
@@ -268,10 +269,11 @@ class TestTokenDeletionLogic:
             token_record.app_user_email = "user@example.com"
             token_record.refresh_token_encrypted = "plain_token"
 
-            # Mock OAuth manager to return invalid_grant error
+            # Mock OAuth manager to raise OAuthInvalidGrantError — the typed exception
+            # raised by OAuthManager when the provider returns {"error": "invalid_grant"}.
             with patch("mcpgateway.services.oauth_manager.OAuthManager") as mock_oauth_class:
                 mock_oauth = MagicMock()
-                mock_oauth.refresh_token = AsyncMock(side_effect=OAuthError("invalid_grant: refresh token expired"))
+                mock_oauth.refresh_token = AsyncMock(side_effect=OAuthInvalidGrantError("Refresh token permanently invalid (invalid_grant): {'error': 'invalid_grant'}"))
                 mock_oauth_class.return_value = mock_oauth
 
                 result = await service._refresh_access_token(token_record)

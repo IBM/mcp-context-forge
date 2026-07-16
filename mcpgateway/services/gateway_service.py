@@ -4774,11 +4774,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 except Exception as e:
                     # Distinguish between auth failures (gateway reachable but unauthorized)
                     # and genuine connectivity failures (gateway unreachable).
-                    # For authorization_code gateways, 401/403 means the gateway is up
-                    # but we don't have a valid token - this is expected and should not
-                    # mark the gateway as unhealthy.
                     is_auth_failure = False
-                    if hasattr(e, "response") and hasattr(e.response, "status_code"):  # pylint: disable=no-member
+                    is_authorization_code = gateway_oauth_config is not None and gateway_oauth_config.get("grant_type") == "authorization_code"
+                    if is_authorization_code and hasattr(e, "response") and hasattr(e.response, "status_code"):  # pylint: disable=no-member
                         status_code = e.response.status_code  # pylint: disable=no-member
                         if status_code in (401, 403):
                             is_auth_failure = True
@@ -4808,6 +4806,12 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                                         update_db.commit()
                             except Exception as update_error:
                                 logger.warning("Failed to update last_seen for gateway %s: %s", gateway_name, update_error)
+
+                            # Auth-failure handling complete — return without marking the
+                            # gateway unhealthy.  Explicit return here prevents any future
+                            # code added below this block from running against an
+                            # unauthenticated / token-less session.
+                            return
 
                     if not is_auth_failure:
                         # Genuine connectivity failure - mark gateway unhealthy

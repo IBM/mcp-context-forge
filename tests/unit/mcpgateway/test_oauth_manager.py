@@ -1390,7 +1390,11 @@ class TestOAuthManager:
 
     @pytest.mark.asyncio
     async def test_refresh_token_error_handling(self):
-        """Test token refresh error handling."""
+        """Test token refresh error handling.
+        """
+        # First-Party
+        from mcpgateway.services.oauth_manager import OAuthInvalidGrantError
+
         manager = OAuthManager()
 
         credentials = {"token_url": "https://oauth.example.com/token", "client_id": "test_client"}
@@ -1398,6 +1402,7 @@ class TestOAuthManager:
         # Create mock response
         mock_response = MagicMock()
         mock_response.status_code = 400
+        mock_response.headers = {"content-type": "application/json"}
         mock_response.json = MagicMock(return_value={"error": "invalid_grant"})
         mock_response.text = '{"error": "invalid_grant"}'
         mock_response.raise_for_status = MagicMock(side_effect=httpx.HTTPStatusError("HTTP Error", request=MagicMock(), response=MagicMock(status_code=400)))
@@ -1407,10 +1412,12 @@ class TestOAuthManager:
         mock_client.post = AsyncMock(return_value=mock_response)
 
         with patch.object(manager, "_get_client", return_value=mock_client):
-            with pytest.raises(OAuthError) as exc_info:
+            # OAuthInvalidGrantError is a subclass of OAuthError — both assertions hold
+            with pytest.raises(OAuthInvalidGrantError) as exc_info:
                 await manager.refresh_token("invalid_token", credentials)
 
-            assert "Refresh token invalid or expired" in str(exc_info.value)
+            assert isinstance(exc_info.value, OAuthError)
+            assert "invalid_grant" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_refresh_token_missing_access_token(self):
@@ -1997,10 +2004,15 @@ class TestTokenStorageService:
 
     @pytest.mark.asyncio
     async def test_refresh_access_token_invalid_token(self):
-        """Test refresh with invalid_grant error (permanent OAuth failure)."""
+        """Test refresh with invalid_grant error (permanent OAuth failure).
+
+        OAuthManager now raises OAuthInvalidGrantError (a typed subclass of OAuthError)
+        when the token endpoint explicitly returns {"error": "invalid_grant"}.
+        TokenStorageService catches that specific type and deletes the token.
+        """
         # First-Party
         from mcpgateway.db import Gateway
-        from mcpgateway.services.oauth_manager import OAuthError
+        from mcpgateway.services.oauth_manager import OAuthInvalidGrantError
 
         mock_db = Mock()
         mock_db.delete = Mock()
@@ -2026,16 +2038,17 @@ class TestTokenStorageService:
                 expires_at=datetime.now(tz=timezone.utc) - timedelta(hours=1),
             )
 
-            # Mock the OAuthManager refresh_token method to raise OAuthError with invalid_grant
-            # This is the ONLY error type that should delete tokens (per RFC 6749 §5.2)
+            # Mock the OAuthManager to raise OAuthInvalidGrantError — this is the
+            # typed exception raised when the provider returns {"error":"invalid_grant"}.
+            # This is the ONLY exception type that should trigger token deletion.
             with patch("mcpgateway.services.oauth_manager.OAuthManager") as mock_oauth_manager_class:
                 mock_manager = mock_oauth_manager_class.return_value
-                mock_manager.refresh_token = AsyncMock(side_effect=OAuthError("invalid_grant: refresh token expired or revoked"))
+                mock_manager.refresh_token = AsyncMock(side_effect=OAuthInvalidGrantError("Refresh token permanently invalid (invalid_grant): {'error': 'invalid_grant'}"))
 
                 result = await service._refresh_access_token(token_record)
 
                 assert result is None
-                # Should delete the invalid token only on invalid_grant
+                # Should delete the invalid token only on OAuthInvalidGrantError
                 mock_db.delete.assert_called_once_with(token_record)
                 mock_db.commit.assert_called_once()
 
