@@ -166,12 +166,6 @@ mcpContextForge:
       drop:
         - ALL
     readOnlyRootFilesystem: true
-    volumeMounts:
-      - name: tmp
-        mountPath: /tmp
-    volumes:
-     - name: tmp
-       emptyDir: {}
 
   # Optional ingress for HTTP traffic
   ingress:
