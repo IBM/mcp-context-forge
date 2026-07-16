@@ -845,7 +845,7 @@ plugins:
   # That is an opt-in decision for operators to make explicitly; do not flip silently.
   - name: "SecretsDetection"
     kind: "cpex_secrets_detection.SecretsDetectionPlugin"
-    version: "0.3.7"
+    version: "0.3.9"
     hooks: ["prompt_pre_fetch", "tool_post_invoke", "resource_post_fetch"]
     tags: ["security", "secrets", "dlp"]
     mode: "disabled"
@@ -865,6 +865,8 @@ plugins:
       redaction_text: "***REDACTED***"
       block_on_detection: true
       min_findings_to_block: 1
+      field_allowlist: []
+      field_denylist: []
 
   # Encoded Exfil Detector (CPEX pilot) — Rust-backed detector for suspicious encoded payloads in
   # prompts, tool outputs, and resources, trace-aware. Reads extensions.request.trace_id (see
