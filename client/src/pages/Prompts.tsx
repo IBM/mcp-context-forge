@@ -271,6 +271,16 @@ export function Prompts() {
     await refetch();
   };
 
+  // TODO: placeholder handlers so the details-panel Definition table shows its
+  // row overflow menu. No behaviour yet — a follow-up PR adds PromptForm edit
+  // mode and a delete flow.
+  const handleEditPrompt = () => {
+    // TODO: open PromptForm in edit mode for the selected prompt
+  };
+  const handleDeletePrompt = () => {
+    // TODO: delete the selected prompt (with confirmation)
+  };
+
   return (
     <div className="p-6">
       {showForm ? (
@@ -316,17 +326,14 @@ export function Prompts() {
         </>
       )}
 
-      {/*
-        onEdit/onDelete are intentionally not wired yet — the panel's overflow
-        menu stays hidden until a follow-up PR adds PromptForm edit mode and a
-        delete flow. The props exist (and are tested) so wiring is a one-liner.
-      */}
       <PromptDetailsPanel
         prompts={displayGroup?.prompts ?? []}
         title={displayGroup?.label ?? ""}
         open={activeGroup !== null}
         onClose={() => setActiveGroup(null)}
         onAddTag={handleAddPromptTag}
+        onEdit={handleEditPrompt}
+        onDelete={handleDeletePrompt}
       />
     </div>
   );

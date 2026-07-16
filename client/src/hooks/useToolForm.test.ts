@@ -388,6 +388,64 @@ describe("useToolForm", () => {
 
       expect(result.current.isValid).toBe(true);
     });
+
+    it("does not require an inputSchema when schema mode is 'none' (the default)", () => {
+      const { result } = renderHook(() => useToolForm());
+
+      act(() => {
+        result.current.setName("my-tool");
+        result.current.setUrl("https://api.example.com");
+        // schemaMode defaults to "none"; inputSchema left empty
+      });
+
+      expect(result.current.schemaMode).toBe("none");
+      expect(result.current.isValid).toBe(true);
+    });
+
+    it("is false when the schema field is visible (manual mode) but inputSchema is empty", () => {
+      const { result } = renderHook(() => useToolForm());
+
+      act(() => {
+        result.current.setName("my-tool");
+        result.current.setUrl("https://api.example.com");
+        result.current.setSchemaMode("manual");
+      });
+
+      expect(result.current.isValid).toBe(false);
+    });
+
+    it("becomes valid in manual mode once a valid inputSchema is provided", () => {
+      const { result } = renderHook(() => useToolForm());
+
+      act(() => {
+        result.current.setName("my-tool");
+        result.current.setUrl("https://api.example.com");
+        result.current.setSchemaMode("manual");
+        result.current.setInputSchema(JSON.stringify({ type: "object" }));
+      });
+
+      expect(result.current.isValid).toBe(true);
+    });
+  });
+
+  describe("validateForm – input schema requirement", () => {
+    it("flags a required (not 'invalid JSON') error when schema is visible but empty", () => {
+      const { result } = renderHook(() => useToolForm());
+
+      act(() => {
+        result.current.setName("my-tool");
+        result.current.setUrl("https://api.example.com");
+        result.current.setSchemaMode("manual");
+      });
+
+      let valid: boolean | undefined;
+      act(() => {
+        valid = result.current.validateForm();
+      });
+
+      expect(valid).toBe(false);
+      expect(result.current.errors.schema).toBe("Input schema is required");
+    });
   });
 
   describe("handleSubmit – error surfacing", () => {

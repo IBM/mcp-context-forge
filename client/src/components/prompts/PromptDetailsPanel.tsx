@@ -4,7 +4,6 @@ import {
   Activity,
   Globe,
   MessageSquareCode,
-  MoreVertical,
   PanelRightClose,
 } from "lucide-react";
 import { useIntl } from "react-intl";
@@ -12,17 +11,17 @@ import type { PromptRead } from "@/generated/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { InlineTagAdd } from "@/components/ui/inline-tag-add";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 import { getTagDisplay } from "@/components/gateways/utils";
 import { formatDateTime } from "@/utils/format";
 
 import { PromptCodeTab } from "./PromptCodeTab";
+import { PromptDefinitionTable } from "./PromptDefinitionTable";
+
+// Segmented-control styling for the Try it / Definition tab triggers.
+const SEGMENTED_TRIGGER_CLASS =
+  "rounded-md px-3 py-1 font-medium data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm";
 
 function DetailRow({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -75,11 +74,19 @@ export function PromptDetailsPanel({
   const [selectedId, setSelectedId] = useState<string | undefined>(
     initialPromptId ?? prompts[0]?.id,
   );
+  const [activeTab, setActiveTab] = useState("tryIt");
 
   useEffect(() => {
     if (!open) return;
     setSelectedId(initialPromptId ?? prompts[0]?.id);
   }, [open, initialPromptId, prompts]);
+
+  // Always land on "Try it" each time the panel opens, regardless of which tab
+  // was active when it was last closed. Keyed on `open` only so a data refetch
+  // while the panel is open doesn't yank the user off the Definition tab.
+  useEffect(() => {
+    if (open) setActiveTab("tryIt");
+  }, [open]);
 
   const selected = useMemo(
     () => prompts.find((p) => p.id === selectedId) ?? prompts[0] ?? null,
@@ -138,49 +145,16 @@ export function PromptDetailsPanel({
         <div className="grid min-h-0 flex-1 grid-cols-1 overflow-hidden lg:grid-cols-[minmax(0,1fr)_320px]">
           <div className="min-w-0 overflow-y-auto bg-background px-6 py-8 dark:bg-neutral-900 lg:px-12">
             <h2 id={headingId} className="sr-only">
-              Prompt details: {title}
+              {intl.formatMessage({ id: "prompts.details.srHeading" }, { title })}
             </h2>
 
             <div className="flex min-w-0 items-start gap-3">
               <span className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-sm bg-emerald-300 text-neutral-950">
                 <MessageSquareCode className="size-4" />
               </span>
-              <div className="flex min-w-0 items-center gap-2">
-                <span aria-hidden="true" className="truncate text-xl font-semibold text-foreground">
-                  {title}
-                </span>
-                {selected && (onEdit ?? onDelete) && (
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="h-8 w-8 shrink-0 p-0"
-                        aria-label={intl.formatMessage(
-                          { id: "prompts.details.moreOptionsFor" },
-                          { name: selected.name },
-                        )}
-                        aria-haspopup="menu"
-                      >
-                        <MoreVertical className="h-4 w-4" aria-hidden="true" />
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="start">
-                      {onEdit && (
-                        <DropdownMenuItem onSelect={() => onEdit(selected)}>
-                          {intl.formatMessage({ id: "prompts.details.action.edit" })}
-                        </DropdownMenuItem>
-                      )}
-                      {onDelete && (
-                        <DropdownMenuItem onSelect={() => onDelete(selected)}>
-                          {intl.formatMessage({ id: "prompts.details.action.delete" })}
-                        </DropdownMenuItem>
-                      )}
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                )}
-              </div>
+              <span aria-hidden="true" className="truncate text-xl font-semibold text-foreground">
+                {title}
+              </span>
             </div>
 
             {selected && (
@@ -204,45 +178,70 @@ export function PromptDetailsPanel({
 
             <div className="my-8 h-px bg-border" />
 
-            <div className="flex items-center justify-between gap-4">
-              <h3 className="text-sm font-semibold text-foreground">Prompt preview</h3>
-            </div>
+            <Tabs value={activeTab} onValueChange={setActiveTab}>
+              <TabsList className="inline-flex h-9 w-fit items-center gap-1 rounded-lg bg-muted p-1">
+                <TabsTrigger value="tryIt" className={SEGMENTED_TRIGGER_CLASS}>
+                  {intl.formatMessage({ id: "prompts.details.tab.tryIt" })}
+                </TabsTrigger>
+                <TabsTrigger value="definition" className={SEGMENTED_TRIGGER_CLASS}>
+                  {intl.formatMessage({ id: "prompts.details.tab.definition" })}
+                </TabsTrigger>
+              </TabsList>
 
-            {prompts.length > 1 && (
-              <div className="mt-8 flex flex-wrap gap-2" role="group" aria-label="Select prompt">
-                {prompts.map((p) => {
-                  const isSelected = p.id === selected?.id;
-                  return (
-                    <Button
-                      key={p.id}
-                      type="button"
-                      variant={isSelected ? "secondary" : "outline"}
-                      size="sm"
-                      aria-pressed={isSelected}
-                      onClick={() => setSelectedId(p.id)}
-                      className={cn(
-                        "rounded-full font-mono text-[12px]",
-                        isSelected
-                          ? "border-transparent bg-muted text-foreground"
-                          : "text-muted-foreground",
-                      )}
-                    >
-                      {p.name}
-                    </Button>
-                  );
-                })}
-              </div>
-            )}
+              <TabsContent value="tryIt" className="mt-8 space-y-6">
+                <h3 className="text-sm font-semibold text-foreground">
+                  {intl.formatMessage({ id: "prompts.details.promptPreview" })}
+                </h3>
 
-            {selected?.description && (
-              <p className="mt-4 max-w-4xl whitespace-normal break-words text-[13px] leading-4 text-muted-foreground">
-                {selected.description}
-              </p>
-            )}
+                {prompts.length > 1 && (
+                  <div
+                    className="flex flex-wrap gap-2"
+                    role="group"
+                    aria-label={intl.formatMessage({ id: "prompts.details.selectPrompt" })}
+                  >
+                    {prompts.map((p) => {
+                      const isSelected = p.id === selected?.id;
+                      return (
+                        <Button
+                          key={p.id}
+                          type="button"
+                          variant={isSelected ? "secondary" : "outline"}
+                          size="sm"
+                          aria-pressed={isSelected}
+                          onClick={() => setSelectedId(p.id)}
+                          className={cn(
+                            "rounded-full font-mono text-[12px]",
+                            isSelected
+                              ? "border-transparent bg-muted text-foreground"
+                              : "text-muted-foreground",
+                          )}
+                        >
+                          {p.name}
+                        </Button>
+                      );
+                    })}
+                  </div>
+                )}
 
-            <div className="mt-6">
-              {selected && <PromptCodeTab key={selected.id} prompt={selected} />}
-            </div>
+                {selected?.description && (
+                  <p className="max-w-4xl whitespace-normal break-words text-[13px] leading-4 text-muted-foreground">
+                    {selected.description}
+                  </p>
+                )}
+
+                {selected && <PromptCodeTab key={selected.id} prompt={selected} />}
+              </TabsContent>
+
+              <TabsContent value="definition" className="mt-8">
+                <PromptDefinitionTable
+                  prompts={prompts}
+                  selectedPromptId={selected?.id}
+                  onSelectPrompt={(p) => setSelectedId(p.id)}
+                  onEdit={onEdit}
+                  onDelete={onDelete}
+                />
+              </TabsContent>
+            </Tabs>
           </div>
 
           <aside className="relative overflow-y-auto border-t border-border bg-background lg:border-l lg:border-t-0 dark:bg-neutral-900">
@@ -251,7 +250,7 @@ export function PromptDetailsPanel({
               type="button"
               variant="ghost"
               size="icon-xs"
-              aria-label="Close prompt details"
+              aria-label={intl.formatMessage({ id: "prompts.details.close" })}
               className="absolute right-3 top-3 text-muted-foreground"
               onClick={onClose}
             >

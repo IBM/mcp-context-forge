@@ -1,5 +1,7 @@
 export { PromptCodeTab } from "./PromptCodeTab";
 export type { PromptCodeTabProps } from "./PromptCodeTab";
+export { PromptDefinitionTable } from "./PromptDefinitionTable";
+export type { PromptDefinitionTableProps } from "./PromptDefinitionTable";
 export { PromptDetailsPanel } from "./PromptDetailsPanel";
 export type { PromptDetailsPanelProps } from "./PromptDetailsPanel";
 export { PromptArgsForm } from "./PromptArgsForm";
