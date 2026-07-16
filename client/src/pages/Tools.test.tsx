@@ -1798,7 +1798,7 @@ describe("Tools", () => {
   describe("inline tag add", () => {
     it("shows a newly added tag in the details drawer (patches cache, no full refetch)", async () => {
       const user = userEvent.setup();
-      const tool: Tool = { ...createMockTool(1, "test-gateway"), tags: ["tag1"] };
+      const tool: Tool = { ...createMockTool(1, "test-gateway"), tags: [{ label: "tag1" }] };
 
       let toolsListCalls = 0;
       server.use(
