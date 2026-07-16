@@ -234,4 +234,31 @@ describe("toolsApi", () => {
       ).rejects.toThrow("HTTP 400");
     });
   });
+
+  describe("updateTags", () => {
+    it("PUTs /tools/:id with a tags-only body and returns the updated tool", async () => {
+      const updated = { id: "tool-abc-123", tags: [{ id: "ml", label: "ml" }] };
+      mockFetch.mockResolvedValueOnce(
+        new Response(JSON.stringify(updated), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+
+      const result = await toolsApi.updateTags("tool-abc-123", ["ml"]);
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining("/tools/tool-abc-123"),
+        expect.objectContaining({
+          method: "PUT",
+          body: JSON.stringify({ tags: ["ml"] }),
+        }),
+      );
+      expect(result).toEqual(updated);
+    });
+
+    it("throws synchronously for an invalid ID", () => {
+      expect(() => toolsApi.updateTags("../etc/passwd", ["ml"])).toThrow("Invalid tool ID format");
+    });
+  });
 });

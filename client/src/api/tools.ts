@@ -69,6 +69,19 @@ export const toolsApi = {
     return api.delete(`/tools/${validId}`);
   },
 
+  /**
+   * Replace a tool's tags.
+   *
+   * Sends a partial `PUT /tools/{id}` carrying only `tags`; the update service
+   * leaves every other field untouched when it is omitted. Returns the updated
+   * tool (with backend-normalized tag objects) so callers can patch their cache
+   * with the canonical values.
+   */
+  updateTags: (id: string, tags: string[]): Promise<Tool> => {
+    const validId = validateToolId(id);
+    return api.put<Tool>(`/tools/${validId}`, { tags });
+  },
+
   // Activation uses the canonical `POST /tools/{tool_id}/state?activate=true|false`
   // endpoint (requires `tools.update` permission). The deprecated `/toggle` endpoint
   // is intentionally not used.

@@ -290,6 +290,20 @@ export function Tools() {
     [setToolsData, intl],
   );
 
+  const handleAddToolTag = useCallback(
+    async (toolId: string, tags: string[]) => {
+      try {
+        const updated = await toolsApi.updateTags(toolId, tags);
+        setToolsData((prev) => prev?.map((t) => (t.id === updated.id ? updated : t)));
+      } catch (err) {
+        const detail = err instanceof ApiError ? extractApiErrorDetail(err.body) : null;
+        toast.error(detail || intl.formatMessage({ id: "tools.tags.addError" }));
+        throw err;
+      }
+    },
+    [setToolsData, intl],
+  );
+
   const handleDelete = useCallback(
     (id: string) => {
       const tool = allTools.find((t) => t.id === id);
@@ -428,6 +442,7 @@ export function Tools() {
               onDeleteTool={handleDelete}
               onEditTool={handleEditTool}
               onToggleTool={handleToggleTool}
+              onAddTag={handleAddToolTag}
             />
           )}
 

@@ -96,6 +96,18 @@ export const serversApi = {
   },
 
   /**
+   * Replace an MCP server's (gateway's) tags.
+   *
+   * Sends a partial `PUT /gateways/{id}` carrying only `tags`; the gateway
+   * update service preserves every other field when it is omitted. Returns the
+   * updated server so callers can patch their cache with the normalized tags.
+   */
+  updateTags: (id: string, tags: string[]): Promise<MCPServer> => {
+    const validId = validateServerId(id);
+    return api.put<MCPServer>(`/gateways/${validId}`, { tags });
+  },
+
+  /**
    * Test connection to an MCP server
    */
   testConnection: (id: string): Promise<{ success: boolean; message: string }> => {
