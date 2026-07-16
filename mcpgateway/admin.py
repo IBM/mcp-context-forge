@@ -146,6 +146,7 @@ from mcpgateway.schemas import (
     ToolMetrics,
     ToolRead,
     ToolUpdate,
+    _encode_auth_headers_list,
 )
 from mcpgateway.services.a2a_agent_plugin_binding_service import A2AAgentPluginBindingForbiddenError, A2AAgentPluginBindingNotFoundError, A2AAgentPluginBindingService
 from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService
@@ -181,7 +182,7 @@ from mcpgateway.services.root_service import RootService, RootServiceError, Root
 from mcpgateway.services.server_service import ServerError, ServerLockConflictError, ServerNameConflictError, ServerNotFoundError, ServerService
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.tag_service import TagService
-from mcpgateway.services.team_management_service import TeamManagementService, UNSET
+from mcpgateway.services.team_management_service import JoinRequestNotFoundError, TeamManagementService, UNSET
 from mcpgateway.services.token_catalog_service import TokenCatalogService
 from mcpgateway.services.tool_service import ToolError, ToolLockConflictError, ToolNameConflictError, ToolNotFoundError, ToolService
 from mcpgateway.utils.create_jwt_token import create_jwt_token, get_jwt_token
@@ -7398,9 +7399,7 @@ async def admin_approve_join_request(
             return HTMLResponse(content='<div class="text-red-500">Only team owners can approve join requests</div>', status_code=403)
 
         # Approve join request
-        member = await team_service.approve_join_request(request_id, approved_by=user_email)
-        if not member:
-            return HTMLResponse(content='<div class="text-red-500">Join request not found</div>', status_code=404)
+        member = await team_service.approve_join_request(team_id, request_id, approved_by=user_email)
 
         response = HTMLResponse(
             content=f"""
@@ -7413,6 +7412,10 @@ async def admin_approve_join_request(
         response.headers["HX-Trigger"] = orjson.dumps({"adminTeamAction": {"teamId": team_id, "refreshJoinRequests": True, "delayMs": 1000}}).decode()
         return response
 
+    except JoinRequestNotFoundError as e:
+        return HTMLResponse(content=f'<div class="text-red-500">{html.escape(str(e))}</div>', status_code=404)
+    except ValueError as e:
+        return HTMLResponse(content=f'<div class="text-red-500">Error approving join request: {html.escape(str(e))}</div>', status_code=400)
     except Exception as e:
         LOGGER.error(f"Error approving join request {request_id}: {e}")
         return HTMLResponse(content=f'<div class="text-red-500">Error approving join request: {html.escape(str(e))}</div>', status_code=400)
@@ -7450,9 +7453,7 @@ async def admin_reject_join_request(
             return HTMLResponse(content='<div class="text-red-500">Only team owners can reject join requests</div>', status_code=403)
 
         # Reject join request
-        success = await team_service.reject_join_request(request_id, rejected_by=user_email)
-        if not success:
-            return HTMLResponse(content='<div class="text-red-500">Join request not found</div>', status_code=404)
+        await team_service.reject_join_request(team_id, request_id, rejected_by=user_email)
 
         response = HTMLResponse(
             content="""
@@ -7465,6 +7466,10 @@ async def admin_reject_join_request(
         response.headers["HX-Trigger"] = orjson.dumps({"adminTeamAction": {"teamId": team_id, "refreshJoinRequests": True, "delayMs": 1000}}).decode()
         return response
 
+    except JoinRequestNotFoundError as e:
+        return HTMLResponse(content=f'<div class="text-red-500">{html.escape(str(e))}</div>', status_code=404)
+    except ValueError as e:
+        return HTMLResponse(content=f'<div class="text-red-500">Error rejecting join request: {html.escape(str(e))}</div>', status_code=400)
     except Exception as e:
         LOGGER.error(f"Error rejecting join request {request_id}: {e}")
         return HTMLResponse(content=f'<div class="text-red-500">Error rejecting join request: {html.escape(str(e))}</div>', status_code=400)
@@ -11780,19 +11785,33 @@ async def admin_get_tool(tool_id: str, request: Request, db: Session = Depends(g
 def _build_auth_obj_from_form(form: Any) -> Optional[dict[str, Any]]:
     """Parse auth fields from a form and return a serialized auth object, or None.
 
+    Custom headers are validated by the same ``_encode_auth_headers_list`` helper the JSON
+    tool/gateway schemas use, so malformed header keys and oversized header sets are rejected
+    here with a 422 instead of being persisted and failing later at tool-invocation time.
+    Rows with a blank key are dropped first: the admin form submits empty rows for headers the
+    user never filled in, and those must keep meaning "no headers" rather than 422.
+
     Args:
         form: Multipart form data containing auth_type and credential fields.
 
     Returns:
         A dict with auth_type and encrypted auth_value, or None if no valid auth provided.
+
+    Raises:
+        HTTPException: 422 if auth_type is 'oauth' (unsupported on tools) or if the supplied
+            custom headers fail validation.
     """
     auth_headers_json = form.get("auth_headers") or ""
     auth_headers: list[dict[str, Any]] = []
     if auth_headers_json:
         try:
-            auth_headers = orjson.loads(auth_headers_json)
+            parsed_headers = orjson.loads(auth_headers_json)
         except (orjson.JSONDecodeError, ValueError):
-            auth_headers = []
+            parsed_headers = []
+        # orjson.loads accepts any JSON scalar (e.g. "5", "null", "true"), so guard against a
+        # non-list value here rather than letting it reach the list comprehension below and raise
+        # an uncaught TypeError (500). A non-list body simply means "no custom headers".
+        auth_headers = parsed_headers if isinstance(parsed_headers, list) else []
 
     auth_type = form.get("auth_type", "")
     if auth_type and auth_type.lower() == "oauth":
@@ -11812,12 +11831,14 @@ def _build_auth_obj_from_form(form: Any) -> Optional[dict[str, Any]]:
                 auth_value = encode_auth({"Authorization": f"Bearer {token}"})
                 auth_obj = {"auth_type": auth_type, "auth_value": auth_value}
         elif auth_type == "authheaders":
-            if auth_headers:
-                header_dict = {h.get("key"): h.get("value", "") for h in auth_headers if h.get("key")}
-                if header_dict:
-                    auth_value = encode_auth(header_dict)
-                    auth_obj = {"auth_type": auth_type, "auth_value": auth_value}
-            else:
+            populated_headers = [h for h in auth_headers if isinstance(h, dict) and h.get("key")]
+            if populated_headers:
+                try:
+                    auth_value = _encode_auth_headers_list(populated_headers)
+                except ValueError as exc:
+                    raise HTTPException(status_code=422, detail=str(exc)) from exc
+                auth_obj = {"auth_type": auth_type, "auth_value": auth_value}
+            elif not auth_headers:
                 header_key = form.get("auth_header_key", "")
                 header_value = form.get("auth_header_value", "")
                 if header_key and header_value:
