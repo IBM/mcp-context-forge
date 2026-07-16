@@ -283,7 +283,7 @@ def _real_data_env():
 
     db_mod.Base.metadata.create_all(bind=engine)
 
-    from mcpgateway.db import EmailTeam, EmailTeamMember, EmailUser, Role, Tool, UserRole
+    from mcpgateway.db import EmailTeam, EmailTeamMember, EmailUser, Role, Server, Tool, UserRole
 
     now = datetime.now(timezone.utc)
     team_a = uuid.uuid4().hex
@@ -337,13 +337,17 @@ def _real_data_env():
     t_public = _tool(f"{SEARCH_TERM}-public", "public", None)
     t_teama = _tool(f"{SEARCH_TERM}-teama", "team", team_a)
     t_teamb = _tool(f"{SEARCH_TERM}-teamb", "team", team_b)
-    db.add_all([t_public, t_teama, t_teamb])
+    # A public server matching the search term: any caller WITH servers.read would
+    # see it, so an empty servers result proves the servers.read denial (not no data).
+    s_public = Server(id=uuid.uuid4().hex, name=f"{SEARCH_TERM}-server", visibility="public", enabled=True, owner_email=owner, tags=[])
+    db.add_all([t_public, t_teama, t_teamb, s_public])
     db.commit()
 
     ids = {
         "public": t_public.id,
         "teama": t_teama.id,
         "teamb": t_teamb.id,
+        "server_public": s_public.id,
         "team_a": team_a,
         "team_b": team_b,
         "user_b": user_b,
@@ -429,3 +433,22 @@ class TestUnifiedSearchRealDataScoping:
         body = resp.json()
         assert "users" not in body["entity_types"]  # restricted entity removed (no admin.user_management)
         assert ids["teamb"] in {tool["id"] for tool in body["results"]["tools"]}  # tools still returned (positive)
+
+    def test_denied_entity_returns_empty_without_collapsing_search(self, _real_data_env):
+        """A real servers.read denial is swallowed to empty; the allowed tools still return.
+
+        user_b has tools.read but not servers.read, so admin_search_servers raises a
+        genuine 403 that _safe_entity_search turns into empty results. The seeded public
+        server matches the query, so empty servers proves the denial (not missing data).
+        """
+        app, TestSessionLocal, ids = _real_data_env
+        _inject_identity(app, TestSessionLocal, ids["user_b"], token_teams=[ids["team_b"]])
+
+        client = TestClient(app, raise_server_exceptions=False)
+        resp = client.get(f"/v1/search?q={SEARCH_TERM}&entity_types=servers,tools", headers={"Authorization": "Bearer x"})
+
+        assert resp.status_code == 200  # a denied entity must not fail the whole request
+        body = resp.json()
+        assert body["results"]["servers"] == []  # servers.read denied -> 403 -> swallowed to empty
+        assert body["results"]["tools"]  # allowed entity still returned (search did not collapse)
+        assert ids["teamb"] in {tool["id"] for tool in body["results"]["tools"]}
