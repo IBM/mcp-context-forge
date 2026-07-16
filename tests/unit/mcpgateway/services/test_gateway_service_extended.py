@@ -15,6 +15,7 @@ from __future__ import annotations
 # Standard
 import asyncio
 from datetime import datetime, timezone
+import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
@@ -397,6 +398,82 @@ class TestGatewayServiceExtended:
 
         # Verify health checks were called
         assert service.check_health_of_gateways.called
+
+    @pytest.mark.asyncio
+    async def test_run_health_checks_rebuilds_filelock_after_fork(self):
+        """A FileLock built pre-fork (e.g. under gunicorn --preload) is bound to the
+        parent PID; newer filelock releases raise on acquire() if reused from a
+        forked child instead of silently working. The loop must detect the PID
+        change and rebuild the lock for the current process rather than reusing
+        the stale, parent-owned instance.
+        """
+        service = GatewayService()
+        service._health_check_interval = 0.05
+        service._get_gateways = MagicMock(return_value=[])
+        service.check_health_of_gateways = AsyncMock(return_value=True)
+
+        stale_lock = MagicMock()
+        stale_lock.is_locked = False
+        service._file_lock = stale_lock
+        service._file_lock_pid = os.getpid() - 1  # simulate a lock built by the parent process
+        service._lock_path = "/tmp/does-not-matter.lock"
+
+        with patch("mcpgateway.services.gateway_service.settings") as mock_settings, patch("mcpgateway.services.gateway_service.FileLock") as mock_filelock_cls:
+            mock_settings.cache_type = "memory"  # anything other than "redis"/"none" hits the filelock branch
+            new_lock = MagicMock()
+            new_lock.is_locked = True
+            mock_filelock_cls.return_value = new_lock
+
+            task = asyncio.create_task(service._run_health_checks("user@example.com"))
+            await asyncio.sleep(0.15)
+            task.cancel()
+            try:
+                await asyncio.wait_for(task, timeout=1.0)
+            except (asyncio.TimeoutError, asyncio.CancelledError):
+                pass
+
+        # The stale, parent-owned lock must never be acquired directly...
+        stale_lock.acquire.assert_not_called()
+        # ...a fresh lock for this PID must have been constructed and used instead.
+        mock_filelock_cls.assert_called_with(service._lock_path)
+        assert service._file_lock_pid == os.getpid()
+        assert new_lock.acquire.called
+
+    @pytest.mark.asyncio
+    async def test_run_health_checks_backs_off_on_filelock_error(self):
+        """Regression test: an unexpected error from file_lock.acquire() must not
+        spin the loop with no delay. A prior version of this handler logged the
+        error and immediately re-entered the loop, which - combined with a
+        fork-poisoned FileLock raising on every call - produced an unbounded
+        busy loop (millions of log lines, CPU starvation, server never able to
+        serve the health endpoint) in CI.
+        """
+        service = GatewayService()
+        service._health_check_interval = 0.05
+        service._get_gateways = MagicMock(return_value=[])
+        service.check_health_of_gateways = AsyncMock(return_value=True)
+
+        broken_lock = MagicMock()
+        broken_lock.acquire = MagicMock(side_effect=RuntimeError("lock was inherited across fork; construct a new instance"))
+        broken_lock.is_locked = False
+        service._file_lock = broken_lock
+        service._file_lock_pid = os.getpid()  # same PID, so acquire() runs directly and raises
+        service._lock_path = "/tmp/does-not-matter.lock"
+
+        with patch("mcpgateway.services.gateway_service.settings") as mock_settings:
+            mock_settings.cache_type = "memory"
+
+            task = asyncio.create_task(service._run_health_checks("user@example.com"))
+            await asyncio.sleep(0.25)
+            task.cancel()
+            try:
+                await asyncio.wait_for(task, timeout=1.0)
+            except (asyncio.TimeoutError, asyncio.CancelledError):
+                pass
+
+        # With a 0.05s backoff, a ~0.25s window should yield a handful of attempts,
+        # not thousands - this bounds the busy-loop regression.
+        assert broken_lock.acquire.call_count < 20
 
     @pytest.mark.asyncio
     async def test_handle_gateway_failure(self):
