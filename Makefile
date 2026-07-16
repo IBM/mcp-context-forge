@@ -4653,7 +4653,7 @@ dockle:
 # help: hadolint             - Lint Containerfile/Dockerfile(s) with hadolint
 .PHONY: hadolint
 # List of Containerfile/Dockerfile patterns to scan
-HADOFILES := Containerfile.* Dockerfile Dockerfile.*
+HADOFILES := Containerfile Containerfile.* Dockerfile Dockerfile.*
 
 hadolint:
 	@echo "🔎  hadolint scan..."
@@ -7498,6 +7498,7 @@ DETECT_SECRETS_FILES_EXCLUDE := '(?x)( \
   |go\.sum$$                   \
   |mcpgateway/sri_hashes\.json$$ \
 )'
+DETECT_SECRETS_PATH ?=
 
 .PHONY: detect-secrets-scan
 detect-secrets-scan: uv                      ## 🔍  detect-secrets scan for secrets in repository
@@ -7505,7 +7506,8 @@ detect-secrets-scan: uv                      ## 🔍  detect-secrets scan for se
 	@$(UV_BIN) tool run --from '$(DETECT_SECRETS_SPEC)' detect-secrets scan \
 		--update .secrets.baseline \
 		--use-all-plugins \
-		--exclude-files $(DETECT_SECRETS_FILES_EXCLUDE)
+		--exclude-files $(DETECT_SECRETS_FILES_EXCLUDE) \
+		$(DETECT_SECRETS_PATH)
 	@echo "📊 detect-secrets findings report:"
 	@$(UV_BIN) tool run --from '$(DETECT_SECRETS_SPEC)' detect-secrets audit --report .secrets.baseline
 

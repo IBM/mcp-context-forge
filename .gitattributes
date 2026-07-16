@@ -4,3 +4,4 @@
 # Explicitly ensure shell scripts and other Unix files use LF
 *.sh text eol=lf
 *.py text eol=lf
+.secrets.baseline merge=secrets-baseline

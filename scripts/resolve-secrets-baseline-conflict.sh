@@ -59,29 +59,24 @@ git checkout --theirs .secrets.baseline
 
 # Regenerate baseline to update line numbers for files changed in this commit only
 log_info "Regenerating baseline with detect-secrets for changed files only"
-if command -v detect-secrets >/dev/null 2>&1; then
-    # Get list of files changed in the commit being rebased
-    CHANGED_FILES=$(git diff-tree --no-commit-id --name-only -r REBASE_HEAD 2>/dev/null || echo "")
+# Get list of files changed in the commit being rebased
+DETECT_SECRETS_PATH=$(git diff-tree --no-commit-id --name-only -r REBASE_HEAD 2>/dev/null || echo "")
 
-    if [ -n "$CHANGED_FILES" ]; then
-        log_info "Scanning $(echo "$CHANGED_FILES" | wc -l | tr -d ' ') changed file(s)"
-        # Scan only the changed files and update baseline
-        if echo "$CHANGED_FILES" | xargs detect-secrets scan --baseline .secrets.baseline --update .secrets.baseline 2>&1 | grep -q "Updated"; then
-            log_info "Baseline updated successfully with current line numbers"
-        else
-            log_info "Baseline already up-to-date for changed files"
-        fi
+if [ -n "$DETECT_SECRETS_PATH" ]; then
+    log_info "Scanning $(echo "$DETECT_SECRETS_PATH" | wc -l | tr -d ' ') changed file(s)"
+    # Scan only the changed files and update baseline
+    if make detect-secrets-scan
+        log_info "Baseline updated successfully with current line numbers"
+        git add .secrets.baseline
+        log_info "Staged resolved .secrets.baseline"
     else
-        log_warn "Could not determine changed files, skipping baseline update"
+        log_info "Additional attention needed"
     fi
 else
-    log_warn "detect-secrets not found, skipping baseline regeneration"
-    log_warn "Install with: pip install --user detect-secrets"
+    log_warn "Could not determine changed files, skipping baseline update"
 fi
 
 # Stage the resolved file
-git add .secrets.baseline
-log_info "Staged resolved .secrets.baseline"
 
 # Check if there are any other conflicts
 OTHER_CONFLICTS=$(git diff --name-only --diff-filter=U | grep -v "^\.secrets\.baseline$" || true)
