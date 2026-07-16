@@ -3286,7 +3286,7 @@ requires-dist = [
     { name = "cpex-url-reputation", marker = "extra == 'plugins'", specifier = ">=0.3.5" },
     { name = "cryptography", specifier = ">=49.0.0" },
     { name = "fastapi", specifier = ">=0.139.0" },
-    { name = "filelock", specifier = ">=3.29.4,<3.30.0" },
+    { name = "filelock", specifier = ">=3.29.4,<3.31.0" },
     { name = "granian", extras = ["pname", "uvloop", "reload"], marker = "extra == 'granian'", specifier = ">=2.7.6" },
     { name = "grpcio", marker = "extra == 'grpc'", specifier = ">=1.81.1" },
     { name = "grpcio-reflection", marker = "extra == 'grpc'", specifier = ">=1.81.1" },
