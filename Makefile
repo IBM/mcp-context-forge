@@ -7497,19 +7497,37 @@ DETECT_SECRETS_FILES_EXCLUDE := '(?x)( \
   |uv\.lock$$                  \
   |go\.sum$$                   \
   |mcpgateway/sri_hashes\.json$$ \
+  |.secrets.baseline$$ \
 )'
-DETECT_SECRETS_PATH ?=
+DETECT_SECRETS_PATH ?= $(shell git diff main --name-only)
 
 .PHONY: detect-secrets-scan
 detect-secrets-scan: uv                      ## 🔍  detect-secrets scan for secrets in repository
 	@echo "🔍 Running detect-secrets scan..."
-	@$(UV_BIN) tool run --from '$(DETECT_SECRETS_SPEC)' detect-secrets scan \
-		--update .secrets.baseline \
+	tmpfile=$$(mktemp) && \
+	outfile=$$(mktemp) && \
+	trap "rm -f $${tmpfile} $${outfile}" EXIT && \
+	cp .secrets.baseline $${tmpfile} && \
+	$(UV_BIN) tool run --from '$(DETECT_SECRETS_SPEC)' detect-secrets scan \
+		--update $${tmpfile} \
 		--use-all-plugins \
 		--exclude-files $(DETECT_SECRETS_FILES_EXCLUDE) \
-		$(DETECT_SECRETS_PATH)
+		$(DETECT_SECRETS_PATH) && \
+	jq -s '{ \
+		exclude: .[0].exclude, \
+		generated_at: .[1].generated_at, \
+		plugins_used: .[1].plugins_used, \
+		results: (.[0].results + .[1].results), \
+		version: .[1].version, \
+		word_list: .[1].word_list \
+	}' \
+		.secrets.baseline $${tmpfile} \
+		> $${outfile} && \
+	cp $${outfile} .secrets.baseline
 	@echo "📊 detect-secrets findings report:"
 	@$(UV_BIN) tool run --from '$(DETECT_SECRETS_SPEC)' detect-secrets audit --report .secrets.baseline
+	@$(UV_BIN) tool run --from '$(DETECT_SECRETS_SPEC)' detect-secrets audit --report --json .secrets.baseline \
+		| jq -r '.stats | .live + .unaudited + .audited_real' | read count && exit $${count}
 
 .PHONY: detect-secrets-audit
 detect-secrets-audit: uv                     ## 🔎  detect-secrets audit for reviewing findings
