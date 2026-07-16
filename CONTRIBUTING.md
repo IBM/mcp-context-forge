@@ -144,7 +144,7 @@ The header format is as follows:
 # -*- coding: utf-8 -*-
 """Module Description.
 Location: ./path/to/your/file.py
-Copyright contributors to the mcp-context-forge project
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
 
 Your detailed module documentation begins here...
