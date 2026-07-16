@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/routers/teams.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Team Management Router.
 This module provides FastAPI routes for team management including

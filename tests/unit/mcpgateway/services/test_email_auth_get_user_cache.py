@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/services/test_email_auth_get_user_cache.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Tests for get_user_by_email() cache integration and mutation invalidation (Issue #3061).
 """

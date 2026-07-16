@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/routers/well_known.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Well-Known URI Handler Router.
 This module implements a flexible /.well-known/* endpoint handler that supports

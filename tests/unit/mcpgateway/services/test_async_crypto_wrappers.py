@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/services/test_async_crypto_wrappers.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Test async wrappers for crypto operations (Argon2 and Fernet).
 

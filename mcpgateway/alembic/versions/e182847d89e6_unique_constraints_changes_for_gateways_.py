@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/alembic/versions/e182847d89e6_unique_constraints_changes_for_gateways_.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Alembic migration for unique constraints on gateways, tools, and servers.
 

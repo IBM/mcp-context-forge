@@ -2,7 +2,6 @@
 """Location: ./tests/playwright/entities/test_resources_extended.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Extended test coverage for MCP Resources admin UI.
 Tests table structure, add form fields, view/edit/test modals,

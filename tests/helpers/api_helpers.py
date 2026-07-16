@@ -2,7 +2,6 @@
 """Location: ./tests/helpers/api_helpers.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Shared API test helpers for Playwright and API-oriented test suites.
 """

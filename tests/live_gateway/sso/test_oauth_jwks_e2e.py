@@ -2,7 +2,6 @@
 """Location: ./tests/live_gateway/sso/test_oauth_jwks_e2e.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: ContextForge Contributors
 
 E2E tests for OAuth access token verification via JWKS on virtual server MCP endpoints.
 

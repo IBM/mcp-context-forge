@@ -2,7 +2,6 @@
 """Location: ./tests/loadtest/locustfile_slow_time_server.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Load testing for slow-time-server via ContextForge.
 This module tests the slow-time-server through the gateway to validate

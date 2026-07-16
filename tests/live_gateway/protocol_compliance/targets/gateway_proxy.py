@@ -2,7 +2,6 @@
 """Location: ./tests/live_gateway/protocol_compliance/targets/gateway_proxy.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Gateway-proxy target: live ContextForge serving /mcp backed by the reference server.
 """

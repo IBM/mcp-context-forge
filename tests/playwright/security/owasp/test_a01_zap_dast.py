@@ -5,7 +5,6 @@
 """Location: ./tests/playwright/security/owasp/test_a01_zap_dast.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 OWASP A01:2021 – ZAP DAST integration layer.
 

@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/test_bootstrap_db.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Comprehensive unit tests for bootstrap_db module.
 """

@@ -2,7 +2,6 @@
 """Location: ./tests/e2e/test_admin_apis.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 End-to-end tests for ContextForge admin APIs.
 This module contains comprehensive end-to-end tests for all admin API endpoints.

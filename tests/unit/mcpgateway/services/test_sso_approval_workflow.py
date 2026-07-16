@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/services/test_sso_approval_workflow.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Test SSO user approval workflow functionality.
 """

@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/routers/test_teams_v2.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Comprehensive unit tests for teams router - V2 with improved RBAC mocking.
 This module tests all team management endpoints including CRUD operations,

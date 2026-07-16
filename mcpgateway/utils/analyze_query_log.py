@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/utils/analyze_query_log.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Analyze database query logs for N+1 patterns and performance issues.
 Usage:

@@ -2,7 +2,6 @@
 """Location: ./tests/populate/populators/prompts.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Prompt populator - creates prompts via POST /prompts.
 """

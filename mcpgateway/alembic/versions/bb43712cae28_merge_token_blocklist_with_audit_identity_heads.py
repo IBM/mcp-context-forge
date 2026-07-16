@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/alembic/versions/bb43712cae28_merge_token_blocklist_with_audit_identity_heads.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 merge token_blocklist (PR #4371) with audit-identity main head
 

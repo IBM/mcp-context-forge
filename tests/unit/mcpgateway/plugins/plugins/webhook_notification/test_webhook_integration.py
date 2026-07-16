@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/plugins/plugins/webhook_notification/test_webhook_integration.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Integration tests for WebhookNotificationPlugin with PluginManager.
 """

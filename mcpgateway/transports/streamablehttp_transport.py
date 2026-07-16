@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/transports/streamablehttp_transport.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Keval Mahajan
 
 Streamable HTTP Transport Implementation.
 This module implements Streamable Http transport for MCP

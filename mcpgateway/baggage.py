@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/baggage.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 OpenTelemetry W3C Baggage support for HTTP header extraction and propagation.
 

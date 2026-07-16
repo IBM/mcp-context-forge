@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/routers/reverse_proxy.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 FastAPI router for handling reverse proxy connections.
 

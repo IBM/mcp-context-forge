@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/services/test_sso_entra_role_mapping.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Test Microsoft EntraID role mapping functionality.
 Tests group extraction, role mapping, and role synchronization.

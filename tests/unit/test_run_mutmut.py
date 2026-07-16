@@ -2,7 +2,6 @@
 """Location: ./tests/unit/test_run_mutmut.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Tests for run_mutmut.py cleanup logic and results_store parameterized query.
 

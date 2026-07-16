@@ -2,7 +2,6 @@
 """Location: ./tests/integration/test_token_exchange_mock_upstream.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Mock-upstream integration tests for RFC 8693 token exchange.
 

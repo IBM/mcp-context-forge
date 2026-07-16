@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/services/test_tool_service_tenant_id.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Tenant-id population in the tool-service GlobalContext fallback paths (G1).
 

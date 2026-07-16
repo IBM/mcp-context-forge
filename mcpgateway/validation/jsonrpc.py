@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/validation/jsonrpc.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 JSON-RPC Validation.
 This module provides validation functions for JSON-RPC 2.0 requests and responses

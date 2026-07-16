@@ -3,7 +3,6 @@
 """Location: ./tests/unit/mcpgateway/plugins/fixtures/plugins/cross_hook_context.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Cross-hook context sharing test plugin.
 

@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/alembic/versions/9f5d93ced2b3_add_llm_permissions_to_default_roles.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Add LLM permissions to default RBAC roles.
 

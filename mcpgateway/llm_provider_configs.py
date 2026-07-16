@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/llm_provider_configs.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Keval Mahajan
 
 LLM Provider-Specific Configuration Definitions.
 

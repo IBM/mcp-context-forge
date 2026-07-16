@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/plugins/plugins/rate_limiter/test_rate_limiter.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Tests for the packaged rate limiter plugin.
 """

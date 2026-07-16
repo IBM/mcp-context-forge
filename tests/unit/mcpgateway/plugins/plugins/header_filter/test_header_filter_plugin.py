@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/plugins/plugins/header_filter/test_header_filter_plugin.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Adrian Popa
 
 Unit tests for Header Filter Plugin functionality.
 """

@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/routers/tool_plugin_bindings.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Madhumohan Jaishankar
 
 Tool Plugin Bindings Router.
 Provides endpoints for configuring per-tool per-tenant plugin policies.

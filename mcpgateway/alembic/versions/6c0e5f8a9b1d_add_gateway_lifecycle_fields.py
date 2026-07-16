@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/alembic/versions/6c0e5f8a9b1d_add_gateway_lifecycle_fields.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 add_gateway_lifecycle_fields
 

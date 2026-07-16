@@ -3,7 +3,6 @@
 """Location: ./tests/fuzz/fuzzers/fuzz_jsonpath.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Coverage-guided fuzzing for JSONPath processing using Atheris.
 """

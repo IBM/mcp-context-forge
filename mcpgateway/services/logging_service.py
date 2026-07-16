@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/services/logging_service.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Logging Service Implementation.
 This module implements structured logging according to the MCP specification.

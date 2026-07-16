@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/routers/sso.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Single Sign-On (SSO) authentication routes for OAuth2/OIDC providers.
 Handles SSO login flows, provider configuration, and callback handling.

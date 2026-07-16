@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/middleware/test_baggage_middleware_coverage.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Unit tests for baggage_middleware.py coverage gaps.
 

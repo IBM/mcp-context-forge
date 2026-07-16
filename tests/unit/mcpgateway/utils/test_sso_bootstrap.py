@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/utils/test_sso_bootstrap.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Test SSO bootstrap async functionality.
 """

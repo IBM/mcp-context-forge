@@ -2,7 +2,6 @@
 """Location: ./tests/integration/test_multitenancy_unique_constraints.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Contributors to the MCP-CONTEXT-FORGE project
 
 Integration tests for multi-tenant unique constraints (Bug #5146).
 This module tests that different teams can register entities with the same names

@@ -2,7 +2,6 @@
 """Location: ./tests/live_gateway/protocol_compliance/test_jsonrpc_envelope.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 JSON-RPC 2.0 envelope invariants from MCP 2025-11-25 § Base Protocol / Messages.
 

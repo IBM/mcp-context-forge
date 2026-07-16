@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/db/test_gateway_lifecycle_migration.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Contributors to the MCP-CONTEXT-FORGE project
 
 Tests for gateway lifecycle Alembic migration.
 """

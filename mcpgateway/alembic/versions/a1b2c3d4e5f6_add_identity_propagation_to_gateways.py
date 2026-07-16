@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/alembic/versions/a1b2c3d4e5f6_add_identity_propagation_to_gateways.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 add identity_propagation to gateways
 

@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/transports/test_rust_mcp_public_proxy.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Unit tests for ``mcpgateway.transports.rust_mcp_public_proxy``.
 

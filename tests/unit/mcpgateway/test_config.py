@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/test_config.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Test the configuration module.
 Author: Mihai Criveti

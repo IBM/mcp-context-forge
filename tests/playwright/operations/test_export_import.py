@@ -5,7 +5,6 @@
 """Location: ./tests/playwright/operations/test_export_import.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Export/Import E2E Tests.
 

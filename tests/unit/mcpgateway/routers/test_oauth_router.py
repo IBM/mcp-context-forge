@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/routers/test_oauth_router.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Unit tests for OAuth router.
 This module tests OAuth endpoints including authorization flow, callbacks, and status endpoints.

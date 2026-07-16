@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/middleware/__init__.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Middleware package for ContextForge.
 Contains various middleware components for request processing.

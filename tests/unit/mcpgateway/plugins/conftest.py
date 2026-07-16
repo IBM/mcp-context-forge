@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/plugins/conftest.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Fred Araujo
 
 Pytest fixtures for plugin framework tests.
 """

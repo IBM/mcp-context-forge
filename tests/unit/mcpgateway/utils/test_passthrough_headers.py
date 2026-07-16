@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/utils/test_passthrough_headers.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Unit tests for HTTP header passthrough functionality.
 This module contains comprehensive unit tests for the passthrough_headers utility

@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/services/test_gateway_service_helpers.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 GatewayService helper tests.
 """

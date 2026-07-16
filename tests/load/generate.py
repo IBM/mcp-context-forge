@@ -2,7 +2,6 @@
 """Location: ./tests/load/generate.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Main CLI for generating load test data.
 

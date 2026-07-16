@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/middleware/compression.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 SSE-Aware Compression Middleware for ContextForge.
 

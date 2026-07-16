@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/alembic/versions/207d8bbddd61_add_gateway_mode_field.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 add_gateway_mode_field
 

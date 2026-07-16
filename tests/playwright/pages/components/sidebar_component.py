@@ -2,7 +2,6 @@
 """Location: ./tests/playwright/pages/components/sidebar_component.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Sidebar component for admin panel navigation.
 """

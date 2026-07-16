@@ -2,7 +2,6 @@
 """Location: ./tests/playwright/test_version_page.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Test cases for Version Info page.
 """

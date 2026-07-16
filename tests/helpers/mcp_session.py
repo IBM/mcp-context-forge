@@ -2,7 +2,6 @@
 """Location: ./tests/helpers/mcp_session.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Shared MCP session-handshake helper for integration and load tests.
 

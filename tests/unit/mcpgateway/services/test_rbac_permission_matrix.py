@@ -5,7 +5,6 @@
 """Location: ./tests/unit/mcpgateway/services/test_rbac_permission_matrix.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Permission Matrix Tests for RBAC System.
 

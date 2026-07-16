@@ -3,7 +3,6 @@
 """Location: ./tests/migration/version_status.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Show current migration testing version configuration.
 """

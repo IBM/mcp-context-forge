@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/test_admin_menu_visibility.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Unit tests for permission-based menu visibility in admin UI.
 

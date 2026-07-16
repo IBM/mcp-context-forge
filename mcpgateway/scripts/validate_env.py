@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/scripts/validate_env.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Environment configuration validation script.
 This module provides validation for ContextForge environment configuration files,

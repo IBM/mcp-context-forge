@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/utils/trace_redaction.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Trace payload redaction and bounded serialization helpers.
 """

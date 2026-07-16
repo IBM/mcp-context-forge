@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/test_request_logging_config.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Configuration tests for request-logging Rust integration.
 """

@@ -3,7 +3,6 @@
 """Location: ./mcpgateway/alembic/versions/20a0e0538ac5_add_composite_indexes_for_metrics_time_.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 add_composite_indexes_for_metrics_time_partitioning
 

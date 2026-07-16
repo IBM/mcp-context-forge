@@ -2,7 +2,6 @@
 """Location: ./tests/unit/test_session_registry_redis_broadcast.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Unit test: Redis broadcast single-encoding
 This unit test verifies that `SessionRegistry.broadcast()` when using the

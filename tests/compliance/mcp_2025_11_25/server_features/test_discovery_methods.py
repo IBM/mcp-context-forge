@@ -2,7 +2,6 @@
 """Location: ./tests/compliance/mcp_2025_11_25/server_features/test_discovery_methods.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Server feature surface checks for methods present in MCP 2025-11-25 schema.
 """

@@ -2,7 +2,6 @@
 """Location: ./tests/load/cleanup.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 CLI for cleaning up load test data.
 

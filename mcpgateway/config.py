@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/config.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti, Manav Gupta, Eleni Kechrioti
 
 ContextForge AI Gateway Configuration.
 This module defines configuration settings for ContextForge AI Gateway using Pydantic.

@@ -2,7 +2,6 @@
 """Location: ./tests/e2e/test_baggage_tracing.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 End-to-end tests for OpenTelemetry baggage tracing.
 

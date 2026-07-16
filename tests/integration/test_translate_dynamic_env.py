@@ -2,7 +2,6 @@
 """Location: ./tests/integration/test_translate_dynamic_env.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Manav Gupta
 
 Integration tests for dynamic environment variable injection.
 Integration tests for dynamic environment variable injection in mcpgateway.translate.

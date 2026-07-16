@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/utils/base_models.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Base model utilities for ContextForge.
 This module provides shared base classes and utilities for Pydantic models

@@ -5,7 +5,6 @@
 """Location: ./tests/playwright/teams/test_team_member_roles.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Team Member Role E2E Tests.
 

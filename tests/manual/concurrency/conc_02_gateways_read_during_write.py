@@ -3,7 +3,6 @@
 """Location: ./tests/manual/concurrency/conc_02_gateways_read_during_write.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 CONC-02 manual concurrency check: read during write for /gateways/{id}.
 """

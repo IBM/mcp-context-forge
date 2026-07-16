@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/translate_header_utils.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Manav Gupta
 
 Header processing utilities for dynamic environment injection in translate module.
 Header processing utilities for dynamic environment variable injection in mcpgateway.translate.

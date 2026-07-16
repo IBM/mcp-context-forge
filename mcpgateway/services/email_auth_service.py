@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/services/email_auth_service.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Email Authentication Service.
 This module provides email-based user authentication services including

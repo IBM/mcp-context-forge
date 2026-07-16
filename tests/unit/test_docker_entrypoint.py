@@ -2,7 +2,6 @@
 """Location: ./tests/unit/test_docker_entrypoint.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Direct unit tests for docker-entrypoint.sh plugin requirement reload logic.
 """

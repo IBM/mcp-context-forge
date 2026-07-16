@@ -2,7 +2,6 @@
 """Location: ./tests/live_gateway/protocol_compliance/test_sampling.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 MCP sampling compliance tests — server can request sampling from the client.
 """

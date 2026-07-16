@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/alembic/versions/b1b2b3b4b5b6_fix_constraints.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Alembic migration to fix constraints for resources and prompts to allow gateway namespacing,
 using team/owner/gateway composite constraints, plus partial indexes for local uniqueness.

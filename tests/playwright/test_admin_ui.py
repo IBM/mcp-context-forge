@@ -2,7 +2,6 @@
 """Location: ./tests/playwright/test_admin_ui.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti, Manav Gupta
 
 Test cases for admin UI.
 """

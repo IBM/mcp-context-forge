@@ -2,7 +2,6 @@
 """Location: ./tests/playwright/pages/admin_page.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Admin panel page object with property-based Locators.
 """

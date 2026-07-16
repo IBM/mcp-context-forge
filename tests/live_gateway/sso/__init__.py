@@ -2,7 +2,6 @@
 """Location: ./tests/live_gateway/sso/__init__.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: ContextForge Contributors
 
 E2E tests requiring a live Single Sign-On identity provider:
 

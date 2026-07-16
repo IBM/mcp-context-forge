@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/middleware/validation_middleware.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Validation middleware for ContextForge input validation and output sanitization.
 

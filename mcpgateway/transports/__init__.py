@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/transports/__init__.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 MCP Transport Package.
 This package provides transport implementations for the MCP protocol:

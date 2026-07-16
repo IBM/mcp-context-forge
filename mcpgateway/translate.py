@@ -3,7 +3,6 @@
 '''Location: ./mcpgateway/translate.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti, Manav Gupta
 
 r"""Bridges between different MCP transport protocols.
 This module provides bidirectional bridging between MCP servers that communicate

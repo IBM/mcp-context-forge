@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/plugins/test_plugins_utils.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Unit tests for mcpgateway.plugins.utils.build_request_extensions() (Task B1 / G0)
 and mcpgateway.plugins.utils.record_plugin_metrics() (Task B2 / G1).

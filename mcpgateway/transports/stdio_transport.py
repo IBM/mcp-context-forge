@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/transports/stdio_transport.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 stdio Transport Implementation.
 This module implements standard input/output (stdio) transport for ContextForge, enabling

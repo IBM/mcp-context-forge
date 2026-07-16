@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/utils/test_psycopg3_optimizations.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Tests for psycopg3 optimization helpers.
 """

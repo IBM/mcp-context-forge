@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/utils/ssl_context_cache.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 SSL context caching utilities for ContextForge services.
 

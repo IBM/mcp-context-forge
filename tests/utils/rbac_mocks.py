@@ -2,7 +2,6 @@
 """Location: ./tests/utils/rbac_mocks.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 RBAC Mocking Utilities for Tests.
 

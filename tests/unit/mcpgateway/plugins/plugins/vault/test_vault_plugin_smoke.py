@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/plugins/plugins/vault/test_vault_plugin_smoke.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Adrian Popa
 
 Smoke tests for Vault Plugin - verifies plugin interface integrity.
 """

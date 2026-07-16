@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/test_cli_export_import_coverage.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Tests for CLI export/import to improve coverage.
 """

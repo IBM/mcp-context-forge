@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/test_auth_helpers.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Targeted tests for auth helper functions.
 """

@@ -2,7 +2,6 @@
 """Location: ./tests/playwright/pages/tools_page.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Tools page object for Tool management features.
 """

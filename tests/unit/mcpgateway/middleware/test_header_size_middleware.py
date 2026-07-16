@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/middleware/test_header_size_middleware.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Bogdan-Marius Catanus
 
 Unit tests for RFC 6585 5 (431 Request Header Fields Too Large) middleware.
 

@@ -3,7 +3,6 @@
 """Location: ./tests/integration/helpers/trace_generator.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Trace generator helper for testing observability backends.
 

@@ -2,7 +2,6 @@
 """Location: ./tests/integration/test_api_versioning_security.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Contributors to the MCP-CONTEXT-FORGE project
 
 Deny-path security tests for /v1/* versioned routes.
 

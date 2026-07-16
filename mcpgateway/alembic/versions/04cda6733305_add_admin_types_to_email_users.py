@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/alembic/versions/04cda6733305_add_admin_types_to_email_users.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Add admin types to email_users
 

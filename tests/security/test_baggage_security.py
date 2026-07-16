@@ -2,7 +2,6 @@
 """Location: ./tests/security/test_baggage_security.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Security tests for baggage implementation.
 

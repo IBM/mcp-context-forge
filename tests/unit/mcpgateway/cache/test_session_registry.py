@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/cache/test_session_registry.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Memory-backend unit tests for ``session_registry.py``.
 This suite exercises the in-memory implementation of

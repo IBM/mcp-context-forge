@@ -5,7 +5,6 @@
 """Location: ./tests/playwright/regression/test_admin_crud_regression.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Regression test suite for admin UI CRUD operations and state persistence.
 

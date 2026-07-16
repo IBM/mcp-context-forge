@@ -2,7 +2,6 @@
 """Location: ./tests/load/generators/sessions.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 MCP session and subscription generators for load testing.
 """

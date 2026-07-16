@@ -2,7 +2,6 @@
 """Location: ./tests/live_gateway/protocol_compliance/test_pagination.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 MCP pagination compliance tests — cursor-based iteration over long list responses.
 

@@ -5,7 +5,6 @@
 """Location: ./tests/unit/mcpgateway/middleware/test_rbac_admin_bypass.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Admin Bypass Tests for RBAC System.
 

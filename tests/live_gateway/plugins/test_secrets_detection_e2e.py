@@ -2,7 +2,6 @@
 """Location: ./tests/live_gateway/plugins/test_secrets_detection_e2e.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 End-to-end gateway test for the cpex-secrets-detection plugin.
 

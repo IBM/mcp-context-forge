@@ -3,7 +3,6 @@
 """Location: ./mcpgateway/utils/db_isready.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 db_isready - Wait until the configured database is ready
 ==========================================================

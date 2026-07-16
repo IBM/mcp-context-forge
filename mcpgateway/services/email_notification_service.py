@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/services/email_notification_service.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Email notification service for authentication workflows.
 """

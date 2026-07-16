@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/plugins/utils.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Gateway-side plugin utilities.
 """

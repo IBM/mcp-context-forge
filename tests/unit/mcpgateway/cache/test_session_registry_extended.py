@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/cache/test_session_registry_extended.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Extended tests for session_registry.py to improve coverage.
 This test suite focuses on uncovered code paths in session_registry.py

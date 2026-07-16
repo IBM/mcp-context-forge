@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/middleware/test_db_query_logging.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Tests for DB query logging middleware.
 """

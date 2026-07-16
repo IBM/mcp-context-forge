@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/alembic/versions/t4d5e6f7g8h9_add_password_changed_at.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Add password_changed_at field to EmailUser
 

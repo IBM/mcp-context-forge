@@ -5,7 +5,6 @@
 """Location: ./tests/playwright/operations/test_llm_config.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 LLM Configuration E2E Tests.
 

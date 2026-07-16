@@ -3,7 +3,6 @@
 """Location: ./mcpgateway/utils/redis_isready.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Reeve Barreto, Mihai Criveti
 
 redis_isready - Wait until Redis is ready and accepting connections
 This helper blocks until the given **Redis** server (defined by a connection URL)

@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/alembic/versions/e28cd485ad3c_remove_global_unique_constraints_for_.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Contributors to the MCP-CONTEXT-FORGE project
 
 remove_global_unique_constraints_for_multitenancy
 

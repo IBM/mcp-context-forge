@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/utils/test_time_restrictions.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Sebastian Iozu
 
 Unit tests for time restriction validation.
 

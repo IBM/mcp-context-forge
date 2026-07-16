@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/services/dataplane_publisher.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Experimental Dataplane publisher service for periodically exporting user configuration to Redis.
 NOTE: This publisher backs dataplane wip feature and it is disabled by default.

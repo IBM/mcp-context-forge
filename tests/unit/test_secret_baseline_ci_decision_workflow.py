@@ -2,7 +2,6 @@
 """Location: ./tests/unit/test_secret_baseline_ci_decision_workflow.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Regression tests for the secrets-baseline-only CI decision workflow.
 """

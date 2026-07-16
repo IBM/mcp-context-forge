@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/utils/test_redis_isready.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Reeve Barreto, Mihai Criveti
 
 redis_isready - Wait until Redis is ready and accepting connections
 """

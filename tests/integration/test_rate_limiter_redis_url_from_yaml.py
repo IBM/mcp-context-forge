@@ -2,7 +2,6 @@
 """Location: ./tests/integration/test_rate_limiter_redis_url_from_yaml.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Smoke test for the rate-limiter's env-sourced redis_url.
 

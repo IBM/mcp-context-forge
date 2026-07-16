@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/alembic/versions/733159a4fa74_add_display_name_to_tools.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 add_display_name_to_tools
 

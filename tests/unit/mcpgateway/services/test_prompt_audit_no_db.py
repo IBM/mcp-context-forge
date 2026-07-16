@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/services/test_prompt_audit_no_db.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Contributors to the MCP-CONTEXT-FORGE project
 
 Regression tests: audit_trail.log_action() must NEVER receive a shared
 ``db`` session from prompt-service CRUD paths.

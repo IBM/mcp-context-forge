@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/test_rpc_backward_compatibility.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Test backward compatibility for tool invocation after PR #746.
 """

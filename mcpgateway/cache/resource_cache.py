@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/cache/resource_cache.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Resource Cache Implementation.
 This module implements a simple in-memory cache with TTL expiration for caching

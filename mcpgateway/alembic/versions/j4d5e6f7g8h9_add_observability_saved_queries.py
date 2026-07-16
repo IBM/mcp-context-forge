@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/alembic/versions/j4d5e6f7g8h9_add_observability_saved_queries.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 add observability saved queries
 

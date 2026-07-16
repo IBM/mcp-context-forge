@@ -2,7 +2,6 @@
 """Location: ./tests/live_gateway/mcp/test_langfuse_traces.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 End-to-end smoke checks for Langfuse trace export.
 

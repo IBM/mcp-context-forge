@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/alembic/versions/4e6273136e56_normalize_registered_oauth_client_issuer.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 normalize_registered_oauth_client_issuer
 

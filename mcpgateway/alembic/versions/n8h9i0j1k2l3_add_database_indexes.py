@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/alembic/versions/n8h9i0j1k2l3_add_database_indexes.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 add database indexes
 

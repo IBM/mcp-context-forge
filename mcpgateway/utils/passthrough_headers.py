@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/utils/passthrough_headers.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 HTTP Header Passthrough Utilities.
 This module provides utilities for handling HTTP header passthrough functionality

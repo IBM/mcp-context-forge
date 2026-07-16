@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/cli_export_import.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Export/Import CLI Commands.
 This module provides CLI commands for exporting and importing ContextForge configuration.

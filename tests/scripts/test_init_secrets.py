@@ -2,7 +2,6 @@
 """Location: ./tests/scripts/test_init_secrets.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Eleni Kechrioti
 
 Unit tests for the secrets initialization script.
 This module verifies token generation entropy, CLI argument handling,

@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/utils/redis_client.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Centralized Redis client factory for consistent configuration.
 This module provides a single source of truth for Redis client creation,

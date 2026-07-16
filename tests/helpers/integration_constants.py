@@ -2,7 +2,6 @@
 """Location: ./tests/helpers/integration_constants.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Shared constants for integration tests.
 """

@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/middleware/test_csrf_fixes.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Test CSRF middleware fixes for review recommendations.
 

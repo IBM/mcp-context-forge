@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/middleware/test_http_auth_integration.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: ContextForge
 
 Integration tests for HTTP authentication middleware using the real main.py app.
 

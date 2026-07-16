@@ -2,7 +2,6 @@
 """Location: ./tests/loadtest/locustfile_mcp_isolation.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Rust MCP session/auth isolation correctness load test.
 This Locust harness is intentionally separate from the throughput benchmarks.

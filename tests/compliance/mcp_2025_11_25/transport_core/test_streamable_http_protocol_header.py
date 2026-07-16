@@ -2,7 +2,6 @@
 """Location: ./tests/compliance/mcp_2025_11_25/transport_core/test_streamable_http_protocol_header.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Streamable HTTP protocol header compliance checks.
 """

@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/services/test_email_auth_basic.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Basic tests for Email Authentication Service functionality.
 """

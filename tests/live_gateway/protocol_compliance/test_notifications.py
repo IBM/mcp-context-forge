@@ -2,7 +2,6 @@
 """Location: ./tests/live_gateway/protocol_compliance/test_notifications.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 MCP notification compliance tests — tools/list_changed and resources/updated.
 """

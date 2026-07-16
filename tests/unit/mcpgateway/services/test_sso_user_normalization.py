@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/services/test_sso_user_normalization.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Test SSO user info normalization functionality across all providers.
 Tests edge cases where provider claims might be missing or incomplete.

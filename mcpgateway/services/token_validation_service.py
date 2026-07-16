@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/services/token_validation_service.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Akshay Shinde
 
 OAuth Token Claim Validation Service for ContextForge.
 

@@ -2,7 +2,6 @@
 """Location: ./tests/security/test_rpc_endpoint_validation.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Test RPC endpoint behavior to verify input validation happens before processing.
 This test file demonstrates the actual vulnerability where malicious method names

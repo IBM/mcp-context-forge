@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/services/token_storage_service.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 OAuth Token Storage Service for ContextForge.
 

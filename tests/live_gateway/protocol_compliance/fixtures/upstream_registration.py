@@ -2,7 +2,6 @@
 """Location: ./tests/live_gateway/protocol_compliance/fixtures/upstream_registration.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Register the reference server as a gateway upstream and build a virtual server.
 

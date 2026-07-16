@@ -2,7 +2,6 @@
 """Location: ./tests/performance/test_streamablehttp_replay.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Performance tests for streamable HTTP replay optimization.
 These tests verify that the ring buffer optimization provides O(k) replay

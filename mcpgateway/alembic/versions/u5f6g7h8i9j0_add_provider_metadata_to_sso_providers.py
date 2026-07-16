@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/alembic/versions/u5f6g7h8i9j0_add_provider_metadata_to_sso_providers.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Add provider_metadata column to sso_providers table.
 

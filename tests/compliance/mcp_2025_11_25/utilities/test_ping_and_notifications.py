@@ -2,7 +2,6 @@
 """Location: ./tests/compliance/mcp_2025_11_25/utilities/test_ping_and_notifications.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Utility method checks (ping and notifications).
 """

@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/middleware/request_context.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Small helpers for per-request caching.
 This module provides optional helpers for caching request metadata on

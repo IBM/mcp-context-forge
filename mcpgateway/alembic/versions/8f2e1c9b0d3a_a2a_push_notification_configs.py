@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/alembic/versions/8f2e1c9b0d3a_a2a_push_notification_configs.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Add a2a_push_notification_configs table
 

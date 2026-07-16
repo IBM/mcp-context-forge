@@ -2,7 +2,6 @@
 """Location: ./tests/security/test_input_validation.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Comprehensive security tests for ContextForge input validation.
 This module tests all input validation functions across the gateway schemas

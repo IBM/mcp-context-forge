@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/services/tag_service.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Tag Service Implementation.
 This module implements tag management and retrieval for all entities in ContextForge.

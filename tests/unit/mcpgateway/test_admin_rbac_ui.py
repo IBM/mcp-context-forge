@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/test_admin_rbac_ui.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Tests for RBAC UI permission checking in admin.py.
 

@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/test_final_coverage_push.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Final push to reach 75% coverage.
 """

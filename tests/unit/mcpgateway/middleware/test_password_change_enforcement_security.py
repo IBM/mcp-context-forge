@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/middleware/test_password_change_enforcement_security.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Security-focused edge case tests for PasswordChangeEnforcementMiddleware.
 These tests ensure the middleware cannot be bypassed through various attack vectors.

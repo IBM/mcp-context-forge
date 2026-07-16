@@ -2,7 +2,6 @@
 """Location: ./tests/playwright/test_agents.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 A2A Agents UI tests for agent management features.
 """

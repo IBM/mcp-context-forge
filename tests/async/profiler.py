@@ -2,7 +2,6 @@
 """Location: ./tests/async/profiler.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Comprehensive async performance profiler for mcpgateway.
 """

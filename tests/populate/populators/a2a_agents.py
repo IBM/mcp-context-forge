@@ -2,7 +2,6 @@
 """Location: ./tests/populate/populators/a2a_agents.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 A2A agent populator - creates A2A agents via POST /a2a.
 """

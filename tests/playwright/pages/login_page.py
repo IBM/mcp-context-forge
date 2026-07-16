@@ -2,7 +2,6 @@
 """Location: ./tests/playwright/pages/login_page.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti, Manav Gupta
 
 Login page object for authentication functionality.
 """

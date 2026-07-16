@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/routers/test_teams_coverage.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Coverage tests for mcpgateway.routers.teams — error branches, edge cases.
 """

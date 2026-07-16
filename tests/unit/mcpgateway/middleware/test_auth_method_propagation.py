@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/middleware/test_auth_method_propagation.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Test auth_method propagation from plugin to RBAC.
 

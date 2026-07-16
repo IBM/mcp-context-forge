@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/alembic/versions/592625561893_add_tool_plugin_bindings_table.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Add tool_plugin_bindings table for per-tool per-tenant plugin policies
 

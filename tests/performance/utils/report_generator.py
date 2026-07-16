@@ -3,7 +3,6 @@
 """Location: ./tests/performance/utils/report_generator.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 HTML Performance Test Report Generator
 

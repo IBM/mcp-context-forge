@@ -2,7 +2,6 @@
 """Location: ./tests/integration/test_migration_cleanup.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Test migration cleanup SQL on SQLite.
 

@@ -2,7 +2,6 @@
 """Location: ./tests/playwright/pages/resources_page.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Resources page object for Resource management features.
 """

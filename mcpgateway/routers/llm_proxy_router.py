@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/routers/llm_proxy_router.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 LLM Proxy Router.
 This module provides OpenAI-compatible API endpoints for the internal

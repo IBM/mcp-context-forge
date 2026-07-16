@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/services/oauth_manager.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 OAuth 2.0 Manager for ContextForge.
 

@@ -5,7 +5,6 @@
 """Location: ./tests/playwright/security/test_rbac_admin.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 RBAC Admin E2E Tests.
 

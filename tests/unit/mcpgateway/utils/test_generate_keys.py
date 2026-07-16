@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/utils/test_generate_keys.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Tests for generate_keys utilities.
 """

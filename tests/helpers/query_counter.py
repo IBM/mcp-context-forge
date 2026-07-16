@@ -2,7 +2,6 @@
 """Location: ./tests/helpers/query_counter.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Database query counter for detecting N+1 patterns.
 This module provides utilities for counting and analyzing SQL queries,

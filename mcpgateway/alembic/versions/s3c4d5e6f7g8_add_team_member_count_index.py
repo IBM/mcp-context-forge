@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/alembic/versions/s3c4d5e6f7g8_add_team_member_count_index.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Add partial index for team member count queries
 

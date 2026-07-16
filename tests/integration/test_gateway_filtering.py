@@ -2,7 +2,6 @@
 """Location: ./tests/integration/test_gateway_filtering.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Integration tests for gateway_id filtering on /prompts and /resources endpoints.
 

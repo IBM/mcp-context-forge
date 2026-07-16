@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/routers/llm_admin_router.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 LLM Admin Router.
 This module provides HTMX-based admin UI endpoints for LLM provider

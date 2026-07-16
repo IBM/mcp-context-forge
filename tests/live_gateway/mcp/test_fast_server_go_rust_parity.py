@@ -2,7 +2,6 @@
 """Location: ./tests/live_gateway/mcp/test_fast_server_go_rust_parity.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Go/Rust fast server parity through a live ContextForge MCP gateway.
 """

@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/utils/test_create_jwt_token.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Full-coverage unit tests for **mcpgateway.utils.create_jwt_token**
 All paths are exercised, including:

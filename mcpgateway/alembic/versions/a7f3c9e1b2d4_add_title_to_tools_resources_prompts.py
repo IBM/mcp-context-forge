@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/alembic/versions/a7f3c9e1b2d4_add_title_to_tools_resources_prompts.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Add title column to tools, resources, and prompts
 

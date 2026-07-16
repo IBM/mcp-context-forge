@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/alembic/versions/4f07c116f917_add_indexes_for_pagination.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Add indexes for cursor pagination
 

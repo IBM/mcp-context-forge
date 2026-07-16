@@ -2,7 +2,6 @@
 """Location: ./tests/integration/test_metrics_cleanup_pg.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Suresh Kumar Moharajan
 
 Postgres-gated integration tests for MetricsCleanupService._cleanup_table.
 

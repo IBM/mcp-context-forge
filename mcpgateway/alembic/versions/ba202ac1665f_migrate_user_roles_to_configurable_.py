@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/alembic/versions/ba202ac1665f_migrate_user_roles_to_configurable_.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Migrate user roles to configurable defaults
 

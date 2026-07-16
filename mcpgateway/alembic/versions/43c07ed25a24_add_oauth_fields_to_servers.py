@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/alembic/versions/43c07ed25a24_add_oauth_fields_to_servers.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 add_oauth_fields_to_servers
 

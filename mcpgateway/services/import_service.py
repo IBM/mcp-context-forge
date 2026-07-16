@@ -3,7 +3,6 @@
 """Location: ./mcpgateway/services/import_service.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Import Service Implementation.
 This module implements comprehensive configuration import functionality according to the import specification.

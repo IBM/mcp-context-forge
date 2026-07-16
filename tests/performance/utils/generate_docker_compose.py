@@ -3,7 +3,6 @@
 """Location: ./tests/performance/utils/generate_docker_compose.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Docker Compose Generator for Infrastructure Profiles
 

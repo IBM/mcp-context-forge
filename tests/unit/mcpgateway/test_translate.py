@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/test_translate.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Full-coverage test-suite for **mcpgateway.translate**.
 This suite touches **every executable path** inside `mcpgateway.translate`

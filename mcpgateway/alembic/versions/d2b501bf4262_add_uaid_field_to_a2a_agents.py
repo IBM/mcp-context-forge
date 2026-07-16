@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/alembic/versions/d2b501bf4262_add_uaid_field_to_a2a_agents.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Add UAID field to a2a_agents
 

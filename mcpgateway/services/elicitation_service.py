@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/services/elicitation_service.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Elicitation service for tracking and routing elicitation requests.
 

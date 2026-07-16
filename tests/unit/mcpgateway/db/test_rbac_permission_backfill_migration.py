@@ -5,7 +5,6 @@
 """Location: ./tests/unit/mcpgateway/db/test_rbac_permission_backfill_migration.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Tests for Alembic migration abf8ac3b6008 (backfill admin.overview and servers.use).
 

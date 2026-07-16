@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/middleware/db_query_logging.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Database query logging middleware for N+1 detection.
 This middleware logs all database queries per request to help identify

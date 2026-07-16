@@ -2,7 +2,6 @@
 """Location: ./tests/compliance/mcp_2025_11_25/authorization/test_protected_resource_metadata.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Authorization discovery checks for protected resource metadata endpoints.
 """

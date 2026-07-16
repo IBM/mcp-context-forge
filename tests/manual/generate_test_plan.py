@@ -3,7 +3,6 @@
 """Location: ./tests/manual/generate_test_plan.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 ContextForge v0.9.0 - Test Plan Generator from YAML
 

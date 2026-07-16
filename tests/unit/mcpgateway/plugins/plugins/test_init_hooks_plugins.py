@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/plugins/plugins/test_init_hooks_plugins.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Fred Araujo
 
 Unit tests for plugin instantiation and hook invocation.
 These tests verify that each plugin can be loaded and its hooks invoked.

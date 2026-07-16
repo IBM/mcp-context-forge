@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/plugins/test_plugin_metadata.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Tests for plugin display metadata resolution.
 """

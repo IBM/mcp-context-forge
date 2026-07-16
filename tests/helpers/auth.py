@@ -2,7 +2,6 @@
 """Location: ./tests/helpers/auth.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Shared authentication helpers for tests.
 

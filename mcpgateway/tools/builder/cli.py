@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/tools/builder/cli.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Teryl Taylor
 
 MCP Stack Deployment Tool - Hybrid Dagger/Python Implementation
 

@@ -2,7 +2,6 @@
 """Location: ./tests/live_gateway/plugins/conftest.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Shared fixtures for the live-gateway cpex plugin E2E suites.
 

@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/alembic/versions/351b43e1d273_add_password_history_table.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 add_password_history_table
 

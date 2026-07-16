@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/utils/test_primary_worker.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Contributors to the MCP-CONTEXT-FORGE project
 
 Tests for the primary-worker election helper.
 """

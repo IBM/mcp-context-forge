@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/utils/test_small_utils.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Unit tests for small utility modules that had low coverage.
 """

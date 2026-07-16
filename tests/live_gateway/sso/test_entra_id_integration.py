@@ -2,7 +2,6 @@
 """Location: ./tests/live_gateway/sso/test_entra_id_integration.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 End-to-end tests for Microsoft Entra ID integration.
 

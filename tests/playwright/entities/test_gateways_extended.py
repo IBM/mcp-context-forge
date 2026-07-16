@@ -2,7 +2,6 @@
 """Location: ./tests/playwright/entities/test_gateways_extended.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Extended test coverage for MCP Servers & Federated Gateways (MCP Registry).
 Tests all modal interactions (Test, View, Edit), OAuth grant type switching,

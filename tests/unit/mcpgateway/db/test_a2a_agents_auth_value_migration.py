@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/db/test_a2a_agents_auth_value_migration.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Unit tests for migration a3c38b6c2437 (fix a2a_agents auth_value JSON -> TEXT).
 

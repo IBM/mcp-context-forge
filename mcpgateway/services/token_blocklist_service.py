@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/services/token_blocklist_service.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Bogdan Catanus
 
 Token Blocklist Service for JWT Token Revocation.
 

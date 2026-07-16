@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/alembic/versions/279184dfd71d_add_name_uniqueness_constraint_to_.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Contributors to the MCP-CONTEXT-FORGE project
 
 add_name_uniqueness_constraint_to_resources
 

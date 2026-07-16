@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/test_main.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Comprehensive tests for the main API endpoints with full coverage.
 """

@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/auth_context.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Per-request scope resolution and Rust-runtime trust-layer helpers.
 

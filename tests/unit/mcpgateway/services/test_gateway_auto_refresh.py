@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/services/test_gateway_auto_refresh.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Unit tests for the auto-refresh tools/resources/prompts feature in GatewayService.
 """

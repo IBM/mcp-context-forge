@@ -2,7 +2,6 @@
 """Location: ./tests/migration/utils/data_seeder.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Data seeding utilities for migration testing.
 

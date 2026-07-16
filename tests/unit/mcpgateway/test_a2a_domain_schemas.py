@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/test_a2a_domain_schemas.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Tests for A2A v1 domain schemas.
 """

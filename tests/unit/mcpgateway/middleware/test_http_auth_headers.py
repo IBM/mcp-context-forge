@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/middleware/test_http_auth_headers.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: ContextForge
 
 Tests that verify HTTP auth middleware properly modifies Starlette request headers.
 

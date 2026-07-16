@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/middleware/path_filter.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Centralized path filtering for middleware chain optimization.
 This module provides cached path exclusion checks for middleware to reduce

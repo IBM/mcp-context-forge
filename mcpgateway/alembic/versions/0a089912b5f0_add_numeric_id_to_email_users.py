@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/alembic/versions/0a089912b5f0_add_numeric_id_to_email_users.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 add_uuid_id_to_email_users
 

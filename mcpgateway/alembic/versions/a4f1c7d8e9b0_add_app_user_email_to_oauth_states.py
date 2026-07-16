@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/alembic/versions/a4f1c7d8e9b0_add_app_user_email_to_oauth_states.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Add app_user_email column to oauth_states.
 

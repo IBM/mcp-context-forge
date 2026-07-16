@@ -3,7 +3,6 @@
 """Location: ./tests/integration/test_integration.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 End-to-end happy-path integration tests for ContextForge API.
 These tests exercise several endpoints together instead of in isolation:

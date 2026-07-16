@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/cache/session_registry.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Session Registry with optional distributed state.
 This module provides a registry for SSE sessions with support for distributed deployment

@@ -5,7 +5,6 @@
 """Location: ./tests/playwright/security/test_user_management.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 User Management E2E Tests.
 

@@ -2,7 +2,6 @@
 """Location: ./tests/live_gateway/mcp/__init__.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: ContextForge Contributors
 
 E2E tests requiring a live ContextForge gateway (MCP transports / observability /
 subprocess-driven flows):

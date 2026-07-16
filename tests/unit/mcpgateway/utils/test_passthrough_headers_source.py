@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/utils/test_passthrough_headers_source.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Tests for PASSTHROUGH_HEADERS_SOURCE configuration feature.
 Passthrough can take precedence from:

@@ -2,7 +2,6 @@
 """Location: ./tests/playwright/entities/test_prompts.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 CRUD tests for Prompts entity in ContextForge Admin UI.
 """

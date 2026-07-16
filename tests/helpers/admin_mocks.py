@@ -2,7 +2,6 @@
 """Location: ./tests/helpers/admin_mocks.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Test helpers for mocking admin-user DB lookups.
 

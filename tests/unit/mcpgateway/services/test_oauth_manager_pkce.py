@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/services/test_oauth_manager_pkce.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Test OAuth Manager PKCE Support (RFC 7636).
 

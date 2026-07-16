@@ -2,7 +2,6 @@
 """Location: ./tests/populate/api_client.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Async HTTP client for REST API population.
 

@@ -2,7 +2,6 @@
 """Location: ./tests/integration/test_session_admin_bypass.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Integration tests for session token admin bypass (PR #5232, issue #5232).
 

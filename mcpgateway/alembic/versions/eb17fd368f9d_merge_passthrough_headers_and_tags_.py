@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/alembic/versions/eb17fd368f9d_merge_passthrough_headers_and_tags_.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 merge passthrough headers and tags support
 

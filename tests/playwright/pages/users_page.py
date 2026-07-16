@@ -2,7 +2,6 @@
 """Location: ./tests/playwright/pages/users_page.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Marek Dano
 
 Users page object for User Management features in the admin UI.
 """

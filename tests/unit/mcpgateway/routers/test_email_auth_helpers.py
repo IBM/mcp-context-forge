@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/routers/test_email_auth_helpers.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Tests for email auth helper functions.
 """

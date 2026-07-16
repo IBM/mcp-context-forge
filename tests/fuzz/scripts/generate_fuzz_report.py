@@ -3,7 +3,6 @@
 """Location: ./tests/fuzz/scripts/generate_fuzz_report.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Generate comprehensive fuzzing report for ContextForge.
 """

@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/utils/subject_token.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Contributors to the MCP-CONTEXT-FORGE project
 
 Extract the inbound user bearer to use as RFC 8693 subject_token.
 """

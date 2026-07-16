@@ -2,7 +2,6 @@
 """Location: ./tests/e2e/test_token_exchange_e2e.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 End-to-end test for RFC 8693 token exchange audit logging.
 

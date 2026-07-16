@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/plugins/_redis.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Dependency-inversion shim for Redis access inside the gateway plugin layer.
 

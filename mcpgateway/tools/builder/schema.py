@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/tools/builder/schema.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Teryl Taylor
 
 Pydantic schemas for MCP Stack configuration validation
 """

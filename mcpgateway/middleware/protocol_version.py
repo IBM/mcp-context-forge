@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/middleware/protocol_version.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Middleware to validate MCP-Protocol-Version header for MCP HTTP endpoints.
 """

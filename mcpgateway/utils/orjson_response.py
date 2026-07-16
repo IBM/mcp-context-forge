@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/utils/orjson_response.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Custom JSON response class using orjson for high-performance JSON serialization.
 

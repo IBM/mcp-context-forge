@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/version.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 version.py - diagnostics endpoint (HTML + JSON)
 A FastAPI router that mounts at /version and returns either:

@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/common/validators.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti, Madhav Kandukuri
 
 SecurityValidator for ContextForge
 This module defines the `SecurityValidator` class, which provides centralized, configurable

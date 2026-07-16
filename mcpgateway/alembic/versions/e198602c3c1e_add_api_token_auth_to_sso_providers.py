@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/alembic/versions/e198602c3c1e_add_api_token_auth_to_sso_providers.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Contributors to the MCP-CONTEXT-FORGE project
 
 add api token auth columns to sso_providers (issue #3567)
 

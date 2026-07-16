@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/alembic/versions/5f3c681b05e1_add_index_for_team_name.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Add index for team name
 

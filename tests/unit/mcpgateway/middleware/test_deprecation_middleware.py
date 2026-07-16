@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/middleware/test_deprecation_middleware.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Contributors to the MCP-CONTEXT-FORGE project
 
 Unit tests for mcpgateway.middleware.deprecation.DeprecationHeadersMiddleware
 and the _is_legacy_path helper.

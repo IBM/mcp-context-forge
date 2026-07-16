@@ -2,7 +2,6 @@
 """Location: ./tests/loadtest/locustfile_plugin_dynamic_config.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Dynamic plugin configuration load test.
 

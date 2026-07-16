@@ -2,7 +2,6 @@
 """Location: ./tests/performance/test_plugins_performance.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Fred Araujo
 
 Performance profiling for plugins using cProfile.
 

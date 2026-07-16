@@ -2,7 +2,6 @@
 """Location: ./tests/acceptance/plugins/test_cpex_contract.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Acceptance tests for the cpex package contract.
 

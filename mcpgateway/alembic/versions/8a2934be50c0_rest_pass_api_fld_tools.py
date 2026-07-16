@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/alembic/versions/8a2934be50c0_rest_pass_api_fld_tools.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 rest_pass_api_fld_tools
 

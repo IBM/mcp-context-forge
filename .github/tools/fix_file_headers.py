@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""A script to check and enforce standardized license and authorship headers.
+"""A script to check and enforce standardized license headers.
 
 Location: ./.github/tools/fix_file_headers.py
 Copyright contributors to the mcp-context-forge project
 SPDX-License-Identifier: Apache-2.0
-Authors: Arnav Bhattacharya, Mihai Criveti
 
 This script scans Python files to ensure they contain a standard header
-with copyright, license, and author information. By default, it runs in
+with copyright and license information. By default, it runs in
 check mode (dry run) and requires explicit flags to modify files.
 
 Operating modes:
@@ -26,7 +25,6 @@ Attributes:
     INCLUDE_DIRS (List[str]): Directories to include in the scan.
     EXCLUDE_DIRS (Set[str]): Directories to exclude from the scan.
     COPYRIGHT_LINE (str): The copyright line for file headers.
-    AUTHORS (str): Default author name(s) for headers.
     LICENSE (str): The project's license identifier.
 
 Examples:
@@ -41,9 +39,6 @@ Examples:
 
     Fix a specific file or directory:
         >>> # python3 .github/tools/fix_file_headers.py --fix --path ./mcpgateway/main.py
-
-    Fix with specific authors:
-        >>> # python3 .github/tools/fix_file_headers.py --fix --path ./mcpgateway/main.py --authors "John Doe, Jane Smith"
 
     Interactive mode:
         >>> # python3 .github/tools/fix_file_headers.py --interactive
@@ -72,13 +67,12 @@ PROJECT_ROOT: Path = Path(__file__).parent.parent.parent.resolve()
 INCLUDE_DIRS: List[str] = ["mcpgateway", "tests"]
 EXCLUDE_DIRS: Set[str] = {".git", ".venv", "venv", "__pycache__", "build", "dist", ".idea", ".vscode", "node_modules", ".tox", ".pytest_cache", ".mypy_cache", ".ruff_cache"}
 COPYRIGHT_LINE: str = "Copyright contributors to the MCP-CONTEXT-FORGE project"
-AUTHORS: str = "Contributors to the MCP-CONTEXT-FORGE project"
 LICENSE: str = "Apache-2.0"
 
 # Constants for header validation
 SHEBANG_LINE: str = "#!/usr/bin/env python3"
 ENCODING_LINE: str = "# -*- coding: utf-8 -*-"
-HEADER_FIELDS: List[str] = ["Location", "Copyright", "SPDX-License-Identifier", "Authors"]
+HEADER_FIELDS: List[str] = ["Location", "Copyright", "SPDX-License-Identifier"]
 
 
 def is_executable(file_path: Path) -> bool:
@@ -103,30 +97,6 @@ def is_executable(file_path: Path) -> bool:
         >>> tmp_path.unlink()
     """
     return os.access(file_path, os.X_OK)
-
-
-def validate_authors(authors: str) -> bool:
-    """Validate that the authors string is properly formatted.
-
-    Args:
-        authors: A string containing author names, typically comma-separated.
-
-    Returns:
-        bool: True if the authors string is valid, False otherwise.
-
-    Examples:
-        >>> validate_authors("John Doe")
-        True
-        >>> validate_authors("John Doe, Jane Smith")
-        True
-        >>> validate_authors("")
-        False
-        >>> validate_authors("   ")
-        False
-        >>> validate_authors("John@Doe")
-        True
-    """
-    return bool(authors and authors.strip())
 
 
 def validate_path(path: Path, require_in_project: bool = True) -> Tuple[bool, Optional[str]]:
@@ -176,12 +146,11 @@ def validate_path(path: Path, require_in_project: bool = True) -> Tuple[bool, Op
     return True, None
 
 
-def get_header_template(relative_path: str, authors: str = AUTHORS, include_shebang: bool = True, include_encoding: bool = True) -> str:
+def get_header_template(relative_path: str, include_shebang: bool = True, include_encoding: bool = True) -> str:
     """Generate the full, standardized header text.
 
     Args:
         relative_path: The relative path from project root to the file.
-        authors: The author name(s) to include in the header.
         include_shebang: Whether to include the shebang line.
         include_encoding: Whether to include the encoding line.
 
@@ -189,17 +158,15 @@ def get_header_template(relative_path: str, authors: str = AUTHORS, include_sheb
         str: The complete header template with proper formatting.
 
     Examples:
-        >>> header = get_header_template("test/example.py", "John Doe")
+        >>> header = get_header_template("test/example.py")
         >>> "#!/usr/bin/env python3" in header
         True
         >>> "Location: ./test/example.py" in header
         True
-        >>> "Authors: John Doe" in header
-        True
         >>> COPYRIGHT_LINE in header
         True
 
-        >>> header_no_shebang = get_header_template("test/example.py", "John Doe", include_shebang=False)
+        >>> header_no_shebang = get_header_template("test/example.py", include_shebang=False)
         >>> "#!/usr/bin/env python3" in header_no_shebang
         False
         >>> "# -*- coding: utf-8 -*-" in header_no_shebang
@@ -216,7 +183,6 @@ def get_header_template(relative_path: str, authors: str = AUTHORS, include_sheb
 Location: ./{relative_path}
 {COPYRIGHT_LINE}
 SPDX-License-Identifier: {LICENSE}
-Authors: {authors}
 
 Module documentation...
 """''')
@@ -317,21 +283,18 @@ def extract_header_info(source_code: str, docstring: str) -> Dict[str, Optional[
         ... Location: ./test/file.py
         ... Copyright 2025
         ... SPDX-License-Identifier: Apache-2.0
-        ... Authors: John Doe
         ...
         ... More documentation.'''
         >>> info = extract_header_info("", docstring)
         >>> info["Location"]
         'Location: ./test/file.py'
-        >>> info["Authors"]
-        'Authors: John Doe'
         >>> "Copyright" in info["Copyright"]
         True
     """
     # source_code parameter is kept for API compatibility but not used in current implementation
     _ = source_code
 
-    header_info: Dict[str, Optional[str]] = {"Location": None, "Copyright": None, "SPDX-License-Identifier": None, "Authors": None}
+    header_info: Dict[str, Optional[str]] = {"Location": None, "Copyright": None, "SPDX-License-Identifier": None}
 
     for line in docstring.splitlines():
         line = line.strip()
@@ -341,8 +304,6 @@ def extract_header_info(source_code: str, docstring: str) -> Dict[str, Optional[
             header_info["Copyright"] = line
         elif line.startswith("SPDX-License-Identifier:"):
             header_info["SPDX-License-Identifier"] = line
-        elif line.startswith("Authors:"):
-            header_info["Authors"] = line
 
     return header_info
 
@@ -398,14 +359,13 @@ def show_file_lines(file_path: Path, num_lines: int = 10) -> str:
 
 
 def process_file(
-    file_path: Path, mode: str, authors: str, show_diff: bool = False, debug: bool = False, require_shebang: Optional[bool] = None, require_encoding: bool = True
+    file_path: Path, mode: str, show_diff: bool = False, debug: bool = False, require_shebang: Optional[bool] = None, require_encoding: bool = True
 ) -> Optional[Dict[str, Any]]:
     """Check a single file and optionally fix its header.
 
     Args:
         file_path: The path to the Python file to process.
         mode: The processing mode ("check", "fix-all", "fix", or "interactive").
-        authors: The author name(s) to use in headers.
         show_diff: Whether to show a diff preview in check mode.
         debug: Whether to show debug information about file contents.
         require_shebang: Whether to require shebang line. If None, only required for executable files.
@@ -427,7 +387,7 @@ def process_file(
         ...     tmp.write('print("test")')
         ...     tmp_path = Path(tmp.name)
         13
-        >>> result = process_file(tmp_path, "check", "Test Author")
+        >>> result = process_file(tmp_path, "check")
         >>> result is not None
         True
         >>> "Missing encoding line" in result['issues']
@@ -487,8 +447,8 @@ def process_file(
         if f"SPDX-License-Identifier: {LICENSE}" not in docstring_node:
             issues.append("Missing 'SPDX-License-Identifier' line")
 
-        if not re.search(r"^Authors: ", docstring_node, re.MULTILINE):
-            issues.append("Missing 'Authors' line")
+        if re.search(r"^Authors: ", docstring_node, re.MULTILINE):
+            issues.append("Stale 'Authors' line must be removed")
 
         if not issues:
             return None
@@ -518,8 +478,8 @@ def process_file(
                     for i, line in enumerate(docstring_lines):
                         line_stripped = line.strip()
 
-                        # Check if this line is a header field
-                        is_header_field = any(line_stripped.startswith(field + ":") for field in HEADER_FIELDS) or line_stripped.startswith("Copyright")
+                        # Check if this line is a header field (Authors: included so it is consumed and dropped)
+                        is_header_field = any(line_stripped.startswith(field + ":") for field in HEADER_FIELDS) or line_stripped.startswith("Copyright") or line_stripped.startswith("Authors:")
 
                         if is_header_field:
                             in_header_section = True
@@ -552,8 +512,6 @@ def process_file(
                     new_header_lines.append(COPYRIGHT_LINE)
                     # Always use the expected license (don't preserve incorrect license)
                     new_header_lines.append(f"SPDX-License-Identifier: {LICENSE}")
-                    # Preserve existing Authors field if it exists, otherwise use the provided authors
-                    new_header_lines.append(existing_header_fields.get("Authors") or f"Authors: {authors}")
 
                     # Reconstruct docstring with preserved content
                     new_inner_content = "\n".join(new_header_lines)
@@ -599,7 +557,7 @@ def process_file(
         # Generate new source code for diff preview or actual fixing
         if mode in ["fix-all", "fix", "interactive"] or show_diff:
             # Create new header
-            new_header = get_header_template(relative_path_str, authors=authors, include_shebang=shebang_required, include_encoding=require_encoding)
+            new_header = get_header_template(relative_path_str, include_shebang=shebang_required, include_encoding=require_encoding)
 
             # Remove existing shebang/encoding if present
             start_line = 0
@@ -665,13 +623,11 @@ def parse_arguments(argv: Optional[List[str]] = None) -> argparse.Namespace:
         >>> args.fix_all
         False
 
-        >>> args = parse_arguments(["--fix", "--path", "test.py", "--authors", "John Doe"])
+        >>> args = parse_arguments(["--fix", "--path", "test.py"])
         >>> args.fix
         True
         >>> args.path
         'test.py'
-        >>> args.authors
-        'John Doe'
 
         >>> # Default behavior with no args
         >>> args = parse_arguments([])
@@ -701,7 +657,6 @@ def parse_arguments(argv: Optional[List[str]] = None) -> argparse.Namespace:
     mode_group.add_argument("--interactive", action="store_true", help="Interactively review and apply fixes.")
 
     parser.add_argument("--path", type=str, help="Specify a file or directory to process. Required with --fix.")
-    parser.add_argument("--authors", type=str, default=AUTHORS, help=f"Specify the author name(s) for new headers. Default: {AUTHORS}")
     parser.add_argument("--show-diff", action="store_true", help="Show diff preview of changes in check mode.")
     parser.add_argument("--debug", action="store_true", help="Show debug information about file contents.")
 
@@ -918,11 +873,6 @@ def main(argv: Optional[List[str]] = None) -> None:
 
     mode = determine_mode(args)
 
-    # Validate authors
-    if not validate_authors(args.authors):
-        print("Error: Invalid authors string. Authors cannot be empty.", file=sys.stderr)
-        sys.exit(1)
-
     # Collect files to process
     files_to_process = collect_files_to_process(args)
 
@@ -960,7 +910,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     modified_files_count = 0
 
     for file_path in files_to_process:
-        result = process_file(file_path, mode, args.authors, show_diff=args.show_diff, debug=args.debug, require_shebang=require_shebang, require_encoding=args.require_encoding)
+        result = process_file(file_path, mode, show_diff=args.show_diff, debug=args.debug, require_shebang=require_shebang, require_encoding=args.require_encoding)
         if result:
             issues_found_in_files.append(result)
             if result.get("fixed", False):

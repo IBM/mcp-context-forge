@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/utils/retry_manager.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Keval Mahajan
 
 ContextForge Resilient HTTP Client with Retry Logic.
 This module provides a resilient HTTP client that automatically retries requests

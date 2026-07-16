@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/db/test_token_uniqueness_migration.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Unit tests for migration d9e0f1a2b3c4 (change token uniqueness to per-team).
 

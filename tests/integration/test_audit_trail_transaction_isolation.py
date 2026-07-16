@@ -2,7 +2,6 @@
 """Location: ./tests/integration/test_audit_trail_transaction_isolation.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Contributors to the MCP-CONTEXT-FORGE project
 
 Integration tests for audit trail transaction isolation.
 

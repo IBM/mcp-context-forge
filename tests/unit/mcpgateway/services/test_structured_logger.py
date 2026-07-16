@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/services/test_structured_logger.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Unit tests for StructuredLogger service.
 """

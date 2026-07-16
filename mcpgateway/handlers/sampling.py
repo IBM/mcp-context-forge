@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/handlers/sampling.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 MCP Sampling Handler Implementation.
 This module implements the sampling handler for MCP LLM interactions.

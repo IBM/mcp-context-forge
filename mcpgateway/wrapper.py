@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/wrapper.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Keval Mahajan
 
 ContextForge Wrapper.
 MCP Client (stdio) <-> ContextForge Bridge

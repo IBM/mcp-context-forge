@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/alembic/versions/615af4ab94b4_add_gateway_client_cert_and_key.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 add_gateway_client_cert_and_key
 

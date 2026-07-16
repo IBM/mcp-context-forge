@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/test_simple_coverage_boost.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Simple tests to boost coverage to 75%.
 """

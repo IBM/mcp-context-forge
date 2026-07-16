@@ -2,7 +2,6 @@
 """Location: ./tests/integration/test_gateway_async_lifecycle_postgres.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Contributors to the MCP-CONTEXT-FORGE project
 
 Postgres-gated integration harness for async gateway lifecycle.
 """

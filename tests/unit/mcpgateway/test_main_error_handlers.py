@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/test_main_error_handlers.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Tests for error handling paths in main.py endpoints to improve coverage.
 Targets uncovered exception handlers in gateway, A2A, tool, and resource routes.

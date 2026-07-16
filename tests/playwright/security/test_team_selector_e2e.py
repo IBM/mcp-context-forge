@@ -5,7 +5,6 @@
 """Location: ./tests/playwright/security/test_team_selector_e2e.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 End-to-end Playwright test: team selector click flow inside an iframe.
 

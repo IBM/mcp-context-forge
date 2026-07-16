@@ -2,7 +2,6 @@
 """Location: ./tests/integration/test_concurrency_row_locking.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Concurrency tests for row-level locking implementation.
 Tests verify that concurrent operations on tools, gateways, prompts, resources,

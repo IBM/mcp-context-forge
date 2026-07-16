@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/routers/auth.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Main Authentication Router.
 This module provides simplified authentication endpoints for both session and API key management.

@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/services/sso_service.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Single Sign-On (SSO) authentication service for OAuth2 and OIDC providers.
 Handles provider management, OAuth flows, and user authentication.

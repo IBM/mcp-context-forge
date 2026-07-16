@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/common/query_params.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Shared FastAPI query-parameter aliases to centralize regex-backed validation.
 

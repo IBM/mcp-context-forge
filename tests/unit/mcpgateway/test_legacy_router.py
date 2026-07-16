@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/test_legacy_router.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Contributors to the MCP-CONTEXT-FORGE project
 
 tests/unit/mcpgateway/test_legacy_router.py
 Unit tests for mcpgateway.api.v1.build_legacy_router.

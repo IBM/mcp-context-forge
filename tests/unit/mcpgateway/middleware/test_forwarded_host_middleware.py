@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/middleware/test_forwarded_host_middleware.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: ContextForge Contributors
 
 Unit tests for ForwardedHostMiddleware.
 """

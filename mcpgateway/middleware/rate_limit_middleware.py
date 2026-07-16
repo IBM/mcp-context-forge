@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/middleware/rate_limit_middleware.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: ContextForge Team
 
 Redis-backed rate limiting middleware for ContextForge API endpoints.
 

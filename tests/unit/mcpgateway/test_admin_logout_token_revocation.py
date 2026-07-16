@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/test_admin_logout_token_revocation.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 HTTP-level tests for ``/admin/logout`` token revocation.
 

@@ -2,7 +2,6 @@
 """Location: ./tests/integration/test_api_versioning.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Contributors to the MCP-CONTEXT-FORGE project
 
 Integration tests for API versioning dual-mount architecture.
 

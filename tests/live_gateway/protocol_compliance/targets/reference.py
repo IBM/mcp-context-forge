@@ -2,7 +2,6 @@
 """Location: ./tests/live_gateway/protocol_compliance/targets/reference.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Reference MCP server target.
 

@@ -3,7 +3,6 @@
 """Location: ./mcpgateway/services/a2a_service.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 A2A Agent Service
 

@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/cache/test_resource_cache.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Unit tests for ResourceCache.
 """

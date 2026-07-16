@@ -2,7 +2,6 @@
 """Location: ./tests/unit/plugins/test_unified_pdp_plugin.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Tests for the UnifiedPDPPlugin class (unified_pdp.py).
 """

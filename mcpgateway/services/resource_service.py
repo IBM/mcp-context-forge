@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/services/resource_service.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Resource Service Implementation.
 This module implements resource management according to the MCP specification.

@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/services/test_permission_service_comprehensive.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Comprehensive unit tests for PermissionService to maximize coverage.
 """

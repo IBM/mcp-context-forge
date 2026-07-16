@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/alembic/versions/d3e4f5a6b7c8_add_binding_reference_id_to_tool_plugin_bindings.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Add binding_reference_id to tool_plugin_bindings.
 

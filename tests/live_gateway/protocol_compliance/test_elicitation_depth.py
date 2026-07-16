@@ -2,7 +2,6 @@
 """Location: ./tests/live_gateway/protocol_compliance/test_elicitation_depth.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Elicitation depth tests beyond the happy-path string response.
 

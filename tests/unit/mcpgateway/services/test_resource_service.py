@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/services/test_resource_service.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Assistant
 
 Comprehensive test suite for ResourceService.
 This suite provides complete test coverage for:

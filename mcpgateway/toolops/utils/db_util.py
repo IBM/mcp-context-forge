@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/toolops/utils/db_util.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Jay Bandlamudi
 
 ContextForge - Main module for handling toolops related database operations.
 

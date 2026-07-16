@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/plugins/plugins/sparc_static_validator/test_sparc_static_validator.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Osher Elhadad
 
 Comprehensive tests for SPARCStaticValidatorPlugin.
 

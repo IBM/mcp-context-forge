@@ -2,7 +2,6 @@
 """Location: ./tests/async/async_validator.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Validate async code patterns and detect common pitfalls.
 """

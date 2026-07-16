@@ -2,7 +2,6 @@
 """Location: ./tests/unit/test_gunicorn_config.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti, Pratik Gandhi
 
 Tests for the ``gunicorn.config.py`` ``post_fork`` hook.
 

@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/alembic/versions/i3c4d5e6f7g8_add_observability_performance_indexes.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 add observability performance indexes
 

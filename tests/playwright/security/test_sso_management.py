@@ -5,7 +5,6 @@
 """Location: ./tests/playwright/security/test_sso_management.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 SSO Provider Management E2E Tests.
 

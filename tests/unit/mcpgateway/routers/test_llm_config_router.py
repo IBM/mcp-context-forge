@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/routers/test_llm_config_router.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Tests for LLM config router.
 """

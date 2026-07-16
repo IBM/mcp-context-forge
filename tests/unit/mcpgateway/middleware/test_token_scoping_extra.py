@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/middleware/test_token_scoping_extra.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Additional tests for token scoping middleware helpers.
 """

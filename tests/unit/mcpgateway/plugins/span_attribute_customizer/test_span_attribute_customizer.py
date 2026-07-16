@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/plugins/span_attribute_customizer/test_span_attribute_customizer.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Unit tests for SpanAttributeCustomizer plugin.
 """

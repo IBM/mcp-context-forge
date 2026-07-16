@@ -2,7 +2,6 @@
 """Location: ./tests/integration/test_plugin_runtime_redis.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Integration tests for plugin runtime management with real Redis.
 

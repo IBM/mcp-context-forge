@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/cache/test_auth_cache_user.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Unit tests for AuthCache.get_user() / set_user() (Issue #3061).
 """

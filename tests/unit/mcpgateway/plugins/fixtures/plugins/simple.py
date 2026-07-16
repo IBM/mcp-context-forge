@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/plugins/fixtures/plugins/simple.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Test Suite
 
 Simple minimal plugins for testing the plugin framework.
 These plugins provide basic passthrough implementations for testing

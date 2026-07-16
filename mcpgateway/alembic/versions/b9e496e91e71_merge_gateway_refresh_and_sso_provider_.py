@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/alembic/versions/b9e496e91e71_merge_gateway_refresh_and_sso_provider_.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Merge gateway_refresh and sso_provider_metadata heads.
 

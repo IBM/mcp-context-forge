@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/test_a2a_plugin_header_security.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Contributors to the MCP-CONTEXT-FORGE project
 
 Tests for plugin header modification security (PR #5183 review fix).
 

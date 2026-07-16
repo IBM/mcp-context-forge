@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/services/test_gateway_service_health_oauth.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Claude Code for coverage improvement
 
 Additional health check and OAuth tests for GatewayService to improve coverage.
 These tests specifically target uncovered areas in gateway_service.py including:

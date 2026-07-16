@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/cache/test_a2a_stats_cache.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Tests for mcpgateway.cache.a2a_stats_cache.
 """

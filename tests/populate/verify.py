@@ -2,7 +2,6 @@
 """Location: ./tests/populate/verify.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Verify populated data via REST API GET endpoints.
 

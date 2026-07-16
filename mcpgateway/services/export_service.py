@@ -3,7 +3,6 @@
 """Location: ./mcpgateway/services/export_service.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Export Service Implementation.
 This module implements comprehensive configuration export functionality according to the export specification.

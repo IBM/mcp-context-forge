@@ -2,7 +2,6 @@
 """Location: ./tests/security/test_rpc_input_validation.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Comprehensive RPC input validation security tests.
 This test module specifically targets the vulnerability where RPC method names

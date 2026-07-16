@@ -2,7 +2,6 @@
 """Location: ./tests/populate/populators/base.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Base populator class for all REST API entity populators.
 """

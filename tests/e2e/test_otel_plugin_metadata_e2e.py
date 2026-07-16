@@ -2,7 +2,6 @@
 """Location: ./tests/e2e/test_otel_plugin_metadata_e2e.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 E2E test — Task C1 (Refs #5458).
 

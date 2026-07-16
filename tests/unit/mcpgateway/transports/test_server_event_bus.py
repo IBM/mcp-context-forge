@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/transports/test_server_event_bus.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Unit tests for the server-to-client event bus (ADR-052).
 

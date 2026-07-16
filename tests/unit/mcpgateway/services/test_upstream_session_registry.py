@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/services/test_upstream_session_registry.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Unit tests for UpstreamSessionRegistry (issue #4205).
 The registry's contract under test:

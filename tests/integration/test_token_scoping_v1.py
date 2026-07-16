@@ -2,7 +2,6 @@
 """Location: ./tests/integration/test_token_scoping_v1.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Contributors to the MCP-CONTEXT-FORGE project
 
 tests/integration/test_token_scoping_v1.py
 Integration tests verifying that token scope path normalization strips /v1

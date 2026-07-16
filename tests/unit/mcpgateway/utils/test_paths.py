@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/utils/test_paths.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Unit tests for mcpgateway.utils.paths.resolve_root_path.
 

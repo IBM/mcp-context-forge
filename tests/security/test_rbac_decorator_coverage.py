@@ -2,7 +2,6 @@
 """Location: ./tests/security/test_rbac_decorator_coverage.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Static-source coverage checks for RBAC permission decorators.
 

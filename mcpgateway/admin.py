@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/admin.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Admin UI Routes for ContextForge AI Gateway.
 This module contains all the administrative UI endpoints for ContextForge AI Gateway.

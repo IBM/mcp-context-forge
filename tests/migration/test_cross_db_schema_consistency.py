@@ -2,7 +2,6 @@
 """Location: ./tests/migration/test_cross_db_schema_consistency.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Cross-database schema consistency test.
 

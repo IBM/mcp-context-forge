@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/utils/test_sqlalchemy_modifier.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Madhav Kandukuri
 
 Comprehensive test suite for sqlalchemy_modifier.
 This suite provides complete test coverage for:

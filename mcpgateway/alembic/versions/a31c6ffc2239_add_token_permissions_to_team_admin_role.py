@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/alembic/versions/a31c6ffc2239_add_token_permissions_to_team_admin_role.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Add token permissions to team_admin role.
 

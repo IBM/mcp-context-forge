@@ -2,7 +2,6 @@
 """Location: ./tests/unit/plugins/test_jwt_claims_extraction.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Ioannis Ioannou
 
 Tests for JWT Claims Extraction Plugin.
 """

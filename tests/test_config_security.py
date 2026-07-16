@@ -2,7 +2,6 @@
 """Location: ./tests/test_config_security.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Eleni Kechrioti
 
 Security enforcement unit tests for US-2 (Fail-Closed logic).
 Verifies that the gateway terminates execution when critical secrets are

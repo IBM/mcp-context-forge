@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/services/test_metrics_api_coverage.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Test coverage for metrics API endpoints and service methods.
 Tests the include_metrics parameter in service list methods.

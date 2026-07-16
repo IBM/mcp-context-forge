@@ -3,7 +3,6 @@
 """Location: ./mcpgateway/alembic/versions/e1f2a3b4c5d6_add_grant_source_to_user_roles.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 add grant_source to user_roles
 

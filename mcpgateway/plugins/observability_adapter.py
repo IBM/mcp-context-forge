@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/plugins/observability_adapter.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Fred Araujo
 
 Adapter bridging ObservabilityService to the plugin framework's
 ObservabilityProvider protocol.

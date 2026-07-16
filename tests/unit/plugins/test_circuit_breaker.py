@@ -2,7 +2,6 @@
 """Location: ./tests/unit/plugins/test_circuit_breaker.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Tests for Circuit Breaker Plugin.
 

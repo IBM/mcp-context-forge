@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/services/test_upstream_session_registry_lifecycle.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Lifecycle wiring tests for UpstreamSessionRegistry (issue #4205).
 These tests verify the registry's integration points outside the registry

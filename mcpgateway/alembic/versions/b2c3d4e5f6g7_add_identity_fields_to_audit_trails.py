@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/alembic/versions/b2c3d4e5f6g7_add_identity_fields_to_audit_trails.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 add identity fields to audit_trails
 

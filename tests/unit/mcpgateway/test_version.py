@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/test_version.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 test_version.py - full-coverage unit tests for diagnostics endpoint
 This suite drives every code path in :pyfile:`mcpgateway/version.py`.

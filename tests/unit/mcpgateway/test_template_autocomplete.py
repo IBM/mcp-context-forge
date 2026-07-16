@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/test_template_autocomplete.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Regression tests ensuring all password inputs in HTML templates have correct
 autocomplete attributes to prevent browser autofill on sensitive fields.

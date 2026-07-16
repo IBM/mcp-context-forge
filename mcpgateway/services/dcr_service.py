@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/services/dcr_service.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Manav Gupta
 
 OAuth 2.0 Dynamic Client Registration Service.
 

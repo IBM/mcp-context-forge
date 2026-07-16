@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/plugins/agent/test_agent_plugins.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Teryl Taylor
 
 Unit tests for agent plugin framework.
 """

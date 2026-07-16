@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/validation/test_tags.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Tests for tag validation and normalization.
 """

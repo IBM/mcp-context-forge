@@ -2,7 +2,6 @@
 """Location: ./tests/live_gateway/protocol_compliance/targets/gateway_virtual.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Gateway virtual-server target: /servers/{id}/mcp on a live gateway.
 """

@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/services/log_storage_service.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Log Storage Service Implementation.
 This service provides in-memory storage for recent logs with entity context,

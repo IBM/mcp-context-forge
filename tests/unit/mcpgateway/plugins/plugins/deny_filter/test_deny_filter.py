@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/plugins/plugins/deny_filter/test_deny_filter.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Test Suite
 
 Tests for the deny_filter plugin with nested structure support.
 """

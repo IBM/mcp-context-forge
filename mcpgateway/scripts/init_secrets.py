@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/scripts/init_secrets.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Eleni Kechrioti
 
 Secrets Initialization Script.
 This script generates cryptographically secure secrets for JWT signing,

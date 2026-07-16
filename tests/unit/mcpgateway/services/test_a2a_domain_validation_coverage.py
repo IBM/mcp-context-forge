@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/services/test_a2a_domain_validation_coverage.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Unit tests for domain validation edge cases to achieve full coverage.
 

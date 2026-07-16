@@ -2,7 +2,6 @@
 """Location: ./tests/integration/test_resource_management.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Integration tests for resource management, exercised through the real HTTP
 endpoints (auth, RBAC, routing, service layer) rather than mocked handler

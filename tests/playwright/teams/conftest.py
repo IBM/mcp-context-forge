@@ -5,7 +5,6 @@
 """Location: ./tests/playwright/teams/conftest.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Shared fixtures for team collaboration E2E tests.
 """

@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/services/metrics_buffer_service.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Buffered metrics service for batching metric writes to the database.
 This service accumulates metrics in memory and flushes them to the database

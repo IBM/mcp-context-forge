@@ -2,7 +2,6 @@
 """Location: ./tests/performance/test_db_query_patterns.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Database query pattern tests for N+1 detection.
 These tests verify that database queries stay within expected bounds

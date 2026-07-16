@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/test_admin.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Tests for the admin module with improved coverage.
 This module tests the admin UI routes for ContextForge, ensuring

@@ -2,7 +2,6 @@
 """Location: ./tests/live_gateway/protocol_compliance/test_protocol_version.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 MCP protocol-version negotiation compliance tests.
 """

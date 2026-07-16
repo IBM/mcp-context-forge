@@ -2,7 +2,6 @@
 """Location: ./tests/performance/test_bulk_import_performance.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Performance tests for bulk import operations.
 

@@ -2,7 +2,6 @@
 """Location: ./tests/playwright/test_api_endpoints.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Test API endpoints through UI interactions.
 """

@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/services/support_bundle_service.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Support Bundle Service - Generate diagnostic bundles for troubleshooting.
 

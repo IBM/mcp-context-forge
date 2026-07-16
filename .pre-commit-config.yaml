@@ -381,12 +381,8 @@ repos:
         description: Ensures mcpgateway/ and tests/ .py files have the correct license header.
         entry: >-
           bash -c '
-          author=$(git config user.name 2>/dev/null);
-          if [ -n "$author" ]; then
-            python3 .github/tools/fix_file_headers.py --fix-all --authors "$author" "$@";
-          else
-            python3 .github/tools/fix_file_headers.py --fix-all "$@";
-          fi' --
+          python3 .github/tools/fix_file_headers.py --fix-all "$@";
+          ' --
         language: system
         types: [python]
         files: ^(mcpgateway|tests)/

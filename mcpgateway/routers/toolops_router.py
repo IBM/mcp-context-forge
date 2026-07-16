@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/routers/toolops_router.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Jay Bandlamudi
 
 Toolops Router Module
 

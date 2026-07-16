@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/alembic/versions/e28566875fa4_add_deprecated_flag_to_tools.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 add_deprecated_flag_to_tools
 

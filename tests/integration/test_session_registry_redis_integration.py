@@ -2,7 +2,6 @@
 """Location: ./tests/integration/test_session_registry_redis_integration.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Integration tests for Redis-backed SessionRegistry.
 End-to-end integration test validating Redis publish/subscribe

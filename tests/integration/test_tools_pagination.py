@@ -2,7 +2,6 @@
 """Location: ./tests/integration/test_tools_pagination.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Integration tests for Tools API pagination.
 Tests verify that the /admin/tools endpoint properly implements pagination

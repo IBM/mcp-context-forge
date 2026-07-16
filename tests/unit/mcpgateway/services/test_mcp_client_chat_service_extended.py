@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/services/test_mcp_client_chat_service_extended.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Extended tests to achieve >95% coverage for mcp_client_chat_service module.
 """

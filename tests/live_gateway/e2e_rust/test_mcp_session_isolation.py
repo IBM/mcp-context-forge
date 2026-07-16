@@ -2,7 +2,6 @@
 """Location: ./tests/live_gateway/e2e_rust/test_mcp_session_isolation.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Compose-backed MCP session/auth isolation tests for the Rust transport path.
 

@@ -2,7 +2,6 @@
 """Location: ./tests/integration/test_external_idp_auth_integration.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Contributors to the MCP-CONTEXT-FORGE project
 
 Integration tests for external IdP bearer auth (issue #3567) -- no crypto mocks.
 

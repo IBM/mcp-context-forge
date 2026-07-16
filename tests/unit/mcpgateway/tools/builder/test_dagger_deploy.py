@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/tools/builder/test_dagger_deploy.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Teryl Taylor
 
 Unit tests for Dagger-based MCP Stack deployment.
 

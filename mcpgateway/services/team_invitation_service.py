@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/services/team_invitation_service.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Team Invitation Service.
 This module provides team invitation creation, management, and acceptance

@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/services/test_notification_service.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Author: Keval Mahajan
 

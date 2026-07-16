@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/validation/test_validators_advanced.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Test the validators module.
 Author: Mihai Criveti

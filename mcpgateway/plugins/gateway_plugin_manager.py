@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/plugins/gateway_plugin_manager.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Madhumohan Jaishankar
 
 Gateway-owned TenantPluginManagerFactory and PluginConfigOverride.
 

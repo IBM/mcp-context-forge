@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/plugins/test_observability_adapter.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Fred Araujo
 
 Tests for ObservabilityServiceAdapter, ContextVar bridge, and Borg late-bind.
 """

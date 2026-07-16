@@ -2,7 +2,6 @@
 """Location: ./tests/live_gateway/protocol_compliance/helpers/drift.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Cross-target payload normalization for drift detection.
 

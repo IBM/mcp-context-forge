@@ -2,7 +2,6 @@
 """Location: ./tests/integration/test_plugin_dynamic_behavior_bad_words.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Integration tests for dynamic plugin mode changes — ReplaceBadWordsPlugin worked example.
 

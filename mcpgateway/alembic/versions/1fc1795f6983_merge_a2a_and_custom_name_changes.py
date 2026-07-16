@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/alembic/versions/1fc1795f6983_merge_a2a_and_custom_name_changes.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 merge_a2a_and_custom_name_changes
 

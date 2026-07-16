@@ -2,7 +2,6 @@
 """Location: ./tests/load/utils/progress.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Progress tracking utilities with rich display.
 """

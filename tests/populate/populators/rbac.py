@@ -2,7 +2,6 @@
 """Location: ./tests/populate/populators/rbac.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 RBAC populator - creates custom roles and assigns roles to users.
 """

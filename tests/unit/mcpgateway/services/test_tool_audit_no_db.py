@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/services/test_tool_audit_no_db.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Contributors to the MCP-CONTEXT-FORGE project
 
 Regression tests for tool audit_trail.log_action db handling.
 """

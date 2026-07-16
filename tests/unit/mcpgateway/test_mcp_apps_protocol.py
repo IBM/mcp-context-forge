@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/test_mcp_apps_protocol.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Contributors to the MCP-CONTEXT-FORGE project
 
 Protocol-facing MCP Apps behavior tests.
 """

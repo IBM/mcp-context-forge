@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/alembic/versions/ffe4494639d3_add_a2a_task_events_table.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 add_a2a_task_events_table
 

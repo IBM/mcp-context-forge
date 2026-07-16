@@ -3,7 +3,6 @@
 """Location: ./mcpgateway/utils/validate_signature.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Madhav Kandukuri
 
 Utility to validate Ed25519 signatures.
 Given data, signature, and public key PEM, verifies authenticity.

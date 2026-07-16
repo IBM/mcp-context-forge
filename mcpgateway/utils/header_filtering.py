@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/utils/header_filtering.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Contributors to the MCP-CONTEXT-FORGE project
 
 Header filtering utilities for sensitive credential removal.
 

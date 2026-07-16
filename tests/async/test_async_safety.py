@@ -2,7 +2,6 @@
 """Location: ./tests/async/test_async_safety.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Comprehensive async safety tests for mcpgateway.
 """

@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/middleware/test_baggage_middleware_main_flow.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Comprehensive tests for baggage_middleware.py main __call__ flow (lines 210-237).
 

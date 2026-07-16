@@ -1,10 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Module Description.
-Location: ./tests/unit/mcpgateway/services/test_token_exchange_cache.py
+"""Location: ./tests/unit/mcpgateway/services/test_token_exchange_cache.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Contributors to the MCP-CONTEXT-FORGE project
 
+Module Description.
 Module documentation...
 """
 # tests/unit/mcpgateway/services/test_token_exchange_cache.py

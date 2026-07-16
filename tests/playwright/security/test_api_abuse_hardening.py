@@ -5,7 +5,6 @@
 """Location: ./tests/playwright/security/test_api_abuse_hardening.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 API abuse hardening tests: mass assignment, BOLA, HPP, XSS, and path traversal.
 """

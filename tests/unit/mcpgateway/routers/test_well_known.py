@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/routers/test_well_known.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Unit tests for well_known and server_well_known routers.
 """

@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/transports/rust_mcp_runtime_proxy.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Experimental MCP transport proxy for the Rust runtime edge.
 

@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/test_server_create_tool_assignment_bug.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Test for bug fix: Tool assignment when creating virtual servers via API.
 

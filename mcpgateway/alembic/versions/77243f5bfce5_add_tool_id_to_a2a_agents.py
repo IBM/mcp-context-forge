@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/alembic/versions/77243f5bfce5_add_tool_id_to_a2a_agents.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Add tool_id to a2a_agents
 

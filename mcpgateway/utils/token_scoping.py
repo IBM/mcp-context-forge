@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/utils/token_scoping.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Token scoping utilities for extracting and validating token scopes.
 """

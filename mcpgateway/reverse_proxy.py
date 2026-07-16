@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/reverse_proxy.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 MCP Reverse Proxy - Bridge local MCP servers to remote gateways.
 This module implements a reverse proxy that connects local MCP servers

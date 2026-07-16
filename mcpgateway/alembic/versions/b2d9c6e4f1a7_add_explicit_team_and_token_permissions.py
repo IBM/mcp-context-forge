@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/alembic/versions/b2d9c6e4f1a7_add_explicit_team_and_token_permissions.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Add explicit team read and token self-management permissions to default roles.
 

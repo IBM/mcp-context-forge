@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/alembic/versions/f9a8b7c6d5e4_add_migration_metadata_table.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Add migration_metadata table for hermetic config snapshots
 

@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/tools/builder/pipeline.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Teryl Taylor
 
 Abstract base class for MCP Stack deployment implementations.
 

@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/transports/sse_transport.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 SSE Transport Implementation.
 This module implements Server-Sent Events (SSE) transport for MCP,

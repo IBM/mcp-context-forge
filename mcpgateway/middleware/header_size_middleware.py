@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/middleware/header_size_middleware.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Bogdan-Marius Catanus
 
 RFC 6585 compliant header size validation middleware.
 

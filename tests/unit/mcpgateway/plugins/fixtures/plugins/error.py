@@ -3,7 +3,6 @@
 """Location: ./tests/unit/mcpgateway/plugins/fixtures/plugins/error.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Error plugin.
 """

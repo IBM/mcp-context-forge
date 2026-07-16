@@ -3,7 +3,6 @@
 """Location: ./tests/performance/test_content_security_benchmark.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Benchmark content security pattern scanning.
 Usage:

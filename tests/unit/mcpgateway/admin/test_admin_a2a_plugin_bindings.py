@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/admin/test_admin_a2a_plugin_bindings.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Unit tests for the A2A agent plugin binding admin UI endpoints.
 

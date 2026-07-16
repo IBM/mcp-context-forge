@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/routers/metrics_maintenance.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Metrics Maintenance Router.
 This router provides admin endpoints for metrics cleanup and rollup operations.

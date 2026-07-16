@@ -2,7 +2,6 @@
 """Location: ./tests/live_gateway/mcp/test_mcp_rbac_transport.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 RBAC + multi-transport MCP protocol tests using Playwright API + FastMCP Client.
 

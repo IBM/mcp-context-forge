@@ -2,7 +2,6 @@
 """Location: ./tests/loadtest/locustfile.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Locust load testing scenarios for ContextForge.
 This module provides comprehensive load testing for ContextForge using Locust.

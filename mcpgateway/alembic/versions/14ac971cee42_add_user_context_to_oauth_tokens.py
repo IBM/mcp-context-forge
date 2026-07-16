@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/alembic/versions/14ac971cee42_add_user_context_to_oauth_tokens.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 add_user_context_to_oauth_tokens
 

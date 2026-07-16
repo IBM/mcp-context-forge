@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/test_config_env_isolation.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Contributors to the MCP-CONTEXT-FORGE project
 
 Cross-environment token isolation config tests (GHSA-vgf8-3685-66j9).
 """

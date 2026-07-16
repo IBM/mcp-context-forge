@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/tools/builder/test_schema.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Teryl Taylor
 
 Unit tests for builder schema validation (Pydantic models).
 """

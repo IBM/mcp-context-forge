@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/utils/primary_worker.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Contributors to the MCP-CONTEXT-FORGE project
 
 Primary-worker election for side-effecting plugin work.
 

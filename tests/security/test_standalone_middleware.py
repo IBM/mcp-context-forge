@@ -2,7 +2,6 @@
 """Location: ./tests/security/test_standalone_middleware.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Standalone Security Middleware Testing.
 

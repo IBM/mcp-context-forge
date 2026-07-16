@@ -2,7 +2,6 @@
 """Location: ./tests/playwright/pages/admin_utils.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti, Marek Dano
 
 Shared utility functions for admin page interactions.
 """

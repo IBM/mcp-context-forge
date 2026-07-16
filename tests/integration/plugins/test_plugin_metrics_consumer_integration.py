@@ -2,7 +2,6 @@
 """Location: ./tests/integration/plugins/test_plugin_metrics_consumer_integration.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Integration tests for mcpgateway.plugins.utils.record_plugin_metrics() (Task B2 / G1)
 against a real ObservabilityService backed by a real (test) database.

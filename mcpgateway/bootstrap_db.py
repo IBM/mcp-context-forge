@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/bootstrap_db.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Madhav Kandukuri
 
 Database bootstrap/upgrade entry-point for ContextForge.
 The script:

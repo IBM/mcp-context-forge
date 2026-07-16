@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/services/test_team_management_service_coverage.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Coverage tests for mcpgateway.services.team_management_service — missing branches.
 """

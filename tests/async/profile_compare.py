@@ -2,7 +2,6 @@
 """Location: ./tests/async/profile_compare.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Compare async performance profiles between builds.
 """

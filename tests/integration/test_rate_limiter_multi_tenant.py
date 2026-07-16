@@ -2,7 +2,6 @@
 """Location: ./tests/integration/test_rate_limiter_multi_tenant.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Integration tests for G1 + G2 — tenant-id end-to-end through the gateway.
 

@@ -5,7 +5,6 @@
 """Location: ./tests/playwright/teams/test_team_join_requests.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Team Join Request E2E Tests.
 

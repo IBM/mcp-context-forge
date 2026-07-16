@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/transports/redis_event_store.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Redis-backed event store for Streamable HTTP stateful sessions.
 

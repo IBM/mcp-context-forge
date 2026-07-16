@@ -2,7 +2,6 @@
 """Location: ./tests/loadtest/locustfile_rate_limiter_scale.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Rate limiter algorithm scale test — resource divergence across algorithms.
 Why this test exists

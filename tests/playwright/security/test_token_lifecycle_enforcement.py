@@ -5,7 +5,6 @@
 """Location: ./tests/playwright/security/test_token_lifecycle_enforcement.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Lifecycle enforcement tests for expiration, revocation, JTI, and session auth boundaries.
 """

@@ -3,7 +3,6 @@
 """Location: ./mcpgateway/alembic/versions/cfc3d6aa0fb2_consolidated_multiuser_team_rbac_.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 consolidated_multiuser_team_rbac_migration
 

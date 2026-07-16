@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/utils/test_validate_signature.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Unit Tests for ./mcpgateway/utils/validate_signature.py
 """

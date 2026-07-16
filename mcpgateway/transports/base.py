@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/transports/base.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Base Transport Interface.
 This module defines the base protocol for MCP transports.

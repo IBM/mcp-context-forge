@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/services/content_security.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Content Security Service for ContextForge.
 Provides validation for user-submitted content including size limits,

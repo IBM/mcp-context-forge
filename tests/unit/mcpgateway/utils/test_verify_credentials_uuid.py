@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/utils/test_verify_credentials_uuid.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Integration tests for UUID resolution in verify_credentials.
 """

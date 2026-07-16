@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/alembic/versions/4842b831d24e_add_on_error_to_tool_plugin_bindings.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 add on_error to tool_plugin_bindings
 

@@ -2,7 +2,6 @@
 """Location: ./tests/unit/mcpgateway/services/test_tool_pre_invoke_logging.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Tests for sanitized tool pre-invoke hook diagnostics.
 """

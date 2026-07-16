@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/alembic/versions/h2b3c4d5e6f7_add_oauth_config_to_a2a_agents.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 add oauth config and passthrough headers to a2a agents
 

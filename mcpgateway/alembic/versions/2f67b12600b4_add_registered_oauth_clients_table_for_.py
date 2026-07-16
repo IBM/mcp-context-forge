@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/alembic/versions/2f67b12600b4_add_registered_oauth_clients_table_for_.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Add registered_oauth_clients table for DCR
 

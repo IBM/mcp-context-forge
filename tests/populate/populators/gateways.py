@@ -2,7 +2,6 @@
 """Location: ./tests/populate/populators/gateways.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Gateway populator - creates gateways via POST /gateways.
 """

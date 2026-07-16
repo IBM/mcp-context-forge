@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/services/metrics_rollup_service.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Metrics Rollup Service for hourly aggregation of raw metrics.
 This service provides automatic rollup of raw metrics into hourly summaries,

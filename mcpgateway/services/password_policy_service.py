@@ -2,7 +2,6 @@
 """Location: ./mcpgateway/services/password_policy_service.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Bogdan Catanus
 
 Password Policy Enforcement Service.
 This module provides comprehensive password policy enforcement including:
