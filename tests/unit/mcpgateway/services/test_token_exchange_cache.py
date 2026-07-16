@@ -1,3 +1,11 @@
+# -*- coding: utf-8 -*-
+"""Location: ./tests/unit/mcpgateway/services/test_token_exchange_cache.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
+SPDX-License-Identifier: Apache-2.0
+
+Module Description.
+Module documentation...
+"""
 # tests/unit/mcpgateway/services/test_token_exchange_cache.py
 # Third-Party
 import pytest

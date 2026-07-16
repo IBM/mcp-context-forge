@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/security/test_gateway_test_ssrf_protection.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
 
 Tests for SSRF protection in the /admin/gateways/test endpoint.

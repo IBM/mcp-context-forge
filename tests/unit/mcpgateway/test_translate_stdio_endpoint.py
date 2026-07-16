@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/test_translate_stdio_endpoint.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Manav Gupta
 
 Unit tests for StdIOEndpoint with environment variable support.
 Tests for StdIOEndpoint class modifications to support dynamic environment variables.

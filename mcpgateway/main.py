@@ -1,9 +1,8 @@
 # -*- coding: utf-8 -*-
 # pylint: disable=wrong-import-position, import-outside-toplevel, no-name-in-module
 """Location: ./mcpgateway/main.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti, Eleni Kechrioti
 
 ContextForge AI Gateway - Main FastAPI Application.
 

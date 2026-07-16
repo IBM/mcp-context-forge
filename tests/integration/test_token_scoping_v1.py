@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
-"""tests/integration/test_token_scoping_v1.py
-Copyright 2026
+"""Location: ./tests/integration/test_token_scoping_v1.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
 
+tests/integration/test_token_scoping_v1.py
 Integration tests verifying that token scope path normalization strips /v1
 before RBAC pattern matching, so a scope pattern like ``^/tools`` grants
 access to both ``/tools`` (legacy) and ``/v1/tools`` (canonical).

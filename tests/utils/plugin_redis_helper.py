@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/utils/plugin_redis_helper.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Test-only helper that wires the framework's Redis shim to the real provider.
 

@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/fuzz/test_schema_validation_fuzz.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Property-based fuzz testing for Pydantic schema validation.
 """

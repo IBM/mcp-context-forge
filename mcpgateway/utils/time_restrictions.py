@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/utils/time_restrictions.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Sebastian Iozu
 
 Time restriction validation utilities for token access control.
 This module provides functions to validate time-based access restrictions

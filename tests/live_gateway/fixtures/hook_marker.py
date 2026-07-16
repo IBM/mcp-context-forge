@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/live_gateway/fixtures/hook_marker.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
 
 Test-only HOOK plugin for the primary-worker e2e.

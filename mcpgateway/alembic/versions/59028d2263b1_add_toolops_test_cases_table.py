@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/alembic/versions/59028d2263b1_add_toolops_test_cases_table.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Jay Bandlamudi
 
 59028d2263b1_add_toolops_test_cases_table
 

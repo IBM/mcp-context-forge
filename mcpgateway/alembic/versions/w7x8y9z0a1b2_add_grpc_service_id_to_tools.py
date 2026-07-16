@@ -1,9 +1,8 @@
 # -*- coding: utf-8 -*-
 # pylint: disable=no-member
 """Location: ./mcpgateway/alembic/versions/w7x8y9z0a1b2_add_grpc_service_id_to_tools.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 add_grpc_service_id_to_tools
 
