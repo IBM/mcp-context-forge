@@ -40,6 +40,7 @@ from mcpgateway.services.tool_plugin_binding_service import get_bindings_for_too
 logger = logging.getLogger(__name__)
 
 CONTEXT_ID_SEPARATOR = "::"
+DEFAULT_CONTEXT_ID = "##global##"
 
 _LEGACY_MODE_TO_PLUGIN_MODE: dict[str, tuple[PluginMode, Optional[OnError]]] = {
     "enforce": (PluginMode.SEQUENTIAL, None),
@@ -129,23 +130,26 @@ class TenantPluginManagerFactory:
 
     async def get_manager(self, context_id: Optional[str] = None) -> TenantPluginManager:
         """Get or create a TenantPluginManager for the given context."""
-        context_id = context_id or "__global__"
+
+        context_id = context_id or DEFAULT_CONTEXT_ID
         expired = None
 
         async with self._lock:
             entry = self._managers.get(context_id)
             if entry is not None:
-                if entry.is_expired(self._cache_ttl):
+                # Shared managers should not expire
+                if entry.is_expired(self._cache_ttl) and not self._is_default_context(context_id):
                     expired = self._managers.pop(context_id, None)
                     logger.debug("Cache TTL expired for context_id=%s, rebuilding", context_id)
                 else:
                     return entry.manager
 
             if expired is not None:
-                try:
-                    await expired.manager.shutdown()
-                except Exception:
-                    logger.warning("Failed to shutdown expired manager for context_id=%s", context_id, exc_info=True)
+                if not self._is_manager_referenced(expired.manager):
+                    try:
+                        await expired.manager.shutdown()
+                    except Exception:
+                        logger.warning("Failed to shutdown expired manager for context_id=%s", context_id, exc_info=True)
 
             inflight = self._inflight.get(context_id)
             if inflight is None:
@@ -164,11 +168,55 @@ class TenantPluginManagerFactory:
                 if self._inflight.get(context_id) is inflight:
                     self._inflight.pop(context_id, None)
 
+    def _is_default_context(self, context_id: str) -> bool:
+        """Check if the context_id is a team or global DEFAULT_CONTEXT_ID"""
+        shared_manager = False
+        if context_id == DEFAULT_CONTEXT_ID:
+            shared_manager = True
+        elif CONTEXT_ID_SEPARATOR in context_id:
+            _, tool_name = context_id.split(CONTEXT_ID_SEPARATOR, 1)
+            shared_manager = tool_name == DEFAULT_CONTEXT_ID
+        return shared_manager
+
+    def _is_manager_referenced(self, manager: TenantPluginManager) -> bool:
+        """Check if a manager instance is referenced by any entry in the cache.
+        Args:
+            manager: The manager instance to check
+        Returns:
+            True if the manager is referenced by at least one cache entry
+        """
+        return any(entry.manager is manager for entry in self._managers.values())
+
     async def _build_manager(self, context_id: str) -> TenantPluginManager:
-        """Create, initialise, and cache a new manager for *context_id*."""
+        """Create, initialise, and cache a new manager for *context_id*.
+
+        Fallback: When no DB config exists for a team context, reuses the team's
+        default manager (team_id::DEFAULT_CONTEXT_ID). Multiple contexts may share the
+        same manager instance. Invalidating a shared default affects all contexts
+        referencing it.
+        """
         manager = None
+        new_config = None
+        team_id = None
+
+        # Parse context_id to check if it's a default context
+        if CONTEXT_ID_SEPARATOR in context_id:
+            team_id, _ = context_id.split(CONTEXT_ID_SEPARATOR, 1)
+
+            if not self._is_default_context(context_id):
+                new_config = await self.get_config_from_db(context_id)
+
+        if new_config is None:
+            default_team_context = make_context_id(team_id, DEFAULT_CONTEXT_ID) if team_id else DEFAULT_CONTEXT_ID
+
+            async with self._lock:
+                default = self._managers.get(default_team_context)
+                if default is not None:
+                    self._managers[context_id] = default
+                    return default.manager
+                context_id = default_team_context
+
         try:
-            new_config = await self.get_config_from_db(context_id)
             config = self._merge_tenant_config(new_config)
             config = await self._apply_redis_mode_overrides(config)
 
@@ -316,10 +364,18 @@ class TenantPluginManagerFactory:
 
         old = old_entry.manager if old_entry is not None else None
         if old is not None:
-            try:
-                await old.shutdown()
-            except Exception:
-                logger.exception("Failed to shutdown old manager for context_id=%s", context_id)
+            # Check if this manager is shared by other contexts before shutting down
+            is_shared = False
+            async with self._lock:
+                is_shared = self._is_manager_referenced(old)
+
+            if is_shared:
+                logger.debug("reload_tenant: manager for context_id=%s is shared, skipping shutdown", context_id)
+            else:
+                try:
+                    await old.shutdown()
+                except Exception:
+                    logger.exception("Failed to shutdown old manager for context_id=%s", context_id)
 
         try:
             return await inflight
@@ -331,7 +387,8 @@ class TenantPluginManagerFactory:
     async def shutdown(self) -> None:
         """Shut down all cached managers and cancel in-flight build tasks."""
         async with self._lock:
-            entries = list(self._managers.values())
+            # Deduplicate managers to avoid multiple shutdowns when shared
+            unique_managers = {entry.manager for entry in self._managers.values()}
             inflight = list(self._inflight.values())
             self._managers.clear()
             self._inflight.clear()
@@ -342,9 +399,9 @@ class TenantPluginManagerFactory:
         if inflight:
             await asyncio.gather(*inflight, return_exceptions=True)
 
-        for entry in entries:
+        for manager in unique_managers:
             try:
-                await entry.manager.shutdown()
+                await manager.shutdown()
             except Exception:
                 logger.exception("Failed to shutdown plugin manager")
 
@@ -407,32 +464,65 @@ class TenantPluginManagerFactory:
         return overrides if overrides else None
 
     async def invalidate_all(self) -> None:
-        """Reload every cached manager concurrently, logging failures."""
+        """Reload every cached manager with two-phase approach to prevent alias race conditions.
+
+        Phase 1: Rebuild all default contexts (team-id::##global##) concurrently.
+        Phase 2: Rebuild all aliases concurrently after defaults complete.
+
+        This ensures aliases always reference the newly rebuilt default managers.
+        """
         async with self._lock:
-            context_ids = list(self._managers.keys())
-        results = await asyncio.gather(
-            *(self.reload_tenant(ctx_id) for ctx_id in context_ids),
+            context_ids = list(self._managers)
+
+        # Phase 1: Rebuild default contexts first
+        defaults = [cid for cid in context_ids if self._is_default_context(cid)]
+        default_results = await asyncio.gather(
+            *(self.reload_tenant(ctx_id) for ctx_id in defaults),
             return_exceptions=True,
         )
-        for ctx_id, result in zip(context_ids, results):
+
+        # Phase 2: Rebuild aliases after defaults complete
+        aliases = [cid for cid in context_ids if not self._is_default_context(cid)]
+        alias_results = await asyncio.gather(
+            *(self.reload_tenant(ctx_id) for ctx_id in aliases),
+            return_exceptions=True,
+        )
+
+        # Log failures from both phases
+        for ctx_id, result in zip(defaults + aliases, default_results + alias_results):
             if isinstance(result, BaseException):
                 logger.warning("invalidate_all: reload failed for context_id=%s (%s)", ctx_id, result)
-        logger.debug("invalidate_all: rebuilt %d managers (%d failures)", len(context_ids), sum(1 for r in results if isinstance(r, BaseException)))
 
     async def invalidate_team(self, team_id: str, separator: Optional[str] = None) -> None:
-        """Reload every cached manager whose context_id starts with team_id plus separator."""
+        """Reload every cached manager whose context_id starts with team_id plus separator.
+
+        Uses two-phase approach: rebuilds team default context first, then aliases.
+        This prevents aliases from referencing stale default managers during invalidation.
+        """
         sep = separator if separator is not None else CONTEXT_ID_SEPARATOR
         prefix = f"{team_id}{sep}"
         async with self._lock:
             context_ids = [cid for cid in self._managers if cid.startswith(prefix)]
-        results = await asyncio.gather(
-            *(self.reload_tenant(ctx_id) for ctx_id in context_ids),
+
+        # Phase 1: Rebuild team default context first
+        defaults = [cid for cid in context_ids if self._is_default_context(cid)]
+        default_results = await asyncio.gather(
+            *(self.reload_tenant(ctx_id) for ctx_id in defaults),
             return_exceptions=True,
         )
-        for ctx_id, result in zip(context_ids, results):
+
+        # Phase 2: Rebuild team aliases after default completes
+        aliases = [cid for cid in context_ids if not self._is_default_context(cid)]
+        alias_results = await asyncio.gather(
+            *(self.reload_tenant(ctx_id) for ctx_id in aliases),
+            return_exceptions=True,
+        )
+
+        # Log failures from both phases
+        for ctx_id, result in zip(defaults + aliases, default_results + alias_results):
             if isinstance(result, BaseException):
                 logger.warning("invalidate_team: reload failed for context_id=%s (%s)", ctx_id, result)
-        logger.debug("invalidate_team: team=%s rebuilt %d managers (%d failures)", team_id, len(context_ids), sum(1 for r in results if isinstance(r, BaseException)))
+        logger.debug("invalidate_team: team=%s rebuilt %d managers (%d failures)", team_id, len(context_ids), sum(1 for r in (default_results + alias_results) if isinstance(r, BaseException)))
 
     def iter_context_ids(self) -> list[str]:
         """Return a snapshot of the cached context IDs."""

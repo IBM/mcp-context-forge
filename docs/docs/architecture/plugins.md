@@ -758,6 +758,128 @@ class PluginInstanceRegistry:
         """Shutdown all registered plugins"""
 ```
 
+### Multi-Tenant Plugin Manager
+
+In multi-tenant deployments, each context (tenant, server, tool) can have a separate plugin configuration. The `TenantPluginManagerFactory` manages context-specific plugin manager instances with automatic caching and lifecycle management. When no context-specific configuration is provided, the factory reuses a shared default manager per team to optimize memory usage.
+
+#### Architecture
+
+```python
+class TenantPluginManagerFactory:
+    """Factory for creating and caching tenant-specific plugin managers"""
+
+    def __init__(self, cache_ttl: int = 300):
+        """
+        Initialize factory with configurable cache TTL.
+
+        Args:
+            cache_ttl: Cache time-to-live in seconds (default: 300 = 5 minutes)
+        """
+        self._managers: Dict[str, Tuple[PluginManager, float]] = {}
+        self._cache_ttl = cache_ttl
+
+    async def get_manager(self, tenant_id: str) -> PluginManager:
+        """
+        Get or create a plugin manager for the specified tenant.
+
+        Managers are cached with TTL-based expiration. If a cached manager
+        exists and hasn't expired, it is returned. Otherwise, a new manager
+        is created from the tenant's plugin configuration.
+
+        Args:
+            tenant_id: Unique tenant identifier
+
+        Returns:
+            PluginManager instance for the tenant
+        """
+        ...
+
+    def reload_tenant(self, tenant_id: str) -> None:
+        """
+        Invalidate cached plugin manager for a tenant.
+
+        This forces the next get_manager() call to create a fresh manager
+        with the latest configuration. Must be called when a tenant's
+        plugin configuration changes.
+
+        Args:
+            tenant_id: Tenant whose cache should be invalidated
+        """
+        if tenant_id in self._managers:
+            del self._managers[tenant_id]
+```
+
+#### Cache Behavior
+
+**Cache TTL**: Plugin managers are cached for 300 seconds (5 minutes) by default. This balances:
+- **Performance**: Avoids recreating managers on every request
+- **Configuration freshness**: Changes propagate within reasonable time
+- **Memory efficiency**: Stale managers are automatically cleaned up
+
+**Cache Invalidation**: The cache must be explicitly invalidated when plugin configuration changes:
+
+```python
+# Example: After updating tenant plugin configuration
+await plugin_service.update_tenant_config(tenant_id, new_config)
+
+# CRITICAL: Invalidate cache so changes take effect immediately
+factory.reload_tenant(tenant_id)
+```
+
+#### Production Considerations
+
+**Memory Management**: Each cached plugin manager holds:
+- Plugin instances and their state
+- Configuration objects
+- Registry entries
+
+For deployments with many tenants, monitor memory usage and consider:
+- Reducing `cache_ttl` for tenants with infrequent requests
+- Implementing LRU eviction for least-recently-used managers
+- Setting up alerts for cache size growth
+
+**Configuration Propagation**: In distributed deployments:
+- Each gateway instance maintains its own cache
+- Configuration changes must propagate to all instances
+- Consider using Redis or similar for shared cache invalidation signals
+
+**Testing**: When writing tests that modify plugin configuration:
+
+```python
+async def test_plugin_config_change():
+    # Update configuration
+    await update_tenant_plugins(tenant_id, new_config)
+
+    # CRITICAL: Reload to simulate production behavior
+    factory.reload_tenant(tenant_id)
+
+    # Verify new configuration is active
+    manager = await factory.get_manager(tenant_id)
+    assert manager.plugin_count == expected_count
+```
+
+#### Shared Manager Optimization
+
+When no tool-specific configuration is provided, the factory reuses a shared default plugin manager per team:
+
+```python
+# Tools within the same team share the team's default manager
+manager_a1 = await factory.get_manager("team-a::tool1")  # No config → uses team-a::##global##
+manager_a2 = await factory.get_manager("team-a::tool2")  # No config → reuses team-a::##global##
+
+# Different teams have separate default managers
+manager_b1 = await factory.get_manager("team-b::tool1")  # No config → uses team-b::##global##
+
+# Tools with custom configs get dedicated managers
+manager_a3 = await factory.get_manager("team-a::tool3")  # Has config → dedicated instance
+```
+
+This optimization:
+- Reduces memory footprint when most tools within a team use default configuration
+- Maintains team isolation with separate default managers per team
+- Maintains isolation through tool-specific contexts during execution
+- Automatically handles cleanup without double-shutdown errors during factory shutdown
+
 ### Plugin Reference System
 
 Plugin reference is used as UUID for plugin registration, discovery, and lifecycle management.

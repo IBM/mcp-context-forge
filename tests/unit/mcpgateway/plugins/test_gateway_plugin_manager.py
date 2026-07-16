@@ -18,20 +18,26 @@ Tests cover:
 
 # Standard
 import asyncio
+import os
+import time
+import uuid
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
 import pytest
+from pydantic import ValidationError
 from sqlalchemy import create_engine
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 # First-Party
-from mcpgateway.db import Base
+from mcpgateway.db import Base, ToolPluginBinding, utc_now
 from mcpgateway.plugins import reload_plugin_context, set_global_observability
 from mcpgateway.plugins.gateway_plugin_manager import (
     CONTEXT_ID_SEPARATOR,
+    DEFAULT_CONTEXT_ID,
     GatewayTenantPluginManagerFactory,
     PluginConfigOverride,
     TenantPluginManagerFactory,
@@ -286,9 +292,6 @@ class TestGetConfigFromDb:
     @pytest.mark.asyncio
     async def test_invalid_on_error_rejected_by_db_constraint(self, db_session):
         """An invalid on_error value is rejected by the DB CHECK constraint."""
-        from mcpgateway.db import ToolPluginBinding, utc_now
-        from sqlalchemy.exc import IntegrityError
-        import uuid
 
         row = ToolPluginBinding(
             id=uuid.uuid4().hex,
@@ -388,7 +391,6 @@ class TestMergeTenantConfigOnError:
     """Verify that _merge_tenant_config propagates on_error from overrides."""
 
     def _make_factory_with_base_config(self):
-        from mcpgateway.plugins.gateway_plugin_manager import TenantPluginManagerFactory
 
         factory = TenantPluginManagerFactory.__new__(TenantPluginManagerFactory)
         factory._base_config = MagicMock()
@@ -406,8 +408,6 @@ class TestMergeTenantConfigOnError:
         return factory, plugin, captured_updates
 
     def test_on_error_applied_when_present(self):
-        from cpex.framework import OnError
-        from mcpgateway.plugins.gateway_plugin_manager import PluginConfigOverride
 
         factory, _plugin, captured = self._make_factory_with_base_config()
         overrides = [PluginConfigOverride(name="TestPlugin", on_error=OnError.IGNORE)]
@@ -417,7 +417,6 @@ class TestMergeTenantConfigOnError:
         assert captured[0].get("on_error") == OnError.IGNORE
 
     def test_on_error_not_applied_when_none(self):
-        from mcpgateway.plugins.gateway_plugin_manager import PluginConfigOverride
 
         factory, _plugin, captured = self._make_factory_with_base_config()
         overrides = [PluginConfigOverride(name="TestPlugin")]
@@ -477,6 +476,9 @@ class TestBuildManager:
         mock_manager.initialize = AsyncMock()
         mock_manager.shutdown = AsyncMock()
 
+
+        default_team_context_id = f"team::{DEFAULT_CONTEXT_ID}"
+
         with (
             patch.object(factory, "get_config_from_db", new_callable=AsyncMock, return_value=None),
             patch.object(factory, "_apply_redis_mode_overrides", new_callable=AsyncMock, side_effect=lambda c: c),
@@ -486,7 +488,7 @@ class TestBuildManager:
 
         assert result is mock_manager
         mock_manager.initialize.assert_awaited_once()
-        assert "team::tool" in factory._managers
+        assert default_team_context_id in factory._managers
 
     @pytest.mark.asyncio
     async def test_build_manager_shuts_down_old_manager(self, factory):
@@ -497,8 +499,10 @@ class TestBuildManager:
         new_manager = AsyncMock()
         new_manager.initialize = AsyncMock()
 
+        config_override = [PluginConfigOverride(name="test_plugin", config={}, mode=PluginMode.SEQUENTIAL)]
+
         with (
-            patch.object(factory, "get_config_from_db", new_callable=AsyncMock, return_value=None),
+            patch.object(factory, "get_config_from_db", new_callable=AsyncMock, return_value=config_override),
             patch.object(factory, "_apply_redis_mode_overrides", new_callable=AsyncMock, side_effect=lambda c: c),
             patch("mcpgateway.plugins.gateway_plugin_manager.TenantPluginManager", return_value=new_manager),
         ):
@@ -594,6 +598,26 @@ class TestBuildManager:
             with pytest.raises(asyncio.CancelledError):
                 await factory._build_manager("team::tool")
 
+    @pytest.mark.asyncio
+    async def test_build_manager_tool_name_containing_global_gets_db_lookup(self, factory):
+        """Tool names containing DEFAULT_CONTEXT_ID substring should still get DB lookup."""
+        mock_manager = AsyncMock()
+        mock_manager.initialize = AsyncMock()
+
+        mock_config = [MagicMock()]  # Non-empty config from DB
+
+        with (
+            patch.object(factory, "get_config_from_db", new_callable=AsyncMock, return_value=mock_config) as mock_db,
+            patch.object(factory, "_apply_redis_mode_overrides", new_callable=AsyncMock, side_effect=lambda c: c),
+            patch("mcpgateway.plugins.gateway_plugin_manager.TenantPluginManager", return_value=mock_manager),
+        ):
+            # Tool name contains "##global##" but is not exactly "##global##"
+            result = await factory._build_manager("team-a::my##global##tool")
+
+        # Should have called get_config_from_db because tool_name != DEFAULT_CONTEXT_ID
+        mock_db.assert_awaited_once_with("team-a::my##global##tool")
+        assert result is mock_manager
+
 
 # ---------------------------------------------------------------------------
 # get_manager
@@ -610,7 +634,6 @@ class TestGetManager:
     @pytest.mark.asyncio
     async def test_get_manager_returns_cached(self, factory):
         mock_manager = AsyncMock()
-        import time
 
         factory._managers["ctx"] = _CachedManager(manager=mock_manager, created_at=time.monotonic())
         result = await factory.get_manager("ctx")
@@ -641,7 +664,6 @@ class TestGetManager:
         cached_manager = AsyncMock()
 
         async def build_and_inject(context_id):
-            import time
             factory._managers[context_id] = _CachedManager(manager=cached_manager, created_at=time.monotonic())
             return mock_manager
 
@@ -650,8 +672,127 @@ class TestGetManager:
 
         assert result is cached_manager
 
+    @pytest.mark.asyncio
+    async def test_distinct_default_manager_for_each_team(self, db_session):
 
-# ---------------------------------------------------------------------------
+        yaml_path = os.path.join(os.path.dirname(__file__), "fixtures/configs/valid_no_plugin.yaml")
+        factory = TenantPluginManagerFactory(
+            yaml_path=yaml_path,
+            db_factory=lambda: db_session,
+        )
+        manager_a_1 = await factory.get_manager("team_a::tool_1")
+        manager_a_2 = await factory.get_manager("team_a::tool_2")
+        manager_b_1 = await factory.get_manager("team_b::tool_1")
+
+        assert manager_a_1 is manager_a_2
+        assert manager_a_1 is not manager_b_1
+
+
+    @pytest.mark.asyncio
+    async def test_default_manager_is_not_applied_when_context_id_has_config(self, db_session):
+
+
+        yaml_path = os.path.join(os.path.dirname(__file__), "fixtures/configs/valid_single_filter_plugin.yaml")
+        factory = TenantPluginManagerFactory(
+            yaml_path=yaml_path,
+            db_factory=lambda: db_session,
+        )
+
+        manager_a_1 = await factory.get_manager("team_a::tool_1")
+        manager_a_2 = await factory.get_manager("team_a::tool_1")
+        manager_a_3 = await factory.get_manager("team_a::tool_2")
+
+        new_config = [PluginConfigOverride(
+            name="DenyListPlugin",
+            config={},
+            mode=PluginMode.SEQUENTIAL
+        )]
+
+        with patch.object(factory, "get_config_from_db", new_callable=AsyncMock, return_value=new_config):
+            await factory.reload_tenant("team_a::tool_1") # Called when API is called with new bindings
+            manager_a_1 = await factory.get_manager("team_a::tool_1")
+
+        assert manager_a_1 is not manager_a_2
+        assert manager_a_2 is manager_a_3
+
+
+    @pytest.mark.asyncio
+    async def test_default_context_never_expires_from_cache(self, factory):
+        """Default context entry is never evicted due to TTL expiry."""
+
+        default_manager = AsyncMock()
+
+        # Create an expired entry for default context
+        factory._managers[DEFAULT_CONTEXT_ID] = _CachedManager(
+            manager=default_manager,
+            created_at=time.monotonic() - 1000  # Very old
+        )
+
+        # Should return cached manager even though TTL expired
+        result = await factory.get_manager(DEFAULT_CONTEXT_ID)
+        assert result is default_manager
+
+
+    @pytest.mark.asyncio
+    async def test_fallback_to_default_manager_when_no_tenant_config(self, factory):
+        """When tenant has no config and default manager exists, reuse default manager."""
+
+        team_x_default = f"team-x::{DEFAULT_CONTEXT_ID}"
+
+        default_manager = AsyncMock()
+        factory._managers[team_x_default] = _CachedManager(
+            manager=default_manager,
+            created_at=time.monotonic()
+        )
+
+        # Mock get_config_from_db to return None (no tenant config)
+        with patch.object(factory, "get_config_from_db", new_callable=AsyncMock, return_value=None):
+            result = await factory.get_manager("team-x::tool-y")
+
+        # Should return the default manager
+        assert result is default_manager
+        # Verify it was cached for the tenant context
+        assert "team-x::tool-y" in factory._managers
+        assert factory._managers["team-x::tool-y"].manager is default_manager
+
+
+
+    @pytest.mark.asyncio
+    async def test_team_default_contexts_never_expire_from_cache(self, factory):
+        """Team-specific default context entries (team::DEFAULT_CONTEXT_ID) are never evicted due to TTL expiry."""
+
+        # Create expired entries for various default contexts
+        team_a_default = f"team_a::{DEFAULT_CONTEXT_ID}"
+        team_b_default = f"team_b::{DEFAULT_CONTEXT_ID}"
+
+        manager_team_a = AsyncMock()
+        manager_default = AsyncMock()
+        manager_team_b = AsyncMock()
+
+        # Create expired entries (very old timestamps)
+        factory._managers[team_a_default] = _CachedManager(
+            manager=manager_team_a,
+            created_at=time.monotonic() - 1000
+        )
+        factory._managers[DEFAULT_CONTEXT_ID] = _CachedManager(
+            manager=manager_default,
+            created_at=time.monotonic() - 1000
+        )
+        factory._managers[team_b_default] = _CachedManager(
+            manager=manager_team_b,
+            created_at=time.monotonic() - 1000
+        )
+
+        # Should return cached managers even though TTL expired
+        result_team_a = await factory.get_manager(team_a_default)
+        result_default = await factory.get_manager(DEFAULT_CONTEXT_ID)
+        result_team_b = await factory.get_manager(team_b_default)
+
+        assert result_team_a is manager_team_a
+        assert result_default is manager_default
+        assert result_team_b is manager_team_b
+
+
 # reload_tenant
 # ---------------------------------------------------------------------------
 
@@ -716,6 +857,33 @@ class TestReloadTenant:
         ):
             result = await factory.reload_tenant("ctx")
 
+
+    @pytest.mark.asyncio
+    async def test_reload_does_not_shutdown_shared_manager(self, factory):
+        """When reloading a context that shares a manager, don't shutdown the shared manager."""
+        shared_manager = AsyncMock()
+        shared_manager.shutdown = AsyncMock()
+
+        # Two contexts sharing the same manager (simulating default manager fallback)
+        factory._managers["ctx1"] = _CachedManager(manager=shared_manager, created_at=0)
+        factory._managers["ctx2"] = _CachedManager(manager=shared_manager, created_at=0)
+
+        new_manager = AsyncMock()
+        new_manager.initialize = AsyncMock()
+
+        with (
+            patch.object(factory, "get_config_from_db", new_callable=AsyncMock, return_value=None),
+            patch.object(factory, "_apply_redis_mode_overrides", new_callable=AsyncMock, side_effect=lambda c: c),
+            patch("mcpgateway.plugins.gateway_plugin_manager.TenantPluginManager", return_value=new_manager),
+        ):
+            result = await factory.reload_tenant("ctx1")
+
+        assert result is new_manager
+        # Shared manager should NOT be shut down because ctx2 still references it
+        shared_manager.shutdown.assert_not_called()
+        assert factory._managers["ctx2"].manager is shared_manager
+
+
         assert result is new_manager
 
 
@@ -766,7 +934,24 @@ class TestShutdown:
         assert len(factory._managers) == 0
 
 
-# ---------------------------------------------------------------------------
+    @pytest.mark.asyncio
+    async def test_shutdown_deduplicates_shared_managers(self, factory):
+        """When multiple contexts share a manager, shutdown is called only once."""
+        shared_manager = AsyncMock()
+        shared_manager.shutdown = AsyncMock()
+
+        # Multiple contexts sharing the same manager instance
+        factory._managers["ctx1"] = _CachedManager(manager=shared_manager, created_at=0)
+        factory._managers["ctx2"] = _CachedManager(manager=shared_manager, created_at=0)
+        factory._managers["ctx3"] = _CachedManager(manager=shared_manager, created_at=0)
+
+        await factory.shutdown()
+
+        # Shutdown should be called exactly once despite 3 contexts
+        shared_manager.shutdown.assert_awaited_once()
+        assert len(factory._managers) == 0
+
+
 # _apply_redis_mode_overrides
 # ---------------------------------------------------------------------------
 
@@ -861,7 +1046,6 @@ class TestApplyRedisModeOverrides:
 
     @pytest.mark.asyncio
     async def test_validation_error_skipped(self, factory):
-        from pydantic import ValidationError
 
         config, plugin = self._make_config_with_plugin()
         plugin.model_copy = MagicMock(side_effect=ValidationError.from_exception_data("test", []))
@@ -902,6 +1086,228 @@ class TestGetConfigFromDbErrors:
 # ---------------------------------------------------------------------------
 # set_global_observability (plugins/__init__.py lines 305-307)
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Two-phase invalidation: race condition prevention
+# ---------------------------------------------------------------------------
+
+
+class TestTwoPhaseInvalidationRaceCondition:
+    """Tests to verify two-phase invalidation prevents alias race conditions."""
+
+    @pytest.mark.asyncio
+    async def test_invalidate_all_rebuilds_defaults_before_aliases(self):
+        """Verify invalidate_all rebuilds default contexts before aliases."""
+        with patch("cpex.framework.manager.ConfigLoader.load_config", return_value=MagicMock(plugins=[])):
+            factory = TenantPluginManagerFactory(yaml_path="/fake.yaml")
+
+        # Track rebuild order
+        rebuild_order = []
+
+        async def track_rebuild(context_id):
+            rebuild_order.append(context_id)
+            mock_mgr = AsyncMock()
+            mock_mgr.initialize = AsyncMock()
+            return mock_mgr
+
+        # Setup: 2 teams with defaults and aliases
+        default_mgr = AsyncMock()
+        factory._managers = {
+            "team-a::##global##": _CachedManager(manager=default_mgr, created_at=0.0),
+            "team-a::tool1": _CachedManager(manager=default_mgr, created_at=0.0),
+            "team-a::tool2": _CachedManager(manager=default_mgr, created_at=0.0),
+            "team-b::##global##": _CachedManager(manager=default_mgr, created_at=0.0),
+            "team-b::tool1": _CachedManager(manager=default_mgr, created_at=0.0),
+        }
+
+        with patch.object(factory, "_build_manager", side_effect=track_rebuild):
+            await factory.invalidate_all()
+
+        # Verify defaults rebuilt before aliases
+        defaults = [cid for cid in rebuild_order if factory._is_default_context(cid)]
+        aliases = [cid for cid in rebuild_order if not factory._is_default_context(cid)]
+
+        # All defaults should appear before any alias
+        last_default_idx = max(rebuild_order.index(d) for d in defaults)
+        first_alias_idx = min(rebuild_order.index(a) for a in aliases)
+
+        assert last_default_idx < first_alias_idx, "Defaults must complete before aliases start"
+
+    @pytest.mark.asyncio
+    async def test_invalidate_team_rebuilds_team_default_before_aliases(self):
+        """Verify invalidate_team rebuilds team default before team aliases."""
+        with patch("cpex.framework.manager.ConfigLoader.load_config", return_value=MagicMock(plugins=[])):
+            factory = TenantPluginManagerFactory(yaml_path="/fake.yaml")
+
+        rebuild_order = []
+
+        async def track_rebuild(context_id):
+            rebuild_order.append(context_id)
+            mock_mgr = AsyncMock()
+            mock_mgr.initialize = AsyncMock()
+            return mock_mgr
+
+        # Setup: team-a with default and aliases, team-b should not be touched
+        default_mgr = AsyncMock()
+        factory._managers = {
+            "team-a::##global##": _CachedManager(manager=default_mgr, created_at=0.0),
+            "team-a::tool1": _CachedManager(manager=default_mgr, created_at=0.0),
+            "team-a::tool2": _CachedManager(manager=default_mgr, created_at=0.0),
+            "team-b::##global##": _CachedManager(manager=default_mgr, created_at=0.0),
+            "team-b::tool1": _CachedManager(manager=default_mgr, created_at=0.0),
+        }
+
+        with patch.object(factory, "_build_manager", side_effect=track_rebuild):
+            await factory.invalidate_team("team-a")
+
+        # Verify only team-a contexts rebuilt
+        assert "team-a::##global##" in rebuild_order
+        assert "team-a::tool1" in rebuild_order
+        assert "team-a::tool2" in rebuild_order
+        assert "team-b::##global##" not in rebuild_order
+        assert "team-b::tool1" not in rebuild_order
+
+        # Verify team-a default rebuilt before team-a aliases
+        team_a_contexts = [cid for cid in rebuild_order if cid.startswith("team-a::")]
+        default_idx = team_a_contexts.index("team-a::##global##")
+        alias_indices = [i for i, cid in enumerate(team_a_contexts) if not factory._is_default_context(cid)]
+
+        assert all(default_idx < idx for idx in alias_indices), "Team default must complete before team aliases"
+
+    @pytest.mark.asyncio
+    async def test_aliases_reference_new_default_after_invalidation(self):
+        """Verify aliases reference newly rebuilt default managers after invalidation."""
+        with patch("cpex.framework.manager.ConfigLoader.load_config", return_value=MagicMock(plugins=[])):
+            factory = TenantPluginManagerFactory(yaml_path="/fake.yaml")
+
+        # Setup: old managers
+        old_default_mgr = AsyncMock()
+        old_default_mgr.shutdown = AsyncMock()
+        factory._managers = {
+            "team-x::##global##": _CachedManager(manager=old_default_mgr, created_at=0.0),
+            "team-x::tool1": _CachedManager(manager=old_default_mgr, created_at=0.0),
+        }
+
+        # Mock _build_manager to return new managers
+        new_default_mgr = AsyncMock()
+        new_default_mgr.initialize = AsyncMock()
+
+        build_count = 0
+
+        async def build_new_manager(context_id):
+            nonlocal build_count
+            build_count += 1
+
+            if factory._is_default_context(context_id):
+                # Default context gets new manager
+                factory._managers[context_id] = _CachedManager(manager=new_default_mgr, created_at=time.monotonic())
+                return new_default_mgr
+            else:
+                # Alias looks up default (simulating lines 213-217)
+                default_ctx = "team-x::##global##"
+                default_entry = factory._managers.get(default_ctx)
+                if default_entry is not None:
+                    # Create alias pointing to default's manager
+                    factory._managers[context_id] = default_entry
+                    return default_entry.manager
+                return new_default_mgr
+
+        with patch.object(factory, "_build_manager", side_effect=build_new_manager):
+            await factory.invalidate_all()
+
+        # Verify both contexts now reference the NEW default manager
+        assert factory._managers["team-x::##global##"].manager is new_default_mgr
+        assert factory._managers["team-x::tool1"].manager is new_default_mgr
+        assert factory._managers["team-x::##global##"].manager is factory._managers["team-x::tool1"].manager
+
+    @pytest.mark.asyncio
+    async def test_no_race_with_redis_override_changes(self):
+        """Verify no race when Redis overrides change during invalidation."""
+        with patch("cpex.framework.manager.ConfigLoader.load_config", return_value=MagicMock(plugins=[])):
+            factory = TenantPluginManagerFactory(yaml_path="/fake.yaml")
+
+        # Simulate Redis override changing during invalidation
+        redis_mode = "disabled"
+
+        async def build_with_redis_override(context_id):
+            # Simulate reading Redis override
+            mock_mgr = AsyncMock()
+            mock_mgr.initialize = AsyncMock()
+            mock_mgr.redis_mode = redis_mode  # Track what Redis value was read
+            factory._managers[context_id] = _CachedManager(manager=mock_mgr, created_at=time.monotonic())
+            return mock_mgr
+
+        old_mgr = AsyncMock()
+        factory._managers = {
+            "team-y::##global##": _CachedManager(manager=old_mgr, created_at=0.0),
+            "team-y::tool1": _CachedManager(manager=old_mgr, created_at=0.0),
+        }
+
+        with patch.object(factory, "_build_manager", side_effect=build_with_redis_override):
+            await factory.invalidate_all()
+
+        # Both should have read the same Redis value (no stale reads)
+        default_mgr = factory._managers["team-y::##global##"].manager
+        alias_mgr = factory._managers["team-y::tool1"].manager
+
+        # In two-phase, alias should reference the same manager as default
+        # (or if separate managers, both should have same Redis config)
+        assert default_mgr.redis_mode == alias_mgr.redis_mode == redis_mode
+
+    @pytest.mark.asyncio
+    async def test_multiple_teams_invalidate_all_maintains_consistency(self):
+        """Verify invalidate_all maintains consistency across multiple teams."""
+        with patch("cpex.framework.manager.ConfigLoader.load_config", return_value=MagicMock(plugins=[])):
+            factory = TenantPluginManagerFactory(yaml_path="/fake.yaml")
+
+        # Setup: 3 teams with defaults and aliases
+        old_mgr = AsyncMock()
+        factory._managers = {
+            "team-a::##global##": _CachedManager(manager=old_mgr, created_at=0.0),
+            "team-a::tool1": _CachedManager(manager=old_mgr, created_at=0.0),
+            "team-b::##global##": _CachedManager(manager=old_mgr, created_at=0.0),
+            "team-b::tool1": _CachedManager(manager=old_mgr, created_at=0.0),
+            "team-c::##global##": _CachedManager(manager=old_mgr, created_at=0.0),
+            "team-c::tool1": _CachedManager(manager=old_mgr, created_at=0.0),
+        }
+
+        # Track which manager each context gets
+        manager_map = {}
+
+        async def build_and_track(context_id):
+            new_mgr = AsyncMock()
+            new_mgr.initialize = AsyncMock()
+            new_mgr.context_id = context_id  # Track origin
+
+            if factory._is_default_context(context_id):
+                # Default gets new manager
+                factory._managers[context_id] = _CachedManager(manager=new_mgr, created_at=time.monotonic())
+                manager_map[context_id] = new_mgr
+                return new_mgr
+            else:
+                # Alias looks up its team default
+                team_id = context_id.split("::")[0]
+                default_ctx = f"{team_id}::##global##"
+                default_entry = factory._managers.get(default_ctx)
+                if default_entry is not None:
+                    factory._managers[context_id] = default_entry
+                    manager_map[context_id] = default_entry.manager
+                    return default_entry.manager
+                return new_mgr
+
+        with patch.object(factory, "_build_manager", side_effect=build_and_track):
+            await factory.invalidate_all()
+
+        # Verify each team's aliases reference their team's default manager
+        assert manager_map["team-a::tool1"] is manager_map["team-a::##global##"]
+        assert manager_map["team-b::tool1"] is manager_map["team-b::##global##"]
+        assert manager_map["team-c::tool1"] is manager_map["team-c::##global##"]
+
+        # Verify different teams have different managers
+        assert manager_map["team-a::##global##"] is not manager_map["team-b::##global##"]
+        assert manager_map["team-b::##global##"] is not manager_map["team-c::##global##"]
+
 
 
 class TestSetGlobalObservability:
@@ -960,9 +1366,8 @@ class TestCachedManagerExpiry:
             assert entry.is_expired(30) is True
 
     def test_ttl_positive_not_expired_before_deadline(self):
-        import time as _time
 
-        now = _time.monotonic()
+        now = time.monotonic()
         entry = _CachedManager(manager=MagicMock(), created_at=now)
         assert entry.is_expired(9999) is False
 
@@ -976,8 +1381,6 @@ class TestEnforceIgnoreErrorDbBinding:
     @pytest.mark.asyncio
     async def test_enforce_ignore_error_from_db_binding(self, db_session):
         """DB bindings with mode='enforce_ignore_error' map to SEQUENTIAL + OnError.IGNORE."""
-        from mcpgateway.db import ToolPluginBinding, utc_now
-        import uuid
 
         binding = ToolPluginBinding(
             id=str(uuid.uuid4()),
@@ -1009,7 +1412,6 @@ class TestEnforceIgnoreErrorDbBinding:
 # ---------------------------------------------------------------------------
 # invalidate_team prefix collision safety
 # ---------------------------------------------------------------------------
-
 
 class TestInvalidateTeamPrefixSafety:
     @pytest.mark.asyncio

@@ -167,7 +167,7 @@ class HttpAuthMiddleware(BaseHTTPMiddleware):
         Returns:
             The response from the application
         """
-        # Note: HTTP hooks always use global config (__global__ context) because
+        # Note: HTTP hooks always use global config (##global## context) because
         # this middleware runs before virtual server routing. Per-tenant HTTP hooks
         # would require extracting server_id from the request path, which is not
         # currently implemented. This is acceptable for auth-layer middleware.
