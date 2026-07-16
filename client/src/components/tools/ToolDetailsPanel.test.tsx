@@ -648,7 +648,9 @@ describe("ToolDetailsPanel", () => {
     it("calls onAddTag with the merged, de-duplicated tag list", async () => {
       const user = userEvent.setup();
       const onAddTag = vi.fn().mockResolvedValue(undefined);
-      const tools = [createMockTool(1, { id: "tool-1", tags: [{ label: "tag1" }, { label: "tag2" }] })];
+      const tools = [
+        createMockTool(1, { id: "tool-1", tags: [{ label: "tag1" }, { label: "tag2" }] }),
+      ];
 
       render(
         <ToolDetailsPanel
