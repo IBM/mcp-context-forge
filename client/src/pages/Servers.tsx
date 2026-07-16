@@ -9,10 +9,10 @@ import { ConfirmDialog } from "@/components/servers/ConfirmDialog";
 import { TestConnectionDialog } from "@/components/servers/TestConnectionDialog";
 import { MCPServerDetailsPanel } from "@/components/servers/MCPServerDetailsPanel";
 import { useQuery } from "@/hooks/useQuery";
-import { api } from "@/api/client";
+import { ApiError, api } from "@/api/client";
 import { serversApi } from "@/api/servers";
 import { useRouter } from "@/router";
-import { sanitizeError } from "@/utils/errors";
+import { extractApiErrorDetail, sanitizeError } from "@/utils/errors";
 import type { MCPServer, ServersResponse } from "@/types/server";
 import { Loading } from "@/components/ui/loading";
 import { InlineNotification } from "@/components/ui/inline-notification";
@@ -67,7 +67,11 @@ export function Servers() {
     [selectedServerIdForDetails],
   );
 
-  const { data: detailsServer, error: detailsQueryError } = useQuery<MCPServer>(detailsQueryPath, {
+  const {
+    data: detailsServer,
+    error: detailsQueryError,
+    setData: setDetailsServer,
+  } = useQuery<MCPServer>(detailsQueryPath, {
     enabled: Boolean(selectedServerIdForDetails),
   });
 
@@ -188,6 +192,21 @@ export function Servers() {
       setSelectedServerIdForDetails(null);
     }
   }, []);
+
+  const handleAddServerTag = useCallback(
+    async (serverId: string, tags: string[]) => {
+      try {
+        const updated = await serversApi.updateTags(serverId, tags);
+        setDetailsServer((prev) => (prev && prev.id === updated.id ? updated : prev));
+        setAllServers((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
+      } catch (err) {
+        const detail = err instanceof ApiError ? extractApiErrorDetail(err.body) : null;
+        toast.error(detail || "Failed to add tag. Please try again.");
+        throw err;
+      }
+    },
+    [setDetailsServer],
+  );
 
   useEffect(() => {
     if (!selectedSearchServerId) return;
@@ -395,6 +414,7 @@ export function Servers() {
         error={detailsError}
         open={isDetailsDrawerOpen}
         onClose={() => handleCloseDetails(false)}
+        onAddTag={handleAddServerTag}
       />
     </div>
   );

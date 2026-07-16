@@ -103,3 +103,15 @@ export function updateVirtualServer(
     buildUpdateVirtualServerPayload(details),
   );
 }
+
+/**
+ * Replace a virtual server's tags.
+ *
+ * Sends a partial `PUT /servers/{id}` carrying only `tags`; the server update
+ * service preserves every other field (name, visibility, associated
+ * tools/resources/prompts, ...) when it is omitted. Returns the updated server
+ * so callers can patch their cache with the backend-normalized tags.
+ */
+export function updateVirtualServerTags(serverId: string, tags: string[]): Promise<VirtualServer> {
+  return api.put<VirtualServer>(`/servers/${encodeURIComponent(serverId)}`, { tags });
+}

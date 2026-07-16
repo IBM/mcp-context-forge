@@ -81,5 +81,6 @@
   "resources.details.visibility.team": "Equipe",
   "resources.details.visibility.public": "Público",
   "resources.details.visibility.private": "Privado",
-  "resources.details.addTag": "adicionar"
+  "resources.details.addTag": "adicionar",
+  "resources.tags.addError": "Falha ao adicionar a tag. Tente novamente."
 }

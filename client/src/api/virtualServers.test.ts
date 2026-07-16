@@ -4,17 +4,20 @@ import {
   buildCreateVirtualServerPayload,
   buildUpdateVirtualServerPayload,
   deleteVirtualServer,
+  updateVirtualServerTags,
 } from "./virtualServers";
 
 vi.mock("./client", () => ({
   api: {
     delete: vi.fn(),
+    put: vi.fn(),
   },
 }));
 
 describe("virtualServers API", () => {
   beforeEach(() => {
     vi.mocked(api.delete).mockReset();
+    vi.mocked(api.put).mockReset();
   });
 
   it("builds the create payload expected by POST /servers", () => {
@@ -279,5 +282,23 @@ describe("virtualServers API", () => {
       team_id: "team-abc-123",
     });
     expect(payload).not.toHaveProperty("oauth_config");
+  });
+
+  it("PUTs /servers/:id with a tags-only body via updateVirtualServerTags", async () => {
+    const updated = { id: "server-1", tags: [{ id: "prod", label: "prod" }] };
+    vi.mocked(api.put).mockResolvedValue(updated);
+
+    const result = await updateVirtualServerTags("server-1", ["prod"]);
+
+    expect(api.put).toHaveBeenCalledWith("/servers/server-1", { tags: ["prod"] });
+    expect(result).toBe(updated);
+  });
+
+  it("URL-encodes the server ID in updateVirtualServerTags", async () => {
+    vi.mocked(api.put).mockResolvedValue({});
+
+    await updateVirtualServerTags("team/1", ["x"]);
+
+    expect(api.put).toHaveBeenCalledWith("/servers/team%2F1", { tags: ["x"] });
   });
 });

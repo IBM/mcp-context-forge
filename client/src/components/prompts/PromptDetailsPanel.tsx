@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { Activity, Globe, MessageSquareCode, PanelRightClose, Plus } from "lucide-react";
+import { Activity, Globe, MessageSquareCode, PanelRightClose } from "lucide-react";
 import { useIntl } from "react-intl";
 
 import type { PromptRead } from "@/generated/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { InlineTagAdd } from "@/components/ui/inline-tag-add";
 import { cn } from "@/lib/utils";
 import { getTagDisplay } from "@/components/gateways/utils";
 import { formatDateTime } from "@/utils/format";
@@ -27,6 +28,12 @@ export interface PromptDetailsPanelProps {
   initialPromptId?: string;
   open: boolean;
   onClose: () => void;
+  /**
+   * Persists the prompt's full tag list after an inline add. Receives the prompt
+   * ID and the new complete list of tag labels. When omitted, the tag row shows
+   * a non-interactive "add" affordance.
+   */
+  onAddTag?: (promptId: string, tags: string[]) => Promise<void>;
 }
 
 /**
@@ -45,6 +52,7 @@ export function PromptDetailsPanel({
   initialPromptId,
   open,
   onClose,
+  onAddTag,
 }: PromptDetailsPanelProps) {
   const intl = useIntl();
   const closeButtonRef = useRef<HTMLButtonElement>(null);
@@ -237,36 +245,35 @@ export function PromptDetailsPanel({
                           : "Not available"}
                       </span>
                     </DetailRow>
-                    <DetailRow label="Tags">
-                      <div className="flex min-w-0 flex-wrap items-center gap-2">
-                        {(selected.tags || []).map((tag, index) => {
-                          const { key, label } = getTagDisplay(tag, index);
-                          return (
-                            <Badge
-                              key={key}
-                              variant="outline"
-                              className="rounded-full px-2 py-0 text-[11px] font-medium text-muted-foreground"
-                            >
-                              {label}
-                            </Badge>
-                          );
-                        })}
-                        {/* TODO: wire tag add-flow. Placeholder pending the
-                            per-prompt actions menu design (tracked with the
-                            same #5563 follow-up as the drawer variants). */}
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          tabIndex={-1}
-                          aria-hidden="true"
-                          className="h-auto gap-1 p-0 text-[12px] font-normal text-muted-foreground hover:bg-transparent hover:text-foreground"
+                    {(() => {
+                      const tagLabels = (selected.tags || []).map(
+                        (tag, index) => getTagDisplay(tag, index).label,
+                      );
+                      return (
+                        <InlineTagAdd
+                          label="Tags"
+                          existingTags={tagLabels}
+                          onAdd={
+                            onAddTag
+                              ? (newTags) => onAddTag(selected.id, [...tagLabels, ...newTags])
+                              : undefined
+                          }
                         >
-                          <Plus className="size-3" aria-hidden="true" />
-                          add
-                        </Button>
-                      </div>
-                    </DetailRow>
+                          {(selected.tags || []).map((tag, index) => {
+                            const { key, label } = getTagDisplay(tag, index);
+                            return (
+                              <Badge
+                                key={key}
+                                variant="outline"
+                                className="rounded-full px-2 py-0 text-[11px] font-medium text-muted-foreground"
+                              >
+                                {label}
+                              </Badge>
+                            );
+                          })}
+                        </InlineTagAdd>
+                      );
+                    })()}
                   </dl>
                 </div>
 

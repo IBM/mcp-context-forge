@@ -270,4 +270,33 @@ describe("serversApi", () => {
       vi.useRealTimers();
     });
   });
+
+  describe("updateTags", () => {
+    it("PUTs /gateways/:id with a tags-only body and returns the updated server", async () => {
+      const updated = { id: "server-123", tags: [{ id: "prod", label: "prod" }] };
+      mockFetch.mockResolvedValueOnce(
+        new Response(JSON.stringify(updated), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+
+      const result = await serversApi.updateTags("server-123", ["prod"]);
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining("/gateways/server-123"),
+        expect.objectContaining({
+          method: "PUT",
+          body: JSON.stringify({ tags: ["prod"] }),
+        }),
+      );
+      expect(result).toEqual(updated);
+    });
+
+    it("throws synchronously for an invalid server ID", () => {
+      expect(() => serversApi.updateTags("../etc/passwd", ["prod"])).toThrow(
+        "Invalid server ID format",
+      );
+    });
+  });
 });
