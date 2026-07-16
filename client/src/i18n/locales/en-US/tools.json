@@ -109,5 +109,6 @@
   "tools.form.error.generateSchema.specAuthRequired": "The OpenAPI spec endpoint requires authentication (returned 401/403). The gateway fetches the spec without credentials — provide a direct URL to a reachable spec, or add the schemas manually.",
   "tools.form.error.generateSchema.generic": "Something went wrong while generating the schema. Please try again.",
   "tools.form.error.updateFailed": "Failed to update tool. Please try again.",
-  "tools.form.error.createFailed": "Failed to create tool. Please try again."
+  "tools.form.error.createFailed": "Failed to create tool. Please try again.",
+  "tools.tags.addError": "Failed to add tag. Please try again."
 }

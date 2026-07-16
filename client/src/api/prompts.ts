@@ -3,6 +3,7 @@
  */
 
 import { api } from "./client";
+import type { PromptRead } from "@/generated/types";
 
 /**
  * Shape of a rendered MCP `prompts/get` response — the gateway substitutes
@@ -45,6 +46,22 @@ function validatePromptName(value: string): string {
   return value;
 }
 
+/**
+ * Validates a prompt ID (the primary-key identifier used by `PUT /prompts/{id}`,
+ * distinct from the name used by {@link promptsApi.render}). Guards against path
+ * traversal and injection by allowing only alphanumerics, hyphens, and
+ * underscores.
+ */
+function validatePromptId(id: string): string {
+  if (!id || typeof id !== "string") {
+    throw new Error("Invalid prompt ID");
+  }
+  if (!/^[a-zA-Z0-9_-]+$/.test(id)) {
+    throw new Error("Invalid prompt ID format");
+  }
+  return id;
+}
+
 export const promptsApi = {
   /**
    * Render a prompt without invoking an LLM. Runs plugin hooks; returns the
@@ -85,5 +102,18 @@ export const promptsApi = {
         signal: options.signal,
       })
       .then(({ data, status }) => ({ rendered: data, status }));
+  },
+
+  /**
+   * Replace a prompt's tags.
+   *
+   * Sends a partial `PUT /prompts/{id}` (keyed by the prompt's primary-key ID,
+   * not its name) carrying only `tags`; the update service preserves every other
+   * field when it is omitted. Returns the updated prompt so callers can patch
+   * their cache with the normalized tags.
+   */
+  updateTags: (id: string, tags: string[]): Promise<PromptRead> => {
+    const validId = validatePromptId(id);
+    return api.put<PromptRead>(`/prompts/${encodeURIComponent(validId)}`, { tags });
   },
 };

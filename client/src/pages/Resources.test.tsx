@@ -1091,4 +1091,43 @@ describe("Resources", () => {
       consoleErrorSpy.mockRestore();
     });
   });
+
+  describe("inline tag add", () => {
+    it("shows a newly added tag in the details drawer (patches cache, no full refetch)", async () => {
+      const user = userEvent.setup();
+      const resource: Resource = { ...createMockResource(1, "test-gateway"), tags: ["tag1"] };
+
+      let resourcesListCalls = 0;
+      server.use(
+        http.get("/resources", () => {
+          resourcesListCalls += 1;
+          return HttpResponse.json([resource]);
+        }),
+        http.put("/resources/:id", () =>
+          HttpResponse.json({ ...resource, tags: ["tag1", "alerts"] }),
+        ),
+      );
+
+      renderWithRouter(<Resources />);
+
+      await waitFor(() => expect(screen.getByText("test-gateway")).toBeInTheDocument());
+      const listCallsAfterLoad = resourcesListCalls;
+
+      await user.click(screen.getByLabelText("More options for test-gateway"));
+      await user.click(await screen.findByText("View Details"));
+
+      const drawer = await screen.findByRole("region", { name: /Resources for test-gateway/i });
+      expect(within(drawer).queryByText("alerts")).not.toBeInTheDocument();
+
+      await user.click(within(drawer).getByRole("button", { name: "Add tags" }));
+      await user.type(
+        within(drawer).getByPlaceholderText("Add tags separated with commas"),
+        "alerts",
+      );
+      await user.click(within(drawer).getByRole("button", { name: "Add" }));
+
+      expect(await within(drawer).findByText("alerts")).toBeInTheDocument();
+      expect(resourcesListCalls).toBe(listCallsAfterLoad);
+    });
+  });
 });

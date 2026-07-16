@@ -358,4 +358,56 @@ describe("Prompts", () => {
     expect(screen.getByText("Error loading prompts")).toBeInTheDocument();
     expect(screen.getByText("HTTP 500")).toBeInTheDocument();
   });
+
+  it("shows a newly added tag in the details drawer (patches cache, no full refetch)", async () => {
+    const user = userEvent.setup();
+    const prompt = createMockPrompt({
+      id: "prompt-1",
+      gatewaySlug: "gh-repo-tasks",
+      tags: [{ id: "summary", label: "summary" }],
+    });
+
+    let promptsListCalls = 0;
+    server.use(
+      http.get("/prompts", () => {
+        promptsListCalls += 1;
+        return HttpResponse.json([prompt]);
+      }),
+      http.put("/prompts/:id", () =>
+        HttpResponse.json({
+          ...prompt,
+          tags: [
+            { id: "summary", label: "summary" },
+            { id: "alerts", label: "alerts" },
+          ],
+        }),
+      ),
+    );
+
+    renderWithProviders(<Prompts />);
+
+    await waitFor(() => expect(screen.getByText("Summarize document")).toBeInTheDocument());
+    const listCallsAfterLoad = promptsListCalls;
+
+    // Open the details drawer for the group.
+    await user.click(screen.getByRole("button", { name: /More options for/i }));
+    await user.click(await screen.findByRole("menuitem", { name: "View details" }));
+
+    const drawer = await screen.findByRole("region", { name: /prompt details/i });
+    expect(within(drawer).getByText("summary")).toBeInTheDocument();
+    expect(within(drawer).queryByText("alerts")).not.toBeInTheDocument();
+
+    // Add a tag through the inline editor.
+    await user.click(within(drawer).getByRole("button", { name: "Add tags" }));
+    await user.type(
+      within(drawer).getByPlaceholderText("Add tags separated with commas"),
+      "alerts",
+    );
+    await user.click(within(drawer).getByRole("button", { name: "Add" }));
+
+    // The new tag renders in the drawer from the patched cache...
+    expect(await within(drawer).findByText("alerts")).toBeInTheDocument();
+    // ...without re-fetching the whole prompts catalog.
+    expect(promptsListCalls).toBe(listCallsAfterLoad);
+  });
 });

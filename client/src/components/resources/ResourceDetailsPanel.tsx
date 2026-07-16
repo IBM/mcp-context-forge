@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { useIntl } from "react-intl";
-import { Activity, Copy, FileText, Globe, PanelRightClose, Plus } from "lucide-react";
+import { Activity, Copy, FileText, Globe, PanelRightClose } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { InlineTagAdd } from "@/components/ui/inline-tag-add";
 import { cn } from "@/lib/utils";
 import type { ResourceRead } from "@/generated/types";
 import { copyToClipboard } from "@/lib/clipboard";
@@ -54,6 +55,12 @@ interface ResourceDetailsPanelProps {
   onClose: () => void;
   onEditResource?: (resource: NonNullable<ResourceRead>) => void;
   onDeleteResource?: (resourceId: string) => void;
+  /**
+   * Persists the resource's full tag list after an inline add. Receives the
+   * resource ID and the new complete list of tag labels. When omitted, the tag
+   * row shows a non-interactive "add" affordance.
+   */
+  onAddTag?: (resourceId: string, tags: string[]) => Promise<void>;
 }
 
 export function ResourceDetailsPanel({
@@ -63,6 +70,7 @@ export function ResourceDetailsPanel({
   onClose,
   onEditResource,
   onDeleteResource,
+  onAddTag,
 }: ResourceDetailsPanelProps) {
   const intl = useIntl();
   const [selectedResource, setSelectedResource] = useState<NonNullable<ResourceRead> | null>(null);
@@ -246,45 +254,34 @@ export function ResourceDetailsPanel({
                           </span>
                         </DetailRow>
                       )}
-                      <DetailRow
-                        label={intl.formatMessage({ id: "resources.details.label.tags" })}
-                        className="items-center"
-                      >
-                        <div className="flex min-w-0 flex-wrap items-center gap-2">
-                          {(selectedResource.tags || []).length > 0 ? (
-                            <>
-                              {(selectedResource.tags || []).map((tag, index) => (
-                                <Badge
-                                  key={`${tag}-${index}`}
-                                  variant="outline"
-                                  className="rounded-full px-2 py-0 text-[11px] font-medium text-muted-foreground"
-                                >
-                                  {tag}
-                                </Badge>
-                              ))}
-                              <button
-                                type="button"
-                                tabIndex={-1}
-                                aria-hidden="true"
-                                className="flex items-center gap-1 text-[12px] text-muted-foreground hover:text-foreground"
+                      {(() => {
+                        const tagLabels = selectedResource.tags || [];
+                        return (
+                          <InlineTagAdd
+                            label={intl.formatMessage({ id: "resources.details.label.tags" })}
+                            existingTags={tagLabels}
+                            onAdd={
+                              onAddTag
+                                ? (newTags) =>
+                                    onAddTag(String(selectedResource.id), [
+                                      ...tagLabels,
+                                      ...newTags,
+                                    ])
+                                : undefined
+                            }
+                          >
+                            {tagLabels.map((tag, index) => (
+                              <Badge
+                                key={`${tag}-${index}`}
+                                variant="outline"
+                                className="rounded-full px-2 py-0 text-[11px] font-medium text-muted-foreground"
                               >
-                                <Plus className="size-3" aria-hidden="true" />
-                                {intl.formatMessage({ id: "resources.details.addTag" })}
-                              </button>
-                            </>
-                          ) : (
-                            <button
-                              type="button"
-                              tabIndex={-1}
-                              aria-hidden="true"
-                              className="flex items-center gap-1 text-[12px] text-muted-foreground hover:text-foreground"
-                            >
-                              <Plus className="size-3" aria-hidden="true" />
-                              {intl.formatMessage({ id: "resources.details.addTag" })}
-                            </button>
-                          )}
-                        </div>
-                      </DetailRow>
+                                {tag}
+                              </Badge>
+                            ))}
+                          </InlineTagAdd>
+                        );
+                      })()}
                     </dl>
                   </div>
 

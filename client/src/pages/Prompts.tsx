@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type Ref } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type Ref } from "react";
 import { MessageSquareCode, MoreHorizontal, Plus } from "lucide-react";
 import { useIntl } from "react-intl";
 import { PromptForm } from "@/components/prompts/PromptForm";
@@ -14,6 +14,10 @@ import {
 import type { CursorPaginatedPromptsResponse, PromptRead } from "@/generated/types";
 import { PromptDetailsPanel } from "@/components/prompts";
 import { useQuery } from "@/hooks/useQuery";
+import { promptsApi } from "@/api/prompts";
+import { ApiError } from "@/api/client";
+import { extractApiErrorDetail } from "@/utils/errors";
+import { toast } from "sonner";
 import type { PromptGroup } from "@/types/prompts";
 
 const MAX_VISIBLE_PROMPTS = 8;
@@ -203,7 +207,30 @@ export function Prompts() {
     error,
     isLoading,
     refetch,
+    setData: setPromptsData,
   } = useQuery<PromptsListResponse>("/prompts?limit=1000&include_inactive=true");
+
+  const handleAddPromptTag = useCallback(
+    async (promptId: string, tags: string[]) => {
+      try {
+        const updated = await promptsApi.updateTags(promptId, tags);
+        if (!updated) return;
+        // Patch the single prompt in place instead of refetching the whole
+        // catalog, which can be expensive with many prompts on the backend.
+        setPromptsData((prev) => {
+          if (!prev) return prev;
+          const replace = (list: (PromptRead | null)[]) =>
+            list.map((p) => (p && p.id === promptId ? updated : p));
+          return Array.isArray(prev) ? replace(prev) : { ...prev, prompts: replace(prev.prompts) };
+        });
+      } catch (err) {
+        const detail = err instanceof ApiError ? extractApiErrorDetail(err.body) : null;
+        toast.error(detail || intl.formatMessage({ id: "prompts.tags.addError" }));
+        throw err;
+      }
+    },
+    [setPromptsData, intl],
+  );
 
   const restPromptsLabel = intl.formatMessage({ id: "prompts.restPromptsGroup" });
   const groups = useMemo(
@@ -211,9 +238,15 @@ export function Prompts() {
     [promptsData, restPromptsLabel],
   );
 
+  // Keep the drawer's group in sync with the latest data: re-resolve the active
+  // group from `groups` by key so edits (e.g. adding tags) show immediately.
+  // When the drawer closes (`activeGroup` becomes null) we leave `displayGroup`
+  // untouched so its content stays put through the slide-out animation.
   useEffect(() => {
-    if (activeGroup) setDisplayGroup(activeGroup);
-  }, [activeGroup]);
+    if (!activeGroup) return;
+    const fresh = groups.find((g) => g.key === activeGroup.key) ?? activeGroup;
+    setDisplayGroup(fresh);
+  }, [activeGroup, groups]);
 
   useEffect(() => {
     if (!showForm && shouldRestoreFormCloseFocus) {
@@ -288,6 +321,7 @@ export function Prompts() {
         title={displayGroup?.label ?? ""}
         open={activeGroup !== null}
         onClose={() => setActiveGroup(null)}
+        onAddTag={handleAddPromptTag}
       />
     </div>
   );

@@ -115,6 +115,7 @@
   "gateways.details.url": "URL",
   "gateways.details.tags": "Tags",
   "gateways.details.addTag": "+ add",
+  "gateways.tags.addError": "Failed to add tag. Please try again.",
   "gateways.details.activity": "Activity",
   "gateways.details.created": "Created",
   "gateways.details.lastModified": "Last modified",

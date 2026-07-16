@@ -115,6 +115,7 @@
   "gateways.details.url": "URL",
   "gateways.details.tags": "Tags",
   "gateways.details.addTag": "+ adicionar",
+  "gateways.tags.addError": "Falha ao adicionar a tag. Tente novamente.",
   "gateways.details.activity": "Atividade",
   "gateways.details.created": "Criado",
   "gateways.details.lastModified": "Última modificação",
