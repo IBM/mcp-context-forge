@@ -12,6 +12,7 @@ unit, and only a real transaction can show that.
 """
 
 # Standard
+import re
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
@@ -551,6 +552,60 @@ class TestSeededMembershipCrossServiceEffects:
         assert "alice@example.com" in invalidated
         assert "external@partner.com" not in invalidated
         assert all(call.args[1] == team_id for call in invalidate.call_args_list)
+
+    @pytest.mark.asyncio
+    async def test_seeded_members_leave_an_audit_trail(self, service, test_db):
+        """Each added member gets an 'added' history row; invited addresses (no membership) do not."""
+        make_user(test_db, "alice@example.com")
+        make_user(test_db, "lead@example.com")
+
+        result = await service.create_team_with_members(
+            name="Engineering",
+            description=None,
+            created_by=CREATOR,
+            visibility="private",
+            members=[
+                TeamMemberSeed(email="alice@example.com", role="member"),
+                TeamMemberSeed(email="lead@example.com", role="owner"),
+                TeamMemberSeed(email="external@partner.com", role="member"),
+            ],
+        )
+
+        team_id = str(result.team.id)
+        history = test_db.query(EmailTeamMemberHistory).filter(EmailTeamMemberHistory.team_id == team_id).all()
+        logged = {(h.user_email, h.role, h.action, h.action_by) for h in history}
+
+        # Both known users are recorded as added, with the actor and seeded role captured.
+        assert ("alice@example.com", "member", "added", CREATOR) in logged
+        assert ("lead@example.com", "owner", "added", CREATOR) in logged
+        # The invited outsider never became a member, so there is no membership history for them.
+        assert not any(h.user_email == "external@partner.com" for h in history)
+
+
+class TestSeededInvitationTokens:
+    """Invitations minted during seeding must carry a usable, unique token."""
+
+    @pytest.mark.asyncio
+    async def test_seeded_invitation_tokens_are_nonempty_urlsafe_and_unique(self, service, test_db):
+        """Every seeded invitation gets a distinct, URL-safe, non-empty token."""
+        result = await service.create_team_with_members(
+            name="Engineering",
+            description=None,
+            created_by=CREATOR,
+            visibility="private",
+            members=[
+                TeamMemberSeed(email="first@partner.com", role="member"),
+                TeamMemberSeed(email="second@partner.com", role="member"),
+            ],
+        )
+
+        tokens = [inv.token for inv in test_db.query(EmailTeamInvitation).filter(EmailTeamInvitation.team_id == result.team.id).all()]
+
+        assert len(tokens) == 2
+        assert all(tokens), "every invitation must carry a non-empty token"
+        # URL-safe base64 alphabet (secrets.token_urlsafe): letters, digits, '-' and '_'.
+        assert all(re.fullmatch(r"[A-Za-z0-9_-]+", token) for token in tokens)
+        assert len(set(tokens)) == len(tokens), "tokens must be unique across invitations"
 
 
 class TestCreateTeamUnchanged:

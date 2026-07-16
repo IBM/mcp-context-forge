@@ -852,19 +852,8 @@ class TeamManagementService:
                 existing_inactive_team.updated_at = utc_now()
                 team = existing_inactive_team
 
-                # Check if the creator already has an inactive membership
-                existing_membership = self.db.query(EmailTeamMember).filter(EmailTeamMember.team_id == team.id, EmailTeamMember.user_email == created_by).first()
-
-                if existing_membership:
-                    # Reactivate existing membership as owner
-                    existing_membership.role = "owner"
-                    existing_membership.joined_at = utc_now()
-                    existing_membership.is_active = True
-                    membership = existing_membership
-                else:
-                    # Create new membership
-                    membership = EmailTeamMember(team_id=team.id, user_email=created_by, role="owner", joined_at=utc_now(), is_active=True)
-                    self.db.add(membership)
+                # Reactivate the creator's prior membership (if any) or create a fresh one, as owner
+                self._upsert_membership(team.id, created_by, "owner")
 
                 logger.info("Reactivated existing team with slug %s", potential_slug)
             else:
@@ -874,9 +863,8 @@ class TeamManagementService:
 
                 self.db.flush()  # Get the team ID
 
-                # Add the creator as owner
-                membership = EmailTeamMember(team_id=team.id, user_email=created_by, role="owner", joined_at=utc_now(), is_active=True)
-                self.db.add(membership)
+                # Add the creator as owner (brand-new team, so no prior membership to look up)
+                self._upsert_membership(team.id, created_by, "owner", existing=None)
 
             # Memberships and invitations join the same transaction as the team
             memberships, invitations = await self._seed_members(team, seeds, created_by)

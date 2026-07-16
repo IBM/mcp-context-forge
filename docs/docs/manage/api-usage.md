@@ -1407,12 +1407,12 @@ Each `TeamMemberSeed` object:
 
 **Configuration notes:**
 
-| Setting | Effect on `POST /teams` |
-|---------|------------------------|
-| `ALLOW_TEAM_CREATION=false` | Non-admin callers receive `403`. Platform admins bypass this flag. |
-| `ALLOW_TEAM_INVITATIONS=false` | Seeded addresses that would normally become invitations instead fail the whole request with `400`. |
-| `MAX_TEAM_MEMBER_SEEDS=500` | Hard ceiling on the `members` array length (validated before any write). |
-| `MAX_MEMBERS_PER_TEAM` | Seed count + creator must not exceed this limit (or the per-team `max_members` override). |
+| Setting | Default | Effect on `POST /teams` |
+|---------|---------|------------------------|
+| `ALLOW_TEAM_CREATION` | `true` | When `false`, non-admin callers receive `403`. Platform admins bypass this flag. |
+| `ALLOW_TEAM_INVITATIONS` | `true` | When `false`, seeded addresses that would normally become invitations instead fail the whole request with `400`. |
+| `MAX_TEAM_MEMBER_SEEDS` | `500` | Hard ceiling on the `members` array length (validated before any write). |
+| `MAX_MEMBERS_PER_TEAM` | `100` | Seed count + creator must not exceed this limit (or the per-team `max_members` override). |
 
 **Minimal create (no members):**
 
@@ -1443,7 +1443,7 @@ curl -s -X POST \
 
 **Response (`TeamCreateResponse`):**
 
-`TeamCreateResponse` is a superset of `TeamResponse`. All `TeamResponse` fields are present; two extra arrays report how each seeded member was resolved. Both arrays are always present (empty when no members were seeded), so clients that only care about the team itself can ignore them.
+`TeamCreateResponse` extends `TeamResponse` through Pydantic subclassing, so it is a strict superset: every `TeamResponse` field is present unchanged, plus two extra arrays that report how each seeded member was resolved. Both arrays are always present (empty when no members were seeded), so clients that only care about the team itself can ignore them.
 
 ```json
 {
