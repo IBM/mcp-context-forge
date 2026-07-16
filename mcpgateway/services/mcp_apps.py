@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Minimal MCP Apps helpers.
+"""Location: ./mcpgateway/services/mcp_apps.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
+SPDX-License-Identifier: Apache-2.0
+Authors: Contributors to the MCP-CONTEXT-FORGE project
+
+Minimal MCP Apps helpers.
 
 This module centralizes MCP Apps metadata handling, capability advertising, and
 AppBridge session management.

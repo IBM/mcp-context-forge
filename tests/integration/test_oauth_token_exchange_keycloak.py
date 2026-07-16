@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/integration/test_oauth_token_exchange_keycloak.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
+Authors: Contributors to the MCP-CONTEXT-FORGE project
 
 Integration tests for RFC 8693 OAuth 2.0 Token Exchange against a live Keycloak.
 

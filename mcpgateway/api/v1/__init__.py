@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/api/v1/__init__.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
+Authors: Contributors to the MCP-CONTEXT-FORGE project
 
 mcpgateway.api.v1 — versioned API v1 router factory.
 Usage (Phase 1 — inline routers still live in main.py):

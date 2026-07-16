@@ -1,5 +1,12 @@
+# -*- coding: utf-8 -*-
 # mcpgateway/services/token_exchange_cache.py
-"""Cache for RFC 8693 exchanged tokens: Redis with in-memory TTL fallback."""
+"""Location: ./mcpgateway/services/token_exchange_cache.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
+SPDX-License-Identifier: Apache-2.0
+Authors: Contributors to the MCP-CONTEXT-FORGE project
+
+Cache for RFC 8693 exchanged tokens: Redis with in-memory TTL fallback.
+"""
 
 # Standard
 import asyncio

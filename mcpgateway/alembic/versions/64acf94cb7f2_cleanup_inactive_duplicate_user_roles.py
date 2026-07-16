@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # pylint: disable=no-member
 """Location: ./mcpgateway/alembic/versions/64acf94cb7f2_cleanup_inactive_duplicate_user_roles.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 

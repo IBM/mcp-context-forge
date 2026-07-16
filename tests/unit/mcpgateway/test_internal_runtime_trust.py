@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/test_internal_runtime_trust.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
+Authors: Contributors to the MCP-CONTEXT-FORGE project
 
 Unit tests for the consolidated internal-runtime trust gate.
 

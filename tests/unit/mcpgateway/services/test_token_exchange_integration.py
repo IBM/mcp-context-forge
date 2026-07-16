@@ -1,3 +1,12 @@
+# -*- coding: utf-8 -*-
+"""Module Description.
+Location: ./tests/unit/mcpgateway/services/test_token_exchange_integration.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
+SPDX-License-Identifier: Apache-2.0
+Authors: Contributors to the MCP-CONTEXT-FORGE project
+
+Module documentation...
+"""
 # tests/unit/mcpgateway/services/test_token_exchange_integration.py
 # Standard
 from unittest.mock import AsyncMock, MagicMock

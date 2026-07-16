@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # pylint: disable=no-member
 """Location: ./mcpgateway/alembic/versions/abf8ac3b6008_add_admin_overview_and_servers_use_to_.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 

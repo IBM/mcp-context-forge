@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/integration/test_cross_env_auth.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
+Authors: Contributors to the MCP-CONTEXT-FORGE project
 
 Integration: cross-environment token rejection at the HTTP layer (GHSA-vgf8-3685-66j9).
 """

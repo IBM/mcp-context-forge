@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""MCP method registry for core MCP and MCP Apps routing.
+"""Location: ./mcpgateway/services/mcp_method_registry.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
+SPDX-License-Identifier: Apache-2.0
+Authors: Contributors to the MCP-CONTEXT-FORGE project
+
+MCP method registry for core MCP and MCP Apps routing.
 
 This module provides a small registry to keep core MCP methods authoritative
 while allowing feature-gated MCP Apps AppBridge methods to pass validation.

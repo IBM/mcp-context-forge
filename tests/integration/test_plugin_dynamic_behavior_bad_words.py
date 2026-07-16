@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/integration/test_plugin_dynamic_behavior_bad_words.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 

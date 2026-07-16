@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/live_gateway/plugins/test_primary_worker_e2e.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
+Authors: Contributors to the MCP-CONTEXT-FORGE project
 
 End-to-end test for primary-worker election.
 
