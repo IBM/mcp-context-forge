@@ -1884,31 +1884,38 @@ class EmailAuthService:
                             if admin_role:
                                 existing = await self.role_service.get_user_role_assignment(user_email=email, role_id=admin_role.id, scope="global", scope_id=None)
                                 if not existing or not existing.is_active:
-                                    await self.role_service.assign_role_to_user(user_email=email, role_id=admin_role.id, scope="global", scope_id=None, granted_by=role_granter)
+                                    await self.role_service.assign_role_to_user(user_email=email, role_id=admin_role.id, scope="global", scope_id=None, granted_by=role_granter, commit=False)
                                     logger.info("Assigned %s role to %s", admin_role_name, SecurityValidator.sanitize_log_message(email))
                             else:
                                 logger.warning("%s role not found, cannot assign to %s", admin_role_name, SecurityValidator.sanitize_log_message(email))
 
                             if user_role:
-                                revoked = await self.role_service.revoke_role_from_user(user_email=email, role_id=user_role.id, scope="global", scope_id=None)
+                                revoked = await self.role_service.revoke_role_from_user(user_email=email, role_id=user_role.id, scope="global", scope_id=None, commit=False)
                                 if revoked:
                                     logger.info("Revoked %s role from %s", SecurityValidator.sanitize_log_message(user_role_name), SecurityValidator.sanitize_log_message(email))
                         else:
                             # Demotion: revoke admin role, assign user role
-                            if admin_role:
-                                revoked = await self.role_service.revoke_role_from_user(user_email=email, role_id=admin_role.id, scope="global", scope_id=None)
-                                if revoked:
-                                    logger.info("Revoked %s role from %s", admin_role_name, SecurityValidator.sanitize_log_message(email))
+                            if not admin_role:
+                                raise ValueError(f"{admin_role_name} role not found; refusing unsafe administrator demotion")
 
-                            if user_role:
-                                existing = await self.role_service.get_user_role_assignment(user_email=email, role_id=user_role.id, scope="global", scope_id=None)
-                                if not existing or not existing.is_active:
-                                    await self.role_service.assign_role_to_user(user_email=email, role_id=user_role.id, scope="global", scope_id=None, granted_by=role_granter)
-                                    logger.info("Assigned %s role to %s", SecurityValidator.sanitize_log_message(user_role_name), SecurityValidator.sanitize_log_message(email))
-                            else:
-                                logger.warning("%s role not found, cannot assign to %s", SecurityValidator.sanitize_log_message(user_role_name), SecurityValidator.sanitize_log_message(email))
+                            existing_admin_assignment = await self.role_service.get_user_role_assignment(user_email=email, role_id=admin_role.id, scope="global", scope_id=None)
+                            if existing_admin_assignment:
+                                revoked = await self.role_service.revoke_role_from_user(user_email=email, role_id=admin_role.id, scope="global", scope_id=None, commit=False)
+                                if not revoked:
+                                    raise ValueError(f"Failed to revoke {admin_role_name} role; refusing unsafe administrator demotion")
+                                logger.info("Revoked %s role from %s", admin_role_name, SecurityValidator.sanitize_log_message(email))
+
+                            if not user_role:
+                                raise ValueError(f"{user_role_name} role not found; refusing unsafe administrator demotion")
+
+                            existing = await self.role_service.get_user_role_assignment(user_email=email, role_id=user_role.id, scope="global", scope_id=None)
+                            if not existing or not existing.is_active:
+                                await self.role_service.assign_role_to_user(user_email=email, role_id=user_role.id, scope="global", scope_id=None, granted_by=role_granter, commit=False)
+                                logger.info("Assigned %s role to %s", SecurityValidator.sanitize_log_message(user_role_name), SecurityValidator.sanitize_log_message(email))
 
                     except Exception as e:
+                        if not is_admin:
+                            raise ValueError("Administrator demotion failed because role synchronization did not complete") from e
                         logger.warning("Failed to sync global roles for %s: %s", SecurityValidator.sanitize_log_message(email), e)
                         # Don't fail user update if role sync fails
 
@@ -2174,14 +2181,10 @@ class EmailAuthService:
         Returns:
             bool: True if this user is the last active admin
         """
-        # First check if the user is an active admin
-        stmt = select(EmailUser).where(EmailUser.email == email)
+        # Lock every active admin row so concurrent demotion/deactivation requests
+        # serialize before checking the last-admin invariant.
+        normalized_email = email.lower().strip()
+        stmt = select(EmailUser).where(EmailUser.is_admin.is_(True), EmailUser.is_active.is_(True)).with_for_update()
         result = self.db.execute(stmt)
-        user = result.scalar_one_or_none()
-
-        if not user or not user.is_admin or not user.is_active:
-            return False
-
-        # Count total active admins
-        admin_count = await self.count_active_admin_users()
-        return admin_count == 1
+        active_admins = result.scalars().all()
+        return len(active_admins) == 1 and active_admins[0].email.lower().strip() == normalized_email

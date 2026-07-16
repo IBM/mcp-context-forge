@@ -511,6 +511,18 @@ class TestAssignRoleToUser:
                     mock_db.commit.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_assign_role_can_defer_commit(self, role_service, mock_db, sample_role, sample_user_role):
+        """Caller-owned transactions flush role assignment without committing."""
+        with patch.object(role_service, "get_role_by_id", new=AsyncMock(return_value=sample_role)):
+            with patch.object(role_service, "get_user_role_assignment", new=AsyncMock(return_value=None)):
+                with patch("mcpgateway.services.role_service.UserRole", return_value=sample_user_role):
+                    result = await role_service.assign_role_to_user(user_email="user@example.com", role_id="role-123", scope="team", scope_id="team-789", granted_by="admin@example.com", commit=False)
+
+        assert result == sample_user_role
+        mock_db.flush.assert_called_once()
+        mock_db.commit.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_assign_role_not_found(self, role_service):
         """Test assigning non-existent role."""
         with patch.object(role_service, "get_role_by_id", new=AsyncMock(return_value=None)):
@@ -608,6 +620,19 @@ class TestRevokeRoleFromUser:
             assert result is True
             assert sample_user_role.is_active is False
             mock_db.commit.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_revoke_role_can_defer_commit(self, role_service, mock_db, sample_user_role):
+        """Caller-owned transactions flush role revocation without committing."""
+        sample_user_role.is_active = True
+
+        with patch.object(role_service, "get_user_role_assignment", new=AsyncMock(return_value=sample_user_role)):
+            result = await role_service.revoke_role_from_user(user_email="user@example.com", role_id="role-123", scope="team", scope_id="team-789", commit=False)
+
+        assert result is True
+        assert sample_user_role.is_active is False
+        mock_db.flush.assert_called_once()
+        mock_db.commit.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_revoke_role_not_found(self, role_service):

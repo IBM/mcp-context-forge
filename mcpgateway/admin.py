@@ -8274,6 +8274,7 @@ async def admin_get_user_edit(
                     </label>
                 </div>'''
         }
+                {'<input type="hidden" name="is_admin" value="on">' if is_editing_self and user_obj.is_admin else ""}
                 <div>
                     <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
                         <input type="checkbox" name="email_verified" {"checked" if user_obj.is_email_verified() else ""}
@@ -8366,20 +8367,6 @@ async def admin_update_user(
 
         # Get current user's email to prevent self-demotion
         current_user_email = get_user_email(_user)
-
-        # Check if trying to remove admin privileges from last admin
-        user_obj = await auth_service.get_user_by_email(decoded_email)
-
-        # When editing self, preserve current admin status (checkbox is hidden in UI)
-        if user_obj and current_user_email.lower() == decoded_email.lower():
-            is_admin = user_obj.is_admin
-
-        if user_obj and user_obj.is_admin and not is_admin:
-            # This user is currently an admin and we're trying to remove admin privileges
-            if await auth_service.is_last_active_admin(decoded_email):
-                return HTMLResponse(
-                    content='<div class="text-red-500">Cannot remove administrator privileges from the last remaining admin user</div>', status_code=400, headers={"HX-Retarget": "#edit-user-error"}
-                )
 
         # Update user
         fn_val = form.get("full_name")
@@ -8502,15 +8489,7 @@ async def admin_deactivate_user(
         # Get current user email from JWT
         current_user_email = get_user_email(user)
 
-        # Prevent self-deactivation
-        if decoded_email == current_user_email:
-            return HTMLResponse(content='<div class="text-red-500">Cannot deactivate your own account</div>', status_code=400)
-
-        # Prevent deactivating the last active admin user
-        if await auth_service.is_last_active_admin(decoded_email):
-            return HTMLResponse(content='<div class="text-red-500">Cannot deactivate the last remaining admin user</div>', status_code=400)
-
-        user_obj = await auth_service.deactivate_user(decoded_email)
+        user_obj = await auth_service.update_user(email=decoded_email, is_active=False, requesting_user_email=current_user_email, admin_origin_source="ui")
         admin_count = await auth_service.count_active_admin_users()
         return HTMLResponse(content=_render_user_card_html(user_obj, current_user_email, admin_count, root_path))
 

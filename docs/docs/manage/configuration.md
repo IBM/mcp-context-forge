@@ -415,6 +415,8 @@ curl -X POST -H "Authorization: Bearer $TOKEN" \
 | `SMTP_USE_SSL`                | Use implicit SSL/TLS                              | `false`               | bool    |
 | `SMTP_TIMEOUT_SECONDS`        | SMTP timeout in seconds                           | `15`                  | int > 0 |
 
+Changing `PROTECT_ALL_ADMINS` does not control peer-administrator removal. An administrator with `admin.user_management` can demote or deactivate another administrator while at least one active administrator remains. Protect administrator credentials accordingly; deployments requiring dual control should enforce that process outside this endpoint.
+
 When `PASSWORD_RESET_ENABLED=false`, self-service forgot/reset endpoints are disabled (`403` on API and disabled/redirected UI flows).
 When `SMTP_ENABLED=false`, reset requests are accepted but no email is delivered.
 

@@ -123,7 +123,7 @@ async def test_update_user_revoke_admin_role(mock_db):
 
                 mock_role_service.get_role_by_name = AsyncMock(side_effect=get_role_by_name_side_effect)
                 mock_role_service.revoke_role_from_user = AsyncMock(return_value=True)
-                mock_role_service.get_user_role_assignment = AsyncMock(return_value=None)
+                mock_role_service.get_user_role_assignment = AsyncMock(side_effect=[MagicMock(is_active=True), None])
                 mock_role_service.assign_role_to_user = AsyncMock()
                 mock_role_service_cls.return_value = mock_role_service
 
@@ -134,10 +134,12 @@ async def test_update_user_revoke_admin_role(mock_db):
                 assert updated_user.is_admin is False
 
                 # Verify platform_admin was revoked
-                mock_role_service.revoke_role_from_user.assert_called_once_with(user_email="test@example.com", role_id="admin-role-123", scope="global", scope_id=None)
+                mock_role_service.revoke_role_from_user.assert_called_once_with(user_email="test@example.com", role_id="admin-role-123", scope="global", scope_id=None, commit=False)
 
                 # Verify platform_viewer was assigned
-                mock_role_service.assign_role_to_user.assert_called_once_with(user_email="test@example.com", role_id="viewer-role-456", scope="global", scope_id=None, granted_by="admin@example.com")
+                mock_role_service.assign_role_to_user.assert_called_once_with(
+                    user_email="test@example.com", role_id="viewer-role-456", scope="global", scope_id=None, granted_by="admin@example.com", commit=False
+                )
 
 
 @pytest.mark.asyncio
@@ -208,10 +210,12 @@ async def test_update_user_assign_admin_role_inactive_assignment(mock_db):
         assert updated_user.is_admin is True
 
         # Verify platform_admin was assigned (because existing assignment was inactive)
-        mock_role_service.assign_role_to_user.assert_called_once_with(user_email="test@example.com", role_id="admin-role-123", scope="global", scope_id=None, granted_by="test@example.com")
+        mock_role_service.assign_role_to_user.assert_called_once_with(
+            user_email="test@example.com", role_id="admin-role-123", scope="global", scope_id=None, granted_by="test@example.com", commit=False
+        )
 
         # Verify platform_viewer was revoked
-        mock_role_service.revoke_role_from_user.assert_called_once_with(user_email="test@example.com", role_id="viewer-role-456", scope="global", scope_id=None)
+        mock_role_service.revoke_role_from_user.assert_called_once_with(user_email="test@example.com", role_id="viewer-role-456", scope="global", scope_id=None, commit=False)
 
 
 @pytest.mark.asyncio
@@ -248,19 +252,16 @@ async def test_update_user_demote_admin_user_role_not_found(mock_db):
                     return None
 
                 mock_role_service.get_role_by_name = AsyncMock(side_effect=get_role_by_name_side_effect)
+                mock_role_service.get_user_role_assignment = AsyncMock(return_value=MagicMock(is_active=True))
                 mock_role_service.revoke_role_from_user = AsyncMock(return_value=True)
                 mock_role_service_cls.return_value = mock_role_service
 
-                # Update user to non-admin (demote)
-                updated_user = await service.update_user(email="test@example.com", is_admin=False, requesting_user_email="admin@example.com")
+                with pytest.raises(ValueError, match="role synchronization did not complete"):
+                    await service.update_user(email="test@example.com", is_admin=False, requesting_user_email="admin@example.com")
 
-                # Verify user was demoted
-                assert updated_user.is_admin is False
+                mock_db.commit.assert_not_called()
+                mock_db.rollback.assert_called_once()
 
-                # Verify platform_admin was revoked
-                mock_role_service.revoke_role_from_user.assert_called_once_with(user_email="test@example.com", role_id="admin-role-123", scope="global", scope_id=None)
-
-                # Verify platform_viewer was NOT assigned (because role was not found)
                 mock_role_service.assign_role_to_user.assert_not_called()
 
 
@@ -280,7 +281,12 @@ async def test_create_platform_admin_new_user_assigns_role(mock_db):
 
             # Verify create_user was called with is_admin=True
             mock_create_user.assert_called_once_with(
-                email="newadmin@example.com", password="NewAdminPass4$x!", full_name="New Admin", is_admin=True, auth_provider="local", skip_password_validation=True  # pragma: allowlist secret
+                email="newadmin@example.com",
+                password="NewAdminPass4$x!",  # pragma: allowlist secret
+                full_name="New Admin",
+                is_admin=True,
+                auth_provider="local",
+                skip_password_validation=True,
             )
 
             # Verify the returned user has admin status
