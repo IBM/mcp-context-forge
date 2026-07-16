@@ -3632,66 +3632,13 @@ class TestResourceBulkRegistration:
         assert any("Failed to process resource" in err for err in result["errors"])
 
     @pytest.mark.asyncio
-    async def test_register_resources_bulk_name_conflict_skip(self, resource_service, mock_db):
-        """Bulk register skips a resource when its name conflicts (skip strategy, lines 952-954)."""
-        existing = MagicMock(spec=DbResource)
-        existing.uri = "file:///other.txt"  # different URI — triggers name-conflict branch
-        existing.name = "Dup"
-        existing.enabled = True
-        existing.id = "abc"
-        existing.visibility = "public"
-        existing.gateway_id = None
-
+    async def test_register_resources_bulk_uri_conflict_is_batched_not_per_item(self, resource_service, mock_db):
+        """N+1 regression guard: URI-conflict detection issues exactly one SELECT per
+        chunk regardless of chunk size. Name-conflict detection was removed because
+        name is a display label, not a unique identifier under the MCP spec."""
         uri_batch_result = MagicMock()
         uri_batch_result.scalars.return_value.all.return_value = []
-        name_batch_result = MagicMock()
-        name_batch_result.scalars.return_value.all.return_value = [existing]
-        mock_db.execute.side_effect = [uri_batch_result, name_batch_result]
-        mock_db.commit = MagicMock()
-        resource_service._notify_resource_added = AsyncMock()
-
-        resources = [ResourceCreate(name="Dup", uri="file:///new.txt", content="body")]
-        result = await resource_service.register_resources_bulk(db=mock_db, resources=resources, created_by="tester", conflict_strategy="skip")
-
-        assert result["skipped"] == 1
-        assert any("name already exists" in err for err in result["errors"])
-        # Name-conflict detection must be a single batched query, not one per resource.
-        assert mock_db.execute.call_count == 2
-
-    @pytest.mark.asyncio
-    async def test_register_resources_bulk_name_conflict_fail(self, resource_service, mock_db):
-        """Bulk register fails a chunk when name conflicts and strategy is fail (line 956)."""
-        existing = MagicMock(spec=DbResource)
-        existing.uri = "file:///other.txt"
-        existing.name = "Dup"
-        existing.enabled = True
-        existing.id = "abc"
-        existing.visibility = "public"
-        existing.gateway_id = None
-
-        uri_batch_result = MagicMock()
-        uri_batch_result.scalars.return_value.all.return_value = []
-        name_batch_result = MagicMock()
-        name_batch_result.scalars.return_value.all.return_value = [existing]
-        mock_db.execute.side_effect = [uri_batch_result, name_batch_result]
-        mock_db.rollback = MagicMock()
-        resource_service._notify_resource_added = AsyncMock()
-
-        resources = [ResourceCreate(name="Dup", uri="file:///new.txt", content="body")]
-        result = await resource_service.register_resources_bulk(db=mock_db, resources=resources, created_by="tester", conflict_strategy="fail")
-
-        assert result["failed"] == 1
-        assert any("already exists" in err for err in result["errors"])
-
-    @pytest.mark.asyncio
-    async def test_register_resources_bulk_name_conflict_batched_not_per_item(self, resource_service, mock_db):
-        """N+1 regression guard: name-conflict detection issues one SELECT per chunk
-        regardless of chunk size, mirroring the existing URI-conflict batch query."""
-        uri_batch_result = MagicMock()
-        uri_batch_result.scalars.return_value.all.return_value = []
-        name_batch_result = MagicMock()
-        name_batch_result.scalars.return_value.all.return_value = []
-        mock_db.execute.side_effect = [uri_batch_result, name_batch_result]
+        mock_db.execute.return_value = uri_batch_result
         mock_db.add_all = MagicMock()
         mock_db.commit = MagicMock()
         mock_db.refresh = MagicMock()
@@ -3701,8 +3648,8 @@ class TestResourceBulkRegistration:
         result = await resource_service.register_resources_bulk(db=mock_db, resources=resources, created_by="tester")
 
         assert result["created"] == 10
-        # Exactly 2 SELECTs for the whole chunk (URI batch + name batch), not 2 + 10.
-        assert mock_db.execute.call_count == 2
+        # Exactly 1 SELECT for the whole chunk (URI batch only, no separate name batch).
+        assert mock_db.execute.call_count == 1
 
     @pytest.mark.asyncio
     async def test_register_resources_bulk_team_scope_without_team_id_raises(self, resource_service, mock_db):
@@ -5221,12 +5168,10 @@ class TestResourceServiceCoverageEdges:
         existing.enabled = True
         existing.id = "existing-id"
         existing.visibility = "team"
-        # First execute() call is the name check (no conflict), second is the URI check (conflict).
-        no_match = MagicMock()
-        no_match.scalar_one_or_none.return_value = None
+        # The only execute() call is the URI uniqueness check (name check was removed).
         uri_match = MagicMock()
         uri_match.scalar_one_or_none.return_value = existing
-        mock_db.execute.side_effect = [no_match, uri_match]
+        mock_db.execute.return_value = uri_match
 
         with pytest.raises(ResourceURIConflictError) as exc_info:
             await resource_service.register_resource(mock_db, sample_resource_create, visibility="team", team_id="team-1")
