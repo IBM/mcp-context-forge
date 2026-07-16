@@ -247,4 +247,27 @@ describe("PromptDetailsPanel", () => {
 
     expect(screen.getByText("Local prompt · private · 1 argument")).toBeInTheDocument();
   });
+
+  it("calls onAddTag with the merged, de-duplicated tag list", async () => {
+    const user = userEvent.setup();
+    const onAddTag = vi.fn().mockResolvedValue(undefined);
+    const prompt = mockPrompt({ id: "p1", tags: [{ id: "dev", label: "dev" }] });
+
+    render(
+      <PromptDetailsPanel
+        prompts={[prompt]}
+        title="hugging-face"
+        open={true}
+        onClose={vi.fn()}
+        onAddTag={onAddTag}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Add tags" }));
+    await user.type(screen.getByPlaceholderText("Add tags separated with commas"), "alerts, dev");
+    await user.click(screen.getByRole("button", { name: "Add" }));
+
+    // "dev" already exists and is dropped; "alerts" is appended.
+    expect(onAddTag).toHaveBeenCalledWith("p1", ["dev", "alerts"]);
+  });
 });

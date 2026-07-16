@@ -94,4 +94,33 @@ describe("promptsApi", () => {
       );
     });
   });
+
+  describe("updateTags", () => {
+    it("PUTs /prompts/:id with a tags-only body and returns the updated prompt", async () => {
+      const updated = { id: "prompt-1", tags: [{ id: "draft", label: "draft" }] };
+      mockFetch.mockResolvedValueOnce(
+        new Response(JSON.stringify(updated), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+
+      const result = await promptsApi.updateTags("prompt-1", ["draft"]);
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining("/prompts/prompt-1"),
+        expect.objectContaining({
+          method: "PUT",
+          body: JSON.stringify({ tags: ["draft"] }),
+        }),
+      );
+      expect(result).toEqual(updated);
+    });
+
+    it("throws synchronously for an invalid prompt ID", () => {
+      expect(() => promptsApi.updateTags("../etc/passwd", ["x"])).toThrow(
+        "Invalid prompt ID format",
+      );
+    });
+  });
 });

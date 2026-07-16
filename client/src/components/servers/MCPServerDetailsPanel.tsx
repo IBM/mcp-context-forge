@@ -8,7 +8,6 @@ import {
   Loader2,
   MessageSquareCode,
   PanelRightClose,
-  Plus,
   Search,
   Server,
   Users,
@@ -17,6 +16,7 @@ import {
 import { MCPIcon } from "@/components/icons/MCPIcon";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { InlineTagAdd } from "@/components/ui/inline-tag-add";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import type { MCPServer as BaseMCPServer, VirtualServerTag } from "@/types/server";
@@ -139,11 +139,18 @@ export function MCPServerDetailsPanel({
   error,
   open,
   onClose,
+  onAddTag,
 }: {
   server: MCPServer | null;
   error: { message: string } | null;
   open: boolean;
   onClose: () => void;
+  /**
+   * Persists the server's full tag list after an inline add. Receives the server
+   * (gateway) ID and the new complete list of tag labels. When omitted, the tag
+   * row shows a non-interactive "add" affordance.
+   */
+  onAddTag?: (serverId: string, tags: string[]) => Promise<void>;
 }) {
   const [activeTab, setActiveTab] = useState<ComponentTab>("all");
   const [searchQuery, setSearchQuery] = useState("");
@@ -543,49 +550,34 @@ export function MCPServerDetailsPanel({
                       <span className="text-foreground">{server.team}</span>
                     </DetailRow>
                   )}
-                  <DetailRow label="Tags" className="items-center">
-                    <div className="flex min-w-0 flex-wrap items-center gap-2">
-                      {(server.tags || []).length > 0 ? (
-                        <>
-                          {(server.tags || []).map((tag, index) => {
-                            const tagLabel =
-                              typeof tag === "string"
-                                ? tag
-                                : tag.label || tag.name || tag.value || tag.id || "Tag";
-                            const tagKey = typeof tag === "string" ? tag : tag.id || tagLabel;
-                            return (
-                              <Badge
-                                key={`${tagKey}-${index}`}
-                                variant="outline"
-                                className="rounded-full px-2 py-0 text-[11px] font-medium text-muted-foreground"
-                              >
-                                {tagLabel}
-                              </Badge>
-                            );
-                          })}
-                          <button
-                            type="button"
-                            tabIndex={-1}
-                            aria-hidden="true"
-                            className="flex items-center gap-1 text-[12px] text-muted-foreground hover:text-foreground"
+                  {(() => {
+                    const tagLabels = (server.tags || []).map((tag) =>
+                      typeof tag === "string"
+                        ? tag
+                        : tag.label || tag.name || tag.value || tag.id || "Tag",
+                    );
+                    return (
+                      <InlineTagAdd
+                        label="Tags"
+                        existingTags={tagLabels}
+                        onAdd={
+                          onAddTag && server.id
+                            ? (newTags) => onAddTag(server.id, [...tagLabels, ...newTags])
+                            : undefined
+                        }
+                      >
+                        {tagLabels.map((tagLabel, index) => (
+                          <Badge
+                            key={`${tagLabel}-${index}`}
+                            variant="outline"
+                            className="rounded-full px-2 py-0 text-[11px] font-medium text-muted-foreground"
                           >
-                            <Plus className="size-3" aria-hidden="true" />
-                            add
-                          </button>
-                        </>
-                      ) : (
-                        <button
-                          type="button"
-                          tabIndex={-1}
-                          aria-hidden="true"
-                          className="flex items-center gap-1 text-[12px] text-muted-foreground hover:text-foreground"
-                        >
-                          <Plus className="size-3" aria-hidden="true" />
-                          add
-                        </button>
-                      )}
-                    </div>
-                  </DetailRow>
+                            {tagLabel}
+                          </Badge>
+                        ))}
+                      </InlineTagAdd>
+                    );
+                  })()}
                   {server.owner_email && (
                     <DetailRow label="Owner">
                       <span className="text-foreground">{server.owner_email}</span>

@@ -109,5 +109,6 @@
   "tools.form.error.generateSchema.specAuthRequired": "O endpoint da especificação OpenAPI requer autenticação (retornou 401/403). O gateway obtém a especificação sem credenciais — forneça uma URL direta para uma especificação acessível ou adicione os esquemas manualmente.",
   "tools.form.error.generateSchema.generic": "Algo deu errado ao gerar o esquema. Tente novamente.",
   "tools.form.error.updateFailed": "Falha ao atualizar a ferramenta. Tente novamente.",
-  "tools.form.error.createFailed": "Falha ao criar a ferramenta. Tente novamente."
+  "tools.form.error.createFailed": "Falha ao criar a ferramenta. Tente novamente.",
+  "tools.tags.addError": "Falha ao adicionar a tag. Tente novamente."
 }

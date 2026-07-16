@@ -7,12 +7,13 @@ import { VirtualServerDetailsPanel } from "@/components/gateways/VirtualServerDe
 import { hasVirtualServerComponents } from "@/components/gateways/utils";
 import { ConfirmDialog } from "@/components/servers/ConfirmDialog";
 import { Loading } from "@/components/ui/loading";
-import { deleteVirtualServer } from "@/api/virtualServers";
+import { deleteVirtualServer, updateVirtualServerTags } from "@/api/virtualServers";
+import { ApiError } from "@/api/client";
 import { useQuery } from "@/hooks/useQuery";
 import { useRouter } from "@/router";
 import type { VirtualServer, VirtualServersResponse } from "@/types/server";
 import { cn } from "@/lib/utils";
-import { sanitizeError } from "@/utils/errors";
+import { extractApiErrorDetail, sanitizeError } from "@/utils/errors";
 
 const DEFAULT_PAGE_SIZE = 12;
 const SERVERS_QUERY_PATH = `/servers?limit=${DEFAULT_PAGE_SIZE}&include_pagination=true`;
@@ -248,10 +249,28 @@ function VirtualServerDetailsPanelContainer({
   onClose: () => void;
   onAddSources: (server: VirtualServer) => void;
 }) {
-  const { data: serverDetails, error } = useQuery<VirtualServer>(
-    `/servers/${encodeURIComponent(serverId)}`,
-  );
+  const intl = useIntl();
+  const {
+    data: serverDetails,
+    error,
+    setData: setServerDetails,
+  } = useQuery<VirtualServer>(`/servers/${encodeURIComponent(serverId)}`);
   const hydratedServer = serverDetails?.id === serverId ? serverDetails : server;
+
+  const handleAddTag = useCallback(
+    async (id: string, tags: string[]) => {
+      try {
+        const updated = await updateVirtualServerTags(id, tags);
+        // Patch the fetched detail in place rather than refetching the server.
+        setServerDetails((prev) => (prev && prev.id === updated.id ? updated : prev));
+      } catch (err) {
+        const detail = err instanceof ApiError ? extractApiErrorDetail(err.body) : null;
+        toast.error(detail || intl.formatMessage({ id: "gateways.tags.addError" }));
+        throw err;
+      }
+    },
+    [setServerDetails, intl],
+  );
 
   if (!hydratedServer) {
     return null;
@@ -265,6 +284,7 @@ function VirtualServerDetailsPanelContainer({
       open={open}
       onClose={onClose}
       onAddSources={() => onAddSources(hydratedServer)}
+      onAddTag={handleAddTag}
     />
   );
 }

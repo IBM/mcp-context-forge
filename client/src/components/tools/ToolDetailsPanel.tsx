@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { useIntl } from "react-intl";
-import { Activity, Copy, Globe, PanelRightClose, Plus, Wrench } from "lucide-react";
+import { Activity, Copy, Globe, PanelRightClose, Wrench } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { InlineTagAdd } from "@/components/ui/inline-tag-add";
 import { cn } from "@/lib/utils";
 import type { Tool } from "@/types/tool";
 import { copyToClipboard } from "@/lib/clipboard";
@@ -56,6 +57,7 @@ export function ToolDetailsPanel({
   onDeleteTool,
   onEditTool,
   onToggleTool,
+  onAddTag,
 }: {
   tools: Tool[];
   gatewaySlug: string;
@@ -65,6 +67,12 @@ export function ToolDetailsPanel({
   onDeleteTool?: (toolId: string) => void;
   onEditTool?: (tool: Tool) => void;
   onToggleTool?: (tool: Tool) => void;
+  /**
+   * Persists the tool's full tag list after an inline add. Receives the tool ID
+   * and the new complete list of tag labels. When omitted, the tag row shows a
+   * non-interactive "add" affordance.
+   */
+  onAddTag?: (toolId: string, tags: string[]) => Promise<void>;
 }) {
   const intl = useIntl();
   const [selectedTool, setSelectedTool] = useState<Tool | null>(null);
@@ -266,48 +274,32 @@ export function ToolDetailsPanel({
                           />
                         </DetailRow>
                       )}
-                      <DetailRow
-                        label={intl.formatMessage({ id: "tools.details.label.tags" })}
-                        className="items-center"
-                      >
-                        <div className="flex min-w-0 flex-wrap items-center gap-2">
-                          {(selectedTool.tags || []).length > 0 ? (
-                            <>
-                              {(selectedTool.tags || []).map((tag, index) => {
-                                const label = typeof tag === "string" ? tag : tag.label;
-                                return (
-                                  <Badge
-                                    key={`${label}-${index}`}
-                                    variant="outline"
-                                    className="rounded-full px-2 py-0 text-[11px] font-medium text-muted-foreground"
-                                  >
-                                    {label}
-                                  </Badge>
-                                );
-                              })}
-                              <button
-                                type="button"
-                                tabIndex={-1}
-                                aria-hidden="true"
-                                className="flex items-center gap-1 text-[12px] text-muted-foreground hover:text-foreground"
+                      {(() => {
+                        const tagLabels = (selectedTool.tags || []).map((tag) =>
+                          typeof tag === "string" ? tag : tag.label,
+                        );
+                        return (
+                          <InlineTagAdd
+                            label={intl.formatMessage({ id: "tools.details.label.tags" })}
+                            existingTags={tagLabels}
+                            onAdd={
+                              onAddTag
+                                ? (newTags) => onAddTag(selectedTool.id, [...tagLabels, ...newTags])
+                                : undefined
+                            }
+                          >
+                            {tagLabels.map((label, index) => (
+                              <Badge
+                                key={`${label}-${index}`}
+                                variant="outline"
+                                className="rounded-full px-2 py-0 text-[11px] font-medium text-muted-foreground"
                               >
-                                <Plus className="size-3" aria-hidden="true" />
-                                {intl.formatMessage({ id: "tools.details.addTag" })}
-                              </button>
-                            </>
-                          ) : (
-                            <button
-                              type="button"
-                              tabIndex={-1}
-                              aria-hidden="true"
-                              className="flex items-center gap-1 text-[12px] text-muted-foreground hover:text-foreground"
-                            >
-                              <Plus className="size-3" aria-hidden="true" />
-                              {intl.formatMessage({ id: "tools.details.addTag" })}
-                            </button>
-                          )}
-                        </div>
-                      </DetailRow>
+                                {label}
+                              </Badge>
+                            ))}
+                          </InlineTagAdd>
+                        );
+                      })()}
                     </dl>
                   </div>
 
