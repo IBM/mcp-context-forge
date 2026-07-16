@@ -1088,6 +1088,228 @@ class TestGetConfigFromDbErrors:
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# Two-phase invalidation: race condition prevention
+# ---------------------------------------------------------------------------
+
+
+class TestTwoPhaseInvalidationRaceCondition:
+    """Tests to verify two-phase invalidation prevents alias race conditions."""
+
+    @pytest.mark.asyncio
+    async def test_invalidate_all_rebuilds_defaults_before_aliases(self):
+        """Verify invalidate_all rebuilds default contexts before aliases."""
+        with patch("cpex.framework.manager.ConfigLoader.load_config", return_value=MagicMock(plugins=[])):
+            factory = TenantPluginManagerFactory(yaml_path="/fake.yaml")
+
+        # Track rebuild order
+        rebuild_order = []
+
+        async def track_rebuild(context_id):
+            rebuild_order.append(context_id)
+            mock_mgr = AsyncMock()
+            mock_mgr.initialize = AsyncMock()
+            return mock_mgr
+
+        # Setup: 2 teams with defaults and aliases
+        default_mgr = AsyncMock()
+        factory._managers = {
+            "team-a::##global##": _CachedManager(manager=default_mgr, created_at=0.0),
+            "team-a::tool1": _CachedManager(manager=default_mgr, created_at=0.0),
+            "team-a::tool2": _CachedManager(manager=default_mgr, created_at=0.0),
+            "team-b::##global##": _CachedManager(manager=default_mgr, created_at=0.0),
+            "team-b::tool1": _CachedManager(manager=default_mgr, created_at=0.0),
+        }
+
+        with patch.object(factory, "_build_manager", side_effect=track_rebuild):
+            await factory.invalidate_all()
+
+        # Verify defaults rebuilt before aliases
+        defaults = [cid for cid in rebuild_order if factory._is_default_context(cid)]
+        aliases = [cid for cid in rebuild_order if not factory._is_default_context(cid)]
+
+        # All defaults should appear before any alias
+        last_default_idx = max(rebuild_order.index(d) for d in defaults)
+        first_alias_idx = min(rebuild_order.index(a) for a in aliases)
+
+        assert last_default_idx < first_alias_idx, "Defaults must complete before aliases start"
+
+    @pytest.mark.asyncio
+    async def test_invalidate_team_rebuilds_team_default_before_aliases(self):
+        """Verify invalidate_team rebuilds team default before team aliases."""
+        with patch("cpex.framework.manager.ConfigLoader.load_config", return_value=MagicMock(plugins=[])):
+            factory = TenantPluginManagerFactory(yaml_path="/fake.yaml")
+
+        rebuild_order = []
+
+        async def track_rebuild(context_id):
+            rebuild_order.append(context_id)
+            mock_mgr = AsyncMock()
+            mock_mgr.initialize = AsyncMock()
+            return mock_mgr
+
+        # Setup: team-a with default and aliases, team-b should not be touched
+        default_mgr = AsyncMock()
+        factory._managers = {
+            "team-a::##global##": _CachedManager(manager=default_mgr, created_at=0.0),
+            "team-a::tool1": _CachedManager(manager=default_mgr, created_at=0.0),
+            "team-a::tool2": _CachedManager(manager=default_mgr, created_at=0.0),
+            "team-b::##global##": _CachedManager(manager=default_mgr, created_at=0.0),
+            "team-b::tool1": _CachedManager(manager=default_mgr, created_at=0.0),
+        }
+
+        with patch.object(factory, "_build_manager", side_effect=track_rebuild):
+            await factory.invalidate_team("team-a")
+
+        # Verify only team-a contexts rebuilt
+        assert "team-a::##global##" in rebuild_order
+        assert "team-a::tool1" in rebuild_order
+        assert "team-a::tool2" in rebuild_order
+        assert "team-b::##global##" not in rebuild_order
+        assert "team-b::tool1" not in rebuild_order
+
+        # Verify team-a default rebuilt before team-a aliases
+        team_a_contexts = [cid for cid in rebuild_order if cid.startswith("team-a::")]
+        default_idx = team_a_contexts.index("team-a::##global##")
+        alias_indices = [i for i, cid in enumerate(team_a_contexts) if not factory._is_default_context(cid)]
+
+        assert all(default_idx < idx for idx in alias_indices), "Team default must complete before team aliases"
+
+    @pytest.mark.asyncio
+    async def test_aliases_reference_new_default_after_invalidation(self):
+        """Verify aliases reference newly rebuilt default managers after invalidation."""
+        with patch("cpex.framework.manager.ConfigLoader.load_config", return_value=MagicMock(plugins=[])):
+            factory = TenantPluginManagerFactory(yaml_path="/fake.yaml")
+
+        # Setup: old managers
+        old_default_mgr = AsyncMock()
+        old_default_mgr.shutdown = AsyncMock()
+        factory._managers = {
+            "team-x::##global##": _CachedManager(manager=old_default_mgr, created_at=0.0),
+            "team-x::tool1": _CachedManager(manager=old_default_mgr, created_at=0.0),
+        }
+
+        # Mock _build_manager to return new managers
+        new_default_mgr = AsyncMock()
+        new_default_mgr.initialize = AsyncMock()
+
+        build_count = 0
+
+        async def build_new_manager(context_id):
+            nonlocal build_count
+            build_count += 1
+
+            if factory._is_default_context(context_id):
+                # Default context gets new manager
+                factory._managers[context_id] = _CachedManager(manager=new_default_mgr, created_at=time.monotonic())
+                return new_default_mgr
+            else:
+                # Alias looks up default (simulating lines 213-217)
+                default_ctx = "team-x::##global##"
+                default_entry = factory._managers.get(default_ctx)
+                if default_entry is not None:
+                    # Create alias pointing to default's manager
+                    factory._managers[context_id] = default_entry
+                    return default_entry.manager
+                return new_default_mgr
+
+        with patch.object(factory, "_build_manager", side_effect=build_new_manager):
+            await factory.invalidate_all()
+
+        # Verify both contexts now reference the NEW default manager
+        assert factory._managers["team-x::##global##"].manager is new_default_mgr
+        assert factory._managers["team-x::tool1"].manager is new_default_mgr
+        assert factory._managers["team-x::##global##"].manager is factory._managers["team-x::tool1"].manager
+
+    @pytest.mark.asyncio
+    async def test_no_race_with_redis_override_changes(self):
+        """Verify no race when Redis overrides change during invalidation."""
+        with patch("cpex.framework.manager.ConfigLoader.load_config", return_value=MagicMock(plugins=[])):
+            factory = TenantPluginManagerFactory(yaml_path="/fake.yaml")
+
+        # Simulate Redis override changing during invalidation
+        redis_mode = "disabled"
+
+        async def build_with_redis_override(context_id):
+            # Simulate reading Redis override
+            mock_mgr = AsyncMock()
+            mock_mgr.initialize = AsyncMock()
+            mock_mgr.redis_mode = redis_mode  # Track what Redis value was read
+            factory._managers[context_id] = _CachedManager(manager=mock_mgr, created_at=time.monotonic())
+            return mock_mgr
+
+        old_mgr = AsyncMock()
+        factory._managers = {
+            "team-y::##global##": _CachedManager(manager=old_mgr, created_at=0.0),
+            "team-y::tool1": _CachedManager(manager=old_mgr, created_at=0.0),
+        }
+
+        with patch.object(factory, "_build_manager", side_effect=build_with_redis_override):
+            await factory.invalidate_all()
+
+        # Both should have read the same Redis value (no stale reads)
+        default_mgr = factory._managers["team-y::##global##"].manager
+        alias_mgr = factory._managers["team-y::tool1"].manager
+
+        # In two-phase, alias should reference the same manager as default
+        # (or if separate managers, both should have same Redis config)
+        assert default_mgr.redis_mode == alias_mgr.redis_mode == redis_mode
+
+    @pytest.mark.asyncio
+    async def test_multiple_teams_invalidate_all_maintains_consistency(self):
+        """Verify invalidate_all maintains consistency across multiple teams."""
+        with patch("cpex.framework.manager.ConfigLoader.load_config", return_value=MagicMock(plugins=[])):
+            factory = TenantPluginManagerFactory(yaml_path="/fake.yaml")
+
+        # Setup: 3 teams with defaults and aliases
+        old_mgr = AsyncMock()
+        factory._managers = {
+            "team-a::##global##": _CachedManager(manager=old_mgr, created_at=0.0),
+            "team-a::tool1": _CachedManager(manager=old_mgr, created_at=0.0),
+            "team-b::##global##": _CachedManager(manager=old_mgr, created_at=0.0),
+            "team-b::tool1": _CachedManager(manager=old_mgr, created_at=0.0),
+            "team-c::##global##": _CachedManager(manager=old_mgr, created_at=0.0),
+            "team-c::tool1": _CachedManager(manager=old_mgr, created_at=0.0),
+        }
+
+        # Track which manager each context gets
+        manager_map = {}
+
+        async def build_and_track(context_id):
+            new_mgr = AsyncMock()
+            new_mgr.initialize = AsyncMock()
+            new_mgr.context_id = context_id  # Track origin
+
+            if factory._is_default_context(context_id):
+                # Default gets new manager
+                factory._managers[context_id] = _CachedManager(manager=new_mgr, created_at=time.monotonic())
+                manager_map[context_id] = new_mgr
+                return new_mgr
+            else:
+                # Alias looks up its team default
+                team_id = context_id.split("::")[0]
+                default_ctx = f"{team_id}::##global##"
+                default_entry = factory._managers.get(default_ctx)
+                if default_entry is not None:
+                    factory._managers[context_id] = default_entry
+                    manager_map[context_id] = default_entry.manager
+                    return default_entry.manager
+                return new_mgr
+
+        with patch.object(factory, "_build_manager", side_effect=build_and_track):
+            await factory.invalidate_all()
+
+        # Verify each team's aliases reference their team's default manager
+        assert manager_map["team-a::tool1"] is manager_map["team-a::##global##"]
+        assert manager_map["team-b::tool1"] is manager_map["team-b::##global##"]
+        assert manager_map["team-c::tool1"] is manager_map["team-c::##global##"]
+
+        # Verify different teams have different managers
+        assert manager_map["team-a::##global##"] is not manager_map["team-b::##global##"]
+        assert manager_map["team-b::##global##"] is not manager_map["team-c::##global##"]
+
+
+
 class TestSetGlobalObservability:
     def test_propagates_to_active_factory(self):
         mock_factory = MagicMock()

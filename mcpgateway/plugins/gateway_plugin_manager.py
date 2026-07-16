@@ -204,12 +204,12 @@ class TenantPluginManagerFactory:
             team_id, _ = context_id.split(CONTEXT_ID_SEPARATOR, 1)
 
             if not self._is_default_context(context_id):
-                async with self._lock:
-                    new_config = await self.get_config_from_db(context_id)
+                new_config = await self.get_config_from_db(context_id)
 
         if new_config is None:
+            default_team_context = make_context_id(team_id, DEFAULT_CONTEXT_ID) if team_id else DEFAULT_CONTEXT_ID
+
             async with self._lock:
-                default_team_context = make_context_id(team_id, DEFAULT_CONTEXT_ID) if team_id else DEFAULT_CONTEXT_ID
                 default = self._managers.get(default_team_context)
                 if default is not None:
                     self._managers[context_id] = default
@@ -464,32 +464,65 @@ class TenantPluginManagerFactory:
         return overrides if overrides else None
 
     async def invalidate_all(self) -> None:
-        """Reload every cached manager concurrently, logging failures."""
+        """Reload every cached manager with two-phase approach to prevent alias race conditions.
+
+        Phase 1: Rebuild all default contexts (team-id::##global##) concurrently.
+        Phase 2: Rebuild all aliases concurrently after defaults complete.
+
+        This ensures aliases always reference the newly rebuilt default managers.
+        """
         async with self._lock:
             context_ids = list(self._managers)
-        results = await asyncio.gather(
-            *(self.reload_tenant(ctx_id) for ctx_id in context_ids),
+
+        # Phase 1: Rebuild default contexts first
+        defaults = [cid for cid in context_ids if self._is_default_context(cid)]
+        default_results = await asyncio.gather(
+            *(self.reload_tenant(ctx_id) for ctx_id in defaults),
             return_exceptions=True,
         )
-        for ctx_id, result in zip(context_ids, results):
+
+        # Phase 2: Rebuild aliases after defaults complete
+        aliases = [cid for cid in context_ids if not self._is_default_context(cid)]
+        alias_results = await asyncio.gather(
+            *(self.reload_tenant(ctx_id) for ctx_id in aliases),
+            return_exceptions=True,
+        )
+
+        # Log failures from both phases
+        for ctx_id, result in zip(defaults + aliases, default_results + alias_results):
             if isinstance(result, BaseException):
                 logger.warning("invalidate_all: reload failed for context_id=%s (%s)", ctx_id, result)
-        logger.debug("invalidate_all: rebuilt %d managers (%d failures)", len(context_ids), sum(1 for r in results if isinstance(r, BaseException)))
 
     async def invalidate_team(self, team_id: str, separator: Optional[str] = None) -> None:
-        """Reload every cached manager whose context_id starts with team_id plus separator."""
+        """Reload every cached manager whose context_id starts with team_id plus separator.
+
+        Uses two-phase approach: rebuilds team default context first, then aliases.
+        This prevents aliases from referencing stale default managers during invalidation.
+        """
         sep = separator if separator is not None else CONTEXT_ID_SEPARATOR
         prefix = f"{team_id}{sep}"
         async with self._lock:
             context_ids = [cid for cid in self._managers if cid.startswith(prefix)]
-        results = await asyncio.gather(
-            *(self.reload_tenant(ctx_id) for ctx_id in context_ids),
+
+        # Phase 1: Rebuild team default context first
+        defaults = [cid for cid in context_ids if self._is_default_context(cid)]
+        default_results = await asyncio.gather(
+            *(self.reload_tenant(ctx_id) for ctx_id in defaults),
             return_exceptions=True,
         )
-        for ctx_id, result in zip(context_ids, results):
+
+        # Phase 2: Rebuild team aliases after default completes
+        aliases = [cid for cid in context_ids if not self._is_default_context(cid)]
+        alias_results = await asyncio.gather(
+            *(self.reload_tenant(ctx_id) for ctx_id in aliases),
+            return_exceptions=True,
+        )
+
+        # Log failures from both phases
+        for ctx_id, result in zip(defaults + aliases, default_results + alias_results):
             if isinstance(result, BaseException):
                 logger.warning("invalidate_team: reload failed for context_id=%s (%s)", ctx_id, result)
-        logger.debug("invalidate_team: team=%s rebuilt %d managers (%d failures)", team_id, len(context_ids), sum(1 for r in results if isinstance(r, BaseException)))
+        logger.debug("invalidate_team: team=%s rebuilt %d managers (%d failures)", team_id, len(context_ids), sum(1 for r in (default_results + alias_results) if isinstance(r, BaseException)))
 
     def iter_context_ids(self) -> list[str]:
         """Return a snapshot of the cached context IDs."""
