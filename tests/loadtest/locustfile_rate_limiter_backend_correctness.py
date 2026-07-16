@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/loadtest/locustfile_rate_limiter_backend_correctness.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Rate limiter correctness load test.
 Validates that the RateLimiterPlugin enforces per-user limits correctly across

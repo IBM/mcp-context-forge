@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/security/test_plugin_binding_bola_fix.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
 
 Mock-based security regression tests for plugin binding BOLA fixes.

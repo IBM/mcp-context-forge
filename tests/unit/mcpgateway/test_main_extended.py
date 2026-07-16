@@ -1,9 +1,8 @@
 # -*- coding: utf-8 -*-
 
 """Location: ./tests/unit/mcpgateway/test_main_extended.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Extended tests for main.py to achieve 100% coverage.
 These tests focus on uncovered code paths including conditional branches,

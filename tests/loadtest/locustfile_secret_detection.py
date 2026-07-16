@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/loadtest/locustfile_secret_detection.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Focused load test for secrets detection plugin performance comparison.
 This locustfile is specifically designed to benchmark the secrets detection plugin

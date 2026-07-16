@@ -1,9 +1,13 @@
-"""add_name_uniqueness_constraint_to_resources
+# -*- coding: utf-8 -*-
+"""Location: ./mcpgateway/alembic/versions/279184dfd71d_add_name_uniqueness_constraint_to_.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
+SPDX-License-Identifier: Apache-2.0
+
+add_name_uniqueness_constraint_to_resources
 
 Revision ID: 279184dfd71d
 Revises: e198602c3c1e
 Create Date: 2026-06-03 12:39:27.221653
-
 """
 
 # Standard

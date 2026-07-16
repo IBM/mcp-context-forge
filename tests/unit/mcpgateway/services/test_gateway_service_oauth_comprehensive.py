@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/services/test_gateway_service_oauth_comprehensive.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Comprehensive OAuth tests for GatewayService to improve coverage.
 These tests specifically target OAuth functionality in gateway_service.py including:

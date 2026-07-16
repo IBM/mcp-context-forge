@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/services/upstream_session_registry.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Jonathan Springer, Mihai Criveti
 
 Upstream MCP session registry (1:1 per downstream session).
 Replaces the previous ``SessionAffinity`` which keyed upstream sessions by

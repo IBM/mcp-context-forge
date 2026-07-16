@@ -2,9 +2,8 @@
 # pylint: disable=no-member
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/alembic/versions/a3c38b6c2437_fix_a2a_agents_auth_value.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 fix_a2a_agents_auth_value
 

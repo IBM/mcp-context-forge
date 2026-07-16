@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/loadtest/locustfile_highthroughput.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 High-throughput Locust load test for maximum RPS.
 This locustfile is optimized for achieving 1000+ RPS by:

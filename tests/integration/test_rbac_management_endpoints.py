@@ -3,9 +3,8 @@
 # SPDX-License-Identifier: Apache-2.0
 
 """Location: ./tests/integration/test_rbac_management_endpoints.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Integration tests for RBAC enforcement on management endpoints.
 

@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/compliance/mcp_2025_11_25/conftest.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Shared fixtures for MCP 2025-11-25 compliance tests.
 """

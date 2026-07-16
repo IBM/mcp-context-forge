@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/live_gateway/plugins/test_retry_with_backoff_e2e.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 End-to-end gateway test for the cpex-retry-with-backoff plugin.
 

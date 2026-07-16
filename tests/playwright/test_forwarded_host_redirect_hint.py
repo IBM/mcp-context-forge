@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/playwright/test_forwarded_host_redirect_hint.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: ContextForge Contributors
 
 Playwright tests verifying that the OAuth redirect_uri hint in the admin UI
 reflects the ``X-Forwarded-Host`` header when the gateway is behind a proxy.

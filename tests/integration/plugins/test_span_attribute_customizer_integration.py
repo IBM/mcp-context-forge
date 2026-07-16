@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/integration/plugins/test_span_attribute_customizer_integration.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Integration tests for SpanAttributeCustomizer plugin with ObservabilityService.
 """

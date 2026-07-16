@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/helpers/router_helpers.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
 
 FastAPI router introspection helpers shared across the test suite.

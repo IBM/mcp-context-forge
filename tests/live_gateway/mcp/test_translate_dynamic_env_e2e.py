@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/live_gateway/mcp/test_translate_dynamic_env_e2e.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Manav Gupta
 
 End-to-end tests for dynamic environment variable injection.
 End-to-end tests for complete HTTP flow with dynamic environment variable injection.

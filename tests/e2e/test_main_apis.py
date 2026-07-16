@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/e2e/test_main_apis.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 End-to-end tests for ContextForge main APIs.
 This module contains comprehensive end-to-end tests for all main API endpoints in main.py.

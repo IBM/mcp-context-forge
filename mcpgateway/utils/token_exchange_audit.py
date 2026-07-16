@@ -1,5 +1,11 @@
+# -*- coding: utf-8 -*-
 # mcpgateway/utils/token_exchange_audit.py
-"""Structured audit logging for RFC 8693 token exchange. Never logs raw tokens."""
+"""Location: ./mcpgateway/utils/token_exchange_audit.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
+SPDX-License-Identifier: Apache-2.0
+
+Structured audit logging for RFC 8693 token exchange. Never logs raw tokens.
+"""
 
 # Standard
 import logging

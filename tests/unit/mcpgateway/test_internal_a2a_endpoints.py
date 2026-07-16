@@ -3,9 +3,8 @@
 # SPDX-License-Identifier: Apache-2.0
 
 """Location: ./tests/unit/mcpgateway/test_internal_a2a_endpoints.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Unit tests for the /_internal/a2a/* endpoints in mcpgateway/main.py.
 

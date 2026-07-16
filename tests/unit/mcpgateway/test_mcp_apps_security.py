@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Security regression tests for MCP Apps."""
+"""Location: ./tests/unit/mcpgateway/test_mcp_apps_security.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
+SPDX-License-Identifier: Apache-2.0
+
+Security regression tests for MCP Apps.
+"""
 
 # Standard
 from datetime import datetime, timedelta, timezone

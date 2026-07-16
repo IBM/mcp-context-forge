@@ -3,9 +3,8 @@
 # SPDX-License-Identifier: Apache-2.0
 
 """Location: ./tests/playwright/entities/test_entity_lifecycle.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Entity Lifecycle E2E Tests (REST API).
 

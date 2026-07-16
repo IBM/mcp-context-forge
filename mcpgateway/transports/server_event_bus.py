@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/transports/server_event_bus.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Server-to-client event bus for the MCP GET /mcp stream (ADR-052).
 Backs the spec-defined "Listening for messages from the server" SSE stream.

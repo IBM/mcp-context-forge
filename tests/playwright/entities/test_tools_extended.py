@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/playwright/entities/test_tools_extended.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Extended test coverage for MCP Tools management in the admin UI.
 Tests table structure, add form fields, modal interactions (View, Edit, Test),

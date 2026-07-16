@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/services/tool_plugin_binding_service.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Madhumohan Jaishankar
 
 Tool Plugin Binding Service.
 Handles upsert, retrieval, and deletion of per-tool per-tenant plugin policy bindings.

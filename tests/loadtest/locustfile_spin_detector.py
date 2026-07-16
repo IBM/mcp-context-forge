@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/loadtest/locustfile_spin_detector.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Locust load test for detecting CPU spin loop bug (Issue #2360).
 This test uses a spike/drop pattern to stress-test session cleanup:

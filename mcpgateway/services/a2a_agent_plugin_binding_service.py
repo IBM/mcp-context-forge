@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/services/a2a_agent_plugin_binding_service.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Madhumohan Jaishankar
 
 A2A Agent Plugin Binding Service.
 Handles upsert, retrieval, and deletion of per-agent per-tenant plugin policy bindings.

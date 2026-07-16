@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/common/validators.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti, Madhav Kandukuri
 
 SecurityValidator for ContextForge
 This module defines the `SecurityValidator` class, which provides centralized, configurable

@@ -1,9 +1,8 @@
 # -*- coding: utf-8 -*-
 # tests/integration/test_admin_teams_ui.py
 """Location: ./tests/integration/test_admin_teams_ui.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Integration tests for admin teams UI endpoints with actual template rendering.
 Tests verify that the HTML response contains the correct UI elements (buttons, badges)
