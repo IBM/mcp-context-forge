@@ -114,10 +114,10 @@ style-src: 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.jsdel
 - ✅ `script-src-attr` directive completely removed
 - ℹ️ `style-src 'unsafe-inline'` retained for inline style attributes (animations, positioning) - acceptable per CSP Level 3 guidance as CSS cannot execute JavaScript
 
-**Tailwind CSS Loading Strategy** (as of PR #5111, 2026-06-29):
-- **Non-air-gapped mode** (default): Uses precompiled CSS (`/static/css/tailwind.min.css`) - CSP-compliant, no `eval()` required
-- **Air-gapped mode** (`ui_airgapped=true`): Uses local Tailwind script (`/static/vendor/tailwindcss/tailwind.min.js`) for environments without external dependencies
-- Templates: `login.html` (non-air-gapped only), `change-password-required.html` (supports both modes), `admin.html` (supports both modes)
+**Tailwind CSS Loading Strategy** (updated issue #5412):
+- **All modes**: All three auth/admin templates unconditionally use precompiled CSS (`/static/css/tailwind.min.css`) - CSP-compliant, no `eval()` required in any deployment mode
+- Templates: `login.html`, `change-password-required.html`, `admin.html` — all use `<link rel="stylesheet" href=".../static/css/tailwind.min.css" />` with no airgapped branch
+- The vendored `tailwind.min.js` bundle (`/static/vendor/tailwindcss/tailwind.min.js`) is no longer referenced by any template; it used a JIT runtime that requires `eval()`, violating strict CSP
 
 ## Testing Checklist
 
