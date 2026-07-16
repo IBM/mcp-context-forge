@@ -20,6 +20,7 @@ export interface PreviewFailure {
 
 export interface PromptPreviewState {
   run: () => Promise<void>;
+  reset: () => void;
   isLoading: boolean;
   result: PreviewSuccess | null;
   error: PreviewFailure | null;
@@ -61,6 +62,22 @@ export function usePromptPreview(
     };
   }, []);
 
+  // Clears result/error and cancels any in-flight request. Callers use this
+  // to return the Preview affordances to their pristine state — e.g. when the
+  // user switches the Code-tab language, we don't want the previous run's
+  // response body to appear under a different snippet.
+  //
+  // Explicitly clears isLoading: run()'s finally-clause skips setLoading(false)
+  // when the signal is aborted (so a late resolution can't touch state after
+  // unmount), which would otherwise leave the button stuck on "Rendering…".
+  const reset = useCallback(() => {
+    abortRef.current?.abort();
+    abortRef.current = null;
+    setResult(null);
+    setError(null);
+    setLoading(false);
+  }, []);
+
   const run = useCallback(async () => {
     abortRef.current?.abort();
     const controller = new AbortController();
@@ -93,6 +110,7 @@ export function usePromptPreview(
 
   return {
     run,
+    reset,
     isLoading,
     result,
     error,
