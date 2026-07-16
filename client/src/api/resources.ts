@@ -3,7 +3,7 @@
  */
 
 import { api } from "./client";
-import type { ResourceCreate, ResourceUpdate } from "@/generated/types";
+import type { ResourceCreate, ResourceRead, ResourceUpdate } from "@/generated/types";
 
 /**
  * Validates resource ID to prevent path traversal and injection attacks
@@ -43,6 +43,18 @@ export const resourcesApi = {
   update: (id: string, data: ResourceUpdate): Promise<void> => {
     const validId = validateResourceId(id);
     return api.put(`/resources/${validId}`, data);
+  },
+
+  /**
+   * Replace a resource's tags.
+   *
+   * Sends a partial `PUT /resources/{id}` carrying only `tags`; other fields are
+   * preserved because the update service skips omitted values. Returns the
+   * updated resource so callers can patch their cache with the normalized tags.
+   */
+  updateTags: (id: string, tags: string[]): Promise<ResourceRead> => {
+    const validId = validateResourceId(id);
+    return api.put<ResourceRead>(`/resources/${validId}`, { tags });
   },
 
   /**

@@ -17,6 +17,7 @@ import {
 import { MCPIcon } from "@/components/icons/MCPIcon";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { InlineTagAdd } from "@/components/ui/inline-tag-add";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import type { MCPServer, VirtualServer } from "@/types/server";
@@ -137,12 +138,19 @@ export function VirtualServerDetailsPanel({
   open,
   onClose,
   onAddSources,
+  onAddTag,
 }: {
   server: VirtualServer | null;
   error: { message: string } | null;
   open: boolean;
   onClose: () => void;
   onAddSources: () => void;
+  /**
+   * Persists the server's full tag list after an inline add. Receives the
+   * virtual server ID and the new complete list of tag labels. When omitted, the
+   * tag row shows a non-interactive "add" affordance.
+   */
+  onAddTag?: (serverId: string, tags: string[]) => Promise<void>;
 }) {
   const intl = useIntl();
   const endpoint = server ? getVirtualServerEndpoint(server.id) : "";
@@ -681,28 +689,30 @@ export function VirtualServerDetailsPanel({
                   <DetailRow label={intl.formatMessage({ id: "gateways.details.url" })}>
                     <CopyValue label="URL" value={endpoint} />
                   </DetailRow>
-                  <DetailRow
-                    label={intl.formatMessage({ id: "gateways.details.tags" })}
-                    className="items-center"
-                  >
-                    <div className="flex min-w-0 flex-wrap items-center gap-2">
-                      {tags.map((tag) => (
-                        <Badge
-                          key={tag.key}
-                          variant="outline"
-                          className="rounded-full px-2 py-0 text-[11px] font-medium text-muted-foreground"
-                        >
-                          {tag.label}
-                        </Badge>
-                      ))}
-                      <button
-                        type="button"
-                        className="text-[12px] text-muted-foreground hover:text-foreground"
+                  {(() => {
+                    const tagLabels = tags.map((tag) => tag.label);
+                    return (
+                      <InlineTagAdd
+                        label={intl.formatMessage({ id: "gateways.details.tags" })}
+                        existingTags={tagLabels}
+                        onAdd={
+                          onAddTag && server
+                            ? (newTags) => onAddTag(server.id, [...tagLabels, ...newTags])
+                            : undefined
+                        }
                       >
-                        {intl.formatMessage({ id: "gateways.details.addTag" })}
-                      </button>
-                    </div>
-                  </DetailRow>
+                        {tags.map((tag) => (
+                          <Badge
+                            key={tag.key}
+                            variant="outline"
+                            className="rounded-full px-2 py-0 text-[11px] font-medium text-muted-foreground"
+                          >
+                            {tag.label}
+                          </Badge>
+                        ))}
+                      </InlineTagAdd>
+                    );
+                  })()}
                 </dl>
               </div>
 
