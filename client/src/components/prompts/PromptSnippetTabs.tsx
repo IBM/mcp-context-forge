@@ -11,6 +11,10 @@ import { buildTypescript } from "./snippets/buildTypescript";
 export interface PromptSnippetTabsProps {
   promptName: string;
   args: Record<string, string>;
+  /** Currently-active language tab. Controlled by the parent. */
+  value: string;
+  /** Fired when the user activates a different language tab. */
+  onValueChange: (value: string) => void;
   /** Rendered to the right of the tab row — typically the Preview button. */
   actions?: ReactNode;
 }
@@ -54,7 +58,13 @@ const SNIPPETS: SnippetSpec[] = [
   },
 ];
 
-export function PromptSnippetTabs({ promptName, args, actions }: PromptSnippetTabsProps) {
+export function PromptSnippetTabs({
+  promptName,
+  args,
+  value,
+  onValueChange,
+  actions,
+}: PromptSnippetTabsProps) {
   const intl = useIntl();
 
   const rendered = useMemo(
@@ -65,7 +75,7 @@ export function PromptSnippetTabs({ promptName, args, actions }: PromptSnippetTa
   const copiedLabel = intl.formatMessage({ id: "prompts.details.code.copySuccess" });
 
   return (
-    <Tabs defaultValue="curl">
+    <Tabs value={value} onValueChange={onValueChange}>
       <div className="mb-2 flex items-center justify-between gap-4">
         <TabsList>
           {SNIPPETS.map((spec) => (
