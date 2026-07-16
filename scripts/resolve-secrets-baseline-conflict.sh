@@ -57,13 +57,22 @@ log_info "Detected conflict in .secrets.baseline during rebase"
 log_info "Taking --theirs version to preserve incoming updates"
 git checkout --theirs .secrets.baseline
 
-# Regenerate baseline to update line numbers for current state
-log_info "Regenerating baseline with detect-secrets to update line numbers"
+# Regenerate baseline to update line numbers for files changed in this commit only
+log_info "Regenerating baseline with detect-secrets for changed files only"
 if command -v detect-secrets >/dev/null 2>&1; then
-    if detect-secrets scan --baseline .secrets.baseline --update .secrets.baseline 2>&1 | grep -q "Updated"; then
-        log_info "Baseline updated successfully with current line numbers"
+    # Get list of files changed in the commit being rebased
+    CHANGED_FILES=$(git diff-tree --no-commit-id --name-only -r REBASE_HEAD 2>/dev/null || echo "")
+
+    if [ -n "$CHANGED_FILES" ]; then
+        log_info "Scanning $(echo "$CHANGED_FILES" | wc -l | tr -d ' ') changed file(s)"
+        # Scan only the changed files and update baseline
+        if echo "$CHANGED_FILES" | xargs detect-secrets scan --baseline .secrets.baseline --update .secrets.baseline 2>&1 | grep -q "Updated"; then
+            log_info "Baseline updated successfully with current line numbers"
+        else
+            log_info "Baseline already up-to-date for changed files"
+        fi
     else
-        log_info "Baseline already up-to-date"
+        log_warn "Could not determine changed files, skipping baseline update"
     fi
 else
     log_warn "detect-secrets not found, skipping baseline regeneration"
