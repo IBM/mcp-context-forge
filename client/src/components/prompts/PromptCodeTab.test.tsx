@@ -99,4 +99,26 @@ describe("PromptCodeTab", () => {
     expect(screen.queryByRole("heading", { name: /^arguments$/i })).not.toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "curl" })).toBeInTheDocument();
   });
+
+  it("resets the Preview button and hides the response when the language tab changes", async () => {
+    vi.mocked(promptsApi.render).mockResolvedValue({
+      rendered: { messages: [{ role: "user", content: { type: "text", text: "hi" } }] },
+      status: 200,
+    });
+    const user = userEvent.setup();
+    render(<PromptCodeTab prompt={mockPrompt()} />);
+
+    await user.click(screen.getByRole("button", { name: /^preview$/i }));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /re-run/i })).toBeInTheDocument(),
+    );
+    // Status row is announced live once the run completes.
+    expect(screen.getByRole("status")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("tab", { name: "Python" }));
+
+    expect(screen.getByRole("button", { name: /^preview$/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /re-run/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
 });
