@@ -1039,6 +1039,7 @@ class Settings(BaseSettings):
     personal_team_prefix: str = Field(default="", description="Personal team naming prefix")
     max_teams_per_user: int = Field(default=50, description="Maximum number of teams a user can belong to")
     max_members_per_team: int = Field(default=100, description="Maximum number of members per team")
+    max_team_member_seeds: int = Field(default=500, description="Hard ceiling on how many members can be seeded in a single POST /teams request (validated before any write)")
     invitation_expiry_days: int = Field(default=7, description="Number of days before team invitations expire")
     require_email_verification_for_invites: bool = Field(default=True, description="Require email verification for team invitations")
 

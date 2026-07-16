@@ -6519,7 +6519,9 @@ class SuccessResponse(BaseModel):
 # Hard ceiling on how many people can be seeded in one create-team call. The real
 # limit is the team's own max_members, checked server-side; this only stops an
 # unbounded request from being accepted when that limit is configured as unlimited.
-MAX_TEAM_MEMBER_SEEDS = 500
+# Configurable via the MAX_TEAM_MEMBER_SEEDS environment variable (default 500),
+# resolved at import time.
+MAX_TEAM_MEMBER_SEEDS = settings.max_team_member_seeds
 
 
 class TeamMemberSeed(BaseModel):
