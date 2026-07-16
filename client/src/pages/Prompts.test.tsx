@@ -262,6 +262,39 @@ describe("Prompts", () => {
     expect(await screen.findByRole("menuitem", { name: "View details" })).toBeInTheDocument();
   });
 
+  it("wires the details-panel Definition row actions (Edit/Delete) from the page", async () => {
+    const user = userEvent.setup();
+    const prompts: Prompt[] = [
+      createMockPrompt({
+        id: "prompt-1",
+        name: "summarize",
+        displayName: "Summarize document",
+        gatewayId: "gw-github",
+        gatewaySlug: "gh-repo-tasks",
+      }),
+    ];
+
+    server.use(http.get("/prompts", () => HttpResponse.json(prompts)));
+
+    renderWithProviders(<Prompts />);
+
+    await waitFor(() => {
+      expect(screen.getByText("gh-repo-tasks")).toBeInTheDocument();
+    });
+
+    // Open the group's details panel.
+    await user.click(screen.getByRole("button", { name: "More options for gh-repo-tasks" }));
+    await user.click(await screen.findByRole("menuitem", { name: "View details" }));
+
+    // The Definition tab surfaces a per-row overflow menu; its Edit/Delete items
+    // only exist because Prompts.tsx passes onEdit/onDelete into the panel.
+    await user.click(await screen.findByRole("tab", { name: /definition/i }));
+    await user.click(await screen.findByRole("button", { name: /more options for summarize/i }));
+
+    expect(await screen.findByRole("menuitem", { name: "Edit" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Delete" })).toBeInTheDocument();
+  });
+
   it("collapses gateway-less prompts into a single REST prompts card", async () => {
     const prompts: Prompt[] = [
       createMockPrompt({
