@@ -438,8 +438,7 @@ class TokenStorageService:
             # token endpoint explicitly returns {"error": "invalid_grant"}, so
             # this match is based on structured type, not substring heuristics.
             logger.warning(
-                "Refresh token is permanently invalid for gateway %s (invalid_grant). "
-                "Deleting token to force re-authorization. Error: %s",
+                "Refresh token is permanently invalid for gateway %s (invalid_grant). Deleting token to force re-authorization. Error: %s",
                 token_record.gateway_id,
                 str(e),
             )
@@ -452,8 +451,7 @@ class TokenStorageService:
             # These are configuration or transient errors — NOT a permanent
             # token failure.  Preserve the token so a later retry can succeed.
             logger.error(
-                "Token refresh failed for gateway %s but error does not indicate invalid refresh token. "
-                "Preserving token for retry. Error: %s",
+                "Token refresh failed for gateway %s but error does not indicate invalid refresh token. Preserving token for retry. Error: %s",
                 token_record.gateway_id,
                 str(e),
             )
