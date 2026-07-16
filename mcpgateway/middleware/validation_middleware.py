@@ -276,18 +276,21 @@ class ValidationMiddleware(BaseHTTPMiddleware):
             return response
 
         try:  # noqa: PLW0717 - keep sanitization failures non-fatal.
-            body = response.body
+            original_body = response.body
+            body = original_body
             if isinstance(body, bytes):
                 body = body.decode("utf-8", errors="replace")
 
             # Remove control characters except newlines and tabs
             sanitized = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]", "", body)
 
-            response.body = sanitized.encode("utf-8")
-            # Only update Content-Length if we actually modified the body AND it's not compressed.
-            # The compression middleware will set Content-Length for compressed responses.
-            if sanitized != body:
-                response.headers["content-length"] = str(len(response.body))
+            final_body = sanitized.encode("utf-8")
+            response.body = final_body
+            # Update Content-Length if the actual bytes changed. This handles both:
+            # 1. Control character removal (sanitized != body)
+            # 2. UTF-8 replacement characters that change byte length (errors="replace")
+            if final_body != original_body:
+                response.headers["content-length"] = str(len(final_body))
         except Exception as e:
             logger.warning("Failed to sanitize response: %s", e)
 

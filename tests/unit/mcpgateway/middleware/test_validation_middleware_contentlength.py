@@ -221,3 +221,29 @@ async def test_validation_middleware_case_insensitive_content_encoding(validatio
     # Should skip sanitization (case-insensitive header matching)
     # Note: Starlette normalizes to lowercase, so this works
     assert result.body == original_body
+
+
+@pytest.mark.asyncio
+async def test_validation_middleware_updates_content_length_for_invalid_utf8(validation_middleware):
+    """ValidationMiddleware should update Content-Length when UTF-8 replacement characters change byte length.
+
+    Regression test for review comment on #5457 - invalid UTF-8 bytes decoded with errors="replace"
+    can produce replacement characters that change the byte length of the response body.
+    The middleware must compare original bytes to final encoded bytes, not just the string content.
+    """
+    # Invalid UTF-8 sequence: 0xFF is not valid UTF-8
+    # When decoded with errors="replace", it becomes U+FFFD (REPLACEMENT CHARACTER)
+    # U+FFFD encodes to 3 bytes in UTF-8: 0xEF 0xBF 0xBD
+    invalid_utf8_body = b"Hello \xFF World"  # 13 bytes
+    response = Response(content=invalid_utf8_body, status_code=200)
+    response.headers["content-length"] = str(len(invalid_utf8_body))  # 13
+
+    result = await validation_middleware._sanitize_response(response)
+
+    # The replacement character U+FFFD is 3 bytes, so final body is longer
+    # "Hello � World" = "Hello " (6) + 0xEF 0xBF 0xBD (3) + " World" (6) = 15 bytes
+    assert len(result.body) == 15
+    # Content-Length must be updated to reflect the actual byte length
+    assert result.headers["content-length"] == "15"
+    # Verify replacement character is present
+    assert "�" in result.body.decode("utf-8")

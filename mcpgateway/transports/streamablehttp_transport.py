@@ -4254,57 +4254,29 @@ class SessionManagerWrapper:
                 response = await post_rpc_in_process(content=body, headers=rpc_headers, timeout=30.0, auth_context=encoded_auth_context)
 
                 # Return response to client
+                # Note: Content-Length is NOT manually set to allow compression
+                # middleware to set it correctly after compression (issue #5457)
                 response_headers = [
                     (b"content-type", b"application/json"),
-                    (b"content-length", str(len(response.content)).encode()),
                 ]
                 if mcp_session_id != "not-provided":
                     response_headers.append((b"mcp-session-id", mcp_session_id.encode()))
 
-                    # Forward the inbound gateway auth header (default: Authorization,
-                    # or AUTH_HEADER_NAME when customized) so /rpc can re-authenticate
-                    # the same caller. Hardcoding "authorization" here would silently
-                    # drop auth on deployments using a custom AUTH_HEADER_NAME.
-                    _gw_auth_lower = _resolve_auth_header_name(settings).lower()
-                    if _gw_auth_lower in headers:
-                        rpc_headers[_gw_auth_lower] = headers[_gw_auth_lower]
-                    # Forward passthrough headers for upstream MCP servers (see #3640).
-                    # First-Party
-                    from mcpgateway.utils.passthrough_headers import safe_extract_and_filter_for_loopback  # pylint: disable=import-outside-toplevel
-
-                    rpc_headers.update(safe_extract_and_filter_for_loopback(headers))
-
-                    response = await client.post(
-                        f"{internal_loopback_base_url()}/rpc",
-                        content=body,
-                        headers=rpc_headers,
-                        timeout=30.0,
-                    )
-
-                    # Return response to client
-                    # Note: Content-Length is NOT manually set to allow compression
-                    # middleware to set it correctly after compression (issue #5457)
-                    response_headers = [
-                        (b"content-type", b"application/json"),
-                    ]
-                    if mcp_session_id != "not-provided":
-                        response_headers.append((b"mcp-session-id", mcp_session_id.encode()))
-
-                    await send(
-                        {
-                            "type": "http.response.start",
-                            "status": response.status_code,
-                            "headers": response_headers,
-                        }
-                    )
-                    await send(
-                        {
-                            "type": "http.response.body",
-                            "body": response.content,
-                        }
-                    )
-                    logger.debug("[HTTP_AFFINITY_FORWARDED] Response sent | Status: %s", response.status_code)
-                    return
+                await send(
+                    {
+                        "type": "http.response.start",
+                        "status": response.status_code,
+                        "headers": response_headers,
+                    }
+                )
+                await send(
+                    {
+                        "type": "http.response.body",
+                        "body": response.content,
+                    }
+                )
+                logger.debug("[HTTP_AFFINITY_FORWARDED] Response sent | Status: %s", response.status_code)
+                return
             except Exception as e:
                 logger.error("[HTTP_AFFINITY_FORWARDED] Error routing to /rpc: %s", e)
                 # Fall through to SDK handling as fallback
