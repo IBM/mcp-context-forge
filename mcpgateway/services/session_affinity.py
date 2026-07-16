@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/services/session_affinity.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Multi-worker session affinity for downstream MCP sessions.
 Keeps each downstream MCP session (identified by its ``Mcp-Session-Id``)

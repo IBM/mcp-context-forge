@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/routers/llm_config_router.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 LLM Configuration Router.
 This module provides FastAPI routes for LLM provider and model management.

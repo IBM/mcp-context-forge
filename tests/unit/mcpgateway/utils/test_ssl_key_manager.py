@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/utils/test_ssl_key_manager.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Keval Mahajan
 
 Unit tests for SSL key manager utility.
 """

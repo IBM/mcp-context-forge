@@ -1,10 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Module Description.
-Location: ./tests/unit/mcpgateway/test_settings_fields.py
-Copyright 2026
+"""Location: ./tests/unit/mcpgateway/test_settings_fields.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
+Module Description.
 Module documentation...
 """
 

@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/routers/test_reverse_proxy.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Unit tests for reverse proxy router.
 This module tests the reverse proxy functionality including WebSocket connections,

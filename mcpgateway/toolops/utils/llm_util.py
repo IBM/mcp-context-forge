@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/toolops/utils/llm_util.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Jay Bandlamudi
 
 ContextForge - Main module for using and supporting MCP-CF LLM providers in toolops modules.
 

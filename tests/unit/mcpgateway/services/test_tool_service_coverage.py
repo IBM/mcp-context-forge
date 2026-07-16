@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/services/test_tool_service_coverage.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Additional coverage tests for tool_service.py.
 

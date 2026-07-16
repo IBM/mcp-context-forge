@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/integration/test_tool_auth_headers_api.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
 
 End-to-end coverage for the ``auth_headers`` array on the JSON tool API (issue #5201).

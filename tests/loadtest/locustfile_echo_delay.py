@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/loadtest/locustfile_echo_delay.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Streamable HTTP echo-with-delay load test for ContextForge.
 Measures gateway throughput when the backend MCP tool has an artificial delay,

@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/test_team_governance_flags.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Tests for team governance feature flags: allow_team_creation, allow_team_join_requests,
 allow_team_invitations, max_teams_per_user, personal_team_prefix, and
