@@ -160,6 +160,10 @@ class TeamMemberLimitExceededError(TeamManagementError):
     """
 
 
+class JoinRequestNotFoundError(TeamManagementError, ValueError):
+    """Raised when a pending join request does not exist for the target team."""
+
+
 class TeamMemberAddError(TeamManagementError):
     """Raised when adding a member to a team fails due to database or system errors.
 
@@ -1782,10 +1786,11 @@ class TeamManagementService:
             logger.error("Failed to list join requests for team %s: %s", SecurityValidator.sanitize_log_message(team_id), e)
             return []
 
-    async def approve_join_request(self, request_id: str, approved_by: str) -> Optional[EmailTeamMember]:
+    async def approve_join_request(self, team_id: str, request_id: str, approved_by: str) -> Optional[EmailTeamMember]:
         """Approve a team join request.
 
         Args:
+            team_id: ID of the team that owns the join request
             request_id: ID of the join request
             approved_by: Email of the user approving the request
 
@@ -1797,10 +1802,10 @@ class TeamManagementService:
         """
         try:
             # Get join request
-            join_request = self.db.query(EmailTeamJoinRequest).filter(EmailTeamJoinRequest.id == request_id, EmailTeamJoinRequest.status == "pending").first()
+            join_request = self.db.query(EmailTeamJoinRequest).filter(EmailTeamJoinRequest.id == request_id, EmailTeamJoinRequest.team_id == team_id, EmailTeamJoinRequest.status == "pending").first()
 
             if not join_request:
-                raise ValueError("Join request not found or already processed")
+                raise JoinRequestNotFoundError("Join request not found or already processed")
 
             if join_request.is_expired():
                 join_request.status = "expired"
@@ -1813,13 +1818,13 @@ class TeamManagementService:
                 raise ValueError(f"User has reached the maximum team limit of {max_teams}")
 
             # Check team member limit
-            team = await self.get_team_by_id(join_request.team_id)
+            team = await self.get_team_by_id(team_id)
             if not team:
-                raise ValueError(f"Team {join_request.team_id} not found or inactive")
+                raise ValueError(f"Team {team_id} not found or inactive")
             check_team_member_capacity(self.db, team)
 
             # Add user to team
-            member = EmailTeamMember(team_id=join_request.team_id, user_email=join_request.user_email, role="member", invited_by=approved_by, joined_at=utc_now())  # New joiners are always members
+            member = EmailTeamMember(team_id=team_id, user_email=join_request.user_email, role="member", invited_by=approved_by, joined_at=utc_now())  # New joiners are always members
 
             self.db.add(member)
             # Update join request status
@@ -1828,15 +1833,15 @@ class TeamManagementService:
             join_request.reviewed_by = approved_by
 
             self.db.flush()
-            self._log_team_member_action(member.id, join_request.team_id, join_request.user_email, member.role, "added", approved_by)
+            self._log_team_member_action(member.id, team_id, join_request.user_email, member.role, "added", approved_by)
 
             self.db.refresh(member)
 
-            await self._assign_team_rbac_role(join_request.user_email, join_request.team_id, member.role, granted_by=approved_by)
-            self._invalidate_membership_caches(join_request.user_email, join_request.team_id)
-            await self.invalidate_team_member_count_cache(str(join_request.team_id))
+            await self._assign_team_rbac_role(join_request.user_email, team_id, member.role, granted_by=approved_by)
+            self._invalidate_membership_caches(join_request.user_email, team_id)
+            await self.invalidate_team_member_count_cache(str(team_id))
 
-            logger.info("Approved join request %s: user %s joined team %s", request_id, join_request.user_email, join_request.team_id)
+            logger.info("Approved join request %s: user %s joined team %s", request_id, join_request.user_email, team_id)
             return member
 
         except ValueError:
@@ -1847,10 +1852,11 @@ class TeamManagementService:
             logger.error("Failed to approve join request %s: %s", request_id, e)
             raise
 
-    async def reject_join_request(self, request_id: str, rejected_by: str) -> bool:
+    async def reject_join_request(self, team_id: str, request_id: str, rejected_by: str) -> bool:
         """Reject a team join request.
 
         Args:
+            team_id: ID of the team that owns the join request
             request_id: ID of the join request
             rejected_by: Email of the user rejecting the request
 
@@ -1862,10 +1868,10 @@ class TeamManagementService:
         """
         try:
             # Get join request
-            join_request = self.db.query(EmailTeamJoinRequest).filter(EmailTeamJoinRequest.id == request_id, EmailTeamJoinRequest.status == "pending").first()
+            join_request = self.db.query(EmailTeamJoinRequest).filter(EmailTeamJoinRequest.id == request_id, EmailTeamJoinRequest.team_id == team_id, EmailTeamJoinRequest.status == "pending").first()
 
             if not join_request:
-                raise ValueError("Join request not found or already processed")
+                raise JoinRequestNotFoundError("Join request not found or already processed")
 
             # Update join request status
             join_request.status = "rejected"
@@ -1874,7 +1880,7 @@ class TeamManagementService:
 
             self.db.commit()
 
-            logger.info("Rejected join request %s: user %s for team %s", request_id, join_request.user_email, join_request.team_id)
+            logger.info("Rejected join request %s: user %s for team %s", request_id, join_request.user_email, team_id)
             return True
 
         except Exception as e:

@@ -182,7 +182,7 @@ from mcpgateway.services.root_service import RootService, RootServiceError, Root
 from mcpgateway.services.server_service import ServerError, ServerLockConflictError, ServerNameConflictError, ServerNotFoundError, ServerService
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.tag_service import TagService
-from mcpgateway.services.team_management_service import TeamManagementService, UNSET
+from mcpgateway.services.team_management_service import JoinRequestNotFoundError, TeamManagementService, UNSET
 from mcpgateway.services.token_catalog_service import TokenCatalogService
 from mcpgateway.services.tool_service import ToolError, ToolLockConflictError, ToolNameConflictError, ToolNotFoundError, ToolService
 from mcpgateway.utils.create_jwt_token import create_jwt_token, get_jwt_token
@@ -7399,9 +7399,7 @@ async def admin_approve_join_request(
             return HTMLResponse(content='<div class="text-red-500">Only team owners can approve join requests</div>', status_code=403)
 
         # Approve join request
-        member = await team_service.approve_join_request(request_id, approved_by=user_email)
-        if not member:
-            return HTMLResponse(content='<div class="text-red-500">Join request not found</div>', status_code=404)
+        member = await team_service.approve_join_request(team_id, request_id, approved_by=user_email)
 
         response = HTMLResponse(
             content=f"""
@@ -7414,6 +7412,10 @@ async def admin_approve_join_request(
         response.headers["HX-Trigger"] = orjson.dumps({"adminTeamAction": {"teamId": team_id, "refreshJoinRequests": True, "delayMs": 1000}}).decode()
         return response
 
+    except JoinRequestNotFoundError as e:
+        return HTMLResponse(content=f'<div class="text-red-500">{html.escape(str(e))}</div>', status_code=404)
+    except ValueError as e:
+        return HTMLResponse(content=f'<div class="text-red-500">Error approving join request: {html.escape(str(e))}</div>', status_code=400)
     except Exception as e:
         LOGGER.error(f"Error approving join request {request_id}: {e}")
         return HTMLResponse(content=f'<div class="text-red-500">Error approving join request: {html.escape(str(e))}</div>', status_code=400)
@@ -7451,9 +7453,7 @@ async def admin_reject_join_request(
             return HTMLResponse(content='<div class="text-red-500">Only team owners can reject join requests</div>', status_code=403)
 
         # Reject join request
-        success = await team_service.reject_join_request(request_id, rejected_by=user_email)
-        if not success:
-            return HTMLResponse(content='<div class="text-red-500">Join request not found</div>', status_code=404)
+        await team_service.reject_join_request(team_id, request_id, rejected_by=user_email)
 
         response = HTMLResponse(
             content="""
@@ -7466,6 +7466,10 @@ async def admin_reject_join_request(
         response.headers["HX-Trigger"] = orjson.dumps({"adminTeamAction": {"teamId": team_id, "refreshJoinRequests": True, "delayMs": 1000}}).decode()
         return response
 
+    except JoinRequestNotFoundError as e:
+        return HTMLResponse(content=f'<div class="text-red-500">{html.escape(str(e))}</div>', status_code=404)
+    except ValueError as e:
+        return HTMLResponse(content=f'<div class="text-red-500">Error rejecting join request: {html.escape(str(e))}</div>', status_code=400)
     except Exception as e:
         LOGGER.error(f"Error rejecting join request {request_id}: {e}")
         return HTMLResponse(content=f'<div class="text-red-500">Error rejecting join request: {html.escape(str(e))}</div>', status_code=400)

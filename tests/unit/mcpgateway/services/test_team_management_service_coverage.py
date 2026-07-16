@@ -812,7 +812,7 @@ class TestApproveJoinRequestEdge:
             mock_settings.default_team_owner_role = "team_admin"
             mock_asyncio.create_task = MagicMock(side_effect=RuntimeError("no loop"))
 
-            result = await svc.approve_join_request("jr1", "owner@t.com")
+            result = await svc.approve_join_request("team-1", "jr1", "owner@t.com")
 
         assert result is not None
 
@@ -1448,7 +1448,7 @@ class TestApproveJoinRequestMaxTeamsLimit:
         with patch("mcpgateway.services.team_management_service.settings") as mock_settings:
             mock_settings.max_teams_per_user = 50
             with pytest.raises(ValueError, match="maximum team limit"):
-                await svc.approve_join_request("jr1", approved_by="owner@t.com")
+                await svc.approve_join_request("team-1", "jr1", approved_by="owner@t.com")
 
     @pytest.mark.asyncio
     async def test_raises_when_team_at_max_members(self, svc, db):
@@ -1474,7 +1474,7 @@ class TestApproveJoinRequestMaxTeamsLimit:
             with patch("mcpgateway.services.team_management_service.settings") as mock_settings:
                 mock_settings.max_teams_per_user = 50
                 with pytest.raises(TeamMemberLimitExceededError, match="maximum member limit"):
-                    await svc.approve_join_request("jr1", approved_by="owner@t.com")
+                    await svc.approve_join_request("team-1", "jr1", approved_by="owner@t.com")
 
 
 # ===========================================================================
