@@ -46,13 +46,28 @@ log_step "Configuring git merge driver for .secrets.baseline"
 MERGE_DRIVER_NAME="secrets-baseline"
 MERGE_DRIVER_DESC="Auto-resolve .secrets.baseline conflicts with --ours"
 MERGE_DRIVER_CMD="scripts/resolve-secrets-baseline-conflict.sh %O %A %B %P"
+MERGE_SCRIPT_PATH="scripts/resolve-secrets-baseline-conflict.sh"
 
 # Check if merge driver is already configured
 CURRENT_DRIVER=$(git config --get "merge.${MERGE_DRIVER_NAME}.driver" || echo "")
 
-if [ "$CURRENT_DRIVER" = "$MERGE_DRIVER_CMD" ]; then
+# Check if merge script has been modified (compare with git HEAD)
+SCRIPT_MODIFIED=false
+if [ -f "$MERGE_SCRIPT_PATH" ]; then
+    if git diff --quiet HEAD -- "$MERGE_SCRIPT_PATH" 2>/dev/null; then
+        log_info "Merge script is up-to-date with repository"
+    else
+        log_warn "Merge script has uncommitted changes"
+        SCRIPT_MODIFIED=true
+    fi
+fi
+
+if [ "$CURRENT_DRIVER" = "$MERGE_DRIVER_CMD" ] && [ "$SCRIPT_MODIFIED" = false ]; then
     log_info "Merge driver already configured correctly"
 else
+    if [ "$SCRIPT_MODIFIED" = true ]; then
+        log_info "Reconfiguring merge driver due to script changes"
+    fi
     git config "merge.${MERGE_DRIVER_NAME}.name" "$MERGE_DRIVER_DESC"
     git config "merge.${MERGE_DRIVER_NAME}.driver" "$MERGE_DRIVER_CMD"
     log_info "Configured merge driver: $MERGE_DRIVER_NAME"
