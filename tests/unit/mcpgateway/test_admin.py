@@ -283,7 +283,7 @@ from mcpgateway.services.prompt_service import PromptNotFoundError, PromptServic
 from mcpgateway.services.resource_service import ResourceNotFoundError, ResourceService
 from mcpgateway.services.root_service import RootService, RootServiceNotFoundError
 from mcpgateway.services.server_service import ServerService
-from mcpgateway.services.team_management_service import UNSET
+from mcpgateway.services.team_management_service import JoinRequestNotFoundError, UNSET
 from mcpgateway.services.tool_service import ToolError, ToolNotFoundError, ToolService
 from mcpgateway.utils.passthrough_headers import PassthroughHeadersError
 from mcpgateway.utils.services_auth import decode_auth
@@ -19687,11 +19687,23 @@ class TestTeamJoinRequests:
         monkeypatch.setattr("mcpgateway.admin.settings.email_auth_enabled", True, raising=False)
         ts = MagicMock()
         ts.get_user_role_in_team = AsyncMock(return_value="owner")
-        ts.approve_join_request = AsyncMock(return_value=None)
+        ts.approve_join_request = AsyncMock(side_effect=JoinRequestNotFoundError("Join request not found or already processed"))
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: ts)
 
         result = await admin_approve_join_request("team-1", "req-1", mock_db, user={"email": "owner@test.com"})
         assert result.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_admin_approve_join_request_value_error(self, monkeypatch, allow_permission, mock_db):
+        monkeypatch.setattr("mcpgateway.admin.settings.email_auth_enabled", True, raising=False)
+        ts = MagicMock()
+        ts.get_user_role_in_team = AsyncMock(return_value="owner")
+        ts.approve_join_request = AsyncMock(side_effect=ValueError("some other validation error"))
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: ts)
+
+        result = await admin_approve_join_request("team-1", "req-1", mock_db, user={"email": "owner@test.com"})
+        assert result.status_code == 400
+        assert "some other validation error" in result.body.decode()
 
     @pytest.mark.asyncio
     async def test_admin_approve_join_request_exception(self, monkeypatch, allow_permission, mock_db):
@@ -19722,11 +19734,23 @@ class TestTeamJoinRequests:
         monkeypatch.setattr("mcpgateway.admin.settings.email_auth_enabled", True, raising=False)
         ts = MagicMock()
         ts.get_user_role_in_team = AsyncMock(return_value="owner")
-        ts.reject_join_request = AsyncMock(return_value=False)
+        ts.reject_join_request = AsyncMock(side_effect=JoinRequestNotFoundError("Join request not found or already processed"))
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: ts)
 
         result = await admin_reject_join_request("team-1", "req-1", mock_db, user={"email": "owner@test.com"})
         assert result.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_admin_reject_join_request_value_error(self, monkeypatch, allow_permission, mock_db):
+        monkeypatch.setattr("mcpgateway.admin.settings.email_auth_enabled", True, raising=False)
+        ts = MagicMock()
+        ts.get_user_role_in_team = AsyncMock(return_value="owner")
+        ts.reject_join_request = AsyncMock(side_effect=ValueError("some other validation error"))
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: ts)
+
+        result = await admin_reject_join_request("team-1", "req-1", mock_db, user={"email": "owner@test.com"})
+        assert result.status_code == 400
+        assert "some other validation error" in result.body.decode()
 
     @pytest.mark.asyncio
     async def test_admin_reject_join_request_email_auth_disabled(self, monkeypatch, allow_permission, mock_db):
