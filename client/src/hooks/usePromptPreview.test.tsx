@@ -152,4 +152,70 @@ describe("usePromptPreview", () => {
     });
     expect(result.current.isLoading).toBe(false);
   });
+
+  it("reset() clears a completed run so hasRun returns to false", async () => {
+    vi.mocked(promptsApi.render).mockResolvedValue({ rendered: { messages: [] }, status: 200 });
+    const { result } = setup();
+
+    await act(async () => {
+      await result.current.run();
+    });
+    expect(result.current.hasRun).toBe(true);
+
+    act(() => {
+      result.current.reset();
+    });
+    expect(result.current.result).toBeNull();
+    expect(result.current.error).toBeNull();
+    expect(result.current.hasRun).toBe(false);
+    expect(result.current.isLoading).toBe(false);
+  });
+
+  it("reset() clears a captured error", async () => {
+    vi.mocked(promptsApi.render).mockRejectedValue(new Error("boom"));
+    const { result } = setup();
+
+    await act(async () => {
+      await result.current.run();
+    });
+    expect(result.current.error).not.toBeNull();
+
+    act(() => {
+      result.current.reset();
+    });
+    expect(result.current.error).toBeNull();
+    expect(result.current.hasRun).toBe(false);
+  });
+
+  it("reset() aborts an in-flight request and clears isLoading", async () => {
+    let capturedSignal: AbortSignal | undefined;
+    let resolve: ((v: { rendered: { messages: never[] }; status: number }) => void) | undefined;
+    vi.mocked(promptsApi.render).mockImplementation((_name, _args, opts) => {
+      capturedSignal = opts?.signal;
+      return new Promise((r) => {
+        resolve = r;
+      });
+    });
+    const { result } = setup();
+
+    act(() => {
+      void result.current.run();
+    });
+    await waitFor(() => expect(result.current.isLoading).toBe(true));
+    expect(capturedSignal?.aborted).toBe(false);
+
+    act(() => {
+      result.current.reset();
+    });
+    expect(capturedSignal?.aborted).toBe(true);
+    expect(result.current.isLoading).toBe(false);
+    expect(result.current.result).toBeNull();
+    expect(result.current.error).toBeNull();
+
+    // Late resolution after reset must not repopulate state.
+    resolve?.({ rendered: { messages: [] }, status: 200 });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(result.current.result).toBeNull();
+    expect(result.current.hasRun).toBe(false);
+  });
 });
