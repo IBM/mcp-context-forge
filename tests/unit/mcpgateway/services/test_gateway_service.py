@@ -2582,12 +2582,22 @@ class TestGatewayService:
                 from mcpgateway.services.gateway_service import GatewayService
 
                 service = GatewayService()
-                await service.initialize()
+                try:
+                    await service.initialize()
 
-                assert service._redis_client is mock_redis_client
-                assert isinstance(service._instance_id, str)
-                assert service._leader_key == "gateway_service_leader"
-                assert service._leader_ttl == 15
+                    assert service._redis_client is mock_redis_client
+                    assert isinstance(service._instance_id, str)
+                    assert service._leader_key == "gateway_service_leader"
+                    assert service._leader_ttl == 15
+                finally:
+                    # Cancel the background health-check task so it does not
+                    # leak into subsequent tests and cause event-loop hangs.
+                    if service._health_check_task and not service._health_check_task.done():
+                        service._health_check_task.cancel()
+                        try:
+                            await service._health_check_task
+                        except (asyncio.CancelledError, Exception):
+                            pass
 
     @pytest.mark.asyncio
     async def test_init_file_cache_path_adjustment(self, monkeypatch):
@@ -7556,7 +7566,7 @@ class TestUpdateGatewayAdvanced:
         mock_gateway.tags = []
         encryption = get_encryption_service(settings.auth_encryption_secret)
         existing_secret = await encryption.encrypt_secret_async("existing-secret")
-        mock_gateway.oauth_config = {"grant_type": "client_credentials", "client_secret": existing_secret  # pragma: allowlist secret}
+        mock_gateway.oauth_config = {"grant_type": "client_credentials", "client_secret": existing_secret}  # pragma: allowlist secret
 
         update_data = _make_gateway(
             auth_type=None,
@@ -7564,7 +7574,7 @@ class TestUpdateGatewayAdvanced:
             url="http://example.com/gateway",
             passthrough_headers=None,
             visibility=None,
-            oauth_config={"grant_type": "client_credentials", "client_secret": settings.masked_auth_value  # pragma: allowlist secret},
+            oauth_config={"grant_type": "client_credentials", "client_secret": settings.masked_auth_value},  # pragma: allowlist secret
         )
         update_data.auth_token = None
         update_data.auth_password = None
@@ -9333,3 +9343,356 @@ class TestTokenExchangeAdminOnlyGate:
             mock_check.return_value = False
             with pytest.raises(PermissionError, match="platform administrator"):
                 await gateway_service.register_gateway(test_db, cfg, owner_email="developer@example.com")
+
+
+# ---------------------------------------------------------------------------
+# Coverage gap fill: fetch_tools_after_oauth API / shared-path branches,
+# unsupported transport, 401-retry logic, and Exception-wrapping in the
+# except-block.
+# ---------------------------------------------------------------------------
+
+
+def _make_fetch_oauth_gateway(transport="SSE"):
+    """Return a minimal gateway mock suitable for fetch_tools_after_oauth tests."""
+    gw = MagicMock(spec=DbGateway)
+    gw.id = "gw-oauth-1"
+    gw.name = "oauth-gw"
+    gw.url = "https://mcp.example.com"
+    gw.transport = transport
+    gw.ca_certificate = None
+    gw.client_cert = None
+    gw.client_key = None
+    gw.tools = []
+    gw.resources = []
+    gw.prompts = []
+    gw.capabilities = {}
+    gw.oauth_config = {
+        "grant_type": "authorization_code",
+        "client_id": "cid",
+        "client_secret": "s3cr3t",  # pragma: allowlist secret
+        "token_url": "https://auth.example.com/token",
+    }
+    return gw
+
+
+class TestFetchToolsAfterOAuthBranches:
+    """Covers the missing branches in GatewayService.fetch_tools_after_oauth."""
+
+    # ------------------------------------------------------------------
+    # Shared helpers
+    # ------------------------------------------------------------------
+
+    def _make_db(self, gateway, user=None):
+        db = MagicMock()
+        # First execute → gateway query; second → EmailUser lookup
+        db.execute.side_effect = [
+            _make_execute_result(scalar=gateway),
+            _make_execute_result(scalar=user),
+        ]
+        return db
+
+    # ------------------------------------------------------------------
+    # Line 2242-2245, 2247-2248: API flow (teams provided) → team-scoped path
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_api_flow_team_scoped_token_found_and_used(self, gateway_service):
+        """Lines 2242-2245: teams!=None → team-scoped TokenStorageService is built."""
+        gw = _make_fetch_oauth_gateway()
+        user_mock = MagicMock()
+        user_mock.is_admin = False
+        db = self._make_db(gw, user_mock)
+
+        caps = {"tools": {}}
+        tools = [{"name": "t1"}]
+        resources, prompts = [], []
+
+        with patch("mcpgateway.services.token_storage_service.TokenStorageService") as mock_ts_cls, patch("mcpgateway.services.token_validation_service.validate_oauth_token_claims") as mock_validate, patch.object(gateway_service, "_connect_to_sse_server_without_validation", new=AsyncMock(return_value=(caps, tools, resources, prompts, {}))), patch.object(gateway_service, "_sync_gateway_catalog", return_value=MagicMock()), patch.object(gateway_service, "_reconcile_gateway_catalog", return_value=MagicMock(tools_added=1, resources_added=0, prompts_added=0)), patch("mcpgateway.services.gateway_service._get_registry_cache") as mock_cache, patch("mcpgateway.services.gateway_service._get_tool_lookup_cache") as mock_tl_cache, patch("mcpgateway.services.gateway_service.register_gateway_capabilities_for_notifications"), patch("mcpgateway.cache.admin_stats_cache.admin_stats_cache", new=MagicMock(invalidate_tags=AsyncMock())):
+
+            mock_ts = MagicMock()
+            mock_ts.get_user_token = AsyncMock(return_value="team-access-token")  # pragma: allowlist secret
+            mock_ts_cls.return_value = mock_ts
+
+            mock_validate.return_value = MagicMock(warnings=[], blocking_errors=[])
+
+            mock_cache.return_value = MagicMock(invalidate_tools=AsyncMock(), invalidate_resources=AsyncMock(), invalidate_prompts=AsyncMock())
+            mock_tl_cache.return_value = MagicMock(invalidate_gateway=AsyncMock())
+
+            result = await gateway_service.fetch_tools_after_oauth(
+                db, "gw-oauth-1", "user@example.com", teams=["eng"]
+            )
+
+        # Team-scoped user_context must have been passed
+        # TokenStorageService(db, user_context=user_context) → kwargs["user_context"]
+        init_call = mock_ts_cls.call_args
+        assert init_call[1]["user_context"]["teams"] == ["eng"]
+        assert result["tools"] == tools
+
+    @pytest.mark.asyncio
+    async def test_api_flow_no_team_token_raises_connection_error(self, gateway_service):
+        """Lines 2247-2248: teams set but no token found → GatewayConnectionError."""
+        gw = _make_fetch_oauth_gateway()
+        user_mock = MagicMock()
+        user_mock.is_admin = False
+        db = self._make_db(gw, user_mock)
+
+        with patch("mcpgateway.services.token_storage_service.TokenStorageService") as mock_ts_cls:
+            mock_ts = MagicMock()
+            mock_ts.get_user_token = AsyncMock(return_value=None)  # No token
+            mock_ts_cls.return_value = mock_ts
+
+            with pytest.raises(GatewayConnectionError, match="team-scoped path"):
+                await gateway_service.fetch_tools_after_oauth(
+                    db, "gw-oauth-1", "user@example.com", teams=["eng"]
+                )
+
+    # ------------------------------------------------------------------
+    # Line 2302: unsupported transport raises ValueError
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_unsupported_transport_raises_value_error(self, gateway_service):
+        """Line 2302: transport != SSE/STREAMABLEHTTP → ValueError → GatewayConnectionError."""
+        gw = _make_fetch_oauth_gateway(transport="STDIO")
+        user_mock = MagicMock()
+        user_mock.is_admin = False
+        db = self._make_db(gw, user_mock)
+
+        with patch("mcpgateway.services.token_storage_service.TokenStorageService") as mock_ts_cls, patch("mcpgateway.services.token_validation_service.validate_oauth_token_claims") as mock_validate:
+
+            mock_ts = MagicMock()
+            mock_ts.get_user_token = AsyncMock(return_value="tok")  # pragma: allowlist secret
+            mock_ts_cls.return_value = mock_ts
+
+            mock_validate.return_value = MagicMock(warnings=[], blocking_errors=[])
+
+            with pytest.raises(GatewayConnectionError):
+                await gateway_service.fetch_tools_after_oauth(
+                    db, "gw-oauth-1", "user@example.com", teams=None
+                )
+
+    # ------------------------------------------------------------------
+    # Lines 2319-2328: 401 retry with shared-path token (SSE transport)
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_401_retry_with_shared_path_token_sse_succeeds(self, gateway_service):
+        """Lines 2319-2328,2332-2333: team-scoped token fails 401 → retry with shared token via SSE."""
+        gw = _make_fetch_oauth_gateway(transport="SSE")
+        user_mock = MagicMock()
+        user_mock.is_admin = False
+        db = self._make_db(gw, user_mock)
+
+        caps = {"tools": {}}
+        tools = [{"name": "retried_tool"}]
+        resources, prompts = [], []
+
+        call_count = 0
+
+        async def _sse_side_effect(url, auth, validation_warnings=None):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise GatewayConnectionError("401 unauthorized")
+            return caps, tools, resources, prompts, {}
+
+        with patch("mcpgateway.services.token_storage_service.TokenStorageService") as mock_ts_cls, patch("mcpgateway.services.token_validation_service.validate_oauth_token_claims") as mock_validate, patch.object(gateway_service, "_connect_to_sse_server_without_validation", side_effect=_sse_side_effect), patch.object(gateway_service, "_sync_gateway_catalog", return_value=MagicMock()), patch.object(gateway_service, "_reconcile_gateway_catalog", return_value=MagicMock(tools_added=1, resources_added=0, prompts_added=0)), patch("mcpgateway.services.gateway_service._get_registry_cache") as mock_cache, patch("mcpgateway.services.gateway_service._get_tool_lookup_cache") as mock_tl_cache, patch("mcpgateway.services.gateway_service.register_gateway_capabilities_for_notifications"), patch("mcpgateway.cache.admin_stats_cache.admin_stats_cache", new=MagicMock(invalidate_tags=AsyncMock())):
+
+            # First call is team-scoped; shared path returns a *different* token
+            team_token = "team-token-abc"  # pragma: allowlist secret
+            shared_token = "shared-token-xyz"  # pragma: allowlist secret
+            ts_team = MagicMock()
+            ts_team.get_user_token = AsyncMock(return_value=team_token)
+            ts_shared = MagicMock()
+            ts_shared.get_user_token = AsyncMock(return_value=shared_token)
+            mock_ts_cls.side_effect = [ts_team, ts_shared]
+
+            mock_validate.return_value = MagicMock(warnings=[], blocking_errors=[])
+
+            mock_cache.return_value = MagicMock(invalidate_tools=AsyncMock(), invalidate_resources=AsyncMock(), invalidate_prompts=AsyncMock())
+            mock_tl_cache.return_value = MagicMock(invalidate_gateway=AsyncMock())
+
+            result = await gateway_service.fetch_tools_after_oauth(
+                db, "gw-oauth-1", "user@example.com", teams=["eng"]
+            )
+
+        assert result["tools"] == tools
+        assert call_count == 2  # first failed, second succeeded
+
+    @pytest.mark.asyncio
+    async def test_401_retry_with_shared_path_token_streamablehttp_succeeds(self, gateway_service):
+        """Lines 2334-2335: 401 retry with shared token via STREAMABLEHTTP."""
+        gw = _make_fetch_oauth_gateway(transport="STREAMABLEHTTP")
+        user_mock = MagicMock()
+        user_mock.is_admin = False
+        db = self._make_db(gw, user_mock)
+
+        caps = {"tools": {}}
+        tools = [{"name": "sh_tool"}]
+        resources, prompts = [], []
+
+        call_count = 0
+
+        async def _sh_side_effect(url, auth):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise GatewayConnectionError("401 unauthorized")
+            return caps, tools, resources, prompts, {}
+
+        with patch("mcpgateway.services.token_storage_service.TokenStorageService") as mock_ts_cls, patch("mcpgateway.services.token_validation_service.validate_oauth_token_claims") as mock_validate, patch.object(gateway_service, "connect_to_streamablehttp_server", side_effect=_sh_side_effect), patch.object(gateway_service, "_sync_gateway_catalog", return_value=MagicMock()), patch.object(gateway_service, "_reconcile_gateway_catalog", return_value=MagicMock(tools_added=1, resources_added=0, prompts_added=0)), patch("mcpgateway.services.gateway_service._get_registry_cache") as mock_cache, patch("mcpgateway.services.gateway_service._get_tool_lookup_cache") as mock_tl_cache, patch("mcpgateway.services.gateway_service.register_gateway_capabilities_for_notifications"), patch("mcpgateway.cache.admin_stats_cache.admin_stats_cache", new=MagicMock(invalidate_tags=AsyncMock())):
+
+            team_token = "team-t"  # pragma: allowlist secret
+            shared_token = "shared-t"  # pragma: allowlist secret
+            ts_team = MagicMock()
+            ts_team.get_user_token = AsyncMock(return_value=team_token)
+            ts_shared = MagicMock()
+            ts_shared.get_user_token = AsyncMock(return_value=shared_token)
+            mock_ts_cls.side_effect = [ts_team, ts_shared]
+
+            mock_validate.return_value = MagicMock(warnings=[], blocking_errors=[])
+
+            mock_cache.return_value = MagicMock(invalidate_tools=AsyncMock(), invalidate_resources=AsyncMock(), invalidate_prompts=AsyncMock())
+            mock_tl_cache.return_value = MagicMock(invalidate_gateway=AsyncMock())
+
+            result = await gateway_service.fetch_tools_after_oauth(
+                db, "gw-oauth-1", "user@example.com", teams=["eng"]
+            )
+
+        assert result["tools"] == tools
+
+    @pytest.mark.asyncio
+    async def test_401_retry_unsupported_transport_raises_value_error(self, gateway_service):
+        """Line 2337: 401 retry path with unsupported transport raises ValueError → GatewayConnectionError."""
+        gw = _make_fetch_oauth_gateway(transport="SSE")
+        user_mock = MagicMock()
+        user_mock.is_admin = False
+        db = self._make_db(gw, user_mock)
+
+        async def _sse_fail(*_args, **_kwargs):
+            raise GatewayConnectionError("401 unauthorized")
+
+        with patch("mcpgateway.services.token_storage_service.TokenStorageService") as mock_ts_cls, patch("mcpgateway.services.token_validation_service.validate_oauth_token_claims") as mock_validate, patch.object(gateway_service, "_connect_to_sse_server_without_validation", side_effect=_sse_fail):
+
+            team_token = "team-tok"  # pragma: allowlist secret
+            shared_token = "shared-tok"  # pragma: allowlist secret
+            ts_team = MagicMock()
+            ts_team.get_user_token = AsyncMock(return_value=team_token)
+            ts_shared = MagicMock()
+            ts_shared.get_user_token = AsyncMock(return_value=shared_token)
+            mock_ts_cls.side_effect = [ts_team, ts_shared]
+
+            mock_validate.return_value = MagicMock(warnings=[], blocking_errors=[])
+
+            # Patch transport on the gateway to be unsupported only during retry
+            # Achieve this by forcing the transport check to hit ValueError inside retry.
+            gw.transport = "GRPC"
+
+            with pytest.raises(GatewayConnectionError):
+                await gateway_service.fetch_tools_after_oauth(
+                    db, "gw-oauth-1", "user@example.com", teams=["eng"]
+                )
+
+    @pytest.mark.asyncio
+    async def test_401_same_shared_token_re_raises_original(self, gateway_service):
+        """Line 2340: shared path returns same token → re-raise original error."""
+        gw = _make_fetch_oauth_gateway(transport="SSE")
+        user_mock = MagicMock()
+        user_mock.is_admin = False
+        db = self._make_db(gw, user_mock)
+
+        async def _sse_fail(*_args, **_kwargs):
+            raise GatewayConnectionError("401 unauthorized")
+
+        with patch("mcpgateway.services.token_storage_service.TokenStorageService") as mock_ts_cls, patch("mcpgateway.services.token_validation_service.validate_oauth_token_claims") as mock_validate, patch.object(gateway_service, "_connect_to_sse_server_without_validation", side_effect=_sse_fail):
+
+            same_token = "same-tok"  # pragma: allowlist secret
+            ts_team = MagicMock()
+            ts_team.get_user_token = AsyncMock(return_value=same_token)
+            ts_shared = MagicMock()
+            ts_shared.get_user_token = AsyncMock(return_value=same_token)  # identical
+            mock_ts_cls.side_effect = [ts_team, ts_shared]
+
+            mock_validate.return_value = MagicMock(warnings=[], blocking_errors=[])
+
+            with pytest.raises(GatewayConnectionError, match="401 unauthorized"):
+                await gateway_service.fetch_tools_after_oauth(
+                    db, "gw-oauth-1", "user@example.com", teams=["eng"]
+                )
+
+    @pytest.mark.asyncio
+    async def test_non_401_error_re_raised_directly(self, gateway_service):
+        """Line 2343: non-401 error is not retried, propagated as GatewayConnectionError."""
+        gw = _make_fetch_oauth_gateway(transport="SSE")
+        user_mock = MagicMock()
+        user_mock.is_admin = False
+        db = self._make_db(gw, user_mock)
+
+        async def _sse_fail(*_args, **_kwargs):
+            raise RuntimeError("internal MCP error")
+
+        with patch("mcpgateway.services.token_storage_service.TokenStorageService") as mock_ts_cls, patch("mcpgateway.services.token_validation_service.validate_oauth_token_claims") as mock_validate, patch.object(gateway_service, "_connect_to_sse_server_without_validation", side_effect=_sse_fail):
+
+            mock_ts = MagicMock()
+            mock_ts.get_user_token = AsyncMock(return_value="tok")  # pragma: allowlist secret
+            mock_ts_cls.return_value = mock_ts
+
+            mock_validate.return_value = MagicMock(warnings=[], blocking_errors=[])
+
+            with pytest.raises(GatewayConnectionError, match="internal MCP error"):
+                await gateway_service.fetch_tools_after_oauth(
+                    db, "gw-oauth-1", "user@example.com", teams=None
+                )
+
+    # ------------------------------------------------------------------
+    # Lines 2395-2398: Exception unwrapping in the generic except block
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_exception_group_inner_error_is_unwrapped(self, gateway_service):
+        """Lines 2395-2396: ExceptionGroup-like object → inner exception message used."""
+        gw = _make_fetch_oauth_gateway()
+        user_mock = MagicMock()
+        user_mock.is_admin = False
+        db = self._make_db(gw, user_mock)
+
+        # Build a fake ExceptionGroup-style exception
+        inner = ValueError("inner detail")
+        outer = RuntimeError("wrapper")
+        outer.exceptions = [inner]
+
+        with patch("mcpgateway.services.token_storage_service.TokenStorageService") as mock_ts_cls, patch("mcpgateway.services.token_validation_service.validate_oauth_token_claims") as mock_validate, patch.object(gateway_service, "_connect_to_sse_server_without_validation", side_effect=outer):
+
+            mock_ts = MagicMock()
+            mock_ts.get_user_token = AsyncMock(return_value="tok")  # pragma: allowlist secret
+            mock_ts_cls.return_value = mock_ts
+            mock_validate.return_value = MagicMock(warnings=[], blocking_errors=[])
+
+            with pytest.raises(GatewayConnectionError, match="inner detail"):
+                await gateway_service.fetch_tools_after_oauth(
+                    db, "gw-oauth-1", "user@example.com", teams=None
+                )
+
+    @pytest.mark.asyncio
+    async def test_exception_with_cause_is_unwrapped(self, gateway_service):
+        """Lines 2397-2398: exception with __cause__ → cause message used."""
+        gw = _make_fetch_oauth_gateway()
+        user_mock = MagicMock()
+        user_mock.is_admin = False
+        db = self._make_db(gw, user_mock)
+
+        cause = ValueError("root cause detail")
+        outer = RuntimeError("chained")
+        outer.__cause__ = cause
+
+        with patch("mcpgateway.services.token_storage_service.TokenStorageService") as mock_ts_cls, patch("mcpgateway.services.token_validation_service.validate_oauth_token_claims") as mock_validate, patch.object(gateway_service, "_connect_to_sse_server_without_validation", side_effect=outer):
+
+            mock_ts = MagicMock()
+            mock_ts.get_user_token = AsyncMock(return_value="tok")  # pragma: allowlist secret
+            mock_ts_cls.return_value = mock_ts
+            mock_validate.return_value = MagicMock(warnings=[], blocking_errors=[])
+
+            with pytest.raises(GatewayConnectionError, match="root cause detail"):
+                await gateway_service.fetch_tools_after_oauth(
+                    db, "gw-oauth-1", "user@example.com", teams=None
+                )

@@ -41,7 +41,7 @@ class TestOAuthManager:
     async def test_get_access_token_client_credentials_success(self):
         """Test successful client credentials flow."""
         manager = OAuthManager()
-        credentials = {"grant_type": "client_credentials", "client_id": "test_client", "client_secret": "test_secret",  # pragma: allowlist secret "token_url": "https://oauth.example.com/token", "scopes": ["read", "write"]}
+        credentials = {"grant_type": "client_credentials", "client_id": "test_client", "client_secret": "test_secret", "token_url": "https://oauth.example.com/token", "scopes": ["read", "write"]}  # pragma: allowlist secret
 
         # Create mock response
         mock_response = MagicMock()
@@ -69,7 +69,7 @@ class TestOAuthManager:
             "username": "systemadmin@system.com",
             "password": "test_password",  # pragma: allowlist secret
             "scopes": ["openid", "profile"],
-        }
+        }  # pragma: allowlist secret
 
         # Create mock response
         mock_response = MagicMock()
@@ -139,7 +139,7 @@ class TestOAuthManager:
     async def test_get_access_token_unsupported_grant_type(self):
         """Test error handling for unsupported grant type."""
         manager = OAuthManager()
-        credentials = {"grant_type": "unsupported", "client_id": "test_client", "client_secret": "test_secret",  # pragma: allowlist secret "token_url": "https://oauth.example.com/token"}
+        credentials = {"grant_type": "unsupported", "client_id": "test_client", "client_secret": "test_secret", "token_url": "https://oauth.example.com/token"}  # pragma: allowlist secret
 
         with pytest.raises(ValueError, match="Unsupported grant type: unsupported"):
             await manager.get_access_token(credentials)
@@ -161,7 +161,7 @@ class TestOAuthManager:
     async def test_exchange_code_for_token_success(self):
         """Test successful code exchange for token."""
         manager = OAuthManager()
-        credentials = {"client_id": "test_client", "client_secret": "test_secret",  # pragma: allowlist secret "token_url": "https://oauth.example.com/token", "redirect_uri": "https://gateway.example.com/callback"}
+        credentials = {"client_id": "test_client", "client_secret": "test_secret", "token_url": "https://oauth.example.com/token", "redirect_uri": "https://gateway.example.com/callback"}  # pragma: allowlist secret
 
         # Create mock response
         mock_response = MagicMock()
@@ -187,7 +187,7 @@ class TestOAuthManager:
     async def test_get_access_token_authorization_code_requires_consent(self):
         """Test authorization_code grant is rejected for automatic token retrieval."""
         manager = OAuthManager()
-        credentials = {"grant_type": "authorization_code", "client_id": "test_client", "client_secret": "test_secret",  # pragma: allowlist secret "token_url": "https://oauth.example.com/token", "scopes": ["read", "write"]}
+        credentials = {"grant_type": "authorization_code", "client_id": "test_client", "client_secret": "test_secret", "token_url": "https://oauth.example.com/token", "scopes": ["read", "write"]}  # pragma: allowlist secret
 
         with patch.object(manager, "_get_client", new_callable=AsyncMock) as mock_get_client:
             with pytest.raises(OAuthError, match="requires user consent"):
@@ -198,7 +198,7 @@ class TestOAuthManager:
     async def test_get_access_token_authorization_code_fallback_failure(self):
         """Legacy fallback path remains disabled even when token endpoint details exist."""
         manager = OAuthManager(max_retries=1)
-        credentials = {"grant_type": "authorization_code", "client_id": "test_client", "client_secret": "test_secret",  # pragma: allowlist secret "token_url": "https://oauth.example.com/token"}
+        credentials = {"grant_type": "authorization_code", "client_id": "test_client", "client_secret": "test_secret", "token_url": "https://oauth.example.com/token"}  # pragma: allowlist secret
 
         with patch.object(manager, "_get_client", new_callable=AsyncMock) as mock_get_client:
             with pytest.raises(OAuthError, match="requires user consent"):
@@ -213,7 +213,7 @@ class TestOAuthManager:
         # Create a long secret that would be considered encrypted
         encrypted_secret = "a" * 60  # Longer than 50 chars
 
-        credentials = {"client_id": "test_client", "client_secret": encrypted_secret,  # pragma: allowlist secret "token_url": "https://oauth.example.com/token", "scopes": ["read", "write"]}
+        credentials = {"client_id": "test_client", "client_secret": encrypted_secret, "token_url": "https://oauth.example.com/token", "scopes": ["read", "write"]}  # pragma: allowlist secret
 
         with patch("mcpgateway.services.oauth_manager.get_settings") as mock_get_settings:
             mock_settings = Mock()
@@ -248,7 +248,7 @@ class TestOAuthManager:
 
         encrypted_secret = "a" * 60  # Long secret
 
-        credentials = {"client_id": "test_client", "client_secret": encrypted_secret,  # pragma: allowlist secret "token_url": "https://oauth.example.com/token"}
+        credentials = {"client_id": "test_client", "client_secret": encrypted_secret, "token_url": "https://oauth.example.com/token"}  # pragma: allowlist secret
 
         with patch("mcpgateway.services.oauth_manager.get_settings") as mock_get_settings:
             mock_get_settings.side_effect = ImportError("No encryption")
@@ -275,7 +275,7 @@ class TestOAuthManager:
 
         encrypted_secret = "a" * 60  # Long secret
 
-        credentials = {"client_id": "test_client", "client_secret": encrypted_secret,  # pragma: allowlist secret "token_url": "https://oauth.example.com/token"}
+        credentials = {"client_id": "test_client", "client_secret": encrypted_secret, "token_url": "https://oauth.example.com/token"}  # pragma: allowlist secret
 
         with patch("mcpgateway.services.oauth_manager.get_settings") as mock_get_settings:
             mock_settings = Mock()
@@ -310,7 +310,7 @@ class TestOAuthManager:
         """Test client credentials flow with form-encoded response (lines 133-138)."""
         manager = OAuthManager()
 
-        credentials = {"client_id": "test_client", "client_secret": "test_secret",  # pragma: allowlist secret "token_url": "https://oauth.example.com/token"}
+        credentials = {"client_id": "test_client", "client_secret": "test_secret", "token_url": "https://oauth.example.com/token"}  # pragma: allowlist secret
 
         # Create mock response
         mock_response = MagicMock()
@@ -333,7 +333,7 @@ class TestOAuthManager:
         """Test client credentials flow when JSON parsing fails (lines 143-147)."""
         manager = OAuthManager()
 
-        credentials = {"client_id": "test_client", "client_secret": "test_secret",  # pragma: allowlist secret "token_url": "https://oauth.example.com/token"}
+        credentials = {"client_id": "test_client", "client_secret": "test_secret", "token_url": "https://oauth.example.com/token"}  # pragma: allowlist secret
 
         # Create mock response
         mock_response = MagicMock()
@@ -358,7 +358,7 @@ class TestOAuthManager:
         """Test client credentials flow when response missing access_token (line 150)."""
         manager = OAuthManager()
 
-        credentials = {"client_id": "test_client", "client_secret": "test_secret",  # pragma: allowlist secret "token_url": "https://oauth.example.com/token"}
+        credentials = {"client_id": "test_client", "client_secret": "test_secret", "token_url": "https://oauth.example.com/token"}  # pragma: allowlist secret
 
         # Create mock response
         mock_response = MagicMock()
@@ -381,7 +381,7 @@ class TestOAuthManager:
         """Test client credentials flow final fallback error (line 162)."""
         manager = OAuthManager(max_retries=0)  # Zero retries to force fallback
 
-        credentials = {"client_id": "test_client", "client_secret": "test_secret",  # pragma: allowlist secret "token_url": "https://oauth.example.com/token"}
+        credentials = {"client_id": "test_client", "client_secret": "test_secret", "token_url": "https://oauth.example.com/token"}  # pragma: allowlist secret
 
         # Create mock client that raises RuntimeError
         mock_client = AsyncMock()
@@ -397,7 +397,7 @@ class TestOAuthManager:
         """Test client credentials flow with retry logic."""
         manager = OAuthManager(max_retries=3)
 
-        credentials = {"client_id": "test_client", "client_secret": "test_secret",  # pragma: allowlist secret "token_url": "https://oauth.example.com/token"}
+        credentials = {"client_id": "test_client", "client_secret": "test_secret", "token_url": "https://oauth.example.com/token"}  # pragma: allowlist secret
 
         # First two calls fail, third succeeds
         fail_response = MagicMock()
@@ -424,7 +424,7 @@ class TestOAuthManager:
         """Test client credentials flow when all retries are exhausted."""
         manager = OAuthManager(max_retries=1)
 
-        credentials = {"client_id": "test_client", "client_secret": "test_secret",  # pragma: allowlist secret "token_url": "https://oauth.example.com/token"}
+        credentials = {"client_id": "test_client", "client_secret": "test_secret", "token_url": "https://oauth.example.com/token"}  # pragma: allowlist secret
 
         fail_response = MagicMock()
         fail_response.status_code = 500
@@ -593,7 +593,7 @@ class TestOAuthManager:
         state_data = {"gateway_id": "wrong_gateway", "app_user_email": "test@example.com", "nonce": "state456"}
         state = base64.urlsafe_b64encode(json.dumps(state_data).encode()).decode()
 
-        credentials = {"client_id": "test_client", "client_secret": "test_secret",  # pragma: allowlist secret "token_url": "https://oauth.example.com/token", "redirect_uri": "https://gateway.example.com/oauth/callback"}
+        credentials = {"client_id": "test_client", "client_secret": "test_secret", "token_url": "https://oauth.example.com/token", "redirect_uri": "https://gateway.example.com/oauth/callback"}  # pragma: allowlist secret
 
         with pytest.raises(OAuthError):
             await manager.complete_authorization_code_flow("gateway123", "code", state, credentials)
@@ -706,7 +706,7 @@ class TestOAuthManager:
         """Test successful code exchange for tokens."""
         manager = OAuthManager()
 
-        credentials = {"client_id": "test_client", "client_secret": "test_secret",  # pragma: allowlist secret "token_url": "https://oauth.example.com/token", "redirect_uri": "https://gateway.example.com/callback"}
+        credentials = {"client_id": "test_client", "client_secret": "test_secret", "token_url": "https://oauth.example.com/token", "redirect_uri": "https://gateway.example.com/callback"}  # pragma: allowlist secret
         code = "auth_code_123"
 
         expected_response = {"access_token": "access123", "refresh_token": "refresh123", "expires_in": 3600}
@@ -731,7 +731,7 @@ class TestOAuthManager:
         """Test code exchange when server returns error."""
         manager = OAuthManager(max_retries=1)  # Reduce retries for faster test execution
 
-        credentials = {"client_id": "test_client", "client_secret": "test_secret",  # pragma: allowlist secret "token_url": "https://oauth.example.com/token", "redirect_uri": "https://gateway.example.com/callback"}
+        credentials = {"client_id": "test_client", "client_secret": "test_secret", "token_url": "https://oauth.example.com/token", "redirect_uri": "https://gateway.example.com/callback"}  # pragma: allowlist secret
         code = "invalid_code"
 
         # Create mock response
@@ -753,7 +753,7 @@ class TestOAuthManager:
         manager = OAuthManager()
 
         encrypted_secret = "a" * 60  # Long secret
-        credentials = {"client_id": "test_client", "client_secret": encrypted_secret,  # pragma: allowlist secret "token_url": "https://oauth.example.com/token", "redirect_uri": "https://gateway.example.com/callback"}
+        credentials = {"client_id": "test_client", "client_secret": encrypted_secret, "token_url": "https://oauth.example.com/token", "redirect_uri": "https://gateway.example.com/callback"}  # pragma: allowlist secret
 
         with patch("mcpgateway.services.oauth_manager.get_settings") as mock_get_settings:
             mock_settings = Mock()
@@ -839,7 +839,7 @@ class TestOAuthManager:
         manager = OAuthManager()
 
         encrypted_secret = "a" * 60  # Long secret
-        credentials = {"client_id": "test_client", "client_secret": encrypted_secret,  # pragma: allowlist secret "token_url": "https://oauth.example.com/token", "redirect_uri": "https://gateway.example.com/callback"}
+        credentials = {"client_id": "test_client", "client_secret": encrypted_secret, "token_url": "https://oauth.example.com/token", "redirect_uri": "https://gateway.example.com/callback"}  # pragma: allowlist secret
 
         with patch("mcpgateway.services.oauth_manager.get_settings") as mock_get_settings:
             mock_settings = Mock()
@@ -874,7 +874,7 @@ class TestOAuthManager:
         """Test exchange code for token with form-encoded response (lines 241-246)."""
         manager = OAuthManager()
 
-        credentials = {"client_id": "test_client", "client_secret": "test_secret",  # pragma: allowlist secret "token_url": "https://oauth.example.com/token", "redirect_uri": "https://gateway.example.com/callback"}
+        credentials = {"client_id": "test_client", "client_secret": "test_secret", "token_url": "https://oauth.example.com/token", "redirect_uri": "https://gateway.example.com/callback"}  # pragma: allowlist secret
 
         # Create mock response
         mock_response = MagicMock()
@@ -897,7 +897,7 @@ class TestOAuthManager:
         """Test exchange code for token when JSON parsing fails (lines 251-255)."""
         manager = OAuthManager()
 
-        credentials = {"client_id": "test_client", "client_secret": "test_secret",  # pragma: allowlist secret "token_url": "https://oauth.example.com/token", "redirect_uri": "https://gateway.example.com/callback"}
+        credentials = {"client_id": "test_client", "client_secret": "test_secret", "token_url": "https://oauth.example.com/token", "redirect_uri": "https://gateway.example.com/callback"}  # pragma: allowlist secret
 
         # Create mock response
         mock_response = MagicMock()
@@ -922,7 +922,7 @@ class TestOAuthManager:
         """Test exchange code for token when response missing access_token (line 258)."""
         manager = OAuthManager()
 
-        credentials = {"client_id": "test_client", "client_secret": "test_secret",  # pragma: allowlist secret "token_url": "https://oauth.example.com/token", "redirect_uri": "https://gateway.example.com/callback"}
+        credentials = {"client_id": "test_client", "client_secret": "test_secret", "token_url": "https://oauth.example.com/token", "redirect_uri": "https://gateway.example.com/callback"}  # pragma: allowlist secret
 
         # Create mock response
         mock_response = MagicMock()
@@ -945,7 +945,7 @@ class TestOAuthManager:
         """Test exchange code for token retry logic with backoff (lines 263-267)."""
         manager = OAuthManager(max_retries=2)
 
-        credentials = {"client_id": "test_client", "client_secret": "test_secret",  # pragma: allowlist secret "token_url": "https://oauth.example.com/token", "redirect_uri": "https://gateway.example.com/callback"}
+        credentials = {"client_id": "test_client", "client_secret": "test_secret", "token_url": "https://oauth.example.com/token", "redirect_uri": "https://gateway.example.com/callback"}  # pragma: allowlist secret
 
         # First call fails with ClientError
         fail_response = MagicMock()
@@ -973,7 +973,7 @@ class TestOAuthManager:
         """Test exchange code for token when all retries are exhausted (lines 265-266)."""
         manager = OAuthManager(max_retries=1)
 
-        credentials = {"client_id": "test_client", "client_secret": "test_secret",  # pragma: allowlist secret "token_url": "https://oauth.example.com/token", "redirect_uri": "https://gateway.example.com/callback"}
+        credentials = {"client_id": "test_client", "client_secret": "test_secret", "token_url": "https://oauth.example.com/token", "redirect_uri": "https://gateway.example.com/callback"}  # pragma: allowlist secret
 
         fail_response = MagicMock()
         fail_response.raise_for_status = MagicMock(side_effect=httpx.HTTPStatusError("HTTP Error", request=MagicMock(), response=MagicMock(status_code=500)))
@@ -992,7 +992,7 @@ class TestOAuthManager:
         """Test exchange code for token final fallback error (line 270)."""
         manager = OAuthManager(max_retries=0)  # Zero retries to force fallback
 
-        credentials = {"client_id": "test_client", "client_secret": "test_secret",  # pragma: allowlist secret "token_url": "https://oauth.example.com/token", "redirect_uri": "https://gateway.example.com/callback"}
+        credentials = {"client_id": "test_client", "client_secret": "test_secret", "token_url": "https://oauth.example.com/token", "redirect_uri": "https://gateway.example.com/callback"}  # pragma: allowlist secret
 
         # Create mock client that raises RuntimeError
         mock_client = AsyncMock()
@@ -1078,7 +1078,7 @@ class TestOAuthManager:
         manager = OAuthManager()
 
         encrypted_secret = "a" * 60  # Long secret
-        credentials = {"client_id": "test_client", "client_secret": encrypted_secret,  # pragma: allowlist secret "token_url": "https://oauth.example.com/token", "redirect_uri": "https://gateway.example.com/callback"}
+        credentials = {"client_id": "test_client", "client_secret": encrypted_secret, "token_url": "https://oauth.example.com/token", "redirect_uri": "https://gateway.example.com/callback"}  # pragma: allowlist secret
 
         with patch("mcpgateway.services.oauth_manager.get_settings") as mock_get_settings:
             mock_settings = Mock()
@@ -1114,7 +1114,7 @@ class TestOAuthManager:
         manager = OAuthManager()
 
         encrypted_secret = "a" * 60  # Long secret
-        credentials = {"client_id": "test_client", "client_secret": encrypted_secret,  # pragma: allowlist secret "token_url": "https://oauth.example.com/token", "redirect_uri": "https://gateway.example.com/callback"}
+        credentials = {"client_id": "test_client", "client_secret": encrypted_secret, "token_url": "https://oauth.example.com/token", "redirect_uri": "https://gateway.example.com/callback"}  # pragma: allowlist secret
 
         with patch("mcpgateway.services.oauth_manager.get_settings") as mock_get_settings:
             mock_settings = Mock()
@@ -1149,7 +1149,7 @@ class TestOAuthManager:
         """Test _exchange_code_for_tokens with form-encoded response (lines 463-468)."""
         manager = OAuthManager()
 
-        credentials = {"client_id": "test_client", "client_secret": "test_secret",  # pragma: allowlist secret "token_url": "https://oauth.example.com/token", "redirect_uri": "https://gateway.example.com/callback"}
+        credentials = {"client_id": "test_client", "client_secret": "test_secret", "token_url": "https://oauth.example.com/token", "redirect_uri": "https://gateway.example.com/callback"}  # pragma: allowlist secret
 
         # Create mock response
         mock_response = MagicMock()
@@ -1173,7 +1173,7 @@ class TestOAuthManager:
         """Test _exchange_code_for_tokens when JSON parsing fails (lines 473-477)."""
         manager = OAuthManager()
 
-        credentials = {"client_id": "test_client", "client_secret": "test_secret",  # pragma: allowlist secret "token_url": "https://oauth.example.com/token", "redirect_uri": "https://gateway.example.com/callback"}
+        credentials = {"client_id": "test_client", "client_secret": "test_secret", "token_url": "https://oauth.example.com/token", "redirect_uri": "https://gateway.example.com/callback"}  # pragma: allowlist secret
 
         # Create mock response
         mock_response = MagicMock()
@@ -1198,7 +1198,7 @@ class TestOAuthManager:
         """Test _exchange_code_for_tokens when response missing access_token (line 480)."""
         manager = OAuthManager()
 
-        credentials = {"client_id": "test_client", "client_secret": "test_secret",  # pragma: allowlist secret "token_url": "https://oauth.example.com/token", "redirect_uri": "https://gateway.example.com/callback"}
+        credentials = {"client_id": "test_client", "client_secret": "test_secret", "token_url": "https://oauth.example.com/token", "redirect_uri": "https://gateway.example.com/callback"}  # pragma: allowlist secret
 
         # Create mock response
         mock_response = MagicMock()
@@ -1221,7 +1221,7 @@ class TestOAuthManager:
         """Test _exchange_code_for_tokens final fallback error (line 492)."""
         manager = OAuthManager(max_retries=0)  # Zero retries to force fallback
 
-        credentials = {"client_id": "test_client", "client_secret": "test_secret",  # pragma: allowlist secret "token_url": "https://oauth.example.com/token", "redirect_uri": "https://gateway.example.com/callback"}
+        credentials = {"client_id": "test_client", "client_secret": "test_secret", "token_url": "https://oauth.example.com/token", "redirect_uri": "https://gateway.example.com/callback"}  # pragma: allowlist secret
 
         # Create mock client that raises RuntimeError
         mock_client = AsyncMock()
@@ -1268,7 +1268,7 @@ class TestOAuthManager:
             "client_secret": "test_secret",  # pragma: allowlist secret
             "token_url": "https://oauth.example.com/token",
             "redirect_uri": "https://gateway.example.com/callback",
-        }
+        }  # pragma: allowlist secret
         _, mock_ssl_context, mock_client, ca_cert, client_cert, client_key = self._make_ca_cert_mocks()
 
         with patch("mcpgateway.services.oauth_manager.get_cached_ssl_context", return_value=mock_ssl_context) as mock_get_ssl:
@@ -1283,7 +1283,7 @@ class TestOAuthManager:
         manager = OAuthManager()
 
         encrypted_secret = "a" * 60  # Long secret
-        credentials = {"client_id": "test_client", "client_secret": encrypted_secret,  # pragma: allowlist secret "token_url": "https://oauth.example.com/token", "redirect_uri": "https://gateway.example.com/callback"}
+        credentials = {"client_id": "test_client", "client_secret": encrypted_secret, "token_url": "https://oauth.example.com/token", "redirect_uri": "https://gateway.example.com/callback"}  # pragma: allowlist secret
 
         with patch("mcpgateway.services.oauth_manager.get_settings") as mock_get_settings:
             mock_settings = Mock()
@@ -1319,7 +1319,7 @@ class TestOAuthManager:
         manager = OAuthManager()
 
         encrypted_secret = "a" * 60  # Long secret
-        credentials = {"client_id": "test_client", "client_secret": encrypted_secret,  # pragma: allowlist secret "token_url": "https://oauth.example.com/token", "redirect_uri": "https://gateway.example.com/callback"}
+        credentials = {"client_id": "test_client", "client_secret": encrypted_secret, "token_url": "https://oauth.example.com/token", "redirect_uri": "https://gateway.example.com/callback"}  # pragma: allowlist secret
 
         with patch("mcpgateway.services.oauth_manager.get_settings") as mock_get_settings:
             mock_settings = Mock()
@@ -1354,7 +1354,7 @@ class TestOAuthManager:
         """Test successful token refresh."""
         manager = OAuthManager()
 
-        credentials = {"token_url": "https://oauth.example.com/token", "client_id": "test_client", "client_secret": "test_secret"}
+        credentials = {"token_url": "https://oauth.example.com/token", "client_id": "test_client", "client_secret": "test_secret"}  # pragma: allowlist secret
 
         # Create mock response
         mock_response = MagicMock()
@@ -1384,7 +1384,7 @@ class TestOAuthManager:
         """Test token refresh with client secret included."""
         manager = OAuthManager()
 
-        credentials = {"token_url": "https://oauth.example.com/token", "client_id": "test_client", "client_secret": "test_secret"}
+        credentials = {"token_url": "https://oauth.example.com/token", "client_id": "test_client", "client_secret": "test_secret"}  # pragma: allowlist secret
 
         # Create mock response
         mock_response = MagicMock()
@@ -1459,7 +1459,7 @@ class TestOAuthManager:
             "client_secret": "test_secret",  # pragma: allowlist secret
             "token_url": "https://oauth.example.com/token",
             "scopes": ["read", "write"],
-        }
+        }  # pragma: allowlist secret
         _, mock_ssl_context, mock_client, ca_cert, _, _ = self._make_ca_cert_mocks({"access_token": "ca_cert_token"})
 
         with patch("mcpgateway.services.oauth_manager.get_cached_ssl_context", return_value=mock_ssl_context) as mock_get_ssl:
@@ -1479,7 +1479,7 @@ class TestOAuthManager:
             "token_url": "https://oauth.example.com/token",
             "username": "user@example.com",
             "password": "secret",
-        }
+        }  # pragma: allowlist secret
         _, mock_ssl_context, mock_client, ca_cert, client_cert, client_key = self._make_ca_cert_mocks({"access_token": "password_ca_token"})
 
         with patch("mcpgateway.services.oauth_manager.get_cached_ssl_context", return_value=mock_ssl_context) as mock_get_ssl:
@@ -1497,7 +1497,7 @@ class TestOAuthManager:
             "client_id": "test_client",
             "client_secret": "test_secret",  # pragma: allowlist secret  # pragma: allowlist  # pragma: allowlist secret
             "token_url": "https://oauth.example.com/token",
-        }
+        }  # pragma: allowlist secret
         _, mock_ssl_context, mock_client, _, client_cert, client_key = self._make_ca_cert_mocks({"access_token": "mtls_token"})
 
         with patch("mcpgateway.services.oauth_manager.get_cached_ssl_context", return_value=mock_ssl_context) as mock_get_ssl:
@@ -1515,7 +1515,7 @@ class TestOAuthManager:
             "client_id": "test_client",
             "client_secret": "test_secret",  # pragma: allowlist secret  # pragma: allowlist secret
             "token_url": "https://oauth.example.com/token",
-        }
+        }  # pragma: allowlist secret
         _, _, _, _, client_cert, _ = self._make_ca_cert_mocks()
 
         with patch("mcpgateway.services.oauth_manager.get_cached_ssl_context", side_effect=ValueError("mTLS requires both client_cert and client_key")):
@@ -1531,7 +1531,7 @@ class TestOAuthManager:
             "client_id": "test_client",
             "client_secret": "test_secret",  # pragma: allowlist secret  # pragma: allowlist secret
             "token_url": "https://oauth.example.com/token",
-        }
+        }  # pragma: allowlist secret
         _, mock_ssl_context, mock_client, ca_cert, client_cert, client_key = self._make_ca_cert_mocks({"access_token": "refreshed_token", "refresh_token": "new_refresh_token"})
 
         with patch("mcpgateway.services.oauth_manager.get_cached_ssl_context", return_value=mock_ssl_context) as mock_get_ssl:
@@ -1540,3 +1540,129 @@ class TestOAuthManager:
                 assert result["access_token"] == "refreshed_token"
                 assert result["refresh_token"] == "new_refresh_token"
                 mock_get_ssl.assert_called_once_with(ca_cert, client_cert=client_cert, client_key=client_key)
+
+
+# ---------------------------------------------------------------------------
+# Coverage gap fill: team_id extraction from user_context (lines 920-921)
+# and OAuthState team_id kwarg injection (line 1238).
+# ---------------------------------------------------------------------------
+
+
+class TestOAuthManagerTeamIdExtraction:
+    """Lines 920-921: team_id is extracted from the first element of user_context.teams."""
+
+    @pytest.mark.asyncio
+    async def test_team_id_extracted_from_user_context_teams(self):
+        """Lines 919-921: when user_context has teams list, teams[0] is used as team_id."""
+        from mcpgateway.services.oauth_manager import OAuthManager
+
+        manager = OAuthManager()
+
+        mock_storage = Mock()
+        mock_storage.user_context = {"email": "user@example.com", "teams": ["eng", "sales"]}
+        manager.token_storage = mock_storage
+
+        credentials = {
+            "grant_type": "authorization_code",
+            "client_id": "cid",
+            "client_secret": "s3cr3t",  # pragma: allowlist secret
+            "authorization_url": "https://auth.example.com/authorize",
+            "token_url": "https://auth.example.com/token",
+            "redirect_uri": "https://app.example.com/callback",
+        }
+
+        with patch.object(manager, "_generate_pkce_params", return_value={"code_verifier": "verifier", "code_challenge": "challenge", "code_challenge_method": "S256"}):
+            with patch.object(manager, "_generate_state", return_value="random-state"):
+                with patch.object(manager, "_store_authorization_state", new_callable=AsyncMock) as mock_store:
+                    await manager.initiate_authorization_code_flow(
+                        "gw-1", credentials, app_user_email="user@example.com"
+                    )
+
+                    # Check that team_id was passed to _store_authorization_state
+                    mock_store.assert_awaited_once()
+                    call_kwargs = mock_store.call_args[1]
+                    assert call_kwargs["team_id"] == "eng"
+
+    @pytest.mark.asyncio
+    async def test_team_id_none_when_teams_is_empty(self):
+        """Line 919: teams is empty list → team_id stays None."""
+        from mcpgateway.services.oauth_manager import OAuthManager
+
+        manager = OAuthManager()
+
+        mock_storage = Mock()
+        mock_storage.user_context = {"email": "user@example.com", "teams": []}
+        manager.token_storage = mock_storage
+
+        credentials = {
+            "grant_type": "authorization_code",
+            "client_id": "cid",
+            "client_secret": "s3cr3t",  # pragma: allowlist secret
+            "authorization_url": "https://auth.example.com/authorize",
+            "token_url": "https://auth.example.com/token",
+            "redirect_uri": "https://app.example.com/callback",
+        }
+
+        with patch.object(manager, "_generate_pkce_params", return_value={"code_verifier": "verifier", "code_challenge": "challenge", "code_challenge_method": "S256"}):
+            with patch.object(manager, "_generate_state", return_value="random-state"):
+                with patch.object(manager, "_store_authorization_state", new_callable=AsyncMock) as mock_store:
+                    await manager.initiate_authorization_code_flow(
+                        "gw-2", credentials, app_user_email="user@example.com"
+                    )
+
+                    # Check that team_id was None
+                    mock_store.assert_awaited_once()
+                    call_kwargs = mock_store.call_args[1]
+                    assert call_kwargs["team_id"] is None
+
+
+class TestOAuthStateTeamIdField:
+    """Line 1238: OAuthState gains team_id when OAuthState has that attribute."""
+
+    @pytest.mark.asyncio
+    async def test_oauth_state_team_id_set_when_attribute_exists(self):
+        """Line 1237-1238: OAuthState.team_id attribute present AND team_id has a value → kwarg is set."""
+        from mcpgateway.db import OAuthState
+        from mcpgateway.services.oauth_manager import OAuthManager
+
+        manager = OAuthManager()
+
+        mock_storage = Mock()
+        mock_storage.user_context = {"email": "user@example.com", "teams": ["team-x"]}
+
+        # Simulate a real DB-backed token_storage
+        mock_db = MagicMock()
+        mock_db.query.return_value.filter.return_value.delete.return_value = None
+
+        added_states = []
+
+        def _add(obj):
+            added_states.append(obj)
+
+        mock_db.add.side_effect = _add
+        mock_db.commit = Mock()
+
+        # Mock get_db generator
+        def mock_get_db():
+            yield mock_db
+
+        with patch("mcpgateway.db.get_db", mock_get_db):
+            with patch("mcpgateway.services.oauth_manager.get_settings") as mock_settings:
+                settings = MagicMock()
+                settings.cache_type = "database"
+                mock_settings.return_value = settings
+
+                # Simulate the DB code path inside _store_authorization_state
+                manager.token_storage = mock_storage
+                await manager._store_authorization_state(
+                    gateway_id="gw-3",
+                    app_user_email="user@example.com",
+                    state="state-abc",
+                    code_verifier="verifier-abc",
+                    team_id="team-x",
+                )
+
+        # At least one OAuthState must have been added with team_id
+        assert added_states, "Expected OAuthState to be added"
+        if hasattr(OAuthState, "team_id"):
+            assert added_states[0].team_id == "team-x"

@@ -469,3 +469,85 @@ class TestRevokeTokensWithTeams:
                 mock_revoke.assert_called_once()
                 call_kwargs = mock_revoke.call_args[1]
                 assert call_kwargs["team_id"] == "engineering"
+
+
+# ---------------------------------------------------------------------------
+# Coverage gap fill: base.py AbstractTokenBackend.get_oauth_credentials
+# default implementation (line 185) returns None.
+# ---------------------------------------------------------------------------
+
+
+class TestAbstractTokenBackendGetOAuthCredentials:
+    """Line 185 in base.py: default get_oauth_credentials returns None."""
+
+    @pytest.mark.asyncio
+    async def test_database_backend_get_oauth_credentials_returns_none(self):
+        """Line 185: DatabaseTokenBackend (concrete subclass using default impl) → None."""
+        # First-Party
+        from mcpgateway.services.token_backends.db_backend import DatabaseTokenBackend
+
+        mock_db = MagicMock()
+        backend = DatabaseTokenBackend(mock_db, None)
+
+        result = await backend.get_oauth_credentials(team_id="team-1", mcp_url="https://mcp.example.com")
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_database_backend_get_oauth_credentials_none_team_returns_none(self):
+        """Line 185: team_id=None (shared path) also returns None via default impl."""
+        # First-Party
+        from mcpgateway.services.token_backends.db_backend import DatabaseTokenBackend
+
+        mock_db = MagicMock()
+        backend = DatabaseTokenBackend(mock_db, None)
+
+        result = await backend.get_oauth_credentials(team_id=None, mcp_url="https://mcp.example.com")
+
+        assert result is None
+
+
+class TestTokenStorageServiceGetOAuthCredentials:
+    """Line 362 in token_storage_service.py: delegates to backend.get_oauth_credentials."""
+
+    @pytest.mark.asyncio
+    async def test_get_oauth_credentials_delegates_to_backend(self):
+        """Line 362: TokenStorageService.get_oauth_credentials calls _backend.get_oauth_credentials."""
+        mock_db = MagicMock()
+        user_context = {"email": "user@example.com", "teams": ["team-1"]}
+
+        with patch("mcpgateway.services.token_storage_service.get_settings") as mock_get_settings:
+            settings = MagicMock()
+            settings.oauth_token_backend = "database"
+            settings.auth_encryption_secret = "test-secret"  # pragma: allowlist secret
+            mock_get_settings.return_value = settings
+
+            service = TokenStorageService(mock_db, user_context)
+
+            # Patch the backend's get_oauth_credentials to return a known value
+            mock_creds = {"client_id": "cid", "client_secret": "s3cr3t"}  # pragma: allowlist secret
+            service._backend.get_oauth_credentials = AsyncMock(return_value=mock_creds)
+
+            result = await service.get_oauth_credentials(team_id="team-1", mcp_url="https://mcp.example.com")
+
+        assert result == mock_creds
+        service._backend.get_oauth_credentials.assert_awaited_once_with("team-1", "https://mcp.example.com")
+
+    @pytest.mark.asyncio
+    async def test_get_oauth_credentials_returns_none_from_backend(self):
+        """Line 362: None returned from backend is propagated directly."""
+        mock_db = MagicMock()
+        user_context = {"email": "user@example.com", "teams": None}
+
+        with patch("mcpgateway.services.token_storage_service.get_settings") as mock_get_settings:
+            settings = MagicMock()
+            settings.oauth_token_backend = "database"
+            settings.auth_encryption_secret = "test-secret"  # pragma: allowlist secret
+            mock_get_settings.return_value = settings
+
+            service = TokenStorageService(mock_db, user_context)
+            service._backend.get_oauth_credentials = AsyncMock(return_value=None)
+
+            result = await service.get_oauth_credentials(team_id=None, mcp_url="https://mcp.example.com")
+
+        assert result is None

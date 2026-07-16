@@ -10,7 +10,7 @@ Tests the Vault KV v2 token storage backend.
 
 # Standard
 from datetime import datetime, timedelta, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 # Third-Party
 import httpx
@@ -1457,3 +1457,420 @@ class TestVaultTokenBackendExpiredTokenHandling:
             )
 
             assert token is None
+
+
+# ---------------------------------------------------------------------------
+# Coverage gap fill: vault_request POST/DELETE branches (lines 185, 193),
+# 4xx non-403 re-raise (247), VaultConnectionError fallback (250),
+# store_tokens cache invalidation (319-321), get_user_token cache LRU
+# move/expire paths (371-375, 377), get_token_info status paths (442, 454, 456),
+# revoke_user_tokens cache invalidation + exception path (489-491, 502-504),
+# _write_token_cache LRU eviction (521), refresh resource normalization (694).
+# ---------------------------------------------------------------------------
+
+
+def _make_vault_backend(cache_enabled=False, cache_max_size=3, cache_ttl=300):
+    """Return a VaultTokenBackend with a mock DB and settings."""
+    from pydantic import SecretStr
+
+    mock_db = MagicMock()
+    mock_settings = MagicMock()
+    mock_settings.vault_addr = "http://127.0.0.1:8200"
+    mock_settings.vault_token = SecretStr("hvs.test")
+    mock_settings.vault_namespace = ""
+    mock_settings.vault_kv_mount = "secret"
+    mock_settings.vault_kv_path_prefix = "cf/oauth"
+    mock_settings.vault_tls_verify = True
+    mock_settings.vault_token_cache_enabled = cache_enabled
+    mock_settings.vault_token_cache_ttl = cache_ttl
+    mock_settings.vault_token_cache_max_size = cache_max_size
+    return VaultTokenBackend(mock_db, mock_settings)
+
+
+class TestVaultRequestHttpMethods:
+    """Lines 185, 193: POST and 404 branches in _vault_request."""
+
+    @pytest.mark.asyncio
+    async def test_vault_request_post_method_sends_json(self):
+        """Line 185: POST method sends data as JSON body."""
+        backend = _make_vault_backend()
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.raise_for_status = Mock()
+        mock_response.text = '{"data": {}}'
+        mock_response.json = Mock(return_value={"data": {}})
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("mcpgateway.services.token_backends.vault_backend.httpx.AsyncClient", return_value=mock_client):
+            result = await backend._vault_request("POST", "secret/data/path", {"key": "value"})
+
+        mock_client.post.assert_called_once()
+        assert result is not None
+
+    @pytest.mark.asyncio
+    async def test_vault_request_returns_none_on_404(self):
+        """Line 193: 404 response → None returned (token not found)."""
+        backend = _make_vault_backend()
+
+        mock_response = MagicMock()
+        mock_response.status_code = 404
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_response)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("mcpgateway.services.token_backends.vault_backend.httpx.AsyncClient", return_value=mock_client):
+            result = await backend._vault_request("GET", "secret/data/missing")
+
+        assert result is None
+
+
+class TestVaultRequestRetryAndErrorPaths:
+    """Lines 247, 250: non-403 4xx re-raise and retry-exhaustion fallback."""
+
+    @pytest.mark.asyncio
+    async def test_non_403_http_error_re_raises_immediately(self):
+        """Line 247: 401 HTTPStatusError (non-403, non-5xx) → re-raise without retry."""
+        backend = _make_vault_backend()
+
+        error_response = MagicMock()
+        error_response.status_code = 401
+        exc = httpx.HTTPStatusError("401 Unauthorized", request=MagicMock(), response=error_response)
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(side_effect=exc)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("mcpgateway.services.token_backends.vault_backend.httpx.AsyncClient", return_value=mock_client):
+            with pytest.raises(httpx.HTTPStatusError):
+                await backend._vault_request("GET", "secret/data/path")
+
+    @pytest.mark.asyncio
+    async def test_retry_exhaustion_raises_vault_connection_error(self):
+        """Line 250: all 3 retries fail with 5xx → VaultConnectionError raised."""
+        backend = _make_vault_backend()
+
+        error_response = MagicMock()
+        error_response.status_code = 503
+
+        def _make_exc(*_args, **_kwargs):
+            raise httpx.HTTPStatusError("503", request=MagicMock(), response=error_response)
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(side_effect=_make_exc)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("mcpgateway.services.token_backends.vault_backend.httpx.AsyncClient", return_value=mock_client):
+            with patch("asyncio.sleep", new=AsyncMock()):
+                with pytest.raises((VaultConnectionError, httpx.HTTPStatusError)):
+                    await backend._vault_request("GET", "secret/data/path")
+
+
+class TestVaultStoreTokensCacheInvalidation:
+    """Lines 319-321: cache entry is evicted when cache_enabled and store_tokens called."""
+
+    @pytest.mark.asyncio
+    async def test_store_tokens_invalidates_cache_entry(self):
+        """Lines 319-321: after storing, matching cache key removed."""
+        backend = _make_vault_backend(cache_enabled=True)
+
+        # Pre-populate the cache with a stale entry
+        server_id = backend._hash_server_id("https://mcp.example.com")
+        cache_key = ("team-1", server_id, "user@test.com")
+        VaultTokenBackend._token_cache[cache_key] = {
+            "token": "old_token",  # pragma: allowlist secret
+            "cache_expires": datetime.now(timezone.utc) + timedelta(minutes=5),
+        }
+
+        mock_gateway = MagicMock()
+        mock_gateway.url = "https://mcp.example.com"
+        backend.db.get.return_value = mock_gateway
+
+        with patch.object(backend, "_vault_request", new=AsyncMock(return_value=None)):
+            await backend.store_tokens(
+                gateway_id="gw-c1",
+                team_id="team-1",
+                user_id="u1",
+                app_user_email="user@test.com",
+                access_token="new_token",  # pragma: allowlist secret
+                refresh_token=None,
+                expires_in=3600,
+                scopes=["read"],
+            )
+
+        assert cache_key not in VaultTokenBackend._token_cache
+
+
+class TestVaultGetUserTokenCachePaths:
+    """Lines 371-375, 377: LRU cache hit (move to end) and expired-entry eviction."""
+
+    @pytest.mark.asyncio
+    async def test_cache_hit_moves_entry_to_end(self):
+        """Lines 371-375: cache hit → moves entry to end of OrderedDict."""
+        backend = _make_vault_backend(cache_enabled=True)
+
+        mock_gateway = MagicMock()
+        mock_gateway.url = "https://mcp.example.com"
+        backend.db.get.return_value = mock_gateway
+
+        server_id = backend._hash_server_id("https://mcp.example.com")
+        cache_key = ("team-1", server_id, "user@test.com")
+        VaultTokenBackend._token_cache.clear()
+        VaultTokenBackend._token_cache[cache_key] = {
+            "token": "cached_token",  # pragma: allowlist secret
+            "cache_expires": datetime.now(timezone.utc) + timedelta(minutes=10),
+        }
+
+        result = await backend.get_user_token(
+            gateway_id="gw-x",
+            team_id="team-1",
+            app_user_email="user@test.com",
+        )
+
+        assert result == "cached_token"
+        # Entry must be at the end (MRU position)
+        last_key = next(reversed(VaultTokenBackend._token_cache))
+        assert last_key == cache_key
+
+    @pytest.mark.asyncio
+    async def test_expired_cache_entry_evicted_and_refetched(self):
+        """Line 377: expired cache entry removed, Vault re-fetched."""
+        backend = _make_vault_backend(cache_enabled=True)
+
+        mock_gateway = MagicMock()
+        mock_gateway.url = "https://mcp.example.com"
+        backend.db.get.return_value = mock_gateway
+
+        server_id = backend._hash_server_id("https://mcp.example.com")
+        cache_key = ("team-1", server_id, "user@test.com")
+        VaultTokenBackend._token_cache.clear()
+        VaultTokenBackend._token_cache[cache_key] = {
+            "token": "stale_token",  # pragma: allowlist secret
+            "cache_expires": datetime.now(timezone.utc) - timedelta(seconds=1),  # expired
+        }
+
+        # Vault returns None (token not found in Vault either)
+        with patch.object(backend, "_vault_request", new=AsyncMock(return_value=None)):
+            result = await backend.get_user_token(
+                gateway_id="gw-x",
+                team_id="team-1",
+                app_user_email="user@test.com",
+            )
+
+        # Stale entry must have been evicted
+        assert cache_key not in VaultTokenBackend._token_cache
+        assert result is None
+
+
+class TestVaultGetTokenInfoStatusPaths:
+    """Lines 442, 454, 456: token-info status (not found, expired, near_expiry)."""
+
+    @pytest.mark.asyncio
+    async def test_get_token_info_returns_none_when_no_vault_data(self):
+        """Line 442: Vault returns empty/None → get_token_info returns None."""
+        backend = _make_vault_backend()
+        mock_gateway = MagicMock()
+        mock_gateway.url = "https://mcp.example.com"
+        backend.db.get.return_value = mock_gateway
+
+        with patch.object(backend, "_vault_request", new=AsyncMock(return_value=None)):
+            result = await backend.get_token_info("gw-1", "team-1", "user@test.com")
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_get_token_info_status_expired(self):
+        """Line 454: token's expires_at is in the past → status = 'expired'."""
+        backend = _make_vault_backend()
+        mock_gateway = MagicMock()
+        mock_gateway.url = "https://mcp.example.com"
+        backend.db.get.return_value = mock_gateway
+
+        past = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+        vault_response = {
+            "data": {
+                "data": {
+                    "email": "user@test.com",
+                    "team_id": "team-1",
+                    "mcp_url": "https://mcp.example.com",
+                    "token": {"access_token": "at", "scopes": ["read"]},  # pragma: allowlist secret
+                    "expires_at": past,
+                    "updated_at": past,
+                }
+            }
+        }
+
+        with patch.object(backend, "_vault_request", new=AsyncMock(return_value=vault_response)):
+            result = await backend.get_token_info("gw-1", "team-1", "user@test.com")
+
+        assert result is not None
+        assert result["status"] == "expired"
+
+    @pytest.mark.asyncio
+    async def test_get_token_info_status_near_expiry(self):
+        """Line 456: token expires within 300s → status = 'near_expiry'."""
+        backend = _make_vault_backend()
+        mock_gateway = MagicMock()
+        mock_gateway.url = "https://mcp.example.com"
+        backend.db.get.return_value = mock_gateway
+
+        near = (datetime.now(timezone.utc) + timedelta(seconds=120)).isoformat()
+        vault_response = {
+            "data": {
+                "data": {
+                    "email": "user@test.com",
+                    "team_id": "team-1",
+                    "mcp_url": "https://mcp.example.com",
+                    "token": {"access_token": "at", "scopes": ["read"]},  # pragma: allowlist secret
+                    "expires_at": near,
+                    "updated_at": near,
+                }
+            }
+        }
+
+        with patch.object(backend, "_vault_request", new=AsyncMock(return_value=vault_response)):
+            result = await backend.get_token_info("gw-1", "team-1", "user@test.com")
+
+        assert result is not None
+        assert result["status"] == "near_expiry"
+
+
+class TestVaultRevokeCacheAndExceptionPath:
+    """Lines 489-491, 502-504: revoke invalidates cache and swallows exceptions."""
+
+    @pytest.mark.asyncio
+    async def test_revoke_invalidates_cache_entry(self):
+        """Lines 488-491: successful revoke pops cache entry."""
+        backend = _make_vault_backend(cache_enabled=True)
+
+        mock_gateway = MagicMock()
+        mock_gateway.url = "https://mcp.example.com"
+        backend.db.get.return_value = mock_gateway
+
+        server_id = backend._hash_server_id("https://mcp.example.com")
+        cache_key = ("team-1", server_id, "user@test.com")
+        VaultTokenBackend._token_cache[cache_key] = {
+            "token": "tok",  # pragma: allowlist secret
+            "cache_expires": datetime.now(timezone.utc) + timedelta(minutes=5),
+        }
+
+        # DELETE returns a non-None value (success)
+        with patch.object(backend, "_vault_request", new=AsyncMock(return_value={"data": {}})):
+            result = await backend.revoke_user_tokens("gw-1", "team-1", "user@test.com")
+
+        assert result is True
+        assert cache_key not in VaultTokenBackend._token_cache
+
+    @pytest.mark.asyncio
+    async def test_revoke_returns_false_on_exception(self):
+        """Lines 502-504: exception during DELETE → logged and False returned."""
+        backend = _make_vault_backend()
+
+        mock_gateway = MagicMock()
+        mock_gateway.url = "https://mcp.example.com"
+        backend.db.get.return_value = mock_gateway
+
+        with patch.object(backend, "_vault_request", side_effect=VaultConnectionError("network error")):
+            result = await backend.revoke_user_tokens("gw-1", "team-1", "user@test.com")
+
+        assert result is False
+
+
+class TestVaultWriteTokenCacheLruEviction:
+    """Line 521: LRU entry evicted when cache is full."""
+
+    def test_lru_eviction_when_cache_full(self):
+        """Line 521: when cache > max_size, oldest (front) entry is evicted."""
+        backend = _make_vault_backend(cache_enabled=True, cache_max_size=2)
+        VaultTokenBackend._token_cache.clear()
+
+        key1 = ("t1", "s1", "u1")
+        key2 = ("t2", "s2", "u2")
+        key3 = ("t3", "s3", "u3")
+
+        backend._write_token_cache(key1, "tok1")  # pragma: allowlist secret
+        backend._write_token_cache(key2, "tok2")  # pragma: allowlist secret
+        # Cache is now at max_size=2; adding key3 should evict key1 (LRU)
+        backend._write_token_cache(key3, "tok3")  # pragma: allowlist secret
+
+        assert key1 not in VaultTokenBackend._token_cache
+        assert key2 in VaultTokenBackend._token_cache
+        assert key3 in VaultTokenBackend._token_cache
+
+
+class TestVaultRefreshResourceNormalization:
+    """Line 694: string resource in oauth_config is normalized before refresh call."""
+
+    @pytest.mark.asyncio
+    async def test_refresh_normalizes_string_resource_url(self):
+        """Line 694: existing_resource is a string → normalize_resource_url strips fragment."""
+        backend = _make_vault_backend()
+
+        mock_gateway = MagicMock()
+        mock_gateway.url = "https://mcp.example.com"
+        mock_gateway.ca_certificate = None
+        mock_gateway.client_cert = None
+        mock_gateway.client_key = None
+        mock_gateway.visibility = "public"
+        mock_gateway.owner_email = "user@test.com"
+        mock_gateway.oauth_config = {
+            "grant_type": "authorization_code",
+            "client_id": "cid",
+            "client_secret": "s3cr3t",  # pragma: allowlist secret
+            "token_url": "https://auth.example.com/token",
+            "resource": "https://api.example.com/v1?x=1#section",  # query + fragment
+        }
+        backend.db.get.return_value = mock_gateway
+        backend.db.query.return_value.filter.return_value.first.return_value = mock_gateway
+
+        now = datetime.now(timezone.utc)
+        vault_data = {
+            "data": {
+                "data": {
+                    "email": "user@test.com",
+                    "team_id": "team-1",
+                    "mcp_url": "https://mcp.example.com",
+                    "token": {
+                        "access_token": "old_at",  # pragma: allowlist secret
+                        "refresh_token": "old_rt",  # pragma: allowlist secret
+                        "scopes": ["read"],
+                    },
+                    "user_id": "uid",
+                    "token_type": "Bearer",
+                    "expires_at": (now - timedelta(minutes=5)).isoformat(),
+                    "created_at": (now - timedelta(hours=1)).isoformat(),
+                    "updated_at": (now - timedelta(hours=1)).isoformat(),
+                }
+            }
+        }
+
+        new_tokens = {
+            "access_token": "refreshed_at",  # pragma: allowlist secret
+            "refresh_token": "refreshed_rt",  # pragma: allowlist secret
+            "expires_in": 3600,
+        }
+
+        with patch.object(backend, "_vault_request", new=AsyncMock(side_effect=[vault_data, vault_data, None])):
+            with patch("mcpgateway.services.token_backends.vault_backend.OAuthManager") as mock_om_cls:
+                mock_om = MagicMock()
+                mock_om.refresh_token = AsyncMock(return_value=new_tokens)
+                mock_om_cls.return_value = mock_om
+
+                await backend._refresh_access_token(
+                    gateway_id="gw-123",
+                    team_id="team-1",
+                    app_user_email="user@test.com",
+                    refresh_token="old_rt",
+                    vault_data=vault_data["data"]["data"]
+                )
+
+        call_kw = mock_om.refresh_token.call_args[0][1]
+        assert "#" not in str(call_kw.get("resource", ""))

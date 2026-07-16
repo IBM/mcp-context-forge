@@ -902,3 +902,242 @@ async def test_get_user_token_no_token_type(backend_with_encryption, mock_db):
 
     # Should still return token without warning
     assert result == "decrypted_value"
+
+
+# ---------------------------------------------------------------------------
+# Coverage gap fill: _preserve_prior_ttl None-branches, get_token_info status
+# paths, refresh resource normalization, and no-prior-TTL path.
+# ---------------------------------------------------------------------------
+
+
+class TestPreservePriorTtlNullBranches:
+    """Lines 47, 50, 52, 55 in db_backend.py — _preserve_prior_ttl edge cases."""
+
+    def _make_record(self, expires_at, updated_at):
+        record = Mock()
+        record.expires_at = expires_at
+        record.updated_at = updated_at
+        return record
+
+    def test_returns_none_when_expires_at_is_none(self):
+        """Line 47: expires_at is None → return None immediately."""
+        from mcpgateway.services.token_backends.db_backend import _preserve_prior_ttl
+
+        record = self._make_record(expires_at=None, updated_at=datetime.now(timezone.utc))
+        assert _preserve_prior_ttl(record) is None
+
+    def test_returns_none_when_updated_at_is_none(self):
+        """Line 47: updated_at is None → return None immediately."""
+        from mcpgateway.services.token_backends.db_backend import _preserve_prior_ttl
+
+        record = self._make_record(
+            expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+            updated_at=None,
+        )
+        assert _preserve_prior_ttl(record) is None
+
+    def test_normalises_naive_expires_at_to_utc(self):
+        """Line 50: naive expires_at gets UTC tzinfo attached."""
+        from mcpgateway.services.token_backends.db_backend import _preserve_prior_ttl
+
+        now = datetime.now()  # naive
+        record = self._make_record(
+            expires_at=now + timedelta(hours=2),
+            updated_at=now,
+        )
+        result = _preserve_prior_ttl(record)
+        assert result is not None
+        assert result > 0
+
+    def test_normalises_naive_updated_at_to_utc(self):
+        """Line 52: naive updated_at gets UTC tzinfo attached."""
+        from mcpgateway.services.token_backends.db_backend import _preserve_prior_ttl
+
+        now_utc = datetime.now(timezone.utc)
+        record = self._make_record(
+            expires_at=now_utc + timedelta(hours=1),
+            updated_at=(now_utc - timedelta(minutes=5)).replace(tzinfo=None),  # naive
+        )
+        result = _preserve_prior_ttl(record)
+        assert result is not None
+        assert result > 0
+
+    def test_returns_none_when_ttl_is_zero_or_negative(self):
+        """Line 55: prev_ttl <= 0 → return None."""
+        from mcpgateway.services.token_backends.db_backend import _preserve_prior_ttl
+
+        now_utc = datetime.now(timezone.utc)
+        # expires_at < updated_at → negative TTL
+        record = self._make_record(
+            expires_at=now_utc - timedelta(hours=1),
+            updated_at=now_utc,
+        )
+        assert _preserve_prior_ttl(record) is None
+
+
+class TestDbBackendGetTokenInfoStatusPaths:
+    """Lines 293-294, 296: get_token_info returns expired / near_expiry / valid status."""
+
+    def _make_backend(self):
+        from mcpgateway.services.token_backends.db_backend import DatabaseTokenBackend
+
+        mock_db = MagicMock()
+        mock_encryption = None
+        return DatabaseTokenBackend(mock_db, mock_encryption)
+
+    def _make_token_record(self, expires_at, access_token="tok", scopes=None, token_type="Bearer"):
+        record = MagicMock()
+        record.access_token = access_token
+        record.refresh_token = None
+        record.scopes = scopes or []
+        record.token_type = token_type
+        record.expires_at = expires_at
+        record.updated_at = datetime.now(timezone.utc) - timedelta(minutes=10)
+        record.gateway_id = "gw-1"
+        record.app_user_email = "user@test.com"
+        return record
+
+    @pytest.mark.asyncio
+    async def test_get_token_info_status_expired(self):
+        """Lines 291-292: token expired → status = 'expired'."""
+        backend = self._make_backend()
+        past = datetime.now(timezone.utc) - timedelta(hours=1)
+        record = self._make_token_record(expires_at=past)
+        backend.db.execute.return_value.scalar_one_or_none.return_value = record
+
+        result = await backend.get_token_info("gw-1", "team-1", "user@test.com")
+
+        assert result is not None
+        assert result["status"] == "expired"
+
+    @pytest.mark.asyncio
+    async def test_get_token_info_status_near_expiry(self):
+        """Lines 293-294: token not expired but within 300s → status = 'near_expiry'."""
+        backend = self._make_backend()
+        near = datetime.now(timezone.utc) + timedelta(seconds=120)  # within 300s
+        record = self._make_token_record(expires_at=near)
+        backend.db.execute.return_value.scalar_one_or_none.return_value = record
+
+        result = await backend.get_token_info("gw-1", "team-1", "user@test.com")
+
+        assert result is not None
+        assert result["status"] == "near_expiry"
+
+    @pytest.mark.asyncio
+    async def test_get_token_info_status_valid(self):
+        """Line 296: token has plenty of time remaining → status = 'valid'."""
+        backend = self._make_backend()
+        future = datetime.now(timezone.utc) + timedelta(hours=2)
+        record = self._make_token_record(expires_at=future)
+        backend.db.execute.return_value.scalar_one_or_none.return_value = record
+
+        result = await backend.get_token_info("gw-1", "team-1", "user@test.com")
+
+        assert result is not None
+        assert result["status"] == "valid"
+
+
+class TestDbBackendRefreshResourceNormalization:
+    """Lines 448, 493, 497: resource URL normalization and no-prior-TTL handling."""
+
+    def _make_backend_with_refresh_setup(self):
+        from mcpgateway.services.token_backends.db_backend import DatabaseTokenBackend
+
+        mock_db = MagicMock()
+        backend = DatabaseTokenBackend(mock_db, None)
+        return backend, mock_db
+
+    def _make_token_record(self, access_token="enc_access", refresh_token="enc_refresh", expires_at=None, updated_at=None):
+        record = MagicMock()
+        record.access_token = access_token
+        record.refresh_token = refresh_token
+        record.gateway_id = "gw-r1"
+        record.app_user_email = "user@test.com"
+        record.expires_at = expires_at
+        record.updated_at = updated_at or datetime.now(timezone.utc) - timedelta(hours=1)
+        record.scopes = ["read"]
+        return record
+
+    @pytest.mark.asyncio
+    async def test_refresh_normalizes_single_resource_url(self):
+        """Line 448: existing_resource is a string → normalize_resource_url called."""
+        from mcpgateway.services.token_backends.db_backend import DatabaseTokenBackend
+
+        mock_db = MagicMock()
+        backend = DatabaseTokenBackend(mock_db, None)
+
+        gateway = MagicMock()
+        gateway.url = "https://mcp.example.com"
+        gateway.ca_certificate = None
+        gateway.client_cert = None
+        gateway.client_key = None
+        gateway.oauth_config = {
+            "grant_type": "authorization_code",
+            "client_id": "cid",
+            "client_secret": "s3cr3t",  # pragma: allowlist secret
+            "token_url": "https://auth.example.com/token",
+            "resource": "https://api.example.com/path?q=1#frag",  # has fragment+query
+        }
+
+        record = self._make_token_record()
+        mock_db.execute.return_value.scalar_one_or_none.return_value = record
+        mock_db.get.return_value = gateway
+        mock_db.query.return_value.filter.return_value.first.return_value = gateway
+
+        new_tokens = {
+            "access_token": "new_at",  # pragma: allowlist secret
+            "refresh_token": "new_rt",  # pragma: allowlist secret
+            "expires_in": 3600,
+        }
+
+        with patch("mcpgateway.services.token_backends.db_backend.OAuthManager") as mock_om_cls:
+            mock_om = MagicMock()
+            mock_om.refresh_token = AsyncMock(return_value=new_tokens)
+            mock_om_cls.return_value = mock_om
+
+            await backend._refresh_access_token(record)
+
+        # resource param passed to refresh_token should be normalized (no fragment)
+        call_kw = mock_om.refresh_token.call_args[0][1]  # oauth_config positional arg
+        assert "#" not in str(call_kw.get("resource", ""))
+
+    @pytest.mark.asyncio
+    async def test_refresh_no_prior_ttl_sets_expires_at_to_none(self):
+        """Lines 493-497: no expires_in AND no prior TTL → expires_at set to None."""
+        from mcpgateway.services.token_backends.db_backend import DatabaseTokenBackend
+
+        mock_db = MagicMock()
+        backend = DatabaseTokenBackend(mock_db, None)
+
+        gateway = MagicMock()
+        gateway.url = "https://mcp.example.com"
+        gateway.ca_certificate = None
+        gateway.client_cert = None
+        gateway.client_key = None
+        gateway.oauth_config = {
+            "grant_type": "authorization_code",
+            "client_id": "cid",
+            "client_secret": "s3cr3t",  # pragma: allowlist secret
+            "token_url": "https://auth.example.com/token",
+        }
+
+        # expires_at=None and updated_at=None → _preserve_prior_ttl returns None
+        record = self._make_token_record(expires_at=None, updated_at=None)
+        mock_db.execute.return_value.scalar_one_or_none.return_value = record
+        mock_db.get.return_value = gateway
+
+        # token_response has NO expires_in
+        new_tokens = {
+            "access_token": "new_at2",  # pragma: allowlist secret
+            "refresh_token": "new_rt2",  # pragma: allowlist secret
+        }
+
+        with patch("mcpgateway.services.token_backends.db_backend.OAuthManager") as mock_om_cls:
+            mock_om = MagicMock()
+            mock_om.refresh_token = AsyncMock(return_value=new_tokens)
+            mock_om_cls.return_value = mock_om
+
+            await backend._refresh_access_token(record)
+
+        # expires_at must be None when no prior TTL exists
+        assert record.expires_at is None
