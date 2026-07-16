@@ -8,6 +8,8 @@ This module tests OAuth endpoints including authorization flow, callbacks, and s
 """
 
 # Standard
+import base64
+import json
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
@@ -44,6 +46,17 @@ def mock_request():
     request.state = SimpleNamespace(token_teams=["team-1"])
     return request
 
+
+@pytest.fixture
+def mock_request_popup():
+    """Create mock FastAPI request for popup mode."""
+    request = Mock(spec=Request)
+    request.url = Mock()
+    request.url.scheme = "https"
+    request.url.netloc = "gateway.example.com"
+    request.scope = {"root_path": ""}
+    request.state = SimpleNamespace(token_teams=["team-1"], csp_nonce="test-nonce-popup", is_popup=True)
+    return request
 
 @pytest.fixture
 def mock_gateway():
@@ -2515,6 +2528,8 @@ class TestOAuthCallbackCSPCompliance:
             nonces_seen.add(nonce)
 
         # Verify we collected 3 unique nonces
+        assert len(nonces_seen) == 3, "Each request should have a unique CSP nonce"
+
 
 
 class TestOAuthRouterPopupMode:
@@ -2940,3 +2955,75 @@ class TestOAuthRouterPopupMode:
 
         # Verify NO postMessage script
         assert 'window.opener.postMessage' not in body
+
+    @pytest.mark.asyncio
+    async def test_oauth_callback_oauth_error_popup_mode(self, mock_db, mock_request_popup, mock_gateway):
+        """Test OAuth callback OAuthError in popup mode (line 887 coverage)."""
+        # Setup state with popup prefix
+        state_data = {"gateway_id": "gateway123", "app_user_email": "test@example.com"}
+        payload = json.dumps(state_data).encode()
+        signature = b"x" * 32
+        state = "popup." + base64.urlsafe_b64encode(payload + signature).decode()
+
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+
+        with patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_manager_class:
+            mock_oauth_manager = Mock()
+            mock_oauth_manager.resolve_gateway_id_from_state = AsyncMock(return_value="gateway123")
+            mock_oauth_manager.complete_authorization_code_flow = AsyncMock(
+                side_effect=OAuthError("Invalid authorization code")
+            )
+            mock_oauth_manager_class.return_value = mock_oauth_manager
+
+            with patch("mcpgateway.routers.oauth_router.TokenStorageService"):
+                from mcpgateway.routers.oauth_router import oauth_callback
+
+                # Execute
+                result = await oauth_callback(
+                    code="invalid_code",
+                    state=state,
+                    request=mock_request_popup,
+                    db=mock_db
+                )
+
+                # Assert popup response
+                assert result.status_code == 400
+                assert b"<!DOCTYPE html>" in result.body
+                assert b"oauth_callback" in result.body
+                assert b"oauth_error" in result.body
+
+    @pytest.mark.asyncio
+    async def test_oauth_callback_unexpected_error_popup_mode(self, mock_db, mock_request_popup, mock_gateway):
+        """Test OAuth callback unexpected error in popup mode (line 930 coverage)."""
+        # Setup state with popup prefix
+        state_data = {"gateway_id": "gateway123", "app_user_email": "test@example.com"}
+        payload = json.dumps(state_data).encode()
+        signature = b"x" * 32
+        state = "popup." + base64.urlsafe_b64encode(payload + signature).decode()
+
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+
+        with patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_manager_class:
+            mock_oauth_manager = Mock()
+            mock_oauth_manager.resolve_gateway_id_from_state = AsyncMock(return_value="gateway123")
+            mock_oauth_manager.complete_authorization_code_flow = AsyncMock(
+                side_effect=RuntimeError("Unexpected server error")
+            )
+            mock_oauth_manager_class.return_value = mock_oauth_manager
+
+            with patch("mcpgateway.routers.oauth_router.TokenStorageService"):
+                from mcpgateway.routers.oauth_router import oauth_callback
+
+                # Execute
+                result = await oauth_callback(
+                    code="auth_code_123",
+                    state=state,
+                    request=mock_request_popup,
+                    db=mock_db
+                )
+
+                # Assert popup response
+                assert result.status_code == 500
+                assert b"<!DOCTYPE html>" in result.body
+                assert b"oauth_callback" in result.body
+                assert b"server_error" in result.body
