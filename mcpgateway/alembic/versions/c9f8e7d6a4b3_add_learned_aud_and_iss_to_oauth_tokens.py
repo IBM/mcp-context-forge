@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/alembic/versions/c9f8e7d6a4b3_add_learned_aud_and_iss_to_oauth_tokens.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 add_learned_aud_and_iss_to_oauth_tokens
 

@@ -593,6 +593,7 @@ describe("editA2AAgent - auth types", () => {
       <input id="oauth-authorization-url-a2a-edit" />
       <input id="oauth-redirect-uri-a2a-edit" />
       <input id="oauth-scopes-a2a-edit" />
+      <input id="oauth-resource-a2a-edit" />
       <div id="oauth-auth-code-fields-a2a-edit" style="display:none"></div>
       <div id="auth-query_param-fields-a2a-edit" style="display:none"></div>
       <input id="auth-query-param-key-a2a-edit" />
@@ -730,6 +731,76 @@ describe("editA2AAgent - auth types", () => {
     );
     expect(document.getElementById("oauth-scopes-a2a-edit").value).toBe("read write");
     expect(document.getElementById("oauth-auth-code-fields-a2a-edit").style.display).toBe("block");
+  });
+
+  test("populates OAuth resource field from string shape", async () => {
+    // RFC 8707 allows a single resource as a string; edit dialog must round-trip it verbatim.
+    window.ROOT_PATH = "";
+    document.body.innerHTML = createEditFormHTML("oauth");
+
+    fetchWithTimeout.mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          name: "OAuth Agent",
+          endpointUrl: "http://localhost",
+          agentType: "A2A",
+          visibility: "public",
+          authType: "oauth",
+          oauthConfig: {
+            grant_type: "client_credentials",
+            client_id: "cid",
+            token_url: "http://auth.example.com/token",
+            resource: "https://api.example.com/mcp",
+          },
+          tags: [],
+          capabilities: {},
+          config: {},
+        }),
+    });
+
+    await editA2AAgent("agent-oauth-res-str");
+
+    expect(document.getElementById("oauth-resource-a2a-edit").value).toBe(
+      "https://api.example.com/mcp"
+    );
+  });
+
+  test("populates OAuth resource field from list shape", async () => {
+    // RFC 8707 also allows resource as a list; edit dialog must render it comma-space joined
+    // so the operator can edit it in the same shape the admin form parses on submit.
+    window.ROOT_PATH = "";
+    document.body.innerHTML = createEditFormHTML("oauth");
+
+    fetchWithTimeout.mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          name: "OAuth Agent",
+          endpointUrl: "http://localhost",
+          agentType: "A2A",
+          visibility: "public",
+          authType: "oauth",
+          oauthConfig: {
+            grant_type: "client_credentials",
+            client_id: "cid",
+            token_url: "http://auth.example.com/token",
+            resource: [
+              "https://api-a.example.com/mcp",
+              "https://api-b.example.com/mcp",
+            ],
+          },
+          tags: [],
+          capabilities: {},
+          config: {},
+        }),
+    });
+
+    await editA2AAgent("agent-oauth-res-list");
+
+    expect(document.getElementById("oauth-resource-a2a-edit").value).toBe(
+      "https://api-a.example.com/mcp, https://api-b.example.com/mcp"
+    );
   });
 
   test("populates query_param auth fields", async () => {
