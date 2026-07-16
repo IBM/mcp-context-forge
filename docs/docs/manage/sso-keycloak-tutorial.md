@@ -26,7 +26,7 @@ Preconfigured local endpoints and credentials:
 - Callback URL: `http://localhost:8080/auth/sso/callback/keycloak`
 - Compose wiring: internal Keycloak URL `http://keycloak:8080`, browser URL `http://localhost:8180`
 - Test users (all password `changeme`):
-  - `admin@example.com`
+  - `admincf@example.com`
   - `developer@example.com`
   - `viewer@example.com`
   - `newuser@example.com`
