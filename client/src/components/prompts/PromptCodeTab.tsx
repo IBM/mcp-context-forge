@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useCallback, useState } from "react";
 
 import type { PromptRead } from "@/generated/types";
 import { PromptArgsForm } from "./PromptArgsForm";
@@ -6,6 +6,8 @@ import { PromptPreviewButton } from "./PromptPreviewButton";
 import { PromptPreviewResult } from "./PromptPreviewResult";
 import { PromptSnippetTabs } from "./PromptSnippetTabs";
 import { usePromptPreview } from "@/hooks/usePromptPreview";
+
+const DEFAULT_LANGUAGE = "curl";
 
 export interface PromptCodeTabProps {
   prompt: NonNullable<PromptRead>;
@@ -24,10 +26,23 @@ export interface PromptCodeTabProps {
  */
 export function PromptCodeTab({ prompt }: PromptCodeTabProps) {
   const [args, setArgs] = useState<Record<string, string>>(() => seedArgs(prompt));
+  const [language, setLanguage] = useState<string>(DEFAULT_LANGUAGE);
   // Address the prompt by name — same identifier the snippets show and what
   // MCP-spec clients use on the wire. See `promptsApi.render` for the full
   // rationale and the tracked "server-scoped MCP transport" follow-up.
   const preview = usePromptPreview(prompt.name, args);
+
+  // Switching languages clears the previous run so the Preview affordances
+  // match the active snippet — the button returns to "Preview" and the
+  // rendered response is unmounted. Same wire call regardless of language,
+  // so nothing useful is discarded.
+  const handleLanguageChange = useCallback(
+    (next: string) => {
+      preview.reset();
+      setLanguage(next);
+    },
+    [preview],
+  );
 
   return (
     <div className="space-y-6">
@@ -36,6 +51,8 @@ export function PromptCodeTab({ prompt }: PromptCodeTabProps) {
         <PromptSnippetTabs
           promptName={prompt.name}
           args={args}
+          value={language}
+          onValueChange={handleLanguageChange}
           actions={<PromptPreviewButton preview={preview} />}
         />
         <PromptPreviewResult preview={preview} />
