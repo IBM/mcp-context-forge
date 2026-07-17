@@ -3,7 +3,7 @@
  */
 
 import { api } from "./client";
-import type { PromptRead } from "@/generated/types";
+import type { PromptRead, PromptUpdate } from "@/generated/types";
 
 /**
  * Shape of a rendered MCP `prompts/get` response — the gateway substitutes
@@ -115,6 +115,18 @@ export const promptsApi = {
   updateTags: (id: string, tags: string[]): Promise<PromptRead> => {
     const validId = validatePromptId(id);
     return api.put<PromptRead>(`/prompts/${encodeURIComponent(validId)}`, { tags });
+  },
+
+  /**
+   * Update an existing prompt.
+   *
+   * Sends a `PUT /prompts/{id}` (keyed by the prompt's primary-key ID) with the
+   * edited fields. The update service preserves any field left undefined, so the
+   * caller only needs to send what changed. Returns the updated prompt.
+   */
+  update: (id: string, data: NonNullable<PromptUpdate>): Promise<PromptRead> => {
+    const validId = validatePromptId(id);
+    return api.put<PromptRead>(`/prompts/${encodeURIComponent(validId)}`, data);
   },
 
   /**

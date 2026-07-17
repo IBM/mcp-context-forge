@@ -159,6 +159,47 @@ test.describe("Resources page", () => {
     await expect(page.getByRole("menuitem", { name: "View Details" })).toBeVisible();
   });
 
+  test("truncates a long gateway name and keeps the overflow menu visible", async ({ page }) => {
+    // With no gateways mocked the card title falls back to the gatewayId, so a
+    // long gatewayId gives us a long, overflow-prone card title.
+    const longSlug =
+      "github-enterprise-server-with-an-extremely-long-federated-gateway-identifier-value";
+    const resources: Resource[] = [
+      makeResource("document-txt", longSlug),
+      makeResource("config-json", longSlug),
+    ];
+
+    await page.route("**/resources?*", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(resources),
+      });
+    });
+
+    await page.goto(APP.RESOURCES);
+    await page.waitForLoadState("networkidle");
+
+    const kebab = page.getByRole("button", { name: `More options for ${longSlug}` });
+    await expect(kebab).toBeVisible();
+
+    const card = page.locator('[data-slot="card"]').filter({ has: kebab });
+    const title = card.locator('[data-slot="card-header"] span.truncate').first();
+
+    const isTruncated = await title.evaluate((el) => el.scrollWidth > el.clientWidth);
+    expect(isTruncated).toBe(true);
+    await expect(title).toHaveAttribute("title", longSlug);
+
+    const cardBox = await card.boundingBox();
+    const kebabBox = await kebab.boundingBox();
+    expect(cardBox).not.toBeNull();
+    expect(kebabBox).not.toBeNull();
+    expect(kebabBox!.x + kebabBox!.width).toBeLessThanOrEqual(cardBox!.x + cardBox!.width + 1);
+
+    await kebab.click();
+    await expect(page.getByRole("menuitem", { name: "View Details" })).toBeVisible();
+  });
+
   test("opens details panel when View Details is clicked", async ({ page }) => {
     await page.route("**/resources?*", async (route) => {
       await route.fulfill({

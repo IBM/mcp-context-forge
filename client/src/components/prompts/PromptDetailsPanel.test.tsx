@@ -292,6 +292,23 @@ describe("PromptDetailsPanel", () => {
     expect(screen.getByRole("tab", { name: /try it/i })).toHaveAttribute("data-state", "active");
   });
 
+  it("opens on the Definition tab when initialTab is 'definition'", () => {
+    render(
+      <PromptDetailsPanel
+        prompts={[mockPrompt()]}
+        title="hugging-face"
+        open={true}
+        initialTab="definition"
+        onClose={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("tab", { name: /definition/i })).toHaveAttribute(
+      "data-state",
+      "active",
+    );
+  });
+
   it("updates the Prompt details sidebar when a Definition table row is selected", async () => {
     const user = userEvent.setup();
     const publicPrompt = mockPrompt({ id: "a", name: "prompt_a", visibility: "public" });

@@ -519,6 +519,46 @@ describe("Prompts", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("reopens the details panel on the Definition tab when the edit form is canceled", async () => {
+    const user = userEvent.setup();
+    const prompts: Prompt[] = [
+      createMockPrompt({
+        id: "prompt-1",
+        name: "summarize",
+        displayName: "Summarize document",
+        gatewayId: "gw-github",
+        gatewaySlug: "gh-repo-tasks",
+      }),
+    ];
+
+    server.use(http.get("/prompts", () => HttpResponse.json(prompts)));
+
+    renderWithProviders(<Prompts />);
+
+    await waitFor(() => {
+      expect(screen.getByText("gh-repo-tasks")).toBeInTheDocument();
+    });
+
+    // Open the panel, switch to Definition, and launch the edit form from the row.
+    await user.click(screen.getByRole("button", { name: "More options for gh-repo-tasks" }));
+    await user.click(await screen.findByRole("menuitem", { name: "View details" }));
+    await user.click(await screen.findByRole("tab", { name: /definition/i }));
+    await user.click(await screen.findByRole("button", { name: /more options for summarize/i }));
+    await user.click(await screen.findByRole("menuitem", { name: "Edit" }));
+
+    expect(await screen.findByRole("heading", { name: "Edit prompt" })).toBeInTheDocument();
+
+    // Canceling returns to the details panel, landing on the Definition tab.
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("tab", { name: /definition/i })).toHaveAttribute(
+        "data-state",
+        "active",
+      );
+    });
+  });
+
   it("collapses gateway-less prompts into a single REST prompts card", async () => {
     const prompts: Prompt[] = [
       createMockPrompt({
