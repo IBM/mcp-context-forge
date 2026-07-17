@@ -540,7 +540,14 @@ async def test_refresh_derived_gateway_url_normalizes_to_empty_logs_warning(serv
 
 
 @pytest.mark.asyncio
-async def test_refresh_client_secret_decrypt_fails_uses_raw_value(service, mock_db):
+async def test_refresh_client_secret_decrypt_fails_preserves_token_and_returns_none(service, mock_db):
+    """Decryption failure raises OAuthError (fail-closed); token is preserved for retry.
+
+    The old behaviour (fall through with raw ciphertext) could send the encrypted
+    envelope to the IdP as a literal client_secret on every refresh cycle, triggering
+    repeated invalid_client responses that may cause IdP rate-limiting/lockout.
+    The fix raises OAuthError immediately so the outer handler preserves the token.
+    """
     gw = MagicMock(
         oauth_config={"token_url": "https://token", "client_id": "cid", "client_secret": "v2:encrypted_data"},  # pragma: allowlist secret
         url="https://gw.com",
@@ -557,22 +564,15 @@ async def test_refresh_client_secret_decrypt_fails_uses_raw_value(service, mock_
     service.encryption.decrypt_secret_async = AsyncMock(
         side_effect=["decrypted_refresh_token", ValueError("Decryption failed")]
     )
-    # encrypt_secret_async is called when storing the refreshed tokens back
-    service.encryption.encrypt_secret_async = AsyncMock(return_value="encrypted_new_token")
-
-    # Mock the OAuthManager to succeed (raw value accepted by provider)
-    mock_oauth = MagicMock()
-    mock_oauth.refresh_token = AsyncMock(return_value={"access_token": "new_token", "expires_in": 3600})
 
     record = _make_token_record()
 
-    with patch("mcpgateway.services.oauth_manager.OAuthManager", return_value=mock_oauth):
-        result = await service._refresh_access_token(record)
+    result = await service._refresh_access_token(record)
 
-    # Token should NOT be deleted — decryption failure is not a grant failure
+    # Fail-closed: OAuthError was raised internally, caught by the OAuthError handler,
+    # token preserved (not deleted), and None returned to the caller.
     mock_db.delete.assert_not_called()
-    # Result is the new access token returned by the provider
-    assert result == "new_token"
+    assert result is None
 
 
 @pytest.mark.asyncio

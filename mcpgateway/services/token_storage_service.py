@@ -291,7 +291,10 @@ class TokenStorageService:
                     return None
 
             # Decrypt client_secret if encryption is available.
-            # Always attempt decryption rather than using an is_encrypted() heuristic
+            # Always attempt decryption rather than using an is_encrypted() heuristic.
+            # Fail closed: if decryption fails we raise rather than forwarding ciphertext
+            # as a credential — sending the raw encrypted envelope to an Authorization Server
+            # causes repeated invalid_client attempts that can trigger IdP rate-limiting/lockout.
             oauth_config = gateway.oauth_config.copy()
             if "client_secret" in oauth_config and oauth_config["client_secret"]:
                 if self.encryption:
@@ -299,13 +302,10 @@ class TokenStorageService:
                     try:
                         oauth_config["client_secret"] = await self.encryption.decrypt_secret_async(client_secret_value)
                     except Exception as decrypt_error:
-                        logger.warning(
-                            "client_secret decryption failed for gateway %s (using raw value): %s. "
-                            "If refresh fails with invalid_client, check that the secret was stored "
-                            "with the current AUTH_ENCRYPTION_SECRET.",
-                            token_record.gateway_id,
-                            str(decrypt_error),
-                        )
+                        raise OAuthError(
+                            f"client_secret decryption failed for gateway {token_record.gateway_id}: {decrypt_error}. "
+                            "Check that AUTH_ENCRYPTION_SECRET matches the value used when the gateway was stored."
+                        ) from decrypt_error
 
             # RFC 8707: Set resource parameter for JWT access tokens during refresh
             # Standard

@@ -33,37 +33,106 @@ from mcpgateway.services.oauth_manager import OAuthInvalidGrantError
 from mcpgateway.services.token_storage_service import TokenStorageService
 
 
-class TestAuthorizationCodeHealthCheck:
-    """Test health check behavior for authorization_code OAuth gateways.
+class TestAuthorizationCodeStreamableHTTP:
+    """Test that 401/403 from a streamablehttp-transport authorization_code gateway
+    is treated as 'reachable, unauthorized' (Issue #5237, streamablehttp path).
 
-    NOTE: Detailed health check behavior is tested in test_gateway_service_health_oauth.py.
-    These tests document the fix for Issue #5237 but are placeholders since the actual
-    behavior is already covered by comprehensive tests in the main test suite.
+    The MCP SDK's streamablehttp_client spawns its HTTP POST inside an anyio
+    TaskGroup. Exceptions from the task surface at the ``async with`` boundary
+    wrapped in a BaseExceptionGroup. The fix unwraps one level so the inner
+    httpx.HTTPStatusError is inspected for 401/403.
     """
 
     @pytest.mark.asyncio
-    async def test_health_check_behavior_documented(self):
-        """Health check fix for Issue #5237 is documented and tested in test_gateway_service_health_oauth.py.
+    async def test_streamablehttp_401_treated_as_reachable(self):
+        """401 wrapped in BaseExceptionGroup (streamablehttp) should not mark gateway unhealthy."""
+        service = GatewayService()
+        service._handle_gateway_failure = AsyncMock()
+        service.set_gateway_state = AsyncMock()
 
-        The fix ensures that:
-        1. Missing tokens don't mark gateways unhealthy
-        2. 401/403 responses are treated as "gateway reachable"
-        3. Connection failures still mark gateways unhealthy
+        gateway = MagicMock(spec=DbGateway)
+        gateway.id = "gw-streamable"
+        gateway.name = "Streamable Gateway"
+        gateway.url = "https://mcp.example.com/v1/mcp"
+        gateway.transport = "streamablehttp"
+        gateway.auth_type = "oauth"
+        gateway.oauth_config = {"grant_type": "authorization_code"}
+        gateway.enabled = True
+        gateway.reachable = False
+        gateway.auth_value = None
+        gateway.ca_certificate = None
+        gateway.client_cert = None
+        gateway.client_key = None
 
-        See test_gateway_service_health_oauth.py for comprehensive tests:
-        - test_oauth_authorization_code_missing_user_email_proceeds_without_auth
-        - test_health_check_oauth_auth_code_no_user
-        """
-        # This test exists to document that health check behavior is tested elsewhere
-        assert True
+        # Build the 401 HTTPStatusError as it would come from the MCP SDK task group:
+        # wrapped one level deep in a BaseExceptionGroup.
+        mock_response = MagicMock()
+        mock_response.status_code = 401
+        inner_exc = httpx.HTTPStatusError("401 Unauthorized", request=MagicMock(), response=mock_response)
+        wrapped_exc = BaseExceptionGroup("task group error", [inner_exc])
+
+        update_db = MagicMock()
+        mock_db_gateway = MagicMock()
+        update_db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=mock_db_gateway)))
+
+        class _TokenDBCM:
+            def __enter__(self):
+                return MagicMock()
+            def __exit__(self, *exc):
+                return False
+
+        class _UpdateDBCM:
+            def __enter__(self):
+                return update_db
+            def __exit__(self, *exc):
+                return False
+
+        class _StatusDBCM:
+            def __enter__(self):
+                return MagicMock()
+            def __exit__(self, *exc):
+                return False
+
+        class _IsoClientCM:
+            async def __aenter__(self):
+                return MagicMock()
+            async def __aexit__(self, *exc):
+                return False
+
+        with (
+            patch("mcpgateway.services.gateway_service.settings", MagicMock(enable_ed25519_signing=False, health_check_timeout=5)),
+            patch("mcpgateway.services.gateway_service.get_isolated_http_client", return_value=_IsoClientCM()),
+            # streamablehttp_client is called directly (not via the httpx client),
+            # so we patch it to raise the BaseExceptionGroup-wrapped 401 error.
+            patch("mcpgateway.services.gateway_service.streamablehttp_client", side_effect=wrapped_exc),
+            patch("mcpgateway.services.gateway_service.fresh_db_session") as mock_fresh_db,
+            patch("mcpgateway.services.gateway_service.SessionLocal", return_value=_StatusDBCM()),
+            patch("mcpgateway.services.token_storage_service.TokenStorageService") as mock_tss,
+        ):
+            mock_fresh_db.side_effect = [_TokenDBCM(), _UpdateDBCM()]
+            mock_tss.return_value.get_user_token = AsyncMock(return_value=None)
+
+            await service._check_single_gateway_health(gateway, user_email="admin@example.com")
+
+        # Gateway MUST NOT be marked unhealthy — 401 means it's reachable
+        service._handle_gateway_failure.assert_not_called()
+        # last_seen should have been updated
+        assert mock_db_gateway.last_seen is not None
+        update_db.commit.assert_called_once()
 
 
 class TestTokenRefreshClientSecret:
     """Test client_secret decryption during token refresh (Issue #5237.2a)."""
 
     @pytest.mark.asyncio
-    async def test_decryption_failure_raises_explicit_error(self):
-        """Decryption failures should raise OAuthError and preserve token (Issue #5237.2a)."""
+    async def test_decryption_failure_raises_oauth_error_and_preserves_token(self):
+        """Decryption failure must raise OAuthError (fail closed) and preserve the token.
+
+        Sending the ciphertext envelope as a literal client_secret to an Authorization
+        Server causes repeated invalid_client attempts that can trigger IdP
+        rate-limiting/lockout.  The fix raises OAuthError so the caller's
+        ``except OAuthError`` branch preserves the token for a later retry.
+        """
         mock_db = MagicMock()
 
         # Mock gateway with encrypted client_secret
@@ -74,34 +143,27 @@ class TestTokenRefreshClientSecret:
         gateway.oauth_config = {
             "grant_type": "authorization_code",
             "client_id": "test-client",
-            "client_secret": "v2:{\"ciphertext\":\"encrypted_data\",\"nonce\":\"abc123\"}",  # Looks encrypted
-            "token_url": "https://oauth.example.com/token"
+            "client_secret": "v2:{\"ciphertext\":\"encrypted_data\",\"nonce\":\"abc123\"}",  # pragma: allowlist secret
+            "token_url": "https://oauth.example.com/token",
         }
         gateway.url = "https://example.com"
         gateway.ca_certificate = None
         gateway.client_cert = None
         gateway.client_key = None
 
-        # Mock the database query to return the gateway
         mock_db.query.return_value.filter.return_value.first.return_value = gateway
 
-        # Create service with mocked encryption
         with patch("mcpgateway.services.token_storage_service.get_settings") as mock_get_settings:
-            # Mock settings to trigger encryption service initialization
             mock_settings = MagicMock()
-            mock_settings.AUTH_ENCRYPTION_SECRET = "test-secret"
+            mock_settings.AUTH_ENCRYPTION_SECRET = "test-secret"  # pragma: allowlist secret
             mock_get_settings.return_value = mock_settings
 
             service = TokenStorageService(mock_db)
 
-            # Mock encryption service that succeeds for refresh_token but fails for client_secret
-            mock_encryption = MagicMock()
-            mock_encryption.is_encrypted.return_value = True
-
-            # First call is for refresh_token (succeed), second call is for client_secret (fail)
+            # refresh_token decryption succeeds; client_secret decryption fails
             decrypt_calls = [
-                "decrypted_refresh_token",  # Success for refresh_token
-                ValueError("Decryption failed")  # Failure for client_secret
+                "decrypted_refresh_token",
+                ValueError("Decryption failed — wrong AUTH_ENCRYPTION_SECRET"),
             ]
 
             async def mock_decrypt(value):
@@ -110,23 +172,22 @@ class TestTokenRefreshClientSecret:
                     raise result
                 return result
 
+            mock_encryption = MagicMock()
             mock_encryption.decrypt_secret_async = AsyncMock(side_effect=mock_decrypt)
             service.encryption = mock_encryption
 
-            # Mock token record with plaintext refresh token (won't need decryption in this test)
             token_record = MagicMock(spec=OAuthToken)
             token_record.gateway_id = "gw-test"
             token_record.app_user_email = "user@example.com"
-            token_record.refresh_token = "encrypted_refresh_token"  # Will be decrypted successfully
+            token_record.refresh_token = "encrypted_refresh_token"
             token_record.expires_at = datetime.now(timezone.utc) + timedelta(minutes=1)
 
-            # Attempt refresh - should fail but NOT delete the token
-            # The error is raised as OAuth error but caught by outer handler and token preserved
+            # _refresh_access_token catches OAuthError internally and returns None;
+            # the outer caller never sees the exception — but the token must NOT be deleted.
             result = await service._refresh_access_token(token_record)
 
-            # Should return None (failure) but NOT delete the token
-            assert result is None
-            mock_db.delete.assert_not_called()
+            assert result is None, "Must return None on decryption failure"
+            mock_db.delete.assert_not_called(), "Token must be preserved on decryption failure"
 
 
 class TestTokenRefreshOmitResource:
@@ -143,7 +204,7 @@ class TestTokenRefreshOmitResource:
         gateway.oauth_config = {
             "grant_type": "authorization_code",
             "client_id": "test-client",
-            "client_secret": "plaintext_secret",
+            "client_secret": "plaintext_secret",  # pragma: allowlist secret
             "token_url": "https://oauth.example.com/token",
             "omit_resource": True  # Explicitly disabled
         }
@@ -194,7 +255,7 @@ class TestTokenRefreshOmitResource:
         gateway.oauth_config = {
             "grant_type": "authorization_code",
             "client_id": "test-client",
-            "client_secret": "plaintext_secret",
+            "client_secret": "plaintext_secret",  # pragma: allowlist secret
             "token_url": "https://oauth.example.com/token",
             # omit_resource not present - should default to False
         }
@@ -248,7 +309,7 @@ class TestTokenDeletionLogic:
         gateway.oauth_config = {
             "grant_type": "authorization_code",
             "client_id": "test-client",
-            "client_secret": "secret",
+            "client_secret": "secret",  # pragma: allowlist secret
             "token_url": "https://oauth.example.com/token",
         }
         gateway.url = "https://example.com"
@@ -273,7 +334,7 @@ class TestTokenDeletionLogic:
             # raised by OAuthManager when the provider returns {"error": "invalid_grant"}.
             with patch("mcpgateway.services.oauth_manager.OAuthManager") as mock_oauth_class:
                 mock_oauth = MagicMock()
-                mock_oauth.refresh_token = AsyncMock(side_effect=OAuthInvalidGrantError("Refresh token permanently invalid (invalid_grant): {'error': 'invalid_grant'}"))
+                mock_oauth.refresh_token = AsyncMock(side_effect=OAuthInvalidGrantError("Refresh token permanently invalid (invalid_grant): {'error': 'invalid_grant'}"))  # pragma: allowlist secret
                 mock_oauth_class.return_value = mock_oauth
 
                 result = await service._refresh_access_token(token_record)
@@ -293,7 +354,7 @@ class TestTokenDeletionLogic:
         gateway.oauth_config = {
             "grant_type": "authorization_code",
             "client_id": "test-client",
-            "client_secret": "wrong_secret",
+            "client_secret": "wrong_secret",  # pragma: allowlist secret
             "token_url": "https://oauth.example.com/token",
         }
         gateway.url = "https://example.com"
@@ -335,7 +396,7 @@ class TestTokenDeletionLogic:
         gateway.oauth_config = {
             "grant_type": "authorization_code",
             "client_id": "test-client",
-            "client_secret": "secret",
+            "client_secret": "secret",  # pragma: allowlist secret
             "token_url": "https://oauth.example.com/token",
         }
         gateway.url = "https://example.com"

@@ -4482,6 +4482,33 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
         return True
 
+    async def _mark_gateway_reachable(self, gateway_id: str, gateway_name: str, gateway_enabled: bool, gateway_reachable: bool, *, reactivation_reason: str = "healthy") -> None:
+        """Reactivate a previously-unreachable gateway and update its last_seen timestamp.
+
+        Extracted to avoid duplicating the same pattern in the success path and the
+        401/403-as-healthy path of ``_check_single_gateway_health``.
+
+        Args:
+            gateway_id: Gateway DB identifier.
+            gateway_name: Human-readable name used in log messages.
+            gateway_enabled: Whether the gateway is currently enabled.
+            gateway_reachable: Whether the gateway is currently marked reachable.
+            reactivation_reason: Short label included in the reactivation log line.
+        """
+        if gateway_enabled and not gateway_reachable:
+            logger.info("Reactivating gateway: %s, as it is %s", gateway_name, reactivation_reason)
+            with cast(Any, SessionLocal)() as status_db:
+                await self.set_gateway_state(status_db, gateway_id, activate=True, reachable=True, only_update_reachable=True)
+
+        try:
+            with fresh_db_session() as update_db:
+                db_gateway = update_db.execute(select(DbGateway).where(DbGateway.id == gateway_id)).scalar_one_or_none()
+                if db_gateway:
+                    db_gateway.last_seen = datetime.now(timezone.utc)
+                    update_db.commit()
+        except Exception as update_error:
+            logger.warning("Failed to update last_seen for gateway %s: %s", gateway_name, update_error)
+
     async def _check_single_gateway_health(self, gateway: DbGateway, user_email: Optional[str] = None) -> None:
         """Check health of a single gateway.
 
@@ -4694,21 +4721,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                             async with ClientSession(read_stream, write_stream) as session:
                                 response = await session.initialize()
 
-                    # Reactivate gateway if it was previously inactive and health check passed now
-                    if gateway_enabled and not gateway_reachable:
-                        logger.info("Reactivating gateway: %s, as it is healthy now", gateway_name)
-                        with cast(Any, SessionLocal)() as status_db:
-                            await self.set_gateway_state(status_db, gateway_id, activate=True, reachable=True, only_update_reachable=True)
-
-                    # Update last_seen with fresh session (gateway object is detached)
-                    try:
-                        with fresh_db_session() as update_db:
-                            db_gateway = update_db.execute(select(DbGateway).where(DbGateway.id == gateway_id)).scalar_one_or_none()
-                            if db_gateway:
-                                db_gateway.last_seen = datetime.now(timezone.utc)
-                                update_db.commit()
-                    except Exception as update_error:
-                        logger.warning("Failed to update last_seen for gateway %s: %s", gateway_name, update_error)
+                    # Reactivate / update last_seen (success path)
+                    await self._mark_gateway_reachable(gateway_id, gateway_name, gateway_enabled, gateway_reachable)
 
                     # Auto-refresh tools/resources/prompts if enabled
                     should_auto_refresh = False
@@ -4774,10 +4788,24 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 except Exception as e:
                     # Distinguish between auth failures (gateway reachable but unauthorized)
                     # and genuine connectivity failures (gateway unreachable).
+                    #
+                    # For SSE transport, httpx raises httpx.HTTPStatusError directly and
+                    # e.response.status_code is accessible.
+                    #
+                    # For streamablehttp transport, the MCP SDK spawns the POST inside an
+                    # anyio TaskGroup, so Python 3.11+ wraps the original exception in a
+                    # BaseExceptionGroup before it surfaces here. Unwrap one level to
+                    # recover the original httpx.HTTPStatusError before inspecting it.
                     is_auth_failure = False
                     is_authorization_code = gateway_oauth_config is not None and gateway_oauth_config.get("grant_type") == "authorization_code"
-                    if is_authorization_code and hasattr(e, "response") and hasattr(e.response, "status_code"):  # pylint: disable=no-member
-                        status_code = e.response.status_code  # pylint: disable=no-member
+
+                    # Unwrap BaseExceptionGroup to find the root httpx error
+                    exc_to_inspect: BaseException = e
+                    if isinstance(e, BaseExceptionGroup) and e.exceptions:
+                        exc_to_inspect = e.exceptions[0]
+
+                    if is_authorization_code and hasattr(exc_to_inspect, "response") and hasattr(exc_to_inspect.response, "status_code"):  # pylint: disable=no-member
+                        status_code = exc_to_inspect.response.status_code  # pylint: disable=no-member
                         if status_code in (401, 403):
                             is_auth_failure = True
                             logger.debug(
@@ -4791,21 +4819,14 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                                 set_span_attribute(span, "auth.status", "unauthorized")
                                 set_span_attribute(span, "success", True)
 
-                            # Reactivate gateway if it was previously marked unreachable
-                            if gateway_enabled and not gateway_reachable:
-                                logger.info("Reactivating gateway: %s, as it is reachable (received %s auth challenge)", gateway_name, status_code)
-                                with cast(Any, SessionLocal)() as status_db:
-                                    await self.set_gateway_state(status_db, gateway_id, activate=True, reachable=True, only_update_reachable=True)
-
-                            # Update last_seen to reflect that gateway responded
-                            try:
-                                with fresh_db_session() as update_db:
-                                    db_gateway = update_db.execute(select(DbGateway).where(DbGateway.id == gateway_id)).scalar_one_or_none()
-                                    if db_gateway:
-                                        db_gateway.last_seen = datetime.now(timezone.utc)
-                                        update_db.commit()
-                            except Exception as update_error:
-                                logger.warning("Failed to update last_seen for gateway %s: %s", gateway_name, update_error)
+                            # Reactivate / update last_seen (auth-challenge path)
+                            await self._mark_gateway_reachable(
+                                gateway_id,
+                                gateway_name,
+                                gateway_enabled,
+                                gateway_reachable,
+                                reactivation_reason=f"reachable (received {status_code} auth challenge)",
+                            )
 
                             # Auth-failure handling complete — return without marking the
                             # gateway unhealthy.  Explicit return here prevents any future
