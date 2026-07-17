@@ -12245,7 +12245,9 @@ class TestCallToolDirectProxy:
             result = await tr.call_tool("my_tool", {"arg": "value"})
 
         assert result is expected_result
-        assert mock_invoke_direct.await_args.kwargs["user_context"] == recovered_identity
+        forwarded_identity = mock_invoke_direct.await_args.kwargs["user_context"]
+        assert forwarded_identity.email == recovered_identity["email"]
+        assert forwarded_identity.teams == recovered_identity["teams"]
 
     @pytest.mark.asyncio
     async def test_call_tool_direct_proxy_access_denied(self):

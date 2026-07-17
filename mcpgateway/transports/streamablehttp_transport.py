@@ -1717,6 +1717,11 @@ async def call_tool(
         <class 'dict'>
     """
     server_id, request_headers, user_context = await _get_request_context_or_default()
+    # The MCP SDK may execute this handler in a task that did not inherit the
+    # auth middleware's ContextVars. Materialize the typed identity in the
+    # current task from the canonical context recovered above.
+    _set_user_identity_from_dict(user_context)
+
     meta_data = None
     # Extract _meta from request context if available
     try:
@@ -1783,7 +1788,7 @@ async def call_tool(
                         meta_data=meta_data,
                         user_email=user_email,
                         token_teams=token_teams,
-                        user_context=user_context,
+                        user_context=user_identity_var.get(),
                     )
         except Exception as e:
             logger.error("Direct proxy mode failed for gateway %s: %s", gateway_id_from_header, e)
@@ -4782,6 +4787,10 @@ def _set_user_identity_from_dict(ctx: dict[str, Any]) -> None:
                 authenticated_at=datetime.now(timezone.utc),
             )
         )
+    else:
+        # Fail closed when the current request is anonymous or malformed.
+        # Without this reset a reused task could retain a previous principal.
+        user_identity_var.set(None)
 
 
 async def _set_proxy_user_context(proxy_user: str) -> dict[str, Any] | None:
