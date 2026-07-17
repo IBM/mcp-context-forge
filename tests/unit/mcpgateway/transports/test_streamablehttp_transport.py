@@ -5149,6 +5149,7 @@ async def test_streamable_http_auth_proxy_user_when_client_auth_disabled(monkeyp
     user_ctx = tr.user_context_var.get()
     assert user_ctx["email"] == "proxy_user@example.com"
     assert scope[tr._MCPGATEWAY_AUTH_CONTEXT_KEY] == user_ctx
+    assert scope["state"][tr._MCPGATEWAY_AUTH_CONTEXT_KEY] == user_ctx
     assert user_ctx["teams"] == []
     assert user_ctx["is_authenticated"] is True
     assert user_ctx["is_admin"] is False
@@ -10382,6 +10383,7 @@ async def test_auth_session_token_admin_bypass(monkeypatch):
     assert user_ctx["teams"] is None  # Admin bypass
     assert user_ctx["is_admin"] is True
     assert scope[tr._MCPGATEWAY_AUTH_CONTEXT_KEY] == user_ctx
+    assert scope["state"][tr._MCPGATEWAY_AUTH_CONTEXT_KEY] == user_ctx
 
 
 @pytest.mark.asyncio
@@ -15070,10 +15072,12 @@ async def test_get_request_context_reads_scope_context(monkeypatch):
     injected_server_id = "abc123def456"  # pragma: allowlist secret
 
     mock_scope = {
-        _MCPGATEWAY_CONTEXT_KEY: {
-            "server_id": injected_server_id,
-            "request_headers": injected_headers,
-            "user_context": injected_user_context,
+        "state": {
+            _MCPGATEWAY_CONTEXT_KEY: {
+                "server_id": injected_server_id,
+                "request_headers": injected_headers,
+                "user_context": injected_user_context,
+            }
         }
     }
 

@@ -2131,7 +2131,12 @@ async def _get_request_context_or_default() -> Tuple[str, dict[str, Any], dict[s
         ctx = mcp_app.request_context
         request = ctx.request
         if request:
-            gw_ctx = getattr(request, "scope", {}).get(_MCPGATEWAY_CONTEXT_KEY)
+            request_scope = getattr(request, "scope", {})
+            gw_ctx = request_scope.get(_MCPGATEWAY_CONTEXT_KEY)
+            if not isinstance(gw_ctx, dict):
+                request_state = request_scope.get("state")
+                if isinstance(request_state, dict):
+                    gw_ctx = request_state.get(_MCPGATEWAY_CONTEXT_KEY)
             if isinstance(gw_ctx, dict):
                 headers = gw_ctx.get("request_headers", {})
                 session_id = headers.get("x-mcp-session-id") if headers else None
@@ -4055,7 +4060,14 @@ class SessionManagerWrapper:
 
         # Enforce server access parity for server-scoped Streamable HTTP MCP routes.
         # This mirrors /servers/{id}/sse and /servers/{id}/message guards.
-        user_context = scope.get(_MCPGATEWAY_AUTH_CONTEXT_KEY)
+        scope_state = scope.get("state")
+        user_context = (
+            scope_state.get(_MCPGATEWAY_AUTH_CONTEXT_KEY)
+            if isinstance(scope_state, dict)
+            else None
+        )
+        if not isinstance(user_context, dict):
+            user_context = scope.get(_MCPGATEWAY_AUTH_CONTEXT_KEY)
         if not isinstance(user_context, dict):
             user_context = user_context_var.get()
         if match and _should_enforce_streamable_rbac(user_context):
@@ -4525,11 +4537,15 @@ class SessionManagerWrapper:
         # handlers can retrieve it even when ContextVars are lost (the SDK's
         # task group was created at startup, so spawned handler tasks inherit
         # the startup context rather than the per-request context).
-        scope[_MCPGATEWAY_CONTEXT_KEY] = {
+        downstream_context = {
             "server_id": server_id_var.get(),
             "request_headers": enriched_headers,
             "user_context": user_context,
         }
+        scope[_MCPGATEWAY_CONTEXT_KEY] = downstream_context
+        scope_state = scope.setdefault("state", {})
+        if isinstance(scope_state, dict):
+            scope_state[_MCPGATEWAY_CONTEXT_KEY] = downstream_context
 
         buffered_request_body = bytearray()
         initialize_span_cm: Optional[ContextManager[Any]] = None
@@ -4924,7 +4940,11 @@ class _StreamableHttpAuthHandler:
         """Store verified identity on the ASGI scope across task boundaries."""
         auth_context = user_context_var.get()
         if isinstance(auth_context, dict):
-            self.scope[_MCPGATEWAY_AUTH_CONTEXT_KEY] = dict(auth_context)
+            persisted_context = dict(auth_context)
+            self.scope[_MCPGATEWAY_AUTH_CONTEXT_KEY] = persisted_context
+            scope_state = self.scope.setdefault("state", {})
+            if isinstance(scope_state, dict):
+                scope_state[_MCPGATEWAY_AUTH_CONTEXT_KEY] = persisted_context
 
     async def _send_error(self, *, detail: str, status_code: int = HTTP_401_UNAUTHORIZED, headers: dict[str, str] | None = None) -> bool:
         """Send an error response and return False (auth rejected).
