@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type Ref } from "react";
-import { MessageSquareCode, MoreHorizontal, Plus } from "lucide-react";
+import { MessageSquareCode, MoreVertical, Plus } from "lucide-react";
 import { useIntl } from "react-intl";
 import { PromptForm } from "@/components/prompts/PromptForm";
 import { Button } from "@/components/ui/button";
@@ -110,7 +110,7 @@ function PromptGroupCard({
                 )}
                 className="h-7 w-7 p-0"
               >
-                <MoreHorizontal className="h-4 w-4" />
+                <MoreVertical className="h-4 w-4" />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
@@ -271,6 +271,16 @@ export function Prompts() {
     await refetch();
   };
 
+  // TODO: placeholder handlers so the details-panel Definition table shows its
+  // row overflow menu. No behaviour yet — a follow-up PR adds PromptForm edit
+  // mode and a delete flow.
+  const handleEditPrompt = () => {
+    // TODO: open PromptForm in edit mode for the selected prompt
+  };
+  const handleDeletePrompt = () => {
+    // TODO: delete the selected prompt (with confirmation)
+  };
+
   return (
     <div className="p-6">
       {showForm ? (
@@ -322,6 +332,8 @@ export function Prompts() {
         open={activeGroup !== null}
         onClose={() => setActiveGroup(null)}
         onAddTag={handleAddPromptTag}
+        onEdit={handleEditPrompt}
+        onDelete={handleDeletePrompt}
       />
     </div>
   );

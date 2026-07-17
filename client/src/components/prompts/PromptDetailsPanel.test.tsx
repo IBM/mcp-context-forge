@@ -248,11 +248,215 @@ describe("PromptDetailsPanel", () => {
     expect(screen.getByText("Local prompt · private · 1 argument")).toBeInTheDocument();
   });
 
+  it("shows Try it and Definition tabs, with Try it (preview) active by default", async () => {
+    const user = userEvent.setup();
+    render(
+      <PromptDetailsPanel
+        prompts={[mockPrompt()]}
+        title="hugging-face"
+        open={true}
+        onClose={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("tab", { name: /try it/i })).toHaveAttribute("data-state", "active");
+    expect(screen.getByRole("button", { name: /^preview$/i })).toBeInTheDocument();
+
+    // Definition tab reveals the prompt table with its columns.
+    await user.click(screen.getByRole("tab", { name: /definition/i }));
+    expect(screen.getByRole("columnheader", { name: /^name$/i })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: /prompt id/i })).toBeInTheDocument();
+    expect(screen.queryByRole("columnheader", { name: /source url/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("cell", { name: "greet_user" })).toBeInTheDocument();
+  });
+
+  it("resets to the Try it tab each time the panel is reopened", async () => {
+    const user = userEvent.setup();
+    const props = {
+      prompts: [mockPrompt()],
+      title: "hugging-face",
+      onClose: vi.fn(),
+    };
+    const { rerender } = render(<PromptDetailsPanel {...props} open={true} />);
+
+    // Switch to Definition, then close and reopen the panel.
+    await user.click(screen.getByRole("tab", { name: /definition/i }));
+    expect(screen.getByRole("tab", { name: /definition/i })).toHaveAttribute(
+      "data-state",
+      "active",
+    );
+
+    rerender(<PromptDetailsPanel {...props} open={false} />);
+    rerender(<PromptDetailsPanel {...props} open={true} />);
+
+    expect(screen.getByRole("tab", { name: /try it/i })).toHaveAttribute("data-state", "active");
+  });
+
+  it("updates the Prompt details sidebar when a Definition table row is selected", async () => {
+    const user = userEvent.setup();
+    const publicPrompt = mockPrompt({ id: "a", name: "prompt_a", visibility: "public" });
+    const privatePrompt = mockPrompt({ id: "b", name: "prompt_b", visibility: "private" });
+    render(
+      <PromptDetailsPanel
+        prompts={[publicPrompt, privatePrompt]}
+        title="hugging-face"
+        open={true}
+        onClose={vi.fn()}
+      />,
+    );
+
+    // First prompt is selected initially; the sidebar shows its visibility.
+    expect(screen.getByText("Public")).toBeInTheDocument();
+    expect(screen.queryByText("Private")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("tab", { name: /definition/i }));
+    await user.click(screen.getByRole("cell", { name: "prompt_b" }));
+
+    // Sidebar now reflects the row that was picked.
+    expect(screen.getByText("Private")).toBeInTheDocument();
+    expect(screen.queryByText("Public")).not.toBeInTheDocument();
+  });
+
+  it("keeps the panel title free of an overflow menu (moved to the table)", () => {
+    render(
+      <PromptDetailsPanel
+        prompts={[mockPrompt()]}
+        title="hugging-face"
+        open={true}
+        onClose={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+      />,
+    );
+
+    // The Try it tab is active; no row menu is rendered until Definition is opened.
+    expect(screen.queryByRole("button", { name: /more options/i })).not.toBeInTheDocument();
+  });
+
+  it("renders a row overflow menu in the Definition table when onEdit is provided", async () => {
+    const user = userEvent.setup();
+    render(
+      <PromptDetailsPanel
+        prompts={[mockPrompt()]}
+        title="hugging-face"
+        open={true}
+        onClose={vi.fn()}
+        onEdit={vi.fn()}
+      />,
+    );
+
+    await user.click(screen.getByRole("tab", { name: /definition/i }));
+    expect(
+      screen.getByRole("button", { name: /more options for greet_user/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("does not render a row overflow menu when neither onEdit nor onDelete is provided", async () => {
+    const user = userEvent.setup();
+    render(
+      <PromptDetailsPanel
+        prompts={[mockPrompt()]}
+        title="hugging-face"
+        open={true}
+        onClose={vi.fn()}
+      />,
+    );
+
+    await user.click(screen.getByRole("tab", { name: /definition/i }));
+    expect(screen.queryByRole("button", { name: /more options/i })).not.toBeInTheDocument();
+  });
+
+  it("calls onEdit with the row's prompt when Edit is clicked in the Definition table", async () => {
+    const onEdit = vi.fn();
+    const user = userEvent.setup();
+    const prompt = mockPrompt();
+    render(
+      <PromptDetailsPanel
+        prompts={[prompt]}
+        title="hugging-face"
+        open={true}
+        onClose={vi.fn()}
+        onEdit={onEdit}
+      />,
+    );
+
+    await user.click(screen.getByRole("tab", { name: /definition/i }));
+    await user.click(screen.getByRole("button", { name: /more options for greet_user/i }));
+    await user.click(screen.getByRole("menuitem", { name: /^edit$/i }));
+    expect(onEdit).toHaveBeenCalledWith(prompt);
+  });
+
+  it("calls onDelete with the row's prompt when Delete is clicked in the Definition table", async () => {
+    const onDelete = vi.fn();
+    const user = userEvent.setup();
+    const prompt = mockPrompt();
+    render(
+      <PromptDetailsPanel
+        prompts={[prompt]}
+        title="hugging-face"
+        open={true}
+        onClose={vi.fn()}
+        onDelete={onDelete}
+      />,
+    );
+
+    await user.click(screen.getByRole("tab", { name: /definition/i }));
+    await user.click(screen.getByRole("button", { name: /more options for greet_user/i }));
+    await user.click(screen.getByRole("menuitem", { name: /^delete$/i }));
+    expect(onDelete).toHaveBeenCalledWith(prompt);
+  });
+
+  it("renders Technical name and Prompt ID with copy buttons", () => {
+    render(
+      <PromptDetailsPanel
+        prompts={[mockPrompt()]}
+        title="hugging-face"
+        open={true}
+        onClose={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("Technical name")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /copy technical name/i })).toBeInTheDocument();
+    expect(screen.getByText("Prompt ID")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /copy prompt id/i })).toBeInTheDocument();
+  });
+
+  it("renders Source URL with copy button when federationSource is set", () => {
+    const prompt = mockPrompt({ federationSource: "https://mcp.example.com/prompts" });
+    render(<PromptDetailsPanel prompts={[prompt]} title="test" open={true} onClose={vi.fn()} />);
+
+    expect(screen.getByText("Source URL")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /copy source url/i })).toBeInTheDocument();
+  });
+
+  it("omits Source URL when federationSource is not set", () => {
+    render(
+      <PromptDetailsPanel prompts={[mockPrompt()]} title="test" open={true} onClose={vi.fn()} />,
+    );
+
+    expect(screen.queryByText("Source URL")).not.toBeInTheDocument();
+  });
+
+  it("renders Version when version is set", () => {
+    const prompt = mockPrompt({ version: 3 });
+    render(<PromptDetailsPanel prompts={[prompt]} title="test" open={true} onClose={vi.fn()} />);
+
+    expect(screen.getByText("Version")).toBeInTheDocument();
+    expect(screen.getByText("3")).toBeInTheDocument();
+  });
+
+  it("omits Version when version is null", () => {
+    const prompt = mockPrompt({ version: null });
+    render(<PromptDetailsPanel prompts={[prompt]} title="test" open={true} onClose={vi.fn()} />);
+
+    expect(screen.queryByText("Version")).not.toBeInTheDocument();
+  });
+
   it("calls onAddTag with the merged, de-duplicated tag list", async () => {
     const user = userEvent.setup();
     const onAddTag = vi.fn().mockResolvedValue(undefined);
     const prompt = mockPrompt({ id: "p1", tags: [{ id: "dev", label: "dev" }] });
-
     render(
       <PromptDetailsPanel
         prompts={[prompt]}

@@ -64,7 +64,6 @@
   "resources.table.delete": "Eliminar",
   "resources.details.resourcesFor": "Recursos de {name}",
   "resources.details.close": "Cerrar detalles del recurso",
-  "resources.details.copyValue": "Copiar {label}",
   "resources.details.componentDetails": "Detalles del componente",
   "resources.details.activity": "Actividad",
   "resources.details.notAvailable": "No disponible",
