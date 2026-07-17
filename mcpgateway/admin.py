@@ -5591,9 +5591,17 @@ async def admin_search_teams(
         # Non-admin search
         # Reuse user team fetching
         all_teams = await team_service.get_user_teams(user_email, include_personal=True)
+        # Narrow to the caller's normalized token scope (Layer 1). get_user_teams
+        # returns every membership and ignores token scope, so a token narrowed to
+        # a team subset would otherwise leak sibling teams the caller belongs to but
+        # is scoped out of. _get_user_team_ids honors token_teams/_cached_team_ids;
+        # the caller's own personal team stays visible (owner is always visible).
+        scoped_team_ids = set(await _get_user_team_ids(user, db))
         # Filter in memory
         filtered = []
         for t in all_teams:
+            if not getattr(t, "is_personal", False) and t.id not in scoped_team_ids:
+                continue
             if not include_inactive and not t.is_active:
                 continue
             if visibility and t.visibility != visibility:

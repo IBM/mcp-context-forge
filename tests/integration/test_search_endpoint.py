@@ -288,8 +288,12 @@ def _real_data_env():
     now = datetime.now(timezone.utc)
     team_a = uuid.uuid4().hex
     team_b = uuid.uuid4().hex
-    user_b = "user-b@example.com"
-    owner = "owner@example.com"  # owns the tools so user_b access is never via ownership
+    # Unique emails per invocation: get_user_teams and role/permission lookups are
+    # cached by email at process scope, so a fixed email would leak one test's
+    # temp-DB team ids into another test using the same user.
+    suffix = uuid.uuid4().hex
+    user_b = f"user-b-{suffix}@example.com"
+    owner = f"owner-{suffix}@example.com"  # owns the tools so user_b access is never via ownership
 
     def _user(email):
         return EmailUser(id=uuid.uuid4().hex, email=email, password_hash="x", full_name=email, is_admin=False, is_active=True, auth_provider="local", email_verified_at=now)  # pragma: allowlist secret
@@ -316,8 +320,8 @@ def _real_data_env():
     db.add_all([_user(user_b), _user(owner)])
     db.add_all(
         [
-            EmailTeam(id=team_a, name="Team A", slug="team-a", created_by=owner, is_personal=False, visibility="public"),
-            EmailTeam(id=team_b, name="Team B", slug="team-b", created_by=owner, is_personal=False, visibility="public"),
+            EmailTeam(id=team_a, name=f"{SEARCH_TERM} Team A", slug="team-a", created_by=owner, is_personal=False, visibility="public"),
+            EmailTeam(id=team_b, name=f"{SEARCH_TERM} Team B", slug="team-b", created_by=owner, is_personal=False, visibility="public"),
         ]
     )
     db.commit()
@@ -329,7 +333,7 @@ def _real_data_env():
         [
             EmailTeamMember(id=uuid.uuid4().hex, team_id=team_a, user_email=user_b, role="member", is_active=True),
             EmailTeamMember(id=uuid.uuid4().hex, team_id=team_b, user_email=user_b, role="member", is_active=True),
-            Role(id=role_id, name="test-tools-reader", scope="global", permissions=["tools.read"], created_by=owner, is_active=True),
+            Role(id=role_id, name="test-reader", scope="global", permissions=["tools.read", "teams.read"], created_by=owner, is_active=True),
             UserRole(id=uuid.uuid4().hex, user_email=user_b, role_id=role_id, scope="global", scope_id=None, granted_by=owner, is_active=True),
         ]
     )
@@ -452,3 +456,33 @@ class TestUnifiedSearchRealDataScoping:
         assert body["results"]["servers"] == []  # servers.read denied -> 403 -> swallowed to empty
         assert body["results"]["tools"]  # allowed entity still returned (search did not collapse)
         assert ids["teamb"] in {tool["id"] for tool in body["results"]["tools"]}
+
+    def test_team_search_hides_narrowed_out_team(self, _real_data_env):
+        """A token scoped to team-B must not leak team-A in team search results.
+
+        Team search reloads all memberships; without token-scope narrowing a
+        token limited to team-B would still surface team-A's id/name/slug/etc.
+        """
+        app, TestSessionLocal, ids = _real_data_env
+        _inject_identity(app, TestSessionLocal, ids["user_b"], token_teams=[ids["team_b"]])
+
+        client = TestClient(app, raise_server_exceptions=False)
+        resp = client.get(f"/v1/search?q={SEARCH_TERM}&entity_types=teams", headers={"Authorization": "Bearer x"})
+
+        assert resp.status_code == 200
+        returned = {team["id"] for team in resp.json()["results"]["teams"]}
+        assert ids["team_b"] in returned  # in-scope team visible (positive control)
+        assert ids["team_a"] not in returned  # narrowed-out team hidden (the deny)
+
+    def test_team_search_without_narrowing_shows_both_teams(self, _real_data_env):
+        """Contrast: same member, no token narrowing, sees both teams (deny above was the token)."""
+        app, TestSessionLocal, ids = _real_data_env
+        _inject_identity(app, TestSessionLocal, ids["user_b"], token_teams=None)
+
+        client = TestClient(app, raise_server_exceptions=False)
+        resp = client.get(f"/v1/search?q={SEARCH_TERM}&entity_types=teams", headers={"Authorization": "Bearer x"})
+
+        assert resp.status_code == 200
+        returned = {team["id"] for team in resp.json()["results"]["teams"]}
+        assert ids["team_b"] in returned
+        assert ids["team_a"] in returned  # visible via membership -> confirms the token caused the deny
