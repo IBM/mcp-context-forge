@@ -2103,13 +2103,17 @@ async def _get_request_context_or_default() -> Tuple[str, dict[str, Any], dict[s
     if s_id != "default_server_id":
         headers = request_headers_var.get()
         session_id = headers.get("x-mcp-session-id") if headers else None
+        context_user = user_context_var.get()
 
-        # If we have a server_id but no session ID in headers, the ContextVars were captured
-        # before enrichment. Fall through to ASGI scope which has the enriched headers.
-        if not session_id:
+        # If identity or session enrichment is missing, these ContextVars were
+        # captured before request authentication. Fall through to the trusted
+        # ASGI scope instead of returning an empty or stale principal.
+        if not session_id or not context_user:
             logger.debug(
-                "[CONTEXT_RESOLUTION] Path 1 skipped (no session ID) | server_id=%s | falling through to ASGI scope",
+                "[CONTEXT_RESOLUTION] Path 1 skipped (incomplete request context) | server_id=%s | has_session_id=%s | has_user=%s | falling through to ASGI scope",
                 s_id[:8] if s_id else None,
+                bool(session_id),
+                bool(context_user),
             )
             # Don't return - fall through to Path 2 (ASGI scope)
         else:
@@ -2118,7 +2122,7 @@ async def _get_request_context_or_default() -> Tuple[str, dict[str, Any], dict[s
                 s_id[:8] if s_id else None,
                 bool(session_id),
             )
-            return s_id, headers, user_context_var.get()
+            return s_id, headers, context_user
 
     # 2. Try ASGI scope context injected by handle_streamable_http()
     ctx = None

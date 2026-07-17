@@ -13021,7 +13021,63 @@ async def test_get_request_context_fast_path_no_session_id_falls_through(monkeyp
                 assert user["email"] == "fallback@test.com"
 
                 # Verify debug log for fallthrough
-                assert any("[CONTEXT_RESOLUTION] Path 1 skipped (no session ID)" in record.message for record in caplog.records)
+                assert any("[CONTEXT_RESOLUTION] Path 1 skipped (incomplete request context)" in record.message for record in caplog.records)
+    finally:
+        server_id_var.reset(s_tok)
+        request_headers_var.reset(h_tok)
+        user_context_var.reset(u_tok)
+
+
+@pytest.mark.asyncio
+async def test_get_request_context_fast_path_empty_identity_falls_through_to_scope():
+    """A session id must not make an empty startup identity authoritative."""
+    # Standard
+    from unittest.mock import PropertyMock
+
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import (
+        _get_request_context_or_default,
+        mcp_app,
+        request_headers_var,
+        server_id_var,
+        user_context_var,
+    )
+
+    scope_identity = {
+        "email": "user@test.com",
+        "teams": [],
+        "is_authenticated": True,
+        "is_admin": False,
+    }
+    scope_headers = {
+        "x-mcp-session-id": "session-123",
+        "x-context-forge-gateway-id": "gateway-123",
+    }
+    mock_request = MagicMock()
+    mock_request.scope = {
+        _MCPGATEWAY_CONTEXT_KEY: {
+            "server_id": "scope-server",
+            "request_headers": scope_headers,
+            "user_context": scope_identity,
+        }
+    }
+    mock_ctx = MagicMock()
+    mock_ctx.request = mock_request
+
+    s_tok = server_id_var.set("stale-server")
+    h_tok = request_headers_var.set({"x-mcp-session-id": "session-123"})
+    u_tok = user_context_var.set({})
+    try:
+        with patch.object(
+            type(mcp_app),
+            "request_context",
+            new_callable=PropertyMock,
+            return_value=mock_ctx,
+        ):
+            sid, headers, user = await _get_request_context_or_default()
+        assert sid == "scope-server"
+        assert headers == scope_headers
+        assert user == scope_identity
     finally:
         server_id_var.reset(s_tok)
         request_headers_var.reset(h_tok)
