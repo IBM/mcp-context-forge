@@ -404,33 +404,38 @@ class TokenStorageService:
                 query = parsed.query if preserve_query else ""
                 return urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, query, ""))
 
-            # RFC 8707: Set resource parameter for JWT access tokens during refresh
-            # Respect omit_resource flag - if explicitly set to true, skip all resource handling
-            omit_resource = oauth_config.get("omit_resource", False)
-            if omit_resource:
-                # User explicitly disabled resource parameter - remove it if present
-                oauth_config.pop("resource", None)
-                logger.debug("Omitting resource parameter for gateway %s as per omit_resource=true config", token_record.gateway_id)
-            else:
-                existing_resource = oauth_config.get("resource")
-                if existing_resource:
-                    # Normalize existing resource - preserve query for explicit config
-                    if isinstance(existing_resource, list):
-                        original_count = len(existing_resource)
-                        normalized = [normalize_resource(r, preserve_query=True) for r in existing_resource]
-                        oauth_config["resource"] = [r for r in normalized if r]
-                        if not oauth_config["resource"] and original_count > 0:
-                            logger.warning("All %s configured resource values were empty and removed during refresh", original_count)
-                    else:
-                        normalized = normalize_resource(existing_resource, preserve_query=True)
-                        if not normalized and existing_resource:
-                            logger.warning("Configured resource was empty and removed during refresh: %s", existing_resource)
-                        oauth_config["resource"] = normalized
-                elif gateway.url:
-                    # Derive from gateway.url if not explicitly configured (strip query)
-                    oauth_config["resource"] = normalize_resource(gateway.url)
-                    if not oauth_config.get("resource"):
-                        logger.warning("Gateway URL is empty, skipping resource parameter: %s", gateway.url)
+            existing_resource = oauth_config.get("resource")
+            if existing_resource:
+                # Normalize existing resource - preserve query for explicit config
+                if isinstance(existing_resource, list):
+                    original_count = len(existing_resource)
+                    normalized = [normalize_resource(r, preserve_query=True) for r in existing_resource]
+                    oauth_config["resource"] = [r for r in normalized if r]
+                    if not oauth_config["resource"] and original_count > 0:
+                        logger.warning("All %s configured resource values were empty and removed during refresh", original_count)
+                else:
+                    normalized = normalize_resource(existing_resource, preserve_query=True)
+                    if not normalized and existing_resource:
+                        logger.warning("Configured resource was empty and removed during refresh: %s", existing_resource)
+                    oauth_config["resource"] = normalized
+            elif gateway.url:
+                # Derive the ORIGIN (scheme + netloc), matching what oauth_router
+                # sends on the initial authorization + callback exchanges. Using
+                # the full URL here would ship a different `resource` on refresh
+                # than the IdP saw at login, causing the refresh to fail or mint
+                # a token whose aud no longer matches the audience the user
+                # already validated against.
+                # First-Party
+                from mcpgateway.services.token_validation_service import _derive_resource_origin  # pylint: disable=import-outside-toplevel
+
+                derived_origin = _derive_resource_origin(gateway.url)
+                if derived_origin:
+                    oauth_config["resource"] = derived_origin
+                else:
+                    logger.warning(
+                        "Cannot derive resource origin from gateway URL (URN or scheme-less), skipping resource parameter: %s",
+                        gateway.url,
+                    )
 
             # Use OAuthManager to refresh the token
             # First-Party

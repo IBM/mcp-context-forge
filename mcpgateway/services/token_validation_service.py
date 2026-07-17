@@ -139,6 +139,44 @@ def _derive_issuer_from_token_url(token_url: str) -> Optional[str]:
     return f"{parsed.scheme}://{parsed.netloc}"
 
 
+def _derive_resource_origin(url: Optional[str]) -> Optional[str]:
+    """Derive the origin (scheme + netloc) from a gateway URL for use as a fallback resource.
+
+    Real-world OAuth providers (Salesforce, Azure AD, Okta) issue access tokens
+    with origin-level audiences (``https://api.salesforce.com``) rather than the
+    full URL of the protected MCP endpoint
+    (``https://api.salesforce.com/platform/mcp/v1/...``).  Using the full
+    gateway URL as the auto-derived resource therefore reliably mismatches the
+    token's actual aud and produces validation failures.
+
+    This helper is the single source of truth for that derivation.  It is used
+    by three call sites that must agree on the auto-derived audience:
+
+    * ``mcpgateway.routers.oauth_router`` — outbound ``resource`` param on the
+      initial authorization request and the callback token exchange.
+    * ``mcpgateway.services.token_storage_service`` — outbound ``resource``
+      param on token refresh (must match the initial request so the IdP mints
+      a token for the same audience).
+    * ``mcpgateway.services.token_validation_service`` — inbound ``aud``
+      comparison fallback when no admin-configured or per-user-learned
+      resource exists.
+
+    Args:
+        url: Gateway URL to extract the origin from.
+
+    Returns:
+        ``scheme://netloc`` for hierarchical URLs, or ``None`` for URNs / empty
+        / scheme-less inputs (caller should treat as "no auto-fallback
+        possible" and rely on admin config or the per-user learned value).
+    """
+    if not url:
+        return None
+    parsed = urlparse(url)
+    if not parsed.scheme or not parsed.netloc:
+        return None
+    return f"{parsed.scheme}://{parsed.netloc}"
+
+
 def _normalize_scope(scope_input: Any) -> set[str]:
     """Normalize a scope string or list by stripping resource URI prefixes.
 
@@ -184,8 +222,12 @@ def _validate_audience(
     1. ``oauth_config["resource"]`` -- admin explicitly configured. Authoritative.
     2. ``learned_aud`` -- per-user value captured from THIS USER'S prior OAuth
        callback (stored on OAuthToken). Authoritative for this user only.
-    3. ``gateway_url`` -- auto-derived fallback. Advisory by default; set
+    3. ``gateway_url`` origin (scheme + netloc) -- auto-derived fallback via
+       ``_derive_resource_origin``. Advisory by default; set
        ``OAUTH_REQUIRE_CONFIGURED_RESOURCE=true`` to make it authoritative.
+       Origin (not full URL) is used because it matches the value the OAuth
+       route sends as the outbound ``resource`` param, so tokens whose ``aud``
+       correctly reflects the origin validate successfully.
 
     Per-user learned audience prevents (a) cross-tenant DoS when a single gateway
     serves multiple IdP tenants with per-tenant aud values, and (b) RBAC bypass
@@ -206,7 +248,15 @@ def _validate_audience(
             no per-user learned value is available.
     """
     configured_resource = oauth_config.get("resource")
-    expected = configured_resource or learned_aud or gateway_url
+    # Fall back to gateway_url's ORIGIN (scheme + netloc), matching the value
+    # oauth_router derives when no explicit resource is configured. Comparing
+    # against the full URL would silently reject tokens whose aud correctly
+    # reflects the origin — visible especially under
+    # OAUTH_REQUIRE_CONFIGURED_RESOURCE=true where the mismatch becomes blocking.
+    # URN or scheme-less gateway_url yields None from the helper; keep
+    # gateway_url as final fallback so those non-URL cases behave as before.
+    gateway_origin = _derive_resource_origin(gateway_url) or gateway_url
+    expected = configured_resource or learned_aud or gateway_origin
     if not expected:
         return
 

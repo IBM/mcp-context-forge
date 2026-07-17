@@ -409,14 +409,39 @@ async def test_refresh_success_with_single_resource(service, mock_db):
 
 
 @pytest.mark.asyncio
-async def test_refresh_derives_resource_from_gateway_url(service, mock_db):
-    gw = MagicMock(oauth_config={"token_url": "https://token", "client_id": "cid"}, url="https://gw.example.com/api")
+async def test_refresh_derives_resource_origin_from_path_bearing_gateway_url(service, mock_db):
+    """Refresh must derive the ORIGIN (scheme + netloc), not the full URL.
+
+    Regression coverage for the case where oauth_router sends
+    ``resource=https://gw.example.com`` on initial authorization and callback,
+    but refresh used to send ``resource=https://gw.example.com/api/mcp/v1``
+    (full URL) — a mismatch that either fails the refresh at the IdP or mints
+    a token whose ``aud`` no longer matches what was originally validated.
+    """
+    gw = MagicMock(oauth_config={"token_url": "https://token", "client_id": "cid"}, url="https://gw.example.com/api/mcp/v1")
     mock_db.query.return_value.filter.return_value.first.return_value = gw
     mock_oauth_manager = MagicMock()
     mock_oauth_manager.refresh_token = AsyncMock(return_value={"access_token": "new_access", "expires_in": 3600})
     with patch("mcpgateway.services.oauth_manager.OAuthManager", return_value=mock_oauth_manager):
         result = await service._refresh_access_token(_make_token_record())
     assert result == "new_access"
+    refresh_call_oauth_config = mock_oauth_manager.refresh_token.call_args[0][1]
+    assert refresh_call_oauth_config["resource"] == "https://gw.example.com"
+
+
+@pytest.mark.asyncio
+async def test_refresh_skips_resource_when_gateway_url_is_urn(service, mock_db, caplog):
+    """URN-shaped gateway.url cannot yield an origin; refresh must skip the resource param."""
+    gw = MagicMock(oauth_config={"token_url": "https://token", "client_id": "cid"}, url="urn:example:mcp-gateway")
+    mock_db.query.return_value.filter.return_value.first.return_value = gw
+    mock_oauth_manager = MagicMock()
+    mock_oauth_manager.refresh_token = AsyncMock(return_value={"access_token": "new_access", "expires_in": 3600})
+    with patch("mcpgateway.services.oauth_manager.OAuthManager", return_value=mock_oauth_manager), caplog.at_level("WARNING"):
+        result = await service._refresh_access_token(_make_token_record())
+    assert result == "new_access"
+    refresh_call_oauth_config = mock_oauth_manager.refresh_token.call_args[0][1]
+    assert "resource" not in refresh_call_oauth_config or refresh_call_oauth_config["resource"] in (None, "")
+    assert any("Cannot derive resource origin" in rec.message for rec in caplog.records)
 
 
 @pytest.mark.asyncio
