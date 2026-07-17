@@ -32,6 +32,8 @@ export interface PromptDetailsPanelProps {
   prompts: NonNullable<PromptRead>[];
   title: string;
   initialPromptId?: string;
+  /** Tab to select each time the panel opens. Defaults to "tryIt". */
+  initialTab?: "tryIt" | "definition";
   open: boolean;
   onClose: () => void;
   /**
@@ -58,6 +60,7 @@ export function PromptDetailsPanel({
   prompts,
   title,
   initialPromptId,
+  initialTab = "tryIt",
   open,
   onClose,
   onAddTag,
@@ -70,19 +73,21 @@ export function PromptDetailsPanel({
   const [selectedId, setSelectedId] = useState<string | undefined>(
     initialPromptId ?? prompts[0]?.id,
   );
-  const [activeTab, setActiveTab] = useState("tryIt");
+  const [activeTab, setActiveTab] = useState<string>(initialTab);
 
   useEffect(() => {
     if (!open) return;
     setSelectedId(initialPromptId ?? prompts[0]?.id);
   }, [open, initialPromptId, prompts]);
 
-  // Always land on "Try it" each time the panel opens, regardless of which tab
-  // was active when it was last closed. Keyed on `open` only so a data refetch
-  // while the panel is open doesn't yank the user off the Definition tab.
+  // Land on `initialTab` (default "Try it") each time the panel opens,
+  // regardless of which tab was active when it was last closed. Keyed on `open`
+  // (and `initialTab`) only so a data refetch while the panel is open doesn't
+  // yank the user off the tab they're on. Returning from the edit form reopens
+  // the panel with initialTab="definition".
   useEffect(() => {
-    if (open) setActiveTab("tryIt");
-  }, [open]);
+    if (open) setActiveTab(initialTab);
+  }, [open, initialTab]);
 
   const selected = useMemo(
     () => prompts.find((p) => p.id === selectedId) ?? prompts[0] ?? null,

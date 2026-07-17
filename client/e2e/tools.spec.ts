@@ -186,6 +186,48 @@ test.describe("Tools page", () => {
     await expect(page.getByText("+2")).toBeVisible();
   });
 
+  test("truncates a long gateway name and keeps the overflow menu visible", async ({ page }) => {
+    // A gateway slug long enough to overflow the card at the default viewport.
+    const longSlug =
+      "openzeppelin-stylus-contracts-enterprise-edition-extended-long-server-name-instance";
+    const tools: Tool[] = [makeTool("stylus_erc20", longSlug), makeTool("stylus_erc721", longSlug)];
+
+    await page.route("**/tools?*", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(tools),
+      });
+    });
+
+    await page.goto(APP.TOOLS);
+    await page.waitForLoadState("networkidle");
+
+    // The kebab menu for the long-named group must stay visible.
+    const kebab = page.getByRole("button", { name: `More options for ${longSlug}` });
+    await expect(kebab).toBeVisible();
+
+    const card = page.locator('[data-slot="card"]').filter({ has: kebab });
+    const title = card.locator('[data-slot="card-header"] span.truncate').first();
+
+    // The title is actually clipped (its content is wider than the box) and
+    // carries a native tooltip so the full name stays discoverable on hover.
+    const isTruncated = await title.evaluate((el) => el.scrollWidth > el.clientWidth);
+    expect(isTruncated).toBe(true);
+    await expect(title).toHaveAttribute("title", longSlug);
+
+    // The kebab is not pushed past the card's right edge (it was clipped before).
+    const cardBox = await card.boundingBox();
+    const kebabBox = await kebab.boundingBox();
+    expect(cardBox).not.toBeNull();
+    expect(kebabBox).not.toBeNull();
+    expect(kebabBox!.x + kebabBox!.width).toBeLessThanOrEqual(cardBox!.x + cardBox!.width + 1);
+
+    // And it remains functional.
+    await kebab.click();
+    await expect(page.getByRole("menuitem", { name: "View Details" })).toBeVisible();
+  });
+
   test("opens more options dropdown and shows View Details item", async ({ page }) => {
     await page.route("**/tools?*", async (route) => {
       await route.fulfill({
