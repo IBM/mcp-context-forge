@@ -126,16 +126,15 @@ class TestTokenRefreshClientSecret:
 
     @pytest.mark.asyncio
     async def test_decryption_failure_raises_oauth_error_and_preserves_token(self):
-        """Decryption failure must raise OAuthError (fail closed) and preserve the token.
+        """Decryption failure must trigger OAuthError (fail closed) and preserve the token.
 
-        Sending the ciphertext envelope as a literal client_secret to an Authorization
-        Server causes repeated invalid_client attempts that can trigger IdP
-        rate-limiting/lockout.  The fix raises OAuthError so the caller's
-        ``except OAuthError`` branch preserves the token for a later retry.
+        decrypt_secret_async() is the idempotent wrapper — it returns None on wrong-key or
+        corrupted-ciphertext failures, it never raises. The fix checks for None and raises
+        OAuthError explicitly. This matches the real wrong-AUTH_ENCRYPTION_SECRET scenario:
+        the token is preserved for retry, and the IdP never receives a None/ciphertext credential.
         """
         mock_db = MagicMock()
 
-        # Mock gateway with encrypted client_secret
         gateway = MagicMock(spec=DbGateway)
         gateway.id = "gw-test"
         gateway.owner_email = "user@example.com"
@@ -160,20 +159,13 @@ class TestTokenRefreshClientSecret:
 
             service = TokenStorageService(mock_db)
 
-            # refresh_token decryption succeeds; client_secret decryption fails
-            decrypt_calls = [
-                "decrypted_refresh_token",
-                ValueError("Decryption failed — wrong AUTH_ENCRYPTION_SECRET"),
-            ]
-
-            async def mock_decrypt(value):
-                result = decrypt_calls.pop(0)
-                if isinstance(result, Exception):
-                    raise result
-                return result
-
+            # Mimic real behaviour: decrypt_secret_async returns "decrypted_refresh_token"
+            # for the refresh token, then returns None for the client_secret (wrong key /
+            # corrupted ciphertext — the real method never raises, it returns None).
             mock_encryption = MagicMock()
-            mock_encryption.decrypt_secret_async = AsyncMock(side_effect=mock_decrypt)
+            mock_encryption.decrypt_secret_async = AsyncMock(
+                side_effect=["decrypted_refresh_token", None]
+            )
             service.encryption = mock_encryption
 
             token_record = MagicMock(spec=OAuthToken)
@@ -182,10 +174,9 @@ class TestTokenRefreshClientSecret:
             token_record.refresh_token = "encrypted_refresh_token"
             token_record.expires_at = datetime.now(timezone.utc) + timedelta(minutes=1)
 
-            # _refresh_access_token catches OAuthError internally and returns None;
-            # the outer caller never sees the exception — but the token must NOT be deleted.
             result = await service._refresh_access_token(token_record)
 
+            # OAuthError raised, caught by the OAuthError handler → returns None, token kept.
             assert result is None, "Must return None on decryption failure"
             mock_db.delete.assert_not_called(), "Token must be preserved on decryption failure"
 

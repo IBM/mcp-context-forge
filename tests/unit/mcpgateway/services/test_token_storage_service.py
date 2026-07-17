@@ -541,12 +541,12 @@ async def test_refresh_derived_gateway_url_normalizes_to_empty_logs_warning(serv
 
 @pytest.mark.asyncio
 async def test_refresh_client_secret_decrypt_fails_preserves_token_and_returns_none(service, mock_db):
-    """Decryption failure raises OAuthError (fail-closed); token is preserved for retry.
+    """Decryption failure is fail-closed; token is preserved for retry.
 
-    The old behaviour (fall through with raw ciphertext) could send the encrypted
-    envelope to the IdP as a literal client_secret on every refresh cycle, triggering
-    repeated invalid_client responses that may cause IdP rate-limiting/lockout.
-    The fix raises OAuthError immediately so the outer handler preserves the token.
+    decrypt_secret_async() is the idempotent wrapper — on wrong-key or corrupted-ciphertext
+    it returns None (never raises). The fix checks for None and raises OAuthError, which is
+    caught by the OAuthError handler: token preserved, None returned.  The IdP never receives
+    a None or raw ciphertext as a client credential.
     """
     gw = MagicMock(
         oauth_config={"token_url": "https://token", "client_id": "cid", "client_secret": "v2:encrypted_data"},  # pragma: allowlist secret
@@ -559,18 +559,17 @@ async def test_refresh_client_secret_decrypt_fails_preserves_token_and_returns_n
     )
     mock_db.query.return_value.filter.return_value.first.return_value = gw
 
-    # First decrypt call is for the refresh token (succeeds); second is for
-    # client_secret (fails — simulates a wrong encryption key for that field).
+    # Mimic real behaviour: refresh token decrypts OK; client_secret decryption returns None
+    # (wrong AUTH_ENCRYPTION_SECRET — the real method never raises, it returns None).
     service.encryption.decrypt_secret_async = AsyncMock(
-        side_effect=["decrypted_refresh_token", ValueError("Decryption failed")]
+        side_effect=["decrypted_refresh_token", None]
     )
 
     record = _make_token_record()
 
     result = await service._refresh_access_token(record)
 
-    # Fail-closed: OAuthError was raised internally, caught by the OAuthError handler,
-    # token preserved (not deleted), and None returned to the caller.
+    # OAuthError raised on None → caught by OAuthError handler → token kept, None returned.
     mock_db.delete.assert_not_called()
     assert result is None
 

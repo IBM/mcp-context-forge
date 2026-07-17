@@ -292,20 +292,24 @@ class TokenStorageService:
 
             # Decrypt client_secret if encryption is available.
             # Always attempt decryption rather than using an is_encrypted() heuristic.
-            # Fail closed: if decryption fails we raise rather than forwarding ciphertext
-            # as a credential — sending the raw encrypted envelope to an Authorization Server
-            # causes repeated invalid_client attempts that can trigger IdP rate-limiting/lockout.
+            # Fail closed on decryption failure: decrypt_secret_async() is the idempotent
+            # wrapper — it returns None (never raises) when decryption fails due to a wrong
+            # key or corrupted ciphertext. Sending None or the raw ciphertext envelope as a
+            # literal client_secret to an Authorization Server causes repeated invalid_client
+            # attempts that can trigger IdP rate-limiting/lockout. We raise OAuthError on
+            # None so the outer OAuthError handler preserves the token for a later retry.
             oauth_config = gateway.oauth_config.copy()
             if "client_secret" in oauth_config and oauth_config["client_secret"]:
                 if self.encryption:
                     client_secret_value = oauth_config["client_secret"]
-                    try:
-                        oauth_config["client_secret"] = await self.encryption.decrypt_secret_async(client_secret_value)
-                    except Exception as decrypt_error:
+                    decrypted_secret = await self.encryption.decrypt_secret_async(client_secret_value)
+                    if decrypted_secret is None:
                         raise OAuthError(
-                            f"client_secret decryption failed for gateway {token_record.gateway_id}: {decrypt_error}. "
+                            f"client_secret decryption failed for gateway {token_record.gateway_id}: "
+                            "decrypt_secret_async returned None (wrong AUTH_ENCRYPTION_SECRET or corrupted ciphertext). "
                             "Check that AUTH_ENCRYPTION_SECRET matches the value used when the gateway was stored."
-                        ) from decrypt_error
+                        )
+                    oauth_config["client_secret"] = decrypted_secret
 
             # RFC 8707: Set resource parameter for JWT access tokens during refresh
             # Standard
