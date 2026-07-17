@@ -1,4 +1,9 @@
-"""add_rbac_unique_constraints_race_fix
+# -*- coding: utf-8 -*-
+"""Location: ./mcpgateway/alembic/versions/d21698ae4a19_add_rbac_unique_constraints_race_fix.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
+SPDX-License-Identifier: Apache-2.0
+
+add_rbac_unique_constraints_race_fix
 
 Fixes issue #4482 - RBAC role/user_role seeder race when fast-path skips advisory lock.
 
