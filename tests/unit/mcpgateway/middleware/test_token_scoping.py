@@ -2008,3 +2008,60 @@ async def test_public_only_resource_denied():
         response = await middleware(mock_request, call_next)
         assert response.status_code == status.HTTP_403_FORBIDDEN
         call_next.assert_not_called()
+
+
+class TestUnifiedSearchPathScoping:
+    """Regression tests: /v1/search must be reachable by validly-scoped tokens.
+
+    /v1/search is authenticated-only at the middleware layer (it spans many entity
+    types, each with its own @require_permission). Before the fix, the unmapped
+    path hit the default-deny branch and any non-wildcard scoped token got 403
+    before the handler ran.
+    """
+
+    def test_permission_check_allows_search_for_scoped_token(self):
+        """A non-wildcard scoped token is allowed past the permission check for /search."""
+        middleware = TokenScopingMiddleware()
+
+        # /v1/search normalizes to /search; allowed regardless of the specific scope.
+        assert middleware._check_permission_restrictions("/v1/search", "GET", ["tools.read"]) is True
+        assert middleware._check_permission_restrictions("/search", "GET", ["tools.read"]) is True
+        # Even a scope unrelated to any searchable entity is allowed here; the
+        # handler's per-entity RBAC + _safe_entity_search filter results downstream.
+        assert middleware._check_permission_restrictions("/search", "GET", ["admin.metrics"]) is True
+
+    def test_admin_search_still_requires_admin_dashboard(self):
+        """The allow is scoped to /search only; /admin/search keeps its admin gate."""
+        middleware = TokenScopingMiddleware()
+
+        # Unchanged: /admin/search still requires admin.dashboard, not tools.read.
+        assert middleware._check_permission_restrictions("/admin/search", "GET", ["tools.read"]) is False
+        assert middleware._check_permission_restrictions("/admin/search", "GET", ["admin.dashboard"]) is True
+
+    def test_real_scoped_jwt_reaches_search_handler(self):
+        """A real signed scoped JWT passes the live middleware for /v1/search (200), while an unmapped path still 403s."""
+        # Third-Party
+        from fastapi import FastAPI  # pylint: disable=import-outside-toplevel
+        from fastapi.testclient import TestClient  # pylint: disable=import-outside-toplevel
+        from starlette.middleware.base import BaseHTTPMiddleware  # pylint: disable=import-outside-toplevel
+
+        # First-Party
+        from tests.helpers.auth import make_test_jwt  # pylint: disable=import-outside-toplevel
+
+        app = FastAPI()
+        app.add_middleware(BaseHTTPMiddleware, dispatch=TokenScopingMiddleware())
+
+        @app.get("/v1/search")
+        def _search():  # pragma: no cover - trivial stub
+            return {"ok": True}
+
+        @app.get("/v1/other")
+        def _other():  # pragma: no cover - trivial stub
+            return {"ok": True}
+
+        client = TestClient(app, raise_server_exceptions=False)
+        token = make_test_jwt(email="scoped@example.com", scopes={"permissions": ["tools.read"]})
+        headers = {"Authorization": f"Bearer {token}"}
+
+        assert client.get("/v1/search", headers=headers).status_code == 200  # middleware lets it through
+        assert client.get("/v1/other", headers=headers).status_code == 403  # control: default-deny still enforced
