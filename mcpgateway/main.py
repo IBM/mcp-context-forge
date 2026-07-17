@@ -4187,11 +4187,10 @@ async def list_servers(
     # - None: admin bypass (is_admin=true with explicit null teams) - sees ALL resources
     # - []: public-only (missing teams or explicit empty) - sees only public
     # - [...]: team-scoped - sees public + teams + user's private
-    is_admin_bypass = token_teams is None
     is_public_only_token = token_teams is not None and len(token_teams) == 0
 
     # Use consolidated server listing with optional team filtering
-    # For admin bypass: pass user_email=None and token_teams=None to skip all filtering
+    # Keep user_email set for owner matching on private resources (PR #4341 / issue #4694)
     logger.debug(
         f"User: {SecurityValidator.sanitize_log_message(user_email)} requested server list with include_inactive={include_inactive}, tags={tags_list}, team_id={team_id}, visibility={visibility}"
     )
@@ -4202,7 +4201,7 @@ async def list_servers(
         include_inactive=include_inactive,
         include_metrics=include_metrics,
         tags=tags_list,
-        user_email=None if is_admin_bypass else user_email,  # Admin bypass: no user filtering
+        user_email=user_email,  # Keep for owner matching (PR #4341 / issue #4694)
         team_id=team_id,
         visibility="public" if is_public_only_token and not visibility else visibility,
         token_teams=token_teams,  # None = admin bypass, [] = public-only, [...] = team-scoped
@@ -7357,18 +7356,17 @@ async def list_gateways(
     # - None: admin bypass (is_admin=true with explicit null teams) - sees ALL resources
     # - []: public-only (missing teams or explicit empty) - sees only public
     # - [...]: team-scoped - sees public + teams + user's private
-    is_admin_bypass = token_teams is None
     is_public_only_token = token_teams is not None and len(token_teams) == 0
 
     # Use consolidated gateway listing with optional team filtering
-    # For admin bypass: pass user_email=None and token_teams=None to skip all filtering
+    # Keep user_email set for owner matching on private resources (PR #4341 / issue #4694)
     logger.debug(f"User: {SecurityValidator.sanitize_log_message(user_email)} requested gateway list with include_inactive={include_inactive}, team_id={team_id}, visibility={visibility}")
     data, next_cursor = await gateway_service.list_gateways(
         db=db,
         cursor=cursor,
         limit=limit,
         include_inactive=include_inactive,
-        user_email=None if is_admin_bypass else user_email,  # Admin bypass: no user filtering
+        user_email=user_email,  # Keep for owner matching (PR #4341 / issue #4694)
         team_id=team_id,
         visibility="public" if is_public_only_token and not visibility else visibility,
         token_teams=token_teams,  # None = admin bypass, [] = public-only, [...] = team-scoped
