@@ -155,7 +155,7 @@ services:
       - HOST=0.0.0.0
       - PORT=4444
       # Domain for CORS/cookies (nginx default at http://localhost:8080)
-      - APP_DOMAIN=${APP_DOMAIN:-http://localhost:8080}
+      - APP_DOMAIN=${APP_DOMAIN:-http://127.0.0.1:8080}
       # Transport: sse, streamablehttp, http, or all (default: all)
       - TRANSPORT_TYPE=streamablehttp
       # High-level Rust MCP UX:
@@ -364,7 +364,7 @@ services:
       - PLATFORM_ADMIN_EMAIL=admin@example.com
       - PLATFORM_ADMIN_PASSWORD=changeme
       # Compose default off so /admin/* REST works without bootstrap redirect; override for production.
-      - PASSWORD_CHANGE_ENFORCEMENT_ENABLED=${PASSWORD_CHANGE_ENFORCEMENT_ENABLED:-true}
+      - PASSWORD_CHANGE_ENFORCEMENT_ENABLED=${PASSWORD_CHANGE_ENFORCEMENT_ENABLED:-false}
       - ACCOUNT_LOCKOUT_NOTIFICATION_ENABLED=${ACCOUNT_LOCKOUT_NOTIFICATION_ENABLED:-true}
       # Self-service password reset (feature flags + hardening controls)
       - PASSWORD_RESET_ENABLED=${PASSWORD_RESET_ENABLED:-true}
