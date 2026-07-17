@@ -5504,6 +5504,14 @@ async def admin_search_teams(
         )
         # Result is dict {data, pagination...} (since page provided)
         teams = result["data"]
+        # Honor explicit token narrowing even for admins (Layer 1 constrains
+        # visibility independently of RBAC/admin status). token_teams is None for
+        # full admin bypass (unrestricted); an explicit list (including []) scopes
+        # the result. The caller's own personal team stays visible.
+        raw_token_teams = user.get("token_teams")
+        if raw_token_teams is not None:
+            scoped_team_ids = {team["id"] if isinstance(team, dict) else team for team in raw_token_teams}
+            teams = [t for t in teams if getattr(t, "is_personal", False) or t.id in scoped_team_ids]
     else:
         # Non-admin search
         # Reuse user team fetching

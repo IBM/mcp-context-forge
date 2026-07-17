@@ -288,15 +288,17 @@ def _real_data_env():
     now = datetime.now(timezone.utc)
     team_a = uuid.uuid4().hex
     team_b = uuid.uuid4().hex
+    team_c = uuid.uuid4().hex  # exists but user_b is NOT a member; only visible via the admin all-teams view
     # Unique emails per invocation: get_user_teams and role/permission lookups are
     # cached by email at process scope, so a fixed email would leak one test's
     # temp-DB team ids into another test using the same user.
     suffix = uuid.uuid4().hex
     user_b = f"user-b-{suffix}@example.com"
+    admin_user = f"admin-{suffix}@example.com"
     owner = f"owner-{suffix}@example.com"  # owns the tools so user_b access is never via ownership
 
-    def _user(email):
-        return EmailUser(id=uuid.uuid4().hex, email=email, password_hash="x", full_name=email, is_admin=False, is_active=True, auth_provider="local", email_verified_at=now)  # pragma: allowlist secret
+    def _user(email, is_admin=False):
+        return EmailUser(id=uuid.uuid4().hex, email=email, password_hash="x", full_name=email, is_admin=is_admin, is_active=True, auth_provider="local", email_verified_at=now)  # pragma: allowlist secret
 
     def _tool(name, visibility, team_id):
         return Tool(
@@ -317,17 +319,19 @@ def _real_data_env():
         )
 
     db = TestSessionLocal()
-    db.add_all([_user(user_b), _user(owner)])
+    db.add_all([_user(user_b), _user(owner), _user(admin_user, is_admin=True)])
     db.add_all(
         [
             EmailTeam(id=team_a, name=f"{SEARCH_TERM} Team A", slug="team-a", created_by=owner, is_personal=False, visibility="public"),
             EmailTeam(id=team_b, name=f"{SEARCH_TERM} Team B", slug="team-b", created_by=owner, is_personal=False, visibility="public"),
+            EmailTeam(id=team_c, name=f"{SEARCH_TERM} Team C", slug="team-c", created_by=owner, is_personal=False, visibility="public"),
         ]
     )
     db.commit()
 
-    # user_b is a real member of BOTH teams (so team-A is genuinely accessible),
-    # and holds a real GLOBAL tools.read role (Layer 2 pass-through).
+    # user_b is a real member of teams A and B (so team-A is genuinely accessible),
+    # and holds a real GLOBAL tools.read+teams.read role (Layer 2 pass-through).
+    # admin_user is a DB admin holding the same role (teams.read has no admin bypass).
     role_id = uuid.uuid4().hex
     db.add_all(
         [
@@ -335,6 +339,7 @@ def _real_data_env():
             EmailTeamMember(id=uuid.uuid4().hex, team_id=team_b, user_email=user_b, role="member", is_active=True),
             Role(id=role_id, name="test-reader", scope="global", permissions=["tools.read", "teams.read"], created_by=owner, is_active=True),
             UserRole(id=uuid.uuid4().hex, user_email=user_b, role_id=role_id, scope="global", scope_id=None, granted_by=owner, is_active=True),
+            UserRole(id=uuid.uuid4().hex, user_email=admin_user, role_id=role_id, scope="global", scope_id=None, granted_by=owner, is_active=True),
         ]
     )
 
@@ -354,7 +359,9 @@ def _real_data_env():
         "server_public": s_public.id,
         "team_a": team_a,
         "team_b": team_b,
+        "team_c": team_c,
         "user_b": user_b,
+        "admin_user": admin_user,
     }
     db.close()
 
@@ -369,8 +376,8 @@ def _real_data_env():
     os.unlink(path)
 
 
-def _inject_identity(app, TestSessionLocal, email, token_teams=None):
-    """Override the auth dependency to yield a non-admin context, optionally token-scoped.
+def _inject_identity(app, TestSessionLocal, email, token_teams=None, is_admin=False):
+    """Override the auth dependency to yield a caller context, optionally token-scoped.
 
     Args:
         app: The FastAPI app to override on.
@@ -378,13 +385,15 @@ def _inject_identity(app, TestSessionLocal, email, token_teams=None):
         email (str): Caller email.
         token_teams: When provided, narrows the caller's visible team scope
             (list of team-id strings); when ``None``, the key is omitted so the
-            caller's full DB team membership applies.
+            caller's full DB team membership applies (non-admin) or full admin
+            bypass applies (admin).
+        is_admin (bool): Whether the context is flagged admin.
     """
 
     async def _ctx():
         session = TestSessionLocal()
         try:
-            context = {"email": email, "is_admin": False, "ip_address": "127.0.0.1", "user_agent": "test-client", "db": session}
+            context = {"email": email, "is_admin": is_admin, "ip_address": "127.0.0.1", "user_agent": "test-client", "db": session}
             if token_teams is not None:
                 context["token_teams"] = token_teams
             yield context
@@ -486,3 +495,34 @@ class TestUnifiedSearchRealDataScoping:
         returned = {team["id"] for team in resp.json()["results"]["teams"]}
         assert ids["team_b"] in returned
         assert ids["team_a"] in returned  # visible via membership -> confirms the token caused the deny
+
+    def test_admin_unscoped_token_sees_all_teams(self, _real_data_env):
+        """An admin with no token narrowing sees every team, including one they don't belong to."""
+        app, TestSessionLocal, ids = _real_data_env
+        _inject_identity(app, TestSessionLocal, ids["admin_user"], token_teams=None, is_admin=True)
+
+        client = TestClient(app, raise_server_exceptions=False)
+        resp = client.get(f"/v1/search?q={SEARCH_TERM}&entity_types=teams", headers={"Authorization": "Bearer x"})
+
+        assert resp.status_code == 200
+        returned = {team["id"] for team in resp.json()["results"]["teams"]}
+        # Admin all-teams view: team-C is returned even though admin is not a member.
+        assert {ids["team_a"], ids["team_b"], ids["team_c"]} <= returned
+
+    def test_admin_scoped_token_narrows_teams(self, _real_data_env):
+        """An admin with a token scoped to team-B sees only team-B, not the other teams.
+
+        Explicit token_teams constrains Layer-1 visibility regardless of admin status;
+        None (full bypass) is the only unrestricted case.
+        """
+        app, TestSessionLocal, ids = _real_data_env
+        _inject_identity(app, TestSessionLocal, ids["admin_user"], token_teams=[ids["team_b"]], is_admin=True)
+
+        client = TestClient(app, raise_server_exceptions=False)
+        resp = client.get(f"/v1/search?q={SEARCH_TERM}&entity_types=teams", headers={"Authorization": "Bearer x"})
+
+        assert resp.status_code == 200
+        returned = {team["id"] for team in resp.json()["results"]["teams"]}
+        assert ids["team_b"] in returned  # in-scope team visible (positive control)
+        assert ids["team_a"] not in returned  # narrowed out
+        assert ids["team_c"] not in returned  # narrowed out
