@@ -176,6 +176,71 @@ sequenceDiagram
     Gateway-->>Admin: Success page
 ```
 
+### Popup OAuth Flow (React UI)
+
+The React UI supports initiating OAuth in a popup window for better UX:
+
+**Endpoint**: `GET /oauth/authorize/{gateway_id}?popup=true`
+
+**Flow Differences**:
+1. **State Token**: When `popup=true`, the OAuth Manager prefixes the state token with `popup.` (e.g., `popup.abc123...`)
+2. **Callback Response**: The callback endpoint detects the `popup.` prefix and responds with `postMessage` instead of HTML
+3. **Window Closure**: The popup closes automatically after posting the result to the parent window
+
+**postMessage Contract**:
+
+Success payload:
+```javascript
+{
+  type: "oauth_callback",
+  status: "success",
+  gatewayId: "gateway-uuid",
+  gatewayName: "Gateway Name"
+}
+```
+
+Error payload:
+```javascript
+{
+  type: "oauth_callback",
+  status: "error",
+  error: "error_code",        // One of: access_denied, missing_code, invalid_state, oauth_error, server_error
+  errorDescription: "Human-readable error message"
+}
+```
+
+**Security Model**:
+- Callback uses `postMessage(..., '*')` for cross-origin compatibility (API and React app may be on different origins)
+- Parent window MUST validate `event.source === authWindow` (exact popup reference) before processing
+- State token signature (HMAC-SHA256) prevents tampering
+- CSP nonce is embedded in the inline script for strict CSP compliance
+
+**Implementation Notes**:
+- State prefix detection: `oauth_router.py:605` checks `state.startswith("popup.")`
+- State generation: `oauth_manager.py:1033` adds prefix when `popup=True`
+- Callback script: `oauth_router.py:189-221` (`_popup_notification_script`)
+- CSP nonce extraction: `oauth_router.py:605` (`get_csp_nonce_from_request`)
+
+```mermaid
+sequenceDiagram
+    participant React as React UI
+    participant Popup as OAuth Popup
+    participant Gateway as OAuth Router
+    participant Provider as OAuth Provider
+
+    React->>Popup: window.open(/oauth/authorize/{id}?popup=true)
+    Popup->>Gateway: GET with popup=true
+    Gateway->>Gateway: Generate state with "popup." prefix
+    Gateway-->>Popup: Redirect to provider
+    Popup->>Provider: User authenticates
+    Provider-->>Gateway: Callback with code & popup-prefixed state
+    Gateway->>Gateway: Detect popup prefix, prepare postMessage
+    Gateway-->>Popup: HTML with postMessage script
+    Popup->>React: postMessage({type: "oauth_callback", status: "success", ...}, '*')
+    React->>React: Validate event.source === Popup
+    Popup->>Popup: window.close()
+```
+
 ### Tool invocation using stored tokens
 
 ```mermaid
