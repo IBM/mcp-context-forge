@@ -614,7 +614,7 @@ class TeamManagementService:
             except Exception as cache_error:
                 logger.debug("Failed to invalidate cache on team create: %s", cache_error)
 
-            logger.info("Created team '%s' by %s", SecurityValidator.sanitize_log_message(team.name), created_by)
+            logger.info("Created team '%s' by %s", SecurityValidator.sanitize_log_message(team.name), SecurityValidator.sanitize_log_message(created_by))
             return team
 
         except Exception as e:
@@ -819,7 +819,7 @@ class TeamManagementService:
             except Exception as cache_error:
                 logger.debug("Failed to invalidate caches on team delete: %s", cache_error)
 
-            logger.info("Deleted team %s by %s", SecurityValidator.sanitize_log_message(team_id), deleted_by)
+            logger.info("Deleted team %s by %s", SecurityValidator.sanitize_log_message(team_id), SecurityValidator.sanitize_log_message(deleted_by))
             return True
 
         except Exception as e:
@@ -987,7 +987,9 @@ class TeamManagementService:
             self._invalidate_membership_caches(user_email, team_id, include_admin_stats=False)
             await self.invalidate_team_member_count_cache(str(team_id))
 
-            logger.info("Removed %s from team %s by %s", SecurityValidator.sanitize_log_message(user_email), SecurityValidator.sanitize_log_message(team_id), removed_by)
+            logger.info(
+                "Removed %s from team %s by %s", SecurityValidator.sanitize_log_message(user_email), SecurityValidator.sanitize_log_message(team_id), SecurityValidator.sanitize_log_message(removed_by)
+            )
             return True
 
         except Exception as e:
@@ -1840,7 +1842,12 @@ class TeamManagementService:
             self._invalidate_membership_caches(join_request.user_email, team_id)
             await self.invalidate_team_member_count_cache(str(team_id))
 
-            logger.info("Approved join request %s: user %s joined team %s", request_id, join_request.user_email, team_id)
+            logger.info(
+                "Approved join request %s: user %s joined team %s",
+                SecurityValidator.sanitize_log_message(request_id),
+                SecurityValidator.sanitize_log_message(join_request.user_email),
+                SecurityValidator.sanitize_log_message(team_id),
+            )
             return member
 
         except ValueError:
@@ -1879,7 +1886,12 @@ class TeamManagementService:
 
             self.db.commit()
 
-            logger.info("Rejected join request %s: user %s for team %s", request_id, join_request.user_email, team_id)
+            logger.info(
+                "Rejected join request %s: user %s for team %s",
+                SecurityValidator.sanitize_log_message(request_id),
+                SecurityValidator.sanitize_log_message(join_request.user_email),
+                SecurityValidator.sanitize_log_message(team_id),
+            )
             return True
 
         except Exception as e:

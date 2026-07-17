@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.auth import get_current_user
+from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import EmailUser, SessionLocal
 from mcpgateway.routers.email_auth import create_access_token, get_client_ip, get_user_agent
@@ -340,7 +341,7 @@ async def logout(request: Request, current_user: EmailUser = Depends(get_current
             if not success:
                 raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to revoke token")
 
-            logger.info(f"User {user.email} logged out successfully", extra={"security_event": "logout", "user_email": user.email, "jti": jti})
+            logger.info("User %s logged out successfully", SecurityValidator.sanitize_log_message(user.email), extra={"security_event": "logout", "user_email": user.email, "jti": jti})
 
             return {"message": "Logged out successfully", "revoked_token": jti}
 
