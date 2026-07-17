@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/services/resource_service.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Resource Service Implementation.
 This module implements resource management according to the MCP specification.
@@ -170,36 +169,6 @@ class ResourceURIConflictError(ResourceError):
         self.enabled = enabled
         self.resource_id = resource_id
         message = f"{visibility.capitalize()} Resource already exists with URI: {uri}"
-        if not enabled:
-            message += f" (currently inactive, ID: {resource_id})"
-        super().__init__(message)
-
-
-class ResourceNameConflictError(ResourceError):
-    """Raised when a resource name conflicts with an existing (active or inactive) resource."""
-
-    def __init__(self, name: str, enabled: bool = True, resource_id: Optional[str] = None, visibility: str = "public") -> None:
-        """Initialize the error with resource information.
-
-        Args:
-            name: The conflicting resource name.
-            enabled: Whether the existing resource is active.
-            resource_id: ID of the existing resource if available.
-            visibility: Visibility status of the resource.
-
-        Examples:
-            >>> err = ResourceNameConflictError('my-resource', enabled=True)
-            >>> str(err)
-            'A resource with this name already exists: my-resource'
-            >>> err2 = ResourceNameConflictError('my-resource', enabled=False, resource_id='abc123')
-            >>> str(err2)
-            'A resource with this name already exists: my-resource (currently inactive, ID: abc123)'
-        """
-        self.name = name
-        self.enabled = enabled
-        self.resource_id = resource_id
-        self.visibility = visibility
-        message = f"A resource with this name already exists: {name}"
         if not enabled:
             message += f" (currently inactive, ID: {resource_id})"
         super().__init__(message)
@@ -580,28 +549,8 @@ class ResourceService(BaseService):
             # Extract gateway_id from resource if present
             gateway_id = getattr(resource, "gateway_id", None)
 
-            # Check for existing resource with the same name (application-level uniqueness within scope)
-            if visibility.lower() == "public":
-                existing_by_name = db.execute(select(DbResource).where(DbResource.name == resource.name, DbResource.visibility == "public", DbResource.gateway_id == gateway_id)).scalar_one_or_none()
-                if existing_by_name:
-                    raise ResourceNameConflictError(resource.name, enabled=existing_by_name.enabled, resource_id=existing_by_name.id, visibility=existing_by_name.visibility)
-            elif visibility.lower() == "team":
-                if not team_id:
-                    raise ResourceValidationError("Cannot create a team-scoped resource without a team_id")
-                existing_by_name = db.execute(
-                    select(DbResource).where(DbResource.name == resource.name, DbResource.visibility == "team", DbResource.team_id == team_id, DbResource.gateway_id == gateway_id)
-                ).scalar_one_or_none()
-                if existing_by_name:
-                    raise ResourceNameConflictError(resource.name, enabled=existing_by_name.enabled, resource_id=existing_by_name.id, visibility=existing_by_name.visibility)
-            else:
-                # Private resources are scoped by owner rather than team.
-                existing_by_name = db.execute(
-                    select(DbResource).where(
-                        DbResource.name == resource.name, DbResource.visibility == "private", DbResource.owner_email == (owner_email or created_by), DbResource.gateway_id == gateway_id
-                    )
-                ).scalar_one_or_none()
-                if existing_by_name:
-                    raise ResourceNameConflictError(resource.name, enabled=existing_by_name.enabled, resource_id=existing_by_name.id, visibility=existing_by_name.visibility)
+            if visibility.lower() == "team" and not team_id:
+                raise ResourceValidationError("Cannot create a team-scoped resource without a team_id")
 
             # Check for existing resource with the same uri
             if visibility.lower() == "public":
@@ -736,23 +685,6 @@ class ResourceService(BaseService):
                 user_email=owner_email,
                 custom_fields={
                     "resource_uri": resource.uri,
-                    "visibility": visibility,
-                },
-            )
-            raise
-        except ResourceNameConflictError:
-            logger.error(f"ResourceNameConflictError in group: {resource.name}")
-
-            # Structured logging: Log name conflict error
-            structured_logger.log(
-                level="WARNING",
-                message="Resource creation failed due to name conflict",
-                event_type="resource_name_conflict",
-                component="resource_service",
-                user_id=created_by,
-                user_email=owner_email,
-                custom_fields={
-                    "resource_name": resource.name,
                     "visibility": visibility,
                 },
             )
@@ -934,20 +866,6 @@ class ResourceService(BaseService):
                 # Use (uri, gateway_id) tuple as key for proper conflict detection with gateway_id scoping
                 existing_resources_map = {(r.uri, r.gateway_id): r for r in existing_resources}
 
-                # Batch check for name conflicts too (mirrors the URI batch query above) so a chunk
-                # of N resources costs 2 SELECTs total instead of N+2 (one per-item name lookup).
-                resource_names = [resource.name for resource in chunk]
-                if visibility.lower() == "public":
-                    name_conditions = [DbResource.name.in_(resource_names), DbResource.visibility == "public"]
-                elif visibility.lower() == "team" and team_id:
-                    name_conditions = [DbResource.name.in_(resource_names), DbResource.visibility == "team", DbResource.team_id == team_id]
-                else:
-                    # Private resources are scoped by owner rather than team.
-                    name_conditions = [DbResource.name.in_(resource_names), DbResource.visibility == "private", DbResource.owner_email == (owner_email or created_by)]
-
-                existing_by_name_rows = db.execute(select(DbResource).where(*name_conditions)).scalars().all()
-                existing_by_name_map = {(r.name, r.gateway_id): r for r in existing_by_name_rows}
-
                 resources_to_add = []
                 resources_to_update = []
 
@@ -989,24 +907,6 @@ class ResourceService(BaseService):
                         resource_gateway_id = getattr(resource, "gateway_id", None)
                         resource_extension_metadata = getattr(resource, "extension_metadata", None)
                         validate_ui_resource(resource.uri, getattr(resource, "mime_type", None), resource_extension_metadata)
-
-                        # Check for duplicate name before URI conflict (mirrors register_resource logic),
-                        # using the batched lookup built above instead of a per-item query.
-                        existing_by_name = existing_by_name_map.get((resource.name, resource_gateway_id))
-
-                        if existing_by_name and existing_by_name.uri != resource.uri:
-                            # Name conflict with a *different* resource — treat same as URI conflict strategy
-                            if conflict_strategy == "skip":
-                                stats["skipped"] += 1
-                                stats["errors"].append(f"Resource '{resource.name}' skipped: name already exists")
-                                continue
-                            if conflict_strategy == "fail":
-                                raise ResourceNameConflictError(resource.name, enabled=existing_by_name.enabled, resource_id=existing_by_name.id, visibility=existing_by_name.visibility)
-                            # Known limitation: for "update"/"rename", a name conflict against a *different* URI is not
-                            # reconciled here. The URI-based lookup below misses (the incoming URI is new), so the row is
-                            # created with a name that already exists and the DB unique-name constraint raises IntegrityError.
-                            # That error is caught by the per-resource handler below and recorded in stats["errors"]/["failed"],
-                            # so the import stays safe (no partial/duplicate rows) but the outcome is not strategy-consistent.
 
                         # Look up existing resource by (uri, gateway_id) tuple
                         existing_resource = existing_resources_map.get((resource.uri, resource_gateway_id))
@@ -3235,48 +3135,6 @@ class ResourceService(BaseService):
                     if existing_resource:
                         raise ResourceURIConflictError(resource_update.uri, enabled=existing_resource.enabled, resource_id=existing_resource.id, visibility=existing_resource.visibility)
 
-            # Check for name conflict if name is being changed. Without this, renaming a resource
-            # to an existing name silently succeeds: the DB unique index only backstops team-scoped
-            # rows (team_id is NULL for public/private), and no pre-check ran here before.
-            if resource_update.name and resource_update.name != resource.name:
-                new_visibility = resource_update.visibility or resource.visibility
-                new_team_id = resource_update.team_id or resource.team_id
-                new_gateway_id = resource.gateway_id
-                if new_visibility.lower() == "public":
-                    existing_by_name = get_for_update(
-                        db, DbResource, where=and_(DbResource.name == resource_update.name, DbResource.visibility == "public", DbResource.gateway_id == new_gateway_id, DbResource.id != resource_id)
-                    )
-                elif new_visibility.lower() == "team" and new_team_id:
-                    existing_by_name = get_for_update(
-                        db,
-                        DbResource,
-                        where=and_(
-                            DbResource.name == resource_update.name,
-                            DbResource.visibility == "team",
-                            DbResource.team_id == new_team_id,
-                            DbResource.gateway_id == new_gateway_id,
-                            DbResource.id != resource_id,
-                        ),
-                    )
-                else:
-                    new_owner_email = resource_update.owner_email or resource.owner_email
-                    existing_by_name = get_for_update(
-                        db,
-                        DbResource,
-                        where=and_(
-                            DbResource.name == resource_update.name,
-                            DbResource.visibility == "private",
-                            DbResource.owner_email == new_owner_email,
-                            DbResource.gateway_id == new_gateway_id,
-                            DbResource.id != resource_id,
-                        ),
-                    )
-                # Belt-and-braces: exclude a self-match in addition to the `id != resource_id` filter above.
-                if existing_by_name and existing_by_name.id == resource_id:
-                    existing_by_name = None
-                if existing_by_name:
-                    raise ResourceNameConflictError(resource_update.name, enabled=existing_by_name.enabled, resource_id=existing_by_name.id, visibility=existing_by_name.visibility)
-
             # Check ownership if user_email provided
             if user_email:
                 # First-Party
@@ -3565,22 +3423,6 @@ class ResourceService(BaseService):
                 error=pe,
             )
             raise pe
-        except ResourceNameConflictError as ne:
-            logger.error("Resource name conflict: %s", ne)
-
-            # Structured logging: Log name conflict error
-            structured_logger.log(
-                level="WARNING",
-                message="Resource update failed due to name conflict",
-                event_type="resource_name_conflict",
-                component="resource_service",
-                user_id=modified_by,
-                user_email=user_email,
-                resource_type="resource",
-                resource_id=str(resource_id),
-                error=ne,
-            )
-            raise ne
         except Exception as e:
             db.rollback()
             if isinstance(e, ResourceNotFoundError):

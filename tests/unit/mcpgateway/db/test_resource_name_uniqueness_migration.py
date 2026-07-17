@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/db/test_resource_name_uniqueness_migration.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
 
 Unit tests for migration 279184dfd71d (add_name_uniqueness_constraint_to_resources).
@@ -111,18 +111,29 @@ def _get_table_names(conn):
     return set(inspector.get_table_names())
 
 
+def _create_name_indexes(conn):
+    """Create stub name-uniqueness indexes so upgrade() has something to drop."""
+    conn.execute(sa.text("CREATE INDEX uq_team_owner_gateway_name_resource ON resources (name, owner_email, team_id, gateway_id)"))
+    conn.execute(sa.text("CREATE INDEX uq_team_owner_name_resource_local ON resources (name, owner_email, team_id)"))
+
+
 class TestUpgradeFunctional:
     """Functional tests for upgrade() on SQLite."""
 
-    def test_upgrade_creates_unique_indexes(self):
-        """Test upgrade creates both unique indexes when no duplicates exist."""
+    def test_upgrade_drops_indexes_when_present(self):
+        """Upgrade drops both name-uniqueness indexes when they exist — the core fix for
+        the WXO production crash (PR #5158 added constraints that violate the MCP spec;
+        resources are uniquely identified by URI, not name)."""
         engine = sa.create_engine("sqlite:///:memory:")
         try:
             with engine.connect() as conn:
                 _create_resources_table(conn)
-                _insert_resource(conn, name="alpha", owner_email="a@example.com")
-                _insert_resource(conn, name="beta", owner_email="a@example.com")
+                _create_name_indexes(conn)
                 conn.commit()
+
+                # Confirm both indexes exist before upgrade
+                assert "uq_team_owner_gateway_name_resource" in _get_index_names(conn, "resources")
+                assert "uq_team_owner_name_resource_local" in _get_index_names(conn, "resources")
 
                 ctx = MigrationContext.configure(conn, opts={"as_sql": False})
                 with Operations.context(ctx):
@@ -130,15 +141,16 @@ class TestUpgradeFunctional:
                     module.upgrade()
 
                 indexes = _get_index_names(conn, "resources")
-                assert "uq_team_owner_gateway_name_resource" in indexes
-                assert "uq_team_owner_name_resource_local" in indexes
+                assert "uq_team_owner_gateway_name_resource" not in indexes
+                assert "uq_team_owner_name_resource_local" not in indexes
         finally:
             engine.dispose()
 
-    def test_upgrade_raises_on_existing_duplicate_names(self):
-        """Test upgrade aborts with a clear RuntimeError when duplicate names already
-        exist under the same (team_id, owner_email, gateway_id) scope, instead of
-        letting index creation fail with an opaque IntegrityError."""
+    def test_upgrade_does_not_raise_for_duplicate_names(self):
+        """Upgrade must NOT raise when duplicate resource names exist under the same
+        scope. The original migration raised RuntimeError here, blocking the WXO
+        deployment. Name uniqueness violates the MCP spec — resources are identified
+        by URI, not name."""
         engine = sa.create_engine("sqlite:///:memory:")
         try:
             with engine.connect() as conn:
@@ -150,19 +162,19 @@ class TestUpgradeFunctional:
                 ctx = MigrationContext.configure(conn, opts={"as_sql": False})
                 with Operations.context(ctx):
                     module = importlib.import_module(MODULE_NAME)
-                    with pytest.raises(RuntimeError, match="duplicate name"):
-                        module.upgrade()
+                    module.upgrade()  # Must not raise
 
-                # Pre-flight check must fail before any index is created.
+                # No name-uniqueness indexes should exist after upgrade
                 indexes = _get_index_names(conn, "resources")
                 assert "uq_team_owner_gateway_name_resource" not in indexes
                 assert "uq_team_owner_name_resource_local" not in indexes
         finally:
             engine.dispose()
 
-    def test_upgrade_allows_same_name_in_different_scopes(self):
-        """Test upgrade succeeds when the same name is reused across different owners
-        (not a real duplicate under the composite uniqueness scope)."""
+    def test_upgrade_is_noop_when_indexes_absent(self):
+        """Upgrade is a no-op when the name-uniqueness indexes do not exist — the
+        common case for fresh installations that never ran the original PR #5158 build.
+        Same name across different owners is a valid MCP pattern."""
         engine = sa.create_engine("sqlite:///:memory:")
         try:
             with engine.connect() as conn:
@@ -176,8 +188,10 @@ class TestUpgradeFunctional:
                     module = importlib.import_module(MODULE_NAME)
                     module.upgrade()  # Should not raise
 
+                # No name-uniqueness indexes should exist (they were never created)
                 indexes = _get_index_names(conn, "resources")
-                assert "uq_team_owner_gateway_name_resource" in indexes
+                assert "uq_team_owner_gateway_name_resource" not in indexes
+                assert "uq_team_owner_name_resource_local" not in indexes
         finally:
             engine.dispose()
 
@@ -195,22 +209,26 @@ class TestUpgradeFunctional:
         finally:
             engine.dispose()
 
-    def test_upgrade_is_idempotent_when_indexes_already_exist(self):
-        """Test upgrade skips index creation when the indexes are already present."""
+    def test_upgrade_is_idempotent(self):
+        """Upgrade can be run multiple times without error — whether the indexes are
+        present (first run drops them, second run is a no-op) or absent (both runs
+        are no-ops)."""
         engine = sa.create_engine("sqlite:///:memory:")
         try:
             with engine.connect() as conn:
                 _create_resources_table(conn)
+                _create_name_indexes(conn)  # simulate a DB that had the old migration
                 conn.commit()
 
                 ctx = MigrationContext.configure(conn, opts={"as_sql": False})
                 with Operations.context(ctx):
                     module = importlib.import_module(MODULE_NAME)
-                    module.upgrade()
-                    module.upgrade()  # Second run should not raise (index already exists)
+                    module.upgrade()   # First run: drops the indexes
+                    module.upgrade()   # Second run: indexes gone, should be a no-op
 
                 indexes = _get_index_names(conn, "resources")
-                assert "uq_team_owner_gateway_name_resource" in indexes
+                assert "uq_team_owner_gateway_name_resource" not in indexes
+                assert "uq_team_owner_name_resource_local" not in indexes
         finally:
             engine.dispose()
 

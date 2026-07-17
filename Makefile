@@ -7833,9 +7833,9 @@ snyk-helm-test:                     ## ⎈ Test Helm charts for security issues
 # help: check-header           - Check specific file/directory (use: path=...)
 # help: fix-all-headers        - Fix ALL files with incorrect headers (modifies files!)
 # help: fix-all-headers-no-encoding - Fix headers without encoding line requirement
-# help: fix-all-headers-custom - Fix with custom config (year=YYYY license=... shebang=...)
+# help: fix-all-headers-custom - Fix with custom config (copyright_line=... license=... shebang=...)
 # help: interactive-fix-headers - Fix headers with prompts before each change
-# help: fix-header             - Fix specific file/directory (use: path=... authors=...)
+# help: fix-header             - Fix specific file/directory (use: path=... shebang=... encoding=no)
 # help: pre-commit-check-headers - Check headers for pre-commit hooks
 # help: pre-commit-fix-headers - Fix headers for pre-commit hooks
 
@@ -7889,10 +7889,11 @@ fix-all-headers-no-encoding:        ## 🔧 Fix headers without encoding line re
 	@python3 .github/tools/fix_file_headers.py --fix-all --no-encoding
 
 .PHONY: fix-all-headers-custom
-fix-all-headers-custom:             ## 🔧 Fix with custom config (year=YYYY license=... shebang=...)
+fix-all-headers-custom:             ## 🔧 Fix with custom config (copyright_line=... license=... shebang=...)
 	@echo "🔧 Fixing headers with custom configuration..."
-	@if [ -n "$(year)" ]; then \
-		extra_args="$$extra_args --copyright-year $(year)"; \
+	@extra_args=""; \
+	if [ -n "$(copyright_line)" ]; then \
+		extra_args="$$extra_args --copyright-line \"$(copyright_line)\""; \
 	fi; \
 	if [ -n "$(license)" ]; then \
 		extra_args="$$extra_args --license $(license)"; \
@@ -7900,26 +7901,22 @@ fix-all-headers-custom:             ## 🔧 Fix with custom config (year=YYYY li
 	if [ -n "$(shebang)" ]; then \
 		extra_args="$$extra_args --require-shebang $(shebang)"; \
 	fi; \
-	python3 .github/tools/fix_file_headers.py --fix-all $$extra_args
+	eval python3 .github/tools/fix_file_headers.py --fix-all $$extra_args
 
 interactive-fix-headers:            ## 💬 Fix headers with prompts before each change
 	@echo "💬 Interactively fixing Python file headers..."
 	@echo "You will be prompted before each change."
 	@python3 .github/tools/fix_file_headers.py --interactive
 
-fix-header:                         ## 🔧 Fix specific file/directory (use: path=... authors=... shebang=... encoding=no)
+fix-header:                         ## 🔧 Fix specific file/directory (use: path=... shebang=... encoding=no)
 	@if [ -z "$(path)" ]; then \
 		echo "❌ Error: 'path' parameter is required"; \
-		echo "💡 Usage: make fix-header path=<file_or_directory> [authors=\"Name1, Name2\"] [shebang=auto|always|never] [encoding=no]"; \
+		echo "💡 Usage: make fix-header path=<file_or_directory> [shebang=auto|always|never] [encoding=no]"; \
 		exit 1; \
 	fi
 	@echo "🔧 Fixing headers in $(path)"
 	@echo "⚠️  This will modify the file(s)!"
 	@extra_args=""; \
-	if [ -n "$(authors)" ]; then \
-		echo "   Authors: $(authors)"; \
-		extra_args="$$extra_args --authors \"$(authors)\""; \
-	fi; \
 	if [ -n "$(shebang)" ]; then \
 		echo "   Shebang requirement: $(shebang)"; \
 		extra_args="$$extra_args --require-shebang $(shebang)"; \

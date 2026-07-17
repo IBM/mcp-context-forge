@@ -1,5 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Add MCP App metadata.
+"""Location: ./mcpgateway/alembic/versions/b6c7d8e9f0a1_add_mcp_app_metadata.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
+SPDX-License-Identifier: Apache-2.0
+
+Add MCP App metadata.
 
 Revision ID: b6c7d8e9f0a1
 Revises: 279184dfd71d

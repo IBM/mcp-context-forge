@@ -50,12 +50,13 @@ cpex-pii-filter = "2026-07-07T23:59:59Z"
 # protocol instead. See IBM/cpex-plugins#124 / #137. Vetted ahead of the usual window for both
 # reasons.
 cpex-retry-with-backoff = "2026-07-15T23:59:59Z"
-# cpex-secrets-detection pinned past its normal soak cutoff: 0.3.7 (2026-07-14) is the first
-# release that emits result.metadata["secrets_detection"] for tool_post_invoke, which
-# tests/integration/plugins/test_plugin_metrics_consumer_integration.py and
-# tests/e2e/test_otel_plugin_metadata_e2e.py depend on. Vetted ahead of the usual window for
-# this reason.
-cpex-secrets-detection = "2026-07-14T23:59:59Z"
+# cpex-secrets-detection pinned past its normal soak cutoff: 0.3.9 (2026-07-15)
+# adds field_allowlist and field_denylist support for gateway plugin config.
+# 0.3.7 is the first release that emits result.metadata["secrets_detection"] for
+# tool_post_invoke, which tests/integration/plugins/test_plugin_metrics_consumer_integration.py
+# and tests/e2e/test_otel_plugin_metadata_e2e.py depend on. Vetted ahead of the usual window
+# for both reasons.
+cpex-secrets-detection = "2026-07-15T23:59:59Z"
 
 
 [tool.uv.sources]
@@ -109,7 +110,7 @@ dependencies = [
     "cpex>=0.1.1",
     "cryptography>=49.0.0",
     "fastapi>=0.139.0",
-    "filelock>=3.29.4",
+    "filelock>=3.29.4,<3.31.0", # verified against 3.30.0's fork-safety guard (gateway_service.py rebuilds post-fork); ceiling caps unknown future releases
     "gunicorn>=26.0.0",
     "httpx>=0.28.1",
     "httpx[http2]>=0.28.1",
@@ -311,7 +312,7 @@ plugins = [
     "cpex-pii-filter>=0.3.6",  # 0.3.6 is the first release that emits result.metadata on tool_post_invoke
     "cpex-rate-limiter>=0.1.7",  # 0.1.7 is the first release that emits result.metadata
     "cpex-retry-with-backoff>=0.3.7",  # 0.3.7 fixes a retry-detection regression against the gateway's CopyOnWriteDict payload isolation (IBM/cpex-plugins#124); 0.3.6 added the result.metadata emission but never actually retried in the gateway. Prior <0.3.2 CI pin (from #5332) is superseded.
-    "cpex-secrets-detection>=0.3.7",  # 0.3.7 is the first release that emits result.metadata
+    "cpex-secrets-detection>=0.3.9",  # 0.3.9 adds field_allowlist and field_denylist support; 0.3.7 is the first release that emits result.metadata
     "cpex-url-reputation>=0.3.5",  # 0.3.5 is the first release that emits result.metadata
 ]
 

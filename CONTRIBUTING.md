@@ -144,9 +144,8 @@ The header format is as follows:
 # -*- coding: utf-8 -*-
 """Module Description.
 Location: ./path/to/your/file.py
-Copyright 2025
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: "Author One, Author Two"
 
 Your detailed module documentation begins here...
 """

@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/loadtest/locustfile_agentgateway_mcp_server_time.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Load testing for external MCP server via Streamable HTTP.
 This module tests an MCP server at http://localhost:3000 using the

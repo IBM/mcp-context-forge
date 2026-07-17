@@ -1,9 +1,8 @@
 # -*- coding: utf-8 -*-
 # mcpgateway/services/cancellation_service.py
 """Location: ./mcpgateway/services/cancellation_service.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Service for tracking and cancelling active tool runs.
 

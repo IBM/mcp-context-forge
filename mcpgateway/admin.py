@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/admin.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Admin UI Routes for ContextForge AI Gateway.
 This module contains all the administrative UI endpoints for ContextForge AI Gateway.
@@ -177,7 +176,7 @@ from mcpgateway.services.performance_service import get_performance_service
 from mcpgateway.services.permission_service import PermissionService
 from mcpgateway.services.plugin_service import get_plugin_service
 from mcpgateway.services.prompt_service import PromptArgumentsJSONError, PromptNameConflictError, PromptNotFoundError, PromptService
-from mcpgateway.services.resource_service import ResourceNameConflictError, ResourceNotFoundError, ResourceService, ResourceURIConflictError, ResourceValidationError
+from mcpgateway.services.resource_service import ResourceNotFoundError, ResourceService, ResourceURIConflictError, ResourceValidationError
 from mcpgateway.services.root_service import RootService, RootServiceError, RootServiceNotFoundError
 from mcpgateway.services.server_service import ServerError, ServerLockConflictError, ServerNameConflictError, ServerNotFoundError, ServerService
 from mcpgateway.services.structured_logger import get_structured_logger
@@ -698,13 +697,23 @@ async def get_hidden_sections_for_user(
                     check_any_team=True,
                 )
             except Exception as e:
-                LOGGER.warning(f"Error checking permission {required_permission} for user {user_email}: {e}")
+                LOGGER.warning(
+                    "Error checking permission %s for user %s: %s",
+                    SecurityValidator.sanitize_log_message(required_permission),
+                    SecurityValidator.sanitize_log_message(user_email),
+                    SecurityValidator.sanitize_log_message(str(e)),
+                )
                 has_permission = False
 
         # Hide section if user doesn't have permission
         if not has_permission:
             hidden.add(section)
-            LOGGER.debug(f"Hiding section '{section}' for user {user_email}: missing permission '{required_permission}'")
+            LOGGER.debug(
+                "Hiding section '%s' for user %s: missing permission '%s'",
+                SecurityValidator.sanitize_log_message(section),
+                SecurityValidator.sanitize_log_message(user_email),
+                SecurityValidator.sanitize_log_message(required_permission),
+            )
 
     return hidden
 
@@ -777,7 +786,7 @@ async def get_user_action_permissions(
             result[flag] = has_permission
         except Exception as e:
             # Fail-closed: deny permission on error
-            LOGGER.warning(f"Error checking {permission} for {user_email}: {e}")
+            LOGGER.warning("Error checking %s for %s: %s", SecurityValidator.sanitize_log_message(permission), SecurityValidator.sanitize_log_message(user_email), e)
             result[flag] = False
 
     return result
@@ -2908,7 +2917,7 @@ async def admin_servers_partial_html(
             LOGGER.debug(f"Filtering servers by team_id: {team_id}")
         else:
             # User is not a member of this team, return no results using SQLAlchemy's false()
-            LOGGER.warning(f"User {user_email} attempted to filter by team {team_id} but is not a member")
+            LOGGER.warning("User %s attempted to filter by team %s but is not a member", SecurityValidator.sanitize_log_message(user_email), SecurityValidator.sanitize_log_message(str(team_id)))
             query = query.where(false())
     else:
         # All Teams view: apply standard access conditions (owner, team, public)
@@ -3061,7 +3070,7 @@ async def admin_get_server(server_id: str, request: Request, db: Session = Depen
     except ServerNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
-        LOGGER.error(f"Error getting server {server_id}: {e}")
+        LOGGER.error("Error getting server %s: %s", SecurityValidator.sanitize_log_message(str(server_id)), e)
         raise e
 
 
@@ -3362,7 +3371,7 @@ async def admin_edit_server(
     except IntegrityError as ex:
         return ORJSONResponse(content=ErrorFormatter.format_database_error(ex), status_code=409)
     except PermissionError as e:
-        LOGGER.info(f"Permission denied for user {get_user_email(user)}: {e}")
+        LOGGER.info("Permission denied for user %s: %s", SecurityValidator.sanitize_log_message(get_user_email(user)), e)
         return ORJSONResponse(content={"message": str(e), "success": False}, status_code=403)
     except HTTPException:
         raise
@@ -3412,10 +3421,10 @@ async def admin_set_server_state(
     try:
         await server_service.set_server_state(db, server_id, activate, user_email=user_email)
     except PermissionError as e:
-        LOGGER.warning(f"Permission denied for user {user_email} setting server {server_id} state: {e}")
+        LOGGER.warning("Permission denied for user %s setting server %s state: %s", SecurityValidator.sanitize_log_message(user_email), SecurityValidator.sanitize_log_message(server_id), e)
         error_message = str(e)
     except ServerLockConflictError as e:
-        LOGGER.warning(f"Lock conflict for user {user_email} setting server {server_id} state: {e}")
+        LOGGER.warning("Lock conflict for user %s setting server %s state: %s", SecurityValidator.sanitize_log_message(user_email), SecurityValidator.sanitize_log_message(server_id), e)
         error_message = "Server is being modified by another request. Please try again."
     except Exception as e:
         LOGGER.error(f"Error setting server status: {e}")
@@ -3461,7 +3470,7 @@ async def admin_delete_server(server_id: str, request: Request, db: Session = De
         LOGGER.debug(f"User {user_email} is deleting server ID {server_id}")
         await server_service.delete_server(db, server_id, user_email=user_email, purge_metrics=purge_metrics)
     except PermissionError as e:
-        LOGGER.warning(f"Permission denied for user {get_user_email(user)} deleting server {server_id}: {e}")
+        LOGGER.warning("Permission denied for user %s deleting server %s: %s", SecurityValidator.sanitize_log_message(get_user_email(user)), SecurityValidator.sanitize_log_message(server_id), e)
         error_message = str(e)
     except Exception as e:
         LOGGER.error(f"Error deleting server: {e}")
@@ -3685,7 +3694,7 @@ async def admin_set_gateway_state(
     try:
         await gateway_service.set_gateway_state(db, gateway_id, activate, user_email=user_email)
     except PermissionError as e:
-        LOGGER.warning(f"Permission denied for user {user_email} setting gateway state {gateway_id}: {e}")
+        LOGGER.warning("Permission denied for user %s setting gateway state %s: %s", SecurityValidator.sanitize_log_message(user_email), SecurityValidator.sanitize_log_message(gateway_id), e)
         error_message = str(e)
     except Exception as e:
         LOGGER.error(f"Error setting gateway state: {e}")
@@ -12881,7 +12890,7 @@ async def admin_delete_gateway_rest(
             )
         return Response(status_code=204)
     except PermissionError as e:
-        LOGGER.warning(f"Permission denied for user {user_email} deleting gateway {gateway_id}: {e}")
+        LOGGER.warning("Permission denied for user %s deleting gateway %s: %s", SecurityValidator.sanitize_log_message(user_email), SecurityValidator.sanitize_log_message(gateway_id), e)
         return ORJSONResponse(content={"message": str(e), "success": False}, status_code=403)
     except GatewayNotFoundError as e:
         return ORJSONResponse(content={"message": str(e), "success": False}, status_code=404)
@@ -13153,7 +13162,7 @@ async def admin_delete_gateway(gateway_id: str, request: Request, db: Session = 
         if getattr(result, "status", None) == "deleting":
             accepted_message = "Gateway deletion accepted and pending cleanup."
     except PermissionError as e:
-        LOGGER.warning(f"Permission denied for user {user_email} deleting gateway {gateway_id}: {e}")
+        LOGGER.warning("Permission denied for user %s deleting gateway %s: %s", SecurityValidator.sanitize_log_message(user_email), SecurityValidator.sanitize_log_message(gateway_id), e)
         error_message = str(e)
     except Exception as e:
         LOGGER.error(f"Error deleting gateway: {e}")
@@ -13374,9 +13383,6 @@ async def admin_add_resource(request: Request, db: Session = Depends(get_db), us
         if isinstance(ex, ResourceValidationError):
             LOGGER.error(f"ResourceValidationError in admin_add_resource: {ex}")
             return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=422)
-        if isinstance(ex, ResourceNameConflictError):
-            LOGGER.error(f"ResourceNameConflictError in admin_add_resource: {ex}")
-            return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=409)
         if isinstance(ex, ResourceURIConflictError):
             LOGGER.error(f"ResourceURIConflictError in admin_add_resource: {ex}")
             return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=409)
@@ -13509,9 +13515,6 @@ async def admin_edit_resource(
         if isinstance(ex, ResourceValidationError):
             LOGGER.error(f"ResourceValidationError in admin_edit_resource: {ex}")
             return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=422)
-        if isinstance(ex, ResourceNameConflictError):
-            LOGGER.error(f"ResourceNameConflictError in admin_edit_resource: {ex}")
-            return ORJSONResponse(status_code=409, content={"message": str(ex), "success": False})
         if isinstance(ex, ResourceURIConflictError):
             LOGGER.error(f"ResourceURIConflictError in admin_edit_resource: {ex}")
             return ORJSONResponse(status_code=409, content={"message": str(ex), "success": False})

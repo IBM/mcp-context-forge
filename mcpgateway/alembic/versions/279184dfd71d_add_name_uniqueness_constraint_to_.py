@@ -1,9 +1,13 @@
-"""add_name_uniqueness_constraint_to_resources
+# -*- coding: utf-8 -*-
+"""Location: ./mcpgateway/alembic/versions/279184dfd71d_add_name_uniqueness_constraint_to_.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
+SPDX-License-Identifier: Apache-2.0
+
+add_name_uniqueness_constraint_to_resources
 
 Revision ID: 279184dfd71d
 Revises: e198602c3c1e
 Create Date: 2026-06-03 12:39:27.221653
-
 """
 
 # Standard
@@ -45,36 +49,16 @@ def upgrade() -> None:
     if "resources" not in inspector.get_table_names():
         return
 
-    # Pre-flight: fail early with a clear message if duplicate names already exist under the
-    # same ownership scope. Without this check the constraint creation below raises a raw
-    # IntegrityError that is hard to diagnose.
-    # NOTE: grouping uses COALESCE(team_id, '') to match the index expression below - team_id is
-    # NULL for public/private resources, and SQL treats NULLs as distinct, so grouping on the raw
-    # column would miss duplicates the new index is about to enforce.
-    dupes = bind.execute(
-        text("SELECT name, COALESCE(team_id, '') AS team_scope, owner_email, gateway_id, COUNT(*) AS cnt FROM resources GROUP BY name, team_scope, owner_email, gateway_id HAVING COUNT(*) > 1")
-    ).fetchall()
-    if dupes:
-        dupe_list = ", ".join(f"'{r[0]}'" for r in dupes[:5])
-        raise RuntimeError(
-            f"Cannot add resource name uniqueness constraint: {len(dupes)} duplicate name(s) "
-            f"exist under the same (team_id, owner_email, gateway_id) scope "
-            f"(e.g. {dupe_list}). Resolve duplicates before migrating."
-        )
-
+    # The name-uniqueness indexes originally added here were found to violate the MCP spec:
+    # resources are uniquely identified by URI, not by name. Name is a human-readable display
+    # label and may legitimately repeat across multiple task-specific resource instances that
+    # share the same resource type name but have distinct URIs (e.g. grid-entities://{taskId}.json).
+    # Drop the indexes if they were created by an earlier build of this migration.
     existing_indexes = _existing_index_names(bind)
-
-    # Use raw CREATE UNIQUE INDEX (not op.create_index) so we can index COALESCE(team_id, '')
-    # instead of the bare column. team_id is NULL for public/private resources, and both SQLite
-    # and Postgres treat NULLs as distinct in unique indexes, so indexing the raw column would
-    # let unlimited duplicate names through for those two visibilities - only team-scoped rows
-    # would ever be blocked. Wrapping team_id in COALESCE collapses NULL to a single comparable
-    # value so the constraint actually enforces uniqueness for public/private resources too.
-    if "uq_team_owner_gateway_name_resource" not in existing_indexes:
-        op.execute(text("CREATE UNIQUE INDEX uq_team_owner_gateway_name_resource ON resources (COALESCE(team_id, ''), owner_email, gateway_id, name)"))
-
-    if "uq_team_owner_name_resource_local" not in existing_indexes:
-        op.execute(text("CREATE UNIQUE INDEX uq_team_owner_name_resource_local ON resources (COALESCE(team_id, ''), owner_email, name) WHERE gateway_id IS NULL"))
+    if "uq_team_owner_gateway_name_resource" in existing_indexes:
+        op.execute(text("DROP INDEX uq_team_owner_gateway_name_resource"))
+    if "uq_team_owner_name_resource_local" in existing_indexes:
+        op.execute(text("DROP INDEX uq_team_owner_name_resource_local"))
 
 
 def downgrade() -> None:

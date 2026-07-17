@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/db.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 ContextForge Database Models.
 This module defines SQLAlchemy models for storing MCP entities including:
@@ -3676,21 +3675,7 @@ class Resource(Base):
     servers: Mapped[List["Server"]] = relationship("Server", secondary=server_resource_association, back_populates="resources")
     __table_args__ = (
         UniqueConstraint("team_id", "owner_email", "gateway_id", "uri", name="uq_team_owner_gateway_uri_resource"),
-        # team_id is NULL for public/private resources, and SQL treats NULLs as distinct in unique
-        # indexes/constraints - a plain UniqueConstraint on team_id silently allows duplicate names
-        # once team_id is NULL. COALESCE(team_id, '') collapses NULL to a single comparable value so
-        # the index actually enforces uniqueness for public/private resources too.
-        Index("uq_team_owner_gateway_name_resource", text("COALESCE(team_id, '')"), "owner_email", "gateway_id", "name", unique=True),
         Index("uq_team_owner_uri_resource_local", "team_id", "owner_email", "uri", unique=True, postgresql_where=text("gateway_id IS NULL"), sqlite_where=text("gateway_id IS NULL")),
-        Index(
-            "uq_team_owner_name_resource_local",
-            text("COALESCE(team_id, '')"),
-            "owner_email",
-            "name",
-            unique=True,
-            postgresql_where=text("gateway_id IS NULL"),
-            sqlite_where=text("gateway_id IS NULL"),
-        ),
         Index("idx_resources_created_at_id", "created_at", "id"),
     )
 

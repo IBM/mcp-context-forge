@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/utils/create_jwt_token.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 jwt_cli.py - generate, inspect, **and be imported** for token helpers.
 * **Run as a script** - friendly CLI (works with *no* flags).

@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/playwright/conftest.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Playwright test configuration - Simple version without python-dotenv.
 This assumes environment variables are loaded by the Makefile.
