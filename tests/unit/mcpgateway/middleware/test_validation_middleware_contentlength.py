@@ -142,7 +142,19 @@ async def test_validation_middleware_updates_content_length_only_if_modified(val
     # Body should be unchanged
     assert result.body == clean_text
     # Content-Length should NOT be set if body wasn't modified
-    # (In practice, the sanitization always re-encodes, so this test verifies the logic)
+    assert "content-length" not in result.headers
+
+
+@pytest.mark.asyncio
+async def test_validation_middleware_updates_content_length_after_invalid_utf8_decode(validation_middleware):
+    """Content-Length must match replacement bytes after invalid UTF-8 decoding."""
+    response = Response(content=b"valid\xff", status_code=200)
+    response.headers["content-length"] = "6"
+
+    result = await validation_middleware._sanitize_response(response)
+
+    assert result.body == b"valid\xef\xbf\xbd"
+    assert result.headers["content-length"] == str(len(result.body))
 
 
 @pytest.mark.asyncio

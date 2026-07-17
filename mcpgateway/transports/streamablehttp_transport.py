@@ -4255,7 +4255,6 @@ class SessionManagerWrapper:
                 # Return response to client
                 response_headers = [
                     (b"content-type", b"application/json"),
-                    (b"content-length", str(len(response.content)).encode()),
                 ]
                 if mcp_session_id != "not-provided":
                     response_headers.append((b"mcp-session-id", mcp_session_id.encode()))
