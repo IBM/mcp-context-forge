@@ -1235,6 +1235,22 @@ plugins:
       export_full_payload: false # opt in only if you explicitly want result content in telemetry
       max_payload_bytes_size: 10000
 
+  # ICA Metering Exporter - export MCP tool invocation metrics to ICA core-services
+  - name: "IcaMeteringExporter"
+    kind: "plugins.ica_metering_exporter.ica_metering_exporter.IcaMeteringExporterPlugin"
+    description: "Export MCP tool invocation metrics to ICA metering service"
+    version: "0.1.0"
+    author: "ICA Team"
+    hooks: ["tool_pre_invoke", "tool_post_invoke"]
+    tags: ["metering", "ica", "observability"]
+    mode: "disabled"
+    priority: 200
+    conditions: []
+    config:
+      metering_url: ""
+      metering_token: ""
+      enabled: false
+
   # TOON Encoder - Convert JSON to TOON format for token efficiency
   - name: "ToonEncoder"
     kind: "plugins.toon_encoder.toon_encoder.ToonEncoderPlugin"
