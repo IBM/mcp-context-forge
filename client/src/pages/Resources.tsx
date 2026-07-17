@@ -355,6 +355,22 @@ export function Resources() {
     setIsDetailsPanelOpen(false);
   };
 
+  const handleAddResourceTag = useCallback(
+    async (resourceId: string, tags: string[]) => {
+      try {
+        const updated = await resourcesApi.updateTags(resourceId, tags);
+        setResourcesData((prev) =>
+          prev?.map((r) => (r?.id === resourceId ? { ...r, tags: updated?.tags } : r)),
+        );
+      } catch (err) {
+        const detail = err instanceof ApiError ? extractApiErrorDetail(err.body) : null;
+        toast.error(detail || intl.formatMessage({ id: "resources.tags.addError" }));
+        throw err;
+      }
+    },
+    [setResourcesData, intl],
+  );
+
   const handleDeleteResource = useCallback(
     (id: string) => {
       if (id === OPTIMISTIC_RESOURCE_ID) return;
@@ -541,6 +557,7 @@ export function Resources() {
               onClose={handleCloseDetails}
               onEditResource={handleEditResource}
               onDeleteResource={handleDeleteResource}
+              onAddTag={handleAddResourceTag}
             />
           )}
 

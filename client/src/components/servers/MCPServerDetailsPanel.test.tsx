@@ -660,4 +660,26 @@ describe("MCPServerDetailsPanel", () => {
     const copyButtons = screen.getAllByRole("button", { name: /copy/i });
     expect(copyButtons.length).toBeGreaterThan(0);
   });
+
+  it("calls onAddTag with the merged, de-duplicated tag list", async () => {
+    const user = userEvent.setup();
+    const onAddTag = vi.fn().mockResolvedValue(undefined);
+
+    renderWithProviders(
+      <MCPServerDetailsPanel
+        server={{ ...mockServer, tags: ["prod"] }}
+        error={null}
+        open
+        onClose={vi.fn()}
+        onAddTag={onAddTag}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Add tags" }));
+    await user.type(screen.getByPlaceholderText("Add tags separated with commas"), "staging, prod");
+    await user.click(screen.getByRole("button", { name: "Add" }));
+
+    // "prod" already exists and is dropped; "staging" is appended.
+    expect(onAddTag).toHaveBeenCalledWith("test-server-123", ["prod", "staging"]);
+  });
 });

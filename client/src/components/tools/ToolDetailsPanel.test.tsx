@@ -643,4 +643,51 @@ describe("ToolDetailsPanel", () => {
     const heading = container.querySelector("#tool-details-heading-my-custom-gateway");
     expect(heading).toBeInTheDocument();
   });
+
+  describe("inline tag add", () => {
+    it("calls onAddTag with the merged, de-duplicated tag list", async () => {
+      const user = userEvent.setup();
+      const onAddTag = vi.fn().mockResolvedValue(undefined);
+      const tools = [
+        createMockTool(1, { id: "tool-1", tags: [{ label: "tag1" }, { label: "tag2" }] }),
+      ];
+
+      render(
+        <ToolDetailsPanel
+          tools={tools}
+          gatewaySlug="test-gateway"
+          open
+          selectedToolId="tool-1"
+          onClose={mockOnClose}
+          onAddTag={onAddTag}
+        />,
+      );
+
+      await user.click(screen.getByRole("button", { name: "Add tags" }));
+      await user.type(
+        screen.getByPlaceholderText("Add tags separated with commas"),
+        "alpha, tag1, beta",
+      );
+      await user.click(screen.getByRole("button", { name: "Add" }));
+
+      // "tag1" already exists and is dropped; the new tags are appended.
+      expect(onAddTag).toHaveBeenCalledWith("tool-1", ["tag1", "tag2", "alpha", "beta"]);
+    });
+
+    it("disables the add-tag trigger when onAddTag is omitted", () => {
+      const tools = [createMockTool(1, { id: "tool-1", tags: [{ label: "tag1" }] })];
+
+      render(
+        <ToolDetailsPanel
+          tools={tools}
+          gatewaySlug="test-gateway"
+          open
+          selectedToolId="tool-1"
+          onClose={mockOnClose}
+        />,
+      );
+
+      expect(screen.getByRole("button", { name: "Add tags" })).toBeDisabled();
+    });
+  });
 });
