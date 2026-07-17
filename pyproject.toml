@@ -399,6 +399,12 @@ mcpgateway = [
 inputs = ["mcpgateway"]
 python_version = "3.11"          # match default runtime
 
+[tool.pyright]
+typeCheckingMode = "standard"
+reportUnusedCoroutine = "error"
+reportMissingTypeStubs = "warning"
+exclude = ["build", ".venv", ".cache", "tests/async/profiles"]
+
 [tool.check-manifest]
 ignore = [
     "docs/**",
