@@ -23,7 +23,7 @@ idempotent and checks if indexes exist before creating them, ensuring no conflic
 the two definition sources.
 
 Revision ID: d21698ae4a19
-Revises: e198602c3c1e
+Revises: b6c7d8e9f0a1
 Create Date: 2026-05-06 12:35:58.142694
 
 """
@@ -35,7 +35,7 @@ from sqlalchemy import text, inspect
 
 # revision identifiers, used by Alembic.
 revision: str = 'd21698ae4a19'  # pragma: allowlist secret
-down_revision: Union[str, Sequence[str], None] = 'e198602c3c1e'  # pragma: allowlist secret
+down_revision: Union[str, Sequence[str], None] = 'b6c7d8e9f0a1'  # pragma: allowlist secret
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

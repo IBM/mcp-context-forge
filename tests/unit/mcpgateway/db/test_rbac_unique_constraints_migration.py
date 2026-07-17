@@ -31,7 +31,7 @@ from sqlalchemy.pool import StaticPool
 
 MODULE_NAME = "mcpgateway.alembic.versions.d21698ae4a19_add_rbac_unique_constraints_race_fix"
 REVISION = "d21698ae4a19"  # pragma: allowlist secret
-DOWN_REVISION = "e198602c3c1e"  # pragma: allowlist secret
+DOWN_REVISION = "b6c7d8e9f0a1"  # pragma: allowlist secret
 
 
 # ---------------------------------------------------------------------------
