@@ -12646,6 +12646,17 @@ class TestRemainingCoverageGaps:
             await main_mod.delete_tool.__wrapped__("t1", purge_metrics=False, db=MagicMock(), user={"email": "u"})
         assert excinfo.value.status_code == 404
 
+    async def test_delete_tool_lock_conflict_maps_to_409(self, monkeypatch):
+        # First-Party
+        import mcpgateway.main as main_mod
+        from mcpgateway.services.tool_service import ToolLockConflictError
+
+        monkeypatch.setattr(main_mod.tool_service, "delete_tool", AsyncMock(side_effect=ToolLockConflictError("locked")))
+        with pytest.raises(HTTPException) as excinfo:
+            await main_mod.delete_tool.__wrapped__("t1", purge_metrics=False, db=MagicMock(), user={"email": "u"})
+        assert excinfo.value.status_code == 409
+        assert "locked" in str(excinfo.value.detail)
+
     async def test_create_resource_resource_error_maps_to_400(self, monkeypatch):
         # First-Party
         import mcpgateway.main as main_mod

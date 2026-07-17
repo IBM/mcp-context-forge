@@ -16924,6 +16924,28 @@ async def test_admin_delete_tool_generic_exception_error_redirect(mock_delete, m
 
 
 @pytest.mark.asyncio
+@patch.object(ToolService, "delete_tool")
+async def test_admin_delete_tool_lock_conflict_error_redirect(mock_delete, mock_db):
+    """ToolLockConflictError surfaces the concurrent-modification message in the redirect."""
+    # Standard
+    from urllib.parse import unquote
+
+    # First-Party
+    from mcpgateway.services.tool_service import ToolLockConflictError
+
+    mock_delete.side_effect = ToolLockConflictError("locked")
+    request = MagicMock(spec=Request)
+    request.form = AsyncMock(return_value=FakeForm({"is_inactive_checked": "false"}))
+    request.scope = {"root_path": "/root"}
+
+    response = await admin_delete_tool("550e8400e29b41d4a7164466554400b1", request, mock_db, user={"email": "user@example.com"})  # pragma: allowlist secret
+    assert isinstance(response, RedirectResponse)
+    assert response.status_code == 303
+    location = unquote(response.headers["location"])
+    assert "Tool is being modified by another request" in location
+
+
+@pytest.mark.asyncio
 @patch.object(GatewayService, "delete_gateway")
 async def test_admin_delete_gateway_success(mock_delete, mock_db):
     request = MagicMock(spec=Request)
