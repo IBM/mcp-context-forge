@@ -13,10 +13,12 @@ import {
 } from "@/components/ui/dropdown-menu";
 import type { CursorPaginatedPromptsResponse, PromptRead } from "@/generated/types";
 import { PromptDetailsPanel } from "@/components/prompts";
+import { ConfirmDialog } from "@/components/servers/ConfirmDialog";
 import { useQuery } from "@/hooks/useQuery";
 import { promptsApi } from "@/api/prompts";
 import { ApiError } from "@/api/client";
-import { extractApiErrorDetail } from "@/utils/errors";
+import { extractApiErrorDetail, sanitizeError } from "@/utils/errors";
+import { parseApiError } from "@/lib/errorUtils";
 import { toast } from "sonner";
 import type { PromptGroup } from "@/types/prompts";
 
@@ -202,6 +204,8 @@ export function Prompts() {
   const addPromptsCardRef = useRef<HTMLDivElement>(null);
   const [showForm, setShowForm] = useState(false);
   const [shouldRestoreFormCloseFocus, setShouldRestoreFormCloseFocus] = useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [promptToDelete, setPromptToDelete] = useState<NonNullable<PromptRead> | null>(null);
   const {
     data: promptsData,
     error,
@@ -271,15 +275,68 @@ export function Prompts() {
     await refetch();
   };
 
-  // TODO: placeholder handlers so the details-panel Definition table shows its
+  // TODO: placeholder handler so the details-panel Definition table shows its
   // row overflow menu. No behaviour yet — a follow-up PR adds PromptForm edit
-  // mode and a delete flow.
+  // mode.
   const handleEditPrompt = () => {
     // TODO: open PromptForm in edit mode for the selected prompt
   };
-  const handleDeletePrompt = () => {
-    // TODO: delete the selected prompt (with confirmation)
-  };
+
+  const handleDeletePrompt = useCallback((prompt: NonNullable<PromptRead>) => {
+    setPromptToDelete(prompt);
+    setDeleteDialogOpen(true);
+  }, []);
+
+  const confirmDeletePrompt = useCallback(async () => {
+    if (!promptToDelete) return;
+
+    const prompt = promptToDelete;
+    const name = getPromptLabel(prompt) || prompt.id;
+
+    // Snapshot the list and the open group so we can roll back the optimistic
+    // removal if the DELETE fails, mirroring the Tools page delete flow.
+    const previousData = promptsData;
+    const previousActiveGroup = activeGroup;
+
+    const removeFromList = (list: (PromptRead | null)[]) =>
+      list.filter((p) => p == null || p.id !== prompt.id);
+    setPromptsData((prev) => {
+      if (!prev) return prev;
+      return Array.isArray(prev)
+        ? removeFromList(prev)
+        : { ...prev, prompts: removeFromList(prev.prompts) };
+    });
+
+    // Keep the open drawer's group in sync with the removal: drop the prompt
+    // from its list, and close the drawer once the group is empty. Recomputing
+    // from the current `activeGroup` (rather than checking a frozen snapshot)
+    // keeps sequential deletes from the same group correct.
+    if (activeGroup) {
+      const remaining = activeGroup.prompts.filter((p) => p.id !== prompt.id);
+      setActiveGroup(remaining.length > 0 ? { ...activeGroup, prompts: remaining } : null);
+    }
+
+    setDeleteDialogOpen(false);
+    setPromptToDelete(null);
+
+    try {
+      await promptsApi.delete(prompt.id);
+      toast.success(intl.formatMessage({ id: "prompts.delete.success" }, { name }));
+
+      try {
+        await refetch();
+      } catch (refreshErr) {
+        console.error("Failed to refresh prompts after deletion:", sanitizeError(refreshErr));
+      }
+    } catch (err) {
+      // Restore the pre-delete list and reopen the group on failure.
+      setPromptsData(() => previousData);
+      setActiveGroup(previousActiveGroup);
+
+      // Surface the backend detail when present, otherwise the localized fallback.
+      toast.error(parseApiError(err, intl.formatMessage({ id: "prompts.delete.error" })));
+    }
+  }, [promptToDelete, promptsData, activeGroup, setPromptsData, refetch, intl]);
 
   return (
     <div className="p-6">
@@ -334,6 +391,19 @@ export function Prompts() {
         onAddTag={handleAddPromptTag}
         onEdit={handleEditPrompt}
         onDelete={handleDeletePrompt}
+      />
+
+      <ConfirmDialog
+        open={deleteDialogOpen}
+        onOpenChange={setDeleteDialogOpen}
+        onConfirm={confirmDeletePrompt}
+        title={intl.formatMessage({ id: "prompts.delete.confirm.title" })}
+        description={intl.formatMessage(
+          { id: "prompts.delete.confirm.description" },
+          { name: promptToDelete ? getPromptLabel(promptToDelete) || promptToDelete.id : "" },
+        )}
+        confirmLabel={intl.formatMessage({ id: "prompts.delete.confirm.button" })}
+        variant="destructive"
       />
     </div>
   );

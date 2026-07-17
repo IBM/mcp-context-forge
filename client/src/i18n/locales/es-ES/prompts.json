@@ -81,5 +81,10 @@
   "prompts.add.error.teamRequired": "La selección de equipo es obligatoria cuando la visibilidad está configurada como equipo",
   "prompts.add.error.argumentsInvalidJson": "Formato JSON inválido",
   "prompts.add.error.argumentsArrayRequired": "Los argumentos deben ser un array JSON",
-  "prompts.tags.addError": "No se pudo añadir la etiqueta. Inténtelo de nuevo."
+  "prompts.tags.addError": "No se pudo añadir la etiqueta. Inténtelo de nuevo.",
+  "prompts.delete.confirm.title": "Eliminar prompt",
+  "prompts.delete.confirm.description": "¿Está seguro de que desea eliminar \"{name}\"? Esta acción no se puede deshacer.",
+  "prompts.delete.confirm.button": "Eliminar",
+  "prompts.delete.success": "Prompt \"{name}\" eliminado correctamente",
+  "prompts.delete.error": "Error al eliminar el prompt"
 }
