@@ -2373,7 +2373,8 @@ class TestEmailAuthServiceUserUpdates:
             await service.update_user(email="Admin@Example.COM", requesting_user_email=" ADMIN@example.com ", **{field: False})
 
     @pytest.mark.asyncio
-    async def test_update_user_admin_removal_requires_requester_identity(self, service, mock_db):
+    @pytest.mark.parametrize("requesting_user_email", [None, "", "   "])
+    async def test_update_user_admin_removal_requires_requester_identity(self, service, mock_db, requesting_user_email):
         """Admin removal fails closed when authenticated requester identity is absent."""
         admin_user = MagicMock(spec=EmailUser)
         admin_user.email = "admin@example.com"
@@ -2385,7 +2386,7 @@ class TestEmailAuthServiceUserUpdates:
         mock_db.execute.return_value = mock_result
 
         with pytest.raises(ValueError, match="Requesting user email is required"):
-            await service.update_user(email="admin@example.com", is_admin=False)
+            await service.update_user(email="admin@example.com", is_admin=False, requesting_user_email=requesting_user_email)
 
     @pytest.mark.asyncio
     async def test_update_user_protect_all_admins_allows_other_updates(self, service, mock_db, monkeypatch):
