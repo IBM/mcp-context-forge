@@ -2709,17 +2709,20 @@ class TestEmailAuthServiceUserDeletion:
         mock_single_member = MagicMock()
         mock_single_member.scalars.return_value.all.return_value = [single_member]
 
-        mock_empty = MagicMock()
+        mock_delete_history = MagicMock()
+        mock_delete_team_members_for_team = MagicMock()
+        mock_delete_team_members_all = MagicMock()
+        mock_delete_auth_events = MagicMock()
 
         mock_db.execute.side_effect = [
             mock_user_result,
             mock_teams_result,
             mock_no_owners,  # No other owners
             mock_single_member,  # Just the user as member
-            mock_empty,  # Delete team member history records
-            mock_empty,  # Delete team members (for the team)
-            mock_empty,  # Delete team members (remove user from all teams)
-            mock_empty,  # Delete auth events
+            mock_delete_history,  # Delete team member history records
+            mock_delete_team_members_for_team,  # Delete team members (for the team)
+            mock_delete_team_members_all,  # Delete team members (remove user from all teams)
+            mock_delete_auth_events,  # Delete auth events
         ]
 
         mock_role_svc = MagicMock()

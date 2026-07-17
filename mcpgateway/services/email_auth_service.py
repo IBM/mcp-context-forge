@@ -2139,11 +2139,11 @@ class EmailAuthService:
 
         except IntegrityError as e:
             self.db.rollback()
-            logger.error(f"FK constraint violation deleting user {SecurityValidator.sanitize_log_message(email)}: {e}")
+            logger.error("FK constraint violation deleting user %s: %s", SecurityValidator.sanitize_log_message(email), str(e))
             raise ValueError("Cannot delete user due to existing references") from e
         except Exception as e:
             self.db.rollback()
-            logger.error("Error deleting user %s: %s", SecurityValidator.sanitize_log_message(email), e)
+            logger.error("Error deleting user %s: %s", SecurityValidator.sanitize_log_message(email), e, exc_info=True)
             raise
 
     async def count_active_admin_users(self) -> int:
