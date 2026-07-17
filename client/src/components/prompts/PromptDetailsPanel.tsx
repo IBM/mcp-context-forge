@@ -1,17 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import {
-  Activity,
-  Globe,
-  MessageSquareCode,
-  PanelRightClose,
-} from "lucide-react";
+import { Activity, Globe, MessageSquareCode, PanelRightClose } from "lucide-react";
 import { useIntl } from "react-intl";
 import type { PromptRead } from "@/generated/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { InlineTagAdd } from "@/components/ui/inline-tag-add";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { CopyValue } from "@/components/ui/copy-value";
 import { cn } from "@/lib/utils";
 import { getTagDisplay } from "@/components/gateways/utils";
 import { formatDateTime } from "@/utils/format";
@@ -291,6 +287,37 @@ export function PromptDetailsPanel({
                               : intl.formatMessage({ id: "prompts.details.notAvailable" })}
                       </span>
                     </DetailRow>
+                    <DetailRow
+                      label={intl.formatMessage({ id: "prompts.details.label.technicalName" })}
+                    >
+                      <CopyValue
+                        label={intl.formatMessage({ id: "prompts.details.label.technicalName" })}
+                        value={selected.name}
+                      />
+                    </DetailRow>
+                    {selected.federationSource && (
+                      <DetailRow
+                        label={intl.formatMessage({ id: "prompts.details.label.sourceUrl" })}
+                      >
+                        <CopyValue
+                          label={intl.formatMessage({ id: "prompts.details.label.sourceUrl" })}
+                          value={selected.federationSource}
+                        />
+                      </DetailRow>
+                    )}
+                    <DetailRow label={intl.formatMessage({ id: "prompts.details.label.promptId" })}>
+                      <CopyValue
+                        label={intl.formatMessage({ id: "prompts.details.label.promptId" })}
+                        value={selected.id}
+                      />
+                    </DetailRow>
+                    {selected.version != null && (
+                      <DetailRow
+                        label={intl.formatMessage({ id: "prompts.details.label.version" })}
+                      >
+                        {selected.version}
+                      </DetailRow>
+                    )}
                     {(() => {
                       const tagLabels = (selected.tags || []).map(
                         (tag, index) => getTagDisplay(tag, index).label,
