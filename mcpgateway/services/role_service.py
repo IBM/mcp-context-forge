@@ -236,13 +236,13 @@ class RoleService:
             self.db.commit()
             self.db.refresh(role)
 
-            logger.info(f"Created role: {role.name} (scope: {role.scope}, id: {role.id})")
+            logger.info("Created role: %s (scope: %s, id: %s)", role.name, role.scope, role.id)
             return role
 
         except IntegrityError as e:
             # Another process created this role concurrently - rollback savepoint and refetch
             self.db.rollback()
-            logger.info(f"Role '{name}' (scope: {scope}) was created concurrently by another process - refetching existing role")
+            logger.info("Role '%s' (scope: %s) was created concurrently by another process - refetching existing role", name, scope)
 
             # Refetch the winner's row
             existing = await self.get_role_by_name(name, scope)
@@ -250,7 +250,7 @@ class RoleService:
                 return existing
 
             # If we still can't find it, something else went wrong - re-raise
-            logger.error(f"IntegrityError but role not found after refetch: {e}")
+            logger.error("IntegrityError but role not found after refetch: %s", e)
             raise ValueError(f"Failed to create or fetch role '{name}' in scope '{scope}': {e}") from e
 
     async def get_role_by_id(self, role_id: str) -> Optional[Role]:
@@ -699,7 +699,7 @@ class RoleService:
         except IntegrityError as e:
             # Another process created this assignment concurrently - rollback savepoint and refetch
             self.db.rollback()
-            logger.info(f"Role assignment for {user_email} to role {role_id} (scope: {scope}, scope_id: {scope_id}) was created concurrently - refetching existing assignment")
+            logger.info("Role assignment for %s to role %s (scope: %s, scope_id: %s) was created concurrently - refetching existing assignment", user_email, role_id, scope, scope_id)
 
             # Refetch the winner's row
             existing = await self.get_user_role_assignment(user_email, role_id, scope, scope_id)
@@ -708,7 +708,7 @@ class RoleService:
                 # This handles the race where another process created an expired assignment
                 # or the assignment expired between creation and refetch
                 if existing.is_expired():
-                    logger.warning(f"Refetched assignment for {user_email} to role {role_id} is expired - soft-deleting and retrying")
+                    logger.warning("Refetched assignment for %s to role %s is expired - soft-deleting and retrying", user_email, role_id)
                     existing.is_active = False
                     self.db.commit()
                     # Raise ValueError to signal that the refetched assignment was expired
@@ -716,7 +716,7 @@ class RoleService:
                 return existing
 
             # If we still can't find it, something else went wrong - re-raise
-            logger.error(f"IntegrityError but user_role assignment not found after refetch: {e}")
+            logger.error("IntegrityError but user_role assignment not found after refetch: %s", e)
             raise ValueError(f"Failed to create or fetch role assignment for {user_email} to role {role_id}: {e}") from e
 
     async def revoke_role_from_user(self, user_email: str, role_id: str, scope: str, scope_id: Optional[str]) -> bool:

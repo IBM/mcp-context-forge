@@ -54,10 +54,38 @@ def upgrade() -> None:
 
     # Find duplicate active roles (same name+scope combination)
     # Strategy: soft-delete (set is_active=false) for duplicates, keep oldest by created_at
+    #
+    # IMPORTANT: Before deactivating duplicate roles, remap any user_roles that reference
+    # a duplicate role to the kept (winner) role.  list_user_roles() joins on roles.is_active,
+    # so assignments pointing at a deactivated role would silently disappear from results.
 
     # Use row_number() for deterministic deduplication (handles timestamp ties via id ordering)
     # Keep the row with row_number = 1 (oldest created_at, lowest id on ties)
     if dialect == 'postgresql':
+        # Step 1a: Remap user_roles.role_id from duplicate roles to the kept role
+        remap_user_roles_sql = text("""
+            UPDATE user_roles
+            SET role_id = keeper.id
+            FROM (
+                SELECT id,
+                       name,
+                       scope,
+                       ROW_NUMBER() OVER (PARTITION BY name, scope ORDER BY created_at, id) as rn
+                FROM roles
+                WHERE is_active = true
+            ) keeper
+            JOIN (
+                SELECT id AS dup_id,
+                       name,
+                       scope,
+                       ROW_NUMBER() OVER (PARTITION BY name, scope ORDER BY created_at, id) as rn
+                FROM roles
+                WHERE is_active = true
+            ) dup ON dup.name = keeper.name AND dup.scope = keeper.scope
+            WHERE keeper.rn = 1
+              AND dup.rn > 1
+              AND user_roles.role_id = dup.dup_id
+        """)
         dedupe_roles_sql = text("""
             UPDATE roles
             SET is_active = false
@@ -73,6 +101,29 @@ def upgrade() -> None:
             )
         """)
     else:  # SQLite
+        # Step 1a: Remap user_roles.role_id from duplicate roles to the kept role
+        remap_user_roles_sql = text("""
+            UPDATE user_roles
+            SET role_id = (
+                SELECT id
+                FROM roles r2
+                WHERE r2.name = (SELECT name FROM roles r3 WHERE r3.id = user_roles.role_id)
+                  AND r2.scope = (SELECT scope FROM roles r3 WHERE r3.id = user_roles.role_id)
+                  AND r2.is_active = 1
+                ORDER BY r2.created_at, r2.id
+                LIMIT 1
+            )
+            WHERE role_id IN (
+                SELECT id
+                FROM (
+                    SELECT id,
+                           ROW_NUMBER() OVER (PARTITION BY name, scope ORDER BY created_at, id) as rn
+                    FROM roles
+                    WHERE is_active = 1
+                ) ranked
+                WHERE rn > 1
+            )
+        """)
         dedupe_roles_sql = text("""
             UPDATE roles
             SET is_active = 0
@@ -88,6 +139,12 @@ def upgrade() -> None:
             )
         """)
 
+    # First remap assignments, then deactivate duplicate roles
+    remap_result = bind.execute(remap_user_roles_sql)
+    remapped_user_roles_count = remap_result.rowcount
+    if remapped_user_roles_count > 0:
+        print(f"Remapped {remapped_user_roles_count} user_role assignment(s) from duplicate roles to kept roles")
+
     result = bind.execute(dedupe_roles_sql)
     deduped_roles_count = result.rowcount
     if deduped_roles_count > 0:
@@ -98,9 +155,17 @@ def upgrade() -> None:
     # =============================================================================
 
     # For user_roles, we need to handle scope_id IS NULL and IS NOT NULL separately
-    # Strategy: soft-delete duplicates, keep oldest by granted_at
+    # Strategy: soft-delete duplicates.
+    #
+    # Preference order for the kept row (rn = 1):
+    #   1. Unexpired assignments before expired ones (NULL expires_at counts as never-expiring)
+    #   2. Among ties, newest granted_at (most recently granted wins)
+    #   3. Among ties, lowest id for determinism
+    #
+    # This avoids the original bug where keeping the oldest-granted row could preserve
+    # an already-expired assignment while discarding a still-valid duplicate.
 
-    # Handle scope_id IS NULL case - use row_number() for deterministic tie-breaking
+    # Handle scope_id IS NULL case
     if dialect == 'postgresql':
         dedupe_user_roles_null_scope_sql = text("""
             UPDATE user_roles
@@ -109,7 +174,13 @@ def upgrade() -> None:
                 SELECT id
                 FROM (
                     SELECT id,
-                           ROW_NUMBER() OVER (PARTITION BY user_email, role_id, scope ORDER BY granted_at, id) as rn
+                           ROW_NUMBER() OVER (
+                               PARTITION BY user_email, role_id, scope
+                               ORDER BY
+                                   CASE WHEN expires_at IS NULL OR expires_at > NOW() THEN 0 ELSE 1 END,
+                                   granted_at DESC,
+                                   id
+                           ) as rn
                     FROM user_roles
                     WHERE is_active = true AND scope_id IS NULL
                 ) ranked
@@ -124,7 +195,13 @@ def upgrade() -> None:
                 SELECT id
                 FROM (
                     SELECT id,
-                           ROW_NUMBER() OVER (PARTITION BY user_email, role_id, scope ORDER BY granted_at, id) as rn
+                           ROW_NUMBER() OVER (
+                               PARTITION BY user_email, role_id, scope
+                               ORDER BY
+                                   CASE WHEN expires_at IS NULL OR expires_at > datetime('now') THEN 0 ELSE 1 END,
+                                   granted_at DESC,
+                                   id
+                           ) as rn
                     FROM user_roles
                     WHERE is_active = 1 AND scope_id IS NULL
                 ) ranked
@@ -135,7 +212,7 @@ def upgrade() -> None:
     result = bind.execute(dedupe_user_roles_null_scope_sql)
     deduped_user_roles_null = result.rowcount
 
-    # Handle scope_id IS NOT NULL case - use row_number() for deterministic tie-breaking
+    # Handle scope_id IS NOT NULL case
     if dialect == 'postgresql':
         dedupe_user_roles_with_scope_sql = text("""
             UPDATE user_roles
@@ -144,7 +221,13 @@ def upgrade() -> None:
                 SELECT id
                 FROM (
                     SELECT id,
-                           ROW_NUMBER() OVER (PARTITION BY user_email, role_id, scope, scope_id ORDER BY granted_at, id) as rn
+                           ROW_NUMBER() OVER (
+                               PARTITION BY user_email, role_id, scope, scope_id
+                               ORDER BY
+                                   CASE WHEN expires_at IS NULL OR expires_at > NOW() THEN 0 ELSE 1 END,
+                                   granted_at DESC,
+                                   id
+                           ) as rn
                     FROM user_roles
                     WHERE is_active = true AND scope_id IS NOT NULL
                 ) ranked
@@ -159,7 +242,13 @@ def upgrade() -> None:
                 SELECT id
                 FROM (
                     SELECT id,
-                           ROW_NUMBER() OVER (PARTITION BY user_email, role_id, scope, scope_id ORDER BY granted_at, id) as rn
+                           ROW_NUMBER() OVER (
+                               PARTITION BY user_email, role_id, scope, scope_id
+                               ORDER BY
+                                   CASE WHEN expires_at IS NULL OR expires_at > datetime('now') THEN 0 ELSE 1 END,
+                                   granted_at DESC,
+                                   id
+                           ) as rn
                     FROM user_roles
                     WHERE is_active = 1 AND scope_id IS NOT NULL
                 ) ranked
@@ -172,7 +261,7 @@ def upgrade() -> None:
 
     total_deduped_user_roles = deduped_user_roles_null + deduped_user_roles_with_scope
     if total_deduped_user_roles > 0:
-        print(f"Deduped {total_deduped_user_roles} duplicate active user_role(s) - set is_active=false for newer duplicates")
+        print(f"Deduped {total_deduped_user_roles} duplicate active user_role(s) - kept unexpired/newest-granted assignment, set is_active=false for others")
 
     # =============================================================================
     # STEP 3: Add partial unique indexes
