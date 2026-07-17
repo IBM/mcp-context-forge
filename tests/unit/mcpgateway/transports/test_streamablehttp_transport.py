@@ -12176,6 +12176,76 @@ class TestCallToolDirectProxy:
         assert call_kwargs.kwargs["gateway_id"] == "gw-direct"
         assert call_kwargs.kwargs["name"] == "my_tool"
         assert call_kwargs.kwargs["arguments"] == {"arg": "value"}
+        assert call_kwargs.kwargs["user_context"] == {
+            "email": "user@test.com",
+            "teams": ["team1"],
+            "is_admin": False,
+            "is_authenticated": True,
+        }
+
+    @pytest.mark.asyncio
+    async def test_call_tool_direct_proxy_uses_scope_recovered_identity(self):
+        """Forward identity recovered from ASGI scope when the SDK task lost its ContextVar."""
+        # Third-Party
+        from mcp import types as mcp_types
+
+        recovered_identity = {
+            "email": "user@test.com",
+            "teams": ["team1"],
+            "is_admin": False,
+            "is_authenticated": True,
+        }
+        mock_gateway = MagicMock(id="gw-direct", gateway_mode="direct_proxy")
+        mock_db = MagicMock()
+        mock_db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=mock_gateway)))
+
+        @asynccontextmanager
+        async def mock_get_db():
+            yield mock_db
+
+        expected_result = mcp_types.CallToolResult(
+            content=[mcp_types.TextContent(type="text", text="direct proxy result")],
+            isError=False,
+        )
+        mock_invoke_direct = AsyncMock(return_value=expected_result)
+        tr.user_identity_var.set(None)
+
+        with (
+            patch(
+                "mcpgateway.transports.streamablehttp_transport._get_request_context_or_default",
+                AsyncMock(
+                    return_value=(
+                        "server-123",
+                        {"x-context-forge-gateway-id": "gw-direct"},
+                        recovered_identity,
+                    )
+                ),
+            ),
+            patch("mcpgateway.transports.streamablehttp_transport.get_db", mock_get_db),
+            patch(
+                "mcpgateway.transports.streamablehttp_transport.extract_gateway_id_from_headers",
+                return_value="gw-direct",
+            ),
+            patch(
+                "mcpgateway.transports.streamablehttp_transport._check_scoped_permission",
+                return_value=True,
+            ),
+            patch(
+                "mcpgateway.transports.streamablehttp_transport._check_streamable_permission",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
+            patch(
+                "mcpgateway.transports.streamablehttp_transport.check_gateway_access",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
+            patch.object(tr.tool_service, "invoke_tool_direct", mock_invoke_direct),
+        ):
+            result = await tr.call_tool("my_tool", {"arg": "value"})
+
+        assert result is expected_result
+        assert mock_invoke_direct.await_args.kwargs["user_context"] == recovered_identity
 
     @pytest.mark.asyncio
     async def test_call_tool_direct_proxy_access_denied(self):
