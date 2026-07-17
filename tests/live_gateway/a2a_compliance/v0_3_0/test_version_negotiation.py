@@ -1,11 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Protocol version advertisement for A2A 0.3.0.
-
-Location: ./tests/live_gateway/a2a_compliance/v0_3_0/test_version_negotiation.py
-Copyright 2026
+"""Location: ./tests/live_gateway/a2a_compliance/v0_3_0/test_version_negotiation.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: ContextForge Contributors
 
+Protocol version advertisement for A2A 0.3.0.
 The 0.3.0 suite pins the expected ``protocolVersion`` to ``0.3.0``.
 Version negotiation in v0.3.0 reads the top-level ``protocolVersion``
 field (unlike v1.0.0 which uses ``supportedInterfaces[*].protocolVersion``).

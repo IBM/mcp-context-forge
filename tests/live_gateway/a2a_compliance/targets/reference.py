@@ -1,11 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Reference A2A agent target.
-
-Location: ./tests/live_gateway/a2a_compliance/targets/reference.py
-Copyright 2026
+"""Location: ./tests/live_gateway/a2a_compliance/targets/reference.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: ContextForge Contributors
 
+Reference A2A agent target.
 Direct connection to the bundled ``a2a_echo_agent``: no gateway in
 front, no federation hop. The ``ClientFactory.create_from_url`` call
 resolves the well-known agent card, picks the JSON-RPC transport per

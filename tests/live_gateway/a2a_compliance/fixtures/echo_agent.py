@@ -1,11 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Live a2a_echo_agent fixtures.
-
-Location: ./tests/live_gateway/a2a_compliance/fixtures/echo_agent.py
-Copyright 2026
+"""Location: ./tests/live_gateway/a2a_compliance/fixtures/echo_agent.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: ContextForge Contributors
 
+Live a2a_echo_agent fixtures.
 Probes the bundled ``a2a_echo_agent`` (compose ``testing`` profile,
 default port 9100) at session scope and skips the entire suite cleanly
 when it's unreachable. Same pattern as

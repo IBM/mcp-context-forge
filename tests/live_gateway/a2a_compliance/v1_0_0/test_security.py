@@ -1,11 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Security scheme advertisement for A2A 1.0.0.
-
-Location: ./tests/live_gateway/a2a_compliance/v1_0_0/test_security.py
-Copyright 2026
+"""Location: ./tests/live_gateway/a2a_compliance/v1_0_0/test_security.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: ContextForge Contributors
 
+Security scheme advertisement for A2A 1.0.0.
 A2A 1.0.0 carries authentication discovery on the card via
 ``securitySchemes`` (map) and ``securityRequirements`` (list of
 requirement references).

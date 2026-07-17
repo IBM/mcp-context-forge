@@ -1,11 +1,9 @@
 # -*- coding: utf-8 -*-
-"""JSON-RPC envelope error-code compliance for A2A 0.3.0.
-
-Location: ./tests/live_gateway/a2a_compliance/v0_3_0/test_error_handling.py
-Copyright 2026
+"""Location: ./tests/live_gateway/a2a_compliance/v0_3_0/test_error_handling.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: ContextForge Contributors
 
+JSON-RPC envelope error-code compliance for A2A 0.3.0.
 Wire-level tests: the SDK Client smooths over JSON-RPC envelope
 details (raising typed Python exceptions instead of surfacing the
 ``code``/``message`` pair), so we drive these checks with raw

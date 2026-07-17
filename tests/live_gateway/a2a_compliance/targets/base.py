@@ -1,11 +1,9 @@
 # -*- coding: utf-8 -*-
-"""A2AComplianceTarget abstraction.
-
-Location: ./tests/live_gateway/a2a_compliance/targets/base.py
-Copyright 2026
+"""Location: ./tests/live_gateway/a2a_compliance/targets/base.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: ContextForge Contributors
 
+A2AComplianceTarget abstraction.
 A target is a runnable A2A endpoint plus the logic to construct an
 ``a2a.client.Client`` bound to it over a given transport. Each target
 declares which transports it supports; the parametrized ``client``

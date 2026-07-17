@@ -1,11 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Well-known endpoint routing for A2A 1.0.0.
-
-Location: ./tests/live_gateway/a2a_compliance/v1_0_0/test_well_known.py
-Copyright 2026
+"""Location: ./tests/live_gateway/a2a_compliance/v1_0_0/test_well_known.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: ContextForge Contributors
 
+Well-known endpoint routing for A2A 1.0.0.
 The well-known card endpoint is the single discovery hook in A2A — an
 agent that doesn't serve a card at the canonical path is invisible to
 ``ClientFactory.create_from_url``. These tests validate the endpoint

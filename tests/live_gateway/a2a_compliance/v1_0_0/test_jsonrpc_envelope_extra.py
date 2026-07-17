@@ -1,11 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Wave 2 gap-closure: A2A 1.0.0 JSON-RPC envelope validation (Section 2).
-
-Location: ./tests/live_gateway/a2a_compliance/v1_0_0/test_jsonrpc_envelope_extra.py
-Copyright 2026
+"""Location: ./tests/live_gateway/a2a_compliance/v1_0_0/test_jsonrpc_envelope_extra.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: ContextForge Contributors
 
+Wave 2 gap-closure: A2A 1.0.0 JSON-RPC envelope validation (Section 2).
 Closes the 1 Section-2 GAP-BLOCK row from
 ``.omo/evidence/c4-audit-checklist.md`` (T10 in
 ``.omo/plans/a2a-native-passthrough.md``):

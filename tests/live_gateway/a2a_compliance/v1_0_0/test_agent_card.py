@@ -1,11 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Agent card structural compliance for A2A 1.0.0.
-
-Location: ./tests/live_gateway/a2a_compliance/v1_0_0/test_agent_card.py
-Copyright 2026
+"""Location: ./tests/live_gateway/a2a_compliance/v1_0_0/test_agent_card.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: ContextForge Contributors
 
+Agent card structural compliance for A2A 1.0.0.
 Phase 1 scope: raw-httpx against the reference target. The card-shape
 contract is wire-level, so we drive it without the SDK abstraction.
 When gateway native A2A passthrough lands (A2A-GAP-001) these checks

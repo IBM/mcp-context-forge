@@ -1,11 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Gateway-proxy A2A target — live ContextForge passthrough.
-
-Location: ./tests/live_gateway/a2a_compliance/targets/gateway_proxy.py
-Copyright 2026
+"""Location: ./tests/live_gateway/a2a_compliance/targets/gateway_proxy.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: ContextForge Contributors
 
+Gateway-proxy A2A target — live ContextForge passthrough.
 Plan T29 (Wave 7) wired this target up to the native A2A passthrough
 ContextForge gained in Wave 3 (T11 + T12 + T14). The
 ``ClientFactory.create_from_url`` call resolves the gateway's

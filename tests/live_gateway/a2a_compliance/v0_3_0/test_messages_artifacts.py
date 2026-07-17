@@ -1,11 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Message and artifact shape compliance for A2A 0.3.0.
-
-Location: ./tests/live_gateway/a2a_compliance/v0_3_0/test_messages_artifacts.py
-Copyright 2026
+"""Location: ./tests/live_gateway/a2a_compliance/v0_3_0/test_messages_artifacts.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: ContextForge Contributors
 
+Message and artifact shape compliance for A2A 0.3.0.
 These assertions cover the response payload shape — what fields are
 populated when the agent successfully echoes a message. The SDK
 Client is used for round-trips so the assertions read at the Python

@@ -1,11 +1,9 @@
 # -*- coding: utf-8 -*-
-"""A2A 0.3.0 compliance harness fixture overrides.
-
-Location: ./tests/live_gateway/a2a_compliance/v0_3_0/conftest.py
-Copyright 2026
+"""Location: ./tests/live_gateway/a2a_compliance/v0_3_0/conftest.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: ContextForge Contributors
 
+A2A 0.3.0 compliance harness fixture overrides.
 Overrides the parent conftest's ``echo_agent_base_url`` session
 fixture to point at the v0.3.0 echo agent (port 9101). All other
 parent-conftest behavior — the ``(target, transport)`` matrix, the

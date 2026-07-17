@@ -1,11 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Agent card structural compliance for A2A 0.3.0.
-
-Location: ./tests/live_gateway/a2a_compliance/v0_3_0/test_agent_card.py
-Copyright 2026
+"""Location: ./tests/live_gateway/a2a_compliance/v0_3_0/test_agent_card.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: ContextForge Contributors
 
+Agent card structural compliance for A2A 0.3.0.
 The A2A 0.3.0 ``AgentCard`` schema is fundamentally different from
 1.0.0 — transport advertisement lives at the top level
 (``protocol_version``, ``url``, ``preferred_transport``,

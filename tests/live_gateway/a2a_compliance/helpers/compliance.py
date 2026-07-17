@@ -1,11 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Shared test helpers for the A2A compliance harness.
-
-Location: ./tests/live_gateway/a2a_compliance/helpers/compliance.py
-Copyright 2026
+"""Location: ./tests/live_gateway/a2a_compliance/helpers/compliance.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: ContextForge Contributors
 
+Shared test helpers for the A2A compliance harness.
 Provides:
   * ``current_target`` / ``xfail_on`` — read the parametrized target out
     of a fixture-aware request and conditionally mark ``xfail``. Used to

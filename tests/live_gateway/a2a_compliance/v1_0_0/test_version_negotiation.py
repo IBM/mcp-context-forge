@@ -1,11 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Protocol version advertisement for A2A 1.0.0.
-
-Location: ./tests/live_gateway/a2a_compliance/v1_0_0/test_version_negotiation.py
-Copyright 2026
+"""Location: ./tests/live_gateway/a2a_compliance/v1_0_0/test_version_negotiation.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: ContextForge Contributors
 
+Protocol version advertisement for A2A 1.0.0.
 Version negotiation in A2A is card-driven: ``ClientFactory`` reads
 ``supportedInterfaces[*].protocolVersion`` and routes via
 ``CompatJsonRpcTransport`` if the version is in the legacy 0.3.x range.

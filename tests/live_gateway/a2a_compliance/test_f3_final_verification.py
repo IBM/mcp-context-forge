@@ -1,11 +1,9 @@
 # -*- coding: utf-8 -*-
-"""F3 Final Verification — Live A2A SDK manual QA against running gateway.
-
-Location: ./tests/live_gateway/a2a_compliance/test_f3_final_verification.py
-Copyright 2026
+"""Location: ./tests/live_gateway/a2a_compliance/test_f3_final_verification.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: ContextForge Contributors
 
+F3 Final Verification — Live A2A SDK manual QA against running gateway.
 13 wire-level scenarios from the plan's third final-verification gate
 (``.omo/plans/a2a-native-passthrough.md:1077-1094``). The plan's
 success criterion #2 requires this gate to APPROVE for completion.

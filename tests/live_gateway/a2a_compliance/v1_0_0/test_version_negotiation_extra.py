@@ -1,11 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Wave 2 gap-closure: A2A 1.0.0 A2A-Version header negotiation (Section 6).
-
-Location: ./tests/live_gateway/a2a_compliance/v1_0_0/test_version_negotiation_extra.py
-Copyright 2026
+"""Location: ./tests/live_gateway/a2a_compliance/v1_0_0/test_version_negotiation_extra.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: ContextForge Contributors
 
+Wave 2 gap-closure: A2A 1.0.0 A2A-Version header negotiation (Section 6).
 Closes the 3 Section-6 GAP-BLOCK rows from
 ``.omo/evidence/c4-audit-checklist.md`` (T10):
 

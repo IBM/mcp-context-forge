@@ -1,11 +1,9 @@
 # -*- coding: utf-8 -*-
-"""A2A compliance harness fixture sanity test (Plan T28 Part B).
-
-Location: ./tests/live_gateway/a2a_compliance/test_fixture_sanity.py
-Copyright 2026
+"""Location: ./tests/live_gateway/a2a_compliance/test_fixture_sanity.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: ContextForge Contributors
 
+A2A compliance harness fixture sanity test (Plan T28 Part B).
 Plan T28 Part B (Wave 7) — sanity-checks every harness fixture in
 isolation so a developer running the harness against a live gateway
 sees a single clean failure if any wiring is broken, rather than

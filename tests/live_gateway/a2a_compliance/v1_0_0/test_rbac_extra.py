@@ -1,11 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Wave 2 gap-closure: A2A 1.0.0 RBAC + Layer-1 visibility denial (Section 8).
-
-Location: ./tests/live_gateway/a2a_compliance/v1_0_0/test_rbac_extra.py
-Copyright 2026
+"""Location: ./tests/live_gateway/a2a_compliance/v1_0_0/test_rbac_extra.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: ContextForge Contributors
 
+Wave 2 gap-closure: A2A 1.0.0 RBAC + Layer-1 visibility denial (Section 8).
 Closes the 6 Section-8 GAP-BLOCK rows from
 ``.omo/evidence/c4-audit-checklist.md`` (T10):
 

@@ -1,11 +1,9 @@
 # -*- coding: utf-8 -*-
-"""A2A protocol compliance harness.
-
-Location: ./tests/live_gateway/a2a_compliance/__init__.py
-Copyright 2026
+"""Location: ./tests/live_gateway/a2a_compliance/__init__.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: ContextForge Contributors
 
+A2A protocol compliance harness.
 Black-box A2A protocol tests driven by the official ``a2a-sdk`` client
 (with raw httpx where wire-level precision matters). The same test
 bodies run against multiple targets — reference (direct to the

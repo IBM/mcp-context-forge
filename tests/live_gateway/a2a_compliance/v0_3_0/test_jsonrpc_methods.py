@@ -1,11 +1,9 @@
 # -*- coding: utf-8 -*-
-"""JSON-RPC method coverage for A2A 0.3.0.
-
-Location: ./tests/live_gateway/a2a_compliance/v0_3_0/test_jsonrpc_methods.py
-Copyright 2026
+"""Location: ./tests/live_gateway/a2a_compliance/v0_3_0/test_jsonrpc_methods.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: ContextForge Contributors
 
+JSON-RPC method coverage for A2A 0.3.0.
 These tests use the ``a2a.client.Client`` SDK abstraction and run
 across the full ``(target, transport)`` matrix. Gateway-target cells
 xfail blanket via A2A-GAP-001 (see conftest's

@@ -1,11 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Cross-target payload normalization for drift detection.
-
-Location: ./tests/live_gateway/a2a_compliance/helpers/drift.py
-Copyright 2026
+"""Location: ./tests/live_gateway/a2a_compliance/helpers/drift.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: ContextForge Contributors
 
+Cross-target payload normalization for drift detection.
 The harness compares responses from ``reference``, ``gateway_proxy``,
 and ``gateway_virtual`` and asserts that — after accounting for
 legitimate gateway decoration — they're structurally equal. Divergence

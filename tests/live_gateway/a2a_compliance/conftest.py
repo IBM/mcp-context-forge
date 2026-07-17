@@ -1,11 +1,9 @@
 # -*- coding: utf-8 -*-
-"""A2A protocol-compliance harness fixtures.
-
-Location: ./tests/live_gateway/a2a_compliance/conftest.py
-Copyright 2026
+"""Location: ./tests/live_gateway/a2a_compliance/conftest.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: ContextForge Contributors
 
+A2A protocol-compliance harness fixtures.
 The ``client`` fixture is parametrized over every ``(target, transport)``
 pair declared below, so every test body runs across the full matrix
 automatically:

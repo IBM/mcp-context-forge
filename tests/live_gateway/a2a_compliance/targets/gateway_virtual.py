@@ -1,11 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Gateway virtual-server A2A target — live v-server passthrough.
-
-Location: ./tests/live_gateway/a2a_compliance/targets/gateway_virtual.py
-Copyright 2026
+"""Location: ./tests/live_gateway/a2a_compliance/targets/gateway_virtual.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: ContextForge Contributors
 
+Gateway virtual-server A2A target — live v-server passthrough.
 Plan T29 (Wave 7) wired this target up to the v-server-scoped native
 A2A passthrough ContextForge gained in Wave 4 (T16 path rewrite
 middleware + the same T11 + T12 + T14 handlers). The

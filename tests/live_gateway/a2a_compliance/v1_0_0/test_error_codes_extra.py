@@ -1,11 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Wave 2 gap-closure: A2A 1.0.0 error codes (Section 4).
-
-Location: ./tests/live_gateway/a2a_compliance/v1_0_0/test_error_codes_extra.py
-Copyright 2026
+"""Location: ./tests/live_gateway/a2a_compliance/v1_0_0/test_error_codes_extra.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: ContextForge Contributors
 
+Wave 2 gap-closure: A2A 1.0.0 error codes (Section 4).
 Closes the 5 Section-4 GAP-BLOCK rows from
 ``.omo/evidence/c4-audit-checklist.md`` (T10):
 
