@@ -3,9 +3,15 @@ import { useIntl } from "react-intl";
 import { z } from "zod";
 import { useAuthContext } from "@/auth/AuthContext";
 import { useQuery } from "@/hooks/useQuery";
+import { promptsApi } from "@/api/prompts";
 import { parseApiError } from "@/lib/errorUtils";
 import { sanitizeString } from "@/lib/sanitize";
-import type { BodyCreatePromptV1PromptsPost, PromptArgument, PromptRead } from "@/generated/types";
+import type {
+  BodyCreatePromptV1PromptsPost,
+  PromptArgument,
+  PromptRead,
+  PromptUpdate,
+} from "@/generated/types";
 import type { PromptFormErrors } from "@/types/prompts";
 import type { Visibility } from "@/types/server";
 
@@ -17,6 +23,34 @@ interface PromptFormValues {
   description: string;
   tags: string;
   teamId?: string;
+}
+
+export interface PromptFormInitialValues {
+  name?: string;
+  visibility?: Visibility;
+  template?: string;
+  arguments?: string;
+  description?: string;
+  tags?: string;
+  /**
+   * The prompt's existing team (edit mode). When set, a `team`-visibility edit
+   * keeps this team instead of forcing the caller to (re)select one in the
+   * sidebar, so editing a team prompt never silently reassigns or blocks it.
+   */
+  teamId?: string | null;
+}
+
+export interface UsePromptFormOptions {
+  /** When set, the form updates this prompt (`PUT /prompts/{id}`) instead of creating one. */
+  promptId?: string;
+  /** Values to prefill the form with (edit mode). */
+  initialValues?: PromptFormInitialValues;
+  /**
+   * Whether the template field is required. Defaults to `true` (REST/local
+   * prompts). Pass `false` for federated prompts, which legitimately have no
+   * local template.
+   */
+  templateRequired?: boolean;
 }
 
 // The generated `prompt` field is nullable to match the server's Optional
@@ -67,7 +101,7 @@ function parseTags(value?: string): string[] | undefined {
   return tags && tags.length > 0 ? tags : undefined;
 }
 
-const createPromptFormSchema = (intl: ReturnType<typeof useIntl>) =>
+const createPromptFormSchema = (intl: ReturnType<typeof useIntl>, templateRequired: boolean) =>
   z
     .object({
       name: z
@@ -75,7 +109,13 @@ const createPromptFormSchema = (intl: ReturnType<typeof useIntl>) =>
         .transform((value) => sanitizeString(value, 100))
         .pipe(z.string().min(1, intl.formatMessage({ id: "prompts.add.error.nameRequired" }))),
       visibility: z.enum(["public", "private", "team"]),
-      template: z.string().min(1, intl.formatMessage({ id: "prompts.add.error.templateRequired" })),
+      // Local (REST) prompts carry their content in `template`, so it is
+      // required. Federated prompts have no local template — the upstream MCP
+      // server resolves the content on `prompts/get` — so the field is optional
+      // when editing them.
+      template: templateRequired
+        ? z.string().min(1, intl.formatMessage({ id: "prompts.add.error.templateRequired" }))
+        : z.string(),
       arguments: z.string().transform((value, ctx): PromptArgument[] => {
         if (!value.trim()) return [];
 
@@ -154,26 +194,44 @@ function getApiFieldError(error: unknown): PromptFormErrors | null {
   return null;
 }
 
-export function usePromptForm(): UsePromptFormReturn {
+export function usePromptForm(options: UsePromptFormOptions = {}): UsePromptFormReturn {
+  const { promptId, initialValues, templateRequired = true } = options;
   const intl = useIntl();
   const { selectedTeamId } = useAuthContext();
-  const schema = useMemo(() => createPromptFormSchema(intl), [intl]);
+  const schema = useMemo(
+    () => createPromptFormSchema(intl, templateRequired),
+    [intl, templateRequired],
+  );
 
-  const [name, setNameState] = useState(initialState.name);
-  const [visibility, setVisibilityState] = useState<Visibility>(initialState.visibility);
-  const [template, setTemplateState] = useState(initialState.template);
-  const [argumentsValue, setArgumentsState] = useState(initialState.arguments);
-  const [description, setDescriptionState] = useState(initialState.description);
-  const [tags, setTagsState] = useState(initialState.tags);
+  const [name, setNameState] = useState(initialValues?.name ?? initialState.name);
+  const [visibility, setVisibilityState] = useState<Visibility>(
+    initialValues?.visibility ?? initialState.visibility,
+  );
+  const [template, setTemplateState] = useState(initialValues?.template ?? initialState.template);
+  const [argumentsValue, setArgumentsState] = useState(
+    initialValues?.arguments ?? initialState.arguments,
+  );
+  const [description, setDescriptionState] = useState(
+    initialValues?.description ?? initialState.description,
+  );
+  const [tags, setTagsState] = useState(initialValues?.tags ?? initialState.tags);
   const [errors, setErrors] = useState<PromptFormErrors>({});
-  const teamId = visibility === "team" ? (selectedTeamId ?? undefined) : undefined;
-  const { execute: createPrompt, isLoading: isSubmitting } = useQuery<
+  const [isUpdating, setIsUpdating] = useState(false);
+  // In edit mode, keep the prompt's own team; only fall back to the sidebar
+  // selection (create mode, or when switching a non-team prompt to team).
+  const initialTeamId = initialValues?.teamId ?? undefined;
+  const resolveTeamId = (vis: Visibility): string | undefined =>
+    vis === "team" ? (initialTeamId ?? selectedTeamId ?? undefined) : undefined;
+  const teamId = resolveTeamId(visibility);
+  const { execute: createPrompt, isLoading: isCreating } = useQuery<
     PromptRead,
     CreatePromptPayload
   >("/prompts", {
     method: "POST",
     enabled: false,
   });
+
+  const isSubmitting = isCreating || isUpdating;
 
   const getFormValues = useCallback(
     (): PromptFormValues => ({
@@ -198,7 +256,8 @@ export function usePromptForm(): UsePromptFormReturn {
       };
 
       if (field === "visibility") {
-        nextValues.teamId = value === "team" ? (selectedTeamId ?? undefined) : undefined;
+        nextValues.teamId =
+          value === "team" ? (initialTeamId ?? selectedTeamId ?? undefined) : undefined;
       }
 
       const result = schema.safeParse({
@@ -225,7 +284,7 @@ export function usePromptForm(): UsePromptFormReturn {
         return nextErrors;
       });
     },
-    [getFormValues, schema, selectedTeamId],
+    [getFormValues, schema, selectedTeamId, initialTeamId],
   );
 
   const updateField = useCallback(
@@ -310,15 +369,37 @@ export function usePromptForm(): UsePromptFormReturn {
     [getFormValues, schema],
   );
 
+  const getUpdateData = useCallback((): NonNullable<PromptUpdate> => {
+    const { prompt } = schema.parse(getFormValues());
+    return {
+      name: prompt.name,
+      description: prompt.description ?? null,
+      template: prompt.template,
+      arguments: prompt.arguments,
+      tags: prompt.tags ?? null,
+      teamId: prompt.teamId,
+      visibility: prompt.visibility,
+    };
+  }, [getFormValues, schema]);
+
   const handleSubmit = useCallback(
     async (event: FormEvent<HTMLFormElement>, onSuccess?: () => void) => {
       event.preventDefault();
       if (!validateForm()) return;
 
       try {
-        await createPrompt(getFormData());
+        if (promptId) {
+          setIsUpdating(true);
+          try {
+            await promptsApi.update(promptId, getUpdateData());
+          } finally {
+            setIsUpdating(false);
+          }
+        } else {
+          await createPrompt(getFormData());
+          resetForm();
+        }
         setErrors({});
-        resetForm();
         onSuccess?.();
       } catch (error) {
         const fieldError = getApiFieldError(error);
@@ -326,12 +407,15 @@ export function usePromptForm(): UsePromptFormReturn {
           setErrors(fieldError);
         } else {
           setErrors({
-            submit: parseApiError(error, intl.formatMessage({ id: "prompts.add.error" })),
+            submit: parseApiError(
+              error,
+              intl.formatMessage({ id: promptId ? "prompts.edit.error" : "prompts.add.error" }),
+            ),
           });
         }
       }
     },
-    [createPrompt, getFormData, intl, resetForm, validateForm],
+    [createPrompt, getFormData, getUpdateData, intl, promptId, resetForm, validateForm],
   );
 
   useEffect(() => {
