@@ -12,6 +12,7 @@ This module defines the utility funtions to read/write/update toolops related da
 from sqlalchemy.orm import Session
 
 # First-Party
+from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.db import Tool
 from mcpgateway.db import ToolOpsTestCases as TestCaseRecord
 from mcpgateway.services.logging_service import LoggingService
@@ -73,14 +74,22 @@ def populate_testcases_table(tool_id, test_cases, run_status, db: Session):
         db.add(test_case_record)
         db.commit()
         db.refresh(test_case_record)
-        logger.info("Added tool test case record with empty test cases for tool " + str(tool_id) + " with status " + str(run_status))
+        logger.info(
+            "Added tool test case record with empty test cases for tool %s with status %s",
+            SecurityValidator.sanitize_log_message(str(tool_id)),
+            SecurityValidator.sanitize_log_message(str(run_status)),
+        )
     # elif tool_record and test_cases != [] and run_status == 'completed':
     elif tool_record:
         tool_record.test_cases = test_cases
         tool_record.run_status = run_status
         db.commit()
         db.refresh(tool_record)
-        logger.info("Updated tool record in table with test cases for tool " + str(tool_id) + " with status " + str(run_status))
+        logger.info(
+            "Updated tool record in table with test cases for tool %s with status %s",
+            SecurityValidator.sanitize_log_message(str(tool_id)),
+            SecurityValidator.sanitize_log_message(str(run_status)),
+        )
 
 
 def query_testcases_table(tool_id, db: Session):
@@ -115,7 +124,7 @@ def query_testcases_table(tool_id, db: Session):
         >>> mock_db.query.assert_called()
     """
     tool_record = db.query(TestCaseRecord).filter_by(tool_id=tool_id).first()
-    logger.info("Tool record obtained from table for tool - " + str(tool_id))
+    logger.info("Tool record obtained from table for tool - %s", SecurityValidator.sanitize_log_message(str(tool_id)))
     return tool_record
 
 
@@ -163,9 +172,9 @@ def query_tool_auth(tool_id, db: Session):
     try:
         tool_record = db.query(Tool).filter_by(id=tool_id).first()
         tool_auth = decode_auth(tool_record.auth_value)
-        logger.info("Tool auth obtained from table for the tool - " + str(tool_id))
+        logger.info("Tool auth obtained from table for the tool - %s", SecurityValidator.sanitize_log_message(str(tool_id)))
     except Exception as e:
-        logger.error("Error in obtaining authorization for the tool - " + tool_id + " , " + str(e))
+        logger.error("Error in obtaining authorization for the tool - %s , %s", SecurityValidator.sanitize_log_message(tool_id), SecurityValidator.sanitize_log_message(str(e)))
     return tool_auth
 
 

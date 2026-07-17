@@ -1277,12 +1277,12 @@ class SSOService:
 
         try:
             # Exchange authorization code for tokens
-            logger.info("Starting token exchange for provider %s", provider_id)
+            logger.info("Starting token exchange for provider %s", SecurityValidator.sanitize_log_message(provider_id))
             token_data = await self._exchange_code_for_tokens(provider, auth_session, code)
             if not token_data:
                 logger.error("Failed to exchange code for tokens for provider %s", provider_id)
                 return None
-            logger.info("Token exchange successful for provider %s", provider_id)
+            logger.info("Token exchange successful for provider %s", SecurityValidator.sanitize_log_message(provider_id))
             callback_nonce = getattr(auth_session, "nonce", None)
 
             # For OIDC providers, verify id_token before any claim extraction.
