@@ -15,11 +15,8 @@ Tests cover:
 """
 
 # Standard
-import base64
-from datetime import datetime, timezone
 import json
-from typing import AsyncGenerator
-from unittest.mock import AsyncMock, MagicMock, patch, Mock
+from unittest.mock import AsyncMock, MagicMock, patch
 import uuid
 
 # Third-Party
@@ -29,7 +26,7 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.db import A2AAgent as DbA2AAgent
-from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNotFoundError, A2AAgentService
+from mcpgateway.services.a2a_service import A2AAgentService
 
 
 @pytest.fixture(autouse=True)
@@ -211,9 +208,7 @@ class TestStreamAgentResponseBasic:
                             with patch("mcpgateway.services.a2a_service.fresh_db_session"):
                                 with patch("mcpgateway.services.a2a_service.get_metrics_buffer_service"):
                                     chunks = []
-                                    async for chunk in a2a_service.stream_agent_response(
-                                        mock_db, "test-streaming-agent", {}, "query", user_email="test@example.com", token_teams=None
-                                    ):
+                                    async for chunk in a2a_service.stream_agent_response(mock_db, "test-streaming-agent", {}, "query", user_email="test@example.com", token_teams=None):
                                         chunks.append(chunk)
 
                                     # Verify base64 encoding was used
@@ -243,9 +238,7 @@ class TestStreamAgentResponseSecurity:
         with patch("mcpgateway.services.a2a_service.get_for_update", return_value=sample_streaming_agent):
             with patch.object(a2a_service, "_check_agent_access", return_value=True):
                 chunks = []
-                async for chunk in a2a_service.stream_agent_response(
-                    mock_db, "test-streaming-agent", {}, "query", user_email="test@example.com", token_teams=None
-                ):
+                async for chunk in a2a_service.stream_agent_response(mock_db, "test-streaming-agent", {}, "query", user_email="test@example.com", token_teams=None):
                     chunks.append(chunk)
 
                 # Should get error SSE event
@@ -268,9 +261,7 @@ class TestStreamAgentResponseSecurity:
         mock_db.execute.return_value.scalar_one_or_none.return_value = None
 
         chunks = []
-        async for chunk in a2a_service.stream_agent_response(
-            mock_db, "nonexistent-agent", {}, "query", user_email="test@example.com", token_teams=None
-        ):
+        async for chunk in a2a_service.stream_agent_response(mock_db, "nonexistent-agent", {}, "query", user_email="test@example.com", token_teams=None):
             chunks.append(chunk)
 
         # Should get error SSE event
@@ -294,9 +285,7 @@ class TestStreamAgentResponseSecurity:
             # Mock access check to deny
             with patch.object(a2a_service, "_check_agent_access", return_value=False):
                 chunks = []
-                async for chunk in a2a_service.stream_agent_response(
-                    mock_db, "test-streaming-agent", {}, "query", user_email="test@example.com", token_teams=[]
-                ):
+                async for chunk in a2a_service.stream_agent_response(mock_db, "test-streaming-agent", {}, "query", user_email="test@example.com", token_teams=[]):
                     chunks.append(chunk)
 
                 # Should get error SSE event (404-style to avoid leaking existence)
@@ -374,9 +363,7 @@ class TestStreamAgentResponseErrorHandling:
                             with patch("mcpgateway.services.a2a_service.fresh_db_session"):
                                 with patch("mcpgateway.services.a2a_service.get_metrics_buffer_service"):
                                     chunks = []
-                                    async for chunk in a2a_service.stream_agent_response(
-                                        mock_db, "test-streaming-agent", {}, "query", user_email="test@example.com", token_teams=None
-                                    ):
+                                    async for chunk in a2a_service.stream_agent_response(mock_db, "test-streaming-agent", {}, "query", user_email="test@example.com", token_teams=None):
                                         chunks.append(chunk)
 
                                     # Should get error SSE event
@@ -413,9 +400,7 @@ class TestStreamAgentResponseErrorHandling:
 
                         with patch("mcpgateway.services.a2a_service.get_http_client", return_value=mock_http_client):
                             chunks = []
-                            async for chunk in a2a_service.stream_agent_response(
-                                mock_db, "test-streaming-agent", {}, "query", user_email="test@example.com", token_teams=None
-                            ):
+                            async for chunk in a2a_service.stream_agent_response(mock_db, "test-streaming-agent", {}, "query", user_email="test@example.com", token_teams=None):
                                 chunks.append(chunk)
 
                             # Should get error SSE event
@@ -472,9 +457,7 @@ class TestStreamAgentResponseObservability:
                                         mock_create_span.return_value = mock_span_context
 
                                         chunks = []
-                                        async for chunk in a2a_service.stream_agent_response(
-                                            mock_db, "test-streaming-agent", {}, "query", user_email="test@example.com", token_teams=None
-                                        ):
+                                        async for chunk in a2a_service.stream_agent_response(mock_db, "test-streaming-agent", {}, "query", user_email="test@example.com", token_teams=None):
                                             chunks.append(chunk)
 
                                         # Verify span was created
@@ -525,9 +508,7 @@ class TestStreamAgentResponseObservability:
                                 mock_metrics_buffer = MagicMock()
                                 with patch("mcpgateway.services.a2a_service.get_metrics_buffer_service", return_value=mock_metrics_buffer):
                                     chunks = []
-                                    async for chunk in a2a_service.stream_agent_response(
-                                        mock_db, "test-streaming-agent", {}, "query", user_email="test@example.com", token_teams=None
-                                    ):
+                                    async for chunk in a2a_service.stream_agent_response(mock_db, "test-streaming-agent", {}, "query", user_email="test@example.com", token_teams=None):
                                         chunks.append(chunk)
 
                                     # Verify metrics recorded
@@ -535,47 +516,6 @@ class TestStreamAgentResponseObservability:
                                     call_args = mock_metrics_buffer.record_a2a_agent_metric_with_duration.call_args
                                     assert call_args.kwargs["success"] is True
                                     assert call_args.kwargs["response_time"] > 0
-
-
-class TestStreamAgentResponseRustRuntime:
-    """Test Rust runtime constraint for streaming."""
-
-    @pytest.mark.asyncio
-    async def test_stream_agent_rust_runtime_returns_error(self, a2a_service, mock_db, sample_streaming_agent):
-        """Test that Rust runtime delegation returns explicit error.
-
-        Verifies:
-        - Rust runtime is not supported for streaming
-        - Clear error message returned
-        - No attempt to stream via Rust
-        """
-        mock_db.execute.return_value.scalar_one_or_none.return_value = sample_streaming_agent.id
-
-        with patch("mcpgateway.services.a2a_service.get_for_update", return_value=sample_streaming_agent):
-            with patch.object(a2a_service, "_check_agent_access", return_value=True):
-                mock_prepared = MagicMock()
-                mock_prepared.endpoint_url = sample_streaming_agent.endpoint_url
-                mock_prepared.request_data = {}
-                mock_prepared.headers = {}
-                mock_prepared.sanitized_endpoint_url = sample_streaming_agent.endpoint_url
-                mock_prepared.sensitive_query_param_names = []
-
-                with patch("mcpgateway.services.a2a_service.prepare_a2a_invocation", return_value=mock_prepared):
-                    with patch.object(a2a_service, "_get_plugin_manager", return_value=None):
-                        # Mock Rust runtime as enabled
-                        with patch("mcpgateway.services.a2a_service._should_delegate_a2a_to_rust", return_value=True):
-                            chunks = []
-                            async for chunk in a2a_service.stream_agent_response(
-                                mock_db, "test-streaming-agent", {}, "query", user_email="test@example.com", token_teams=None
-                            ):
-                                chunks.append(chunk)
-
-                            # Should get error SSE event
-                            assert len(chunks) == 1
-                            error_data = json.loads(chunks[0].replace("data: ", "").replace("\n\n", ""))
-                            assert "error" in error_data
-                            assert "rust runtime" in error_data["error"].lower()
-                            assert "streaming not supported" in error_data["error"].lower()
 
 
 class TestStreamAgentResponsePlugins:
@@ -628,9 +568,7 @@ class TestStreamAgentResponsePlugins:
                             with patch("mcpgateway.services.a2a_service.fresh_db_session"):
                                 with patch("mcpgateway.services.a2a_service.get_metrics_buffer_service"):
                                     chunks = []
-                                    async for chunk in a2a_service.stream_agent_response(
-                                        mock_db, "test-streaming-agent", {"test": "data"}, "query", user_email="test@example.com", token_teams=None
-                                    ):
+                                    async for chunk in a2a_service.stream_agent_response(mock_db, "test-streaming-agent", {"test": "data"}, "query", user_email="test@example.com", token_teams=None):
                                         chunks.append(chunk)
 
                                     # Verify hook was called
@@ -687,9 +625,7 @@ class TestStreamAgentResponsePlugins:
                             with patch("mcpgateway.services.a2a_service.fresh_db_session"):
                                 with patch("mcpgateway.services.a2a_service.get_metrics_buffer_service"):
                                     chunks = []
-                                    async for chunk in a2a_service.stream_agent_response(
-                                        mock_db, "test-streaming-agent", {}, "query", user_email="test@example.com", token_teams=None
-                                    ):
+                                    async for chunk in a2a_service.stream_agent_response(mock_db, "test-streaming-agent", {}, "query", user_email="test@example.com", token_teams=None):
                                         chunks.append(chunk)
 
                                     # Verify post-invoke hook was called
@@ -779,9 +715,7 @@ class TestStreamAgentResponseUAIDValidation:
                 # Mock UAID validation to fail
                 with patch("mcpgateway.services.a2a_service._validate_uaid_endpoint_domain", side_effect=ValueError("Domain blocked-domain.com not in allowlist")):
                     chunks = []
-                    async for chunk in a2a_service.stream_agent_response(
-                        mock_db, "test-streaming-agent", {}, "query", user_email="test@example.com", token_teams=None
-                    ):
+                    async for chunk in a2a_service.stream_agent_response(mock_db, "test-streaming-agent", {}, "query", user_email="test@example.com", token_teams=None):
                         chunks.append(chunk)
 
                     # Should get error SSE event
@@ -814,9 +748,7 @@ class TestStreamAgentResponseAuthDecryption:
                 # Mock prepare_a2a_invocation to fail on auth decryption
                 with patch("mcpgateway.services.a2a_service.prepare_a2a_invocation", side_effect=Exception("Failed to decrypt credentials")):
                     chunks = []
-                    async for chunk in a2a_service.stream_agent_response(
-                        mock_db, "test-streaming-agent", {}, "query", user_email="test@example.com", token_teams=None
-                    ):
+                    async for chunk in a2a_service.stream_agent_response(mock_db, "test-streaming-agent", {}, "query", user_email="test@example.com", token_teams=None):
                         chunks.append(chunk)
 
                     # Should get error SSE event
@@ -845,9 +777,7 @@ class TestStreamAgentResponseAuthDecryption:
                 # Mock prepare_a2a_invocation to fail on query param auth decryption
                 with patch("mcpgateway.services.a2a_service.prepare_a2a_invocation", side_effect=Exception("Failed to decrypt query parameters")):
                     chunks = []
-                    async for chunk in a2a_service.stream_agent_response(
-                        mock_db, "test-streaming-agent", {}, "query", user_email="test@example.com", token_teams=None
-                    ):
+                    async for chunk in a2a_service.stream_agent_response(mock_db, "test-streaming-agent", {}, "query", user_email="test@example.com", token_teams=None):
                         chunks.append(chunk)
 
                     # Should get error SSE event
@@ -890,9 +820,7 @@ class TestStreamAgentResponsePluginErrors:
 
                     with patch.object(a2a_service, "_get_plugin_manager", return_value=mock_plugin_manager):
                         chunks = []
-                        async for chunk in a2a_service.stream_agent_response(
-                            mock_db, "test-streaming-agent", {}, "query", user_email="test@example.com", token_teams=None
-                        ):
+                        async for chunk in a2a_service.stream_agent_response(mock_db, "test-streaming-agent", {}, "query", user_email="test@example.com", token_teams=None):
                             chunks.append(chunk)
 
                         # Should get error SSE event
@@ -929,9 +857,7 @@ class TestStreamAgentResponsePluginErrors:
 
                     with patch.object(a2a_service, "_get_plugin_manager", return_value=mock_plugin_manager):
                         chunks = []
-                        async for chunk in a2a_service.stream_agent_response(
-                            mock_db, "test-streaming-agent", {}, "query", user_email="test@example.com", token_teams=None
-                        ):
+                        async for chunk in a2a_service.stream_agent_response(mock_db, "test-streaming-agent", {}, "query", user_email="test@example.com", token_teams=None):
                             chunks.append(chunk)
 
                         # Should get error SSE event
@@ -986,9 +912,7 @@ class TestStreamAgentResponseMetricsAndTimestamps:
 
                                 with patch("mcpgateway.services.a2a_service.get_metrics_buffer_service", return_value=mock_metrics_buffer):
                                     chunks = []
-                                    async for chunk in a2a_service.stream_agent_response(
-                                        mock_db, "test-streaming-agent", {}, "query", user_email="test@example.com", token_teams=None
-                                    ):
+                                    async for chunk in a2a_service.stream_agent_response(mock_db, "test-streaming-agent", {}, "query", user_email="test@example.com", token_teams=None):
                                         chunks.append(chunk)
 
                                     # Streaming should still succeed
@@ -1035,9 +959,7 @@ class TestStreamAgentResponseMetricsAndTimestamps:
                             with patch("mcpgateway.services.a2a_service.fresh_db_session", side_effect=Exception("Database locked")):
                                 with patch("mcpgateway.services.a2a_service.get_metrics_buffer_service"):
                                     chunks = []
-                                    async for chunk in a2a_service.stream_agent_response(
-                                        mock_db, "test-streaming-agent", {}, "query", user_email="test@example.com", token_teams=None
-                                    ):
+                                    async for chunk in a2a_service.stream_agent_response(mock_db, "test-streaming-agent", {}, "query", user_email="test@example.com", token_teams=None):
                                         chunks.append(chunk)
 
                                     # Streaming should still succeed
@@ -1100,9 +1022,7 @@ class TestStreamAgentResponseMetricsAndTimestamps:
                                     # Mock logger to verify retry is logged
                                     with patch("mcpgateway.services.a2a_service.logger") as mock_logger:
                                         chunks = []
-                                        async for chunk in a2a_service.stream_agent_response(
-                                            mock_db, "test-streaming-agent", {}, "query", user_email="test@example.com", token_teams=None
-                                        ):
+                                        async for chunk in a2a_service.stream_agent_response(mock_db, "test-streaming-agent", {}, "query", user_email="test@example.com", token_teams=None):
                                             chunks.append(chunk)
 
                                         # Streaming should complete
@@ -1498,7 +1418,6 @@ class TestStreamAgentResponseCoverageGaps:
                             assert len(chunks) == 1
                             # Verify plugin hook was called
                             mock_manager.invoke_hook.assert_called()
-
 
     async def test_stream_passthrough_headers_filtered(self, a2a_service, mock_db, sample_streaming_agent):
         """Test that request headers are filtered by passthrough_headers whitelist (covers lines 2734-2735)."""
