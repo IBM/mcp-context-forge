@@ -176,7 +176,7 @@ from mcpgateway.services.performance_service import get_performance_service
 from mcpgateway.services.permission_service import PermissionService
 from mcpgateway.services.plugin_service import get_plugin_service
 from mcpgateway.services.prompt_service import PromptArgumentsJSONError, PromptNameConflictError, PromptNotFoundError, PromptService
-from mcpgateway.services.resource_service import ResourceNameConflictError, ResourceNotFoundError, ResourceService, ResourceURIConflictError, ResourceValidationError
+from mcpgateway.services.resource_service import ResourceNotFoundError, ResourceService, ResourceURIConflictError, ResourceValidationError
 from mcpgateway.services.root_service import RootService, RootServiceError, RootServiceNotFoundError
 from mcpgateway.services.server_service import ServerError, ServerLockConflictError, ServerNameConflictError, ServerNotFoundError, ServerService
 from mcpgateway.services.structured_logger import get_structured_logger
@@ -13373,9 +13373,6 @@ async def admin_add_resource(request: Request, db: Session = Depends(get_db), us
         if isinstance(ex, ResourceValidationError):
             LOGGER.error(f"ResourceValidationError in admin_add_resource: {ex}")
             return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=422)
-        if isinstance(ex, ResourceNameConflictError):
-            LOGGER.error(f"ResourceNameConflictError in admin_add_resource: {ex}")
-            return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=409)
         if isinstance(ex, ResourceURIConflictError):
             LOGGER.error(f"ResourceURIConflictError in admin_add_resource: {ex}")
             return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=409)
@@ -13508,9 +13505,6 @@ async def admin_edit_resource(
         if isinstance(ex, ResourceValidationError):
             LOGGER.error(f"ResourceValidationError in admin_edit_resource: {ex}")
             return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=422)
-        if isinstance(ex, ResourceNameConflictError):
-            LOGGER.error(f"ResourceNameConflictError in admin_edit_resource: {ex}")
-            return ORJSONResponse(status_code=409, content={"message": str(ex), "success": False})
         if isinstance(ex, ResourceURIConflictError):
             LOGGER.error(f"ResourceURIConflictError in admin_edit_resource: {ex}")
             return ORJSONResponse(status_code=409, content={"message": str(ex), "success": False})
