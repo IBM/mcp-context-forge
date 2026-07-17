@@ -4801,8 +4801,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
                     # Unwrap BaseExceptionGroup to find the root httpx error
                     exc_to_inspect: BaseException = e
-                    if isinstance(e, BaseExceptionGroup) and e.exceptions:
-                        exc_to_inspect = e.exceptions[0]
+                    if isinstance(e, BaseExceptionGroup) and e.exceptions:  # pylint: disable=no-member
+                        exc_to_inspect = e.exceptions[0]  # pylint: disable=no-member
 
                     if is_authorization_code and hasattr(exc_to_inspect, "response") and hasattr(exc_to_inspect.response, "status_code"):  # pylint: disable=no-member
                         status_code = exc_to_inspect.response.status_code  # pylint: disable=no-member
