@@ -2125,16 +2125,22 @@ async def _get_request_context_or_default() -> Tuple[str, dict[str, Any], dict[s
             if isinstance(gw_ctx, dict):
                 headers = gw_ctx.get("request_headers", {})
                 session_id = headers.get("x-mcp-session-id") if headers else None
+                resolved_server_id = gw_ctx.get("server_id") or s_id
+                recovered_user_context = gw_ctx.get("user_context", {})
                 logger.debug(
                     "[CONTEXT_RESOLUTION] Path 2 (ASGI scope) | server_id=%s | has_session_id=%s",
-                    (gw_ctx.get("server_id") or s_id)[:8] if (gw_ctx.get("server_id") or s_id) else None,
+                    resolved_server_id[:8] if resolved_server_id else None,
                     bool(session_id),
                 )
-                return (
-                    gw_ctx.get("server_id") or s_id,
-                    headers,
-                    gw_ctx.get("user_context", {}),
-                )
+                # The MCP SDK may run handlers in a task created before the
+                # request ContextVars were populated. Rehydrate them from the
+                # trusted ASGI scope so downstream services and proxy helpers
+                # see the same authenticated identity recovered above.
+                server_id_var.set(resolved_server_id)
+                request_headers_var.set(headers)
+                user_context_var.set(recovered_user_context)
+                _set_user_identity_from_dict(recovered_user_context)
+                return resolved_server_id, headers, recovered_user_context
     except LookupError:
         # Not in a request context — fall through to ContextVar defaults
         return s_id, request_headers_var.get(), user_context_var.get()
