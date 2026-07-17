@@ -8,7 +8,10 @@ even with the advisory lock in place today, the DB should be the ultimate author
 uniqueness.
 
 Changes:
-1. Deduplicates any existing duplicate active rows (keeps oldest by created_at/granted_at)
+1. Deduplicates any existing duplicate active rows:
+   - roles: keeps oldest by created_at (lowest id on ties)
+   - user_roles: keeps unexpired rows first, then newest granted_at, then lowest id
+   - remaps user_roles.role_id to the kept role before deactivating duplicates
 2. Adds partial unique index on roles(name, scope) WHERE is_active = true
 3. Adds partial unique indexes on user_roles for both nullable and non-nullable scope_id cases
 
@@ -53,7 +56,7 @@ def upgrade() -> None:
     # =============================================================================
 
     # Find duplicate active roles (same name+scope combination)
-    # Strategy: soft-delete (set is_active=false) for duplicates, keep oldest by created_at
+    # Strategy: keep oldest by created_at (lowest id on ties), soft-delete the rest
     #
     # IMPORTANT: Before deactivating duplicate roles, remap any user_roles that reference
     # a duplicate role to the kept (winner) role.  list_user_roles() joins on roles.is_active,
@@ -151,7 +154,7 @@ def upgrade() -> None:
         print(f"Deduped {deduped_roles_count} duplicate active role(s) - set is_active=false for newer duplicates")
 
     # =============================================================================
-    # STEP 2: Deduplicate user_roles table - keep oldest active assignment
+    # STEP 2: Deduplicate user_roles table
     # =============================================================================
 
     # For user_roles, we need to handle scope_id IS NULL and IS NOT NULL separately

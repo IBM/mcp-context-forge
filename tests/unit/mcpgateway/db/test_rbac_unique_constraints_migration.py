@@ -23,7 +23,6 @@ import inspect as pyinspect
 from datetime import datetime, timedelta, timezone
 
 # Third-Party
-import pytest
 import sqlalchemy as sa
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
@@ -240,8 +239,6 @@ class TestRolesDeduplications:
                 r2 = conn.execute(text("SELECT is_active FROM roles WHERE id='r2'")).scalar()
                 assert r1 == 1
                 assert r2 == 0  # remains inactive
-
-
         finally:
             engine.dispose()
 
