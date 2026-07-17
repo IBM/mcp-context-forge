@@ -295,6 +295,166 @@ describe("Prompts", () => {
     expect(screen.getByRole("menuitem", { name: "Delete" })).toBeInTheDocument();
   });
 
+  it("deletes the sole prompt in a group and closes the drawer after confirmation", async () => {
+    const user = userEvent.setup();
+    let remaining: Prompt[] = [
+      createMockPrompt({
+        id: "prompt-1",
+        name: "summarize",
+        displayName: "Summarize document",
+        gatewayId: "gw-github",
+        gatewaySlug: "gh-repo-tasks",
+      }),
+    ];
+
+    const deleteSpy = vi.fn(() => {
+      remaining = remaining.filter((p) => p.id !== "prompt-1");
+      return HttpResponse.json({ status: "success" });
+    });
+    server.use(
+      http.get("/prompts", () => HttpResponse.json(remaining)),
+      http.delete("/prompts/prompt-1", deleteSpy),
+    );
+
+    renderWithProviders(<Prompts />);
+
+    await waitFor(() => {
+      expect(screen.getByText("gh-repo-tasks")).toBeInTheDocument();
+    });
+
+    // Open the group's details panel and its Definition tab.
+    await user.click(screen.getByRole("button", { name: "More options for gh-repo-tasks" }));
+    await user.click(await screen.findByRole("menuitem", { name: "View details" }));
+    await user.click(await screen.findByRole("tab", { name: /definition/i }));
+
+    // Trigger delete from the row overflow menu.
+    await user.click(await screen.findByRole("button", { name: /more options for summarize/i }));
+    await user.click(await screen.findByRole("menuitem", { name: "Delete" }));
+
+    // Confirm dialog names the prompt and requires an explicit confirmation.
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText("Delete prompt")).toBeInTheDocument();
+    expect(
+      within(dialog).getByText(/Are you sure you want to delete "Summarize document"/),
+    ).toBeInTheDocument();
+
+    await user.click(within(dialog).getByRole("button", { name: /^delete$/i }));
+
+    await waitFor(() => {
+      expect(deleteSpy).toHaveBeenCalledTimes(1);
+    });
+
+    // The group's only prompt is gone, so its grid card (and the card-only
+    // "More options" trigger) disappears.
+    await waitFor(() => {
+      expect(
+        screen.queryByRole("button", { name: "More options for gh-repo-tasks" }),
+      ).not.toBeInTheDocument();
+    });
+  });
+
+  it("keeps the drawer and other rows when deleting one prompt from a multi-prompt group", async () => {
+    const user = userEvent.setup();
+    let remaining: Prompt[] = [
+      createMockPrompt({
+        id: "prompt-1",
+        name: "summarize",
+        displayName: "Summarize document",
+        gatewayId: "gw-github",
+        gatewaySlug: "gh-repo-tasks",
+      }),
+      createMockPrompt({
+        id: "prompt-2",
+        name: "translate",
+        displayName: "Translate document",
+        gatewayId: "gw-github",
+        gatewaySlug: "gh-repo-tasks",
+      }),
+    ];
+
+    server.use(
+      http.get("/prompts", () => HttpResponse.json(remaining)),
+      http.delete("/prompts/prompt-1", () => {
+        remaining = remaining.filter((p) => p.id !== "prompt-1");
+        return HttpResponse.json({ status: "success" });
+      }),
+    );
+
+    renderWithProviders(<Prompts />);
+
+    await waitFor(() => {
+      expect(screen.getByText("gh-repo-tasks")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: "More options for gh-repo-tasks" }));
+    await user.click(await screen.findByRole("menuitem", { name: "View details" }));
+    await user.click(await screen.findByRole("tab", { name: /definition/i }));
+
+    await user.click(await screen.findByRole("button", { name: /more options for summarize/i }));
+    await user.click(await screen.findByRole("menuitem", { name: "Delete" }));
+
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("button", { name: /^delete$/i }));
+
+    // The deleted row is gone but the drawer stays open with the sibling prompt.
+    await waitFor(() => {
+      expect(
+        screen.queryByRole("button", { name: /more options for summarize/i }),
+      ).not.toBeInTheDocument();
+    });
+    expect(screen.getByRole("button", { name: /more options for translate/i })).toBeInTheDocument();
+  });
+
+  it("restores the deleted prompt row when the DELETE request fails", async () => {
+    const user = userEvent.setup();
+    const prompts: Prompt[] = [
+      createMockPrompt({
+        id: "prompt-1",
+        name: "summarize",
+        displayName: "Summarize document",
+        gatewayId: "gw-github",
+        gatewaySlug: "gh-repo-tasks",
+      }),
+      createMockPrompt({
+        id: "prompt-2",
+        name: "translate",
+        displayName: "Translate document",
+        gatewayId: "gw-github",
+        gatewaySlug: "gh-repo-tasks",
+      }),
+    ];
+
+    server.use(
+      http.get("/prompts", () => HttpResponse.json(prompts)),
+      http.delete("/prompts/prompt-1", () =>
+        HttpResponse.json({ detail: "Prompt is in use" }, { status: 409 }),
+      ),
+    );
+
+    renderWithProviders(<Prompts />);
+
+    await waitFor(() => {
+      expect(screen.getByText("gh-repo-tasks")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: "More options for gh-repo-tasks" }));
+    await user.click(await screen.findByRole("menuitem", { name: "View details" }));
+    await user.click(await screen.findByRole("tab", { name: /definition/i }));
+
+    await user.click(await screen.findByRole("button", { name: /more options for summarize/i }));
+    await user.click(await screen.findByRole("menuitem", { name: "Delete" }));
+
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("button", { name: /^delete$/i }));
+
+    // The optimistic removal is rolled back, so the row reappears.
+    await waitFor(() => {
+      expect(
+        screen.getByRole("button", { name: /more options for summarize/i }),
+      ).toBeInTheDocument();
+    });
+  });
+
   it("collapses gateway-less prompts into a single REST prompts card", async () => {
     const prompts: Prompt[] = [
       createMockPrompt({
