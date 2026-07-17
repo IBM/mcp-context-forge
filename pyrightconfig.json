@@ -1,6 +1,0 @@
-{
-  "typeCheckingMode": "standard",
-  "reportUnusedCoroutine": "error",
-  "reportMissingTypeStubs": "warning",
-  "exclude": ["build", ".venv", ".cache", "tests/async/profiles"]
-}
