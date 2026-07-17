@@ -89,13 +89,16 @@ function PromptGroupCard({
   return (
     <Card size="sm">
       <CardHeader>
-        <div className="flex items-center gap-3">
+        <div className="flex min-w-0 items-center gap-3">
           <div className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded bg-prompt-icon-bg">
             <MessageSquareCode className="h-3.5 w-3.5 text-black" />
           </div>
 
           <div className="flex min-w-0 flex-1 items-center gap-2">
-            <span className="truncate text-sm font-semibold text-neutral-500 dark:text-neutral-400">
+            <span
+              title={group.label}
+              className="min-w-0 truncate text-sm font-semibold text-neutral-500 dark:text-neutral-400"
+            >
               {group.label}
             </span>
           </div>
@@ -110,7 +113,7 @@ function PromptGroupCard({
                   { id: "prompts.card.moreOptionsFor" },
                   { name: group.label },
                 )}
-                className="h-7 w-7 p-0"
+                className="h-7 w-7 shrink-0 p-0"
               >
                 <MoreVertical className="h-4 w-4" />
               </Button>
@@ -203,6 +206,13 @@ export function Prompts() {
 
   const addPromptsCardRef = useRef<HTMLDivElement>(null);
   const [showForm, setShowForm] = useState(false);
+  const [editingPrompt, setEditingPrompt] = useState<NonNullable<PromptRead> | null>(null);
+  // The group whose details panel launched the edit form; used to reopen that
+  // panel (on the Definition tab) when the user cancels/goes back.
+  const [returnGroup, setReturnGroup] = useState<PromptGroup<NonNullable<PromptRead>> | null>(null);
+  // Tab the details panel lands on each time it opens. Normal "View details"
+  // opens on "Try it"; returning from the edit form opens on "Definition".
+  const [detailsInitialTab, setDetailsInitialTab] = useState<"tryIt" | "definition">("tryIt");
   const [shouldRestoreFormCloseFocus, setShouldRestoreFormCloseFocus] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [promptToDelete, setPromptToDelete] = useState<NonNullable<PromptRead> | null>(null);
@@ -259,27 +269,52 @@ export function Prompts() {
     }
   }, [showForm, shouldRestoreFormCloseFocus]);
 
+  const handleViewDetails = (group: PromptGroup<NonNullable<PromptRead>>) => {
+    setDetailsInitialTab("tryIt");
+    setActiveGroup(group);
+  };
+
   const handleAddPrompt = () => {
     setShouldRestoreFormCloseFocus(false);
+    setReturnGroup(null);
+    setEditingPrompt(null);
     setShowForm(true);
   };
 
   const handleFormCancel = () => {
-    setShouldRestoreFormCloseFocus(true);
     setShowForm(false);
+    setEditingPrompt(null);
+    if (returnGroup) {
+      // Reopen the details panel on the Definition tab the edit was launched
+      // from. The panel takes focus itself, so don't redirect focus to the list.
+      setShouldRestoreFormCloseFocus(false);
+      setDetailsInitialTab("definition");
+      setActiveGroup(returnGroup);
+      setReturnGroup(null);
+    } else {
+      setShouldRestoreFormCloseFocus(true);
+    }
   };
 
   const handleFormSuccess = async () => {
     setShouldRestoreFormCloseFocus(true);
     setShowForm(false);
+    if (editingPrompt) {
+      toast.success(
+        intl.formatMessage({ id: "prompts.edit.success" }, { name: getPromptLabel(editingPrompt) }),
+      );
+    }
+    setEditingPrompt(null);
+    setReturnGroup(null);
     await refetch();
   };
 
-  // TODO: placeholder handler so the details-panel Definition table shows its
-  // row overflow menu. No behaviour yet — a follow-up PR adds PromptForm edit
-  // mode.
-  const handleEditPrompt = () => {
-    // TODO: open PromptForm in edit mode for the selected prompt
+  const handleEditPrompt = (prompt: NonNullable<PromptRead>) => {
+    setReturnGroup(activeGroup);
+    setActiveGroup(null);
+    setShouldRestoreFormCloseFocus(false);
+    setEditingPrompt(prompt);
+    setShowForm(true);
   };
 
   const handleDeletePrompt = useCallback((prompt: NonNullable<PromptRead>) => {
@@ -360,7 +395,13 @@ export function Prompts() {
   return (
     <div className="p-6">
       {showForm ? (
-        <PromptForm isOpen={showForm} onToggle={handleFormCancel} onSuccess={handleFormSuccess} />
+        <PromptForm
+          key={editingPrompt ? editingPrompt.id : "create"}
+          isOpen={showForm}
+          onToggle={handleFormCancel}
+          onSuccess={handleFormSuccess}
+          prompt={editingPrompt ?? undefined}
+        />
       ) : (
         <>
           <h1 className="mb-6 text-base font-semibold text-neutral-900 dark:text-white">
@@ -382,7 +423,11 @@ export function Prompts() {
               <div className="grid grid-cols-1 gap-6 lg:grid-cols-2 2xl:grid-cols-3">
                 <AddPromptsCard onActivate={handleAddPrompt} cardRef={addPromptsCardRef} />
                 {groups.map((group) => (
-                  <PromptGroupCard key={group.key} group={group} onViewDetails={setActiveGroup} />
+                  <PromptGroupCard
+                    key={group.key}
+                    group={group}
+                    onViewDetails={handleViewDetails}
+                  />
                 ))}
               </div>
               {error && (
@@ -405,6 +450,7 @@ export function Prompts() {
       <PromptDetailsPanel
         prompts={displayGroup?.prompts ?? []}
         title={displayGroup?.label ?? ""}
+        initialTab={detailsInitialTab}
         open={activeGroup !== null}
         onClose={() => setActiveGroup(null)}
         onAddTag={handleAddPromptTag}

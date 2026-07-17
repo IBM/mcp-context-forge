@@ -87,13 +87,16 @@ const ResourceGroupCard = memo(function ResourceGroupCard({
   return (
     <Card size="sm" className="rounded-xl pl-0 pt-4 pb-4">
       <CardHeader>
-        <div className="flex items-center gap-3">
+        <div className="flex min-w-0 items-center gap-3">
           <div className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded bg-tool-icon-bg">
             <FileText className="h-3.5 w-3.5 text-black" />
           </div>
 
           <div className="flex min-w-0 flex-1 items-center gap-2">
-            <span className="truncate text-sm font-semibold text-neutral-500 dark:text-neutral-400">
+            <span
+              title={group.gatewaySlug}
+              className="min-w-0 truncate text-sm font-semibold text-neutral-500 dark:text-neutral-400"
+            >
               {group.gatewaySlug}
             </span>
             <span className="whitespace-nowrap text-sm font-semibold text-neutral-900 dark:text-white">
@@ -123,7 +126,7 @@ const ResourceGroupCard = memo(function ResourceGroupCard({
                   { id: "resources.card.moreOptionsFor" },
                   { name: group.gatewaySlug },
                 )}
-                className="h-7 w-7 p-0"
+                className="h-7 w-7 shrink-0 p-0"
               >
                 <EllipsisVertical className="h-4 w-4" />
               </Button>
