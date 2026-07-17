@@ -280,8 +280,10 @@ async def _enforce_gateway_access(
         HTTPException: If authentication is missing or access is not permitted.
     """
     requester_email = get_user_email(current_user)
-    if requester_email == "unknown":
+    if requester_email == "unknown" or not requester_email.strip():
         raise HTTPException(status_code=401, detail="User authentication required")
+    # Normalize so comparisons against gateway_owner (also stripped/lowercased below) are case- and whitespace-insensitive
+    requester_email = requester_email.strip().lower()
 
     requester_is_admin = _extract_is_admin(current_user)
 

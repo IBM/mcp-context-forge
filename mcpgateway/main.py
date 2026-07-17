@@ -11272,7 +11272,7 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
             user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
             # Admin bypass - only when token has NO team restrictions
             if is_admin and token_teams is None:
-                user_email = None
+                # Keep user_email set for owner matching on the admin's own private rows (PR #4341 / issue #4694)
                 token_teams = None  # Admin unrestricted
             elif token_teams is None:
                 token_teams = []  # Non-admin without teams = public-only (secure default)
@@ -11291,7 +11291,7 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
             user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
             # Admin bypass - only when token has NO team restrictions
             if is_admin and token_teams is None:
-                user_email = None
+                # Keep user_email set for owner matching on the admin's own private rows (PR #4341 / issue #4694)
                 token_teams = None  # Admin unrestricted
             elif token_teams is None:
                 token_teams = []  # Non-admin without teams = public-only (secure default)
@@ -11318,8 +11318,8 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
             # Get authorization context (same as resources/list)
             auth_user_email, auth_token_teams, auth_is_admin = get_rpc_filter_context(request, user)
             if auth_is_admin and auth_token_teams is None:
-                auth_user_email = None
-                # auth_token_teams stays None (unrestricted)
+                # Keep auth_user_email set for owner matching on the admin's own private rows (PR #4341 / issue #4694)
+                pass  # auth_token_teams stays None (unrestricted)
             elif auth_token_teams is None:
                 auth_token_teams = []  # Non-admin without teams = public-only
 
@@ -11388,7 +11388,7 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
             user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
             # Admin bypass - only when token has NO team restrictions
             if is_admin and token_teams is None:
-                user_email = None
+                # Keep user_email set for owner matching on the admin's own private rows (PR #4341 / issue #4694)
                 token_teams = None  # Admin unrestricted
             elif token_teams is None:
                 token_teams = []  # Non-admin without teams = public-only (secure default)
@@ -11415,8 +11415,8 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
             # Get authorization context (same as prompts/list)
             auth_user_email, auth_token_teams, auth_is_admin = get_rpc_filter_context(request, user)
             if auth_is_admin and auth_token_teams is None:
-                auth_user_email = None
-                # auth_token_teams stays None (unrestricted)
+                # Keep auth_user_email set for owner matching on the admin's own private rows (PR #4341 / issue #4694)
+                pass  # auth_token_teams stays None (unrestricted)
             elif auth_token_teams is None:
                 auth_token_teams = []  # Non-admin without teams = public-only
 
