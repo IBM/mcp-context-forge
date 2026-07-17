@@ -5553,9 +5553,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         gateway_dict["team"] = getattr(gateway, "team", None)
 
         # Populate from the eagerly-loaded tools relationship when available, this helps to log or fail in the else condition if needed in future.
-        gateway_dict["tool_count"] = len(gateway.tools) if gateway.__dict__.get("tools") else 0
-        gateway_dict["prompt_count"] = len(gateway.prompts) if gateway.__dict__.get("prompts") else 0
-        gateway_dict["resource_count"] = len(gateway.resources) if gateway.__dict__.get("resources") else 0
+        gateway_dict["tool_count"] = len(gateway.__dict__.get("tools", [])) if gateway.__dict__.get("tools") else 0
+        gateway_dict["prompt_count"] = len(gateway.__dict__.get("prompts", [])) if gateway.__dict__.get("prompts") else 0
+        gateway_dict["resource_count"] = len(gateway.__dict__.get("resources", [])) if gateway.__dict__.get("resources") else 0
 
         return GatewayRead.model_validate(gateway_dict).masked()
 

@@ -278,6 +278,49 @@ async def test_list_gateways_for_user_populates_capability_counts(monkeypatch):
 
 
 def test_gateway_service_validate_tools_valueerror(monkeypatch):
+    pass
+
+
+@pytest.mark.asyncio
+async def test_list_gateways_populates_capability_counts(monkeypatch):
+    """list_gateways eager-loads relationships so capability counts are non-zero."""
+    service = GatewayService()
+
+    fake_gateway = SimpleNamespace(
+        auth_value=None,
+        tags=[],
+        created_by=None,
+        modified_by=None,
+        created_at=None,
+        updated_at=None,
+        version=None,
+        team=None,
+        team_id=None,
+        tools=["t1", "t2", "t3"],
+        prompts=["p1", "p2"],
+        resources=["r1"],
+    )
+
+    db = MagicMock()
+    db.execute.return_value.scalars.return_value.all.return_value = [fake_gateway]
+
+    captured: dict = {}
+
+    class MockGatewayRead:
+        def __init__(self, data):
+            captured.update(data)
+
+        def masked(self):
+            return self
+
+    monkeypatch.setattr(GatewayRead, "model_validate", staticmethod(lambda x: MockGatewayRead(x)))
+
+    gateways, _ = await service.list_gateways(db)
+
+    assert captured["tool_count"] == 3
+    assert captured["prompt_count"] == 2
+    assert captured["resource_count"] == 1
+
     service = GatewayService()
 
     monkeypatch.setattr("mcpgateway.services.gateway_service.ToolCreate.model_validate", lambda _data: (_ for _ in ()).throw(ValueError("JSON structure exceeds maximum depth")))
