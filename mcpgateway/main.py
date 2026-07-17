@@ -112,7 +112,7 @@ from mcpgateway.middleware.rate_limit_middleware import RateLimitMiddleware
 from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG, get_current_user_with_permissions, PermissionChecker, require_permission
 from mcpgateway.middleware.request_logging_middleware import RequestLoggingMiddleware
 from mcpgateway.middleware.security_headers import SecurityHeadersMiddleware
-from mcpgateway.middleware.token_scoping import token_scoping_middleware
+from mcpgateway.middleware.token_scoping import ResourceOwnershipResult, token_scoping_middleware
 from mcpgateway.middleware.validation_middleware import ValidationMiddleware
 from mcpgateway.observability import configure_baggage_span_attribute_policy, extract_baggage_span_attribute_policy, init_telemetry, OpenTelemetryRequestMiddleware, otel_tracing_enabled
 from mcpgateway.plugins import (
@@ -959,11 +959,14 @@ def _enforce_scoped_resource_access(request: Request, db: Session, user, resourc
     if scoped_token_teams is None:
         return
 
-    if not token_scoping_middleware._check_resource_team_ownership(  # pylint: disable=protected-access
-        resource_path,
-        scoped_token_teams,
-        db=db,
-        _user_email=scoped_user_email,
+    if (
+        token_scoping_middleware._check_resource_team_ownership(  # pylint: disable=protected-access
+            resource_path,
+            scoped_token_teams,
+            db=db,
+            _user_email=scoped_user_email,
+        )
+        is not ResourceOwnershipResult.ALLOWED
     ):
         logger.warning("Scoped resource access denied: user=%s, resource=%s", scoped_user_email, resource_path)
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_ACCESS_DENIED_MSG)
