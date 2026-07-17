@@ -317,22 +317,22 @@ spec:
           resources:
 {{- toYaml .Values.mcpContextForge.resources | nindent 12 }}
 
-    volumeMounts:
-          - name: tmp
-            mountPath: /tmp
-        {{- if .Values.mcpContextForge.pluginConfig.enabled }}
-          - name: plugin-config-volume
-            mountPath: /app/{{ $pluginsConfigFile }}
-            subPath: config.yaml
-        {{- end }}
-    volumes:
-      - name: tmp
-        emptyDir: {}
-    {{- if .Values.mcpContextForge.pluginConfig.enabled }}
-      - name: plugin-config-volume
-        configMap:
-          name: {{ include "mcp-stack.fullname" . }}-gateway-plugins
-          items:
-          - key: config.yaml
-            path: config.yaml
-    {{- end }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          {{- if .Values.mcpContextForge.pluginConfig.enabled }}
+            - name: plugin-config-volume
+              mountPath: /app/{{ $pluginsConfigFile }}
+              subPath: config.yaml
+          {{- end }}
+      volumes:
+        - name: tmp
+          emptyDir: {}
+      {{- if .Values.mcpContextForge.pluginConfig.enabled }}
+        - name: plugin-config-volume
+          configMap:
+            name: {{ include "mcp-stack.fullname" . }}-gateway-plugins
+            items:
+              - key: config.yaml
+                path: config.yaml
+      {{- end }}
