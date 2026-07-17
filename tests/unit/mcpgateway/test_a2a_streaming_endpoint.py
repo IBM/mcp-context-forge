@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-"""Location: ./tests/unit/mcpgateway/test_a2a_streaming_endpoint_combined.py
-Copyright 2026
+"""Location: ./tests/unit/mcpgateway/test_a2a_streaming_endpoint.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
 
 A2A Agent Streaming Endpoint Tests (Combined).

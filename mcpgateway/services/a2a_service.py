@@ -44,7 +44,6 @@ from mcpgateway.db import fresh_db_session, get_for_update
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.observability import create_span, set_span_attribute, set_span_error
 from mcpgateway.plugins.gateway_plugin_manager import make_context_id
-from mcpgateway.plugins.utils import build_request_extensions, record_plugin_metrics
 from mcpgateway.schemas import A2A_AGENT_METADATA, A2AAgentAggregateMetrics, A2AAgentCreate, A2AAgentMetrics, A2AAgentRead, A2AAgentUpdate, PydanticA2AAgent
 from mcpgateway.services.a2a_protocol import prepare_a2a_invocation
 from mcpgateway.services.base_service import BaseService
@@ -53,7 +52,7 @@ from mcpgateway.services.http_client_service import get_http_client
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.metrics_buffer_service import get_metrics_buffer_service
 from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batches, pause_rollup_during_purge
-from mcpgateway.services.observability_service import current_trace_id, ObservabilityService
+from mcpgateway.services.observability_service import ObservabilityService
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.utils import uaid as uaid_utils
@@ -2657,21 +2656,7 @@ class A2AAgentService(BaseService):
         #     allowlist, and that path self-loops without bound.  The
         #     header is a ContextForge-internal marker and is safe for
         #     third-party agents to receive (they ignore it).
-        # Use `_should_delegate_a2a_to_rust()` (not the raw settings flags)
-        # so this branch stays in lockstep with the dispatch decision below
-        # (`if _should_delegate_a2a_to_rust(): ...`).  The helper also
-        # honors the runtime-mutable `A2A_MODE` override introduced by
-        # `mcpgateway.version`; reading raw flags here would desync the
-        # hop-stamp contract from the dispatch contract when an operator
-        # flips the mode at runtime (e.g., `PATCH /admin/runtime/a2a-mode
-        # {mode: "shadow"}` while delegate flags are boot-true).  That
-        # desync would let Python emit the HTTP POST while the header
-        # was stamped for the Rust-delegate path — downstream gateways
-        # would then trip the guard at half the configured depth.
-        if _should_delegate_a2a_to_rust():
-            prepared.headers[uaid_utils.HOP_HEADER] = str(hop_count)
-        else:
-            uaid_utils.stamp_hop(prepared.headers, hop_count)
+        uaid_utils.stamp_hop(prepared.headers, hop_count)
 
         with create_span("a2a.invoke", span_attributes) as span:
             try:
@@ -2695,24 +2680,15 @@ class A2AAgentService(BaseService):
                     },
                 )
 
-                if _should_delegate_a2a_to_rust():
-                    runtime_response = await get_rust_a2a_runtime_client().invoke(
-                        prepared,
-                        timeout_seconds=int(settings.mcpgateway_a2a_default_timeout),
-                    )
-                    status_code = int(runtime_response.get("status_code", 200))
-                    response_json = runtime_response.get("json")
-                    response_text = str(runtime_response.get("text") or "")
-                else:
-                    # Make HTTP request to the agent endpoint using shared HTTP client
-                    # First-Party
-                    from mcpgateway.services.http_client_service import get_http_client  # pylint: disable=import-outside-toplevel,reimported,redefined-outer-name
+                # Make HTTP request to the agent endpoint using shared HTTP client
+                # First-Party
+                from mcpgateway.services.http_client_service import get_http_client  # pylint: disable=import-outside-toplevel,reimported,redefined-outer-name
 
-                    client = await get_http_client()
-                    http_response = await client.post(prepared.endpoint_url, json=prepared.request_data, headers=prepared.headers)
-                    status_code = http_response.status_code
-                    response_json = http_response.json() if status_code == 200 else None
-                    response_text = http_response.text
+                client = await get_http_client()
+                http_response = await client.post(prepared.endpoint_url, json=prepared.request_data, headers=prepared.headers)
+                status_code = http_response.status_code
+                response_json = http_response.json() if status_code == 200 else None
+                response_text = http_response.text
 
                 call_duration_ms = (datetime.now(timezone.utc) - call_start_time).total_seconds() * 1000
 
@@ -3064,13 +3040,6 @@ class A2AAgentService(BaseService):
                 yield self._format_sse_error(f"Agent '{agent_name}' invocation blocked: {e}")
                 return
 
-        # ═══════════════════════════════════════════════════════════════════════════
-        # IMPORTANT: Rust runtime does not support streaming yet (fail fast)
-        # ═══════════════════════════════════════════════════════════════════════════
-        if _should_delegate_a2a_to_rust():
-            yield self._format_sse_error("Streaming not supported with Rust runtime (experimental_rust_a2a_runtime_delegate_enabled=true)")
-            return
-
         start_time = datetime.now(timezone.utc)
         success = False
         error_message = None
@@ -3156,10 +3125,7 @@ class A2AAgentService(BaseService):
             span_attributes["langfuse.observation.input"] = serialize_trace_payload(parameters or {})
 
         # Stamp hop counter (same logic as invoke_agent)
-        if _should_delegate_a2a_to_rust():  # pragma: no cover
-            prepared.headers[uaid_utils.HOP_HEADER] = str(hop_count)  # pragma: no cover
-        else:
-            uaid_utils.stamp_hop(prepared.headers, hop_count)
+        uaid_utils.stamp_hop(prepared.headers, hop_count)
 
         # ═══════════════════════════════════════════════════════════════════════════
         # PHASE 3: Stream HTTP response
