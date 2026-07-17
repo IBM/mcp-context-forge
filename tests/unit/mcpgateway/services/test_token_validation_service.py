@@ -250,10 +250,24 @@ class TestValidateOauthTokenClaims:
         assert result.audience_match is True
         assert not any("audience" in w.lower() for w in result.warnings)
 
-    def test_audience_falls_back_to_gateway_url(self):
-        token = _make_jwt({"aud": "https://mcp.example.com/sse"})
+    def test_audience_falls_back_to_gateway_url_origin(self):
+        """Fallback derives the ORIGIN (scheme + netloc), matching the value oauth_router
+        sends as the outbound ``resource`` param on initial auth + callback.
+
+        Real IdPs (Salesforce, Azure AD, Okta) mint tokens with origin-level ``aud``,
+        so validating against the full path would silently reject valid tokens.
+        """
+        token = _make_jwt({"aud": "https://mcp.example.com"})
         oauth_config = {}  # No resource configured
-        result = validate_oauth_token_claims(token, oauth_config, "https://mcp.example.com/sse", "test-gw")
+        result = validate_oauth_token_claims(token, oauth_config, "https://mcp.example.com/platform/mcp/v1", "test-gw")
+
+        assert result.audience_match is True
+
+    def test_audience_fallback_uses_urn_verbatim_when_origin_not_derivable(self):
+        """URN-shaped gateway.url has no origin; the raw value is used as the fallback."""
+        token = _make_jwt({"aud": "urn:example:mcp-gateway"})
+        oauth_config = {}
+        result = validate_oauth_token_claims(token, oauth_config, "urn:example:mcp-gateway", "test-gw")
 
         assert result.audience_match is True
 
@@ -565,6 +579,23 @@ class TestOAuthRequireConfiguredResourceSetting:
             mock_settings.oauth_require_configured_resource = True
             token = _make_jwt({"aud": "https://gw.example.com"})
             result = validate_oauth_token_claims(token, {}, "https://gw.example.com", "test-gw")
+
+        assert result.audience_match is True
+        assert result.blocking_errors == []
+
+    def test_strict_mode_accepts_origin_aud_against_path_bearing_gateway_url(self):
+        """Strict mode + path-bearing gateway_url + origin-only aud must MATCH.
+
+        Regression coverage for the validator/oauth_router contract mismatch: the
+        route sends ``resource=<origin>`` on initial auth so the IdP mints an
+        origin-level ``aud``. If the validator falls back to the full gateway URL,
+        a valid origin-aud token gets rejected under strict mode. Origin-level
+        derivation on both sides keeps the contract consistent.
+        """
+        with patch("mcpgateway.services.token_validation_service.settings") as mock_settings:
+            mock_settings.oauth_require_configured_resource = True
+            token = _make_jwt({"aud": "https://api.salesforce.com"})
+            result = validate_oauth_token_claims(token, {}, "https://api.salesforce.com/platform/mcp/v1", "sf-gw")
 
         assert result.audience_match is True
         assert result.blocking_errors == []

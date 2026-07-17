@@ -104,38 +104,12 @@ async def enforce_fetch_tools_csrf(request: Request) -> None:
         raise HTTPException(status_code=403, detail="CSRF validation failed")
 
 
-def _derive_resource_origin(url: str | None) -> str | None:
-    """Derive the origin (scheme + netloc) from a gateway URL for use as a fallback resource.
+# _derive_resource_origin moved to mcpgateway.services.token_validation_service
+# so the OAuth route, the refresh path in token_storage_service, and the
+# validator fallback all share one implementation. Re-exported below.
+from mcpgateway.services.token_validation_service import _derive_resource_origin  # noqa: E402  pylint: disable=wrong-import-position
 
-    Real-world OAuth providers (Salesforce, Azure AD, Okta) issue access tokens
-    with origin-level audiences (``https://api.salesforce.com``) rather than the
-    full URL of the protected MCP endpoint
-    (``https://api.salesforce.com/platform/mcp/v1/...``).  Using the full
-    gateway URL as the auto-derived resource therefore reliably mismatches the
-    token's actual aud and produces validation failures.
-
-    For an admin who has not explicitly configured ``oauth_config["resource"]``,
-    derive the URL's origin as a best-effort starting point for the *outbound*
-    RFC 8707 request parameter.  The derived value is used for THIS REQUEST
-    only and is not persisted to shared config; per-user inbound audience
-    validation uses ``OAuthToken.learned_aud`` populated on the callback (see
-    ``TokenStorageService.store_tokens`` and
-    ``token_validation_service._validate_audience``).
-
-    Args:
-        url: Gateway URL to extract the origin from.
-
-    Returns:
-        ``scheme://netloc`` for hierarchical URLs, or ``None`` for URNs / empty
-        / scheme-less inputs (caller should treat as "no auto-fallback
-        possible" and rely on admin config or the per-user learned value).
-    """
-    if not url:
-        return None
-    parsed = urlparse(url)
-    if not parsed.scheme or not parsed.netloc:
-        return None
-    return f"{parsed.scheme}://{parsed.netloc}"
+__all__ = ["_derive_resource_origin"]
 
 
 oauth_router = APIRouter(prefix="/oauth", tags=["oauth"])

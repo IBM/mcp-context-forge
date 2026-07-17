@@ -22,7 +22,7 @@ from sqlalchemy.orm import Session
 from mcpgateway.db import Gateway
 from mcpgateway.middleware.token_scoping import ResourceOwnershipResult
 from mcpgateway.routers.oauth_router import ADMIN_CSRF_COOKIE_NAME, enforce_fetch_tools_csrf
-from mcpgateway.routers.oauth_router import _derive_resource_origin
+from mcpgateway.routers.oauth_router import _derive_resource_origin  # re-exported from token_validation_service
 from mcpgateway.schemas import EmailUserResponse
 from mcpgateway.services.oauth_manager import OAuthError
 
