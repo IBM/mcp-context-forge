@@ -7902,12 +7902,12 @@ async def remove_root(
     logger.debug(f"User '{safe_log_user(user)}' requested to remove root with URI: {uri}")
     try:
         await root_service.remove_root(uri)
-        return {"status": "success", "message": f"Root {uri} removed"}
     except RootServiceNotFoundError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        raise HTTPException(status_code=404, detail=str(e)) from e
     except Exception as e:
         logger.error(f"Failed to remove root {uri}: {e}")
-        raise HTTPException(status_code=500, detail="Internal error removing root")
+        raise HTTPException(status_code=500, detail="Internal error removing root") from e
+    return {"status": "success", "message": f"Root {uri} removed"}
 
 
 ##################
@@ -11342,14 +11342,14 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
                     request_headers=dict(request.headers),
                 )
                 result = {"contents": [serialize_resource_content_for_mcp(result, fallback_uri=uri)]}
-            except (ValueError, ResourceNotFoundError):
+            except (ValueError, ResourceNotFoundError) as e:
                 # Resource not found in the gateway
                 logger.error("Resource not found: %s", uri)
-                raise JSONRPCError(-32002, f"Resource not found: {uri}", {"uri": uri})
+                raise JSONRPCError(-32002, f"Resource not found: {uri}", {"uri": uri}) from e
             except ResourceError as e:
                 # Generic resource error (e.g., ambiguous URI, proxy failure)
                 logger.error("RPC error: %s", str(e))
-                raise JSONRPCError(-32000, f"Resource read failed: {e}", {"uri": uri})
+                raise JSONRPCError(-32000, f"Resource read failed: {e}", {"uri": uri}) from e
             # Release transaction after resources/read completes
             db.commit()
             db.close()
@@ -11437,14 +11437,14 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
                 )
                 if hasattr(result, "model_dump"):
                     result = result.model_dump(by_alias=True, exclude_none=True)
-            except PromptNotFoundError:
+            except PromptNotFoundError as e:
                 # Prompt not found in the gateway
                 logger.error("Prompt not found: %s", name)
-                raise JSONRPCError(-32002, f"Prompt not found: {name}", {"name": name})
+                raise JSONRPCError(-32002, f"Prompt not found: {name}", {"name": name}) from e
             except PromptError as e:
                 # Generic prompt error (e.g., validation failure)
                 logger.error("RPC error: %s", str(e))
-                raise JSONRPCError(-32000, f"Prompt retrieval failed: {e}", {"name": name})
+                raise JSONRPCError(-32000, f"Prompt retrieval failed: {e}", {"name": name}) from e
             # Release transaction after prompts/get completes
             db.commit()
             db.close()
