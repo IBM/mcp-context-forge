@@ -5148,6 +5148,7 @@ async def test_streamable_http_auth_proxy_user_when_client_auth_disabled(monkeyp
 
     user_ctx = tr.user_context_var.get()
     assert user_ctx["email"] == "proxy_user@example.com"
+    assert scope[tr._MCPGATEWAY_AUTH_CONTEXT_KEY] == user_ctx
     assert user_ctx["teams"] == []
     assert user_ctx["is_authenticated"] is True
     assert user_ctx["is_admin"] is False
@@ -10380,6 +10381,7 @@ async def test_auth_session_token_admin_bypass(monkeypatch):
     user_ctx = tr.user_context_var.get()
     assert user_ctx["teams"] is None  # Admin bypass
     assert user_ctx["is_admin"] is True
+    assert scope[tr._MCPGATEWAY_AUTH_CONTEXT_KEY] == user_ctx
 
 
 @pytest.mark.asyncio

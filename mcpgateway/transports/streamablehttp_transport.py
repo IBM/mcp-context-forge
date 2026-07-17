@@ -299,6 +299,7 @@ _REJECT = object()
 
 # ASGI scope key for propagating gateway context from middleware to MCP handlers
 _MCPGATEWAY_CONTEXT_KEY = "_mcpgateway_context"
+_MCPGATEWAY_AUTH_CONTEXT_KEY = "_mcpgateway_auth_context"
 
 # Initialize ToolService, PromptService, ResourceService, CompletionService and MCP Server
 tool_service: ToolService = ToolService()
@@ -4054,7 +4055,9 @@ class SessionManagerWrapper:
 
         # Enforce server access parity for server-scoped Streamable HTTP MCP routes.
         # This mirrors /servers/{id}/sse and /servers/{id}/message guards.
-        user_context = user_context_var.get()
+        user_context = scope.get(_MCPGATEWAY_AUTH_CONTEXT_KEY)
+        if not isinstance(user_context, dict):
+            user_context = user_context_var.get()
         if match and _should_enforce_streamable_rbac(user_context):
             _server_id = match.group("server_id")
             has_server_access = await _check_streamable_permission(
@@ -4917,6 +4920,12 @@ class _StreamableHttpAuthHandler:
         self.receive = receive
         self.send = send
 
+    def _persist_auth_context(self) -> None:
+        """Store verified identity on the ASGI scope across task boundaries."""
+        auth_context = user_context_var.get()
+        if isinstance(auth_context, dict):
+            self.scope[_MCPGATEWAY_AUTH_CONTEXT_KEY] = dict(auth_context)
+
     async def _send_error(self, *, detail: str, status_code: int = HTTP_401_UNAUTHORIZED, headers: dict[str, str] | None = None) -> bool:
         """Send an error response and return False (auth rejected).
 
@@ -4997,6 +5006,7 @@ class _StreamableHttpAuthHandler:
             proxy_error = await _set_proxy_user_context(proxy_user)
             if proxy_error:
                 return await self._send_error(**proxy_error)
+            self._persist_auth_context()
             return True  # Trusted proxy supplied valid, active user
 
         # --- Standard JWT authentication flow (client auth enabled) ---
@@ -5010,9 +5020,18 @@ class _StreamableHttpAuthHandler:
                     token = credentials
 
         if token is None:
-            return await self._auth_no_token(path=path, bearer_header_supplied=bearer_header_supplied)
+            authenticated = await self._auth_no_token(
+                path=path,
+                bearer_header_supplied=bearer_header_supplied,
+            )
+            if authenticated:
+                self._persist_auth_context()
+            return authenticated
 
-        return await self._auth_jwt(token=token)
+        authenticated = await self._auth_jwt(token=token)
+        if authenticated:
+            self._persist_auth_context()
+        return authenticated
 
     async def _auth_no_token(self, *, path: str, bearer_header_supplied: bool) -> bool:
         """Handle unauthenticated MCP requests (no Bearer token present).
