@@ -3341,9 +3341,9 @@ FILE_AWARE_LINTERS := isort black pylint mypy bandit pydocstyle \
 
 .PHONY: lint $(LINTERS) pyright-pr black black-check isort-check ruff-check ruff-fix ruff-format autoflake lint-py lint-yaml lint-json lint-md lint-strict \
 	lint-count-errors lint-report lint-changed lint-staged lint-commit \
-	lint-pre-commit lint-pre-push lint-parallel lint-cache-clear lint-stats \
+	lint-parallel lint-cache-clear lint-stats \
 	lint-complexity lint-watch lint-watch-quick \
-	lint-install-hooks lint-quick lint-fix lint-smart lint-target lint-all \
+	lint-quick lint-fix lint-smart lint-target lint-all \
 	lint-actionlint lint-chart-testing lint-helm-unittest lint-commitlint \
 	linting-python-env \
 	linting-workflow-actionlint linting-workflow-zizmor linting-workflow-reviewdog linting-workflow-commitlint \
@@ -3799,6 +3799,40 @@ pre-commit: uv                     ## 🪄  Run pre-commit tool
 		$(VENV_DIR)/bin/pre-commit run --config .pre-commit-config.yaml --all-files --show-diff-on-failure"
 
 RUFF_MODE   ?= check
+
+.PHONY: install-pre-commit-hooks
+install-pre-commit-hooks: uv          ## 🪝  Install pre-commit hooks
+	@echo "🪝  Installing pre-commit hooks..."
+	$(UV_BIN) run pre-commit install
+	@echo "✅  Pre-commit hooks installed"
+
+.PHONY: configure-secrets-merge-driver
+configure-secrets-merge-driver:    ## 🔀  Configure git merge driver for .secrets.baseline
+	@echo "🔀  Configuring git merge driver for .secrets.baseline..."
+	@if ! git rev-parse --git-dir > /dev/null 2>&1; then \
+		echo "❌  Not in a git repository"; \
+		exit 1; \
+	fi
+	@git config merge.secrets-baseline.name "Auto-resolve .secrets.baseline conflicts with --ours"
+	@git config merge.secrets-baseline.driver "scripts/gitops/resolve-secrets-baseline-conflict.sh %O %A %B %P"
+	@if [ ! -f .gitattributes ]; then \
+		echo ".secrets.baseline merge=secrets-baseline" > .gitattributes; \
+		echo "✅  Created .gitattributes with merge driver entry"; \
+	elif ! grep -qF ".secrets.baseline merge=secrets-baseline" .gitattributes; then \
+		echo ".secrets.baseline merge=secrets-baseline" >> .gitattributes; \
+		echo "✅  Added merge driver entry to .gitattributes"; \
+	else \
+		echo "✅  .gitattributes already contains merge driver entry"; \
+	fi
+	@echo "✅  Git merge driver configured for .secrets.baseline"
+
+
+.PHONY: configure-git
+configure-git: install-pre-commit-hooks configure-secrets-merge-driver  ## 🔧  Configure git hooks and merge drivers
+	@echo "✅  Git configuration complete"
+
+
+
 RUFF_SELECT ?=
 
 ruff: uv                            ## ⚡  Ruff linter (RUFF_MODE=check|fix|format, RUFF_SELECT=rules)
@@ -4137,48 +4171,6 @@ lint-report:							## 📋 Generate comprehensive linting report
 	@echo "## Error Count by Tool" >> $(DOCS_DIR)/reports/full-lint-report.md
 	@$(MAKE) --no-print-directory lint-count-errors TARGET="$(TARGET)" >> $(DOCS_DIR)/reports/full-lint-report.md 2>&1 || true
 	@echo "📄 Report generated: $(DOCS_DIR)/reports/full-lint-report.md"
-
-# -----------------------------------------------------------------------------
-# 🔧 PRE-COMMIT INTEGRATION
-# -----------------------------------------------------------------------------
-# help: lint-install-hooks   - Install git pre-commit hooks for linting
-# help: lint-pre-commit      - Run linting as pre-commit check
-# help: lint-pre-push        - Run linting as pre-push check
-.PHONY: lint-install-hooks lint-pre-commit lint-pre-push
-
-# Install git hooks for linting
-lint-install-hooks:						## 🔧 Install git hooks for auto-linting
-	@echo "🔧 Installing git pre-commit hooks for linting..."
-	@if [ ! -d ".git" ]; then \
-		echo "❌ Not a git repository"; \
-		exit 1; \
-	fi
-	@echo '#!/bin/bash' > .git/hooks/pre-commit
-	@echo '# Auto-generated pre-commit hook for linting' >> .git/hooks/pre-commit
-	@echo 'echo "🔍 Running pre-commit linting..."' >> .git/hooks/pre-commit
-	@echo 'make lint-pre-commit' >> .git/hooks/pre-commit
-	@chmod +x .git/hooks/pre-commit
-	@echo '#!/bin/bash' > .git/hooks/pre-push
-	@echo '# Auto-generated pre-push hook for linting' >> .git/hooks/pre-push
-	@echo 'echo "🔍 Running pre-push linting..."' >> .git/hooks/pre-push
-	@echo 'make lint-pre-push' >> .git/hooks/pre-push
-	@chmod +x .git/hooks/pre-push
-	@echo "✅ Git hooks installed:"
-	@echo "   📝 pre-commit: .git/hooks/pre-commit"
-	@echo "   📤 pre-push: .git/hooks/pre-push"
-	@echo "💡 To disable: rm .git/hooks/pre-commit .git/hooks/pre-push"
-
-# Pre-commit hook (lint staged files)
-lint-pre-commit:						## 🔍 Pre-commit linting check
-	@echo "🔍 Pre-commit linting check..."
-	@$(MAKE) --no-print-directory lint-staged
-	@echo "✅ Pre-commit linting passed!"
-
-# Pre-push hook (lint all changed files)
-lint-pre-push:							## 🔍 Pre-push linting check
-	@echo "🔍 Pre-push linting check..."
-	@$(MAKE) --no-print-directory lint-changed
-	@echo "✅ Pre-push linting passed!"
 
 # -----------------------------------------------------------------------------
 # 🎯 FILE TYPE SPECIFIC LINTING
@@ -5690,6 +5682,7 @@ compose-siem-logs: ## 📜 Tail logs for SIEM stack services
 	$(COMPOSE_CMD) -f docker-compose.yml -f docker-compose.siem-opensearch.yml logs -f gateway opensearch
 
 .PHONY: compose-restart
+compose-restart:
 	@echo "🔄  Restarting stack..."
 	$(COMPOSE) pull
 	$(COMPOSE) build
@@ -6876,7 +6869,7 @@ SHELL_SCRIPTS := $(shell find . -type f -name '*.sh' \
 # Define shfmt binary location
 SHFMT := $(shell command -v shfmt 2>/dev/null || echo "$(HOME)/go/bin/shfmt")
 
-.PHONY: shell-linters-install shell-lint shfmt-fix shellcheck bashate
+.PHONY: shell-linters-install shell-lint shfmt-fix
 
 shell-linters-install:     ## 🔧  Install shellcheck, shfmt, bashate
 	@echo "🔧  Installing/ensuring shell linters are present..."
@@ -7499,7 +7492,9 @@ DETECT_SECRETS_FILES_EXCLUDE := '(?x)( \
   |mcpgateway/sri_hashes\.json$$ \
   |.secrets.baseline$$ \
 )'
-DETECT_SECRETS_PATH ?= $(shell git diff main --name-only)
+
+# --diff-filter=d EXCLUDES delete files
+DETECT_SECRETS_PATH ?= $(shell git diff main --name-only --diff-filter=d)
 
 .PHONY: detect-secrets-scan
 detect-secrets-scan: uv                      ## 🔍  detect-secrets scan for secrets in repository

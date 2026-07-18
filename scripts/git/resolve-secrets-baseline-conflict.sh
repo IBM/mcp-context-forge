@@ -4,13 +4,13 @@
 #
 # Setup as merge driver:
 #   git config merge.secrets-baseline.name "Auto-resolve .secrets.baseline conflicts with --ours"
-#   git config merge.secrets-baseline.driver "scripts/resolve-secrets-baseline-conflict.sh %O %A %B %P"
+#   git config merge.secrets-baseline.driver "scripts/gitops/resolve-secrets-baseline-conflict.sh %O %A %B %P"
 #
 # Then add to .gitattributes:
 #   .secrets.baseline merge=secrets-baseline
 #
 # Or use manually during rebase:
-#   scripts/resolve-secrets-baseline-conflict.sh
+#   scripts/gitops/resolve-secrets-baseline-conflict.sh
 
 set -euo pipefail
 
