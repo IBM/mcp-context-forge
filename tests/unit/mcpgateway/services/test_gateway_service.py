@@ -5323,6 +5323,55 @@ class TestUpdateOrCreateTools:
         assert existing.description == "new desc"
         assert existing.title == "new title"
 
+    def test_existing_tool_annotations_updated(self, gateway_service, mock_gateway):
+        # Regression for #5697: an annotation-only upstream change must be detected
+        # and propagated. Annotations carry MCP behavior hints (readOnlyHint,
+        # destructiveHint, ...) that clients use for confirmation/auto-approval, so
+        # stale annotations let a tool that became dangerous keep looking safe.
+        existing = MagicMock()
+        existing.original_name = "my-tool"
+        existing.url = "http://gw.example"
+        existing.description = "same desc"
+        existing.original_description = "same desc"
+        existing.integration_type = "MCP"
+        existing.request_type = "POST"
+        existing.headers = {}
+        existing.input_schema = {}
+        existing.output_schema = None
+        existing.jsonpath_filter = None
+        existing.extension_metadata = None
+        existing.auth_type = None
+        existing.auth_value = None
+        existing.visibility = "public"
+        existing.title = "my-tool"
+        existing.annotations = {"readOnlyHint": True}
+        existing.reachable = True
+
+        db = MagicMock()
+        db.execute.return_value.scalars.return_value.all.return_value = [existing]
+
+        # Everything matches the existing tool except the annotations.
+        tool = SimpleNamespace(
+            name="my-tool",
+            description="same desc",
+            input_schema={},
+            output_schema=None,
+            request_type="POST",
+            headers={},
+            annotations={"readOnlyHint": False, "destructiveHint": True},
+            jsonpath_filter=None,
+            title="my-tool",
+        )
+        mock_gateway.url = "http://gw.example"
+        mock_gateway.auth_type = None
+        mock_gateway.auth_value = None
+        mock_gateway.visibility = "public"
+
+        result = gateway_service._update_or_create_tools(db, [tool], mock_gateway, "update")
+        assert result == []  # updated in-place, not re-created
+        # The annotation-only change was detected and the new hints propagated.
+        assert existing.annotations == {"readOnlyHint": False, "destructiveHint": True}
+
     def test_none_tool_skipped(self, gateway_service, mock_gateway):
         db = MagicMock()
         db.execute.return_value.scalars.return_value.all.return_value = []

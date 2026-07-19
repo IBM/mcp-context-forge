@@ -5623,7 +5623,12 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
                     title_changed = existing_tool.title != _resolve_tool_title(tool)
 
-                    if basic_fields_changed or schema_fields_changed or auth_fields_changed or title_changed:
+                    # Annotations carry MCP behavior hints (readOnlyHint, destructiveHint, ...)
+                    # that clients use for confirmation/auto-approval, so an annotation-only
+                    # upstream change must still trigger an update.
+                    annotations_changed = existing_tool.annotations != tool.annotations
+
+                    if basic_fields_changed or schema_fields_changed or auth_fields_changed or title_changed or annotations_changed:
                         fields_to_update = True
 
                     # Always mark tool as reachable when successfully fetched from gateway
@@ -5646,6 +5651,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         existing_tool.jsonpath_filter = tool.jsonpath_filter
                         existing_tool.extension_metadata = tool_extension_metadata
                         existing_tool.title = _resolve_tool_title(tool)
+                        existing_tool.annotations = tool.annotations
                         existing_tool.auth_type = gateway.auth_type
                         existing_tool.auth_value = encode_auth(gateway.auth_value) if isinstance(gateway.auth_value, dict) else gateway.auth_value
                         if update_visibility and upstream_tool_visibility is not None:
