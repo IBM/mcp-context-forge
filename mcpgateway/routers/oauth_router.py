@@ -221,6 +221,25 @@ def _popup_notification_script(nonce: str, payload: dict) -> str:
     return f"<script nonce=\"{safe_nonce}\">(function(){{if(window.opener&&!window.opener.closed){{window.opener.postMessage({safe_payload},'*');window.close();}}}})()</script>"
 
 
+def _popup_callback_response(nonce: str, payload: dict, status_code: int = 200, extra_body: str = "") -> HTMLResponse:
+    """Build the full HTML page wrapping the popup postMessage script for an OAuth callback result.
+
+    Args:
+        nonce: CSP nonce for the inline script tag.
+        payload: Dict to send as the postMessage data (see ``_popup_notification_script``).
+        status_code: HTTP status code for the response.
+        extra_body: Optional extra HTML appended after the script tag (e.g. a visible message).
+
+    Returns:
+        HTMLResponse containing the postMessage script for the popup window.
+    """
+    title = "OAuth Authorization Successful" if payload.get("status") == "success" else "OAuth Authorization Failed"
+    return HTMLResponse(
+        content=(f"<!DOCTYPE html><html><head><title>{title}</title></head><body>" + _popup_notification_script(nonce, payload) + extra_body + "</body></html>"),
+        status_code=status_code,
+    )
+
+
 oauth_router = APIRouter(prefix="/oauth", tags=["oauth"])
 
 
@@ -605,14 +624,9 @@ async def oauth_callback(
             # Sanitize untrusted query parameters before logging to prevent log injection
             logger.warning(f"OAuth provider returned error callback: error={sanitize_for_log(error)}, description={sanitize_for_log(error_description)}")
             if is_popup:
-                return HTMLResponse(
-                    content=(
-                        "<!DOCTYPE html><html><head><title>OAuth Authorization Failed</title></head><body>"
-                        + _popup_notification_script(
-                            csp_nonce, {"type": "oauth_callback", "status": "error", "error": error, "errorDescription": error_description or "OAuth provider returned an authorization error."}
-                        )
-                        + "</body></html>"
-                    ),
+                return _popup_callback_response(
+                    csp_nonce,
+                    {"type": "oauth_callback", "status": "error", "error": error, "errorDescription": error_description or "OAuth provider returned an authorization error."},
                     status_code=400,
                 )
             return HTMLResponse(
@@ -634,15 +648,8 @@ async def oauth_callback(
         if not code:
             logger.warning("OAuth callback missing authorization code")
             if is_popup:
-                return HTMLResponse(
-                    content=(
-                        "<!DOCTYPE html><html><head><title>OAuth Authorization Failed</title></head><body>"
-                        + _popup_notification_script(
-                            csp_nonce, {"type": "oauth_callback", "status": "error", "error": "missing_code", "errorDescription": "Missing authorization code in callback response."}
-                        )
-                        + "</body></html>"
-                    ),
-                    status_code=400,
+                return _popup_callback_response(
+                    csp_nonce, {"type": "oauth_callback", "status": "error", "error": "missing_code", "errorDescription": "Missing authorization code in callback response."}, status_code=400
                 )
             return HTMLResponse(
                 content=f"""
@@ -666,13 +673,8 @@ async def oauth_callback(
                 HTMLResponse: A 400 error page describing the invalid state.
             """
             if is_popup:
-                return HTMLResponse(
-                    content=(
-                        "<!DOCTYPE html><html><head><title>OAuth Authorization Failed</title></head><body>"
-                        + _popup_notification_script(csp_nonce, {"type": "oauth_callback", "status": "error", "error": "invalid_state", "errorDescription": "Invalid OAuth state parameter."})
-                        + "</body></html>"
-                    ),
-                    status_code=400,
+                return _popup_callback_response(
+                    csp_nonce, {"type": "oauth_callback", "status": "error", "error": "invalid_state", "errorDescription": "Invalid OAuth state parameter."}, status_code=400
                 )
             return HTMLResponse(
                 content=f"""
@@ -734,13 +736,10 @@ async def oauth_callback(
 
         # React UI popup: post result to parent window and close.
         if is_popup:
-            return HTMLResponse(
-                content=(
-                    "<!DOCTYPE html><html><head><title>OAuth Authorization Successful</title></head><body>"
-                    + _popup_notification_script(csp_nonce, {"type": "oauth_callback", "status": "success", "gatewayId": str(gateway_id), "gatewayName": str(gateway.name)})
-                    + "<p>Authorization successful. This window will close automatically.</p>"
-                    + "</body></html>"
-                )
+            return _popup_callback_response(
+                csp_nonce,
+                {"type": "oauth_callback", "status": "success", "gatewayId": str(gateway_id), "gatewayName": str(gateway.name)},
+                extra_body="<p>Authorization successful. This window will close automatically.</p>",
             )
 
         # Legacy admin UI: return full page with fetch-tools button.
@@ -872,14 +871,7 @@ async def oauth_callback(
     except OAuthError as e:
         logger.error(f"OAuth callback failed: {str(e)}")
         if is_popup:
-            return HTMLResponse(
-                content=(
-                    "<!DOCTYPE html><html><head><title>OAuth Authorization Failed</title></head><body>"
-                    + _popup_notification_script(csp_nonce, {"type": "oauth_callback", "status": "error", "error": "oauth_error", "errorDescription": str(e)})
-                    + "</body></html>"
-                ),
-                status_code=400,
-            )
+            return _popup_callback_response(csp_nonce, {"type": "oauth_callback", "status": "error", "error": "oauth_error", "errorDescription": str(e)}, status_code=400)
         return HTMLResponse(
             content=f"""
         <!DOCTYPE html>
@@ -915,15 +907,8 @@ async def oauth_callback(
     except Exception as e:
         logger.error(f"Unexpected error in OAuth callback: {str(e)}")
         if is_popup:
-            return HTMLResponse(
-                content=(
-                    "<!DOCTYPE html><html><head><title>OAuth Authorization Failed</title></head><body>"
-                    + _popup_notification_script(
-                        csp_nonce, {"type": "oauth_callback", "status": "error", "error": "server_error", "errorDescription": "An unexpected error occurred during authorization."}
-                    )
-                    + "</body></html>"
-                ),
-                status_code=500,
+            return _popup_callback_response(
+                csp_nonce, {"type": "oauth_callback", "status": "error", "error": "server_error", "errorDescription": "An unexpected error occurred during authorization."}, status_code=500
             )
         return HTMLResponse(
             content=f"""
