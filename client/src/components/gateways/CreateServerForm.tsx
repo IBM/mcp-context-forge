@@ -203,8 +203,9 @@ export function CreateServerForm({
           </div>
         </div>
 
-        <button
+        <Button
           type="button"
+          variant="ghost"
           onClick={() => setOptionalOpen((current) => !current)}
           className="flex h-12 w-full items-center gap-3 rounded-md border border-border px-4 text-left text-sm font-medium text-muted-foreground transition hover:bg-muted/40 hover:text-foreground dark:border-[#252529]"
           aria-expanded={optionalOpen}
@@ -215,7 +216,7 @@ export function CreateServerForm({
             aria-hidden="true"
           />
           {intl.formatMessage({ id: "gateways.createServer.optionalConfiguration" })}
-        </button>
+        </Button>
 
         {optionalOpen && (
           <div id="optional-server-configuration" className="grid gap-7">
