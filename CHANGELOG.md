@@ -10,6 +10,7 @@
 
 ### Fixed
 
+- **Missing Server and Gateway Deletes** - `DELETE /servers/{id}` and `DELETE /gateways/{id}` now return `404 Not Found` when the target no longer exists, instead of incorrectly returning `403 Forbidden`.
 - **Custom Auth Headers on Tools** ([#5314](https://github.com/IBM/mcp-context-forge/pull/5314), [#5201](https://github.com/IBM/mcp-context-forge/issues/5201)) - `POST /tools` and `PUT /tools/{tool_id}` now persist the `auth_headers` array instead of silently storing `auth_value: null`. Invalid header keys/values are rejected with a 422 rather than an unhandled 500.
 
 ### Changed

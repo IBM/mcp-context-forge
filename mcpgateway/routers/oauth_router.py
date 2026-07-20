@@ -33,7 +33,7 @@ from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import Gateway, get_db
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
-from mcpgateway.middleware.token_scoping import token_scoping_middleware
+from mcpgateway.middleware.token_scoping import ResourceOwnershipResult, token_scoping_middleware
 from mcpgateway.schemas import EmailUserResponse
 from mcpgateway.services.dcr_service import DcrError, DcrService
 from mcpgateway.services.encryption_service import protect_oauth_config_for_storage
@@ -311,11 +311,14 @@ async def _enforce_gateway_access(
                 return
             token_teams = []
 
-        if not token_scoping_middleware._check_resource_team_ownership(
-            f"/gateways/{gateway_id}",
-            token_teams,
-            db=db,
-            _user_email=requester_email,
+        if (
+            token_scoping_middleware._check_resource_team_ownership(
+                f"/gateways/{gateway_id}",
+                token_teams,
+                db=db,
+                _user_email=requester_email,
+            )
+            is not ResourceOwnershipResult.ALLOWED
         ):
             raise HTTPException(status_code=403, detail="You don't have access to this gateway")
 

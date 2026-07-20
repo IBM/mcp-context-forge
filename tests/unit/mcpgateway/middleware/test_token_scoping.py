@@ -23,7 +23,7 @@ import pytest
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.db import Permissions
-from mcpgateway.middleware.token_scoping import _get_llm_permission_patterns, TokenScopingMiddleware
+from mcpgateway.middleware.token_scoping import ResourceOwnershipResult, _get_llm_permission_patterns, TokenScopingMiddleware
 
 
 def _trusted_internal_runtime_headers() -> dict[str, str]:
@@ -181,7 +181,7 @@ class TestTokenScopingMiddleware:
         with (
             patch.object(middleware, "_extract_token_scopes", new=AsyncMock(return_value=payload)),
             patch.object(middleware, "_check_team_membership", return_value=True),
-            patch.object(middleware, "_check_resource_team_ownership", return_value=True),
+            patch.object(middleware, "_check_resource_team_ownership", return_value=ResourceOwnershipResult.ALLOWED),
             patch.object(middleware, "_check_server_restriction", return_value=True),
             patch.object(middleware, "_check_permission_restrictions", return_value=False),
         ):
@@ -732,7 +732,7 @@ class TestTokenScopingMiddleware:
                 # Mock _check_team_membership to avoid DB query
                 with patch.object(middleware, "_check_team_membership", return_value=True):
                     # Mock _check_resource_team_ownership to avoid DB query
-                    with patch.object(middleware, "_check_resource_team_ownership", return_value=True):
+                    with patch.object(middleware, "_check_resource_team_ownership", return_value=ResourceOwnershipResult.ALLOWED):
                         call_next = AsyncMock(return_value="success")
 
                         result = await middleware(mock_request, call_next)
@@ -828,7 +828,7 @@ class TestTokenScopingMiddleware:
                     # Mock _check_team_membership to avoid DB query
                     with patch.object(middleware, "_check_team_membership", return_value=True):
                         # Mock _check_resource_team_ownership to avoid DB query
-                        with patch.object(middleware, "_check_resource_team_ownership", return_value=True):
+                        with patch.object(middleware, "_check_resource_team_ownership", return_value=ResourceOwnershipResult.ALLOWED):
                             call_next = AsyncMock(return_value="success")
 
                             result = await middleware(mock_request, call_next)
@@ -863,7 +863,7 @@ class TestTokenScopingMiddleware:
                     # Mock _check_team_membership to avoid DB query
                     with patch.object(middleware, "_check_team_membership", return_value=True):
                         # Mock _check_resource_team_ownership to avoid DB query
-                        with patch.object(middleware, "_check_resource_team_ownership", return_value=True):
+                        with patch.object(middleware, "_check_resource_team_ownership", return_value=ResourceOwnershipResult.ALLOWED):
                             call_next = AsyncMock(return_value="success")
 
                             result = await middleware(mock_request, call_next)
@@ -894,7 +894,7 @@ class TestTokenScopingMiddleware:
 
         with patch.object(middleware, "_extract_token_scopes", return_value=session_payload):
             with patch("mcpgateway.middleware.token_scoping.resolve_session_teams", new=AsyncMock(return_value=["team-1"])) as mock_resolve:
-                with patch.object(middleware, "_check_resource_team_ownership", return_value=True):
+                with patch.object(middleware, "_check_resource_team_ownership", return_value=ResourceOwnershipResult.ALLOWED):
                     call_next = AsyncMock(return_value="success")
 
                     result = await middleware(mock_request, call_next)
@@ -922,7 +922,7 @@ class TestTokenScopingMiddleware:
             # resolve_session_teams returns [] (empty intersection)
             with patch("mcpgateway.auth._resolve_teams_from_db", return_value=["db-team"]) as mock_resolve:
                 with patch.object(middleware, "_check_team_membership", return_value=False) as mock_membership:
-                    with patch.object(middleware, "_check_resource_team_ownership", return_value=True):
+                    with patch.object(middleware, "_check_resource_team_ownership", return_value=ResourceOwnershipResult.ALLOWED):
                         call_next = AsyncMock(return_value="success")
 
                         result = await middleware(mock_request, call_next)
@@ -1008,15 +1008,15 @@ class TestTokenScopingMiddleware:
         tool.team_id = "team-1"
         db.execute.return_value.scalar_one_or_none.return_value = tool
 
-        assert middleware._check_resource_team_ownership("/tools/abc", ["team-1"], db=db, _user_email="user@example.com") is True
-        assert middleware._check_resource_team_ownership("/tools/abc", [], db=db, _user_email="user@example.com") is False
+        assert middleware._check_resource_team_ownership("/tools/abc", ["team-1"], db=db, _user_email="user@example.com") is ResourceOwnershipResult.ALLOWED
+        assert middleware._check_resource_team_ownership("/tools/abc", [], db=db, _user_email="user@example.com") is ResourceOwnershipResult.DENIED
 
         resource = MagicMock()
         resource.visibility = "private"
         resource.owner_email = "user@example.com"
         db.execute.return_value.scalar_one_or_none.return_value = resource
 
-        assert middleware._check_resource_team_ownership("/resources/abc", ["team-1"], db=db, _user_email="user@example.com") is True
+        assert middleware._check_resource_team_ownership("/resources/abc", ["team-1"], db=db, _user_email="user@example.com") is ResourceOwnershipResult.ALLOWED
 
         # Test that GET /tools requires TOOLS_READ permission specifically
         assert middleware._check_permission_restrictions("/tools", "GET", [Permissions.TOOLS_CREATE]) == False
@@ -1358,7 +1358,7 @@ class TestTokenScopingMiddleware:
             db=mock_db,
             _user_email="owner@example.com",
         )
-        assert result is True, "Owner should access their private resource"
+        assert result is ResourceOwnershipResult.ALLOWED, "Owner should access their private resource"
 
         # Test: Non-owner in same team CANNOT access private resource
         result = middleware._check_resource_team_ownership(
@@ -1367,7 +1367,7 @@ class TestTokenScopingMiddleware:
             db=mock_db,
             _user_email="teammate@example.com",
         )
-        assert result is False, "Non-owner teammate should NOT access private resource"
+        assert result is ResourceOwnershipResult.DENIED, "Non-owner teammate should NOT access private resource"
 
         # Test: Non-owner in different team CANNOT access private resource
         result = middleware._check_resource_team_ownership(
@@ -1376,7 +1376,7 @@ class TestTokenScopingMiddleware:
             db=mock_db,
             _user_email="outsider@example.com",
         )
-        assert result is False, "Non-owner outsider should NOT access private resource"
+        assert result is ResourceOwnershipResult.DENIED, "Non-owner outsider should NOT access private resource"
 
     @pytest.mark.asyncio
     async def test_team_visibility_allows_team_members(self, middleware):
@@ -1397,7 +1397,7 @@ class TestTokenScopingMiddleware:
             db=mock_db,
             _user_email="teammate@example.com",
         )
-        assert result is True, "Team member should access team resource"
+        assert result is ResourceOwnershipResult.ALLOWED, "Team member should access team resource"
 
         # Test: Non-team member cannot access team resource
         result = middleware._check_resource_team_ownership(
@@ -1406,7 +1406,7 @@ class TestTokenScopingMiddleware:
             db=mock_db,
             _user_email="outsider@example.com",
         )
-        assert result is False, "Non-team member should NOT access team resource"
+        assert result is ResourceOwnershipResult.DENIED, "Non-team member should NOT access team resource"
 
     @pytest.mark.asyncio
     async def test_public_visibility_allows_all(self, middleware):
@@ -1427,7 +1427,7 @@ class TestTokenScopingMiddleware:
             db=mock_db,
             _user_email="anyone@example.com",
         )
-        assert result is True, "Any user should access public resource"
+        assert result is ResourceOwnershipResult.ALLOWED, "Any user should access public resource"
 
         # Test: Public-only token (empty teams) can access public resource
         result = middleware._check_resource_team_ownership(
@@ -1436,7 +1436,7 @@ class TestTokenScopingMiddleware:
             db=mock_db,
             _user_email="public-user@example.com",
         )
-        assert result is True, "Public-only token should access public resource"
+        assert result is ResourceOwnershipResult.ALLOWED, "Public-only token should access public resource"
 
     @pytest.mark.asyncio
     async def test_admin_bypass_skips_team_validation(self, middleware, mock_request):
@@ -1495,7 +1495,7 @@ class TestTokenScopingMiddleware:
         with (
             patch.object(middleware, "_extract_token_scopes", return_value=payload),
             patch.object(middleware, "_check_team_membership", return_value=True),
-            patch.object(middleware, "_check_resource_team_ownership", return_value=True),
+            patch.object(middleware, "_check_resource_team_ownership", return_value=ResourceOwnershipResult.ALLOWED),
             patch("mcpgateway.auth._resolve_teams_from_db", new=AsyncMock(return_value=["team-1"])),
         ):
             call_next = AsyncMock(return_value="ok")
@@ -1522,7 +1522,7 @@ class TestTokenScopingMiddleware:
         with (
             patch.object(middleware, "_extract_token_scopes", return_value=payload),
             patch.object(middleware, "_check_team_membership", return_value=True),
-            patch.object(middleware, "_check_resource_team_ownership", return_value=True),
+            patch.object(middleware, "_check_resource_team_ownership", return_value=ResourceOwnershipResult.ALLOWED),
             patch.object(middleware, "_check_server_restriction", return_value=True),
             patch.object(middleware, "_check_permission_restrictions", return_value=True),
         ):
@@ -1601,18 +1601,18 @@ def test_check_resource_team_ownership_prompt_and_gateway():
     prompt.visibility = "team"
     prompt.team_id = "team-1"
     db.execute.return_value.scalar_one_or_none.return_value = prompt
-    assert middleware._check_resource_team_ownership("/prompts/a1b2c3d4", ["team-1"], db=db, _user_email="user@example.com") is True
+    assert middleware._check_resource_team_ownership("/prompts/a1b2c3d4", ["team-1"], db=db, _user_email="user@example.com") is ResourceOwnershipResult.ALLOWED
 
     # Gateway: private visibility with owner match should allow
     gateway = MagicMock()
     gateway.visibility = "private"
     gateway.owner_email = "owner@example.com"
     db.execute.return_value.scalar_one_or_none.return_value = gateway
-    assert middleware._check_resource_team_ownership("/gateways/a1b2c3d4", ["team-1"], db=db, _user_email="owner@example.com") is True
+    assert middleware._check_resource_team_ownership("/gateways/a1b2c3d4", ["team-1"], db=db, _user_email="owner@example.com") is ResourceOwnershipResult.ALLOWED
 
     # Missing resources must fail closed
     db.execute.return_value.scalar_one_or_none.return_value = None
-    assert middleware._check_resource_team_ownership("/resources/a1b2c3d4", ["team-1"], db=db, _user_email="user@example.com") is False
+    assert middleware._check_resource_team_ownership("/resources/a1b2c3d4", ["team-1"], db=db, _user_email="user@example.com") is ResourceOwnershipResult.DENIED
 
 
 def test_check_resource_team_ownership_normalizes_team_dict_and_allows_team_resource():
@@ -1625,7 +1625,7 @@ def test_check_resource_team_ownership_normalizes_team_dict_and_allows_team_reso
     resource.team_id = "team-1"
     db.execute.return_value.scalar_one_or_none.return_value = resource
 
-    assert middleware._check_resource_team_ownership("/resources/a1b2c3d4", [{"id": "team-1"}], db=db, _user_email="user@example.com") is True
+    assert middleware._check_resource_team_ownership("/resources/a1b2c3d4", [{"id": "team-1"}], db=db, _user_email="user@example.com") is ResourceOwnershipResult.ALLOWED
 
 
 def test_check_resource_team_ownership_owns_session_commits_and_closes(monkeypatch):
@@ -1642,7 +1642,7 @@ def test_check_resource_team_ownership_owns_session_commits_and_closes(monkeypat
 
     monkeypatch.setattr("mcpgateway.db.get_db", _get_db)
 
-    assert middleware._check_resource_team_ownership("/resources/a1b2c3d4", ["team-1"], _user_email="user@example.com") is True
+    assert middleware._check_resource_team_ownership("/resources/a1b2c3d4", ["team-1"], _user_email="user@example.com") is ResourceOwnershipResult.ALLOWED
     db.commit.assert_called_once()
     db.close.assert_called_once()
 
@@ -1657,7 +1657,7 @@ def test_check_resource_team_ownership_public_only_token_denied_for_team_prompt(
     prompt.team_id = "team-1"
     db.execute.return_value.scalar_one_or_none.return_value = prompt
 
-    assert middleware._check_resource_team_ownership("/prompts/a1b2c3d4", [], db=db, _user_email="user@example.com") is False
+    assert middleware._check_resource_team_ownership("/prompts/a1b2c3d4", [], db=db, _user_email="user@example.com") is ResourceOwnershipResult.DENIED
 
 
 def test_check_resource_team_ownership_prompt_unknown_visibility_denies():
@@ -1670,7 +1670,7 @@ def test_check_resource_team_ownership_prompt_unknown_visibility_denies():
     prompt.team_id = "team-1"
     db.execute.return_value.scalar_one_or_none.return_value = prompt
 
-    assert middleware._check_resource_team_ownership("/prompts/a1b2c3d4", ["team-1"], db=db, _user_email="user@example.com") is False
+    assert middleware._check_resource_team_ownership("/prompts/a1b2c3d4", ["team-1"], db=db, _user_email="user@example.com") is ResourceOwnershipResult.DENIED
 
 
 def test_check_resource_team_ownership_gateway_team_allows_matching_team():
@@ -1683,7 +1683,7 @@ def test_check_resource_team_ownership_gateway_team_allows_matching_team():
     gateway.team_id = "team-1"
     db.execute.return_value.scalar_one_or_none.return_value = gateway
 
-    assert middleware._check_resource_team_ownership("/gateways/a1b2c3d4", ["team-1"], db=db, _user_email="user@example.com") is True
+    assert middleware._check_resource_team_ownership("/gateways/a1b2c3d4", ["team-1"], db=db, _user_email="user@example.com") is ResourceOwnershipResult.ALLOWED
 
 
 def test_check_resource_team_ownership_gateway_private_denies_non_owner():
@@ -1697,7 +1697,7 @@ def test_check_resource_team_ownership_gateway_private_denies_non_owner():
     gateway.team_id = "team-1"
     db.execute.return_value.scalar_one_or_none.return_value = gateway
 
-    assert middleware._check_resource_team_ownership("/gateways/a1b2c3d4", ["team-1"], db=db, _user_email="other@example.com") is False
+    assert middleware._check_resource_team_ownership("/gateways/a1b2c3d4", ["team-1"], db=db, _user_email="other@example.com") is ResourceOwnershipResult.DENIED
 
 
 def test_check_resource_team_ownership_unknown_resource_type_denies(monkeypatch):
@@ -1712,7 +1712,7 @@ def test_check_resource_team_ownership_unknown_resource_type_denies(monkeypatch)
     db = MagicMock()
 
     monkeypatch.setattr(token_scoping_module, "_RESOURCE_PATTERNS", [(re.compile(r"/weird/?([a-f0-9\\-]+)"), "weird")])
-    assert middleware._check_resource_team_ownership("/weird/a1b2c3d4", ["team-1"], db=db, _user_email="user@example.com") is False
+    assert middleware._check_resource_team_ownership("/weird/a1b2c3d4", ["team-1"], db=db, _user_email="user@example.com") is ResourceOwnershipResult.DENIED
 
 
 def test_check_resource_team_ownership_tool_private_and_unknown():
@@ -1724,12 +1724,12 @@ def test_check_resource_team_ownership_tool_private_and_unknown():
     tool.visibility = "private"
     tool.owner_email = "owner@example.com"
     db.execute.return_value.scalar_one_or_none.return_value = tool
-    assert middleware._check_resource_team_ownership("/tools/a1b2c3d4", ["team-1"], db=db, _user_email="owner@example.com") is True
-    assert middleware._check_resource_team_ownership("/tools/a1b2c3d4", ["team-1"], db=db, _user_email="other@example.com") is False
+    assert middleware._check_resource_team_ownership("/tools/a1b2c3d4", ["team-1"], db=db, _user_email="owner@example.com") is ResourceOwnershipResult.ALLOWED
+    assert middleware._check_resource_team_ownership("/tools/a1b2c3d4", ["team-1"], db=db, _user_email="other@example.com") is ResourceOwnershipResult.DENIED
 
     # Unknown visibility denies
     tool.visibility = "mystery"
-    assert middleware._check_resource_team_ownership("/tools/a1b2c3d4", ["team-1"], db=db, _user_email="owner@example.com") is False
+    assert middleware._check_resource_team_ownership("/tools/a1b2c3d4", ["team-1"], db=db, _user_email="owner@example.com") is ResourceOwnershipResult.DENIED
 
 
 def test_check_resource_team_ownership_resource_branches():
@@ -1740,31 +1740,31 @@ def test_check_resource_team_ownership_resource_branches():
     resource = MagicMock()
     resource.visibility = "public"
     db.execute.return_value.scalar_one_or_none.return_value = resource
-    assert middleware._check_resource_team_ownership("/resources/a1b2c3d4", ["team-1"], db=db, _user_email="user@example.com") is True
+    assert middleware._check_resource_team_ownership("/resources/a1b2c3d4", ["team-1"], db=db, _user_email="user@example.com") is ResourceOwnershipResult.ALLOWED
 
     # Public-only token denied for team resource
     resource.visibility = "team"
     resource.team_id = "team-1"
-    assert middleware._check_resource_team_ownership("/resources/a1b2c3d4", [], db=db, _user_email="user@example.com") is False
+    assert middleware._check_resource_team_ownership("/resources/a1b2c3d4", [], db=db, _user_email="user@example.com") is ResourceOwnershipResult.DENIED
 
     # Team mismatch denied
-    assert middleware._check_resource_team_ownership("/resources/a1b2c3d4", ["team-2"], db=db, _user_email="user@example.com") is False
+    assert middleware._check_resource_team_ownership("/resources/a1b2c3d4", ["team-2"], db=db, _user_email="user@example.com") is ResourceOwnershipResult.DENIED
 
     # Private resource denied for non-owner
     resource.visibility = "private"
     resource.owner_email = "owner@example.com"
-    assert middleware._check_resource_team_ownership("/resources/a1b2c3d4", ["team-1"], db=db, _user_email="other@example.com") is False
+    assert middleware._check_resource_team_ownership("/resources/a1b2c3d4", ["team-1"], db=db, _user_email="other@example.com") is ResourceOwnershipResult.DENIED
 
     # Unknown visibility denies
     resource.visibility = "mystery"
-    assert middleware._check_resource_team_ownership("/resources/a1b2c3d4", ["team-1"], db=db, _user_email="user@example.com") is False
+    assert middleware._check_resource_team_ownership("/resources/a1b2c3d4", ["team-1"], db=db, _user_email="user@example.com") is ResourceOwnershipResult.DENIED
 
 
-def test_check_resource_team_ownership_exception_returns_false():
+def test_check_resource_team_ownership_exception_returns_denied():
     middleware = TokenScopingMiddleware()
     db = MagicMock()
     db.execute.side_effect = RuntimeError("boom")
-    assert middleware._check_resource_team_ownership("/tools/a1b2c3d4", ["team-1"], db=db, _user_email="user@example.com") is False
+    assert middleware._check_resource_team_ownership("/tools/a1b2c3d4", ["team-1"], db=db, _user_email="user@example.com") is ResourceOwnershipResult.DENIED
 
 
 def _make_request(path: str = "/servers/server-123") -> MagicMock:
@@ -1818,12 +1818,111 @@ async def test_team_scoped_resource_denied(monkeypatch):
     with (
         patch.object(middleware, "_extract_token_scopes", return_value=payload),
         patch.object(middleware, "_check_team_membership", return_value=True),
-        patch.object(middleware, "_check_resource_team_ownership", return_value=False),
+        patch.object(middleware, "_check_resource_team_ownership", return_value=ResourceOwnershipResult.DENIED),
     ):
         call_next = AsyncMock()
         response = await middleware(mock_request, call_next)
         assert response.status_code == status.HTTP_403_FORBIDDEN
         call_next.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("path", "token_teams"),
+    [
+        ("/servers/aabbccddeeff00112233445566778899", ["team-1"]),
+        ("/gateways/aabbccddeeff00112233445566778899", ["team-1"]),
+        ("/servers/aabbccddeeff00112233445566778899", []),
+        ("/gateways/aabbccddeeff00112233445566778899", []),
+        ("/servers/aabbccdd-eeff-0011-2233-445566778899", ["team-1"]),
+        ("/gateways/aabbccdd-eeff-0011-2233-445566778899", []),
+        ("/v1/servers/aabbccddeeff00112233445566778899", ["team-1"]),
+        ("/v1/gateways/aabbccddeeff00112233445566778899", []),
+    ],
+)
+async def test_missing_targeted_delete_returns_404(monkeypatch, path, token_teams):
+    middleware = TokenScopingMiddleware()
+    request = _make_request(path)
+    request.method = "DELETE"
+    db = MagicMock()
+    db.execute.return_value.scalar_one_or_none.return_value = None
+    payload = {"sub": "user@example.com", "teams": token_teams, "scopes": {"permissions": ["*"]}}
+
+    monkeypatch.setattr("mcpgateway.db.get_db", lambda: iter([db]))
+    with (
+        patch.object(middleware, "_extract_token_scopes", return_value=payload),
+        patch.object(middleware, "_check_team_membership", return_value=True),
+    ):
+        response = await middleware(request, AsyncMock())
+
+    assert response.status_code == status.HTTP_404_NOT_FOUND
+
+
+@pytest.mark.asyncio
+async def test_missing_targeted_delete_under_app_root_path_returns_404(monkeypatch):
+    middleware = TokenScopingMiddleware()
+    request = _make_request("/forge/v1/servers/aabbccddeeff00112233445566778899")
+    request.method = "DELETE"
+    db = MagicMock()
+    db.execute.return_value.scalar_one_or_none.return_value = None
+    payload = {"sub": "user@example.com", "teams": ["team-1"], "scopes": {"permissions": ["*"]}}
+
+    monkeypatch.setattr("mcpgateway.middleware.token_scoping.settings.app_root_path", "/forge")
+    monkeypatch.setattr("mcpgateway.db.get_db", lambda: iter([db]))
+    with (
+        patch.object(middleware, "_extract_token_scopes", return_value=payload),
+        patch.object(middleware, "_check_team_membership", return_value=True),
+    ):
+        response = await middleware(request, AsyncMock())
+
+    assert response.status_code == status.HTTP_404_NOT_FOUND
+
+
+@pytest.mark.asyncio
+async def test_targeted_delete_database_error_returns_403(monkeypatch):
+    middleware = TokenScopingMiddleware()
+    request = _make_request("/servers/aabbccddeeff00112233445566778899")
+    request.method = "DELETE"
+    db = MagicMock()
+    db.execute.side_effect = RuntimeError("boom")
+    payload = {"sub": "user@example.com", "teams": ["team-1"], "scopes": {"permissions": ["*"]}}
+
+    monkeypatch.setattr("mcpgateway.db.get_db", lambda: iter([db]))
+    with (
+        patch.object(middleware, "_extract_token_scopes", return_value=payload),
+        patch.object(middleware, "_check_team_membership", return_value=True),
+    ):
+        response = await middleware(request, AsyncMock())
+
+    assert response.status_code == status.HTTP_403_FORBIDDEN
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("method", "path", "ownership_result"),
+    [
+        ("DELETE", "/servers/aabbccddeeff00112233445566778899", ResourceOwnershipResult.DENIED),
+        ("DELETE", "/gateways/aabbccddeeff00112233445566778899", ResourceOwnershipResult.DENIED),
+        ("GET", "/servers/aabbccddeeff00112233445566778899", ResourceOwnershipResult.NOT_FOUND),
+        ("PUT", "/gateways/aabbccddeeff00112233445566778899", ResourceOwnershipResult.NOT_FOUND),
+        ("DELETE", "/servers/aabbccddeeff00112233445566778899/sse", ResourceOwnershipResult.NOT_FOUND),
+        ("DELETE", "/tools/aabbccddeeff00112233445566778899", ResourceOwnershipResult.DENIED),
+    ],
+)
+async def test_non_targeted_or_denied_ownership_returns_403(method, path, ownership_result):
+    middleware = TokenScopingMiddleware()
+    request = _make_request(path)
+    request.method = method
+    payload = {"sub": "user@example.com", "teams": [], "scopes": {"permissions": ["*"]}}
+
+    with (
+        patch.object(middleware, "_extract_token_scopes", return_value=payload),
+        patch.object(middleware, "_check_team_membership", return_value=True),
+        patch.object(middleware, "_check_resource_team_ownership", return_value=ownership_result),
+    ):
+        response = await middleware(request, AsyncMock())
+
+    assert response.status_code == status.HTTP_403_FORBIDDEN
 
 
 class TestRuntimeMcpTransportCompensation:
@@ -2002,7 +2101,7 @@ async def test_public_only_resource_denied():
     with (
         patch.object(middleware, "_extract_token_scopes", return_value=payload),
         patch.object(middleware, "_check_team_membership", return_value=True),
-        patch.object(middleware, "_check_resource_team_ownership", return_value=False),
+        patch.object(middleware, "_check_resource_team_ownership", return_value=ResourceOwnershipResult.DENIED),
     ):
         call_next = AsyncMock()
         response = await middleware(mock_request, call_next)

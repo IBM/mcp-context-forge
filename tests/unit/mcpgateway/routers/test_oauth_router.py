@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.db import Gateway
+from mcpgateway.middleware.token_scoping import ResourceOwnershipResult
 from mcpgateway.routers.oauth_router import ADMIN_CSRF_COOKIE_NAME, enforce_fetch_tools_csrf
 from mcpgateway.schemas import EmailUserResponse
 from mcpgateway.services.oauth_manager import OAuthError
@@ -1119,7 +1120,7 @@ class TestOAuthRouter:
             from mcpgateway.routers.oauth_router import fetch_tools_after_oauth
 
             # Execute
-            with patch("mcpgateway.routers.oauth_router.token_scoping_middleware._check_resource_team_ownership", return_value=True):
+            with patch("mcpgateway.routers.oauth_router.token_scoping_middleware._check_resource_team_ownership", return_value=ResourceOwnershipResult.ALLOWED):
                 result = await fetch_tools_after_oauth(gateway_id="gateway123", request=request, current_user={"email": "test@example.com", "is_admin": False}, db=mock_db)
 
             # Assert
@@ -1149,7 +1150,7 @@ class TestOAuthRouter:
             from mcpgateway.routers.oauth_router import fetch_tools_after_oauth
 
             # Execute
-            with patch("mcpgateway.routers.oauth_router.token_scoping_middleware._check_resource_team_ownership", return_value=True):
+            with patch("mcpgateway.routers.oauth_router.token_scoping_middleware._check_resource_team_ownership", return_value=ResourceOwnershipResult.ALLOWED):
                 result = await fetch_tools_after_oauth(gateway_id="gateway123", request=request, current_user={"email": "test@example.com", "is_admin": False}, db=mock_db)
 
             # Assert
@@ -1178,7 +1179,7 @@ class TestOAuthRouter:
 
             # Execute & Assert
             with pytest.raises(HTTPException) as exc_info:
-                with patch("mcpgateway.routers.oauth_router.token_scoping_middleware._check_resource_team_ownership", return_value=True):
+                with patch("mcpgateway.routers.oauth_router.token_scoping_middleware._check_resource_team_ownership", return_value=ResourceOwnershipResult.ALLOWED):
                     await fetch_tools_after_oauth(gateway_id="gateway123", request=request, current_user={"email": "test@example.com", "is_admin": False}, db=mock_db)
 
             assert exc_info.value.status_code == 500
@@ -1206,7 +1207,7 @@ class TestOAuthRouter:
             from mcpgateway.routers.oauth_router import fetch_tools_after_oauth
 
             # Execute
-            with patch("mcpgateway.routers.oauth_router.token_scoping_middleware._check_resource_team_ownership", return_value=True):
+            with patch("mcpgateway.routers.oauth_router.token_scoping_middleware._check_resource_team_ownership", return_value=ResourceOwnershipResult.ALLOWED):
                 result = await fetch_tools_after_oauth(gateway_id="gateway123", request=request, current_user={"email": "test@example.com", "is_admin": False}, db=mock_db)
 
             # Assert
@@ -1226,7 +1227,7 @@ class TestOAuthRouter:
         from mcpgateway.routers.oauth_router import fetch_tools_after_oauth
 
         with pytest.raises(HTTPException) as exc_info:
-            with patch("mcpgateway.routers.oauth_router.token_scoping_middleware._check_resource_team_ownership", return_value=False):
+            with patch("mcpgateway.routers.oauth_router.token_scoping_middleware._check_resource_team_ownership", return_value=ResourceOwnershipResult.DENIED):
                 await fetch_tools_after_oauth(gateway_id="gateway123", request=request, current_user={"email": "test@example.com", "is_admin": False}, db=mock_db)
 
         assert exc_info.value.status_code == 403
@@ -1249,7 +1250,7 @@ class TestOAuthRouter:
             from mcpgateway.routers.oauth_router import fetch_tools_after_oauth
 
             with pytest.raises(HTTPException) as exc_info:
-                with patch("mcpgateway.routers.oauth_router.token_scoping_middleware._check_resource_team_ownership", return_value=False) as ownership_check:
+                with patch("mcpgateway.routers.oauth_router.token_scoping_middleware._check_resource_team_ownership", return_value=ResourceOwnershipResult.DENIED) as ownership_check:
                     await fetch_tools_after_oauth(
                         gateway_id="gateway123",
                         request=request,
@@ -1277,7 +1278,7 @@ class TestOAuthRouter:
 
             from mcpgateway.routers.oauth_router import fetch_tools_after_oauth
 
-            with patch("mcpgateway.routers.oauth_router.token_scoping_middleware._check_resource_team_ownership", return_value=True) as ownership_check:
+            with patch("mcpgateway.routers.oauth_router.token_scoping_middleware._check_resource_team_ownership", return_value=ResourceOwnershipResult.ALLOWED) as ownership_check:
                 result = await fetch_tools_after_oauth(
                     gateway_id="gateway123",
                     request=request,
@@ -1338,7 +1339,7 @@ class TestOAuthRouter:
         from mcpgateway.routers.oauth_router import fetch_tools_after_oauth
 
         with pytest.raises(HTTPException) as exc_info:
-            with patch("mcpgateway.routers.oauth_router.token_scoping_middleware._check_resource_team_ownership", return_value=False):
+            with patch("mcpgateway.routers.oauth_router.token_scoping_middleware._check_resource_team_ownership", return_value=ResourceOwnershipResult.DENIED):
                 await fetch_tools_after_oauth(
                     gateway_id="gateway123",
                     request=request,
@@ -1398,12 +1399,38 @@ class TestOAuthAccessHelpers:
         request.state = SimpleNamespace(token_teams=None)
         gateway = SimpleNamespace(visibility="public", owner_email=None, team_id=None)
 
-        with patch("mcpgateway.routers.oauth_router.token_scoping_middleware._check_resource_team_ownership", return_value=False) as ownership_check:
+        with patch("mcpgateway.routers.oauth_router.token_scoping_middleware._check_resource_team_ownership", return_value=ResourceOwnershipResult.DENIED) as ownership_check:
             with pytest.raises(HTTPException) as exc_info:
                 await _enforce_gateway_access("gateway123", gateway, {"email": "user@example.com", "is_admin": False}, mock_db, request=request)
 
         assert exc_info.value.status_code == 403
         assert ownership_check.call_args.args[1] == []
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("ownership_result", [ResourceOwnershipResult.DENIED, ResourceOwnershipResult.NOT_FOUND])
+    async def test_enforce_gateway_access_rejects_non_allowed_ownership_results(self, mock_db, ownership_result):
+        from mcpgateway.routers.oauth_router import _enforce_gateway_access
+
+        request = Mock(spec=Request)
+        request.state = SimpleNamespace(token_teams=[])
+        gateway = SimpleNamespace(visibility="public", owner_email=None, team_id=None)
+
+        with patch("mcpgateway.routers.oauth_router.token_scoping_middleware._check_resource_team_ownership", return_value=ownership_result):
+            with pytest.raises(HTTPException) as exc_info:
+                await _enforce_gateway_access("gateway123", gateway, {"email": "user@example.com", "is_admin": False}, mock_db, request=request)
+
+        assert exc_info.value.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_enforce_gateway_access_allows_allowed_ownership_result(self, mock_db):
+        from mcpgateway.routers.oauth_router import _enforce_gateway_access
+
+        request = Mock(spec=Request)
+        request.state = SimpleNamespace(token_teams=[])
+        gateway = SimpleNamespace(visibility="public", owner_email=None, team_id=None)
+
+        with patch("mcpgateway.routers.oauth_router.token_scoping_middleware._check_resource_team_ownership", return_value=ResourceOwnershipResult.ALLOWED):
+            await _enforce_gateway_access("gateway123", gateway, {"email": "user@example.com", "is_admin": False}, mock_db, request=request)
 
     @pytest.mark.asyncio
     async def test_enforce_gateway_access_admin_null_token_teams_short_circuit(self, mock_db):
@@ -1923,7 +1950,7 @@ class TestOAuthRouterAdditionalCoverage:
 
         from mcpgateway.routers.oauth_router import initiate_oauth_flow
 
-        with patch("mcpgateway.routers.oauth_router.token_scoping_middleware._check_resource_team_ownership", return_value=True):
+        with patch("mcpgateway.routers.oauth_router.token_scoping_middleware._check_resource_team_ownership", return_value=ResourceOwnershipResult.ALLOWED):
             with pytest.raises(HTTPException) as exc_info:
                 await initiate_oauth_flow("gateway123", mock_request, {"email": "intruder@example.com", "is_admin": False}, mock_db)
 
@@ -1941,7 +1968,7 @@ class TestOAuthRouterAdditionalCoverage:
 
         from mcpgateway.routers.oauth_router import get_oauth_status
 
-        with patch("mcpgateway.routers.oauth_router.token_scoping_middleware._check_resource_team_ownership", return_value=True):
+        with patch("mcpgateway.routers.oauth_router.token_scoping_middleware._check_resource_team_ownership", return_value=ResourceOwnershipResult.ALLOWED):
             result = await get_oauth_status(
                 "gateway123",
                 mock_request,
@@ -1963,7 +1990,7 @@ class TestOAuthRouterAdditionalCoverage:
 
         from mcpgateway.routers.oauth_router import get_oauth_status
 
-        with patch("mcpgateway.routers.oauth_router.token_scoping_middleware._check_resource_team_ownership", return_value=True):
+        with patch("mcpgateway.routers.oauth_router.token_scoping_middleware._check_resource_team_ownership", return_value=ResourceOwnershipResult.ALLOWED):
             with pytest.raises(HTTPException) as exc_info:
                 await get_oauth_status(
                     "gateway123",
