@@ -46,11 +46,13 @@ export interface UsePromptFormOptions {
   /** Values to prefill the form with (edit mode). */
   initialValues?: PromptFormInitialValues;
   /**
-   * Whether the template field is required. Defaults to `true` (REST/local
-   * prompts). Pass `false` for federated prompts, which legitimately have no
-   * local template.
+   * Whether this is a federated prompt (sourced from a remote MCP gateway).
+   * Federated prompts have no local template (so it is not required) and their
+   * description/template/arguments are managed upstream — those fields are
+   * omitted from the update payload so an edit never clobbers newer upstream
+   * data with stale, prefilled form state.
    */
-  templateRequired?: boolean;
+  federated?: boolean;
 }
 
 // The generated `prompt` field is nullable to match the server's Optional
@@ -195,9 +197,11 @@ function getApiFieldError(error: unknown): PromptFormErrors | null {
 }
 
 export function usePromptForm(options: UsePromptFormOptions = {}): UsePromptFormReturn {
-  const { promptId, initialValues, templateRequired = true } = options;
+  const { promptId, initialValues, federated = false } = options;
   const intl = useIntl();
   const { selectedTeamId } = useAuthContext();
+  // Federated prompts have no local template, so it isn't required.
+  const templateRequired = !federated;
   const schema = useMemo(
     () => createPromptFormSchema(intl, templateRequired),
     [intl, templateRequired],
@@ -371,16 +375,28 @@ export function usePromptForm(options: UsePromptFormOptions = {}): UsePromptForm
 
   const getUpdateData = useCallback((): NonNullable<PromptUpdate> => {
     const { prompt } = schema.parse(getFormValues());
-    return {
+    const payload: NonNullable<PromptUpdate> = {
       name: prompt.name,
-      description: prompt.description ?? null,
-      template: prompt.template,
-      arguments: prompt.arguments,
       tags: prompt.tags ?? null,
       teamId: prompt.teamId,
       visibility: prompt.visibility,
     };
-  }, [getFormValues, schema]);
+
+    // Federated prompts have their description/template/arguments managed
+    // upstream. Omit them entirely so a name/visibility/tag edit never
+    // overwrites newer upstream data with stale, prefilled form values (the
+    // inputs are read-only in the form, but their values would still be sent).
+    if (!federated) {
+      // Send "" (not null) for an emptied description so the backend actually
+      // clears it — the update service treats null as "field not provided" and
+      // leaves the previous value in place.
+      payload.description = prompt.description ?? "";
+      payload.template = prompt.template;
+      payload.arguments = prompt.arguments;
+    }
+
+    return payload;
+  }, [federated, getFormValues, schema]);
 
   const handleSubmit = useCallback(
     async (event: FormEvent<HTMLFormElement>, onSuccess?: () => void) => {

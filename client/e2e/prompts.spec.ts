@@ -273,6 +273,10 @@ test.describe("Prompts page", () => {
 
     await expect.poll(() => putBody).not.toBeNull();
     expect(putBody!.name).toBe("renamed_summarize");
+    // Upstream-managed fields are omitted so the edit can't clobber newer data.
+    expect(putBody).not.toHaveProperty("template");
+    expect(putBody).not.toHaveProperty("description");
+    expect(putBody).not.toHaveProperty("arguments");
   });
 
   test("renders a preview in the details panel Try it tab", async ({ page }) => {

@@ -56,7 +56,7 @@ export function PromptForm({ isOpen, onToggle, onSuccess, prompt }: PromptFormPr
   const form = usePromptForm({
     promptId: prompt?.id,
     initialValues: promptToInitialValues(prompt),
-    templateRequired,
+    federated: isFederated,
   });
   const nameInputRef = useRef<HTMLInputElement>(null);
 
