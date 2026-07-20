@@ -1,0 +1,844 @@
+{
+  "project_root": ".",
+  "path_log_file": "last_failed.log",
+  "groups": [
+    {
+      "label": "1. Version Update",
+      "color": "Blue",
+      "checks": [
+        {
+          "name": "1.1 bump-version",
+          "description": "Bump version atomically with bump2version — update X.Y.Z-RC-N to the actual release version before running",
+          "cmd": [
+            "sh",
+            "-c",
+            "bump2version --verbose --new-version=1.0.6 build"
+          ],
+          "manual": false
+        },
+        {
+          "name": "1.2 update-roadmap",
+          "description": "Set release Completion=100% and Status=Closed in docs/docs/architecture/roadmap.md; move incomplete issues to next milestone",
+          "cmd": [
+            "sh",
+            "-c",
+            "echo 'Open docs/docs/architecture/roadmap.md and update milestone status'"
+          ],
+          "manual": true
+        },
+        {
+          "name": "1.3.1 check-dependabot-alerts",
+          "description": "Check for open critical Dependabot alerts — prints count, instructs you to fix any before proceeding",
+          "cmd": [
+            "sh",
+            "-c",
+            "count=$(gh api repos/IBM/mcp-context-forge/dependabot/alerts --jq '[.[] | select(.state==\"open\" and .security_advisory.severity == \"critical\")] | length'); if [ \"$count\" -gt 0 ]; then echo \"\"; echo \"⚠️  WARNING: $count open critical Dependabot alert(s) found.\"; echo \"   Resolve them at: https://github.com/IBM/mcp-context-forge/security/dependabot\"; echo \"   Do NOT proceed until all critical alerts are dismissed or patched.\"; echo \"\"; else echo \"✅ OK: no open critical Dependabot alerts — safe to proceed.\"; fi"
+          ],
+          "manual": true
+        },
+        {
+          "name": "1.3.2 check-code-scanning-alerts",
+          "description": "Check for open code scanning alerts — prints count, instructs you to review any before proceeding",
+          "cmd": [
+            "sh",
+            "-c",
+            "count=$(gh api repos/IBM/mcp-context-forge/code-scanning/alerts --jq '[.[] | select(.state==\"open\")] | length'); if [ \"$count\" -gt 0 ]; then echo \"\"; echo \"⚠️  WARNING: $count open code scanning alert(s) found.\"; echo \"   Review them at: https://github.com/IBM/mcp-context-forge/security/code-scanning\"; echo \"   Resolve or triage each one before tagging the release.\"; echo \"\"; else echo \"✅ OK: no open code scanning alerts — safe to proceed.\"; fi"
+          ],
+          "manual": true
+        },
+        {
+          "name": "1.4.1 check-base-images",
+          "description": "Print current FROM lines in Containerfile — manually update each tag to the latest before running 1.4.2",
+          "cmd": [
+            "sh",
+            "-c",
+            "grep '^FROM' Containerfile"
+          ],
+          "manual": true
+        },
+        {
+          "name": "1.4.2 build-no-cache",
+          "description": "Rebuild production container after base-image bump to verify new tags build cleanly",
+          "cmd": [
+            "sh",
+            "-c",
+            "make docker-prod DOCKER_BUILD_ARGS='--no-cache'"
+          ],
+          "manual": false
+        }
+      ]
+    },
+    {
+      "label": "2. Python Dependency Updates",
+      "color": "Yellow",
+      "checks": [
+        {
+          "name": "2.1 update-cpex-deps",
+          "description": "Update CPEX exclude-newer date in pyproject.toml manually, then run uv lock --upgrade",
+          "cmd": [
+            "sh",
+            "-c",
+            "uv lock --upgrade"
+          ],
+          "manual": false
+        },
+        {
+          "name": "2.2.1 update-deps-all-pyproject",
+          "description": "Run uv-upsync + uv lock --upgrade for every pyproject.toml — fails if any project fails to lock",
+          "cmd": [
+            "sh",
+            "-c",
+            "uv tool install uv-upsync; find . -path './mcp-servers/templates' -prune -o -path '*/.venv' -prune -o -path '*/target' -prune -o -path './.cache' -prune -o -name 'pyproject.toml' -type f -print | while read -r toml_file; do dir=$(dirname \"$toml_file\"); echo \"==> $dir\"; uv-upsync --project \"$dir\" 2>/dev/null || true; uv lock --upgrade --exclude-newer '10 days' --project \"$dir\" || { echo \"FAIL: uv lock failed in $dir\"; exit 1; }; done"
+          ],
+          "manual": false
+        },
+        {
+          "name": "2.2.2 update-deps-requirements-txt",
+          "description": "Update all requirements.txt files via the GitHub tools updater — fails if any file fails",
+          "cmd": [
+            "sh",
+            "-c",
+            "find . -path '*/.venv' -prune -o -path './.cache' -prune -o -name 'requirements.txt' -type f -print | while read -r req_file; do echo \"==> $req_file\"; uv run .github/tools/update_dependencies.py --file \"$req_file\" || { echo \"FAIL: update failed for $req_file\"; exit 1; }; done"
+          ],
+          "manual": false
+        },
+        {
+          "name": "2.3 install-dev",
+          "description": "Reinstall dev environment after dependency updates",
+          "cmd": [
+            "sh",
+            "-c",
+            "make install-dev"
+          ],
+          "manual": false
+        },
+        {
+          "name": "2.4.1 pip-audit",
+          "description": "Audit dependencies for known CVEs — fails if any CVE found",
+          "cmd": [
+            "sh",
+            "-c",
+            "source .venv/bin/activate && uv pip install -q pip-audit && pip-audit --strict"
+          ],
+          "manual": false
+        },
+        {
+          "name": "2.4.2 rebuild-and-test",
+          "description": "Rebuild production container with updated deps and run the full test suite",
+          "cmd": [
+            "sh",
+            "-c",
+            "make docker-prod DOCKER_BUILD_ARGS='--no-cache' && make test"
+          ],
+          "manual": false
+        }
+      ]
+    },
+    {
+      "label": "3. Rust & JavaScript Dependency Updates",
+      "color": "Orange",
+      "checks": [
+        {
+          "name": "3.1.1 cargo-update",
+          "description": "Update Cargo.lock for the whole workspace",
+          "cmd": [
+            "sh",
+            "-c",
+            "cargo update --workspace"
+          ],
+          "manual": false
+        },
+        {
+          "name": "3.1.2 rust-check",
+          "description": "Verify Rust build, lint, and tests (cargo fmt --check + clippy -D warnings + cargo test)",
+          "cmd": [
+            "sh",
+            "-c",
+            "make rust-check"
+          ],
+          "manual": false
+        },
+        {
+          "name": "3.2.1 rust-vet",
+          "description": "Supply-chain vetting with cargo-vet — fails if any unvetted crate found",
+          "cmd": [
+            "sh",
+            "-c",
+            "make rust-vet"
+          ],
+          "manual": false
+        },
+        {
+          "name": "3.2.2 cargo-vet-prune",
+          "description": "Prune stale cargo-vet exemptions after vetting",
+          "cmd": [
+            "sh",
+            "-c",
+            "cargo vet prune"
+          ],
+          "manual": false
+        },
+        {
+          "name": "3.3.1 npm-update",
+          "description": "Update npm packages and fix audit issues",
+          "cmd": [
+            "sh",
+            "-c",
+            "npm update && npm audit && npm audit fix"
+          ],
+          "manual": false
+        },
+        {
+          "name": "3.3.2 lint-web",
+          "description": "Run frontend linting",
+          "cmd": [
+            "sh",
+            "-c",
+            "make lint-web"
+          ],
+          "manual": false
+        },
+        {
+          "name": "3.3.3 test-js-coverage",
+          "description": "Run JavaScript unit tests with coverage (Vitest + Istanbul)",
+          "cmd": [
+            "sh",
+            "-c",
+            "make test-js-coverage"
+          ],
+          "manual": false
+        },
+        {
+          "name": "3.4.1 build-ui",
+          "description": "Rebuild Admin UI Vite bundle after npm dependency updates",
+          "cmd": [
+            "sh",
+            "-c",
+            "make build-ui"
+          ],
+          "manual": false
+        },
+        {
+          "name": "3.4.2 smoke-test-admin-ui",
+          "description": "Manually verify Admin UI bundled assets load correctly in a browser after bundle rebuild",
+          "cmd": [
+            "sh",
+            "-c",
+            "echo 'Open http://localhost:8080/admin/ and verify the UI loads with no missing assets'"
+          ],
+          "manual": true
+        },
+        {
+          "name": "3.5 rebuild-containers",
+          "description": "Rebuild production container from scratch after all dependency ecosystem updates",
+          "cmd": [
+            "sh",
+            "-c",
+            "make docker-prod DOCKER_BUILD_ARGS='--no-cache'"
+          ],
+          "manual": false
+        }
+      ]
+    },
+    {
+      "label": "4. Quality Gates",
+      "color": "Purple",
+      "checks": [
+        {
+          "name": "4.1 verify",
+          "description": "Validate wheel and sdist with twine, check-manifest, and pyroma",
+          "cmd": [
+            "sh",
+            "-c",
+            "make verify"
+          ],
+          "manual": false
+        },
+        {
+          "name": "4.2 detect-secrets-scan",
+          "description": "Full-tree secrets scan — fails if any unaudited secrets found in the baseline",
+          "cmd": [
+            "sh",
+            "-c",
+            "make detect-secrets-scan; unaudited=$(uv tool run detect-secrets audit --report .secrets.baseline 2>/dev/null | grep -c 'Unaudited' || true); if [ \"$unaudited\" -gt 0 ]; then echo \"FAIL: $unaudited unaudited secret(s) — run make detect-secrets-audit to triage\"; exit 1; fi; echo 'OK: no unaudited secrets'"
+          ],
+          "manual": false
+        }
+      ]
+    },
+    {
+      "label": "5. Test Gates",
+      "color": "Green",
+      "checks": [
+        {
+          "name": "5.1 coverage",
+          "description": "Python unit tests with coverage report — review for significant regressions",
+          "cmd": [
+            "sh",
+            "-c",
+            "make coverage"
+          ],
+          "manual": false
+        },
+        {
+          "name": "5.2 test-js-coverage",
+          "description": "JavaScript unit tests with Istanbul coverage (Vitest)",
+          "cmd": [
+            "sh",
+            "-c",
+            "make test-js-coverage"
+          ],
+          "manual": false
+        },
+        {
+          "name": "5.3 test-ui-headless",
+          "description": "Playwright UI tests in headless Chromium — requires compose stack from section 6",
+          "cmd": [
+            "sh",
+            "-c",
+            "make test-ui-headless"
+          ],
+          "manual": false
+        },
+        {
+          "name": "5.4.0 start testing stack",
+          "description": "Start the Testing Stack",
+          "cmd": [
+            "sh",
+            "-c",
+            "make testing-down compose-clean testing-up && i=1; while [ $i -le 30 ]; do if curl -sf http://localhost:8080/health >/dev/null 2>&1; then echo 'OK: gateway healthy'; break; fi; echo \"Waiting for gateway... ($i/30)\"; sleep 2; if [ $i -eq 30 ]; then echo 'FAIL: gateway did not become healthy after 60s'; exit 1; fi; i=$((i+1)); done"
+          ],
+          "manual": false
+        },
+        {
+          "name": "5.4.1 test-mcp-rbac",
+          "description": "RBAC enforcement and multi-transport MCP protocol compliance tests — requires compose stack",
+          "cmd": [
+            "sh",
+            "-c",
+            "make test-mcp-rbac"
+          ],
+          "manual": false
+        },
+        {
+          "name": "5.4.2 test-mcp-protocol-e2e",
+          "description": "MCP protocol end-to-end tests via FastMCP client — requires compose stack",
+          "cmd": [
+            "sh",
+            "-c",
+            "make test-mcp-protocol-e2e"
+          ],
+          "manual": false
+        },
+        {
+          "name": "5.5.1 load-test-cli",
+          "description": "10-minute sustained load test — acceptance gate: 1000 RPS target, 0% error rate",
+          "cmd": [
+            "sh",
+            "-c",
+            "make load-test-cli"
+          ],
+          "manual": false
+        },
+        {
+          "name": "5.5.2 load-test-light",
+          "description": "Quick smoke load test: 10 users, 30s",
+          "cmd": [
+            "sh",
+            "-c",
+            "make load-test LOADTEST_USERS=10 LOADTEST_SPAWN_RATE=2 LOADTEST_RUN_TIME=30s"
+          ],
+          "manual": false
+        },
+        {
+          "name": "5.5.3 load-test-heavy",
+          "description": "Stress load test: 200 users, 120s",
+          "cmd": [
+            "sh",
+            "-c",
+            "make load-test LOADTEST_USERS=200 LOADTEST_SPAWN_RATE=20 LOADTEST_RUN_TIME=120s"
+          ],
+          "manual": false
+        },
+        {
+          "name": "5.5.4 load-test-sustained",
+          "description": "Endurance load test: 25 users, 300s",
+          "cmd": [
+            "sh",
+            "-c",
+            "make load-test LOADTEST_USERS=25 LOADTEST_SPAWN_RATE=5 LOADTEST_RUN_TIME=300s"
+          ],
+          "manual": false
+        },
+        {
+          "name": "5.5.5 load-test-stress",
+          "description": "Peak load test: 500 users, 60s",
+          "cmd": [
+            "sh",
+            "-c",
+            "make load-test LOADTEST_USERS=500 LOADTEST_SPAWN_RATE=50 LOADTEST_RUN_TIME=60s"
+          ],
+          "manual": false
+        },
+        {
+          "name": "5.6.0 clean  testing stack",
+          "description": "Clean the Testing Stack",
+          "cmd": [
+            "sh",
+            "-c",
+            "make testing-down compose-clean"
+          ],
+          "manual": false
+        }
+      ]
+    },
+    {
+      "label": "6. Build Verification",
+      "color": "Cyan",
+      "checks": [
+        {
+          "name": "6.1 docker-prod",
+          "description": "Build production container from scratch",
+          "cmd": [
+            "sh",
+            "-c",
+            "make docker-prod DOCKER_BUILD_ARGS='--no-cache'"
+          ],
+          "manual": false
+        },
+        {
+          "name": "6.2.1 compose-stack-up",
+          "description": "Bring up full testing compose stack — waits up to 60s for gateway health before continuing",
+          "cmd": [
+            "sh",
+            "-c",
+            "make testing-down compose-clean testing-up && i=1; while [ $i -le 30 ]; do if curl -sf http://localhost:8080/health >/dev/null 2>&1; then echo 'OK: gateway healthy'; break; fi; echo \"Waiting for gateway... ($i/30)\"; sleep 2; if [ $i -eq 30 ]; then echo 'FAIL: gateway did not become healthy after 60s'; exit 1; fi; i=$((i+1)); done"
+          ],
+          "manual": false
+        },
+        {
+          "name": "6.2.2 compose-ps",
+          "description": "Verify all compose services are running or healthy — fails with a list of bad containers if any are not",
+          "cmd": [
+            "sh",
+            "-c",
+            "make compose-ps; bad=$(docker compose ps --format '{{.Name}}\t{{.State}}\t{{.Health}}' | awk 'NR>0 && $2!=\"running\" && $2!=\"healthy\" {print $1\" (\"$2\")\" }'); if [ -n \"$bad\" ]; then echo \"FAIL: unhealthy services: $bad\"; exit 1; fi; echo 'OK: all services running/healthy'"
+          ],
+          "manual": false
+        },
+        {
+          "name": "6.3.1 embedded-up",
+          "description": "Start embedded/iframe mode with benchmark servers",
+          "cmd": [
+            "sh",
+            "-c",
+            "make embedded-up"
+          ],
+          "manual": false
+        },
+        {
+          "name": "6.3.2 embedded-smoke-test",
+          "description": "Manually verify Admin UI renders in iframe at http://localhost:8889 and benchmark tools appear in catalog",
+          "cmd": [
+            "sh",
+            "-c",
+            "echo 'Open http://localhost:8889 and verify iframe UI, tool catalog, and navigation'"
+          ],
+          "manual": true
+        },
+        {
+          "name": "6.3.3 embedded-down",
+          "description": "Tear down embedded mode stack",
+          "cmd": [
+            "sh",
+            "-c",
+            "make embedded-down"
+          ],
+          "manual": false
+        },
+        {
+          "name": "6.4.1 dist",
+          "description": "Build wheel and sdist",
+          "cmd": [
+            "sh",
+            "-c",
+            "make dist"
+          ],
+          "manual": true
+        },
+        {
+          "name": "6.4.2 verify",
+          "description": "Validate built packages with twine, check-manifest, pyroma",
+          "cmd": [
+            "sh",
+            "-c",
+            "make verify"
+          ],
+          "manual": false
+        }
+      ]
+    },
+    {
+      "label": "7. SSO Verification",
+      "color": "Magenta",
+      "checks": [
+        {
+          "name": "7.1 compose-sso",
+          "description": "Start full stack with Keycloak SSO profile (gateway :8080, Keycloak :8180 admin/changeme)",
+          "cmd": [
+            "sh",
+            "-c",
+            "make compose-sso"
+          ],
+          "manual": false
+        },
+        {
+          "name": "7.2 sso-login-flow",
+          "description": "Manually verify SSO login: navigate to /admin/, confirm Keycloak redirect, log in, verify session and RBAC roles, test logout",
+          "cmd": [
+            "sh",
+            "-c",
+            "echo 'Open http://localhost:8080/admin/ and complete the SSO login verification checklist'"
+          ],
+          "manual": true
+        },
+        {
+          "name": "7.3 compose-sso-down",
+          "description": "Tear down SSO compose stack",
+          "cmd": [
+            "sh",
+            "-c",
+            "make compose-sso-down"
+          ],
+          "manual": false
+        }
+      ]
+    },
+    {
+      "label": "8. Observability Verification",
+      "color": "Teal",
+      "checks": [
+        {
+          "name": "8.1 monitoring-up",
+          "description": "Start monitoring stack — verifies Grafana (:3000) and Prometheus (:9090) are reachable before continuing",
+          "cmd": [
+            "sh",
+            "-c",
+            "make monitoring-up && i=1; while [ $i -le 15 ]; do if curl -sf http://localhost:3000/api/health >/dev/null 2>&1; then echo 'OK: Grafana healthy'; break; fi; echo \"Waiting for Grafana... ($i/15)\"; sleep 2; if [ $i -eq 15 ]; then echo 'FAIL: Grafana did not become healthy after 30s'; exit 1; fi; i=$((i+1)); done && curl -sf http://localhost:9090/-/healthy >/dev/null 2>&1 && echo 'OK: Prometheus healthy' || { echo 'FAIL: Prometheus not healthy'; exit 1; }"
+          ],
+          "manual": false
+        },
+        {
+          "name": "8.2 load-test-with-monitoring",
+          "description": "Run load test while monitoring stack is active — then verify all Prometheus targets are UP",
+          "cmd": [
+            "sh",
+            "-c",
+            "make load-test-cli && down=$(curl -sf 'http://localhost:9090/api/v1/targets' | python3 -c \"import sys,json; d=json.load(sys.stdin); bad=[t['labels'].get('job','?') for t in d['data']['activeTargets'] if t['health']!='up']; print('\\n'.join(bad))\"); if [ -n \"$down\" ]; then echo \"FAIL: Prometheus targets not UP: $down\"; exit 1; fi; echo 'OK: all Prometheus targets UP'"
+          ],
+          "manual": false
+        },
+        {
+          "name": "8.3 grafana-dashboard-check",
+          "description": "Manually verify Grafana: MCP Gateway Overview dashboard shows live metrics, latency graphs render, Tempo traces visible",
+          "cmd": [
+            "sh",
+            "-c",
+            "echo 'Open http://localhost:3000 (admin/changeme) and verify the MCP Gateway Overview dashboard'"
+          ],
+          "manual": true
+        },
+        {
+          "name": "8.4 monitoring-down",
+          "description": "Tear down monitoring stack",
+          "cmd": [
+            "sh",
+            "-c",
+            "make monitoring-down"
+          ],
+          "manual": false
+        }
+      ]
+    },
+    {
+      "label": "9. Security & Analysis",
+      "color": "Red",
+      "checks": [
+        {
+          "name": "9.1.1 sonar-up",
+          "description": "Start SonarQube server and wait until fully ready (up to 120s)",
+          "cmd": [
+            "sh",
+            "-c",
+            "make sonar-up-docker && i=1; while [ $i -le 24 ]; do status=$(curl -sf http://localhost:9000/api/system/status 2>/dev/null | python3 -c \"import sys,json; print(json.load(sys.stdin).get('status',''))\" 2>/dev/null); if [ \"$status\" = 'UP' ]; then echo 'OK: SonarQube is UP'; break; fi; echo \"Waiting for SonarQube... ($i/24) status=$status\"; sleep 5; if [ $i -eq 24 ]; then echo 'FAIL: SonarQube did not reach UP state after 120s'; exit 1; fi; i=$((i+1)); done"
+          ],
+          "manual": false
+        },
+        {
+          "name": "9.1.2 sonar-submit",
+          "description": "Submit SonarQube scan",
+          "cmd": [
+            "sh",
+            "-c",
+            "make sonar-submit-docker"
+          ],
+          "manual": false
+        },
+        {
+          "name": "9.1.3 sonar-review",
+          "description": "Manually review SonarQube report at http://localhost:9000 — acceptance: no new bugs, vulnerabilities, or security hotspots",
+          "cmd": [
+            "sh",
+            "-c",
+            "echo 'Open http://localhost:9000 and review the scan results'"
+          ],
+          "manual": true
+        },
+        {
+          "name": "9.2 semgrep",
+          "description": "Run Semgrep security analysis — fails if any findings reported (bypasses the || true in the Makefile)",
+          "cmd": [
+            "sh",
+            "-c",
+            "source .venv/bin/activate && uvx semgrep --config=auto mcpgateway --exclude-rule python.lang.compatibility.python37.python37-compatibility-importlib2 --error"
+          ],
+          "manual": false
+        },
+        {
+          "name": "9.3 sbom",
+          "description": "Generate CycloneDX SBOM (mcpgateway.sbom.xml) for the release artifact",
+          "cmd": [
+            "sh",
+            "-c",
+            "make sbom"
+          ],
+          "manual": false
+        },
+        {
+          "name": "9.4 container-scan",
+          "description": "Verify the latest docker-scan.yml CI run completed successfully — fails if last run was not success",
+          "cmd": [
+            "sh",
+            "-c",
+            "conclusion=$(gh run list --workflow=docker-scan.yml --limit=1 --json conclusion --jq '.[0].conclusion'); echo \"docker-scan.yml last run: $conclusion\"; if [ \"$conclusion\" != 'success' ]; then echo \"FAIL: last docker-scan.yml run was '$conclusion' — check GitHub Actions\"; exit 1; fi; echo 'OK: docker-scan.yml passed'"
+          ],
+          "manual": false
+        }
+      ]
+    },
+    {
+      "label": "10. Documentation Verification",
+      "color": "Gray",
+      "checks": [
+        {
+          "name": "10.1 markdown-links",
+          "description": "Scan Markdown files for broken internal and external links",
+          "cmd": [
+            "sh",
+            "-c",
+            "make linting-docs-markdown-links"
+          ],
+          "manual": true
+        },
+        {
+          "name": "10.2 docs-review",
+          "description": "Run local MkDocs server and manually review: new content, navigation, code blocks, CHANGELOG and roadmap pages",
+          "cmd": [
+            "sh",
+            "-c",
+            "cd docs && make serve"
+          ],
+          "manual": true
+        },
+        {
+          "name": "10.3.1 mike-deploy",
+          "description": "Deploy versioned docs with mike — update VERSION=X.Y.Z before running",
+          "cmd": [
+            "sh",
+            "-c",
+            "cd docs && make mike-deploy VERSION=1.0.x"
+          ],
+          "manual": true
+        },
+        {
+          "name": "10.3.2 mike-set-default",
+          "description": "Set the deployed version as the default landing page",
+          "cmd": [
+            "sh",
+            "-c",
+            "cd docs && make mike-set-default"
+          ],
+          "manual": true
+        },
+        {
+          "name": "10.3.3 mike-list",
+          "description": "List all deployed documentation versions to verify the deployment succeeded",
+          "cmd": [
+            "sh",
+            "-c",
+            "cd docs && make mike-list"
+          ],
+          "manual": true
+        }
+      ]
+    },
+    {
+      "label": "11. Upgrade Testing",
+      "color": "Olive",
+      "checks": [
+        {
+          "name": "11.1 upgrade-validate",
+          "description": "Run all four upgrade scenarios (SQLite/PostgreSQL × fresh/upgrade) via automated harness",
+          "cmd": [
+            "sh",
+            "-c",
+            "make docker-prod DOCKER_BUILD_ARGS='--no-cache' && make upgrade-validate"
+          ],
+          "manual": false
+        },
+        {
+          "name": "11.2 manual-compose-upgrade-postgres",
+          "description": "Manually swap image in docker-compose.yml to old release, seed data, swap back to latest, verify data survived — see release-manual-steps.md §14",
+          "cmd": [
+            "sh",
+            "-c",
+            "echo 'See release-manual-steps.md §14 for the full PostgreSQL compose upgrade procedure'"
+          ],
+          "manual": true
+        },
+        {
+          "name": "11.3.1 migration-test-all",
+          "description": "Run comprehensive migration test suite (sequential upgrades, downgrades, skip-version)",
+          "cmd": [
+            "sh",
+            "-c",
+            "make migration-test-all"
+          ],
+          "manual": true
+        },
+        {
+          "name": "11.3.2 migration-test-performance",
+          "description": "Run migration performance tests",
+          "cmd": [
+            "sh",
+            "-c",
+            "make migration-test-performance"
+          ],
+          "manual": true
+        }
+      ]
+    },
+    {
+      "label": "12. Manual Testing",
+      "color": "DarkGreen",
+      "checks": [
+        {
+          "name": "12.0.1 init-secrets",
+          "description": "Ensure JWT_SECRET_KEY is set in .env (not the placeholder) — generate if needed",
+          "cmd": [
+            "sh",
+            "-c",
+            "make init-secrets && grep JWT_SECRET_KEY .env | grep -v '__REPLACE_ME__' && echo 'OK: JWT_SECRET_KEY is set' || { echo 'FAIL: JWT_SECRET_KEY still contains placeholder'; exit 1; }"
+          ],
+          "manual": false
+        },
+        {
+          "name": "12.0.2 stack-up",
+          "description": "Build image and start compose stack for manual testing",
+          "cmd": [
+            "sh",
+            "-c",
+            "make docker-prod && make testing-up"
+          ],
+          "manual": false
+        },
+        {
+          "name": "12.1 generate-jwt",
+          "description": "Generate a JWT bearer token for manual API calls",
+          "cmd": [
+            "sh",
+            "-c",
+            "export JWT_SECRET_KEY=$(grep '^JWT_SECRET_KEY=' .env | cut -d= -f2-) && python -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret \"$JWT_SECRET_KEY\""
+          ],
+          "manual": false
+        },
+        {
+          "name": "12.2 register-sse-gateway",
+          "description": "Start mcp-server-time via SSE on :8002 and register with gateway — manually verify tools appear in catalog",
+          "cmd": [
+            "sh",
+            "-c",
+            "echo 'See release-manual-steps.md §18 for translate + curl commands'"
+          ],
+          "manual": true
+        },
+        {
+          "name": "12.3 register-streamable-http-gateway",
+          "description": "Start mcp-server-time via Streamable HTTP on :8003 and register — manually verify tools in catalog",
+          "cmd": [
+            "sh",
+            "-c",
+            "echo 'See release-manual-steps.md §19 for translate + curl commands'"
+          ],
+          "manual": true
+        },
+        {
+          "name": "12.4 create-virtual-server-and-export",
+          "description": "Create virtual server wrapping both gateways and export config — manually verify export contains both gateways and server",
+          "cmd": [
+            "sh",
+            "-c",
+            "echo 'See release-manual-steps.md §20 for curl + cli export commands'"
+          ],
+          "manual": true
+        },
+        {
+          "name": "12.5 mcp-inspector",
+          "description": "Launch MCP Inspector and manually verify SSE + Streamable HTTP transports against the virtual server",
+          "cmd": [
+            "sh",
+            "-c",
+            "npx -y @modelcontextprotocol/inspector"
+          ],
+          "manual": true
+        },
+        {
+          "name": "12.6 vscode-copilot",
+          "description": "Configure .vscode/mcp.json and manually verify GitHub Copilot tool calls work with both SSE and Streamable HTTP",
+          "cmd": [
+            "sh",
+            "-c",
+            "echo 'See release-manual-steps.md §22 for mcp.json configuration'"
+          ],
+          "manual": true
+        },
+        {
+          "name": "12.7 cleanup",
+          "description": "Stop background translate processes and remove test export file",
+          "cmd": [
+            "sh",
+            "-c",
+            "kill %1 %2 2>/dev/null || true && rm -f release-test-export.json"
+          ],
+          "manual": false
+        }
+      ]
+    },
+    {
+      "label": "13. Post-Release",
+      "color": "Silver",
+      "checks": [
+        {
+          "name": "13.1 update-changelog",
+          "description": "Add a new section to CHANGELOG.md: '## [X.Y.Z] - YYYY-MM-DD - Release Title' with Added/Changed/Fixed/Security entries",
+          "cmd": [
+            "sh",
+            "-c",
+            "echo 'Open CHANGELOG.md and add a new release section'"
+          ],
+          "manual": true
+        }
+      ]
+    }
+  ]
+}
