@@ -1209,9 +1209,9 @@ class TestRedisBackendIntegration:
     async def test_unavailable_redis_fails_open_by_default(self):
         """An unavailable Redis URL fails open by default: the request is allowed, not blocked, and nothing crashes.
 
-        There is no memory fallback. When Redis is unavailable, the plugin is governed by fail_mode
-        it decides what happens, and it defaults to "open" (allow the request).
-        This test pins that default; fail_mode "closed" would block instead.
+        There is no memory fallback. When Redis is unavailable, the plugin's
+        behaviour is governed by fail_mode, which defaults to "open" (allow the
+        request). This test pins that default; fail_mode "closed" would block instead.
         """
         plugin = _make_redis_plugin("redis://127.0.0.1:19999/0", limit="3/s")
         ctx = PluginContext(global_context=GlobalContext(request_id="r1", user="alice"))

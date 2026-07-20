@@ -17,12 +17,18 @@ The schema-alignment check runs without Redis and stays green everywhere.
 
 # Standard
 import logging
+import pathlib
 
 # Third-Party
 import pytest
 
 # First-Party
-from cpex.framework import ConfigLoader
+from cpex.framework import ConfigLoader, PluginLoader
+
+# Anchor the config path to this file's location so the test works regardless
+# of the directory pytest is invoked from (repo root, tests/, etc.).
+_REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+_CONFIG_YAML = str(_REPO_ROOT / "plugins" / "config.yaml")
 
 
 @pytest.mark.asyncio
@@ -39,15 +45,14 @@ async def test_shipped_plugins_config_has_no_unknown_keys(caplog, monkeypatch):
     in the hope a feature exists when it doesn't) all silently pollute
     operators' logs and pull focus during incident response.
 
-    This test is the regression guard against that drift.  It loads the
-    yaml, instantiates each plugin via the plugin-framework loader (which
-    invokes the plugin's ``__init__`` and therefore any unknown-key
-    warnings), and asserts the captured log records contain none of those
-    warnings.
+    This test is the regression guard against that drift.  It loads the yaml
+    and loads each plugin through the framework loader (which invokes the
+    plugin's ``__init__`` and therefore any unknown-key warnings), then asserts
+    the captured log records contain none of those warnings.
 
-    Constructions that raise (e.g. a plugin requiring a Redis it can't
-    reach) are tolerated — that's a *connectivity* concern, not a *schema*
-    concern, and the warning still fires before the connection attempt.
+    Loads that raise (e.g. a plugin whose optional dependency is absent) are
+    tolerated — that's not a *schema* concern, and the unknown-key warning
+    fires during loading regardless.
     """
     # Inject a default REDIS_URL so the rate-limiter's Jinja substitution
     # resolves even when the test runner hasn't set the env var.  The
@@ -56,22 +61,28 @@ async def test_shipped_plugins_config_has_no_unknown_keys(caplog, monkeypatch):
     # validation time, which precedes the network attempt.
     monkeypatch.setenv("REDIS_URL", "redis://127.0.0.1:6379/0")
 
-    # First-Party — local import so test-collection doesn't pay for it
-    # in environments where mcpgateway isn't fully installed.
-    from cpex.framework import PluginLoader  # noqa: PLC0415
-
-    cfg = ConfigLoader.load_config("plugins/config.yaml")
+    cfg = ConfigLoader.load_config(_CONFIG_YAML)
     loader = PluginLoader()
 
+    constructed = 0
     with caplog.at_level(logging.WARNING):
         for plugin_cfg in cfg.plugins:
             try:
+                # Load via the framework loader (build + initialise) — the same
+                # path the gateway uses at startup.  We keep initialise() rather
+                # than only constructing so the guard mirrors real startup and
+                # still catches unknown-key warnings even if a future plugin
+                # surfaces them at initialise() instead of __init__.
                 await loader.load_and_instantiate_plugin(plugin_cfg)
+                constructed += 1
             except Exception:
-                # Plugin construction may fail for connectivity / other
-                # runtime reasons; the unknown-key warning fires earlier
-                # at schema-validation time and is still captured.
+                # A plugin may fail to load (optional dependency absent, etc.);
+                # the unknown-key warning fires during loading and is still captured.
                 pass
+
+    # Fail rather than pass on zero checks: an empty config or an all-failed
+    # load would otherwise verify nothing.
+    assert constructed, "No plugins were loaded from plugins/config.yaml — check the config path."
 
     unknown_warnings = [
         r.getMessage()
