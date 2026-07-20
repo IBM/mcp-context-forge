@@ -336,10 +336,12 @@ export function MCPServerDetailsPanel({
                   className="flex min-w-0 items-center gap-6"
                 >
                   {TABS.map((tab) => (
-                    <button
+                    <Button
                       key={tab.value}
                       id={`tab-${tab.value}`}
                       type="button"
+                      variant="ghost"
+                      size="sm"
                       role="tab"
                       aria-selected={activeTab === tab.value}
                       tabIndex={activeTab === tab.value ? 0 : -1}
@@ -352,7 +354,7 @@ export function MCPServerDetailsPanel({
                       onKeyDown={(e) => handleTabKeyDown(e, tab.value)}
                     >
                       {tab.label}
-                    </button>
+                    </Button>
                   ))}
                 </div>
 

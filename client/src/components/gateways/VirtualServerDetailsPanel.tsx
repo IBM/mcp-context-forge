@@ -454,10 +454,12 @@ export function VirtualServerDetailsPanel({
                     const isSelected = sourceFilter === source.id;
 
                     return (
-                      <button
+                      <Button
                         key={source.id}
                         id={`source-tab-${index}`}
                         type="button"
+                        variant="ghost"
+                        size="sm"
                         role="tab"
                         aria-selected={isSelected}
                         tabIndex={isSelected ? 0 : -1}
@@ -471,7 +473,7 @@ export function VirtualServerDetailsPanel({
                         onKeyDown={(e) => handleSourceTabKeyDown(e, index, sources.length)}
                       >
                         {source.label}
-                      </button>
+                      </Button>
                     );
                   })}
                 </div>
@@ -484,10 +486,12 @@ export function VirtualServerDetailsPanel({
                   className="flex min-w-0 items-center gap-6"
                 >
                   {COMPONENT_FILTER_OPTIONS.map((option) => (
-                    <button
+                    <Button
                       key={option.value}
                       id={`tab-${option.value}`}
                       type="button"
+                      variant="ghost"
+                      size="sm"
                       role="tab"
                       aria-selected={componentFilter === option.value}
                       tabIndex={componentFilter === option.value ? 0 : -1}
@@ -500,7 +504,7 @@ export function VirtualServerDetailsPanel({
                       onKeyDown={(e) => handleTabKeyDown(e, option.value)}
                     >
                       {intl.formatMessage({ id: option.labelId })}
-                    </button>
+                    </Button>
                   ))}
                 </div>
                 <div className="flex items-center gap-2">

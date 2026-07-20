@@ -131,8 +131,10 @@ export function InlineTagAdd({
       <dd className="flex min-w-0 flex-wrap items-center gap-2 text-foreground">
         {children}
         {!editing && (
-          <button
+          <Button
             type="button"
+            variant="ghost"
+            size="sm"
             disabled={!onAdd}
             onClick={() => setEditing(true)}
             aria-label={ariaLabel}
@@ -143,7 +145,7 @@ export function InlineTagAdd({
           >
             <Plus className="size-3" aria-hidden="true" />
             {addLabel}
-          </button>
+          </Button>
         )}
       </dd>
 
