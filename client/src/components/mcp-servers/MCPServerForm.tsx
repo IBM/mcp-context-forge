@@ -162,8 +162,9 @@ export function MCPServerForm({ isOpen, onToggle, serverId, onSuccess }: MCPServ
               {
                 "Context Forge will discover the server's tools, resources, and prompts. The MCP server should be running and reachable. Or, choose a server from the"
               }{" "}
-              <button
+              <Button
                 type="button"
+                variant="link"
                 onClick={() => {
                   onToggle();
                   navigate("/app/server-catalog");
@@ -171,7 +172,7 @@ export function MCPServerForm({ isOpen, onToggle, serverId, onSuccess }: MCPServ
                 className="font-medium text-cyan-700 underline decoration-cyan-300 underline-offset-4 transition hover:text-cyan-800 dark:text-cyan-400 dark:decoration-cyan-700 dark:hover:text-cyan-300"
               >
                 mcp server catalog
-              </button>
+              </Button>
               .
             </p>
           </div>
@@ -289,15 +290,16 @@ export function MCPServerForm({ isOpen, onToggle, serverId, onSuccess }: MCPServ
             </div>
 
             <div className="flex flex-col gap-5 pt-2">
-              <button
+              <Button
                 type="button"
+                variant="ghost"
                 onClick={() => setAdvancedOpen((current) => !current)}
                 className="inline-flex w-full items-center gap-2 rounded-md border border-neutral-200 px-3 py-2 text-sm font-medium text-neutral-600 transition hover:text-neutral-950 dark:border-neutral-800 dark:text-neutral-400 dark:hover:text-neutral-300"
                 aria-expanded={advancedOpen}
               >
                 <ChevronDown className={`h-4 w-4 transition ${advancedOpen ? "rotate-180" : ""}`} />
                 Advanced settings
-              </button>
+              </Button>
 
               {advancedOpen && (
                 <AdvancedSettings

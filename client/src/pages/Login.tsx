@@ -3,6 +3,9 @@ import { useIntl } from "react-intl";
 import { useAuth } from "../auth/useAuth";
 import { useRouter } from "../router";
 import { ApiError } from "../api/client";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 
 export function Login() {
   const intl = useIntl();
@@ -49,13 +52,13 @@ export function Login() {
         </h1>
         <form onSubmit={handleSubmit} className="space-y-4" noValidate>
           <div>
-            <label
+            <Label
               htmlFor="email"
               className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-1"
             >
               {intl.formatMessage({ id: "auth.login.email" })}
-            </label>
-            <input
+            </Label>
+            <Input
               id="email"
               type="email"
               autoComplete="email"
@@ -66,13 +69,13 @@ export function Login() {
             />
           </div>
           <div>
-            <label
+            <Label
               htmlFor="password"
               className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-1"
             >
               {intl.formatMessage({ id: "auth.login.password" })}
-            </label>
-            <input
+            </Label>
+            <Input
               id="password"
               type="password"
               autoComplete="current-password"
@@ -87,7 +90,7 @@ export function Login() {
               {error}
             </p>
           )}
-          <button
+          <Button
             type="submit"
             disabled={loading}
             className="w-full bg-neutral-900 dark:bg-neutral-700 text-white rounded px-3 py-2 text-sm font-medium hover:bg-neutral-700 dark:hover:bg-neutral-600 disabled:opacity-50 transition-colors"
@@ -95,15 +98,17 @@ export function Login() {
             {loading
               ? intl.formatMessage({ id: "auth.login.submitting" })
               : intl.formatMessage({ id: "auth.login.submit" })}
-          </button>
+          </Button>
         </form>
         <div className="mt-4 text-center">
-          <button
+          <Button
+            type="button"
+            variant="ghost"
             onClick={() => navigate("/app/forgot-password")}
             className="text-sm text-neutral-500 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-neutral-100 transition-colors"
           >
             {intl.formatMessage({ id: "auth.login.forgotPassword" })}
-          </button>
+          </Button>
         </div>
       </div>
     </div>

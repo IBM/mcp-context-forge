@@ -25,6 +25,7 @@ import { ServerActionsMenu } from "./ServerActionsMenu";
 import type { MCPServer, ServerStatus } from "../../types/server";
 import { Loading } from "../ui/loading";
 import { formatLocalDateTime } from "../../utils/formatDate";
+import { Button } from "@/components/ui/button";
 
 function getLastSeenValue(server: MCPServer): string | undefined {
   return server.lastSeen;
@@ -224,8 +225,10 @@ export function ServersTable({
                   {formatLocalDateTime(lastSeen, intl.formatMessage({ id: "mcpServer.neverUsed" }))}
                 </TableCell>
                 <TableCell className="px-4 py-2.5">
-                  <button
+                  <Button
                     type="button"
+                    variant="ghost"
+                    size="sm"
                     onClick={() => handleCopy(server.id)}
                     className="inline-flex items-center gap-2 text-xs text-neutral-600 dark:text-neutral-400 transition hover:text-neutral-900 dark:hover:text-neutral-200"
                     aria-label={`Copy UUID for ${server.name}`}
@@ -239,7 +242,7 @@ export function ServersTable({
                     ) : (
                       <Copy className="h-3.5 w-3.5" aria-hidden="true" />
                     )}
-                  </button>
+                  </Button>
                 </TableCell>
                 <TableCell className="px-4 py-2.5">
                   <div className="inline-flex items-center gap-1.5 text-xs text-neutral-600 dark:text-neutral-400">
