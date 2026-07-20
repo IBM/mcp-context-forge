@@ -366,10 +366,11 @@ export function HeaderQuickNav() {
             const isFocused = resultIndex === focusedResultIndex;
 
             return (
-              <button
+              <Button
                 id={`quick-nav-result-${resultIndex}`}
                 key={`${group.entity_type}-${item.id}`}
                 type="button"
+                variant="ghost"
                 role="option"
                 tabIndex={-1}
                 aria-selected={isFocused}
@@ -384,7 +385,7 @@ export function HeaderQuickNav() {
                 {item.summary && item.summary !== item.name ? (
                   <span className="truncate text-xs text-muted-foreground">{item.summary}</span>
                 ) : null}
-              </button>
+              </Button>
             );
           })}
         </div>

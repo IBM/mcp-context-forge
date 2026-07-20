@@ -7,6 +7,7 @@ import {
 } from "../ui/dropdown-menu";
 import { useIntl } from "react-intl";
 import type { User } from "../../types/user";
+import { Button } from "@/components/ui/button";
 
 interface UserActionsMenuProps {
   user: User;
@@ -21,8 +22,10 @@ export function UserActionsMenu({ user, displayName, onEdit, onDelete }: UserAct
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <button
+        <Button
           type="button"
+          variant="ghost"
+          size="icon"
           className="inline-flex h-5 w-5 items-center justify-center rounded-sm transition-colors hover:text-card-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           aria-label={intl.formatMessage(
             { id: "users.table.actions.label" },
@@ -31,7 +34,7 @@ export function UserActionsMenu({ user, displayName, onEdit, onDelete }: UserAct
           aria-haspopup="menu"
         >
           <MoreVertical className="h-5 w-5" strokeWidth={1.25} aria-hidden="true" />
-        </button>
+        </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" role="menu">
         <DropdownMenuItem onClick={() => onEdit(user)} role="menuitem">
