@@ -512,7 +512,7 @@ describe("ToolForm", () => {
     });
 
     it("renders with a minimal tool correctly", () => {
-      const minimalTool: Tool = {
+      const minimalTool = {
         id: "tool-min",
         name: "min-tool",
         originalName: "min-tool",
@@ -526,13 +526,13 @@ describe("ToolForm", () => {
         tags: [],
         createdAt: "2026-01-01T00:00:00",
         updatedAt: "2026-01-02T00:00:00",
-        url: undefined as unknown as Tool["url"],
-        visibility: undefined as unknown as Tool["visibility"],
+        url: undefined,
+        visibility: undefined,
         auth: {
           authType: "custom",
           authHeaders: [{ key: "X-Test", value: "test" }],
         },
-      };
+      } as unknown as Tool;
       renderForm({ tool: minimalTool });
       expect(screen.getByDisplayValue("min-tool")).toBeInTheDocument();
     });
@@ -606,10 +606,10 @@ describe("ToolForm", () => {
       const user = userEvent.setup();
 
       // Delay schema generation so we can observe the intermediate state
-      let resolveGenerate!: (value: unknown) => void;
+      let resolveGenerate!: (value: Response) => void;
       server.use(
         http.post("*/v1/tools/generate-schemas-from-openapi", () => {
-          return new Promise((resolve) => {
+          return new Promise<Response>((resolve) => {
             resolveGenerate = resolve;
           });
         }),

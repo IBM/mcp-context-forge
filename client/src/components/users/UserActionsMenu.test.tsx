@@ -3,6 +3,8 @@ import { renderWithProviders } from "@/test/test-utils";
 import { screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { UserActionsMenu } from "./UserActionsMenu";
+import type { User } from "@/types/user";
+
 const mockUser = {
   email: "alice@example.com",
   is_admin: false,
