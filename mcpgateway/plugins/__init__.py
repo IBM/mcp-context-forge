@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/plugins/__init__.py
-Copyright contributors to the MCP-CONTEXT-FORGE project
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
+Authors: Fred Araujo
 
 Gateway plugin integration.
 
@@ -498,14 +499,14 @@ async def _plugin_invalidation_listener() -> None:
                 await asyncio.sleep(10)
                 continue
 
-            pubsub = client.pubsub()
-            await pubsub.subscribe(_REDIS_INVALIDATION_CHANNEL)
-            _logger.info("Plugin invalidation listener subscribed to %s", _REDIS_INVALIDATION_CHANNEL)
-            backoff = 1.0
-            consecutive_failures = 0
+            async with client.pubsub() as pubsub:
+                await pubsub.subscribe(_REDIS_INVALIDATION_CHANNEL)
+                _logger.info("Plugin invalidation listener subscribed to %s", _REDIS_INVALIDATION_CHANNEL)
+                backoff = 1.0
+                consecutive_failures = 0
 
-            async for message in pubsub.listen():
-                await _handle_invalidation_message(message)
+                async for message in pubsub.listen():
+                    await _handle_invalidation_message(message)
 
         except asyncio.CancelledError:
             _logger.info("Plugin invalidation listener cancelled")
