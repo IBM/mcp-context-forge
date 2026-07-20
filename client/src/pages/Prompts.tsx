@@ -293,9 +293,9 @@ export function Prompts() {
     const prompt = promptToDelete;
     const name = getPromptLabel(prompt) || prompt.id;
 
-    // Snapshot the list and the open group so we can roll back the optimistic
-    // removal if the DELETE fails, mirroring the Tools page delete flow.
-    const previousData = promptsData;
+    // Remember the open group so a failed delete can re-resolve it against
+    // server truth (below). We deliberately do NOT snapshot the whole list:
+    // reconciling with the server on failure is safer than blindly restoring.
     const previousActiveGroup = activeGroup;
 
     const removeFromList = (list: (PromptRead | null)[]) =>
@@ -329,14 +329,33 @@ export function Prompts() {
         console.error("Failed to refresh prompts after deletion:", sanitizeError(refreshErr));
       }
     } catch (err) {
-      // Restore the pre-delete list and reopen the group on failure.
-      setPromptsData(() => previousData);
-      setActiveGroup(previousActiveGroup);
+      // A DELETE error does not guarantee the prompt still exists:
+      // PromptService.delete_prompt() commits before running notification and
+      // cache invalidation, so a post-commit failure returns an error even
+      // though the row is already gone. Reconcile with the server instead of
+      // restoring a pre-delete snapshot — that would resurrect an
+      // already-deleted prompt, and unconditionally restoring the whole list
+      // could also clobber newer state from an overlapping delete.
+      try {
+        const fresh = await refetch();
+        // Re-resolve the open drawer's group from server truth so the drawer
+        // reopens/repopulates on a genuine failure (or stays closed if the
+        // group is now empty).
+        if (previousActiveGroup) {
+          const freshGroups = buildPromptGroups(getPromptItems(fresh), restPromptsLabel);
+          setActiveGroup(freshGroups.find((g) => g.key === previousActiveGroup.key) ?? null);
+        }
+      } catch (refreshErr) {
+        console.error(
+          "Failed to reconcile prompts after failed deletion:",
+          sanitizeError(refreshErr),
+        );
+      }
 
       // Surface the backend detail when present, otherwise the localized fallback.
       toast.error(parseApiError(err, intl.formatMessage({ id: "prompts.delete.error" })));
     }
-  }, [promptToDelete, promptsData, activeGroup, setPromptsData, refetch, intl]);
+  }, [promptToDelete, activeGroup, setPromptsData, refetch, intl, restPromptsLabel]);
 
   return (
     <div className="p-6">

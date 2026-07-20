@@ -405,7 +405,7 @@ describe("Prompts", () => {
     expect(screen.getByRole("button", { name: /more options for translate/i })).toBeInTheDocument();
   });
 
-  it("restores the deleted prompt row when the DELETE request fails", async () => {
+  it("reconciles with the server and restores the row when the DELETE fails and the prompt survives", async () => {
     const user = userEvent.setup();
     const prompts: Prompt[] = [
       createMockPrompt({
@@ -424,6 +424,9 @@ describe("Prompts", () => {
       }),
     ];
 
+    // The DELETE fails and the prompt is NOT removed server-side (a pre-commit
+    // failure), so the post-failure refetch still returns it and the row
+    // reappears.
     server.use(
       http.get("/prompts", () => HttpResponse.json(prompts)),
       http.delete("/prompts/prompt-1", () =>
@@ -447,12 +450,73 @@ describe("Prompts", () => {
     const dialog = await screen.findByRole("dialog");
     await user.click(within(dialog).getByRole("button", { name: /^delete$/i }));
 
-    // The optimistic removal is rolled back, so the row reappears.
+    // The optimistic removal is reconciled against server truth, so the row
+    // reappears because the prompt still exists.
     await waitFor(() => {
       expect(
         screen.getByRole("button", { name: /more options for summarize/i }),
       ).toBeInTheDocument();
     });
+  });
+
+  it("does not resurrect a prompt when the DELETE reports an error but the row is already gone", async () => {
+    const user = userEvent.setup();
+    // Simulates a post-commit failure: PromptService.delete_prompt() commits
+    // the removal, then a later step (notification/cache invalidation) fails
+    // and the endpoint returns an error. The server no longer has the prompt,
+    // so reconciling must NOT restore it.
+    let remaining: Prompt[] = [
+      createMockPrompt({
+        id: "prompt-1",
+        name: "summarize",
+        displayName: "Summarize document",
+        gatewayId: "gw-github",
+        gatewaySlug: "gh-repo-tasks",
+      }),
+      createMockPrompt({
+        id: "prompt-2",
+        name: "translate",
+        displayName: "Translate document",
+        gatewayId: "gw-github",
+        gatewaySlug: "gh-repo-tasks",
+      }),
+    ];
+
+    server.use(
+      http.get("/prompts", () => HttpResponse.json(remaining)),
+      http.delete("/prompts/prompt-1", () => {
+        // Row is committed as deleted, but the request still errors out.
+        remaining = remaining.filter((p) => p.id !== "prompt-1");
+        return HttpResponse.json({ detail: "Post-commit hook failed" }, { status: 500 });
+      }),
+    );
+
+    renderWithProviders(<Prompts />);
+
+    await waitFor(() => {
+      expect(screen.getByText("gh-repo-tasks")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: "More options for gh-repo-tasks" }));
+    await user.click(await screen.findByRole("menuitem", { name: "View details" }));
+    await user.click(await screen.findByRole("tab", { name: /definition/i }));
+
+    await user.click(await screen.findByRole("button", { name: /more options for summarize/i }));
+    await user.click(await screen.findByRole("menuitem", { name: "Delete" }));
+
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("button", { name: /^delete$/i }));
+
+    // The drawer stays open with the surviving sibling, and the deleted prompt
+    // is not brought back by the failure path.
+    await waitFor(() => {
+      expect(
+        screen.getByRole("button", { name: /more options for translate/i }),
+      ).toBeInTheDocument();
+    });
+    expect(
+      screen.queryByRole("button", { name: /more options for summarize/i }),
+    ).not.toBeInTheDocument();
   });
 
   it("collapses gateway-less prompts into a single REST prompts card", async () => {
