@@ -12,7 +12,7 @@
           "cmd": [
             "sh",
             "-c",
-            "bump2version --verbose --new-version=1.0.6 build"
+            "uv run bump2version --verbose --new-version=1.0.6 build"
           ],
           "manual": false
         },
@@ -209,7 +209,7 @@
           "manual": false
         },
         {
-          "name": "3.4.1 build-ui",
+          "name": "3.4.0 build-ui",
           "description": "Rebuild Admin UI Vite bundle after npm dependency updates",
           "cmd": [
             "sh",
@@ -219,22 +219,32 @@
           "manual": false
         },
         {
-          "name": "3.4.2 smoke-test-admin-ui",
-          "description": "Manually verify Admin UI bundled assets load correctly in a browser after bundle rebuild",
-          "cmd": [
-            "sh",
-            "-c",
-            "echo 'Open http://localhost:8080/admin/ and verify the UI loads with no missing assets'"
-          ],
-          "manual": true
-        },
-        {
-          "name": "3.5 rebuild-containers",
+          "name": "3.4.1 rebuild-containers",
           "description": "Rebuild production container from scratch after all dependency ecosystem updates",
           "cmd": [
             "sh",
             "-c",
             "make docker-prod DOCKER_BUILD_ARGS='--no-cache'"
+          ],
+          "manual": false
+        },
+        {
+          "name": "3.4.2 smoke-test-admin-ui",
+          "description": "Manually verify Admin UI bundled assets load correctly in a browser after bundle rebuild",
+          "cmd": [
+            "sh",
+            "-c",
+            "make compose-up && echo 'Open http://localhost:8080/admin/ and verify the UI loads with no missing assets'"
+          ],
+          "manual": true
+        },
+        {
+          "name": "3.4.3 make compose down",
+          "description": "Stop test server",
+          "cmd": [
+            "sh",
+            "-c",
+            "make compose-down"
           ],
           "manual": false
         }
