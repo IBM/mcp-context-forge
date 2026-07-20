@@ -29,6 +29,7 @@ function cleanOldBundles() {
 }
 
 export default defineConfig({
+  base: '/static/',
   build: {
     minify: 'terser',
     // lightningcss ships no linux-ppc64(le)/s390x native binary, so fall back
