@@ -3292,7 +3292,7 @@ LINTERS := isort pylint mypy bandit pydocstyle pycodestyle \
 FILE_AWARE_LINTERS := isort black pylint mypy bandit pydocstyle \
 	pycodestyle ruff pyright vulture markdownlint
 
-.PHONY: lint $(LINTERS) black black-check isort-check ruff-check ruff-fix ruff-format autoflake lint-py lint-yaml lint-json lint-md lint-strict \
+.PHONY: lint $(LINTERS) pyright-pr black black-check isort-check ruff-check ruff-fix ruff-format autoflake lint-py lint-yaml lint-json lint-md lint-strict \
 	lint-count-errors lint-report lint-changed lint-staged lint-commit \
 	lint-pre-commit lint-pre-push lint-parallel lint-cache-clear lint-stats \
 	lint-complexity lint-watch lint-watch-quick \
@@ -3794,6 +3794,16 @@ ty:                                 ## ⚡  Ty type checker
 
 pyright:                            ## 🏷️  Pyright type-checking
 	@echo "🏷️ pyright $(TARGET)..." && $(VENV_DIR)/bin/pyright $(TARGET)
+
+pyright-pr:                         ## 🏷️  Pyright — check only files changed vs main (CI gate for PRs)
+	@base=$${BASE_BRANCH:-origin/main}; \
+	files=$$(git diff --name-only --diff-filter=ACM "$$base"...HEAD 2>/dev/null | grep '\.py$$' || true); \
+	if [ -z "$$files" ]; then \
+		echo "🏷️ pyright-pr: no Python files changed vs $$base — nothing to check"; \
+		exit 0; \
+	fi; \
+	echo "🏷️ pyright-pr: checking $$(echo $$files | wc -w) changed file(s) vs $$base"; \
+	$(VENV_DIR)/bin/pyright $$files
 
 radon: uv                           ## 📈  Complexity / MI metrics
 	@$(UV_BIN) tool run radon==$(RADON_VERSION) mi -s $(TARGET) && \
