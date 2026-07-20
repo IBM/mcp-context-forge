@@ -3027,3 +3027,82 @@ class TestOAuthRouterPopupMode:
                 assert b"<!DOCTYPE html>" in result.body
                 assert b"oauth_callback" in result.body
                 assert b"server_error" in result.body
+
+
+class TestOAuthRouterPopupQueryResolution:
+    """HTTP-level tests exercising FastAPI's real `Query` dependency-injection layer for `popup`.
+
+    The tests above call `initiate_oauth_flow` directly as a plain coroutine, so the
+    `popup` parameter never goes through FastAPI's `Query` resolution -- it's whatever
+    the test passes in (or the raw `Query(default=False)` sentinel when omitted). These
+    tests instead route a real HTTP request through a `TestClient`, so `popup` is parsed
+    from the query string exactly as it would be in production.
+    """
+
+    @staticmethod
+    def _build_app(mock_db, mock_current_user):
+        from fastapi import FastAPI
+
+        from mcpgateway.db import get_db
+        from mcpgateway.middleware.rbac import get_current_user_with_permissions
+        from mcpgateway.routers.oauth_router import oauth_router
+
+        app = FastAPI()
+        app.include_router(oauth_router)
+
+        async def _get_db_override():
+            return mock_db
+
+        async def _get_user_override():
+            return mock_current_user
+
+        app.dependency_overrides[get_db] = _get_db_override
+        app.dependency_overrides[get_current_user_with_permissions] = _get_user_override
+        return app
+
+    def test_authorize_popup_true_resolved_from_query_string(self, mock_db, mock_gateway, mock_current_user):
+        """`?popup=true` on the real route must resolve to `popup=True` in the handler."""
+        from fastapi.testclient import TestClient
+
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+        auth_data = {"authorization_url": "https://oauth.example.com/authorize?state=popup.abc123", "state": "popup.abc123"}
+
+        app = self._build_app(mock_db, mock_current_user)
+
+        with patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_manager_class:
+            mock_oauth_manager = Mock()
+            mock_oauth_manager.initiate_authorization_code_flow = AsyncMock(return_value=auth_data)
+            mock_oauth_manager_class.return_value = mock_oauth_manager
+
+            with patch("mcpgateway.routers.oauth_router.TokenStorageService"):
+                with patch("mcpgateway.routers.oauth_router._enforce_gateway_access", new_callable=AsyncMock):
+                    client = TestClient(app)
+                    response = client.get("/oauth/authorize/gateway123?popup=true", follow_redirects=False)
+
+        assert response.status_code == 307
+        assert response.headers["location"] == auth_data["authorization_url"]
+        call_kwargs = mock_oauth_manager.initiate_authorization_code_flow.call_args.kwargs
+        assert call_kwargs["popup"] is True
+
+    def test_authorize_popup_omitted_resolves_to_false_from_query_string(self, mock_db, mock_gateway, mock_current_user):
+        """Omitting `popup` on the real route must resolve to `popup=False`, not the `Query` default object."""
+        from fastapi.testclient import TestClient
+
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+        auth_data = {"authorization_url": "https://oauth.example.com/authorize?state=abc123", "state": "abc123"}
+
+        app = self._build_app(mock_db, mock_current_user)
+
+        with patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_manager_class:
+            mock_oauth_manager = Mock()
+            mock_oauth_manager.initiate_authorization_code_flow = AsyncMock(return_value=auth_data)
+            mock_oauth_manager_class.return_value = mock_oauth_manager
+
+            with patch("mcpgateway.routers.oauth_router.TokenStorageService"):
+                with patch("mcpgateway.routers.oauth_router._enforce_gateway_access", new_callable=AsyncMock):
+                    client = TestClient(app)
+                    response = client.get("/oauth/authorize/gateway123", follow_redirects=False)
+
+        assert response.status_code == 307
+        call_kwargs = mock_oauth_manager.initiate_authorization_code_flow.call_args.kwargs
+        assert call_kwargs["popup"] is False
