@@ -66,7 +66,7 @@ export function ResourcesTable({
             className="cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset"
           >
             <TableCell className="px-4 py-3 text-sm text-foreground">
-              <span className="line-clamp-1">{resource.name}</span>
+              <span className="line-clamp-1">{resource.title || resource.name}</span>
             </TableCell>
 
             <TableCell className="px-4 py-3">

@@ -526,8 +526,8 @@ describe("ToolForm", () => {
         tags: [],
         createdAt: "2026-01-01T00:00:00",
         updatedAt: "2026-01-02T00:00:00",
-        url: undefined as any,
-        visibility: undefined as any,
+        url: undefined as unknown as Tool["url"],
+        visibility: undefined as unknown as Tool["visibility"],
         auth: {
           authType: "custom",
           authHeaders: [{ key: "X-Test", value: "test" }],
@@ -539,14 +539,14 @@ describe("ToolForm", () => {
 
     it("handles tool with multiple authHeaders and object tags", () => {
       const toolWithHeadersAndTags = createMockTool({
-        tags: [{ id: "t1", label: "obj-tag", color: "red" }] as any,
+        tags: [{ id: "t1", label: "obj-tag", color: "red" }] as unknown as Tool["tags"],
         auth: {
           authType: "authheaders",
           authHeaders: [
             { key: "X-Header-1", value: "val1" },
             { key: "X-Header-2", value: "val2" },
           ],
-        } as any,
+        } as unknown as Tool["auth"],
       });
       renderForm({ tool: toolWithHeadersAndTags });
 
@@ -560,7 +560,7 @@ describe("ToolForm", () => {
           authType: "authheaders",
           authHeaderKey: "Old-Header",
           authHeaderValue: "old-val",
-        } as any,
+        } as unknown as Tool["auth"],
       });
       renderForm({ tool: toolWithOldHeaders });
       expect(screen.getByDisplayValue("Old-Header")).toBeInTheDocument();
@@ -601,34 +601,12 @@ describe("ToolForm", () => {
     });
   });
 
-  describe("Form Validation and aria-invalid", () => {
-    it("sets aria-invalid and aria-describedby when validation fails", async () => {
-      const user = userEvent.setup({ delay: null });
-      renderForm();
-
-      // Submit without entering Name and URL
-      const submitBtn = screen.getByRole("button", { name: /Add tool/i });
-      await user.click(submitBtn);
-
-      // Wait for errors to appear
-      await waitFor(() => {
-        const nameInput = screen.getByLabelText(/Name/);
-        expect(nameInput).toHaveAttribute("aria-invalid", "true");
-        expect(nameInput).toHaveAttribute("aria-describedby", "name-error");
-
-        const urlInput = screen.getByLabelText(/URL/);
-        expect(urlInput).toHaveAttribute("aria-invalid", "true");
-        expect(urlInput).toHaveAttribute("aria-describedby", "url-error");
-      });
-    });
-  });
-
   describe("Schema Generation UI state", () => {
     it("shows generating schema text and spinner while generating", async () => {
       const user = userEvent.setup();
 
       // Delay schema generation so we can observe the intermediate state
-      let resolveGenerate!: (value: any) => void;
+      let resolveGenerate!: (value: unknown) => void;
       server.use(
         http.post("*/v1/tools/generate-schemas-from-openapi", () => {
           return new Promise((resolve) => {

@@ -155,7 +155,7 @@ describe("useCreateServerForm", () => {
       result.current.validateField("nonexistent", "");
     });
     // Should not throw and should not add an error
-    expect((result.current.errors as any).nonexistent).toBeUndefined();
+    expect((result.current.errors as Record<string, unknown>).nonexistent).toBeUndefined();
   });
 
   it("resetForm clears values and errors", () => {

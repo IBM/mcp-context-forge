@@ -74,7 +74,7 @@ type ShortcutNavigator = Pick<Navigator, "platform" | "userAgent"> & {
   };
 };
 
-function getQuickNavShortcutLabel(nav: ShortcutNavigator = navigator) {
+export function getQuickNavShortcutLabel(nav: ShortcutNavigator = navigator) {
   const detectedPlatform = [nav.userAgentData?.platform, nav.platform, nav.userAgent]
     .filter(Boolean)
     .join(" ");

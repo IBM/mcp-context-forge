@@ -183,7 +183,6 @@ describe("UsersTable", () => {
   });
 
   it("does not trigger delete if user email is not found", async () => {
-
     renderWithIntl(
       <UsersTable
         users={[baseUser]}

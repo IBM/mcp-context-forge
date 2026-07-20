@@ -96,9 +96,7 @@ describe("TeamsTable", () => {
 
     await user.click(screen.getByRole("button", { name: /Actions for Alpha/i }));
 
-    expect(
-      await screen.findByRole("menuitem", { name: /Edit/i }, { timeout: 5000 }),
-    ).toBeInTheDocument();
+    expect(await screen.findByRole("menuitem", { name: /Edit/i })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: /Delete/i })).toBeInTheDocument();
   });
 
@@ -107,11 +105,11 @@ describe("TeamsTable", () => {
     renderTable(<TeamsTable teams={[makeTeam({ name: "Alpha" })]} isLoading={false} />);
 
     await user.click(screen.getByRole("button", { name: /Actions for Alpha/i }));
-    await user.click(await screen.findByRole("menuitem", { name: /Edit/i }, { timeout: 5000 }));
+    await user.click(await screen.findByRole("menuitem", { name: /Edit/i }));
 
     // Menu closes after selection; reopen and exercise Delete too.
     await user.click(screen.getByRole("button", { name: /Actions for Alpha/i }));
-    await user.click(await screen.findByRole("menuitem", { name: /Delete/i }, { timeout: 5000 }));
+    await user.click(await screen.findByRole("menuitem", { name: /Delete/i }));
 
     expect(screen.getByText("Alpha")).toBeInTheDocument();
   });
@@ -128,7 +126,7 @@ describe("TeamsTable", () => {
     );
 
     await user.click(screen.getByRole("button", { name: /Actions for Alpha/i }));
-    await user.click(await screen.findByRole("menuitem", { name: /Edit/i }, { timeout: 5000 }));
+    await user.click(await screen.findByRole("menuitem", { name: /Edit/i }));
 
     expect(onEdit).toHaveBeenCalledWith("team-42");
   });
@@ -145,7 +143,7 @@ describe("TeamsTable", () => {
     );
 
     await user.click(screen.getByRole("button", { name: /Actions for Alpha/i }));
-    await user.click(await screen.findByRole("menuitem", { name: /Delete/i }, { timeout: 5000 }));
+    await user.click(await screen.findByRole("menuitem", { name: /Delete/i }));
 
     expect(onDelete).toHaveBeenCalledWith("team-99");
   });
@@ -237,8 +235,6 @@ describe("TeamsTable", () => {
 
     await user.click(screen.getByRole("button", { name: "View description for Alpha" }));
 
-    expect(
-      await screen.findByText("All org team for automation.", undefined, { timeout: 5000 }),
-    ).toBeInTheDocument();
+    expect(await screen.findByText("All org team for automation.")).toBeInTheDocument();
   });
 });

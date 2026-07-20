@@ -25,7 +25,7 @@ function getStoredTheme(): Theme {
       return stored;
     }
   } catch {
-    return "system";
+    // localStorage might be unavailable
   }
   return "system";
 }

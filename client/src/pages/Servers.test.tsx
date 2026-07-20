@@ -723,7 +723,7 @@ describe("Servers", () => {
     });
 
     // Mock a slow API response for the next page
-    let resolveSecondPage!: (value: any) => void;
+    let resolveSecondPage!: (value: unknown) => void;
     vi.mocked(api.get).mockImplementationOnce(
       () =>
         new Promise((resolve) => {

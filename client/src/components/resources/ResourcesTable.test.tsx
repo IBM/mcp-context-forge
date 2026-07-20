@@ -14,16 +14,20 @@ function createMockResource(id: number, overrides?: Partial<Resource>): Resource
     id: `resource-${id}`,
     name: `Resource ${id}`,
     description: `Description for resource ${id}`,
+    title: `Resource ${id} Title`,
     gatewayId: "gateway-id",
     enabled: true,
     uri: `resource://example/${id}`,
     uriTemplate: undefined,
     mimeType: "application/json",
+    size: 0,
+    version: 1,
     visibility: "public",
-    createdAt: "2024-01-01T00:00:00Z",
-    updatedAt: "2024-01-01T00:00:00Z",
+    tags: ["tag1", "tag2"],
+    createdAt: "2024-01-01T00:00:00",
+    updatedAt: "2024-01-02T00:00:00",
     ...overrides,
-  } as unknown as Resource;
+  };
 }
 
 describe("ResourcesTable", () => {
@@ -63,14 +67,14 @@ describe("ResourcesTable", () => {
   });
 
   it("displays title when available", () => {
-    const resources = [createMockResource(1, { name: "Custom Title" })];
+    const resources = [createMockResource(1, { title: "Custom Title" })];
     render(<ResourcesTable resources={resources} onSelectResource={mockOnSelectResource} />);
 
     expect(screen.getByText("Custom Title")).toBeInTheDocument();
   });
 
   it("falls back to name when title is not available", () => {
-    const resources = [createMockResource(1, { name: "Resource Name" })];
+    const resources = [createMockResource(1, { title: null, name: "Resource Name" })];
     render(<ResourcesTable resources={resources} onSelectResource={mockOnSelectResource} />);
 
     expect(screen.getByText("Resource Name")).toBeInTheDocument();
@@ -209,7 +213,7 @@ describe("ResourcesTable", () => {
   it("handles very long resource names with line-clamp", () => {
     const resources = [
       createMockResource(1, {
-        name: "This is a very long resource title that should be clamped to one line",
+        title: "This is a very long resource title that should be clamped to one line",
       }),
     ];
     render(<ResourcesTable resources={resources} onSelectResource={mockOnSelectResource} />);

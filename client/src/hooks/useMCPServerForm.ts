@@ -438,7 +438,6 @@ export function useMCPServerForm(gatewayId?: string): UseMCPServerFormReturn {
         if (oauthConfig.redirect_uri) setOAuthRedirectUri(oauthConfig.redirect_uri);
         if (oauthConfig.authorization_url) setOAuthAuthorizationUrl(oauthConfig.authorization_url);
         if (oauthConfig.scopes) {
-          /* v8 ignore next 3 */
           setOAuthScopes(
             Array.isArray(oauthConfig.scopes) ? oauthConfig.scopes.join(" ") : oauthConfig.scopes,
           );
@@ -585,7 +584,6 @@ export function useMCPServerForm(gatewayId?: string): UseMCPServerFormReturn {
     };
   }, []);
 
-  /* v8 ignore next 30 */
   const validateField = useCallback((field: keyof FormErrors, value: string) => {
     try {
       const fieldSchema =
@@ -739,7 +737,6 @@ export function useMCPServerForm(gatewayId?: string): UseMCPServerFormReturn {
           let responseGatewayId: string | undefined;
           let response: unknown;
           if (isEditMode) {
-            /* v8 ignore next 4 */
             if (!gatewayId) {
               setErrors({ submit: "Cannot update: gateway ID is missing." });
               return;

@@ -573,12 +573,14 @@ describe("Teams", () => {
     expect(screen.getByRole("button", { name: /^save changes$/i })).toBeInTheDocument();
   });
 
-  it("handles dummy Create Team click in list state", async () => {
+  it("opens the create form when Create team is clicked in list state", async () => {
     const user = userEvent.setup();
     vi.mocked(api.get).mockResolvedValueOnce({
       teams: createMockTeams(0, 1),
       nextCursor: null,
     });
+    // The create form's useTeamForm hook loads the user directory on mount.
+    vi.mocked(api.get).mockResolvedValue({ users: [] });
 
     renderWithRouter(<Teams />);
 
@@ -586,18 +588,20 @@ describe("Teams", () => {
       expect(screen.getByText("Team 0")).toBeInTheDocument();
     });
 
-    const createButton = screen.getByRole("button", { name: /Create team/i });
+    const createButton = screen.getAllByRole("button", { name: /Create team/i })[0];
     await user.click(createButton);
-    // Dummy click, just ensuring coverage for the inline function
-    expect(createButton).toBeInTheDocument();
+
+    expect(await screen.findByRole("heading", { name: /Create team/i })).toBeInTheDocument();
   });
 
-  it("handles dummy Create Team click in empty state", async () => {
+  it("opens the create form when Create team is clicked in empty state", async () => {
     const user = userEvent.setup();
     vi.mocked(api.get).mockResolvedValueOnce({
       teams: [],
       nextCursor: null,
     });
+    // The create form's useTeamForm hook loads the user directory on mount.
+    vi.mocked(api.get).mockResolvedValue({ users: [] });
 
     renderWithRouter(<Teams />);
 
@@ -605,10 +609,10 @@ describe("Teams", () => {
       expect(screen.getByText("No teams yet")).toBeInTheDocument();
     });
 
-    const createButton = screen.getByRole("button", { name: /Create team/i });
+    const createButton = screen.getAllByRole("button", { name: /Create team/i })[0];
     await user.click(createButton);
-    // Dummy click, just ensuring coverage for the inline function
-    expect(createButton).toBeInTheDocument();
+
+    expect(await screen.findByRole("heading", { name: /Create team/i })).toBeInTheDocument();
   });
 
   it("handles error when loading more teams fails", async () => {

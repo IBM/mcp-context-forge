@@ -4,6 +4,7 @@ import { IntlProvider } from "react-intl";
 import { useUserForm } from "./useUserForm";
 import * as useQueryModule from "@/hooks/useQuery";
 import type { ReactNode } from "react";
+import type { User } from "@/types/user";
 
 // Mock useQuery
 vi.mock("@/hooks/useQuery", () => ({
@@ -452,9 +453,12 @@ describe("useUserForm", () => {
         is_active: true,
         password_change_required: false,
       };
-      const { result } = renderHook(() => useUserForm({ initialUser: initialUser as any }), {
-        wrapper,
-      });
+      const { result } = renderHook(
+        () => useUserForm({ initialUser: initialUser as unknown as User }),
+        {
+          wrapper,
+        },
+      );
       const onSuccess = vi.fn();
       const onOptimisticUpdate = vi.fn();
 
@@ -496,9 +500,12 @@ describe("useUserForm", () => {
         is_active: true,
         password_change_required: false,
       };
-      const { result } = renderHook(() => useUserForm({ initialUser: initialUser as any }), {
-        wrapper,
-      });
+      const { result } = renderHook(
+        () => useUserForm({ initialUser: initialUser as unknown as User }),
+        {
+          wrapper,
+        },
+      );
       const onError = vi.fn();
 
       act(() => {

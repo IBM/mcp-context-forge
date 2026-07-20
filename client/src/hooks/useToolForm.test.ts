@@ -5,7 +5,7 @@ import { IntlProvider } from "react-intl";
 import { http, HttpResponse } from "msw";
 import { server } from "@/test/mocks/server";
 import enMessages from "@/i18n/locales/en-US";
-import { useToolForm } from "./useToolForm";
+import { useToolForm, type RequestType } from "./useToolForm";
 
 // Wrap hooks in IntlProvider so react-intl's useIntl() resolves localized strings.
 const wrapper = ({ children }: { children: ReactNode }) =>
@@ -705,7 +705,7 @@ describe("useToolForm", () => {
         } as unknown as FormEvent<HTMLFormElement>);
       });
 
-      expect((capturedBody?.tool as any).tags).toEqual(["tag1", "tag2"]);
+      expect((capturedBody?.tool as Record<string, unknown>).tags).toEqual(["tag1", "tag2"]);
     });
 
     it("returns false from validateForm if outputSchema is invalid", () => {
@@ -797,7 +797,7 @@ describe("useToolForm", () => {
       });
 
       expect(capturedBody?.auth_type).toBe("authheaders");
-      expect((capturedBody?.auth_headers as any)[0].value).toBe("new-secret");
+      expect((capturedBody?.auth_headers as Array<{ value: string }>)[0].value).toBe("new-secret");
     });
 
     it("handles authheaders update when single header is changed (maxCustomHeaders = 1)", async () => {
@@ -855,7 +855,7 @@ describe("useToolForm", () => {
           initialValues: {
             name: "my-tool",
             url: "https://api.example.com",
-            requestType: "STREAMABLEHTTP" as any, // Cast since RequestType limits it
+            requestType: "STREAMABLEHTTP" as unknown as RequestType, // Cast since RequestType limits it
             integrationType: "MCP",
           },
         }),

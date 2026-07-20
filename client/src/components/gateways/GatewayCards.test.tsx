@@ -147,11 +147,7 @@ describe("VirtualServerCard", () => {
     const ellipsisBtn = screen.getByRole("button", { name: /Actions for/i });
     await user.click(ellipsisBtn);
     // After click, view details menu item appears
-    const viewDetailsItem = await screen.findByRole(
-      "menuitem",
-      { name: /View details/i },
-      { timeout: 5000 },
-    );
+    const viewDetailsItem = await screen.findByRole("menuitem", { name: /View details/i });
     expect(viewDetailsItem).toBeTruthy();
   });
 
@@ -163,11 +159,7 @@ describe("VirtualServerCard", () => {
     );
     const ellipsisBtn = screen.getByRole("button", { name: /Actions for/i });
     await user.click(ellipsisBtn);
-    const editItem = await screen.findByRole(
-      "menuitem",
-      { name: /Edit server/i },
-      { timeout: 5000 },
-    );
+    const editItem = await screen.findByRole("menuitem", { name: /Edit server/i });
     expect(editItem).toBeTruthy();
     await user.click(editItem);
     expect(onEdit).toHaveBeenCalledWith(mockServer);
@@ -181,7 +173,7 @@ describe("VirtualServerCard", () => {
     );
     const ellipsisBtn = screen.getByRole("button", { name: /Actions for/i });
     await user.click(ellipsisBtn);
-    const deleteItem = await screen.findByRole("menuitem", { name: /Delete/i }, { timeout: 5000 });
+    const deleteItem = await screen.findByRole("menuitem", { name: /Delete/i });
     expect(deleteItem).toBeTruthy();
     await user.click(deleteItem);
     expect(onDelete).toHaveBeenCalledWith(mockServer);
@@ -195,7 +187,7 @@ describe("VirtualServerCard", () => {
     const ellipsisBtn = screen.getByRole("button", { name: /Actions for/i });
     await user.click(ellipsisBtn);
     // enabled=true server shows "Deactivate"
-    const toggle = await screen.findByRole("menuitem", { name: /Deactivate/i }, { timeout: 5000 });
+    const toggle = await screen.findByRole("menuitem", { name: /Deactivate/i });
     expect(toggle).toBeTruthy();
   });
 

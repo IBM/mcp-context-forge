@@ -94,7 +94,7 @@ describe("useQuery", () => {
     });
 
     it("throws error for non-string paths", () => {
-      expect(() => renderHook(() => useQuery(123 as any))).toThrow(
+      expect(() => renderHook(() => useQuery(123 as unknown as string))).toThrow(
         "useQuery: path must be a non-empty string or null",
       );
     });
