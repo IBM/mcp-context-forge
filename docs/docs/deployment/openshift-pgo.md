@@ -75,7 +75,7 @@ If you don't need HA or automated backups (dev/test, POCs, teams without cluster
 
 ---
 
-# Prerequisites
+# 1. Prerequisites
 
 The following tools must be installed locally before you begin:
 
@@ -93,7 +93,7 @@ The following tools must be installed locally before you begin:
 
 ---
 
-## One-time cluster setup
+## 1.1 One-time cluster setup
 
 **These steps are performed **once per cluster**, not per deployment. Skip any step that is already done.**
 
@@ -123,7 +123,7 @@ make ocp-install-operator OCP_CLUSTER=<api-url>
 
 ---
 
-## Prepare secrets
+## 1.2 Prepare secrets
 
 These steps are performed **once** and the secrets file is reused across all deployments.
 
@@ -160,7 +160,7 @@ testing:
 
 ---
 
-# Deployment steps
+# 2. Deployment steps
 
 The Make commands below wrap Ansible playbooks (`ansible/ocp/playbooks/`). You can also run the playbooks directly — see [ansible/ocp/README.md](https://github.com/IBM/mcp-context-forge/blob/main/ansible/ocp/README.md) for details.
 
@@ -250,7 +250,7 @@ For step-by-step details, troubleshooting, or if the Make commands don't work as
 
 ---
 
-## Detailed Manual Steps
+## 3. Detailed Manual Steps
 
 > The sections below are for manual control or troubleshooting. For most deployments, the quick setup and deployment steps above are sufficient.
 
