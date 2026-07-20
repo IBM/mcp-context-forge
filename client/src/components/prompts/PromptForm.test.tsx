@@ -278,12 +278,13 @@ describe("PromptForm", () => {
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "Save changes" }));
 
-    await waitFor(() => {
-      expect(mockPut).toHaveBeenCalledWith(
-        "/prompts/prompt-2",
-        expect.objectContaining({ name: "federated_prompt", template: "" }),
-      );
-    });
+    await waitFor(() => expect(mockPut).toHaveBeenCalled());
+    const payload = mockPut.mock.calls[0][1] as Record<string, unknown>;
+    expect(payload).toMatchObject({ name: "federated_prompt" });
+    // Upstream-managed fields are omitted from the federated PUT payload.
+    expect(payload).not.toHaveProperty("template");
+    expect(payload).not.toHaveProperty("description");
+    expect(payload).not.toHaveProperty("arguments");
   });
 
   it("only allows editing name/visibility/tags for a federated prompt (upstream fields disabled)", () => {
