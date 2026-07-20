@@ -55,7 +55,7 @@ def mock_user():
     user = MagicMock(spec=EmailUser)
     user.email = "test@example.com"
     user.is_admin = False
-    user.id = "user-123"
+    user.id = "11111111-1111-1111-1111-111111111111"
     return user
 
 
@@ -255,7 +255,7 @@ class TestTokenCatalogService:
 
     @pytest.mark.asyncio
     async def test_generate_token_basic(self, token_service):
-        """Test _generate_token method with basic parameters."""
+        """Test _generate_token method with basic parameters and no user object."""
         with patch("mcpgateway.services.token_catalog_service.create_jwt_token", new_callable=AsyncMock) as mock_create_jwt:
             mock_create_jwt.return_value = "jwt_token_123"
             jti = str(uuid.uuid4())
@@ -269,6 +269,21 @@ class TestTokenCatalogService:
             assert call_kwargs["data"]["jti"] == jti
             assert call_kwargs["user_data"]["email"] == "user@example.com"
             assert call_kwargs["user_data"]["is_admin"] is False
+
+    @pytest.mark.asyncio
+    async def test_generate_token_uses_user_id_as_subject(self, token_service, mock_user):
+        """API tokens use the opaque user id as JWT subject when the user record is available."""
+        with patch("mcpgateway.services.token_catalog_service.create_jwt_token", new_callable=AsyncMock) as mock_create_jwt:
+            mock_create_jwt.return_value = "jwt_token_123"
+            jti = str(uuid.uuid4())
+
+            await token_service._generate_token("user@example.com", jti, user=mock_user)
+
+            call_kwargs = mock_create_jwt.call_args.kwargs
+            assert call_kwargs["data"]["sub"] == mock_user.id
+            assert call_kwargs["data"]["jti"] == jti
+            assert call_kwargs["data"]["token_use"] == "api"
+            assert call_kwargs["user_data"]["email"] == "user@example.com"
 
     @pytest.mark.asyncio
     async def test_generate_token_with_team(self, token_service):
@@ -354,6 +369,7 @@ class TestTokenCatalogService:
             assert token == "jwt_token_admin"
             call_kwargs = mock_create_jwt.call_args.kwargs
             assert call_kwargs["user_data"]["is_admin"] is True
+            assert call_kwargs["data"]["sub"] == mock_user.id
 
     @pytest.mark.asyncio
     async def test_generate_token_no_team_sets_teams_none(self, token_service):
@@ -380,6 +396,7 @@ class TestTokenCatalogService:
             token, raw_token = await token_service.create_token(user_email="test@example.com", name="New Token", description="Test token", expires_in_days=30, tags=["api", "test"])
 
             assert raw_token == "jwt_token_new"
+            assert mock_gen_token.await_args.kwargs["user"] is mock_user
             mock_db.add.assert_called_once()
             mock_db.commit.assert_called()
             mock_db.refresh.assert_called_once()
@@ -1108,7 +1125,7 @@ class TestTokenCatalogService:
             mock_get.return_value = mock_api_token
 
             # Must provide caller_permissions that include the requested scope permissions
-            updated = await token_service.update_token(
+            await token_service.update_token(
                 token_id="token-123",
                 user_email="test@example.com",
                 scope=token_scope,

@@ -712,6 +712,27 @@ class TestTokenScopingMiddleware:
         result = middleware._check_team_membership(payload, db=MagicMock())
         assert result is False
 
+    def test_check_team_membership_uses_signed_user_email_for_uuid_subject(self, middleware, monkeypatch):
+        """UUID-sub API tokens validate membership with the signed email metadata."""
+        payload = {
+            "sub": "11111111-1111-1111-1111-111111111111",
+            "user": {"email": "user@example.com"},
+            "teams": ["team-1"],
+        }
+
+        cache = MagicMock()
+        cache.get_team_membership_valid_sync.return_value = None
+        monkeypatch.setattr("mcpgateway.cache.auth_cache.get_auth_cache", lambda: cache)
+
+        db = MagicMock()
+        db.execute.return_value.scalars.return_value.all.return_value = ["team-1"]
+
+        result = middleware._check_team_membership(payload, db=db)
+
+        assert result is True
+        cache.get_team_membership_valid_sync.assert_called_once_with("user@example.com", ["team-1"])
+        cache.set_team_membership_valid_sync.assert_called_once_with("user@example.com", ["team-1"], True)
+
     @pytest.mark.asyncio
     async def test_session_token_with_teams_claim_still_resolves_from_db(self, middleware, mock_request):
         """Session tokens always resolve teams from DB even when a teams claim is present."""
@@ -842,6 +863,43 @@ class TestTokenScopingMiddleware:
 
                             # Verify _resolve_teams_from_db was NOT called
                             mock_resolve_teams.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_api_token_uuid_subject_uses_signed_user_email_for_ownership(self, middleware, mock_request, monkeypatch):
+        """API tokens can use opaque subjects without breaking email-keyed ownership checks."""
+        mock_request.url.path = "/servers"
+        mock_request.method = "GET"
+        mock_request.headers = {"Authorization": "Bearer api_token"}
+
+        api_payload = {
+            "sub": "11111111-1111-1111-1111-111111111111",
+            "user": {"email": "user@example.com"},
+            "token_use": "api",
+            "teams": ["team-1"],
+            "scopes": {"permissions": ["*"]},
+        }
+        db = MagicMock()
+
+        def _get_db():
+            yield db
+
+        monkeypatch.setattr("mcpgateway.db.get_db", _get_db)
+
+        with (
+            patch.object(middleware, "_extract_token_scopes", return_value=api_payload),
+            patch("mcpgateway.middleware.token_scoping.normalize_token_teams", return_value=["team-1"]),
+            patch.object(middleware, "_check_team_membership", return_value=True) as mock_membership,
+            patch.object(middleware, "_check_resource_team_ownership", return_value=ResourceOwnershipResult.ALLOWED) as mock_ownership,
+            patch.object(middleware, "_check_server_restriction", return_value=True),
+            patch.object(middleware, "_check_permission_restrictions", return_value=True),
+        ):
+            call_next = AsyncMock(return_value="success")
+
+            result = await middleware(mock_request, call_next)
+
+            assert result == "success"
+            mock_membership.assert_called_once_with(api_payload, db=db)
+            mock_ownership.assert_called_once_with("/servers", ["team-1"], db=db, _user_email="user@example.com")
 
     @pytest.mark.asyncio
     async def test_legacy_token_without_token_use_uses_embedded_teams(self, middleware, mock_request):

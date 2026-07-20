@@ -23,6 +23,7 @@ from sqlalchemy import and_, func, select
 
 # First-Party
 from mcpgateway.auth import normalize_token_teams, resolve_session_teams
+from mcpgateway.auth_context import get_user_email
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import Permissions
@@ -779,6 +780,18 @@ class TokenScopingMiddleware:
         # Default deny for unmatched paths (requires explicit permission mapping)
         return False
 
+    @staticmethod
+    def _get_user_email_from_payload(payload: dict) -> str | None:
+        """Extract the email identity from a signed JWT payload."""
+        user_info = payload.get("user")
+        if isinstance(user_info, dict):
+            user_email = get_user_email(user_info)
+            if user_email != "unknown":
+                return user_email
+
+        user_email = get_user_email(payload)
+        return user_email if user_email != "unknown" else None
+
     def _check_team_membership(self, payload: dict, db=None) -> bool:
         """
         Check if user still belongs to teams in the token.
@@ -800,7 +813,7 @@ class TokenScopingMiddleware:
             bool: True if team membership is valid, False otherwise
         """
         teams = payload.get("teams", [])
-        user_email = payload.get("sub")
+        user_email = self._get_user_email_from_payload(payload)
 
         # PUBLIC-ONLY TOKEN: No team validation needed
         if not teams or len(teams) == 0:
@@ -1301,7 +1314,7 @@ class TokenScopingMiddleware:
 
             # TEAM VALIDATION: Use single DB session for both team checks
             # This reduces connection pool overhead from 2 sessions to 1 for resource endpoints
-            user_email = payload.get("sub") or payload.get("email")  # Extract user email for ownership check
+            user_email = self._get_user_email_from_payload(payload)
 
             # Resolve teams based on token_use claim
             token_use = payload.get("token_use")
