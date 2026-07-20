@@ -286,6 +286,40 @@ describe("PromptForm", () => {
     });
   });
 
+  it("only allows editing name/visibility/tags for a federated prompt (upstream fields disabled)", () => {
+    const federatedPrompt = {
+      ...editablePrompt,
+      id: "prompt-2",
+      name: "federated_prompt",
+      gatewayId: "gw-hugging-face",
+      gatewaySlug: "hugging-face",
+    } as unknown as NonNullable<ComponentProps<typeof PromptForm>["prompt"]>;
+
+    renderPromptForm({ prompt: federatedPrompt });
+
+    // A notice explains why some fields are read-only.
+    expect(screen.getByRole("note")).toBeInTheDocument();
+
+    // Upstream-managed fields are disabled (they get clobbered on re-sync).
+    expect(screen.getByLabelText(/template/i)).toBeDisabled();
+    expect(screen.getByLabelText(/arguments/i)).toBeDisabled();
+    expect(screen.getByLabelText("Description")).toBeDisabled();
+
+    // Locally-owned fields stay editable.
+    expect(screen.getByLabelText(/name/i)).toBeEnabled();
+    expect(screen.getByRole("combobox", { name: /visibility/i })).toBeEnabled();
+    expect(screen.getByLabelText(/tags/i)).toBeEnabled();
+  });
+
+  it("keeps all fields editable when editing a local (non-federated) prompt", () => {
+    renderPromptForm({ prompt: editablePrompt });
+
+    expect(screen.queryByRole("note")).not.toBeInTheDocument();
+    expect(screen.getByLabelText(/template/i)).toBeEnabled();
+    expect(screen.getByLabelText(/arguments/i)).toBeEnabled();
+    expect(screen.getByLabelText("Description")).toBeEnabled();
+  });
+
   it("revalidates argument errors while the field is edited", async () => {
     renderPromptForm();
     const argumentsField = screen.getByLabelText(/arguments/i);

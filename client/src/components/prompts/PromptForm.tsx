@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import { useIntl } from "react-intl";
-import { CircleAlert, MessageSquareCode } from "lucide-react";
+import { CircleAlert, Info, MessageSquareCode } from "lucide-react";
 import { BackButton } from "@/components/ui/back-button";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -93,6 +93,16 @@ export function PromptForm({ isOpen, onToggle, onSuccess, prompt }: PromptFormPr
           <p className="text-sm text-muted-foreground">
             {intl.formatMessage({ id: "prompts.add.subtitle" })}
           </p>
+
+          {isFederated && (
+            <div
+              role="note"
+              className="flex gap-3 rounded-md border border-border bg-muted/50 p-3 text-sm text-muted-foreground"
+            >
+              <Info className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+              <p>{intl.formatMessage({ id: "prompts.edit.federatedNotice" })}</p>
+            </div>
+          )}
 
           <form onSubmit={(event) => form.handleSubmit(event, onSuccess)} className="space-y-6">
             {form.errors.submit && (
@@ -202,6 +212,7 @@ export function PromptForm({ isOpen, onToggle, onSuccess, prompt }: PromptFormPr
                 aria-required={templateRequired}
                 aria-invalid={!!form.errors.template}
                 aria-describedby={form.errors.template ? "prompt-template-error" : undefined}
+                disabled={isFederated}
                 className="min-h-[96px] resize-y focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-0"
               />
               {form.errors.template && (
@@ -226,6 +237,7 @@ export function PromptForm({ isOpen, onToggle, onSuccess, prompt }: PromptFormPr
                 placeholder={intl.formatMessage({ id: "prompts.add.placeholder.arguments" })}
                 aria-invalid={!!form.errors.arguments}
                 aria-describedby={form.errors.arguments ? "prompt-arguments-error" : undefined}
+                disabled={isFederated}
                 className="min-h-[116px] resize-y font-mono text-sm focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-0"
               />
               {form.errors.arguments && (
@@ -247,6 +259,7 @@ export function PromptForm({ isOpen, onToggle, onSuccess, prompt }: PromptFormPr
                 value={form.description}
                 onChange={(e) => form.setDescription(e.target.value)}
                 placeholder={intl.formatMessage({ id: "prompts.add.placeholder.description" })}
+                disabled={isFederated}
                 className="min-h-[60px] resize-y focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-0"
               />
             </div>

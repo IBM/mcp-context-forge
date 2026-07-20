@@ -213,6 +213,68 @@ test.describe("Prompts page", () => {
     await expect(page.getByText("Updated description via e2e")).toBeVisible();
   });
 
+  test("restricts the edit form to name/visibility/tags for a federated prompt", async ({
+    page,
+  }) => {
+    const PROMPT = makePrompt("summarize", "hugging-face", {
+      id: "prompt-1",
+      displayName: "summarize",
+      description: "Upstream description",
+      template: "Upstream template",
+      arguments: [],
+    });
+    const promptsList: Prompt[] = [PROMPT];
+    let putBody: UpdatePromptPayload | null = null;
+
+    await page.route("**/prompts?*", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(promptsList),
+      });
+    });
+    await page.route(`**/prompts/${PROMPT.id}`, async (route) => {
+      if (route.request().method() === "PUT") {
+        putBody = route.request().postDataJSON() as UpdatePromptPayload;
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({ ...PROMPT, name: putBody.name ?? PROMPT.name }),
+        });
+      } else {
+        await route.fallback();
+      }
+    });
+
+    await page.goto(APP.PROMPTS);
+    await page.waitForLoadState("networkidle");
+
+    // Open the federated group's panel and launch the edit form.
+    await page.getByRole("button", { name: "More options for hugging-face" }).click();
+    await page.getByRole("menuitem", { name: "View details" }).click();
+
+    const panel = page.getByRole("region", { name: /Prompt details:/ });
+    await panel.getByRole("tab", { name: "Definition" }).click();
+    await panel.getByRole("button", { name: "More options for summarize" }).click();
+    await page.getByRole("menuitem", { name: "Edit" }).click();
+
+    await expect(page.getByRole("heading", { name: "Edit prompt" })).toBeVisible();
+
+    // Upstream-managed fields are disabled; a notice explains why.
+    await expect(page.getByRole("note")).toBeVisible();
+    await expect(page.getByLabel(/template/i)).toBeDisabled();
+    await expect(page.getByLabel(/arguments/i)).toBeDisabled();
+    await expect(page.getByLabel("Description")).toBeDisabled();
+
+    // Name / visibility / tags stay editable and a rename is persisted.
+    await expect(page.locator("#name")).toBeEnabled();
+    await page.locator("#name").fill("renamed_summarize");
+    await page.getByRole("button", { name: "Save changes" }).click();
+
+    await expect.poll(() => putBody).not.toBeNull();
+    expect(putBody!.name).toBe("renamed_summarize");
+  });
+
   test("renders a preview in the details panel Try it tab", async ({ page }) => {
     const PROMPT = makePrompt("summarize", "", {
       id: "prompt-1",
