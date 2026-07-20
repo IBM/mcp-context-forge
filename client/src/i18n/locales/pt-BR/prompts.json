@@ -76,6 +76,7 @@
   "prompts.add.button.submit": "Adicionar prompt",
   "prompts.edit.pageTitle": "Editar prompt",
   "prompts.edit.button.submit": "Salvar alterações",
+  "prompts.edit.federatedNotice": "Este prompt é fornecido por um servidor MCP federado. Sua descrição, modelo e argumentos são gerenciados na origem e não podem ser editados aqui.",
   "prompts.edit.success": "Prompt \"{name}\" atualizado",
   "prompts.edit.error": "Falha ao atualizar prompt. Por favor, tente novamente.",
   "prompts.add.required": "*",
