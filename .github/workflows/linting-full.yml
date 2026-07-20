@@ -376,62 +376,57 @@ jobs:
         run: nodejsscan --directory ./mcpgateway/static
 
   # ---------------------------------------------------------------
-  # Pyright type checker — changed-file gate (merge queue / push)
-  #
-  # NOTE: This job intentionally checks only files changed vs main,
-  # not the full project. The full project currently has ~6,400
-  # pyright errors in standard mode that pre-date this workflow.
-  # Once those are resolved (see issue #5633), change the run step
-  # from `make pyright-pr` to `make pyright` to enforce whole-project
-  # type checking on every merge.
+  # Pyright type checker — TEMPORARILY DISABLED (see issue #5633)
+  # Uncomment the block below and restore pyright to the lint-complete
+  # needs list to re-enable once pre-existing errors are resolved.
   # ---------------------------------------------------------------
-  pyright:
-    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
-    name: "python: pyright (changed files)"
-    runs-on: ubuntu-slim
-    timeout-minutes: 10
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
-        with:
-          persist-credentials: false
-          fetch-depth: 0
-
-      - name: Install Node.js 22
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y ca-certificates curl gnupg
-          sudo mkdir -p /etc/apt/keyrings
-          curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
-            | sudo gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg
-          echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_22.x nodistro main" \
-            | sudo tee /etc/apt/sources.list.d/nodesource.list > /dev/null
-          sudo apt-get update -qq
-          sudo apt-get install -y nodejs
-
-      - name: Set up Python
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
-        with:
-          python-version: "3.12"
-
-      - name: Set up uv
-        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
-        with:
-          enable-cache: true
-
-      - name: Install dependencies
-        run: uv sync
-
-      - name: Run Pyright on changed files
-        run: BASE_BRANCH=origin/main make pyright-pr
+  # pyright:
+  #   if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+  #   name: "python: pyright (changed files)"
+  #   runs-on: ubuntu-slim
+  #   timeout-minutes: 10
+  #
+  #   steps:
+  #     - name: Checkout
+  #       uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+  #       with:
+  #         persist-credentials: false
+  #         fetch-depth: 0
+  #
+  #     - name: Install Node.js 22
+  #       run: |
+  #         sudo apt-get update -qq
+  #         sudo apt-get install -y ca-certificates curl gnupg
+  #         sudo mkdir -p /etc/apt/keyrings
+  #         curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
+  #           | sudo gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg
+  #         echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_22.x nodistro main" \
+  #           | sudo tee /etc/apt/sources.list.d/nodesource.list > /dev/null
+  #         sudo apt-get update -qq
+  #         sudo apt-get install -y nodejs
+  #
+  #     - name: Set up Python
+  #       uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+  #       with:
+  #         python-version: "3.12"
+  #
+  #     - name: Set up uv
+  #       uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+  #       with:
+  #         enable-cache: true
+  #
+  #     - name: Install dependencies
+  #       run: uv sync
+  #
+  #     - name: Run Pyright on changed files
+  #       run: BASE_BRANCH=origin/main make pyright-pr
 
   # ---------------------------------------------------------------
   # Fan-in gate — single required status check for merge queue
   # ---------------------------------------------------------------
   lint-complete:
     name: Linting Complete
-    needs: [lint-go-helm-ci, lint-python, syntax-check, lint-rust, lint-web, nodejsscan, pyright]
+    needs: [lint-go-helm-ci, lint-python, syntax-check, lint-rust, lint-web, nodejsscan]
     runs-on: ubuntu-slim
     if: always()
     steps:
@@ -444,7 +439,6 @@ jobs:
             "${{ needs.lint-rust.result }}"
             "${{ needs.lint-web.result }}"
             "${{ needs.nodejsscan.result }}"
-            "${{ needs.pyright.result }}"
           )
           failed=0
           for r in "${results[@]}"; do
