@@ -2501,6 +2501,55 @@ class TestEmailAuthServiceUserUpdates:
         mock_db.commit.assert_called()
 
     @pytest.mark.asyncio
+    async def test_deactivate_user_active_admin_requires_requester_identity(self, service, mock_db, mock_user):
+        """Direct service calls cannot bypass requester validation for admins."""
+        mock_user.email = "admin@example.com"
+        mock_user.is_admin = True
+        mock_user.is_active = True
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_user
+
+        with pytest.raises(ValueError, match="Requesting user email is required"):
+            await service.deactivate_user("admin@example.com")
+
+    @pytest.mark.asyncio
+    async def test_deactivate_user_blocks_admin_self_deactivation(self, service, mock_db, mock_user):
+        """Direct service calls enforce case-insensitive self-deactivation protection."""
+        mock_user.email = "admin@example.com"
+        mock_user.is_admin = True
+        mock_user.is_active = True
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_user
+
+        with pytest.raises(ValueError, match="cannot demote or deactivate their own account"):
+            await service.deactivate_user("Admin@Example.com", requesting_user_email=" ADMIN@example.com ")
+
+    @pytest.mark.asyncio
+    async def test_deactivate_user_blocks_last_active_admin(self, service, mock_db, mock_user):
+        """Direct service calls enforce last-active-admin protection."""
+        mock_user.email = "admin@example.com"
+        mock_user.is_admin = True
+        mock_user.is_active = True
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_user
+
+        with patch.object(service, "is_last_active_admin", new=AsyncMock(return_value=True)):
+            with pytest.raises(ValueError, match="last remaining active admin"):
+                await service.deactivate_user("admin@example.com", requesting_user_email="other-admin@example.com")
+
+    @pytest.mark.asyncio
+    async def test_deactivate_user_allows_peer_admin_deactivation(self, service, mock_db, mock_user):
+        """Direct service calls allow peer deactivation when another admin remains."""
+        mock_user.email = "admin@example.com"
+        mock_user.is_admin = True
+        mock_user.is_active = True
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_user
+
+        with patch.object(service, "is_last_active_admin", new=AsyncMock(return_value=False)):
+            result = await service.deactivate_user("admin@example.com", requesting_user_email="other-admin@example.com")
+
+        assert result is mock_user
+        assert mock_user.is_active is False
+        mock_db.commit.assert_called_once()
+
+    @pytest.mark.asyncio
     async def test_deactivate_user_not_found(self, service, mock_db):
         """Test deactivating non-existent user."""
         mock_result = MagicMock()

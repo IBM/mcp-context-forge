@@ -2009,39 +2009,20 @@ class EmailAuthService:
             logger.error("Error activating user %s: %s", SecurityValidator.sanitize_log_message(email), e)
             raise
 
-    async def deactivate_user(self, email: str) -> EmailUser:
+    async def deactivate_user(self, email: str, requesting_user_email: Optional[str] = None) -> EmailUser:
         """Deactivate a user account.
 
         Args:
             email: User's email address
+            requesting_user_email: Email of the authenticated user making the change. Required when deactivating an active admin.
 
         Returns:
             EmailUser: Updated user object
 
         Raises:
-            ValueError: If user doesn't exist
+            ValueError: If user doesn't exist or the admin-removal policy rejects the change
         """
-        try:
-            stmt = select(EmailUser).where(EmailUser.email == email)
-            result = self.db.execute(stmt)
-            user = result.scalar_one_or_none()
-
-            if not user:
-                raise ValueError(f"User {email} not found")
-
-            user.is_active = False
-            user.updated_at = datetime.now(timezone.utc)
-
-            self.db.commit()
-            await self._invalidate_user_auth_cache(email)
-
-            logger.info("User %s deactivated", SecurityValidator.sanitize_log_message(email))
-            return user
-
-        except Exception as e:
-            self.db.rollback()
-            logger.error("Error deactivating user %s: %s", SecurityValidator.sanitize_log_message(email), e)
-            raise
+        return await self.update_user(email=email, is_active=False, requesting_user_email=requesting_user_email)
 
     async def delete_user(self, email: str) -> bool:
         """Delete a user account permanently.
