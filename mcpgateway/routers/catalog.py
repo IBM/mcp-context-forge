@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/routers/catalog.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: IBM
 
 MCP Registry catalog API router.
 """
@@ -26,7 +25,6 @@ router = APIRouter(prefix="/catalog", tags=["Catalog"])
 
 
 @router.get("", response_model=CatalogListResponse)
-@router.get("/", response_model=CatalogListResponse)
 @require_permission("servers.read")
 async def list_catalog_servers(
     request: Request,

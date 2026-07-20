@@ -1,4 +1,10 @@
-"""Unit tests for the v1 catalog API router."""
+# -*- coding: utf-8 -*-
+"""Location: ./tests/unit/mcpgateway/routers/test_catalog.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
+SPDX-License-Identifier: Apache-2.0
+
+Unit tests for the v1 catalog API router.
+"""
 
 # Standard
 from unittest.mock import AsyncMock, MagicMock
@@ -115,6 +121,6 @@ def test_catalog_router_is_v1_only():
     legacy_paths = [path for path, *_ in collect_routes(build_legacy_router(settings, **_empty_router_kwargs()))]
 
     assert "/v1/catalog" in v1_paths
-    assert "/v1/catalog/" in v1_paths
+    assert "/v1/catalog/" not in v1_paths
     assert "/catalog" not in legacy_paths
     assert "/catalog/" not in legacy_paths
