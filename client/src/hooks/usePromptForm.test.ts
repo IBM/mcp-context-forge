@@ -389,11 +389,11 @@ describe("usePromptForm", () => {
     expect(result.current.errors.template).toBe("Template is required");
   });
 
-  it("allows an empty template when templateRequired is false (federated prompts)", () => {
+  it("allows an empty template for a federated prompt", () => {
     const { result } = renderHook(() =>
       usePromptForm({
         promptId: "prompt-1",
-        templateRequired: false,
+        federated: true,
         initialValues: { name: "Federated prompt", template: "", visibility: "public" },
       }),
     );
@@ -406,6 +406,41 @@ describe("usePromptForm", () => {
     expect(valid!).toBe(true);
     expect(result.current.errors.template).toBeUndefined();
     expect(result.current.isValid).toBe(true);
+  });
+
+  it("omits upstream-managed fields from the PUT for a federated prompt", async () => {
+    mockPut.mockResolvedValue({ id: "prompt-1", name: "Federated prompt" });
+    const { result } = renderHook(() =>
+      usePromptForm({
+        promptId: "prompt-1",
+        federated: true,
+        initialValues: {
+          name: "Federated prompt",
+          visibility: "public",
+          template: "Upstream template",
+          description: "Upstream description",
+          arguments: '[{"name":"topic"}]',
+          tags: "a, b",
+        },
+      }),
+    );
+
+    await act(async () => {
+      await result.current.handleSubmit(fakeSubmit());
+    });
+
+    const payload = mockPut.mock.calls[0][1] as Record<string, unknown>;
+    // Locally-owned fields are sent...
+    expect(payload).toMatchObject({
+      name: "Federated prompt",
+      tags: ["a", "b"],
+      visibility: "public",
+    });
+    // ...but upstream-managed fields are omitted entirely (not sent as stale
+    // values that would clobber newer upstream data).
+    expect(payload).not.toHaveProperty("description");
+    expect(payload).not.toHaveProperty("template");
+    expect(payload).not.toHaveProperty("arguments");
   });
 
   it("updates an existing prompt via PUT and preserves the form in edit mode", async () => {
@@ -433,7 +468,7 @@ describe("usePromptForm", () => {
     expect(mockPost).not.toHaveBeenCalled();
     expect(mockPut).toHaveBeenCalledWith("/prompts/prompt-1", {
       name: "Existing prompt",
-      description: null,
+      description: "",
       template: "Hello {{ name }}, welcome",
       arguments: [],
       tags: null,
@@ -444,6 +479,35 @@ describe("usePromptForm", () => {
     // Edit mode does not reset the form back to its empty state.
     expect(result.current.name).toBe("Existing prompt");
     expect(result.current.template).toBe("Hello {{ name }}, welcome");
+  });
+
+  it("clears a description by sending an empty string (not null) in the PUT", async () => {
+    mockPut.mockResolvedValue({ id: "prompt-1", name: "Existing prompt" });
+    const { result } = renderHook(() =>
+      usePromptForm({
+        promptId: "prompt-1",
+        initialValues: {
+          name: "Existing prompt",
+          visibility: "public",
+          template: "Hello {{ name }}",
+          description: "Original description",
+        },
+      }),
+    );
+
+    // The user empties a previously non-empty description.
+    act(() => {
+      result.current.setDescription("");
+    });
+
+    await act(async () => {
+      await result.current.handleSubmit(fakeSubmit());
+    });
+
+    // "" (not null) so the backend actually clears the field — it treats null as
+    // "field not provided" and would otherwise keep the old description.
+    const payload = mockPut.mock.calls[0][1] as Record<string, unknown>;
+    expect(payload.description).toBe("");
   });
 
   it("keeps the prompt's own team when editing a team prompt with no sidebar selection", async () => {
