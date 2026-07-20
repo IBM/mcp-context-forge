@@ -1536,7 +1536,7 @@ def get_user_id(user: Union[str, dict[str, Any], object] = None) -> str:
     if isinstance(user, dict):
         # Try multiple possible ID fields in order of preference.
         # Email is the primary key in the model, so that's our mostly likely result.
-        return user.get("id") or user.get("user_id") or user.get("sub") or user.get("email") or "unknown"
+        return user.get("id") or user.get("user_id") or get_user_email(user)
 
     return "unknown" if user is None else str(getattr(user, "id", user))
 
