@@ -35,6 +35,7 @@ from starlette.routing import Mount
 # First-Party
 from mcpgateway.common.models import LogLevel
 from mcpgateway.config import settings
+from mcpgateway.middleware.token_scoping import ResourceOwnershipResult
 import mcpgateway.db as db_mod
 from mcpgateway.auth_context import _expected_internal_mcp_runtime_auth_header
 from mcpgateway.auth import TokenValidationError
@@ -13336,12 +13337,40 @@ class TestHardeningHelperCoverage:
 
         with (
             patch.object(main_mod, "get_scoped_resource_access_context", return_value=("user@example.com", ["team-1"])),
-            patch.object(main_mod.token_scoping_middleware, "_check_resource_team_ownership", return_value=False),
+            patch.object(main_mod.token_scoping_middleware, "_check_resource_team_ownership", return_value=ResourceOwnershipResult.DENIED),
         ):
             with pytest.raises(HTTPException) as excinfo:
                 main_mod._enforce_scoped_resource_access(request, db, {"email": "user@example.com"}, "/servers/server-1")
 
         assert excinfo.value.status_code == 403
+
+    @pytest.mark.parametrize("ownership_result", [ResourceOwnershipResult.DENIED, ResourceOwnershipResult.NOT_FOUND])
+    def test_enforce_scoped_resource_access_rejects_non_allowed_results(self, ownership_result):
+        import mcpgateway.main as main_mod
+
+        request = MagicMock(spec=Request)
+        db = MagicMock()
+
+        with (
+            patch.object(main_mod, "get_scoped_resource_access_context", return_value=("user@example.com", ["team-1"])),
+            patch.object(main_mod.token_scoping_middleware, "_check_resource_team_ownership", return_value=ownership_result),
+        ):
+            with pytest.raises(HTTPException) as excinfo:
+                main_mod._enforce_scoped_resource_access(request, db, {"email": "user@example.com"}, "/servers/server-1")
+
+        assert excinfo.value.status_code == 403
+
+    def test_enforce_scoped_resource_access_allows_allowed_result(self):
+        import mcpgateway.main as main_mod
+
+        request = MagicMock(spec=Request)
+        db = MagicMock()
+
+        with (
+            patch.object(main_mod, "get_scoped_resource_access_context", return_value=("user@example.com", ["team-1"])),
+            patch.object(main_mod.token_scoping_middleware, "_check_resource_team_ownership", return_value=ResourceOwnershipResult.ALLOWED),
+        ):
+            main_mod._enforce_scoped_resource_access(request, db, {"email": "user@example.com"}, "/servers/server-1")
 
 
 @pytest.mark.asyncio
