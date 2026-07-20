@@ -267,8 +267,9 @@ export function SourceSelection({
 
         {createServerActions && (
           <div className="space-y-7">
-            <button
+            <Button
               type="button"
+              variant="ghost"
               onClick={handleToggleComponentsPanel}
               aria-expanded={isComponentsPanelOpen}
               aria-controls={panelId}
@@ -288,7 +289,7 @@ export function SourceSelection({
                   aria-hidden="true"
                 />
               )}
-            </button>
+            </Button>
 
             {isComponentsPanelOpen && (
               <section

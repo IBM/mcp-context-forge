@@ -1,4 +1,5 @@
 import { CircleCheck, CircleAlert, X } from "lucide-react";
+import { Button } from "@/components/ui/button";
 
 interface InlineNotificationProps {
   type: "success" | "error";
@@ -31,14 +32,16 @@ export function InlineNotification({
         </p>
       </div>
       {onDismiss && (
-        <button
+        <Button
           type="button"
+          variant="ghost"
+          size="icon"
           onClick={onDismiss}
           aria-label={dismissLabel}
           className="ml-2 shrink-0 p-1 opacity-60 hover:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500"
         >
           <X className="h-4 w-4" aria-hidden="true" />
-        </button>
+        </Button>
       )}
     </div>
   );

@@ -476,8 +476,9 @@ export function ToolForm({ isOpen, onToggle, onSuccess, tool }: ToolFormProps) {
                 )}
               </div>
 
-              <button
+              <Button
                 type="button"
+                variant="ghost"
                 onClick={() => setAdvancedOpen((current) => !current)}
                 className="inline-flex w-full items-center gap-2 rounded-md border border-neutral-200 px-3 py-2 text-sm font-medium text-neutral-600 transition hover:text-neutral-950 dark:border-neutral-800 dark:text-neutral-400 dark:hover:text-neutral-300"
                 aria-expanded={advancedOpen}
@@ -485,7 +486,7 @@ export function ToolForm({ isOpen, onToggle, onSuccess, tool }: ToolFormProps) {
               >
                 <ChevronDown className={`h-4 w-4 transition ${advancedOpen ? "rotate-180" : ""}`} />
                 {intl.formatMessage({ id: "tools.form.advancedSettings" })}
-              </button>
+              </Button>
 
               {advancedOpen && (
                 <div id="advanced-settings-panel">
