@@ -4414,7 +4414,7 @@ async def set_server_state(
         HTTPException: If the server is not found or there is an error.
     """
     try:
-        user_email = user.get("email") if isinstance(user, dict) else str(user)
+        user_email = get_user_email(user)
         logger.debug(f"User {safe_log_user(user)} is setting server with ID {server_id} to {'active' if activate else 'inactive'}")
         return await server_service.set_server_state(db, server_id, activate, user_email=user_email)
     except PermissionError as e:
@@ -4470,7 +4470,7 @@ async def delete_server(
         request (Request): Incoming FastAPI request (for visibility scope resolution).
         purge_metrics (bool): Whether to delete raw + hourly rollup metrics for this server.
         db (Session): The database session used to interact with the data store.
-        user (str): The authenticated user making the request.
+        user (str): The authenticated user making the request. Email extracted via get_user_email() with email-over-sub precedence.
 
     Returns:
         Dict[str, str]: A success message indicating the server was deleted.
@@ -4480,7 +4480,7 @@ async def delete_server(
     """
     try:
         logger.debug(f"User {safe_log_user(user)} is deleting server with ID {server_id}")
-        user_email = user.get("email") if isinstance(user, dict) else str(user)
+        user_email = get_user_email(user)
         auth_user_email, auth_token_teams = get_scoped_resource_access_context(request, user)
         await server_service.get_server(db, server_id, user_email=auth_user_email, token_teams=auth_token_teams)
         await server_service.delete_server(db, server_id, user_email=user_email, purge_metrics=purge_metrics)
@@ -5080,7 +5080,7 @@ async def update_a2a_agent(
 
         if a2a_service is None:
             raise HTTPException(status_code=503, detail="A2A service not available")
-        user_email = user.get("email") if isinstance(user, dict) else str(user)
+        user_email = get_user_email(user)
         return await a2a_service.update_agent(
             db,
             agent_id,
@@ -5131,7 +5131,7 @@ async def set_a2a_agent_state(
         HTTPException: If the agent is not found or there is an error.
     """
     try:
-        user_email = user.get("email") if isinstance(user, dict) else str(user)
+        user_email = get_user_email(user)
         logger.debug(f"User {safe_log_user(user)} is toggling A2A agent with ID {agent_id} to {'active' if activate else 'inactive'}")
         if a2a_service is None:
             raise HTTPException(status_code=503, detail="A2A service not available")
@@ -5197,7 +5197,7 @@ async def delete_a2a_agent(
         logger.debug(f"User {safe_log_user(user)} is deleting A2A agent with ID {agent_id}")
         if a2a_service is None:
             raise HTTPException(status_code=503, detail="A2A service not available")
-        user_email = user.get("email") if isinstance(user, dict) else str(user)
+        user_email = get_user_email(user)
         await a2a_service.delete_agent(db, agent_id, user_email=user_email, purge_metrics=purge_metrics)
         return {
             "status": "success",
@@ -5948,7 +5948,7 @@ async def update_tool(
         tool (ToolUpdate): The updated tool information.
         request (Request): The FastAPI request object for metadata extraction.
         db (Session): The database session dependency.
-        user (str): The authenticated user making the request.
+        user (str): The authenticated user making the request. Email extracted via get_user_email() with email-over-sub precedence.
 
     Returns:
         ToolRead: The updated tool data.
@@ -5965,7 +5965,7 @@ async def update_tool(
         mod_metadata = MetadataCapture.extract_modification_metadata(request, user, current_version)
 
         logger.debug(f"User {safe_log_user(user)} is updating tool with ID {tool_id}")
-        user_email = user.get("email") if isinstance(user, dict) else str(user)
+        user_email = get_user_email(user)
         result = await tool_service.update_tool(
             db,
             tool_id,
@@ -6011,7 +6011,7 @@ async def delete_tool(
         tool_id (str): The ID of the tool to delete.
         purge_metrics (bool): Whether to delete raw + hourly rollup metrics for this tool.
         db (Session): The database session dependency.
-        user (str): The authenticated user making the request.
+        user (str): The authenticated user making the request. Email extracted via get_user_email() with email-over-sub precedence.
 
     Returns:
         Dict[str, str]: A confirmation message upon successful deletion.
@@ -6021,7 +6021,7 @@ async def delete_tool(
     """
     try:
         logger.debug(f"User {safe_log_user(user)} is deleting tool with ID {tool_id}")
-        user_email = user.get("email") if isinstance(user, dict) else str(user)
+        user_email = get_user_email(user)
         await tool_service.delete_tool(db, tool_id, user_email=user_email, purge_metrics=purge_metrics)
         db.commit()
         db.close()
@@ -6049,7 +6049,7 @@ async def set_tool_state(
         tool_id (str): The ID of the tool to update.
         activate (bool): Whether to activate (`True`) or deactivate (`False`) the tool.
         db (Session): The database session dependency.
-        user (str): The authenticated user making the request.
+        user (str): The authenticated user making the request. Email extracted via get_user_email() with email-over-sub precedence.
 
     Returns:
         Dict[str, Any]: The status, message, and updated tool data.
@@ -6059,7 +6059,7 @@ async def set_tool_state(
     """
     try:
         logger.debug(f"User {safe_log_user(user)} is setting tool state for ID {tool_id} to {'active' if activate else 'inactive'}")
-        user_email = user.get("email") if isinstance(user, dict) else str(user)
+        user_email = get_user_email(user)
         tool = await tool_service.set_tool_state(db, tool_id, activate, reachable=activate, user_email=user_email)
         return {
             "status": "success",
@@ -6169,7 +6169,7 @@ async def set_resource_state(
         resource_id (str): The ID of the resource.
         activate (bool): True to activate, False to deactivate.
         db (Session): Database session.
-        user (str): Authenticated user.
+        user (str): Authenticated user. Email extracted via get_user_email() with email-over-sub precedence.
 
     Returns:
         Dict[str, Any]: Status message and updated resource data.
@@ -6179,7 +6179,7 @@ async def set_resource_state(
     """
     logger.debug(f"User {safe_log_user(user)} is toggling resource with ID {resource_id} to {'active' if activate else 'inactive'}")
     try:
-        user_email = user.get("email") if isinstance(user, dict) else str(user)
+        user_email = get_user_email(user)
         resource = await resource_service.set_resource_state(db, resource_id, activate, user_email=user_email)
         return {
             "status": "success",
@@ -6594,7 +6594,7 @@ async def update_resource(
         resource (ResourceUpdate): New resource data.
         request (Request): The FastAPI request object for metadata extraction.
         db (Session): Database session.
-        user (str): Authenticated user.
+        user (str): Authenticated user. Email extracted via get_user_email() with email-over-sub precedence.
 
     Returns:
         ResourceRead: The updated resource.
@@ -6607,7 +6607,7 @@ async def update_resource(
         # Extract modification metadata
         mod_metadata = MetadataCapture.extract_modification_metadata(request, user, 0)  # Version will be incremented in service
 
-        user_email = user.get("email") if isinstance(user, dict) else str(user)
+        user_email = get_user_email(user)
         result = await resource_service.update_resource(
             db,
             resource_id,
@@ -6660,7 +6660,7 @@ async def delete_resource(
         resource_id (str): ID of the resource to delete.
         purge_metrics (bool): Whether to delete raw + hourly rollup metrics for this resource.
         db (Session): Database session.
-        user (str): Authenticated user.
+        user (str): Authenticated user. Email extracted via get_user_email() with email-over-sub precedence.
 
     Returns:
         Dict[str, str]: Status message indicating deletion success.
@@ -6670,7 +6670,7 @@ async def delete_resource(
     """
     try:
         logger.debug(f"User {safe_log_user(user)} is deleting resource with id {resource_id}")
-        user_email = user.get("email") if isinstance(user, dict) else str(user)
+        user_email = get_user_email(user)
         await resource_service.delete_resource(db, resource_id, user_email=user_email, purge_metrics=purge_metrics)
         db.commit()
         db.close()
@@ -6737,7 +6737,7 @@ async def set_prompt_state(
         prompt_id: ID of the prompt to update.
         activate: True to activate, False to deactivate.
         db: Database session.
-        user: Authenticated user.
+        user: Authenticated user. Email extracted via get_user_email() with email-over-sub precedence.
 
     Returns:
         Status message and updated prompt details.
@@ -6747,7 +6747,7 @@ async def set_prompt_state(
     """
     logger.debug(f"User: {safe_log_user(user)} requested state change for prompt {prompt_id}, activate={activate}")
     try:
-        user_email = user.get("email") if isinstance(user, dict) else str(user)
+        user_email = get_user_email(user)
         prompt = await prompt_service.set_prompt_state(db, prompt_id, activate, user_email=user_email)
         return {
             "status": "success",
@@ -7141,7 +7141,7 @@ async def update_prompt(
         # Extract modification metadata
         mod_metadata = MetadataCapture.extract_modification_metadata(request, user, 0)  # Version will be incremented in service
 
-        user_email = user.get("email") if isinstance(user, dict) else str(user)
+        user_email = get_user_email(user)
         result = await prompt_service.update_prompt(
             db,
             prompt_id,
@@ -7201,7 +7201,7 @@ async def delete_prompt(
         prompt_id: ID of the prompt.
         purge_metrics: Whether to delete raw + hourly rollup metrics for this prompt.
         db: Database session.
-        user: Authenticated user.
+        user: Authenticated user. Email extracted via get_user_email() with email-over-sub precedence.
 
     Returns:
         Status message.
@@ -7211,7 +7211,7 @@ async def delete_prompt(
     """
     logger.debug(f"User: {safe_log_user(user)} requested deletion of prompt {prompt_id}")
     try:
-        user_email = user.get("email") if isinstance(user, dict) else str(user)
+        user_email = get_user_email(user)
         await prompt_service.delete_prompt(db, prompt_id, user_email=user_email, purge_metrics=purge_metrics)
         db.commit()
         db.close()
@@ -7250,7 +7250,7 @@ async def set_gateway_state(
         gateway_id (str): String ID of the gateway to update.
         activate (bool): ``True`` to activate, ``False`` to deactivate.
         db (Session): Active SQLAlchemy session.
-        user (str): Authenticated username.
+        user (str): Authenticated username. Email extracted via get_user_email() with email-over-sub precedence.
 
     Returns:
         Dict[str, Any]: A dict containing the operation status, a message, and the updated gateway object.
@@ -7260,7 +7260,7 @@ async def set_gateway_state(
     """
     logger.debug(f"User '{safe_log_user(user)}' requested state change for gateway {gateway_id}, activate={activate}")
     try:
-        user_email = user.get("email") if isinstance(user, dict) else str(user)
+        user_email = get_user_email(user)
         gateway = await gateway_service.set_gateway_state(
             db,
             gateway_id,
@@ -7531,7 +7531,7 @@ async def update_gateway(
         request (Request): The FastAPI request object for metadata extraction.
         response: Outgoing response used to set `202 Accepted` for async lifecycle.
         db: Database session.
-        user: Authenticated user.
+        user: Authenticated user. Email extracted via get_user_email() with email-over-sub precedence.
 
     Returns:
         Updated gateway.
@@ -7541,7 +7541,7 @@ async def update_gateway(
         # Extract modification metadata
         mod_metadata = MetadataCapture.extract_modification_metadata(request, user, 0)  # Version will be incremented in service
 
-        user_email = user.get("email") if isinstance(user, dict) else str(user)
+        user_email = get_user_email(user)
         result = await gateway_service.update_gateway(
             db,
             gateway_id,
@@ -7600,7 +7600,7 @@ async def delete_gateway(
         request: Incoming FastAPI request (for visibility scope resolution).
         response: Outgoing response used to set `202 Accepted` for async lifecycle.
         db: Database session.
-        user: Authenticated user.
+        user: Authenticated user. Email extracted via get_user_email() with email-over-sub precedence.
 
     Returns:
         Status message.
@@ -7610,7 +7610,7 @@ async def delete_gateway(
     """
     logger.debug(f"User '{safe_log_user(user)}' requested deletion of gateway {gateway_id}")
     try:
-        user_email = user.get("email") if isinstance(user, dict) else str(user)
+        user_email = get_user_email(user)
         auth_user_email, auth_token_teams = get_scoped_resource_access_context(request, user)
         current = await gateway_service.get_gateway(db, gateway_id, user_email=auth_user_email, token_teams=auth_token_teams)
         has_resources = bool(current.capabilities.get("resources"))
@@ -7665,7 +7665,7 @@ async def refresh_gateway_tools(
         include_resources: Whether to include resources in the refresh.
         include_prompts: Whether to include prompts in the refresh.
         db: Database session used to validate gateway access.
-        user: Authenticated user.
+        user: Authenticated user. Email extracted via get_user_email() with email-over-sub precedence.
 
     Returns:
         GatewayRefreshResponse with counts of changes and any validation errors.
@@ -7679,7 +7679,7 @@ async def refresh_gateway_tools(
         await gateway_service.get_gateway(db, gateway_id, user_email=auth_user_email, token_teams=auth_token_teams)
         _enforce_scoped_resource_access(request, db, user, f"/gateways/{gateway_id}")
 
-        user_email = user.get("email") if isinstance(user, dict) else str(user)
+        user_email = get_user_email(user)
         result = await gateway_service.refresh_gateway_manually(
             gateway_id=gateway_id,
             include_resources=include_resources,
@@ -7906,10 +7906,10 @@ async def remove_root(
     try:
         await root_service.remove_root(uri)
     except RootServiceNotFoundError as e:
-        raise HTTPException(status_code=404, detail=f"Root not found: {uri}") from e
+        raise HTTPException(status_code=404, detail=str(e)) from e
     except Exception as e:
-        logger.exception(f"Unexpected error removing root {uri}: {e}")
-        raise HTTPException(status_code=500, detail=f"Internal error: {str(e)}") from e
+        logger.error(f"Failed to remove root {uri}: {e}")
+        raise HTTPException(status_code=500, detail="Internal error removing root") from e
     return {"status": "success", "message": f"Root {uri} removed"}
 
 
@@ -11124,10 +11124,11 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
     req_id: Optional[Union[int, str]] = None
     try:
         # Extract user identifier from either RBAC user object or JWT payload
+        # Cache this early to avoid duplicate extraction in get_rpc_filter_context
         if hasattr(user, "email"):
             user_id = getattr(user, "email", None)  # RBAC user object
         elif isinstance(user, dict):
-            user_id = user.get("sub") or user.get("email") or user.get("username", "unknown")  # JWT payload
+            user_id = get_user_email(user)  # JWT payload with canonical email extraction
         else:
             user_id = str(user)  # String username from basic auth
 
@@ -11274,7 +11275,7 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
             user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
             # Admin bypass - only when token has NO team restrictions
             if is_admin and token_teams is None:
-                user_email = None
+                # Keep user_email set for owner matching on the admin's own private rows (PR #4341 / issue #4694)
                 token_teams = None  # Admin unrestricted
             elif token_teams is None:
                 token_teams = []  # Non-admin without teams = public-only (secure default)
@@ -11292,9 +11293,8 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
             await _ensure_rpc_permission(user, db, "resources.read", method, request=request)
             user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
             # Admin bypass - only when token has NO team restrictions
-            # Keep user_email for owner matching (PR #4341 / issue #4694)
             if is_admin and token_teams is None:
-                # user_email stays as-is (not None) for owner matching
+                # Keep user_email set for owner matching on the admin's own private rows (PR #4341 / issue #4694)
                 token_teams = None  # Admin unrestricted
             elif token_teams is None:
                 token_teams = []  # Non-admin without teams = public-only (secure default)
@@ -11319,12 +11319,10 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
                 raise JSONRPCError(-32602, "Missing resource URI in parameters", params)
 
             # Get authorization context (same as resources/list)
-            # Keep user_email for owner matching (PR #4341 / issue #4694)
             auth_user_email, auth_token_teams, auth_is_admin = get_rpc_filter_context(request, user)
             if auth_is_admin and auth_token_teams is None:
-                # auth_user_email stays as-is (not None) for owner matching
-                # auth_token_teams stays None (unrestricted)
-                pass
+                # Keep auth_user_email set for owner matching on the admin's own private rows (PR #4341 / issue #4694)
+                pass  # auth_token_teams stays None (unrestricted)
             elif auth_token_teams is None:
                 auth_token_teams = []  # Non-admin without teams = public-only
 
@@ -11352,12 +11350,9 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
                 logger.error("Resource not found: %s", uri)
                 raise JSONRPCError(-32002, f"Resource not found: {uri}", {"uri": uri}) from e
             except ResourceError as e:
-                # Other resource errors (ambiguous URI, proxy failures, path validation, etc.)
-                logger.error("Resource read failed: %s", str(e))
-                raise JSONRPCError(-32000, f"Resource read failed: {str(e)}", {"uri": uri}) from e
-            except Exception as e:
-                logger.exception(f"Unexpected error in resources/read for {uri}: {e}")
-                raise JSONRPCError(-32603, f"Internal error: {str(e)}", {"uri": uri}) from e
+                # Generic resource error (e.g., ambiguous URI, proxy failure)
+                logger.error("RPC error: %s", str(e))
+                raise JSONRPCError(-32000, f"Resource read failed: {e}", {"uri": uri}) from e
             # Release transaction after resources/read completes
             db.commit()
             db.close()
@@ -11395,9 +11390,8 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
             await _ensure_rpc_permission(user, db, "prompts.read", method, request=request)
             user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
             # Admin bypass - only when token has NO team restrictions
-            # Keep user_email for owner matching (PR #4341 / issue #4694)
             if is_admin and token_teams is None:
-                # user_email stays as-is (not None) for owner matching
+                # Keep user_email set for owner matching on the admin's own private rows (PR #4341 / issue #4694)
                 token_teams = None  # Admin unrestricted
             elif token_teams is None:
                 token_teams = []  # Non-admin without teams = public-only (secure default)
@@ -11422,12 +11416,10 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
                 raise JSONRPCError(-32602, "Missing prompt name in parameters", params)
 
             # Get authorization context (same as prompts/list)
-            # Keep user_email for owner matching (PR #4341 / issue #4694)
             auth_user_email, auth_token_teams, auth_is_admin = get_rpc_filter_context(request, user)
             if auth_is_admin and auth_token_teams is None:
-                # auth_user_email stays as-is (not None) for owner matching
-                # auth_token_teams stays None (unrestricted)
-                pass
+                # Keep auth_user_email set for owner matching on the admin's own private rows (PR #4341 / issue #4694)
+                pass  # auth_token_teams stays None (unrestricted)
             elif auth_token_teams is None:
                 auth_token_teams = []  # Non-admin without teams = public-only
 
@@ -11446,15 +11438,16 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
                     plugin_global_context=plugin_global_context,
                     _meta_data=meta_data,
                 )
+                if hasattr(result, "model_dump"):
+                    result = result.model_dump(by_alias=True, exclude_none=True)
             except PromptNotFoundError as e:
-                raise JSONRPCError(-32002, str(e), {"name": name}) from e
+                # Prompt not found in the gateway
+                logger.error("Prompt not found: %s", name)
+                raise JSONRPCError(-32002, f"Prompt not found: {name}", {"name": name}) from e
             except PromptError as e:
-                raise JSONRPCError(-32000, f"Prompt retrieval failed: {str(e)}", {"name": name}) from e
-            except Exception as e:
-                logger.exception(f"Unexpected error in prompts/get for {name}: {e}")
-                raise JSONRPCError(-32603, f"Internal error: {str(e)}", {"name": name}) from e
-            if hasattr(result, "model_dump"):
-                result = result.model_dump(by_alias=True, exclude_none=True)
+                # Generic prompt error (e.g., validation failure)
+                logger.error("RPC error: %s", str(e))
+                raise JSONRPCError(-32000, f"Prompt retrieval failed: {e}", {"name": name}) from e
             # Release transaction after prompts/get completes
             db.commit()
             db.close()
@@ -12060,10 +12053,15 @@ async def set_log_level(request: Request, user=Depends(get_current_user_with_per
     logger.debug(f"User {safe_log_user(user)} requested to set log level")
     body = await _read_request_json(request)
     try:
-        # Normalize to lowercase before enum construction
-        level = LogLevel(body["level"].lower())
-    except (ValueError, KeyError, AttributeError) as e:
-        raise HTTPException(status_code=422, detail=f"Invalid log level: {body.get('level', 'missing')}") from e
+        level_value = body["level"]
+        # Accept both uppercase and lowercase
+        if isinstance(level_value, str):
+            level_value = level_value.lower()
+        level = LogLevel(level_value)
+    except KeyError:
+        raise HTTPException(status_code=422, detail="Invalid log level: 'level' field is required")
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=f"Invalid log level: {e}")
     await logging_service.set_level(level)
 
 
@@ -12569,7 +12567,7 @@ async def export_selective_configuration(
         if hasattr(user, "email"):
             username = getattr(user, "email", None)
         elif isinstance(user, dict):
-            username = user.get("email")
+            username = get_user_email(user)
 
         # Get root path for URL construction - prefer configured APP_ROOT_PATH
         root_path = settings.app_root_path
