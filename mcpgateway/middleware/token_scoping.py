@@ -1343,6 +1343,7 @@ class TokenScopingMiddleware:
                     # Check resource team ownership with shared session
                     ownership_result = self._check_resource_team_ownership(normalized_path, token_teams, db=db, _user_email=user_email)
                     if ownership_result is ResourceOwnershipResult.NOT_FOUND and self._is_targeted_missing_resource_delete(request.url.path, request.method):
+                        logger.info("Scoped DELETE target not found: %s", SecurityValidator.sanitize_log_message(normalized_path))
                         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Resource not found")
                     if ownership_result is not ResourceOwnershipResult.ALLOWED:
                         logger.warning(f"Access denied: Resource does not belong to token's teams {SecurityValidator.sanitize_log_message(str(token_teams))}")
@@ -1364,6 +1365,7 @@ class TokenScopingMiddleware:
 
                 ownership_result = self._check_resource_team_ownership(normalized_path, token_teams, _user_email=user_email)
                 if ownership_result is ResourceOwnershipResult.NOT_FOUND and self._is_targeted_missing_resource_delete(request.url.path, request.method):
+                    logger.info("Scoped DELETE target not found: %s", SecurityValidator.sanitize_log_message(normalized_path))
                     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Resource not found")
                 if ownership_result is not ResourceOwnershipResult.ALLOWED:
                     logger.warning(f"Access denied: Resource does not belong to token's teams {SecurityValidator.sanitize_log_message(str(token_teams))}")

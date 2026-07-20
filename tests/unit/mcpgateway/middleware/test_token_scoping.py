@@ -1834,6 +1834,8 @@ async def test_team_scoped_resource_denied(monkeypatch):
         ("/gateways/aabbccddeeff00112233445566778899", ["team-1"]),
         ("/servers/aabbccddeeff00112233445566778899", []),
         ("/gateways/aabbccddeeff00112233445566778899", []),
+        ("/servers/aabbccdd-eeff-0011-2233-445566778899", ["team-1"]),
+        ("/gateways/aabbccdd-eeff-0011-2233-445566778899", []),
         ("/v1/servers/aabbccddeeff00112233445566778899", ["team-1"]),
         ("/v1/gateways/aabbccddeeff00112233445566778899", []),
     ],
