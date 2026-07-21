@@ -50,7 +50,7 @@ COMPLIANCE_GAPS_PATH = REPO_ROOT / "tests" / "live_gateway" / "protocol_complian
 # Engines, in display order. "reference" is stdio against the in-process FastMCP
 # reference server; it's not a gateway engine but including it here keeps the
 # summary a single consistent table.
-ENGINES = ("reference", "python", "rust_edge", "rust_full")
+ENGINES = ("reference", "python")
 
 # Per-engine filter for pytest: chooses which (target, transport) cells to run.
 # The harness's parametrize IDs are ``<target>-<transport>``; we filter via -k.
@@ -62,16 +62,12 @@ ENGINES = ("reference", "python", "rust_edge", "rust_full")
 _ENGINE_KEYWORD = {
     "reference": "reference-stdio",
     "python": "not reference-stdio",
-    "rust_edge": "not reference-stdio",
-    "rust_full": "not reference-stdio",
 }
 
 # Mode to flip to for each engine (None means don't flip).
 _ENGINE_FLIP_TARGET = {
     "reference": None,
     "python": "shadow",
-    "rust_edge": "edge",
-    "rust_full": None,  # can't flip to full; only runs if already there.
 }
 
 
@@ -245,16 +241,9 @@ def _determine_runnable(state: Optional[dict], only: Optional[list[str]]) -> lis
             continue
         supported = set(state.get("supported_override_modes", []))
         target = _ENGINE_FLIP_TARGET[engine]
-        if engine == "rust_full":
-            if state.get("effective_mode") == "full":
-                out.append((engine, None))
-            else:
-                out.append((engine, f"requires boot with RUST_MCP_MODE=full (currently {state.get('boot_mode')!r})"))
-            continue
         if target not in supported:
             out.append((engine, f"gateway boot={state.get('boot_mode')!r} cannot flip to {target!r}"))
             continue
-        # rust_edge requires boot=edge (safety flag); if flippable it's runnable.
         out.append((engine, None))
     return out
 
@@ -488,7 +477,7 @@ def main(argv: Optional[list[str]] = None) -> int:
                     s.skip_reason = f"flip to {target_mode!r} refused"
                     slices.append(s)
                     continue
-                expected_runtime = "rust" if target_mode == "edge" else "python"
+                expected_runtime = "python"
                 # If the data plane hasn't actually converged on the expected
                 # runtime, running the slice would probe whatever transport
                 # is really live — not what the engine label says — and the
