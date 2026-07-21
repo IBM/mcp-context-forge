@@ -1096,6 +1096,12 @@ def scan_rust_modules(root: Path, policy: Dict[str, Any], compiled_patterns: Opt
     findings: List[Finding] = []
     stats = {"manifests": 0, "crates": 0}
 
+    # Check if any Cargo.toml files exist before requiring cargo-license
+    cargo_files = list(_iter_files_with_name(root, "Cargo.toml"))
+    if not cargo_files:
+        # No Rust workspace exists, skip Rust dependency checks
+        return findings, stats
+
     if not shutil.which("cargo-license"):
         return (
             [

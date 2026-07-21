@@ -11,6 +11,11 @@ include gunicorn.config.py
 include Containerfile
 include tox.ini
 
+# Admin UI assets (required for package build)
+recursive-include mcpgateway/admin_ui *.js *.css *.html
+recursive-include mcpgateway/static *.js *.css *.html *.json
+recursive-include mcpgateway/templates *.html *.jinja2
+
 # Top-level config
 include *.py
 include *.md
