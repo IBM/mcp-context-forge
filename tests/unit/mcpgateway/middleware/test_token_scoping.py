@@ -523,7 +523,7 @@ class TestTokenScopingMiddleware:
 
             expected_response = Response(status_code=200, content="ok")
             call_next = AsyncMock(return_value=expected_response)
-            response = await middleware(mock_request, call_next)
+            await middleware(mock_request, call_next)
 
             call_next.assert_called_once()
 
@@ -565,7 +565,7 @@ class TestTokenScopingMiddleware:
 
             expected_response = Response(status_code=200, content="ok")
             call_next = AsyncMock(return_value=expected_response)
-            response = await middleware(mock_request, call_next)
+            await middleware(mock_request, call_next)
 
             call_next.assert_called_once()
 
@@ -607,7 +607,7 @@ class TestTokenScopingMiddleware:
 
             expected_response = Response(status_code=200, content="ok")
             call_next = AsyncMock(return_value=expected_response)
-            response = await middleware(mock_request, call_next)
+            await middleware(mock_request, call_next)
 
             call_next.assert_called_once()
 
@@ -732,6 +732,15 @@ class TestTokenScopingMiddleware:
         assert result is True
         cache.get_team_membership_valid_sync.assert_called_once_with("user@example.com", ["team-1"])
         cache.set_team_membership_valid_sync.assert_called_once_with("user@example.com", ["team-1"], True)
+
+    def test_check_team_membership_does_not_treat_uuid_sub_as_email(self, middleware):
+        """A UUID subject without signed email metadata is not a user email."""
+        payload = {
+            "sub": "11111111-1111-1111-1111-111111111111",
+            "teams": ["team-1"],
+        }
+
+        assert middleware._check_team_membership(payload) is False
 
     @pytest.mark.asyncio
     async def test_session_token_with_teams_claim_still_resolves_from_db(self, middleware, mock_request):

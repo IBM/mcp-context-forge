@@ -2203,6 +2203,18 @@ async def _get_request_context_or_default() -> Tuple[str, dict[str, Any], dict[s
         return s_id, request_headers_var.get(), user_context_var.get()
 
 
+async def _resolve_jwt_user_email_for_streamable(payload: dict[str, Any]) -> str | None:
+    """Resolve JWT user email for Streamable HTTP auth without treating UUID sub as email."""
+    # First-Party
+    from mcpgateway.auth import _get_email_by_id_sync  # pylint: disable=import-outside-toplevel
+    from mcpgateway.auth_context import resolve_jwt_user_email_from_payload  # pylint: disable=import-outside-toplevel
+
+    async def resolve_uuid_subject(user_id: str) -> str | None:
+        return await asyncio.to_thread(_get_email_by_id_sync, user_id)
+
+    return await resolve_jwt_user_email_from_payload(payload, uuid_email_resolver=resolve_uuid_subject)
+
+
 async def _normalize_jwt_payload(payload: dict[str, Any]) -> dict[str, Any]:
     """Normalize a raw JWT payload to the canonical user context shape.
 
@@ -2218,7 +2230,7 @@ async def _normalize_jwt_payload(payload: dict[str, Any]) -> dict[str, Any]:
     Returns:
         Canonical user context dict with keys email, teams, is_admin, is_authenticated, token_use.
     """
-    email = payload.get("sub") or payload.get("email")
+    email = await _resolve_jwt_user_email_for_streamable(payload)
     jwt_is_admin = payload.get("is_admin", False)
     if not jwt_is_admin:
         user_info = payload.get("user", {})
@@ -5086,7 +5098,9 @@ class _StreamableHttpAuthHandler:
             from mcpgateway.cache.auth_cache import CachedAuthContext, get_auth_cache  # pylint: disable=import-outside-toplevel
 
             jti = user_payload.get("jti")
-            user_email = user_payload.get("sub") or user_payload.get("email")
+            user_email = await _resolve_jwt_user_email_for_streamable(user_payload)
+            if not user_email and settings.require_user_in_db:
+                return await self._send_error(detail="User not found in database", headers={"WWW-Authenticate": "Bearer"})
             nested_user = user_payload.get("user", {})
             nested_is_admin = nested_user.get("is_admin", False) if isinstance(nested_user, dict) else False
             is_admin = user_payload.get("is_admin", False) or nested_is_admin

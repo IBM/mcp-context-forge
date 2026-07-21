@@ -61,6 +61,8 @@ The names below are the **module's public API**. Callers in ``main.py``,
 
     Identity resolution
         get_user_email(user) -> str
+        get_jwt_user_email_from_payload(payload) -> str | None
+        resolve_jwt_user_email_from_payload(payload, uuid_email_resolver=None) -> str | None
 
     Trust-layer headers forwarded from the Rust MCP runtime
         decode_internal_mcp_auth_context(header_value) -> dict
@@ -112,11 +114,13 @@ policy. The key invariants that this module enforces:
 # Standard
 import asyncio
 import base64
+from collections.abc import Awaitable, Callable
 from functools import lru_cache
 import hashlib
 import hmac
 import logging
 from typing import Any, Dict, List, Optional
+import uuid
 
 # Third-Party
 from fastapi import Request
@@ -205,6 +209,70 @@ def get_user_email(user: Any) -> str:
         return "unknown"
     # Fallback to string conversion for other types
     return str(user) if user else "unknown"
+
+
+def _is_uuid_string(value: str) -> bool:
+    """Return True when *value* is a syntactically valid UUID string."""
+    try:
+        uuid.UUID(value)
+    except ValueError:
+        return False
+    return True
+
+
+def _non_uuid_identity(value: Any) -> str | None:
+    """Return a non-empty string identity unless it is a UUID."""
+    if not isinstance(value, str):
+        return None
+    value = value.strip()
+    if not value or _is_uuid_string(value):
+        return None
+    return value
+
+
+def get_jwt_user_email_from_payload(payload: dict[str, Any]) -> str | None:
+    """Extract a human email identity from signed JWT claims without DB lookup.
+
+    The dataplane JWT subject may be an opaque UUID. This helper intentionally
+    never returns that UUID as a user email; callers that need UUID fallback can
+    use :func:`resolve_jwt_user_email_from_payload` with an injected resolver.
+    """
+    user_info = payload.get("user")
+    if isinstance(user_info, dict):
+        user_email = _non_uuid_identity(user_info.get("email"))
+        if user_email is not None:
+            return user_email
+
+    user_email = _non_uuid_identity(payload.get("email"))
+    if user_email is not None:
+        return user_email
+
+    return _non_uuid_identity(payload.get("sub"))
+
+
+async def resolve_jwt_user_email_from_payload(
+    payload: dict[str, Any],
+    *,
+    uuid_email_resolver: Callable[[str], Awaitable[str | None]] | None = None,
+) -> str | None:
+    """Resolve the human email identity from verified JWT claims.
+
+    Signed email metadata is used first and does not touch the database. Only
+    UUID-sub tokens without email metadata use the optional resolver callback.
+    """
+    user_email = get_jwt_user_email_from_payload(payload)
+    if user_email is not None:
+        return user_email
+
+    subject = payload.get("sub")
+    if not isinstance(subject, str):
+        return None
+    subject = subject.strip()
+    if not subject or not _is_uuid_string(subject) or uuid_email_resolver is None:
+        return None
+
+    resolved = await uuid_email_resolver(subject)
+    return _non_uuid_identity(resolved)
 
 
 def get_internal_mcp_auth_context(request: Request) -> Optional[Dict[str, Any]]:

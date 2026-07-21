@@ -23,7 +23,7 @@ from sqlalchemy import and_, func, select
 
 # First-Party
 from mcpgateway.auth import normalize_token_teams, resolve_session_teams
-from mcpgateway.auth_context import get_user_email
+from mcpgateway.auth_context import get_jwt_user_email_from_payload
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import Permissions
@@ -783,14 +783,7 @@ class TokenScopingMiddleware:
     @staticmethod
     def _get_user_email_from_payload(payload: dict) -> str | None:
         """Extract the email identity from a signed JWT payload."""
-        user_info = payload.get("user")
-        if isinstance(user_info, dict):
-            user_email = get_user_email(user_info)
-            if user_email != "unknown":
-                return user_email
-
-        user_email = get_user_email(payload)
-        return user_email if user_email != "unknown" else None
+        return get_jwt_user_email_from_payload(payload)
 
     def _check_team_membership(self, payload: dict, db=None) -> bool:
         """
