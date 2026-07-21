@@ -75,7 +75,7 @@ If you don't need HA or automated backups (dev/test, POCs, teams without cluster
 
 ---
 
-# 1. Prerequisites
+## Prerequisites
 
 The following tools must be installed locally before you begin:
 
@@ -93,9 +93,9 @@ The following tools must be installed locally before you begin:
 
 ---
 
-## 1.1 One-time cluster setup
+### One-time cluster setup
 
-**These steps are performed **once per cluster**, not per deployment. Skip any step that is already done.**
+**These steps are performed once per cluster, not per deployment. Skip any step that is already done.**
 
 **Step 1 — Verify cluster sizing**
 
@@ -123,7 +123,7 @@ make ocp-install-operator OCP_CLUSTER=<api-url>
 
 ---
 
-## 1.2 Prepare secrets
+### Prepare secrets
 
 These steps are performed **once** and the secrets file is reused across all deployments.
 
@@ -133,7 +133,7 @@ These steps are performed **once** and the secrets file is reused across all dep
 make init-secrets
 ```
 
-This writes generated secrets to `.env.secrets`. It saves using "=" instead of ": ", so **ensure to change "=" to ": ".**
+This writes generated secrets to `.env.secrets`. It saves using "=" instead of ": ". **USE ": " ONLY.** **
 
 **Step 2 — Create the secrets values file**
 
@@ -160,13 +160,13 @@ testing:
 
 ---
 
-# 2. Deployment steps
+## Deployment steps
 
 The Make commands below wrap Ansible playbooks (`ansible/ocp/playbooks/`). You can also run the playbooks directly — see [ansible/ocp/README.md](https://github.com/IBM/mcp-context-forge/blob/main/ansible/ocp/README.md) for details.
 
 **Step 1 — Create Docker Hub pull secret** (one-time per namespace):
 
-##### a) If you are already logged in locally via `docker login`:
+**a) If you are already logged in locally via `docker login`:**
 
 ```bash
 oc create secret generic dockerhub-pull \
@@ -175,7 +175,7 @@ oc create secret generic dockerhub-pull \
   -n <namespace-change-me>
 ```
 
-##### b) If you prefer to supply credentials explicitly:
+**b) If you prefer to supply credentials explicitly:**
 
 ```bash
 oc create secret docker-registry dockerhub-pull \
@@ -227,8 +227,8 @@ You should see the ContextForge admin login page. Log in with the `BASIC_AUTH_US
 **Step 5 — (Optional) Run the MCP benchmark:**
 
 ```bash
-make ocp-benchmark-setup OCP_NS=<namespace>
-make ocp-benchmark OCP_NS=<namespace>
+make ocp-benchmark-setup OCP_NS=<namespace-change-me>
+make ocp-benchmark OCP_NS=<namespace-change-me>
 ```
 
 `ocp-benchmark-setup` enables Locust (1 master + 3 workers), waits for workers to schedule, auto-fetches the virtual server ID, and configures everything. If only some workers schedule due to CPU pressure, the test continues with whatever workers are available and prints a warning.
@@ -236,8 +236,8 @@ make ocp-benchmark OCP_NS=<namespace>
 `ocp-benchmark` triggers the benchmark — defaults to 125 users, 30/s spawn, 60s. Override for heavier load:
 
 ```bash
-make ocp-benchmark OCP_NS=<namespace> BENCH_USERS=500 BENCH_SPAWN=50     # heavy load
-make ocp-benchmark OCP_NS=<namespace> BENCH_USERS=750 BENCH_SPAWN=75     # max throughput
+make ocp-benchmark OCP_NS=<namespace-change-me> BENCH_USERS=500 BENCH_SPAWN=50     # heavy load
+make ocp-benchmark OCP_NS=<namespace-change-me> BENCH_USERS=750 BENCH_SPAWN=75     # max throughput
 ```
 
 Benchmark results (OCP Large, 3 gateway pods, 3 NGINX, PGO Postgres, 3 Locust workers):
@@ -273,7 +273,7 @@ For step-by-step details, troubleshooting, or if the Make commands don't work as
 
 ---
 
-## 3. Detailed Manual Steps
+## Detailed Manual Steps
 
 > The sections below are for manual control or troubleshooting. For most deployments, the quick setup and deployment steps above are sufficient.
 
@@ -498,7 +498,7 @@ When enabled, Locust is configured with:
 **1. Enable Locust and configure the server ID:**
 
 ```bash
-make ocp-benchmark-setup OCP_NS=<namespace>
+make ocp-benchmark-setup OCP_NS=<namespace-change-me>
 ```
 
 This is the recommended path. The target:
@@ -511,12 +511,12 @@ This is the recommended path. The target:
 If you prefer to do it manually, it's equivalent to:
 
 ```bash
-SERVER_ID=$(oc -n <namespace> exec deploy/<release>-mcp-stack-mcpgateway -- \
+SERVER_ID=$(oc -n <namespace-change-me> exec deploy/<release>-mcp-stack-mcpgateway -- \
   curl -s -H "Authorization: Bearer $TOKEN" http://localhost:4444/servers | \
   python3 -c "import json,sys; print(next(s for s in json.load(sys.stdin) if s['name'] == 'Fast Time Server')['id'])")
 
 helm upgrade <release> charts/mcp-stack \
-  -n <namespace> \
+  -n <namespace-change-me> \
   -f charts/mcp-stack/profiles/ocp/values-pgo.yaml \
   -f charts/mcp-stack/profiles/ocp/values-pgo-secrets.yaml \
   --set testing.locust.enabled=true \
@@ -527,10 +527,10 @@ helm upgrade <release> charts/mcp-stack \
 
 ```bash
 # Default (125 users, 30/s spawn, 60s)
-make ocp-benchmark OCP_NS=<namespace>
+make ocp-benchmark OCP_NS=<namespace-change-me>
 
 # Override for heavier load
-make ocp-benchmark OCP_NS=<namespace> BENCH_USERS=500 BENCH_SPAWN=50
+make ocp-benchmark OCP_NS=<namespace-change-me> BENCH_USERS=500 BENCH_SPAWN=50
 ```
 
 Results are printed automatically when the benchmark completes.
@@ -571,7 +571,7 @@ To enforce a plugin, change its `mode` from `"permissive"` to `"enforce"` in the
 | Issue | Solution |
 |-------|----------|
 | Gateway pods stuck at 0/1 Running | Check `oc logs` for DB connectivity. Verify PGO Postgres and PgBouncer pods are Running. |
-| Gateway pods in `CrashLoopBackOff` with "Schema not at head" | The migration job did not run or failed. Check `oc get jobs -n <namespace>` and `oc logs job/<release>-mcp-stack-migration`. Re-run with `helm uninstall` + `helm install`. |
+| Gateway pods in `CrashLoopBackOff` with "Schema not at head" | The migration job did not run or failed. Check `oc get jobs -n <namespace-change-me>` and `oc logs job/<release>-mcp-stack-migration`. Re-run with `helm uninstall` + `helm install`. |
 | Gateway pod Pending | Insufficient CPU on worker nodes. Check `oc describe pod` for scheduling errors. Free resources from other namespaces or reduce CPU requests. |
 | Redis PVC stuck in Pending | Check the `nfs-client` StorageClass exists (`oc get sc nfs-client`). If the dynamic provisioner isn't installed, see your cluster admin. |
 | `helm install` fails with "got string, want object" or "mapping values not allowed" | Your `values-pgo-secrets.yaml` uses shell syntax (`KEY=value`) instead of YAML (`key: value`). Fix all lines in the `secret:` block to use `: ` instead of `=`. |
