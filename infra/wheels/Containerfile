@@ -17,7 +17,7 @@
 #   docker buildx build --platform linux/ppc64le -t wheels:ppc64le -f infra/wheels/Containerfile .
 ###############################################################################
 
-ARG UBI_MINIMAL=registry.access.redhat.com/ubi10/ubi-minimal:10.1-1772441549
+ARG UBI_MINIMAL=registry.access.redhat.com/ubi10/ubi-minimal:10.2-1784581369
 FROM ${UBI_MINIMAL}
 
 ARG PYTHON_VERSION=3.12
