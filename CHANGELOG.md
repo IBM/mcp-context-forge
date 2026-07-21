@@ -571,7 +571,6 @@ Release 1.0.6 consolidates **61 PRs** focused on **OAuth RFC 8693 token exchange
 | [#5605](https://github.com/IBM/mcp-context-forge/pull/5605) | chore: updated python dependencies | prakhar-singh1928 |
 | [#5635](https://github.com/IBM/mcp-context-forge/pull/5635) | Version bump SecretsDetection and update field filter config | gandhipratik203 |
 | [#5710](https://github.com/IBM/mcp-context-forge/pull/5710) | Update roadmap for 1.0.6 | jonpspri |
-
 ## [1.0.5] - 2026-07-07 - API Versioning, Auth Hardening, A2A Compatibility, and Build Consolidation
 
 ### Overview

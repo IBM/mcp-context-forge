@@ -150,6 +150,43 @@ class TestCacheInvalidationSubscriber:
                 assert "tool-b" in mock_tool_lookup._cache
 
     @pytest.mark.asyncio
+    async def test_process_tool_lookup_server_invalidation(self, cache_subscriber):
+        """Test processing of tool_lookup:server:id invalidation message."""
+        mock_tool_lookup = MagicMock()
+        mock_tool_lookup._cache_key = lambda name, server_id=None: f"server:{server_id}:{name}" if server_id else name
+        mock_tool_lookup._cache = {
+            "tool-a": MagicMock(value={"status": "active"}),
+            "server:srv-123:tool-a": MagicMock(value={"status": "active"}),
+            "server:srv-456:tool-a": MagicMock(value={"status": "active"}),
+        }
+        mock_tool_lookup._lock = threading.Lock()
+
+        with patch.dict("sys.modules", {"mcpgateway.cache.tool_lookup_cache": MagicMock(tool_lookup_cache=mock_tool_lookup)}):
+            await cache_subscriber._process_invalidation("tool_lookup:server:srv-123")
+
+        assert "tool-a" in mock_tool_lookup._cache
+        assert "server:srv-123:tool-a" not in mock_tool_lookup._cache
+        assert "server:srv-456:tool-a" in mock_tool_lookup._cache
+
+    @pytest.mark.asyncio
+    async def test_process_all_scoped_tool_lookup_invalidation(self, cache_subscriber):
+        """Test processing of the all-scoped tool lookup invalidation message."""
+        mock_tool_lookup = MagicMock()
+        mock_tool_lookup._cache = {
+            "tool-a": MagicMock(value={"status": "active"}),
+            "server:srv-123:tool-a": MagicMock(value={"status": "active"}),
+            "server:srv-456:tool-a": MagicMock(value={"status": "active"}),
+        }
+        mock_tool_lookup._lock = threading.Lock()
+
+        with patch.dict("sys.modules", {"mcpgateway.cache.tool_lookup_cache": MagicMock(tool_lookup_cache=mock_tool_lookup)}):
+            await cache_subscriber._process_invalidation("tool_lookup:scoped")
+
+        assert "tool-a" in mock_tool_lookup._cache
+        assert "server:srv-123:tool-a" not in mock_tool_lookup._cache
+        assert "server:srv-456:tool-a" not in mock_tool_lookup._cache
+
+    @pytest.mark.asyncio
     async def test_process_admin_invalidation(self, cache_subscriber):
         """Test processing of admin:prefix invalidation message."""
         mock_admin_cache = MagicMock()
@@ -567,6 +604,8 @@ class TestCrossWorkerCacheInvalidation:
             await subscriber._process_invalidation("registry:agents")
             await subscriber._process_invalidation("tool_lookup:my-tool")
             await subscriber._process_invalidation("tool_lookup:gateway:gw-123")
+            await subscriber._process_invalidation("tool_lookup:server:srv-123")
+            await subscriber._process_invalidation("tool_lookup:scoped")
             await subscriber._process_invalidation("admin:users")
             await subscriber._process_invalidation("admin:teams")
             # Unknown formats should be handled gracefully
