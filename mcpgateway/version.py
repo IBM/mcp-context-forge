@@ -111,8 +111,6 @@ MCP_RESUME_CORE_MODE = "python"
 MCP_LIVE_STREAM_CORE_MODE = "python"
 MCP_AFFINITY_CORE_MODE = "python"
 MCP_SESSION_AUTH_REUSE_MODE = "python"
-RUST_BUILD_INCLUDED = False
-RUST_RUNTIME_MANAGED = False
 
 # MCP runtime diagnostics for health/version/UI surfaces (constant — no function call needed).
 MCP_RUNTIME_STATUS_PAYLOAD: Dict[str, Any] = {
@@ -126,20 +124,12 @@ MCP_RUNTIME_STATUS_PAYLOAD: Dict[str, Any] = {
     "cluster_propagation": "N/A",
     "boot_reconcile_status": "N/A",
     "pod_id": "N/A",
-    "rust_build_included": RUST_BUILD_INCLUDED,
-    "rust_runtime_enabled": False,
     "session_core_mode": MCP_SESSION_CORE_MODE,
     "event_store_mode": MCP_EVENT_STORE_MODE,
     "resume_core_mode": MCP_RESUME_CORE_MODE,
     "live_stream_core_mode": MCP_LIVE_STREAM_CORE_MODE,
     "affinity_core_mode": MCP_AFFINITY_CORE_MODE,
     "session_auth_reuse_mode": MCP_SESSION_AUTH_REUSE_MODE,
-    "rust_session_core_enabled": False,
-    "rust_event_store_enabled": False,
-    "rust_resume_core_enabled": False,
-    "rust_live_stream_core_enabled": False,
-    "rust_affinity_core_enabled": False,
-    "rust_session_auth_reuse_enabled": False,
     "status": "healthy",
 }
 

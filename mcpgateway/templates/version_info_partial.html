@@ -108,9 +108,7 @@
     <div class="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
       <div>
         <h3 class="text-lg font-medium mb-1 dark:text-gray-200 flex items-center">
-          <span class="text-2xl mr-2" aria-hidden="true">
-            {% if payload.mcp_runtime.mounted == 'rust' %}🦀{% else %}🐍{% endif %}
-          </span>
+          <span class="text-2xl mr-2" aria-hidden="true">🐍</span>
           MCP Runtime
         </h3>
         <p class="text-sm text-gray-600 dark:text-gray-400">
@@ -120,9 +118,9 @@
       <div class="flex flex-wrap gap-2">
         <span
           id="version-mcp-core-badge"
-          class="px-3 py-1 rounded-full text-sm font-medium {% if payload.mcp_runtime.mounted == 'rust' %}bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200{% else %}bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200{% endif %}"
+          class="px-3 py-1 rounded-full text-sm font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200"
         >
-          {% if payload.mcp_runtime.mounted == 'rust' %}🦀 Rust MCP Core{% else %}🐍 Python MCP Core{% endif %}
+          🐍 Python MCP Core
         </span>
         <span
           id="version-mcp-runtime-mode-badge"
@@ -139,7 +137,7 @@
           Public Transport
         </div>
         <div class="text-lg font-semibold text-gray-900 dark:text-gray-100">
-          {% if payload.mcp_runtime.mounted == 'rust' %}🦀 Rust{% else %}🐍 Python{% endif %}
+          🐍 Python
         </div>
       </div>
       <div class="bg-gray-50 rounded p-4 dark:bg-gray-700">
@@ -147,7 +145,7 @@
           Session Core
         </div>
         <div class="text-lg font-semibold text-gray-900 dark:text-gray-100">
-          {% if payload.mcp_runtime.session_core_mode == 'rust' %}🦀 Rust{% else %}🐍 Python{% endif %}
+          🐍 Python
         </div>
       </div>
       <div class="bg-gray-50 rounded p-4 dark:bg-gray-700">
@@ -155,7 +153,7 @@
           Event Store
         </div>
         <div class="text-lg font-semibold text-gray-900 dark:text-gray-100">
-          {% if payload.mcp_runtime.event_store_mode == 'rust' %}🦀 Rust{% else %}🐍 Python{% endif %}
+          🐍 Python
         </div>
       </div>
       <div class="bg-gray-50 rounded p-4 dark:bg-gray-700">
@@ -163,7 +161,7 @@
           Replay / Resume
         </div>
         <div class="text-lg font-semibold text-gray-900 dark:text-gray-100">
-          {% if payload.mcp_runtime.resume_core_mode == 'rust' %}🦀 Rust{% else %}🐍 Python{% endif %}
+          🐍 Python
         </div>
       </div>
       <div class="bg-gray-50 rounded p-4 dark:bg-gray-700">
@@ -171,7 +169,7 @@
           Live Stream
         </div>
         <div class="text-lg font-semibold text-gray-900 dark:text-gray-100">
-          {% if payload.mcp_runtime.live_stream_core_mode == 'rust' %}🦀 Rust{% else %}🐍 Python{% endif %}
+          🐍 Python
         </div>
       </div>
       <div class="bg-gray-50 rounded p-4 dark:bg-gray-700">
@@ -179,7 +177,7 @@
           Affinity
         </div>
         <div class="text-lg font-semibold text-gray-900 dark:text-gray-100">
-          {% if payload.mcp_runtime.affinity_core_mode == 'rust' %}🦀 Rust{% else %}🐍 Python{% endif %}
+          🐍 Python
         </div>
       </div>
       <div class="bg-gray-50 rounded p-4 dark:bg-gray-700">
@@ -187,28 +185,10 @@
           Session Auth Reuse
         </div>
         <div class="text-lg font-semibold text-gray-900 dark:text-gray-100">
-          {% if payload.mcp_runtime.session_auth_reuse_mode == 'rust' %}🦀 Rust{% else %}🐍 Python{% endif %}
-        </div>
-      </div>
-      <div class="bg-gray-50 rounded p-4 dark:bg-gray-700">
-        <div class="text-sm font-medium text-gray-500 dark:text-gray-400">
-          Rust Build Included
-        </div>
-        <div class="text-lg font-semibold text-gray-900 dark:text-gray-100">
-          {% if payload.mcp_runtime.rust_build_included %}Yes{% else %}No{% endif %}
+          🐍 Python
         </div>
       </div>
     </div>
-
-    {% if payload.mcp_runtime.mode == 'rust-managed' and payload.mcp_runtime.mounted == 'python' %}
-    <div class="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-700 dark:bg-amber-900/20 dark:text-amber-200">
-      Public MCP traffic is still on the Python path. The Rust sidecar is present internally for managed rollout or safe fallback operation.
-    </div>
-    {% elif payload.mcp_runtime.mode == 'python-rust-built-disabled' %}
-    <div class="mt-4 rounded-lg border border-indigo-200 bg-indigo-50 px-4 py-3 text-sm text-indigo-800 dark:border-indigo-700 dark:bg-indigo-900/20 dark:text-indigo-200">
-      This image includes Rust MCP artifacts, but the runtime is currently disabled and the public MCP path remains Python-only.
-    </div>
-    {% endif %}
   </div>
 
   <!-- Services Status Card -->

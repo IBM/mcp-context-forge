@@ -274,24 +274,6 @@ structured_logger = get_structured_logger("a2a_service")
 _cross_gateway_auth_warning_logged = False
 
 
-async def _publish_a2a_invalidation(message_type: str, **kwargs: Any) -> None:
-    """Publish a cache invalidation message to Redis for Rust L1 eviction."""
-    try:
-        # First-Party
-        from mcpgateway.utils.redis_client import get_redis_client  # pylint: disable=import-outside-toplevel
-
-        redis = await get_redis_client()
-        if redis is None:
-            return
-        # Third-Party
-        import orjson  # pylint: disable=import-outside-toplevel
-
-        payload = orjson.dumps({"type": message_type, **kwargs}).decode()
-        await redis.publish("mcpgw:a2a:invalidate", payload)
-    except Exception as e:
-        logger.warning("Failed to publish A2A cache invalidation: %s", e)
-
-
 class A2AAgentError(Exception):
     """Base class for A2A agent-related errors.
 
@@ -816,20 +798,6 @@ class A2AAgentService(BaseService):
                     metrics_cache.invalidate("a2a")
                 except Exception as cache_error:
                     logger.warning("Cache invalidation failed after agent commit: %s", cache_error)
-
-                try:
-                    # Standard
-                    import asyncio  # pylint: disable=import-outside-toplevel
-
-                    loop = asyncio.get_running_loop()
-                    loop.create_task(_publish_a2a_invalidation("agent", name=new_agent.name))
-                except RuntimeError:
-                    pass  # No running event loop (e.g., in tests)
-                except Exception as exc:
-                    # Best-effort, but log so a Redis outage stops being
-                    # invisible — stale Rust L1 caches silently serve old
-                    # agent data until TTL expires.
-                    logger.warning("Rust-cache invalidation scheduling failed for agent %s: %s", new_agent.name, exc)
 
                 # Automatically create a tool for the A2A agent if not already present
                 # Tool creation is wrapped in try/except to ensure agent registration succeeds
@@ -1680,17 +1648,6 @@ class A2AAgentService(BaseService):
 
             await admin_stats_cache.invalidate_tags()
 
-            try:
-                # Standard
-                import asyncio  # pylint: disable=import-outside-toplevel
-
-                loop = asyncio.get_running_loop()
-                loop.create_task(_publish_a2a_invalidation("agent", name=agent.name))
-            except RuntimeError:
-                pass  # No running event loop (e.g., in tests)
-            except Exception as exc:
-                logger.warning("Rust-cache invalidation scheduling failed for agent %s: %s", agent.name, exc)
-
             # Update the associated tool if it exists
             # Wrap in try/except to handle tool sync failures gracefully - the agent
             # update is the primary operation and should succeed even if tool sync fails
@@ -1880,17 +1837,6 @@ class A2AAgentService(BaseService):
                 from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
 
                 await admin_stats_cache.invalidate_tags()
-
-                try:
-                    # Standard
-                    import asyncio  # pylint: disable=import-outside-toplevel
-
-                    loop = asyncio.get_running_loop()
-                    loop.create_task(_publish_a2a_invalidation("agent", name=agent_name))
-                except RuntimeError:
-                    pass  # No running event loop (e.g., in tests)
-                except Exception as exc:
-                    logger.warning("Rust-cache invalidation scheduling failed for agent %s: %s", agent_name, exc)
 
                 logger.info("Deleted A2A agent: %s (ID: %s)", agent_name, agent_id)
 

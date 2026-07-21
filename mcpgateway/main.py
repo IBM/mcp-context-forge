@@ -238,7 +238,6 @@ from mcpgateway.version import (
     MCP_SESSION_AUTH_REUSE_MODE,
     MCP_SESSION_CORE_MODE,
     MCP_TRANSPORT_MOUNT,
-    RUST_BUILD_INCLUDED,
 )
 
 # Initialize logging service first
@@ -1047,7 +1046,6 @@ def _apply_runtime_mode_headers(response: Response) -> None:
     """
     response.headers["x-contextforge-mcp-runtime-mode"] = MCP_RUNTIME_MODE
     response.headers["x-contextforge-mcp-transport-mounted"] = MCP_TRANSPORT_MOUNT
-    response.headers["x-contextforge-rust-build-included"] = "true" if RUST_BUILD_INCLUDED else "false"
     response.headers["x-contextforge-mcp-session-core-mode"] = MCP_SESSION_CORE_MODE
     response.headers["x-contextforge-mcp-event-store-mode"] = MCP_EVENT_STORE_MODE
     response.headers["x-contextforge-mcp-resume-core-mode"] = MCP_RESUME_CORE_MODE
@@ -7957,7 +7955,7 @@ async def handle_internal_mcp_initialize(request: Request):
 @utility_router.delete("/_internal/mcp/session/")
 @utility_router.delete("/_internal/mcp/session")
 async def handle_internal_mcp_session_delete(request: Request):
-    """Handle trusted MCP session teardown forwarded from the local Rust runtime.
+    """Handle trusted MCP session teardown forwarded from internal session affinity.
 
     Args:
         request: Trusted internal MCP session-delete request.
@@ -7971,7 +7969,7 @@ async def handle_internal_mcp_session_delete(request: Request):
     if not mcp_session_id:
         return ORJSONResponse(status_code=400, content={"detail": "mcp-session-id header is required"})
 
-    if auth_context.get("_rust_session_validated") is not True:
+    if auth_context.get("_internal_session_validated") is not True:
         session_allowed, deny_status, deny_detail = await _validate_streamable_session_access(
             mcp_session_id=mcp_session_id,
             user_context=auth_context,
