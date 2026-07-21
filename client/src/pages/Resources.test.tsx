@@ -703,6 +703,46 @@ describe("Resources", () => {
       );
     });
 
+    it("shows a content-load error with a retry action in edit mode", async () => {
+      const user = userEvent.setup();
+      const mockResources: Resource[] = [createMockResource(1, "test-gateway")];
+      server.use(
+        http.get("/resources", () => HttpResponse.json(mockResources)),
+        http.get("/resources/resource-1", () =>
+          HttpResponse.json({ detail: "boom" }, { status: 500 }),
+        ),
+      );
+
+      renderWithRouter(<Resources />);
+      await waitFor(() => expect(screen.getByText("test-gateway")).toBeInTheDocument());
+      await user.click(screen.getByLabelText("More options for test-gateway"));
+      await user.click(await screen.findByText("View Details"));
+      await user.click(await screen.findByLabelText("More options for Resource 1"));
+      await user.click(await screen.findByText("Edit"));
+
+      expect(await screen.findByText("Failed to load resource content")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+    });
+
+    it("shows a loading state while the resource content is being fetched", async () => {
+      const user = userEvent.setup();
+      const mockResources: Resource[] = [createMockResource(1, "test-gateway")];
+      server.use(
+        http.get("/resources", () => HttpResponse.json(mockResources)),
+        // Never resolves, so the content stays in its loading state.
+        http.get("/resources/resource-1", () => new Promise(() => {})),
+      );
+
+      renderWithRouter(<Resources />);
+      await waitFor(() => expect(screen.getByText("test-gateway")).toBeInTheDocument());
+      await user.click(screen.getByLabelText("More options for test-gateway"));
+      await user.click(await screen.findByText("View Details"));
+      await user.click(await screen.findByLabelText("More options for Resource 1"));
+      await user.click(await screen.findByText("Edit"));
+
+      expect(await screen.findByText("Loading resource content...")).toBeInTheDocument();
+    });
+
     it("shows submit error and keeps the form open on API failure", async () => {
       const user = userEvent.setup();
       const mockResources: Resource[] = [createMockResource(1, "test-gateway")];
@@ -1070,6 +1110,30 @@ describe("Resources", () => {
         );
       });
     });
+
+    it("rolls back with a generic error toast when delete fails at the network level", async () => {
+      const mockResources = [createMockResource(1, "net-gateway")];
+      server.use(
+        http.get("/resources", () => HttpResponse.json(mockResources)),
+        // A network-level failure surfaces as a non-ApiError Error in the rollback.
+        http.delete("/resources/resource-1", () => HttpResponse.error()),
+      );
+
+      const { user } = await setup(mockResources, "net-gateway");
+
+      await user.click(screen.getByLabelText("More options for Resource 1"));
+      await user.click(await screen.findByText("Delete"));
+      await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument());
+      await user.click(screen.getByRole("button", { name: /^delete$/i }));
+
+      await waitFor(() => {
+        expect(toast.error).toHaveBeenCalledWith(
+          expect.stringContaining("Failed to delete resource"),
+        );
+      });
+      // The optimistic removal is rolled back, so the resource remains listed.
+      expect(screen.getAllByText("Resource 1").length).toBeGreaterThan(0);
+    });
   });
 
   describe("Error Boundary", () => {
@@ -1128,6 +1192,56 @@ describe("Resources", () => {
 
       expect(await within(drawer).findByText("alerts")).toBeInTheDocument();
       expect(resourcesListCalls).toBe(listCallsAfterLoad);
+    });
+
+    it("keeps the editor open and original tags when adding a resource tag fails", async () => {
+      const user = userEvent.setup();
+      const resource: Resource = { ...createMockResource(1, "test-gateway"), tags: ["tag1"] };
+      server.use(
+        http.get("/resources", () => HttpResponse.json([resource])),
+        http.put("/resources/:id", () => HttpResponse.json({ detail: "nope" }, { status: 500 })),
+      );
+
+      renderWithRouter(<Resources />);
+      await waitFor(() => expect(screen.getByText("test-gateway")).toBeInTheDocument());
+
+      await user.click(screen.getByLabelText("More options for test-gateway"));
+      await user.click(await screen.findByText("View Details"));
+      const drawer = await screen.findByRole("region", { name: /Resources for test-gateway/i });
+
+      await user.click(within(drawer).getByRole("button", { name: "Add tags" }));
+      await user.type(
+        within(drawer).getByPlaceholderText("Add tags separated with commas"),
+        "alerts",
+      );
+      await user.click(within(drawer).getByRole("button", { name: "Add" }));
+
+      // The failed update leaves the editor open (for retry) and does not add the tag.
+      await waitFor(() => {
+        expect(
+          within(drawer).getByPlaceholderText("Add tags separated with commas"),
+        ).toBeInTheDocument();
+      });
+      expect(within(drawer).queryByText("alerts")).not.toBeInTheDocument();
+    });
+  });
+
+  describe("gateway name mapping", () => {
+    it("labels a resource group using the gateway name from the gateways list", async () => {
+      const resource = createMockResource(1, "gw-1");
+      server.use(
+        http.get("/resources", () => HttpResponse.json([resource])),
+        http.get("/gateways", () =>
+          HttpResponse.json({
+            gateways: [{ id: "gw-1", slug: "gh-repo-tasks", name: "GH Repo" }],
+          }),
+        ),
+      );
+
+      renderWithRouter(<Resources />);
+
+      // gatewayNameById resolves gw-1 -> its slug, which labels the group card.
+      expect(await screen.findByText("gh-repo-tasks")).toBeInTheDocument();
     });
   });
 });

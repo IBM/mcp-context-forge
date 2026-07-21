@@ -56,4 +56,73 @@ describe("resourcesApi", () => {
       await expect(resourcesApi.updateTags("42", ["x"])).rejects.toThrow("HTTP 403");
     });
   });
+
+  const okJson = (body: unknown) =>
+    new Response(JSON.stringify(body), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+
+  describe("create", () => {
+    it("POSTs the resource to /resources", async () => {
+      mockFetch.mockResolvedValueOnce(okJson({ id: "new-resource" }));
+
+      await resourcesApi.create({
+        uri: "resource://example",
+        name: "Example",
+        content: "hello",
+      } as Parameters<typeof resourcesApi.create>[0]);
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining("/resources"),
+        expect.objectContaining({ method: "POST" }),
+      );
+    });
+  });
+
+  describe("update", () => {
+    it("PUTs the resource to /resources/:id", async () => {
+      mockFetch.mockResolvedValueOnce(okJson({ id: "res-1" }));
+
+      await resourcesApi.update("res-1", { name: "Renamed" } as Parameters<
+        typeof resourcesApi.update
+      >[1]);
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining("/resources/res-1"),
+        expect.objectContaining({ method: "PUT" }),
+      );
+    });
+
+    it("throws synchronously for an invalid ID", () => {
+      expect(() => resourcesApi.update("../etc/passwd", {})).toThrow("Invalid resource ID format");
+    });
+  });
+
+  describe("delete", () => {
+    it("DELETEs /resources/:id", async () => {
+      mockFetch.mockResolvedValueOnce(okJson({}));
+
+      await resourcesApi.delete("res-1");
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining("/resources/res-1"),
+        expect.objectContaining({ method: "DELETE" }),
+      );
+    });
+
+    it("throws synchronously for an invalid ID", () => {
+      expect(() => resourcesApi.delete("bad/id")).toThrow("Invalid resource ID format");
+    });
+  });
+
+  describe("validateResourceId (via delete)", () => {
+    it("rejects an empty id", () => {
+      expect(() => resourcesApi.delete("")).toThrow(/^Invalid resource ID$/);
+    });
+
+    it("rejects an id longer than 255 characters", () => {
+      expect(() => resourcesApi.delete("a".repeat(256))).toThrow("Resource ID too long");
+    });
+  });
 });

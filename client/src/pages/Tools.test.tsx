@@ -52,8 +52,8 @@ function createMockTool(id: number, gatewaySlug: string, enabled = true, reachab
 }
 
 // Helper to render with real router and auth context driven by MSW /app/auth/me
-function renderWithRouter(ui: ReactElement) {
-  window.history.pushState({}, "", "/app/tools");
+function renderWithRouter(ui: ReactElement, path = "/app/tools") {
+  window.history.pushState({}, "", path);
 
   return render(
     <AuthProvider>
@@ -1124,6 +1124,30 @@ describe("Tools", () => {
       });
     });
 
+    it("shows an error toast when the delete API throws a standard Error", async () => {
+      const mockTools: Tool[] = [createMockTool(1, "test-gateway")];
+      server.use(
+        http.get("/tools", () => HttpResponse.json(mockTools)),
+        http.delete("/tools/tool-1", () => {
+          return HttpResponse.error();
+        }),
+      );
+
+      renderWithRouter(<Tools />);
+      await waitFor(() => expect(screen.getByText("test-gateway")).toBeInTheDocument());
+
+      const user = await openDetailsPanel("test-gateway");
+      await user.click(screen.getByLabelText("More options"));
+      await user.click(await screen.findByText("Delete"));
+
+      await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument());
+      await user.click(screen.getByRole("button", { name: /^delete$/i }));
+
+      await waitFor(() => {
+        expect(toast.error).toHaveBeenCalledWith(expect.stringContaining("Failed to delete tool"));
+      });
+    });
+
     it("uses displayName in the dialog description when available", async () => {
       const mockTools: Tool[] = [
         { ...createMockTool(1, "test-gateway"), displayName: "My Custom Tool" },
@@ -1231,6 +1255,24 @@ describe("Tools", () => {
 
       // The whole list was fetched only once (on mount), not again after the toggle
       expect(listFetches).toBe(1);
+    });
+
+    it("shows an error toast when a toggle fails with a network error", async () => {
+      const activeTool = createMockTool(1, "test-gateway", true, true);
+      server.use(
+        http.get("/tools", () => HttpResponse.json([activeTool])),
+        // A network-level failure surfaces as a non-ApiError Error in the catch.
+        http.post("/tools/tool-1/state", () => HttpResponse.error()),
+      );
+
+      renderWithRouter(<Tools />);
+      await waitFor(() => expect(screen.getByText("test-gateway")).toBeInTheDocument());
+
+      const user = await openDetailsPanel("test-gateway");
+      await user.click(screen.getByLabelText("More options"));
+      await user.click(await screen.findByText("Deactivate"));
+
+      await waitFor(() => expect(toast.error).toHaveBeenCalled());
     });
 
     it("activates an inactive tool and shows a success toast", async () => {
@@ -1830,6 +1872,46 @@ describe("Tools", () => {
 
       expect(await within(drawer).findByText("alerts")).toBeInTheDocument();
       expect(toolsListCalls).toBe(listCallsAfterLoad);
+    });
+
+    it("shows an error toast and keeps the original tags when the tag update fails", async () => {
+      const user = userEvent.setup();
+      const tool: Tool = { ...createMockTool(1, "test-gateway"), tags: [{ label: "tag1" }] };
+      server.use(
+        http.get("/tools", () => HttpResponse.json([tool])),
+        http.put("/tools/:id", () => HttpResponse.json({ detail: "nope" }, { status: 500 })),
+      );
+
+      renderWithRouter(<Tools />);
+      await waitFor(() => expect(screen.getByText("test-gateway")).toBeInTheDocument());
+
+      await user.click(screen.getByLabelText("More options for test-gateway"));
+      await user.click(await screen.findByText("View Details"));
+      const drawer = await screen.findByRole("region", { name: /Tools for test-gateway/i });
+
+      await user.click(within(drawer).getByRole("button", { name: "Add tags" }));
+      await user.type(
+        within(drawer).getByPlaceholderText("Add tags separated with commas"),
+        "alerts",
+      );
+      await user.click(within(drawer).getByRole("button", { name: "Add" }));
+
+      await waitFor(() => expect(toast.error).toHaveBeenCalled());
+      expect(within(drawer).queryByText("alerts")).not.toBeInTheDocument();
+    });
+  });
+
+  describe("opening from global search", () => {
+    it("opens the details panel for a tool referenced by the ?selected= query param", async () => {
+      const tool = createMockTool(1, "test-gateway");
+      server.use(http.get("/tools", () => HttpResponse.json([tool])));
+
+      renderWithRouter(<Tools />, "/app/tools?selected=tool-1");
+
+      // The effect resolves the tool's group and opens its details panel.
+      expect(
+        await screen.findByRole("region", { name: /Tools for test-gateway/i }),
+      ).toBeInTheDocument();
     });
   });
 });
