@@ -166,7 +166,7 @@ The Make commands below wrap Ansible playbooks (`ansible/ocp/playbooks/`). You c
 
 **Step 1 — Create Docker Hub pull secret** (one-time per namespace):
 
-### a) If you are already logged in locally via `docker login`:
+##### a) If you are already logged in locally via `docker login`:
 
 ```bash
 oc create secret generic dockerhub-pull \
@@ -175,7 +175,7 @@ oc create secret generic dockerhub-pull \
   -n <namespace-change-me>
 ```
 
-### b) If you prefer to supply credentials explicitly:
+##### b) If you prefer to supply credentials explicitly:
 
 ```bash
 oc create secret docker-registry dockerhub-pull \
