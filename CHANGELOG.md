@@ -13,7 +13,7 @@
 
 ### Overview
 
-Release 1.0.6 consolidates **88 PRs** focused on **OAuth RFC 8693 token exchange**, **HashiCorp Vault per-user credential resolution**, **MCP Apps support**, **dataplane resource and tool publishing**, **SSRF/TLS security hardening**, **plugin observability**, and **CI/DevOps improvements**:
+Release 1.0.6 consolidates **61 PRs** focused on **OAuth RFC 8693 token exchange**, **HashiCorp Vault per-user credential resolution**, **MCP Apps support**, **dataplane resource and tool publishing**, **SSRF/TLS security hardening**, **plugin observability**, and **CI/DevOps improvements**:
 
 - **Security** - SSRF/TLS validation in gRPC endpoint, SSRF validation for all OAuth config URLs, CSP modernisation, output neutralisation (CWE-117), global SSRF flag respected in gateway test endpoint, output-length guard resource bypass fix, and stricter auth-header key validation.
 - **OAuth & Auth** - RFC 8693 On-Behalf-Of token exchange for OAuth gateways, unified email extraction across all resource operations, and Keycloak test-user collision fix.
