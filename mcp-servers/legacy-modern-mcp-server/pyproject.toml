@@ -1,0 +1,9 @@
+[project]
+name = "legacy-modern-mcp-server"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "mcp==2.0.0b2",
+]

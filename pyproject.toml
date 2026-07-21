@@ -62,6 +62,11 @@ cpex-secrets-detection = "2026-07-15T23:59:59Z"
 [tool.uv.sources]
 compliance-reference-server = { path = "mcp-servers/python/compliance_reference_server", editable = true }
 
+[tool.uv.workspace]
+members = [
+    "mcp-servers/legacy-modern-mcp-server",
+]
+
 # ----------------------------------------------------------------
 # 📦 Core project metadata (PEP 621)
 # ----------------------------------------------------------------
