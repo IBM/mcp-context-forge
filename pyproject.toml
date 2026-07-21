@@ -412,6 +412,9 @@ ignore = [
     ".github/**",
     "Makefile",
     "mcpgateway/admin_ui/**",
+    "mcpgateway/static/assets/**",
+    "mcpgateway/static/css/**",
+    "mcpgateway/static/chunk-*.js",
     "mcpgateway/static/bundle-*.js",
 ]
 
