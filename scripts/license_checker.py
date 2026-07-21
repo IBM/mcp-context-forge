@@ -1092,110 +1092,6 @@ def scan_go_modules(root: Path, policy: Dict[str, Any], compiled_patterns: Optio
     return findings, stats
 
 
-def scan_rust_modules(root: Path, policy: Dict[str, Any], compiled_patterns: Optional[CompiledPatterns] = None) -> Tuple[List[Finding], Dict[str, int]]:
-    findings: List[Finding] = []
-    stats = {"manifests": 0, "crates": 0}
-
-    # Check if any Cargo.toml files exist before requiring cargo-license
-    cargo_files = list(_iter_files_with_name(root, "Cargo.toml"))
-    if not cargo_files:
-        # No Rust workspace exists, skip Rust dependency checks
-        return findings, stats
-
-    if not shutil.which("cargo-license"):
-        return (
-            [
-                Finding(
-                    "rust",
-                    "cargo",
-                    "cargo-license",
-                    "",
-                    "`cargo-license` binary is not available",
-                )
-            ],
-            stats,
-        )
-
-    local_crate_licenses: Dict[str, str] = {}
-    for cargo_file in _iter_files_with_name(root, "Cargo.toml"):
-        crate_root = cargo_file.parent
-        crate_name = str(crate_root.name)
-        license_value = _extract_cargo_license(cargo_file)
-        if not license_value:
-            license_value = _find_repo_spdx(crate_root, root)
-        if not license_value:
-            license_value = "unknown"
-        local_crate_licenses[crate_name] = license_value
-        finding = evaluate_license(
-            "rust",
-            str(crate_root.relative_to(root)),
-            crate_name,
-            license_value,
-            policy,
-            is_local=True,
-            compiled_patterns=compiled_patterns,
-        )
-        if finding:
-            findings.append(finding)
-
-    seen: Set[Tuple[str, str, str]] = set()
-    for cargo_file in _iter_files_with_name(root, "Cargo.toml"):
-        crate_root = cargo_file.parent
-        crate_name = str(crate_root.name)
-        stats["manifests"] += 1
-        result = _run_command(["cargo", "license", "--json", "--avoid-dev-deps"], crate_root)
-        if result.returncode != 0 and not result.stdout:
-            findings.append(
-                Finding(
-                    "rust",
-                    str(crate_root.relative_to(root)),
-                    cargo_file.name,
-                    "",
-                    f"`cargo license` failed: {result.stderr.strip() or 'unknown error'}",
-                )
-            )
-            continue
-
-        try:
-            entries = json.loads(result.stdout or "[]")
-        except json.JSONDecodeError:
-            findings.append(
-                Finding(
-                    "rust",
-                    str(crate_root.relative_to(root)),
-                    "cargo-license",
-                    "",
-                    "failed to parse JSON output from `cargo license`",
-                )
-            )
-            continue
-
-        for entry in entries:
-            name = str(entry.get("name", "")).strip()
-            if not name:
-                continue
-            license_value = str(entry.get("license", "")).strip()
-            is_local_dependency = name in local_crate_licenses
-            key = (str(crate_root), name, license_value)
-            if key in seen:
-                continue
-            seen.add(key)
-            stats["crates"] += 1
-            finding = evaluate_license(
-                "rust",
-                str(crate_root.relative_to(root)),
-                name,
-                license_value,
-                policy,
-                is_local=is_local_dependency,
-                compiled_patterns=compiled_patterns,
-            )
-            if finding:
-                findings.append(finding)
-
-    return findings, stats
-
-
 def print_summary(findings: Sequence[Finding], stats: Dict[str, Dict[str, int]], root: Path, summary_only: bool = False) -> None:
     warnings = sum(1 for finding in findings if finding.is_warning)
     errors = len(findings) - warnings
@@ -1462,10 +1358,7 @@ def main() -> int:
         findings.extend(scope_findings)
         stats["go"].update(scope_stats)
 
-    if scan_cfg.get("check_rust_dependencies", True):
-        scope_findings, scope_stats = scan_rust_modules(ROOT, policy, compiled_patterns=compiled_patterns)
-        findings.extend(scope_findings)
-        stats["rust"].update(scope_stats)
+    # Rust dependency scanning removed - no first-party Rust workspace exists
 
     # De-duplicate findings by signature to avoid noisy duplicates from nested workspaces.
     deduped = []

@@ -7389,7 +7389,6 @@ async-clean:
 # spaces — harmless under (?x).
 DETECT_SECRETS_FILES_EXCLUDE := '(?x)( \
   package-lock\.json$$         \
-  |Cargo\.lock$$               \
   |uv\.lock$$                  \
   |go\.sum$$                   \
   |mcpgateway/sri_hashes\.json$$ \
