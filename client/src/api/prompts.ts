@@ -116,4 +116,16 @@ export const promptsApi = {
     const validId = validatePromptId(id);
     return api.put<PromptRead>(`/prompts/${encodeURIComponent(validId)}`, { tags });
   },
+
+  /**
+   * Delete a prompt by its primary-key ID.
+   *
+   * Mirrors `DELETE /prompts/{prompt_id}` (`mcpgateway/main.py`), which requires
+   * the `prompts.delete` permission. The ID is validated (not the name used by
+   * {@link promptsApi.render}) to guard against path traversal and injection.
+   */
+  delete: (id: string): Promise<void> => {
+    const validId = validatePromptId(id);
+    return api.delete(`/prompts/${encodeURIComponent(validId)}`);
+  },
 };

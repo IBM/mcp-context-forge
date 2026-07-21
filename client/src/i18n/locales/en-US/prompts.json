@@ -81,5 +81,10 @@
   "prompts.add.error.teamRequired": "Team selection is required when visibility is set to team",
   "prompts.add.error.argumentsInvalidJson": "Invalid JSON format",
   "prompts.add.error.argumentsArrayRequired": "Arguments must be a JSON array",
-  "prompts.tags.addError": "Failed to add tag. Please try again."
+  "prompts.tags.addError": "Failed to add tag. Please try again.",
+  "prompts.delete.confirm.title": "Delete prompt",
+  "prompts.delete.confirm.description": "Are you sure you want to delete \"{name}\"? This action cannot be undone.",
+  "prompts.delete.confirm.button": "Delete",
+  "prompts.delete.success": "Prompt \"{name}\" deleted successfully",
+  "prompts.delete.error": "Failed to delete prompt"
 }
