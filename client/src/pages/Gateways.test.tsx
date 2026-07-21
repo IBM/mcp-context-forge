@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { renderWithProviders } from "@/test/test-utils";
 import { Gateways } from "./Gateways";
 import { useQuery } from "@/hooks/useQuery";
-import { deleteVirtualServer } from "@/api/virtualServers";
+import { deleteVirtualServer, updateVirtualServerTags } from "@/api/virtualServers";
 import type { VirtualServer } from "@/types/server";
 
 // Mock the router
@@ -24,6 +24,7 @@ vi.mock("@/hooks/useQuery", () => ({
 
 vi.mock("@/api/virtualServers", () => ({
   deleteVirtualServer: vi.fn(),
+  updateVirtualServerTags: vi.fn(),
 }));
 
 vi.mock("sonner", () => ({
@@ -36,6 +37,7 @@ vi.mock("sonner", () => ({
 const mockUseQuery = vi.mocked(useQuery);
 const mockDeleteVirtualServer = vi.mocked(deleteVirtualServer);
 const mockToastError = vi.mocked(toast.error);
+const mockUpdateVirtualServerTags = vi.mocked(updateVirtualServerTags);
 
 // ---------------------------------------------------------------------------
 // Shared factory — avoids repeating all 30 fields in every test
@@ -1070,5 +1072,102 @@ describe("Gateways", () => {
     ).toBeInTheDocument();
     expect(screen.getByText("Failed to fetch servers")).toBeInTheDocument();
     expect(screen.getByText(mockServer.name)).toBeInTheDocument();
+  });
+
+  it("logs a console error when the post-delete refetch fails", async () => {
+    const user = userEvent.setup();
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const refetch = vi.fn().mockRejectedValue(new Error("refresh failed"));
+    const mockServer = makeServer({ id: "gateway-del", name: "Del Server" });
+    setupWithServer(mockServer, { refetch });
+
+    renderWithProviders(<Gateways />);
+    await user.click(screen.getByRole("button", { name: "Actions for Del Server" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Delete" }));
+    await user.click(screen.getByRole("button", { name: "Delete" }));
+
+    await waitFor(() => expect(mockDeleteVirtualServer).toHaveBeenCalledWith("gateway-del"));
+    await waitFor(() => expect(consoleError).toHaveBeenCalled());
+    consoleError.mockRestore();
+  });
+
+  it("clears the pending server when the delete dialog is dismissed", async () => {
+    const user = userEvent.setup();
+    const mockServer = makeServer({ id: "gateway-cancel", name: "Cancel Server" });
+    setupWithServer(mockServer);
+
+    renderWithProviders(<Gateways />);
+    await user.click(screen.getByRole("button", { name: "Actions for Cancel Server" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Delete" }));
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(mockDeleteVirtualServer).not.toHaveBeenCalled();
+  });
+
+  it("adds a tag from the details panel", async () => {
+    const user = userEvent.setup();
+    const detailServer = makeServer({ id: "gateway-1", tags: [] });
+    mockUseQuery.mockImplementation((path) => {
+      const base = {
+        error: null,
+        isLoading: false,
+        execute: vi.fn(),
+        refetch: vi.fn(),
+        setData: vi.fn(),
+      };
+      if (path === "/servers/gateway-1") return { ...base, data: detailServer };
+      if (path?.startsWith("/servers/gateway-1/")) return { ...base, data: [] };
+      return { ...base, data: { servers: [detailServer] } };
+    });
+    mockUpdateVirtualServerTags.mockResolvedValue({
+      ...detailServer,
+      tags: [{ id: "alerts", label: "alerts" }],
+    });
+
+    renderWithProviders(<Gateways />);
+    await user.click(screen.getByRole("button", { name: "Actions for GH repo tasks" }));
+    await user.click(await screen.findByRole("menuitem", { name: "View details" }));
+
+    await user.click(await screen.findByRole("button", { name: "Add tags" }));
+    await user.type(screen.getByPlaceholderText("Add tags separated with commas"), "alerts");
+    await user.click(screen.getByRole("button", { name: "Add" }));
+
+    await waitFor(() =>
+      expect(mockUpdateVirtualServerTags).toHaveBeenCalledWith("gateway-1", ["alerts"]),
+    );
+  });
+
+  it("surfaces an error when adding a tag from the details panel fails", async () => {
+    const user = userEvent.setup();
+    const detailServer = makeServer({ id: "gateway-1", tags: [] });
+    mockUseQuery.mockImplementation((path) => {
+      const base = {
+        error: null,
+        isLoading: false,
+        execute: vi.fn(),
+        refetch: vi.fn(),
+        setData: vi.fn(),
+      };
+      if (path === "/servers/gateway-1") return { ...base, data: detailServer };
+      if (path?.startsWith("/servers/gateway-1/")) return { ...base, data: [] };
+      return { ...base, data: { servers: [detailServer] } };
+    });
+    mockUpdateVirtualServerTags.mockRejectedValue(new Error("boom"));
+
+    renderWithProviders(<Gateways />);
+    await user.click(screen.getByRole("button", { name: "Actions for GH repo tasks" }));
+    await user.click(await screen.findByRole("menuitem", { name: "View details" }));
+
+    await user.click(await screen.findByRole("button", { name: "Add tags" }));
+    await user.type(screen.getByPlaceholderText("Add tags separated with commas"), "alerts");
+    await user.click(screen.getByRole("button", { name: "Add" }));
+
+    // The failed update runs the error branch and leaves the editor open to retry.
+    await waitFor(() =>
+      expect(mockUpdateVirtualServerTags).toHaveBeenCalledWith("gateway-1", ["alerts"]),
+    );
   });
 });

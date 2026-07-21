@@ -51,7 +51,7 @@ vi.mock("@/components/users/UserForm", () => ({
     user?: { email: string };
     onToggle: () => void;
     onOptimisticCreate: (data: { email: string; full_name: string }) => void;
-    onSuccess: () => void;
+    onSuccess: (result?: { email: string }) => void;
     onError: (data: { email: string }) => void;
   }) => (
     <div data-testid="mock-user-form">
@@ -60,7 +60,8 @@ vi.mock("@/components/users/UserForm", () => ({
       <button onClick={() => onOptimisticCreate({ email: "opt@example.com", full_name: "Opt" })}>
         Optimistic Create
       </button>
-      <button onClick={onSuccess}>Success Form</button>
+      <button onClick={() => onSuccess()}>Success Form</button>
+      <button onClick={() => onSuccess(user)}>Success With Result</button>
       <button onClick={() => onError({ email: "opt@example.com" })}>Error Form</button>
     </div>
   ),
@@ -721,6 +722,32 @@ describe("Users", () => {
 
     // After clicking, the form should be visible (would need to check for form elements)
     expect(screen.queryByText("No users found")).not.toBeInTheDocument();
+  });
+
+  it("opens the edit form from a row action and applies the updated user on success", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.get).mockResolvedValueOnce({
+      users: createMockUsers(0, 1),
+      nextCursor: null,
+    });
+
+    renderWithRouter(<Users />);
+    await waitFor(() => {
+      expect(screen.getByText("user0@example.com")).toBeInTheDocument();
+    });
+
+    // Edit from the row actions opens the form pre-filled for that user.
+    await user.click(screen.getByRole("button", { name: "Actions for User 0" }));
+    await user.click(await screen.findByRole("menuitem", { name: /^edit$/i }));
+    expect(screen.getByText("Edit user: user0@example.com")).toBeInTheDocument();
+
+    // Completing the edit with a result patches the list and shows a success toast.
+    await user.click(screen.getByRole("button", { name: "Success With Result" }));
+
+    await waitFor(() => {
+      expect(mockToastSuccess).toHaveBeenCalled();
+    });
+    expect(screen.queryByTestId("mock-user-form")).not.toBeInTheDocument();
   });
 
   it("closes user form when toggled", async () => {

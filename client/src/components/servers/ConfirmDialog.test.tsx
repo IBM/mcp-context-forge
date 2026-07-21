@@ -127,4 +127,39 @@ describe("ConfirmDialog", () => {
     renderWithProviders(<ConfirmDialog {...defaultProps} open={false} />);
     expect(screen.queryByText("Delete Server")).toBeNull();
   });
+
+  it("requests close on Escape when not loading", () => {
+    const onOpenChange = vi.fn();
+    renderWithProviders(<ConfirmDialog {...defaultProps} onOpenChange={onOpenChange} />);
+
+    fireEvent.keyDown(document, { key: "Escape", code: "Escape" });
+
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  it("ignores an Escape close while loading", () => {
+    const onOpenChange = vi.fn();
+    renderWithProviders(
+      <ConfirmDialog {...defaultProps} onOpenChange={onOpenChange} isLoading={true} />,
+    );
+
+    fireEvent.keyDown(document, { key: "Escape", code: "Escape" });
+
+    expect(onOpenChange).not.toHaveBeenCalled();
+  });
+
+  it("shows the loading label and disables the actions while loading", () => {
+    renderWithProviders(
+      <ConfirmDialog
+        {...defaultProps}
+        isLoading={true}
+        loadingLabel="Deleting..."
+        confirmLabel="Delete"
+      />,
+    );
+
+    expect(screen.getByText("Deleting...")).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Deleting/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
+  });
 });

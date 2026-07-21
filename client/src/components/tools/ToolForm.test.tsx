@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { screen, waitFor, within } from "@testing-library/react";
+import { screen, waitFor, within, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { render } from "@testing-library/react";
 import { http, HttpResponse } from "msw";
@@ -675,6 +675,48 @@ describe("ToolForm", () => {
         value: originalClipboard,
         configurable: true,
       });
+    });
+  });
+
+  describe("field interactions", () => {
+    it("renders nothing when isOpen is false", () => {
+      const { container } = renderForm({ isOpen: false });
+      expect(container).toBeEmptyDOMElement();
+    });
+
+    it("focuses the URL field when Generate is clicked without a URL", async () => {
+      const user = userEvent.setup();
+      renderForm();
+
+      await user.click(screen.getByRole("button", { name: /^Generate$/i }));
+
+      // handleGenerateClick surfaces the URL-required error and refocuses the field.
+      expect(screen.getByLabelText(/URL/)).toHaveFocus();
+    });
+
+    it("changes the request type", async () => {
+      const user = userEvent.setup();
+      renderForm();
+
+      const postRadio = screen.getByRole("radio", { name: "POST" });
+      await user.click(postRadio);
+
+      expect(postRadio).toBeChecked();
+    });
+
+    it("edits the input and output schema fields in manual mode", async () => {
+      const user = userEvent.setup();
+      renderForm();
+
+      await user.click(screen.getByRole("button", { name: /Add manually/i }));
+
+      const input = screen.getByLabelText(/Input schema/);
+      fireEvent.change(input, { target: { value: '{"type":"object"}' } });
+      expect(input).toHaveValue('{"type":"object"}');
+
+      const output = screen.getByLabelText(/Output schema/);
+      fireEvent.change(output, { target: { value: '{"type":"array"}' } });
+      expect(output).toHaveValue('{"type":"array"}');
     });
   });
 });

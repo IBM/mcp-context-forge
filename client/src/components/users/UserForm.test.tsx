@@ -7,6 +7,7 @@ import * as useUserFormModule from "@/hooks/useUserForm";
 vi.mock("@/hooks/useUserForm");
 
 const messages = {
+  "common.button.back": "Back",
   "users.form.title": "Create New User",
   "users.form.description": "Add a new user to the system",
   "users.form.email": "Email",

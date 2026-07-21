@@ -321,6 +321,56 @@ describe("useUserForm", () => {
 
       expect(result.current.errors.confirmPassword).toBeUndefined();
     });
+
+    it("clears a field error once the whole form validates", () => {
+      const { result } = renderHook(() => useUserForm(), { wrapper });
+
+      act(() => {
+        result.current.setEmail("valid@example.com");
+        result.current.setPassword("LongEnoughPassword123!");
+        result.current.setConfirmPassword("LongEnoughPassword123!");
+      });
+
+      act(() => {
+        result.current.validateField("email", "valid@example.com");
+        vi.advanceTimersByTime(300);
+      });
+
+      expect(result.current.errors.email).toBeUndefined();
+    });
+  });
+
+  describe("getFormData in edit mode", () => {
+    const editUser = {
+      email: "edit@example.com",
+      full_name: "Edit User",
+      is_admin: false,
+      is_active: true,
+      auth_provider: "local",
+      created_at: "2024-01-01T00:00:00Z",
+      email_verified: true,
+      password_change_required: false,
+      failed_login_attempts: 0,
+      is_locked: false,
+    } as unknown as User;
+
+    it("includes the password in the payload when a new one is entered", () => {
+      const { result } = renderHook(() => useUserForm({ initialUser: editUser }), { wrapper });
+
+      act(() => {
+        result.current.setPassword("BrandNewPassword123!");
+      });
+
+      const payload = result.current.getFormData();
+      expect((payload as { password?: string }).password).toBe("BrandNewPassword123!");
+    });
+
+    it("omits the password when it is left blank", () => {
+      const { result } = renderHook(() => useUserForm({ initialUser: editUser }), { wrapper });
+
+      const payload = result.current.getFormData();
+      expect((payload as { password?: string }).password).toBeUndefined();
+    });
   });
 
   describe("validateForm", () => {

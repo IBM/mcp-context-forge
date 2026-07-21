@@ -443,4 +443,128 @@ describe("Prompts", () => {
     // ...without re-fetching the whole prompts catalog.
     expect(promptsListCalls).toBe(listCallsAfterLoad);
   });
+
+  it("patches the tag into an object-shaped prompts response", async () => {
+    const user = userEvent.setup();
+    const prompt = createMockPrompt({
+      id: "prompt-1",
+      gatewaySlug: "gh-repo-tasks",
+      tags: [{ id: "summary", label: "summary" }],
+    });
+    // Object-shaped response ({ prompts: [...] }) exercises the non-array cache patch.
+    server.use(
+      http.get("/prompts", () => HttpResponse.json({ prompts: [prompt] })),
+      http.put("/prompts/:id", () =>
+        HttpResponse.json({
+          ...prompt,
+          tags: [
+            { id: "summary", label: "summary" },
+            { id: "alerts", label: "alerts" },
+          ],
+        }),
+      ),
+    );
+
+    renderWithProviders(<Prompts />);
+    await waitFor(() => expect(screen.getByText("Summarize document")).toBeInTheDocument());
+
+    await user.click(screen.getByRole("button", { name: /More options for/i }));
+    await user.click(await screen.findByRole("menuitem", { name: "View details" }));
+    const drawer = await screen.findByRole("region", { name: /prompt details/i });
+
+    await user.click(within(drawer).getByRole("button", { name: "Add tags" }));
+    await user.type(
+      within(drawer).getByPlaceholderText("Add tags separated with commas"),
+      "alerts",
+    );
+    await user.click(within(drawer).getByRole("button", { name: "Add" }));
+
+    expect(await within(drawer).findByText("alerts")).toBeInTheDocument();
+  });
+
+  it("keeps the original tags when the tag update fails", async () => {
+    const user = userEvent.setup();
+    const prompt = createMockPrompt({
+      id: "prompt-1",
+      gatewaySlug: "gh-repo-tasks",
+      tags: [{ id: "summary", label: "summary" }],
+    });
+    server.use(
+      http.get("/prompts", () => HttpResponse.json([prompt])),
+      http.put("/prompts/:id", () => HttpResponse.json({ detail: "nope" }, { status: 500 })),
+    );
+
+    renderWithProviders(<Prompts />);
+    await waitFor(() => expect(screen.getByText("Summarize document")).toBeInTheDocument());
+
+    await user.click(screen.getByRole("button", { name: /More options for/i }));
+    await user.click(await screen.findByRole("menuitem", { name: "View details" }));
+    const drawer = await screen.findByRole("region", { name: /prompt details/i });
+
+    await user.click(within(drawer).getByRole("button", { name: "Add tags" }));
+    await user.type(
+      within(drawer).getByPlaceholderText("Add tags separated with commas"),
+      "alerts",
+    );
+    await user.click(within(drawer).getByRole("button", { name: "Add" }));
+
+    // The failed update leaves the original tags untouched.
+    await waitFor(() => {
+      expect(within(drawer).queryByText("alerts")).not.toBeInTheDocument();
+    });
+    expect(within(drawer).getByText("summary")).toBeInTheDocument();
+  });
+
+  it("skips the cache patch when the tag update returns no prompt", async () => {
+    const user = userEvent.setup();
+    const prompt = createMockPrompt({
+      id: "prompt-1",
+      gatewaySlug: "gh-repo-tasks",
+      tags: [{ id: "summary", label: "summary" }],
+    });
+    server.use(
+      http.get("/prompts", () => HttpResponse.json([prompt])),
+      http.put("/prompts/:id", () => HttpResponse.json(null)),
+    );
+
+    renderWithProviders(<Prompts />);
+    await waitFor(() => expect(screen.getByText("Summarize document")).toBeInTheDocument());
+
+    await user.click(screen.getByRole("button", { name: /More options for/i }));
+    await user.click(await screen.findByRole("menuitem", { name: "View details" }));
+    const drawer = await screen.findByRole("region", { name: /prompt details/i });
+
+    await user.click(within(drawer).getByRole("button", { name: "Add tags" }));
+    await user.type(
+      within(drawer).getByPlaceholderText("Add tags separated with commas"),
+      "alerts",
+    );
+    await user.click(within(drawer).getByRole("button", { name: "Add" }));
+
+    // A null response means there is nothing to patch; the tag is not added.
+    await waitFor(() => {
+      expect(within(drawer).queryByText("alerts")).not.toBeInTheDocument();
+    });
+    expect(within(drawer).getByText("summary")).toBeInTheDocument();
+  });
+
+  it("closes the details drawer when the close button is clicked", async () => {
+    const user = userEvent.setup();
+    const prompt = createMockPrompt({ id: "prompt-1", gatewaySlug: "gh-repo-tasks" });
+    server.use(http.get("/prompts", () => HttpResponse.json([prompt])));
+
+    renderWithProviders(<Prompts />);
+    await waitFor(() => expect(screen.getByText("Summarize document")).toBeInTheDocument());
+
+    await user.click(screen.getByRole("button", { name: /More options for/i }));
+    await user.click(await screen.findByRole("menuitem", { name: "View details" }));
+    const drawer = await screen.findByRole("region", { name: /prompt details/i });
+
+    await user.click(within(drawer).getByRole("button", { name: "Close prompt details" }));
+
+    // Closing hides the panel (aria-hidden), so it drops out of the a11y tree.
+    await waitFor(() => {
+      expect(screen.queryByRole("region", { name: /prompt details/i })).not.toBeInTheDocument();
+    });
+  });
 });

@@ -549,6 +549,86 @@ describe("CreateServer", () => {
     );
   });
 
+  it("lists connected MCP servers with computed status and visibility", async () => {
+    const user = userEvent.setup();
+    server.use(
+      http.get("*/gateways", () =>
+        HttpResponse.json({
+          gateways: [
+            {
+              id: "s-active",
+              name: "Active Server",
+              enabled: true,
+              reachable: true,
+              visibility: "public",
+              toolCount: 2,
+              resourceCount: 1,
+              promptCount: 0,
+            },
+            {
+              id: "s-warning",
+              name: "Warning Server",
+              enabled: true,
+              reachable: false,
+              lastSeen: "2026-01-01T00:00:00Z",
+              visibility: "team",
+            },
+            {
+              id: "s-offline",
+              name: "Offline Server",
+              enabled: true,
+              reachable: false,
+              lastSeen: null,
+              visibility: "private",
+            },
+            {
+              id: "s-draft",
+              name: "Draft Server",
+              enabled: false,
+              reachable: false,
+              visibility: "public",
+            },
+          ],
+        }),
+      ),
+    );
+
+    renderWithProviders(<CreateServer />);
+    await user.type(screen.getByLabelText(/Name/), "Research server");
+    await user.click(screen.getByRole("button", { name: /Continue/ }));
+    await screen.findByRole("heading", { name: "Connect a source" });
+
+    // Selecting a different action card highlights it.
+    await user.click(screen.getByTestId("action-card-AI agent"));
+
+    // Open the connected-sources panel, which enables the MCP servers query.
+    await user.click(screen.getByRole("button", { name: /Add tools, resources, and prompts/i }));
+
+    expect(await screen.findByText("Active Server")).toBeInTheDocument();
+    expect(screen.getByText("Warning Server")).toBeInTheDocument();
+    expect(screen.getByText("Offline Server")).toBeInTheDocument();
+    expect(screen.getByText("Draft Server")).toBeInTheDocument();
+
+    // Status labels exercise every getServerStatus / getStatusConfig branch.
+    expect(screen.getByText("Active")).toBeInTheDocument();
+    expect(screen.getByText("Warning")).toBeInTheDocument();
+    expect(screen.getByText("Offline")).toBeInTheDocument();
+    expect(screen.getByText("Inactive")).toBeInTheDocument();
+
+    // Visibility labels exercise team / private / public.
+    expect(screen.getByText("Team")).toBeInTheDocument();
+    expect(screen.getByText("Private")).toBeInTheDocument();
+    expect(screen.getAllByText("Public").length).toBeGreaterThanOrEqual(2);
+
+    // Selecting a source switches the footer button to Submit.
+    await user.click(screen.getByRole("checkbox", { name: "Select Active Server" }));
+    expect(screen.getByRole("button", { name: "Submit" })).toBeInTheDocument();
+
+    // The panel's "Add source" button triggers the first enabled card's action.
+    await user.click(screen.getByRole("button", { name: "Add source" }));
+    expect(mockNavigate).toHaveBeenCalledWith("/app/servers?openForm=true");
+  });
+
   it("should set step back to details if handleSkipForNow is called and serverDetails is null", async () => {
     componentMockState.mockForm = true;
     componentMockState.mockSourceSelection = true;
@@ -710,6 +790,60 @@ describe("CreateServer", () => {
       act(() => {
         toolCheckbox.click();
       });
+    });
+
+    it("renders every MCP server status and visibility in the edit accordion", async () => {
+      routerMock.path = "/app/gateways/create-server?editServerId=gateway-1";
+      server.use(
+        http.get("*/servers/gateway-1", () =>
+          HttpResponse.json({ id: "gateway-1", name: "Test Edit Server", visibility: "team" }),
+        ),
+        http.get("*/gateways", () =>
+          HttpResponse.json({
+            gateways: [
+              {
+                id: "m-warning",
+                name: "Warning MCP",
+                enabled: true,
+                reachable: false,
+                lastSeen: "2026-01-01T00:00:00Z",
+                visibility: "team",
+              },
+              {
+                id: "m-offline",
+                name: "Offline MCP",
+                enabled: true,
+                reachable: false,
+                lastSeen: null,
+                visibility: "private",
+              },
+              {
+                id: "m-draft",
+                name: "Draft MCP",
+                enabled: false,
+                reachable: false,
+                visibility: "public",
+              },
+            ],
+          }),
+        ),
+      );
+
+      renderWithProviders(<CreateServer />);
+
+      await waitFor(() =>
+        expect(screen.getByRole("heading", { name: "Edit server" })).toBeInTheDocument(),
+      );
+
+      // Each server's computed status label is shown on its accordion row.
+      expect(await screen.findByText("Warning")).toBeInTheDocument();
+      expect(screen.getByText("Offline")).toBeInTheDocument();
+      expect(screen.getByText("Inactive")).toBeInTheDocument();
+
+      // Visibility labels cover team / private / public.
+      expect(screen.getByText("Team")).toBeInTheDocument();
+      expect(screen.getByText("Private")).toBeInTheDocument();
+      expect(screen.getByText("Public")).toBeInTheDocument();
     });
 
     it("renders warning alert when mcpServers fails to load", async () => {
