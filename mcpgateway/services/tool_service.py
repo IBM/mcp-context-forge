@@ -4276,18 +4276,19 @@ class ToolService(BaseService):
         if require_model_visible and not is_model_visible_tool(tool_payload):
             raise ToolNotFoundError(f"Tool not found: {name}")
 
-        if server_id and not tool_selected_from_server_scope:
+        if server_id:
             tool_id_for_check = tool_payload.get("id")
             if not tool_id_for_check:
                 raise ToolNotFoundError(f"Tool not found: {name}")
-            server_match = db.execute(
-                select(server_tool_association.c.tool_id).where(
-                    server_tool_association.c.server_id == server_id,
-                    server_tool_association.c.tool_id == tool_id_for_check,
-                )
-            ).first()
-            if not server_match:
-                raise ToolNotFoundError(f"Tool not found: {name}")
+            if not tool_selected_from_server_scope:
+                server_match = db.execute(
+                    select(server_tool_association.c.tool_id).where(
+                        server_tool_association.c.server_id == server_id,
+                        server_tool_association.c.tool_id == tool_id_for_check,
+                    )
+                ).first()
+                if not server_match:
+                    raise ToolNotFoundError(f"Tool not found: {name}")
 
         tool_integration_type = tool_payload.get("integration_type")
         if tool_integration_type != "MCP":
@@ -5033,7 +5034,7 @@ class ToolService(BaseService):
             # SECURITY: Enforce server scoping if server_id is provided
             # Tool must be attached to the specified virtual server
             # ═══════════════════════════════════════════════════════════════════════════
-            if server_id and not tool_selected_from_server_scope:
+            if server_id:
                 tool_id_for_check = tool_payload.get("id")
                 if not tool_id_for_check:
                     # Cannot verify server membership without tool ID - deny access
@@ -5041,14 +5042,15 @@ class ToolService(BaseService):
                     logger.warning("Tool '%s' has no ID in payload, cannot verify server membership", name)
                     raise ToolNotFoundError(f"Tool not found: {name}")
 
-                server_match = db.execute(
-                    select(server_tool_association.c.tool_id).where(
-                        server_tool_association.c.server_id == server_id,
-                        server_tool_association.c.tool_id == tool_id_for_check,
-                    )
-                ).first()
-                if not server_match:
-                    raise ToolNotFoundError(f"Tool not found: {name}")
+                if not tool_selected_from_server_scope:
+                    server_match = db.execute(
+                        select(server_tool_association.c.tool_id).where(
+                            server_tool_association.c.server_id == server_id,
+                            server_tool_association.c.tool_id == tool_id_for_check,
+                        )
+                    ).first()
+                    if not server_match:
+                        raise ToolNotFoundError(f"Tool not found: {name}")
 
         if require_app_visible:
             if is_direct_proxy or not is_app_visible_tool(tool_payload):
