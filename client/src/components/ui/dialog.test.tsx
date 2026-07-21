@@ -204,9 +204,31 @@ describe("Dialog Components", () => {
 
       const content = screen.getByTestId("content");
       expect(content).toHaveClass("fixed");
-      expect(content).toHaveClass("inset-0");
-      expect(content).toHaveClass("m-auto");
+      expect(content).toHaveClass("inset-x-0");
+      expect(content).toHaveClass("top-1/2");
+      expect(content).toHaveClass("-translate-y-1/2");
+      expect(content).toHaveClass("mx-auto");
       expect(content).toHaveClass("z-50");
+    });
+
+    it("bounds its height to the viewport and scrolls overflowing content", () => {
+      // Tall dialogs must stay within the viewport so the header, top content,
+      // and close button remain reachable instead of extending off-screen.
+      render(
+        <Dialog open={true}>
+          <DialogContent data-testid="content">
+            <DialogTitle>Tall dialog</DialogTitle>
+            <DialogDescription>Lots of content</DialogDescription>
+            {Array.from({ length: 100 }, (_, i) => (
+              <p key={i}>Row {i}</p>
+            ))}
+          </DialogContent>
+        </Dialog>,
+      );
+
+      const content = screen.getByTestId("content");
+      expect(content).toHaveClass("max-h-[calc(100vh-2rem)]");
+      expect(content).toHaveClass("overflow-y-auto");
     });
 
     it("should include close button", () => {

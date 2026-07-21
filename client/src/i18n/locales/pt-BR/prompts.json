@@ -81,5 +81,10 @@
   "prompts.add.error.teamRequired": "A seleção de equipe é obrigatória quando a visibilidade está definida como equipe",
   "prompts.add.error.argumentsInvalidJson": "Formato JSON inválido",
   "prompts.add.error.argumentsArrayRequired": "Os argumentos devem ser um array JSON",
-  "prompts.tags.addError": "Falha ao adicionar a tag. Tente novamente."
+  "prompts.tags.addError": "Falha ao adicionar a tag. Tente novamente.",
+  "prompts.delete.confirm.title": "Excluir prompt",
+  "prompts.delete.confirm.description": "Tem certeza de que deseja excluir \"{name}\"? Esta ação não pode ser desfeita.",
+  "prompts.delete.confirm.button": "Excluir",
+  "prompts.delete.success": "Prompt \"{name}\" excluído com sucesso",
+  "prompts.delete.error": "Falha ao excluir o prompt"
 }

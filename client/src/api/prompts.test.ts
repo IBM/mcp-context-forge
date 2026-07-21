@@ -123,4 +123,42 @@ describe("promptsApi", () => {
       );
     });
   });
+
+  describe("delete", () => {
+    it("calls DELETE /prompts/:id with CSRF token and same-origin credentials", async () => {
+      mockFetch.mockResolvedValueOnce(new Response(null, { status: 204 }));
+
+      await promptsApi.delete("prompt-abc-123");
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining("/prompts/prompt-abc-123"),
+        expect.objectContaining({
+          method: "DELETE",
+          headers: expect.objectContaining({
+            "X-CSRF-Token": "test-csrf-token",
+          }),
+          credentials: "same-origin", // pragma: allowlist secret
+        }),
+      );
+    });
+
+    it("throws synchronously for an empty ID", () => {
+      expect(() => promptsApi.delete("")).toThrow("Invalid prompt ID");
+    });
+
+    it("throws synchronously for an ID with path traversal characters", () => {
+      expect(() => promptsApi.delete("../etc/passwd")).toThrow("Invalid prompt ID format");
+    });
+
+    it("throws ApiError on 404 response", async () => {
+      mockFetch.mockResolvedValueOnce(
+        new Response(JSON.stringify({ detail: "Prompt not found" }), {
+          status: 404,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+
+      await expect(promptsApi.delete("prompt-abc-123")).rejects.toThrow("HTTP 404");
+    });
+  });
 });
