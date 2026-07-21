@@ -22,7 +22,7 @@ Release 1.0.6 consolidates **88 PRs** focused on **OAuth RFC 8693 token exchange
 - **Dataplane** - Publish original tool names, streamable-HTTP-only backends, resource URIs and capabilities, per-worker lock IDs with safer key TTL.
 - **Plugins** - CPEX plugin trace context and metrics (G0+G1), metrics from 5 remaining bundled cpex-* plugins, single-worker initialisation across instances, fork-poisoned FileLock rebuild.
 - **API & Fixes** - Bootstrap race condition fix, resource proxy templated reads, savepoint for personal-team cascade delete, 404 for missing server/gateway deletes, team invitation duplicate membership check.
-- **CI / DevOps** - PR-scoped pyright workflow, s390x build flag, remove Slack direct-merge notification, remove Renovate in favour of Dependabot, Redis maxclients increase, OCP SCC UID compatibility.
+- **CI / DevOps** - PR-scoped pyright workflow, s390x build flag, remove Slack direct-merge notification, remove Renovate in favour of Dependabot, Redis maxclients increase.
 
 ### Breaking Changes
 
