@@ -129,7 +129,7 @@ Release 1.0.6 consolidates **89 PRs** focused on **UI modernization**, **securit
 - **Update python call in fix file headers pre-commit to use uv run** ([#5669](https://github.com/IBM/mcp-context-forge/pull/5669))
 - **Version bump SecretsDetection and update field filter config** ([#5635](https://github.com/IBM/mcp-context-forge/pull/5635))
 - **Update secrets and reset some of content from .secrets.baseline file** ([#5622](https://github.com/IBM/mcp-context-forge/pull/5622))
-- **UI rewrite/tool form adjustments ** ([#5612](https://github.com/IBM/mcp-context-forge/pull/5612))
+- **UI rewrite/tool form adjustments** ([#5612](https://github.com/IBM/mcp-context-forge/pull/5612))
 - **Release/v1.0.5** ([#5509](https://github.com/IBM/mcp-context-forge/pull/5509))
 - **Package all js libs** ([#5481](https://github.com/IBM/mcp-context-forge/pull/5481))
 - **Move Rust and Go MCP servers to contextforge-examples repository** ([#5425](https://github.com/IBM/mcp-context-forge/pull/5425))
