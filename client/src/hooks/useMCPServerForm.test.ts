@@ -93,6 +93,70 @@ describe("useMCPServerForm", () => {
 
       expect(result.current.advancedOpen).toBe(false);
     });
+
+    it("should update visibility", () => {
+      const { result } = renderHook(() => useMCPServerForm());
+
+      act(() => {
+        result.current.setVisibility("team");
+      });
+
+      expect(result.current.visibility).toBe("team");
+    });
+
+    it("should update auth setters", () => {
+      const { result } = renderHook(() => useMCPServerForm());
+
+      act(() => {
+        result.current.setAuthType("basic");
+        result.current.setAuthUsername("user");
+        result.current.setAuthPassword("pass");
+        result.current.setAuthToken("token");
+        result.current.setOneTimeAuth(true);
+        result.current.setPassthroughHeaders("Authorization");
+        result.current.setCaCertificate("cert");
+        result.current.setBearerToken("bearer");
+        result.current.setCustomHeaders([{ id: "1", key: "x", value: "y" }]);
+        result.current.setOAuthClientId("id");
+        result.current.setOAuthClientSecret("secret");
+        result.current.setOAuthTokenUrl("url");
+        result.current.setOAuthGrantType("password");
+        result.current.setOAuthIssuerUrl("issuer");
+        result.current.setOAuthRedirectUri("redirect");
+        result.current.setOAuthAuthorizationUrl("auth");
+        result.current.setOAuthScopes("scope");
+        result.current.setOAuthStoreTokens(false);
+        result.current.setOAuthAutoRefresh(false);
+        result.current.setOAuthUsername("o_user");
+        result.current.setOAuthPassword("o_pass");
+        result.current.setQueryParamName("param");
+        result.current.setQueryParamApiKey("key");
+      });
+
+      expect(result.current.authType).toBe("basic");
+      expect(result.current.authUsername).toBe("user");
+      expect(result.current.authPassword).toBe("pass");
+      expect(result.current.authToken).toBe("token");
+      expect(result.current.oneTimeAuth).toBe(true);
+      expect(result.current.passthroughHeaders).toBe("Authorization");
+      expect(result.current.caCertificate).toBe("cert");
+      expect(result.current.bearerToken).toBe("bearer");
+      expect(result.current.customHeaders).toEqual([{ id: "1", key: "x", value: "y" }]);
+      expect(result.current.oauthClientId).toBe("id");
+      expect(result.current.oauthClientSecret).toBe("secret");
+      expect(result.current.oauthTokenUrl).toBe("url");
+      expect(result.current.oauthGrantType).toBe("password");
+      expect(result.current.oauthIssuerUrl).toBe("issuer");
+      expect(result.current.oauthRedirectUri).toBe("redirect");
+      expect(result.current.oauthAuthorizationUrl).toBe("auth");
+      expect(result.current.oauthScopes).toBe("scope");
+      expect(result.current.oauthStoreTokens).toBe(false);
+      expect(result.current.oauthAutoRefresh).toBe(false);
+      expect(result.current.oauthUsername).toBe("o_user");
+      expect(result.current.oauthPassword).toBe("o_pass");
+      expect(result.current.queryParamName).toBe("param");
+      expect(result.current.queryParamApiKey).toBe("key");
+    });
   });
 
   describe("Form Validation", () => {
@@ -852,6 +916,63 @@ describe("useMCPServerForm", () => {
       expect(result.current.queryParamApiKey).toBe("*****");
     });
 
+    it("populates advanced settings and OAuth config from the API", async () => {
+      server.use(
+        http.get("/gateways/gw-adv", () =>
+          HttpResponse.json({
+            name: "Advanced Server",
+            url: "http://localhost:3000",
+            transport: "STREAMABLEHTTP",
+            passthroughHeaders: ["X-Trace", "X-Env"],
+            oneTimeAuth: true,
+            caCertificate: "-----BEGIN CERTIFICATE-----",
+            oauthConfig: {
+              grant_type: "authorization_code",
+              client_id: "client-123",
+              client_secret: "secret-xyz", // pragma: allowlist secret
+              token_url: "https://auth.example.com/token",
+              issuer: "https://auth.example.com",
+              redirect_uri: "https://app.example.com/callback",
+              authorization_url: "https://auth.example.com/authorize",
+              scopes: ["read", "write"],
+              username: "oauth-user",
+              password: "oauth-pass", // pragma: allowlist secret
+              store_tokens: true,
+            },
+          }),
+        ),
+      );
+
+      const { result } = renderHook(() => useMCPServerForm("gw-adv"));
+
+      await waitFor(() => expect(result.current.passthroughHeaders).toBe("X-Trace, X-Env"));
+      expect(result.current.oneTimeAuth).toBe(true);
+      expect(result.current.caCertificate).toBe("-----BEGIN CERTIFICATE-----");
+      expect(result.current.oauthGrantType).toBe("authorization_code");
+      expect(result.current.oauthClientId).toBe("client-123");
+      expect(result.current.oauthTokenUrl).toBe("https://auth.example.com/token");
+      expect(result.current.oauthIssuerUrl).toBe("https://auth.example.com");
+      expect(result.current.oauthScopes).toBe("read write");
+      expect(result.current.oauthStoreTokens).toBe(true);
+      expect(result.current.oauthUsername).toBe("oauth-user");
+    });
+
+    it("accepts OAuth scopes provided as a plain string", async () => {
+      server.use(
+        http.get("/gateways/gw-scopes", () =>
+          HttpResponse.json({
+            name: "Scopes Server",
+            url: "http://localhost:3000",
+            oauthConfig: { grant_type: "client_credentials", scopes: "read write admin" },
+          }),
+        ),
+      );
+
+      const { result } = renderHook(() => useMCPServerForm("gw-scopes"));
+
+      await waitFor(() => expect(result.current.oauthScopes).toBe("read write admin"));
+    });
+
     it("populates basic auth username and masked password from API", async () => {
       server.use(
         http.get("/gateways/gw-3", () =>
@@ -1494,6 +1615,91 @@ describe("useMCPServerForm", () => {
       await waitFor(() => {
         expect(result.current.errors.submit).toBe("Gateway not found");
       });
+    });
+
+    it("logs error and continues if activation fails during OAuth", async () => {
+      server.use(http.post("/gateways", () => HttpResponse.json({ id: "gw-oauth-activate-fail" })));
+
+      vi.spyOn(serversApi, "triggerOAuthAuthorization").mockResolvedValueOnce({
+        type: "oauth_callback",
+        status: "success",
+      });
+      const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      vi.spyOn(serversApi, "toggleEnabled").mockRejectedValueOnce(new Error("Activation failed"));
+      vi.spyOn(serversApi, "fetchToolsAfterOAuth").mockResolvedValueOnce({
+        success: true,
+        message: "ok",
+      });
+
+      const { result } = renderHook(() => useMCPServerForm());
+      const mockEvent = { preventDefault: vi.fn() } as unknown as React.FormEvent<HTMLFormElement>;
+
+      await act(async () => {
+        result.current.setName("Test OAuth");
+        result.current.setUrl("http://example.com");
+        result.current.setAuthType("oauth");
+      });
+
+      await act(async () => {
+        await result.current.handleSubmit(mockEvent);
+      });
+
+      expect(consoleErrorSpy).toHaveBeenCalledWith(
+        "Failed to activate gateway after OAuth:",
+        "An error occurred. Please try again.",
+      );
+    });
+  });
+
+  describe("validateField and isValid", () => {
+    it("clears a field error when a value is valid (including advanced auth fields)", () => {
+      const { result } = renderHook(() => useMCPServerForm());
+
+      act(() => {
+        result.current.validateField("transport", "SSE");
+        result.current.validateField("authUsername", "admin");
+        result.current.validateField("authPassword", "s3cret-value");
+        result.current.validateField("authToken", "token-123");
+        result.current.validateField("caCertificate", "-----BEGIN CERTIFICATE-----");
+        result.current.validateField("passthroughHeaders", "X-Trace, X-Env");
+      });
+
+      expect(result.current.errors.transport).toBeUndefined();
+      expect(result.current.errors.authUsername).toBeUndefined();
+    });
+
+    it("sets a field error for an invalid transport value", () => {
+      const { result } = renderHook(() => useMCPServerForm());
+
+      act(() => {
+        result.current.validateField("transport", "NOT_A_TRANSPORT");
+      });
+
+      expect(result.current.errors.transport).toBeDefined();
+    });
+
+    it("is invalid for a non-http(s) URL", () => {
+      const { result } = renderHook(() => useMCPServerForm());
+
+      act(() => {
+        result.current.setName("A server");
+        result.current.setUrl("ftp://example.com/resource");
+      });
+
+      expect(result.current.isValid).toBe(false);
+    });
+
+    it("requires OAuth username and password for the password grant", () => {
+      const { result } = renderHook(() => useMCPServerForm());
+
+      act(() => {
+        result.current.setName("A server");
+        result.current.setUrl("https://example.com/mcp");
+        result.current.setAuthType("oauth");
+        result.current.setOAuthGrantType("password");
+      });
+
+      expect(result.current.isValid).toBe(false);
     });
   });
 });

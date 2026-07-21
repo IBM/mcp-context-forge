@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { serversApi } from "./servers";
+import type { GatewayTestRequest } from "@/generated/types";
 
 describe("serversApi", () => {
   const mockFetch = vi.fn();
@@ -255,6 +256,31 @@ describe("serversApi", () => {
       vi.useRealTimers();
     });
 
+    it("ignores non-oauth_callback messages from the popup", async () => {
+      vi.useFakeTimers();
+      const mockAuthWindow = { closed: false } as unknown as Window;
+      vi.spyOn(window, "open").mockReturnValue(mockAuthWindow);
+
+      const promise = serversApi.triggerOAuthAuthorization("server-123");
+
+      // Correct source, but payloads that fail the null / type guard are ignored.
+      const nullEvent = new MessageEvent("message", { data: null });
+      Object.defineProperty(nullEvent, "source", { value: mockAuthWindow, writable: false });
+      window.dispatchEvent(nullEvent);
+
+      const wrongTypeEvent = new MessageEvent("message", { data: { type: "something_else" } });
+      Object.defineProperty(wrongTypeEvent, "source", { value: mockAuthWindow, writable: false });
+      window.dispatchEvent(wrongTypeEvent);
+
+      // Neither settled the promise; closing the popup does.
+      (mockAuthWindow as { closed: boolean }).closed = true;
+      vi.advanceTimersByTime(1000);
+
+      await expect(promise).rejects.toThrow("OAuth authorization was cancelled");
+
+      vi.useRealTimers();
+    });
+
     it("rejects with cancellation message when user closes the popup", async () => {
       vi.useFakeTimers();
       const mockAuthWindow = { closed: false } as unknown as Window;
@@ -296,6 +322,195 @@ describe("serversApi", () => {
     it("throws synchronously for an invalid server ID", () => {
       expect(() => serversApi.updateTags("../etc/passwd", ["prod"])).toThrow(
         "Invalid server ID format",
+      );
+    });
+  });
+
+  describe("validateServerId (via get)", () => {
+    it("throws 'Invalid server ID' for an empty id", () => {
+      expect(() => serversApi.get("")).toThrow(/^Invalid server ID$/);
+    });
+
+    it("throws 'Invalid server ID format' for an id with illegal characters", () => {
+      expect(() => serversApi.get("bad/id")).toThrow("Invalid server ID format");
+    });
+  });
+
+  describe("list", () => {
+    const jsonResponse = (body: unknown) =>
+      new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+
+    it("requests /gateways with only include_pagination by default", async () => {
+      const body = { servers: [], pagination: { nextCursor: null } };
+      mockFetch.mockResolvedValueOnce(jsonResponse(body));
+
+      const result = await serversApi.list();
+
+      expect(result).toEqual(body);
+      const url = mockFetch.mock.calls[0][0] as string;
+      expect(url).toContain("/gateways?");
+      expect(url).toContain("include_pagination=true");
+      expect(url).not.toContain("cursor=");
+      expect(url).not.toContain("limit=");
+      expect(url).not.toContain("include_inactive=");
+    });
+
+    it("includes cursor, clamped limit, and include_inactive when provided", async () => {
+      mockFetch.mockResolvedValueOnce(jsonResponse({ servers: [] }));
+
+      await serversApi.list({ cursor: "next-page", limit: 500, include_inactive: true });
+
+      const url = mockFetch.mock.calls[0][0] as string;
+      expect(url).toContain("cursor=next-page");
+      expect(url).toContain("limit=100"); // clamped to the max of 100
+      expect(url).toContain("include_inactive=true");
+    });
+
+    it("clamps a limit below 1 up to 1", async () => {
+      mockFetch.mockResolvedValueOnce(jsonResponse({ servers: [] }));
+
+      await serversApi.list({ limit: 0 });
+
+      expect(mockFetch.mock.calls[0][0]).toContain("limit=1");
+    });
+
+    it("falls back to a limit of 25 for a non-finite limit", async () => {
+      mockFetch.mockResolvedValueOnce(jsonResponse({ servers: [] }));
+
+      await serversApi.list({ limit: Number.POSITIVE_INFINITY });
+
+      expect(mockFetch.mock.calls[0][0]).toContain("limit=25");
+    });
+
+    it("resolves when passed an AbortSignal", async () => {
+      mockFetch.mockResolvedValueOnce(jsonResponse({ servers: [] }));
+      const controller = new AbortController();
+
+      await expect(serversApi.list({ signal: controller.signal })).resolves.toEqual({
+        servers: [],
+      });
+    });
+  });
+
+  describe("get", () => {
+    const jsonResponse = (body: unknown) =>
+      new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+
+    it("fetches /gateways/:id and returns the server", async () => {
+      const server = { id: "get-basic", name: "Basic" };
+      mockFetch.mockResolvedValueOnce(jsonResponse(server));
+
+      const result = await serversApi.get("get-basic");
+
+      expect(result).toEqual(server);
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining("/gateways/get-basic"),
+        expect.objectContaining({ method: "GET" }),
+      );
+    });
+
+    it("returns the same in-flight promise for concurrent gets (request cache)", async () => {
+      mockFetch.mockResolvedValueOnce(jsonResponse({ id: "get-cache" }));
+
+      const first = serversApi.get("get-cache");
+      const second = serversApi.get("get-cache");
+
+      expect(first).toBe(second);
+      await first;
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+
+    it("evicts the cache on failure so a later call retries", async () => {
+      mockFetch.mockResolvedValueOnce(
+        new Response(JSON.stringify({ detail: "boom" }), {
+          status: 500,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+
+      await expect(serversApi.get("get-evict")).rejects.toThrow("HTTP 500");
+
+      // The failed request was removed from the cache, so this refetches.
+      mockFetch.mockResolvedValueOnce(jsonResponse({ id: "get-evict" }));
+      const result = await serversApi.get("get-evict");
+
+      expect(result).toEqual({ id: "get-evict" });
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe("testConnection", () => {
+    it("POSTs /gateways/:id/test and returns the result", async () => {
+      mockFetch.mockResolvedValueOnce(
+        new Response(JSON.stringify({ success: true, message: "Reachable" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+
+      const result = await serversApi.testConnection("server-123");
+
+      expect(result).toEqual({ success: true, message: "Reachable" });
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining("/gateways/server-123/test"),
+        expect.objectContaining({ method: "POST" }),
+      );
+    });
+
+    it("throws synchronously for an invalid server ID", () => {
+      expect(() => serversApi.testConnection("../etc/passwd")).toThrow("Invalid server ID format");
+    });
+  });
+
+  describe("delete", () => {
+    it("DELETEs /gateways/:id", async () => {
+      mockFetch.mockResolvedValueOnce(
+        new Response(JSON.stringify({}), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+
+      await serversApi.delete("server-123");
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining("/gateways/server-123"),
+        expect.objectContaining({ method: "DELETE" }),
+      );
+    });
+
+    it("throws synchronously for an invalid server ID", () => {
+      expect(() => serversApi.delete("../etc/passwd")).toThrow("Invalid server ID format");
+    });
+  });
+
+  describe("testConnectivity", () => {
+    it("POSTs the request to /v1/mcp-servers/test and returns the response", async () => {
+      const upstream = { statusCode: 200, body: "ok" };
+      mockFetch.mockResolvedValueOnce(
+        new Response(JSON.stringify(upstream), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+
+      const request: GatewayTestRequest = {
+        method: "GET",
+        baseUrl: "https://example.com",
+        path: "/health",
+      };
+      const result = await serversApi.testConnectivity(request);
+
+      expect(result).toEqual(upstream);
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining("/v1/mcp-servers/test"),
+        expect.objectContaining({ method: "POST", body: JSON.stringify(request) }),
       );
     });
   });

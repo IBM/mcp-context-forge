@@ -120,6 +120,7 @@ playwright-report-*.html
 # Vitest
 coverage/
 .vitest/
+client/vitest.config.ts.timestamp-*.mjs
 
 # ========================================
 # Fuzzing

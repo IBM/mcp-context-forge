@@ -6,7 +6,10 @@ import { http, HttpResponse } from "msw";
 import { server } from "@/test/mocks/server";
 import { renderWithProviders } from "@/test/test-utils";
 import { MCPServerDetailsPanel } from "./MCPServerDetailsPanel";
+import { copyToClipboard } from "@/lib/clipboard";
 import type { MCPServer } from "@/types/server";
+
+vi.mock("@/lib/clipboard", () => ({ copyToClipboard: vi.fn() }));
 
 const mockServer: MCPServer = {
   id: "test-server-123",
@@ -681,5 +684,123 @@ describe("MCPServerDetailsPanel", () => {
 
     // "prod" already exists and is dropped; "staging" is appended.
     expect(onAddTag).toHaveBeenCalledWith("test-server-123", ["prod", "staging"]);
+  });
+
+  describe("labels, keyboard nav, copy and search", () => {
+    beforeEach(() => {
+      vi.mocked(copyToClipboard).mockClear();
+    });
+
+    it("copies titled and untitled component identifiers", async () => {
+      const user = userEvent.setup();
+      renderWithProviders(
+        <MCPServerDetailsPanel server={mockServer} error={null} open onClose={() => {}} />,
+      );
+
+      // A titled tool copies via its title label; an untitled one via its identifier.
+      await user.click(await screen.findByRole("button", { name: "Copy Tool One" }));
+      expect(copyToClipboard).toHaveBeenCalledWith("original_tool_1");
+
+      await user.click(screen.getByRole("button", { name: "Copy original_tool_2" }));
+      expect(copyToClipboard).toHaveBeenCalledWith("original_tool_2");
+    });
+
+    it("moves the active component tab with arrow keys", async () => {
+      const user = userEvent.setup();
+      renderWithProviders(
+        <MCPServerDetailsPanel server={mockServer} error={null} open onClose={() => {}} />,
+      );
+      await screen.findByRole("button", { name: "Copy Tool One" });
+
+      const allTab = screen.getByRole("tab", { name: "All" });
+      allTab.focus();
+      await user.keyboard("{ArrowRight}");
+      expect(screen.getByRole("tab", { name: "Tools" })).toHaveAttribute("aria-selected", "true");
+
+      await user.keyboard("{ArrowLeft}");
+      expect(screen.getByRole("tab", { name: "All" })).toHaveAttribute("aria-selected", "true");
+    });
+
+    it("renders team visibility and Streamable HTTP transport labels", () => {
+      renderWithProviders(
+        <MCPServerDetailsPanel
+          server={{ ...mockServer, visibility: "team", transport: "STREAMABLEHTTP" }}
+          error={null}
+          open
+          onClose={() => {}}
+        />,
+      );
+      expect(screen.getAllByText("Team").length).toBeGreaterThan(0);
+      expect(screen.getByText("Streamable HTTP")).toBeInTheDocument();
+    });
+
+    it("renders private visibility label", () => {
+      renderWithProviders(
+        <MCPServerDetailsPanel
+          server={{ ...mockServer, visibility: "private" }}
+          error={null}
+          open
+          onClose={() => {}}
+        />,
+      );
+      expect(screen.getByText("Private")).toBeInTheDocument();
+    });
+
+    it("formats a recent last-seen time relative to now", () => {
+      const fiveMinutesAgo = new Date(Date.now() - 5 * 60000).toISOString();
+      renderWithProviders(
+        <MCPServerDetailsPanel
+          server={{ ...mockServer, lastSeen: fiveMinutesAgo }}
+          error={null}
+          open
+          onClose={() => {}}
+        />,
+      );
+      expect(screen.getByText(/min ago/i)).toBeInTheDocument();
+    });
+
+    it.each([
+      [undefined, /Never used/i],
+      [new Date(Date.now() - 30 * 1000).toISOString(), /Just now/i],
+      [new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(), /hour/i],
+    ])("formats last-seen value %s", (lastSeen, expected) => {
+      renderWithProviders(
+        <MCPServerDetailsPanel
+          server={{ ...mockServer, lastSeen }}
+          error={null}
+          open
+          onClose={() => {}}
+        />,
+      );
+      expect(screen.getByText(expected)).toBeInTheDocument();
+    });
+
+    it("falls back to 'Not available' for missing visibility and transport", () => {
+      renderWithProviders(
+        <MCPServerDetailsPanel
+          server={
+            { ...mockServer, visibility: undefined, transport: undefined } as unknown as MCPServer
+          }
+          error={null}
+          open
+          onClose={() => {}}
+        />,
+      );
+      expect(screen.getAllByText("Not available").length).toBeGreaterThan(0);
+    });
+
+    it("collapses the search box on blur when empty", async () => {
+      const user = userEvent.setup();
+      renderWithProviders(
+        <MCPServerDetailsPanel server={mockServer} error={null} open onClose={() => {}} />,
+      );
+      await screen.findByRole("button", { name: "Copy Tool One" });
+
+      const searchBox = screen.getByRole("searchbox");
+      await user.click(searchBox);
+      await user.tab();
+
+      expect(searchBox).toHaveValue("");
+    });
   });
 });

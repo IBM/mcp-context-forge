@@ -429,4 +429,90 @@ describe("HeaderQuickNav", () => {
 
     expect(await screen.findByText("No matching results.")).toBeInTheDocument();
   });
+
+  type SearchResult = Awaited<ReturnType<typeof searchAdminEntities>>;
+
+  it("resolves result labels from fallback fields across multiple groups", async () => {
+    vi.mocked(searchAdminEntities).mockResolvedValue({
+      query: "q",
+      entity_types: [],
+      limit_per_type: 8,
+      results: {},
+      items: [],
+      count: 4,
+      groups: [
+        {
+          entity_type: "resources",
+          count: 2,
+          items: [
+            { id: "r1", uri: "resource://only-uri" },
+            { id: "r2", full_name: "Full Name Person" },
+          ],
+        },
+        {
+          entity_type: "tools",
+          count: 1,
+          items: [{ id: "t1", slug: "tool-slug" }],
+        },
+      ],
+    } as unknown as SearchResult);
+
+    renderQuickNav();
+    const input = screen.getByRole("searchbox", { name: "Search" });
+    fireEvent.focus(input);
+    fireEvent.change(input, { target: { value: "query" } });
+
+    expect(await screen.findByText("resource://only-uri")).toBeInTheDocument();
+    expect(screen.getByText("Full Name Person")).toBeInTheDocument();
+    expect(screen.getByText("tool-slug")).toBeInTheDocument();
+  });
+
+  it("shows a searching state while the request is in flight", async () => {
+    vi.mocked(searchAdminEntities).mockReturnValue(new Promise<SearchResult>(() => {}));
+
+    renderQuickNav();
+    const input = screen.getByRole("searchbox", { name: "Search" });
+    fireEvent.focus(input);
+    fireEvent.change(input, { target: { value: "query" } });
+
+    expect(await screen.findByText("Searching...")).toBeInTheDocument();
+  });
+
+  it("ignores abort errors without showing an error state", async () => {
+    vi.mocked(searchAdminEntities).mockRejectedValue(new DOMException("aborted", "AbortError"));
+
+    renderQuickNav();
+    const input = screen.getByRole("searchbox", { name: "Search" });
+    fireEvent.focus(input);
+    fireEvent.change(input, { target: { value: "query" } });
+
+    // The abort is swallowed, so no error message is rendered.
+    await waitFor(() => expect(searchAdminEntities).toHaveBeenCalled());
+    expect(screen.queryByText(/failed|error/i)).not.toBeInTheDocument();
+  });
+
+  it("closes the results popover on Escape", async () => {
+    vi.mocked(searchAdminEntities).mockResolvedValue({
+      query: "q",
+      entity_types: [],
+      limit_per_type: 8,
+      results: {},
+      items: [],
+      count: 1,
+      groups: [{ entity_type: "gateways", count: 1, items: [{ id: "g1", name: "Payments MCP" }] }],
+    } as unknown as SearchResult);
+
+    renderQuickNav();
+    const input = screen.getByRole("searchbox", { name: "Search" });
+    fireEvent.focus(input);
+    fireEvent.change(input, { target: { value: "query" } });
+
+    expect(await screen.findByText("Payments MCP")).toBeInTheDocument();
+
+    fireEvent.keyDown(input, { key: "Escape" });
+
+    await waitFor(() => {
+      expect(screen.queryByText("Payments MCP")).not.toBeInTheDocument();
+    });
+  });
 });
