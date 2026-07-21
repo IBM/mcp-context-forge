@@ -442,7 +442,7 @@ checksum = "a6ef517f0926dd24a1582492c791b6a4818a4d94e789a334894aa15b0d12f55c"
 
 [[package]]
 name = "contextforge_mcp_runtime"
-version = "1.0.5"
+version = "1.0.6"
 dependencies = [
  "async-stream",
  "axum",
@@ -1392,7 +1392,7 @@ checksum = "47e1ffaa40ddd1f3ed91f717a33c8c0ee23fff369e3aa8772b9605cc1d22f4c3"
 
 [[package]]
 name = "mcp_stdio_wrapper"
-version = "1.0.5"
+version = "1.0.6"
 dependencies = [
  "actson",
  "arc-swap",
@@ -2138,7 +2138,7 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
 name = "request_logging_masking_native_extension"
-version = "1.0.5"
+version = "1.0.6"
 dependencies = [
  "pyo3",
  "serde_json",
