@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { screen } from "@testing-library/react";
+import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { App } from "./App";
 import { renderWithProviders } from "./test/test-utils";
@@ -50,5 +50,16 @@ describe("App", () => {
       name: /Connect a source|Virtual servers/i,
     });
     expect(gatewaysHeading).toBeInTheDocument();
+  });
+
+  it("redirects bare /app to /app/", async () => {
+    localStorage.clear();
+    sessionStorage.clear();
+    window.history.pushState({}, "", "/app");
+
+    renderWithProviders(<App />);
+
+    // The bare /app path renders <Redirect to="/app/" />, which normalizes the URL.
+    await waitFor(() => expect(window.location.pathname).toBe("/app/"));
   });
 });

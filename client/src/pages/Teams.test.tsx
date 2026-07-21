@@ -20,6 +20,12 @@ vi.mock("@/api/client", () => ({
 
 vi.mock("@/api/teams", () => ({
   deleteTeam: vi.fn(),
+  createTeam: vi.fn(),
+  updateTeam: vi.fn(),
+  addTeamMember: vi.fn(),
+  listTeamMembers: vi.fn(),
+  updateTeamMember: vi.fn(),
+  removeTeamMember: vi.fn(),
 }));
 
 vi.mock("sonner", () => ({
@@ -30,11 +36,13 @@ vi.mock("sonner", () => ({
 }));
 
 import { api } from "@/api/client";
-import { deleteTeam } from "@/api/teams";
+import { deleteTeam, createTeam, updateTeam, listTeamMembers } from "@/api/teams";
 
 const mockToastSuccess = vi.mocked(toast.success);
 const mockToastError = vi.mocked(toast.error);
 const mockDeleteTeam = vi.mocked(deleteTeam);
+const mockCreateTeam = vi.mocked(createTeam);
+const mockUpdateTeam = vi.mocked(updateTeam);
 
 function createMockTeams(startIndex: number, count: number) {
   return Array.from({ length: count }, (_, i) => ({
@@ -571,5 +579,158 @@ describe("Teams", () => {
     expect(await screen.findByRole("heading", { name: /edit team/i })).toBeInTheDocument();
     expect(screen.getByPlaceholderText(/add team name/i)).toHaveValue("Team 0");
     expect(screen.getByRole("button", { name: /^save changes$/i })).toBeInTheDocument();
+  });
+
+  it("opens the create form when Create team is clicked in list state", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.get).mockResolvedValueOnce({
+      teams: createMockTeams(0, 1),
+      nextCursor: null,
+    });
+    // The create form's useTeamForm hook loads the user directory on mount.
+    vi.mocked(api.get).mockResolvedValue({ users: [] });
+
+    renderWithRouter(<Teams />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Team 0")).toBeInTheDocument();
+    });
+
+    const createButton = screen.getAllByRole("button", { name: /Create team/i })[0];
+    await user.click(createButton);
+
+    expect(await screen.findByRole("heading", { name: /Create team/i })).toBeInTheDocument();
+  });
+
+  it("opens the create form when Create team is clicked in empty state", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.get).mockResolvedValueOnce({
+      teams: [],
+      nextCursor: null,
+    });
+    // The create form's useTeamForm hook loads the user directory on mount.
+    vi.mocked(api.get).mockResolvedValue({ users: [] });
+
+    renderWithRouter(<Teams />);
+
+    await waitFor(() => {
+      expect(screen.getByText("No teams yet")).toBeInTheDocument();
+    });
+
+    const createButton = screen.getAllByRole("button", { name: /Create team/i })[0];
+    await user.click(createButton);
+
+    expect(await screen.findByRole("heading", { name: /Create team/i })).toBeInTheDocument();
+  });
+
+  it("handles error when loading more teams fails", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.get).mockResolvedValueOnce({
+      teams: createMockTeams(0, 10),
+      nextCursor: "cursor-1",
+    });
+
+    renderWithRouter(<Teams />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Team 0")).toBeInTheDocument();
+    });
+
+    // Make the load more call fail
+    vi.mocked(api.get).mockRejectedValueOnce(new Error("Failed to load more"));
+
+    const loadMoreButton = screen.getByRole("button", { name: /load more teams/i });
+    await user.click(loadMoreButton);
+
+    await waitFor(() => {
+      expect(mockToastError).toHaveBeenCalledWith(expect.any(String));
+    });
+  });
+
+  it("creates a team and shows a success toast", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.get).mockImplementation((path: string) => {
+      if (path.includes("/auth/email/admin/users")) {
+        return Promise.resolve({ users: [] });
+      }
+      return Promise.resolve({ teams: createMockTeams(0, 1), nextCursor: null });
+    });
+    mockCreateTeam.mockResolvedValue({ id: "team-new", name: "New Team" } as Awaited<
+      ReturnType<typeof createTeam>
+    >);
+
+    renderWithRouter(<Teams />);
+    await waitFor(() => expect(screen.getByText("Team 0")).toBeInTheDocument());
+
+    await user.click(screen.getAllByRole("button", { name: /Create team/i })[0]);
+    await user.type(await screen.findByPlaceholderText(/add team name/i), "New Team");
+    await user.click(screen.getByRole("button", { name: /^create team$/i }));
+
+    await waitFor(() => {
+      expect(mockCreateTeam).toHaveBeenCalledWith(expect.objectContaining({ name: "New Team" }));
+      expect(mockToastSuccess).toHaveBeenCalledWith("Team created successfully");
+    });
+  });
+
+  it("updates a team and shows a success toast", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.get).mockImplementation((path: string) => {
+      if (path.includes("/auth/email/admin/users")) {
+        return Promise.resolve({ users: [] });
+      }
+      return Promise.resolve({ teams: createMockTeams(0, 1), nextCursor: null });
+    });
+    mockUpdateTeam.mockResolvedValue({ id: "team-0", name: "Team 0" } as Awaited<
+      ReturnType<typeof updateTeam>
+    >);
+
+    renderWithRouter(<Teams />);
+    await waitFor(() => expect(screen.getByText("Team 0")).toBeInTheDocument());
+
+    await user.click(screen.getByRole("button", { name: "Actions for Team 0" }));
+    await user.click(await screen.findByRole("menuitem", { name: /^edit$/i }));
+    await screen.findByRole("heading", { name: /edit team/i });
+    await user.click(screen.getByRole("button", { name: /^save changes$/i }));
+
+    await waitFor(() => {
+      expect(mockUpdateTeam).toHaveBeenCalled();
+      expect(mockToastSuccess).toHaveBeenCalledWith("Team updated successfully");
+    });
+  });
+
+  it("closes the create form when Back is clicked", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.get).mockResolvedValueOnce({
+      teams: createMockTeams(0, 1),
+      nextCursor: null,
+    });
+    vi.mocked(api.get).mockResolvedValue({ users: [] });
+
+    renderWithRouter(<Teams />);
+    await waitFor(() => expect(screen.getByText("Team 0")).toBeInTheDocument());
+
+    await user.click(screen.getAllByRole("button", { name: /Create team/i })[0]);
+    await screen.findByRole("heading", { name: /create team/i });
+
+    await user.click(screen.getByRole("button", { name: /^back$/i }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole("heading", { name: /create team/i })).not.toBeInTheDocument();
+    });
+    expect(screen.getByText("Team 0")).toBeInTheDocument();
+  });
+
+  it("opens the manage-members dialog from the row actions", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.get).mockResolvedValue({ teams: createMockTeams(0, 1), nextCursor: null });
+    vi.mocked(listTeamMembers).mockResolvedValue([]);
+
+    renderWithRouter(<Teams />);
+    await waitFor(() => expect(screen.getByText("Team 0")).toBeInTheDocument());
+
+    await user.click(screen.getByRole("button", { name: "Actions for Team 0" }));
+    await user.click(await screen.findByRole("menuitem", { name: /manage members/i }));
+
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
   });
 });

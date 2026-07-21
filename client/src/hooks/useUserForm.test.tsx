@@ -1,9 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderHook, act } from "@testing-library/react";
 import { IntlProvider } from "react-intl";
-import { useUserForm } from "./useUserForm";
+import { useUserForm, createOptimisticUser } from "./useUserForm";
 import * as useQueryModule from "@/hooks/useQuery";
 import type { ReactNode } from "react";
+import type { User, CreateUserRequest } from "@/types/user";
 
 // Mock useQuery
 vi.mock("@/hooks/useQuery", () => ({
@@ -15,6 +16,7 @@ const messages = {
   "users.form.error.passwordMinLength": "Password must be at least 8 characters",
   "users.form.error.passwordsDoNotMatch": "Passwords do not match",
   "users.form.error.createFailed": "Failed to create user",
+  "users.form.error.updateFailed": "Failed to update user",
 };
 
 const wrapper = ({ children }: { children: ReactNode }) => (
@@ -41,6 +43,138 @@ describe("useUserForm", () => {
 
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  describe("createOptimisticUser", () => {
+    beforeEach(() => {
+      vi.setSystemTime(new Date("2024-01-15T10:30:00.000Z"));
+    });
+
+    it("should create optimistic user with all provided fields", () => {
+      const userData: CreateUserRequest = {
+        email: "test@example.com",
+        password: "password123", // pragma: allowlist secret
+        full_name: "Test User",
+        is_admin: true,
+        is_active: false,
+        password_change_required: true,
+      };
+
+      const result = createOptimisticUser(userData);
+
+      expect(result).toEqual({
+        email: "test@example.com",
+        full_name: "Test User",
+        is_admin: true,
+        is_active: false,
+        auth_provider: "email",
+        created_at: "2024-01-15T10:30:00.000Z",
+        email_verified: false,
+        password_change_required: true,
+        failed_login_attempts: 0,
+        is_locked: false,
+      });
+    });
+
+    it("should use default values for optional fields", () => {
+      const userData: CreateUserRequest = {
+        email: "minimal@example.com",
+        password: "password123", // pragma: allowlist secret
+        full_name: "Minimal User",
+      };
+
+      const result = createOptimisticUser(userData);
+
+      expect(result).toEqual({
+        email: "minimal@example.com",
+        full_name: "Minimal User",
+        is_admin: false,
+        is_active: true,
+        auth_provider: "email",
+        created_at: "2024-01-15T10:30:00.000Z",
+        email_verified: false,
+        password_change_required: false,
+        failed_login_attempts: 0,
+        is_locked: false,
+      });
+    });
+
+    it("should handle explicit false values correctly", () => {
+      const userData: CreateUserRequest = {
+        email: "explicit@example.com",
+        password: "password123", // pragma: allowlist secret
+        full_name: "Explicit User",
+        is_admin: false,
+        is_active: false,
+        password_change_required: false,
+      };
+
+      const result = createOptimisticUser(userData);
+
+      expect(result.is_admin).toBe(false);
+      expect(result.is_active).toBe(false);
+      expect(result.password_change_required).toBe(false);
+    });
+
+    it("should always set auth_provider to email", () => {
+      const userData: CreateUserRequest = {
+        email: "provider@example.com",
+        password: "password123", // pragma: allowlist secret
+        full_name: "Provider User",
+      };
+
+      const result = createOptimisticUser(userData);
+
+      expect(result.auth_provider).toBe("email");
+    });
+
+    it("should always set email_verified to false", () => {
+      const userData: CreateUserRequest = {
+        email: "verified@example.com",
+        password: "password123", // pragma: allowlist secret
+        full_name: "Verified User",
+      };
+
+      const result = createOptimisticUser(userData);
+
+      expect(result.email_verified).toBe(false);
+    });
+
+    it("should always set failed_login_attempts to 0", () => {
+      const userData: CreateUserRequest = {
+        email: "attempts@example.com",
+        password: "password123", // pragma: allowlist secret
+        full_name: "Attempts User",
+      };
+
+      const result = createOptimisticUser(userData);
+
+      expect(result.failed_login_attempts).toBe(0);
+    });
+
+    it("should always set is_locked to false", () => {
+      const userData: CreateUserRequest = {
+        email: "locked@example.com",
+        password: "password123", // pragma: allowlist secret
+        full_name: "Locked User",
+      };
+
+      const result = createOptimisticUser(userData);
+
+      expect(result.is_locked).toBe(false);
+    });
+
+    it("should use current timestamp for created_at", () => {
+      const userData: CreateUserRequest = {
+        email: "timestamp@example.com",
+        password: "password123", // pragma: allowlist secret
+        full_name: "Timestamp User",
+      };
+
+      const result = createOptimisticUser(userData);
+
+      expect(result.created_at).toBe("2024-01-15T10:30:00.000Z");
+    });
   });
 
   describe("initial state", () => {
@@ -186,6 +320,56 @@ describe("useUserForm", () => {
       });
 
       expect(result.current.errors.confirmPassword).toBeUndefined();
+    });
+
+    it("clears a field error once the whole form validates", () => {
+      const { result } = renderHook(() => useUserForm(), { wrapper });
+
+      act(() => {
+        result.current.setEmail("valid@example.com");
+        result.current.setPassword("LongEnoughPassword123!");
+        result.current.setConfirmPassword("LongEnoughPassword123!");
+      });
+
+      act(() => {
+        result.current.validateField("email", "valid@example.com");
+        vi.advanceTimersByTime(300);
+      });
+
+      expect(result.current.errors.email).toBeUndefined();
+    });
+  });
+
+  describe("getFormData in edit mode", () => {
+    const editUser = {
+      email: "edit@example.com",
+      full_name: "Edit User",
+      is_admin: false,
+      is_active: true,
+      auth_provider: "local",
+      created_at: "2024-01-01T00:00:00Z",
+      email_verified: true,
+      password_change_required: false,
+      failed_login_attempts: 0,
+      is_locked: false,
+    } as unknown as User;
+
+    it("includes the password in the payload when a new one is entered", () => {
+      const { result } = renderHook(() => useUserForm({ initialUser: editUser }), { wrapper });
+
+      act(() => {
+        result.current.setPassword("BrandNewPassword123!");
+      });
+
+      const payload = result.current.getFormData();
+      expect((payload as { password?: string }).password).toBe("BrandNewPassword123!");
+    });
+
+    it("omits the password when it is left blank", () => {
+      const { result } = renderHook(() => useUserForm({ initialUser: editUser }), { wrapper });
+
+      const payload = result.current.getFormData();
+      expect((payload as { password?: string }).password).toBeUndefined();
     });
   });
 
@@ -441,6 +625,99 @@ describe("useUserForm", () => {
         is_active: true,
         password_change_required: false,
       });
+    });
+
+    it("should submit valid form in edit mode and handle success", async () => {
+      mockExecute.mockResolvedValue({ email: "edit@example.com" });
+      const initialUser = {
+        email: "edit@example.com",
+        is_admin: false,
+        is_active: true,
+        password_change_required: false,
+      };
+      const { result } = renderHook(
+        () => useUserForm({ initialUser: initialUser as unknown as User }),
+        {
+          wrapper,
+        },
+      );
+      const onSuccess = vi.fn();
+      const onOptimisticUpdate = vi.fn();
+
+      act(() => {
+        result.current.setFullName("Updated Name");
+      });
+
+      const mockEvent = {
+        preventDefault: vi.fn(),
+      } as unknown as React.FormEvent<HTMLFormElement>;
+
+      await act(async () => {
+        await result.current.handleSubmit(
+          mockEvent,
+          onSuccess,
+          undefined,
+          undefined,
+          onOptimisticUpdate,
+        );
+      });
+
+      expect(mockEvent.preventDefault).toHaveBeenCalled();
+      expect(onOptimisticUpdate).toHaveBeenCalledWith(
+        "edit@example.com",
+        expect.objectContaining({ full_name: "Updated Name" }),
+      );
+      expect(onSuccess).toHaveBeenCalledWith({ email: "edit@example.com" });
+    });
+
+    it("should handle error in edit mode", async () => {
+      mockExecute.mockRejectedValue({
+        body: {
+          message: "Update failed",
+        },
+      });
+      const initialUser = {
+        email: "edit@example.com",
+        is_admin: false,
+        is_active: true,
+        password_change_required: false,
+      };
+      const { result } = renderHook(
+        () => useUserForm({ initialUser: initialUser as unknown as User }),
+        {
+          wrapper,
+        },
+      );
+      const onError = vi.fn();
+
+      act(() => {
+        result.current.setFullName("Updated Name");
+      });
+
+      const mockEvent = {
+        preventDefault: vi.fn(),
+      } as unknown as React.FormEvent<HTMLFormElement>;
+
+      await act(async () => {
+        await result.current.handleSubmit(mockEvent, undefined, undefined, onError);
+      });
+
+      expect(mockEvent.preventDefault).toHaveBeenCalled();
+      expect(onError).toHaveBeenCalled();
+      expect(result.current.errors.submit).toBe("Update failed");
+    });
+
+    it("should clear timeouts on rapid validation", () => {
+      const { result } = renderHook(() => useUserForm(), { wrapper });
+      const clearTimeoutSpy = vi.spyOn(global, "clearTimeout");
+
+      act(() => {
+        result.current.validateField("email", "invalid1");
+        result.current.validateField("email", "invalid2");
+      });
+
+      expect(clearTimeoutSpy).toHaveBeenCalled();
+      clearTimeoutSpy.mockRestore();
     });
 
     it("should call onSuccess callback after successful submission", async () => {
