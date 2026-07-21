@@ -13,7 +13,7 @@
 
 ### Overview
 
-Release 1.0.6 consolidates **89 PRs** focused on **OAuth RFC 8693 token exchange**, **HashiCorp Vault per-user credential resolution**, **MCP Apps support**, **dataplane resource and tool publishing**, **SSRF/TLS security hardening**, **plugin observability**, and **CI/DevOps improvements**:
+Release 1.0.6 consolidates **88 PRs** focused on **OAuth RFC 8693 token exchange**, **HashiCorp Vault per-user credential resolution**, **MCP Apps support**, **dataplane resource and tool publishing**, **SSRF/TLS security hardening**, **plugin observability**, and **CI/DevOps improvements**:
 
 - **Security** - SSRF/TLS validation in gRPC endpoint, SSRF validation for all OAuth config URLs, CSP modernisation, output neutralisation (CWE-117), global SSRF flag respected in gateway test endpoint, output-length guard resource bypass fix, and stricter auth-header key validation.
 - **OAuth & Auth** - RFC 8693 On-Behalf-Of token exchange for OAuth gateways, unified email extraction across all resource operations, and Keycloak test-user collision fix.
@@ -22,7 +22,7 @@ Release 1.0.6 consolidates **89 PRs** focused on **OAuth RFC 8693 token exchange
 - **Dataplane** - Publish original tool names, streamable-HTTP-only backends, resource URIs and capabilities, per-worker lock IDs with safer key TTL.
 - **Plugins** - CPEX plugin trace context and metrics (G0+G1), metrics from 5 remaining bundled cpex-* plugins, single-worker initialisation across instances, fork-poisoned FileLock rebuild.
 - **API & Fixes** - Bootstrap race condition fix, resource proxy templated reads, savepoint for personal-team cascade delete, 404 for missing server/gateway deletes, team invitation duplicate membership check.
-- **CI / DevOps** - PR-scoped pyright workflow, s390x build flag, remove Slack direct-merge notification, remove Renovate in favour of Dependabot, Redis maxclients increase, OCP SCC UID compatibility, Helm volumeMounts indentation fix.
+- **CI / DevOps** - PR-scoped pyright workflow, s390x build flag, remove Slack direct-merge notification, remove Renovate in favour of Dependabot, Redis maxclients increase, OCP SCC UID compatibility.
 
 ### Breaking Changes
 
@@ -115,7 +115,6 @@ Release 1.0.6 consolidates **89 PRs** focused on **OAuth RFC 8693 token exchange
 
 #### **Build & Infrastructure**
 
-- **OCP SCC UID Compatibility** ([#5678](https://github.com/IBM/mcp-context-forge/pull/5678)) - Fixed OCP SCC UID compatibility and Helm volumeMounts indentation.
 - **Redis maxclients Increase** ([#4724](https://github.com/IBM/mcp-context-forge/pull/4724)) - Raised Redis `maxclients` from 10000 to 15000 and reduced max connections.
 - **Containerfile Premature Exit** ([#5596](https://github.com/IBM/mcp-context-forge/pull/5596)) - Removed premature exit in Containerfile and restored Go linting targets.
 - **CI a2a-echo-agent Docker Scan** ([#5590](https://github.com/IBM/mcp-context-forge/pull/5590)) - Removed deleted a2a-echo-agent from docker-scan workflow and fixed Makefile actionlint quote.
