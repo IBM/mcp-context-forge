@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ServersTable } from "./ServersTable";
 import { I18nProvider } from "@/i18n";
@@ -207,6 +207,76 @@ describe("ServersTable", () => {
     await user.click(copyBtn);
 
     expect(writeText).toHaveBeenCalledWith("copy-me-uuid");
+  });
+
+  it("shows the copied indicator, re-copies, and clears it after the timeout", async () => {
+    vi.useFakeTimers();
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText },
+      writable: true,
+      configurable: true,
+    });
+
+    const server = makeServer({ id: "copy-timeout" });
+    renderTable(
+      <ServersTable
+        servers={[server]}
+        isLoading={false}
+        onEdit={noop}
+        onDelete={noop}
+        onTest={noop}
+      />,
+    );
+
+    const copyBtn = screen.getByRole("button", { name: /copy uuid for test server/i });
+
+    fireEvent.click(copyBtn);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(screen.getByText("Copied!")).toBeInTheDocument();
+
+    // A second copy before the timeout clears the pending timer first.
+    fireEvent.click(copyBtn);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(writeText).toHaveBeenCalledTimes(2);
+
+    // After the feedback duration, the copied indicator resets.
+    act(() => {
+      vi.advanceTimersByTime(1500);
+    });
+    expect(screen.queryByText("Copied!")).not.toBeInTheDocument();
+
+    vi.useRealTimers();
+  });
+
+  it("logs an error when copying to the clipboard fails", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const writeText = vi.fn().mockRejectedValue(new Error("denied"));
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText },
+      writable: true,
+      configurable: true,
+    });
+
+    const server = makeServer({ id: "copy-fail" });
+    renderTable(
+      <ServersTable
+        servers={[server]}
+        isLoading={false}
+        onEdit={noop}
+        onDelete={noop}
+        onTest={noop}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /copy uuid for test server/i }));
+
+    await waitFor(() => expect(consoleError).toHaveBeenCalled());
+    consoleError.mockRestore();
   });
 
   // ── Visibility cell ─────────────────────────────────────────────────────────

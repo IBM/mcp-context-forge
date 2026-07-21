@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { renderWithProviders } from "@/test/test-utils";
 import { Gateways } from "./Gateways";
 import { useQuery } from "@/hooks/useQuery";
-import { deleteVirtualServer } from "@/api/virtualServers";
+import { deleteVirtualServer, updateVirtualServerTags } from "@/api/virtualServers";
 import type { VirtualServer } from "@/types/server";
 
 // Mock the router
@@ -24,6 +24,7 @@ vi.mock("@/hooks/useQuery", () => ({
 
 vi.mock("@/api/virtualServers", () => ({
   deleteVirtualServer: vi.fn(),
+  updateVirtualServerTags: vi.fn(),
 }));
 
 vi.mock("sonner", () => ({
@@ -36,6 +37,7 @@ vi.mock("sonner", () => ({
 const mockUseQuery = vi.mocked(useQuery);
 const mockDeleteVirtualServer = vi.mocked(deleteVirtualServer);
 const mockToastError = vi.mocked(toast.error);
+const mockUpdateVirtualServerTags = vi.mocked(updateVirtualServerTags);
 
 // ---------------------------------------------------------------------------
 // Shared factory — avoids repeating all 30 fields in every test
@@ -999,5 +1001,173 @@ describe("Gateways", () => {
     expect(screen.queryByText("Failed to fetch tools")).not.toBeInTheDocument();
     expect(screen.queryByText("Failed to fetch resources")).not.toBeInTheDocument();
     expect(screen.queryByText("Failed to fetch prompts")).not.toBeInTheDocument();
+  });
+  it("renders an error message when the servers query fails and there are no servers", () => {
+    mockUseQuery.mockReturnValue({
+      data: null,
+      error: new Error("Failed to fetch servers"),
+      isLoading: false,
+      execute: vi.fn(),
+      refetch: vi.fn(),
+      setData: vi.fn(),
+    });
+
+    renderWithProviders(<Gateways />);
+
+    expect(screen.getByRole("alert")).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Error loading virtual servers" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Failed to fetch servers")).toBeInTheDocument();
+  });
+
+  it("renders an error message when the servers query fails and there are existing servers", () => {
+    const mockServer: VirtualServer = {
+      id: "gateway-1",
+      name: "Test Server",
+      description: "Test server",
+      icon: "",
+      createdAt: "2026-04-16T13:23:12Z",
+      updatedAt: "2026-04-16T13:23:12Z",
+      enabled: true,
+      associatedTools: [],
+      associatedToolIds: ["tool1"],
+      associatedResources: [],
+      associatedPrompts: [],
+      associatedA2aAgents: [],
+      metrics: null,
+      tags: [],
+      createdBy: "admin@example.com",
+      createdFromIp: "127.0.0.1",
+      createdVia: "ui",
+      createdUserAgent: "Mozilla/5.0",
+      modifiedBy: null,
+      modifiedFromIp: null,
+      modifiedVia: null,
+      modifiedUserAgent: null,
+      importBatchId: null,
+      federationSource: null,
+      version: 1,
+      teamId: "team-1",
+      team: "Test Team",
+      ownerEmail: "admin@example.com",
+      visibility: "team",
+      oauthEnabled: false,
+      oauthConfig: null,
+    };
+    mockUseQuery.mockReturnValue({
+      data: { servers: [mockServer] },
+      error: new Error("Failed to fetch servers"),
+      isLoading: false,
+      execute: vi.fn(),
+      refetch: vi.fn(),
+      setData: vi.fn(),
+    });
+
+    renderWithProviders(<Gateways />);
+
+    expect(screen.getByRole("alert")).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Error loading virtual servers" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Failed to fetch servers")).toBeInTheDocument();
+    expect(screen.getByText(mockServer.name)).toBeInTheDocument();
+  });
+
+  it("logs a console error when the post-delete refetch fails", async () => {
+    const user = userEvent.setup();
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const refetch = vi.fn().mockRejectedValue(new Error("refresh failed"));
+    const mockServer = makeServer({ id: "gateway-del", name: "Del Server" });
+    setupWithServer(mockServer, { refetch });
+
+    renderWithProviders(<Gateways />);
+    await user.click(screen.getByRole("button", { name: "Actions for Del Server" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Delete" }));
+    await user.click(screen.getByRole("button", { name: "Delete" }));
+
+    await waitFor(() => expect(mockDeleteVirtualServer).toHaveBeenCalledWith("gateway-del"));
+    await waitFor(() => expect(consoleError).toHaveBeenCalled());
+    consoleError.mockRestore();
+  });
+
+  it("clears the pending server when the delete dialog is dismissed", async () => {
+    const user = userEvent.setup();
+    const mockServer = makeServer({ id: "gateway-cancel", name: "Cancel Server" });
+    setupWithServer(mockServer);
+
+    renderWithProviders(<Gateways />);
+    await user.click(screen.getByRole("button", { name: "Actions for Cancel Server" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Delete" }));
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(mockDeleteVirtualServer).not.toHaveBeenCalled();
+  });
+
+  it("adds a tag from the details panel", async () => {
+    const user = userEvent.setup();
+    const detailServer = makeServer({ id: "gateway-1", tags: [] });
+    mockUseQuery.mockImplementation((path) => {
+      const base = {
+        error: null,
+        isLoading: false,
+        execute: vi.fn(),
+        refetch: vi.fn(),
+        setData: vi.fn(),
+      };
+      if (path === "/servers/gateway-1") return { ...base, data: detailServer };
+      if (path?.startsWith("/servers/gateway-1/")) return { ...base, data: [] };
+      return { ...base, data: { servers: [detailServer] } };
+    });
+    mockUpdateVirtualServerTags.mockResolvedValue({
+      ...detailServer,
+      tags: [{ id: "alerts", label: "alerts" }],
+    });
+
+    renderWithProviders(<Gateways />);
+    await user.click(screen.getByRole("button", { name: "Actions for GH repo tasks" }));
+    await user.click(await screen.findByRole("menuitem", { name: "View details" }));
+
+    await user.click(await screen.findByRole("button", { name: "Add tags" }));
+    await user.type(screen.getByPlaceholderText("Add tags separated with commas"), "alerts");
+    await user.click(screen.getByRole("button", { name: "Add" }));
+
+    await waitFor(() =>
+      expect(mockUpdateVirtualServerTags).toHaveBeenCalledWith("gateway-1", ["alerts"]),
+    );
+  });
+
+  it("surfaces an error when adding a tag from the details panel fails", async () => {
+    const user = userEvent.setup();
+    const detailServer = makeServer({ id: "gateway-1", tags: [] });
+    mockUseQuery.mockImplementation((path) => {
+      const base = {
+        error: null,
+        isLoading: false,
+        execute: vi.fn(),
+        refetch: vi.fn(),
+        setData: vi.fn(),
+      };
+      if (path === "/servers/gateway-1") return { ...base, data: detailServer };
+      if (path?.startsWith("/servers/gateway-1/")) return { ...base, data: [] };
+      return { ...base, data: { servers: [detailServer] } };
+    });
+    mockUpdateVirtualServerTags.mockRejectedValue(new Error("boom"));
+
+    renderWithProviders(<Gateways />);
+    await user.click(screen.getByRole("button", { name: "Actions for GH repo tasks" }));
+    await user.click(await screen.findByRole("menuitem", { name: "View details" }));
+
+    await user.click(await screen.findByRole("button", { name: "Add tags" }));
+    await user.type(screen.getByPlaceholderText("Add tags separated with commas"), "alerts");
+    await user.click(screen.getByRole("button", { name: "Add" }));
+
+    // The failed update runs the error branch and leaves the editor open to retry.
+    await waitFor(() =>
+      expect(mockUpdateVirtualServerTags).toHaveBeenCalledWith("gateway-1", ["alerts"]),
+    );
   });
 });
