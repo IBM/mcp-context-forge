@@ -166,7 +166,7 @@ The Make commands below wrap Ansible playbooks (`ansible/ocp/playbooks/`). You c
 
 **Step 1 — Create Docker Hub pull secret** (one-time per namespace):
 
-a) If you are already logged in locally via `docker login`:
+### a) If you are already logged in locally via `docker login`:
 
 ```bash
 oc create secret generic dockerhub-pull \
@@ -175,7 +175,7 @@ oc create secret generic dockerhub-pull \
   -n <namespace-change-me>
 ```
 
-b) If you prefer to supply credentials explicitly:
+### b) If you prefer to supply credentials explicitly:
 
 ```bash
 oc create secret docker-registry dockerhub-pull \
@@ -201,7 +201,30 @@ make ocp-deploy OCP_NS=<namespace-change-me>
 
 Runs `helm install` with the PGO values and secrets files. Deploys gateway (3 pods), NGINX (3 pods), Redis (PVC dynamically provisioned), and connects to the PGO-managed Postgres. Database migration runs as a `pre-install` hook directly to Postgres (bypasses PgBouncer for advisory lock safety). Locust is **not** deployed at this stage — it is enabled on demand by `ocp-benchmark-setup`.
 
-**Step 4 — (Optional) Run the MCP benchmark:**
+**Step 4 — Verify the deployment:**
+
+Check all pods are running:
+
+```bash
+oc get pods -n <namespace-change-me>
+# Expect: 3 gateway (1/1), 3 NGINX (1/1), 1 Redis (1/1), 2 fast-time-server (1/1)
+```
+
+Get the Route and open it in your browser:
+
+```bash
+oc get route -n <namespace-change-me> -o wide
+```
+
+Copy the `HOST/PORT` value from the output and open it in your browser:
+
+```
+https://<route-host>
+```
+
+You should see the ContextForge admin login page. Log in with the `BASIC_AUTH_USER` and `BASIC_AUTH_PASSWORD` values from your secrets file.
+
+**Step 5 — (Optional) Run the MCP benchmark:**
 
 ```bash
 make ocp-benchmark-setup OCP_NS=<namespace>
