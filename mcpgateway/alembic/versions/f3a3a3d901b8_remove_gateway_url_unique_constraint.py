@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/alembic/versions/f3a3a3d901b8_remove_gateway_url_unique_constraint.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Keval Mahajan
 
 Alembic migration to remove unique constraint on gateway URL.
 An improved alternative duplication check has been implemented for gateway duplication prevention.

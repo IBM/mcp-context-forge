@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/services/test_session_affinity.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Unit tests for SessionAffinity (cluster-affinity layer for #4205).
 After the #4205 refactor hollowed the pool-era machinery, ``SessionAffinity``

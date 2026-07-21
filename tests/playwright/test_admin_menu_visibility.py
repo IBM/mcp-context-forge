@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/playwright/test_admin_menu_visibility.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Playwright integration tests for admin UI menu visibility based on RBAC permissions.
 
@@ -32,6 +31,7 @@ import pytest
 from tests.helpers.api_helpers import ApiTestHelper
 from tests.helpers.auth import make_playwright_api_context, make_test_jwt
 from .conftest import BASE_URL
+from .pages.admin_utils import wait_for_js_condition
 
 logger = logging.getLogger(__name__)
 
@@ -154,10 +154,13 @@ def _wait_for_admin_shell(page: Page, timeout: int = 60000) -> None:
         if "Internal Server Error" in content:
             raise AssertionError("Admin page failed to load: Internal Server Error (500)")
         raise
-    # Wait for JS initialization
+    # Wait for JS initialization (see wait_for_js_condition() docstring for why
+    # evaluate()-based polling is used). showTab lives on the Admin namespace,
+    # not as a bare global, since the JS bundling refactor.
     try:
-        page.wait_for_function(
-            "typeof window.showTab === 'function' && typeof window.htmx !== 'undefined'",
+        wait_for_js_condition(
+            page,
+            "typeof window.Admin !== 'undefined' && typeof window.Admin.showTab === 'function' && typeof window.htmx !== 'undefined'",
             timeout=30000,
         )
     except PlaywrightTimeoutError:

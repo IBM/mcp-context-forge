@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/test_admin_module.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Tests for mcpgateway.admin helpers and auth flows.
 """
@@ -258,12 +257,12 @@ class _StubTeamService:
     async def list_join_requests(self, team_id: str):
         return self.join_requests
 
-    async def approve_join_request(self, request_id: str, approved_by: str):
-        self.approve_args = (request_id, approved_by)
+    async def approve_join_request(self, team_id: str, request_id: str, approved_by: str):
+        self.approve_args = (team_id, request_id, approved_by)
         return self.approve_member
 
-    async def reject_join_request(self, request_id: str, rejected_by: str):
-        self.reject_args = (request_id, rejected_by)
+    async def reject_join_request(self, team_id: str, request_id: str, rejected_by: str):
+        self.reject_args = (team_id, request_id, rejected_by)
         return self.reject_ok
 
     def count_team_owners(self, team_id: str) -> int:
@@ -1343,6 +1342,23 @@ async def test_admin_approve_join_request_success(monkeypatch):
     assert response.status_code == 200
     assert "Join request approved" in _response_text(response)
     assert "HX-Trigger" in response.headers
+    assert team_service.approve_args == ("team-1", "req-1", "owner@example.com")
+
+
+@pytest.mark.asyncio
+async def test_admin_reject_join_request_forwards_team_id(monkeypatch):
+    mock_db = MagicMock()
+    user = {"email": "owner@example.com"}
+    monkeypatch.setattr(admin.settings, "email_auth_enabled", True)
+
+    team_service = _StubTeamService(db=mock_db, user_role="owner", reject_ok=True)
+    monkeypatch.setattr(admin, "TeamManagementService", lambda db: team_service)
+
+    _allow_permissions(monkeypatch)
+    response = await admin.admin_reject_join_request("team-1", "req-1", db=mock_db, user=user)
+    assert response.status_code == 200
+    assert "Join request rejected" in _response_text(response)
+    assert team_service.reject_args == ("team-1", "req-1", "owner@example.com")
 
 
 @pytest.mark.asyncio

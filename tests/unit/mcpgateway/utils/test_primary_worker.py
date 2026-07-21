@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/utils/test_primary_worker.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
 
 Tests for the primary-worker election helper.
@@ -163,3 +163,39 @@ def test_empty_string_override_falls_back_to_default(monkeypatch):
     monkeypatch.setattr(pw.settings, "primary_worker_lock_path", "", raising=False)
     monkeypatch.setattr(pw.settings, "port", 4444, raising=False)
     assert _lock_path().endswith("mcpgw_plugin_primary_4444.lock")
+
+
+def test_redis_backend_delegates_to_elector(monkeypatch):
+    """With the redis backend, is_primary_worker reads the elector (fail closed if unstarted)."""
+    # First-Party
+    import mcpgateway.services.leader_election as le
+
+    monkeypatch.setattr(pw.settings, "primary_worker_election_backend", "redis", raising=False)
+
+    monkeypatch.setattr(le, "_elector", None, raising=False)
+    assert is_primary_worker() is False  # no elector started -> fail closed
+
+    class _FakeElector:
+        started = True
+        is_primary = True
+
+    monkeypatch.setattr(le, "_elector", _FakeElector(), raising=False)
+    assert is_primary_worker() is True
+
+
+def test_default_backend_is_filelock_and_skips_elector(monkeypatch, tmp_path):
+    """Default backend is filelock, and that path never consults the elector."""
+    # First-Party
+    from mcpgateway.config import get_settings
+    import mcpgateway.services.leader_election as le
+
+    # Conservative shipped default — no deployment silently flips to cluster-wide.
+    assert get_settings().__class__.model_fields["primary_worker_election_backend"].default == "filelock"
+
+    # With the filelock backend, is_primary_worker never reaches the elector.
+    monkeypatch.setattr(pw.settings, "primary_worker_election_backend", "filelock", raising=False)
+    seen = []
+    monkeypatch.setattr(le, "get_primary_worker_elector", lambda: seen.append(1) or None)
+    _set_override(monkeypatch, tmp_path / "x.lock")
+    assert is_primary_worker() is True
+    assert seen == []  # filelock path never touched the elector

@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/routers/test_teams.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Comprehensive unit tests for teams router.
 This module tests all team management endpoints including CRUD operations,
@@ -1320,7 +1319,7 @@ class TestTeamsRouter:
             result = await approve_join_request(team_id, request_id, current_user=mock_user_context, db=mock_db)
 
             assert result.id == mock_team_member.id
-            mock_service.approve_join_request.assert_called_once_with(request_id, approved_by=mock_user_context["email"])
+            mock_service.approve_join_request.assert_called_once_with(team_id, request_id, approved_by=mock_user_context["email"])
 
     @pytest.mark.asyncio
     async def test_reject_join_request_success(self, mock_user_context, mock_db, mock_public_team):
@@ -1340,6 +1339,7 @@ class TestTeamsRouter:
             result = await reject_join_request(team_id, request_id, current_user=mock_user_context, db=mock_db)
 
             assert result.message == "Join request rejected successfully"
+            mock_service.reject_join_request.assert_called_once_with(team_id, request_id, rejected_by=mock_user_context["email"])
 
     @pytest.mark.asyncio
     async def test_reject_join_request_not_owner(self, mock_user_context, mock_db, mock_public_team):

@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/playwright/test_admin_url_context.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Regression tests for admin UI URL context preservation.
 Covers issues #3321 (delete/toggle loses tab/team_id) and
@@ -26,6 +25,7 @@ import pytest
 
 # Local
 from .conftest import _ensure_admin_logged_in
+from .pages.admin_utils import wait_for_js_condition
 
 # A placeholder team_id value; tests use it as a URL param and verify it survives
 # mutations.  In a real team-scoped deployment this would be a valid UUID.
@@ -69,7 +69,8 @@ def _wait_for_admin_function(page: Page, function_name: str, timeout: int = 1000
         pytest.skip: If the function is not available within timeout
     """
     try:
-        page.wait_for_function(f"typeof window.Admin !== 'undefined' && typeof window.Admin.{function_name} === 'function'", timeout=timeout, polling=100)
+        # See wait_for_js_condition() docstring for why evaluate()-based polling is used.
+        wait_for_js_condition(page, f"typeof window.Admin !== 'undefined' && typeof window.Admin.{function_name} === 'function'", timeout=timeout, polling=100)
     except PlaywrightTimeoutError:
         admin_debug = page.evaluate("""() => {
             return {
@@ -979,9 +980,10 @@ class TestAdminIframeContext:
         except PlaywrightTimeoutError:
             pass
 
-        # Wait for admin JS to initialise inside iframe
+        # Wait for admin JS to initialise inside iframe (see wait_for_js_condition() docstring).
         try:
-            frame_obj.wait_for_function(
+            wait_for_js_condition(
+                frame_obj,
                 "typeof window.Admin !== 'undefined' && typeof window.Admin.searchTeamSelector === 'function'",
                 timeout=15000,
             )
@@ -1011,9 +1013,11 @@ class TestAdminIframeContext:
             items_container = frame.locator("#team-selector-items")
             items_container.wait_for(state="visible", timeout=10000)
 
-            # Wait for actual team buttons (not "Loading..." placeholder)
-            frame_obj.wait_for_function(
-                "() => document.querySelectorAll('#team-selector-items .team-selector-item').length > 0",
+            # Wait for actual team buttons (not "Loading..." placeholder); see
+            # wait_for_js_condition() docstring for why evaluate()-based polling is used.
+            wait_for_js_condition(
+                frame_obj,
+                "document.querySelectorAll('#team-selector-items .team-selector-item').length > 0",
                 timeout=15000,
             )
 

@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/plugins/plugins/rate_limiter/test_rate_limiter.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Tests for the packaged rate limiter plugin.
 """
@@ -93,7 +92,12 @@ class TestRateLimiterPlugin:
         assert third.violation.details["reset_in"] == 1
 
     @pytest.mark.asyncio
-    async def test_prompt_pre_fetch_success_includes_rate_limit_headers(self):
+    async def test_prompt_pre_fetch_success_without_trace_context_emits_no_metadata(self):
+        # As of 0.1.7, result.metadata is gated on a valid trace_id in extensions
+        # (see result.metadata["rate_limiter"] contract) -- calling without
+        # extensions (as this test does) must yield no metadata at all,
+        # matching the untraced path being byte-for-byte identical to
+        # before metrics existed.
         plugin = make_plugin({"by_user": "10/s"})
         ctx = make_context()
         payload = PromptPrehookPayload(prompt_id="p", args={})
@@ -101,8 +105,7 @@ class TestRateLimiterPlugin:
         result = await plugin.prompt_pre_fetch(payload, ctx)
 
         assert result.violation is None
-        assert result.metadata["remaining"] == 9
-        assert result.metadata["reset_in"] == 1
+        assert result.metadata == {}
 
     @pytest.mark.asyncio
     async def test_tool_pre_invoke_applies_per_tool_limit(self):
@@ -157,7 +160,7 @@ class TestRateLimiterPlugin:
 
         result = await plugin.prompt_pre_fetch(payload, ctx)
 
-        plugin._core.prompt_pre_fetch.assert_awaited_once_with(payload, ctx)
+        plugin._core.prompt_pre_fetch.assert_awaited_once_with(payload, ctx, None)
         assert result == "sentinel"
 
     @pytest.mark.asyncio
@@ -169,7 +172,7 @@ class TestRateLimiterPlugin:
 
         result = await plugin.tool_pre_invoke(payload, ctx)
 
-        plugin._core.tool_pre_invoke.assert_awaited_once_with(payload, ctx)
+        plugin._core.tool_pre_invoke.assert_awaited_once_with(payload, ctx, None)
         assert result == "sentinel"
 
     @pytest.mark.asyncio

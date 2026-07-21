@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/integration/plugins/test_plugin_metrics_consumer_integration.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Integration tests for mcpgateway.plugins.utils.record_plugin_metrics() (Task B2 / G1)
 against a real ObservabilityService backed by a real (test) database.
@@ -218,5 +217,151 @@ class TestRecordPluginMetricsIntegration:
         record_plugin_metrics(trace_id, {})
 
         assert db_session.query(ObservabilitySpan).filter_by(trace_id=trace_id).count() == before_spans
+
+        observability_service.end_trace(trace_id)
+
+
+class TestRecordPluginMetricsAdditionalPluginsIntegration:
+    """Task 7 (S4 allowlist extension): same real-DB integration pattern as
+    ``TestRecordPluginMetricsIntegration`` above, covering the 4 non-secrets_detection
+    plugins whose metrics fields were newly added to the ``_SAFE_NUMERIC_FIELD_NAMES`` /
+    ``_SAFE_STRING_FIELD_NAMES`` allowlists in ``mcpgateway/plugins/utils.py`` (Tasks 1-6
+    on this branch): ``rate_limiter``, ``retry_with_backoff``, ``encoded_exfil_detection``,
+    and ``url_reputation``. ``secrets_detection`` is covered separately in
+    ``tests/e2e/test_otel_plugin_metadata_e2e.py`` (real Rust-backed plugin, HTTP pipeline).
+
+    Each test asserts the same two things ``TestRecordPluginMetricsIntegration`` splits
+    across ``test_single_plugin_creates_span_with_attributes`` /
+    ``test_numeric_fields_also_recorded_as_metrics`` for ``pii_filter``: the dedicated
+    ``plugin.metrics.<name>`` span gets the validated attributes, and the numeric
+    (non-bool) validated fields are additionally persisted as ``ObservabilityMetric`` rows.
+    """
+
+    def test_rate_limiter_records_span_and_metrics(self, db_session, observability_service: ObservabilityService):
+        """Fake rate_limiter metadata -> span attributes (incl. the ``backend`` string
+        field) plus numeric metric rows for ``allowed``/``throttled``.
+        """
+        trace_id = observability_service.start_trace(name="test_trace_g1_rate_limiter")
+
+        result_metadata = {"rate_limiter": {"allowed": 1, "throttled": 0, "backend": "redis"}}
+
+        record_plugin_metrics(trace_id, result_metadata)
+
+        span = db_session.query(ObservabilitySpan).filter_by(trace_id=trace_id, name="plugin.metrics.rate_limiter").one()
+        assert span.resource_type == "plugin"
+        assert span.resource_name == "rate_limiter"
+        assert span.status == "ok"
+        assert span.attributes["allowed"] == 1
+        assert span.attributes["throttled"] == 0
+        assert span.attributes["backend"] == "redis"
+
+        metrics = db_session.query(ObservabilityMetric).filter_by(trace_id=trace_id).all()
+        metrics_by_name = {m.name: m for m in metrics}
+        assert set(metrics_by_name) == {"plugin.rate_limiter.allowed", "plugin.rate_limiter.throttled"}
+        assert metrics_by_name["plugin.rate_limiter.allowed"].value == 1.0
+        assert metrics_by_name["plugin.rate_limiter.throttled"].value == 0.0
+        for metric in metrics_by_name.values():
+            assert metric.resource_type == "plugin"
+            assert metric.resource_id == "rate_limiter"
+
+        observability_service.end_trace(trace_id)
+
+    def test_retry_with_backoff_records_span_and_metrics(self, db_session, observability_service: ObservabilityService):
+        """Fake retry_with_backoff metadata -> span attributes plus numeric metric rows
+        for ``retry_count``/``retry_delay_ms``.
+        """
+        trace_id = observability_service.start_trace(name="test_trace_g1_retry_with_backoff")
+
+        result_metadata = {"retry_with_backoff": {"retry_count": 2, "retry_delay_ms": 250}}
+
+        record_plugin_metrics(trace_id, result_metadata)
+
+        span = db_session.query(ObservabilitySpan).filter_by(trace_id=trace_id, name="plugin.metrics.retry_with_backoff").one()
+        assert span.resource_type == "plugin"
+        assert span.resource_name == "retry_with_backoff"
+        assert span.status == "ok"
+        assert span.attributes["retry_count"] == 2
+        assert span.attributes["retry_delay_ms"] == 250
+
+        metrics = db_session.query(ObservabilityMetric).filter_by(trace_id=trace_id).all()
+        metrics_by_name = {m.name: m for m in metrics}
+        assert set(metrics_by_name) == {"plugin.retry_with_backoff.retry_count", "plugin.retry_with_backoff.retry_delay_ms"}
+        assert metrics_by_name["plugin.retry_with_backoff.retry_count"].value == 2.0
+        assert metrics_by_name["plugin.retry_with_backoff.retry_delay_ms"].value == 250.0
+        for metric in metrics_by_name.values():
+            assert metric.resource_type == "plugin"
+            assert metric.resource_id == "retry_with_backoff"
+
+        observability_service.end_trace(trace_id)
+
+    def test_encoded_exfil_detection_records_span_and_metrics(self, db_session, observability_service: ObservabilityService):
+        """Fake encoded_exfil_detection metadata -> span attributes, including
+        ``encoding_types`` as a ``list[str]`` joined into a single comma-separated string by
+        ``_sanitize_plugin_metrics`` -- the same list-to-string behavior already exercised for
+        ``detection_types`` in ``TestRecordPluginMetricsIntegration.test_single_plugin_creates_span_with_attributes``
+        above -- plus a numeric metric row for ``total_detections``.
+        """
+        trace_id = observability_service.start_trace(name="test_trace_g1_encoded_exfil_detection")
+
+        result_metadata = {
+            "encoded_exfil_detection": {
+                "total_detections": 3,
+                "encoding_types": ["base64", "hex"],
+            }
+        }
+
+        record_plugin_metrics(trace_id, result_metadata)
+
+        span = db_session.query(ObservabilitySpan).filter_by(trace_id=trace_id, name="plugin.metrics.encoded_exfil_detection").one()
+        assert span.resource_type == "plugin"
+        assert span.resource_name == "encoded_exfil_detection"
+        assert span.status == "ok"
+        assert span.attributes["total_detections"] == 3
+        assert span.attributes["encoding_types"] == "base64,hex"
+
+        metrics = db_session.query(ObservabilityMetric).filter_by(trace_id=trace_id).all()
+        metrics_by_name = {m.name: m for m in metrics}
+        assert set(metrics_by_name) == {"plugin.encoded_exfil_detection.total_detections"}
+        assert metrics_by_name["plugin.encoded_exfil_detection.total_detections"].value == 3.0
+        assert metrics_by_name["plugin.encoded_exfil_detection.total_detections"].resource_type == "plugin"
+        assert metrics_by_name["plugin.encoded_exfil_detection.total_detections"].resource_id == "encoded_exfil_detection"
+
+        observability_service.end_trace(trace_id)
+
+    def test_url_reputation_records_span_and_metrics(self, db_session, observability_service: ObservabilityService):
+        """Fake url_reputation metadata -> span attributes, including ``reputation_categories``
+        as a ``list[str]`` joined into a single comma-separated string by
+        ``_sanitize_plugin_metrics`` -- the same list-to-string behavior already exercised for
+        ``encoding_types`` in ``test_encoded_exfil_detection_records_span_and_metrics`` above --
+        plus numeric metric rows for ``total_checked``/``total_blocked``.
+        """
+        trace_id = observability_service.start_trace(name="test_trace_g1_url_reputation")
+
+        result_metadata = {
+            "url_reputation": {
+                "total_checked": 1,
+                "total_blocked": 1,
+                "reputation_categories": ["blocked_domain"],
+            }
+        }
+
+        record_plugin_metrics(trace_id, result_metadata)
+
+        span = db_session.query(ObservabilitySpan).filter_by(trace_id=trace_id, name="plugin.metrics.url_reputation").one()
+        assert span.resource_type == "plugin"
+        assert span.resource_name == "url_reputation"
+        assert span.status == "ok"
+        assert span.attributes["total_checked"] == 1
+        assert span.attributes["total_blocked"] == 1
+        assert span.attributes["reputation_categories"] == "blocked_domain"
+
+        metrics = db_session.query(ObservabilityMetric).filter_by(trace_id=trace_id).all()
+        metrics_by_name = {m.name: m for m in metrics}
+        assert set(metrics_by_name) == {"plugin.url_reputation.total_checked", "plugin.url_reputation.total_blocked"}
+        assert metrics_by_name["plugin.url_reputation.total_checked"].value == 1.0
+        assert metrics_by_name["plugin.url_reputation.total_blocked"].value == 1.0
+        for metric in metrics_by_name.values():
+            assert metric.resource_type == "plugin"
+            assert metric.resource_id == "url_reputation"
 
         observability_service.end_trace(trace_id)

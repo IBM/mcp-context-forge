@@ -1,14 +1,14 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/test_config.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Test the configuration module.
 Author: Mihai Criveti
 """
 
 # Standard
+import logging
 import os
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -1780,3 +1780,37 @@ def test_uaid_allowed_domains_accepts_valid_with_port():
     """Verify validator accepts valid public domains with ports."""
     settings = Settings(uaid_allowed_domains=["example.com:8443", "gateway.io:4444"], _env_file=None)
     assert settings.uaid_allowed_domains == ["example.com:8443", "gateway.io:4444"]
+
+
+def _pw_heartbeat_warned(caplog):
+    """Return True if the primary-worker heartbeat/lease-ttl warning was logged."""
+    return any("PRIMARY_WORKER_HEARTBEAT_INTERVAL" in r.getMessage() for r in caplog.records)
+
+
+def test_primary_worker_heartbeat_warns_when_too_slow(caplog):
+    """redis backend: warn when heartbeat_interval >= lease_ttl/2 (lease can expire before renewal)."""
+    with caplog.at_level(logging.WARNING, logger="mcpgateway.config"):
+        Settings(primary_worker_election_backend="redis", primary_worker_lease_ttl=15, primary_worker_heartbeat_interval=8, _env_file=None)
+    assert _pw_heartbeat_warned(caplog)
+
+
+def test_primary_worker_heartbeat_ok_when_fast_enough(caplog):
+    """No warning when heartbeat < lease_ttl/2 on the redis backend."""
+    with caplog.at_level(logging.WARNING, logger="mcpgateway.config"):
+        Settings(primary_worker_election_backend="redis", primary_worker_lease_ttl=15, primary_worker_heartbeat_interval=5, _env_file=None)
+    assert not _pw_heartbeat_warned(caplog)
+
+
+def test_primary_worker_heartbeat_not_checked_for_filelock(caplog):
+    """The heartbeat/lease-ttl check only applies to the redis backend, not filelock."""
+    with caplog.at_level(logging.WARNING, logger="mcpgateway.config"):
+        Settings(primary_worker_election_backend="filelock", primary_worker_lease_ttl=15, primary_worker_heartbeat_interval=8, _env_file=None)
+    assert not _pw_heartbeat_warned(caplog)
+
+
+def test_primary_worker_heartbeat_warns_at_exact_boundary(caplog):
+    """Boundary: heartbeat_interval == lease_ttl/2 warns (the requirement is strictly less than)."""
+    # Integer fields, so use an even ttl to hit the exact half: 7 == 14/2.
+    with caplog.at_level(logging.WARNING, logger="mcpgateway.config"):
+        Settings(primary_worker_election_backend="redis", primary_worker_lease_ttl=14, primary_worker_heartbeat_interval=7, _env_file=None)
+    assert _pw_heartbeat_warned(caplog)

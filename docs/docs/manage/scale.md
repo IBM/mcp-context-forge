@@ -496,11 +496,11 @@ services:
       - DB_POOL_SIZE=15              # Smaller with PgBouncer
       - DB_MAX_OVERFLOW=30
 
-      # Redis with hiredis
+      # Redis with hiredis - keep replicas × workers × pool < maxclients (15000)
       - CACHE_TYPE=redis
       - REDIS_URL=redis://redis:6379/0
       - REDIS_PARSER=hiredis
-      - REDIS_MAX_CONNECTIONS=150
+      - REDIS_MAX_CONNECTIONS=100
 
       # Multi-level caching
       - AUTH_CACHE_ENABLED=true
@@ -546,7 +546,7 @@ services:
       - "--maxmemory" - "1gb"
       - "--maxmemory-policy" - "allkeys-lru"
       - "--tcp-backlog" - "2048"
-      - "--maxclients" - "10000"
+      - "--maxclients" - "15000"
 ```
 
 **Access Points:**
@@ -950,8 +950,8 @@ For 1000+ concurrent users:
 
 ```bash
 # Connection pool - Formula: (concurrent_requests / workers) * 1.5
-# Example: 32 workers × 150 = 4800 < Redis maxclients (10000)
-REDIS_MAX_CONNECTIONS=150
+# Example: 32 workers × 50 = 1600 < Redis maxclients (15000)
+REDIS_MAX_CONNECTIONS=50
 
 # Timeouts - keep low for fast failure detection
 REDIS_SOCKET_TIMEOUT=5.0
@@ -972,7 +972,7 @@ redis:
     - "--tcp-backlog"
     - "2048"                    # Higher for pending connections
     - "--maxclients"
-    - "10000"                   # Max client connections
+    - "15000"                   # Max client connections
 ```
 
 #### Kubernetes Deployment
@@ -1013,10 +1013,12 @@ redis:
 
 - Formula: `REDIS_MAX_CONNECTIONS = (concurrent_requests / workers) × 1.5`
 - Default 50 handles ~500 concurrent requests with 10 workers
-- High-concurrency: increase to 100 and lower timeouts
+- High-concurrency: verify `replicas × workers × REDIS_MAX_CONNECTIONS < maxclients (15,000)` before increasing
 
 ```bash
 # High-concurrency production overrides
+# Pool size: replicas × workers × REDIS_MAX_CONNECTIONS must stay below Redis maxclients (15000)
+# Example: 5 replicas × 24 workers × 100 = 12,000 < 15,000
 REDIS_MAX_CONNECTIONS=100
 REDIS_SOCKET_TIMEOUT=1.0
 REDIS_SOCKET_CONNECT_TIMEOUT=1.0
@@ -2556,7 +2558,7 @@ ContextForge is built on a high-performance foundation:
   - [ ] Enable Redis: `CACHE_TYPE=redis`
   - [ ] Set `REDIS_URL` to shared Redis instance
   - [ ] Configure TTLs: `SESSION_TTL=3600`, `MESSAGE_TTL=600`
-  - [ ] Tune Redis pool: `REDIS_MAX_CONNECTIONS=150` (high concurrency)
+  - [ ] Tune Redis pool: `REDIS_MAX_CONNECTIONS=50` (keep replicas × workers × pool < 15,000 maxclients)
   - [ ] Use hiredis parser: `REDIS_PARSER=hiredis` (up to 83x faster)
   - [ ] Enable JWT caching: `JWT_CACHE_ENABLED=true`
   - [ ] Enable auth caching: `AUTH_CACHE_ENABLED=true`

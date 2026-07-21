@@ -374,6 +374,20 @@ repos:
         exclude: '(^|/)Makefile(\.[^/]*)?$|(\.mk|\.jinja)$'
 
 
+  - repo: local
+    hooks:
+      - id: correct-file-headers
+        name: 📄 Correct Python File Headers
+        description: Ensures mcpgateway/ and tests/ .py files have the correct license header.
+        entry: >-
+          bash -c '
+          uv run .github/tools/fix_file_headers.py --fix-all "$@";
+          ' --
+        language: system
+        types: [python]
+        files: ^(mcpgateway|tests)/
+        pass_filenames: true
+
   # -----------------------------------------------------------------------------
   #  Interrogate
   # -----------------------------------------------------------------------------

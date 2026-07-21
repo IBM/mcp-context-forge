@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/integration/test_api_versioning_security.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
 
 Deny-path security tests for /v1/* versioned routes.

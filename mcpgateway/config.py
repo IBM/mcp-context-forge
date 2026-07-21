@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/config.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti, Manav Gupta, Eleni Kechrioti
 
 ContextForge AI Gateway Configuration.
 This module defines configuration settings for ContextForge AI Gateway using Pydantic.
@@ -2545,6 +2544,36 @@ class Settings(BaseSettings):
     # mcpgateway/utils/primary_worker.py. Defaults to a port-scoped file in the
     # system temp dir when unset.
     primary_worker_lock_path: Optional[str] = None
+
+    # Primary-worker election backend: "filelock" (one primary per host, default)
+    # or "redis" (one primary across instances sharing a Redis).
+    primary_worker_election_backend: Literal["filelock", "redis"] = "filelock"
+    primary_worker_redis_key: str = "mcpgw:primary_worker"
+    primary_worker_lease_ttl: int = Field(default=15, description="Redis lease TTL (secs) for primary-worker election")
+    primary_worker_heartbeat_interval: int = Field(default=5, description="Seconds between primary-worker lease renewals (should be < lease_ttl/2)")
+    # Redis unreachable: fail_closed (no primary) preserves the global guarantee;
+    # filelock_fallback degrades to per-host.
+    primary_worker_redis_unavailable_policy: Literal["fail_closed", "filelock_fallback"] = "fail_closed"
+
+    @model_validator(mode="after")
+    def validate_primary_worker_timing(self) -> Self:
+        """Warn when the primary-worker heartbeat is too slow to keep the redis lease alive.
+
+        The lease must be renewed at least twice per TTL to tolerate a single missed
+        heartbeat; ``heartbeat_interval >= lease_ttl / 2`` lets the lease expire before
+        renewal, causing continuous primary re-election across instances. Only relevant
+        to the redis backend. Warns (does not raise) to avoid breaking existing configs.
+
+        Returns:
+            Self for chaining.
+        """
+        if self.primary_worker_election_backend == "redis" and self.primary_worker_heartbeat_interval * 2 >= self.primary_worker_lease_ttl:
+            logger.warning(
+                "⚠️  PRIMARY_WORKER_HEARTBEAT_INTERVAL (%ss) should be < PRIMARY_WORKER_LEASE_TTL/2 (%ss); otherwise the redis lease can expire before it is renewed, causing continuous primary re-election.",
+                self.primary_worker_heartbeat_interval,
+                self.primary_worker_lease_ttl,
+            )
+        return self
 
     # Default Roots
     default_roots: List[str] = []

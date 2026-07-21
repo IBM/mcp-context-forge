@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/alembic/versions/b29af8761e97_add_a2a_agent_plugin_binding_table.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Madhumohan Jaishankar
 
 add_a2a_agent_plugin_binding_table
 

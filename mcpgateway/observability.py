@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/observability.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Vendor-agnostic OpenTelemetry instrumentation for ContextForge.
 Supports any OTLP-compatible backend (Jaeger, Zipkin, Tempo, Phoenix, etc.).

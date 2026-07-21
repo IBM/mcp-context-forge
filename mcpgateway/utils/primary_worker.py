@@ -1,19 +1,23 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/utils/primary_worker.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
 
 Primary-worker election for side-effecting plugin work.
 
 Under multiple worker processes every worker runs each plugin's
 ``initialize()``. ``is_primary_worker()`` lets a plugin gate side-effecting work
-to one worker. Election uses a file lock: the first process to acquire it is
-primary; the OS releases it on exit so another caller can take over.
+to one worker. Two backends, selected by ``PRIMARY_WORKER_ELECTION_BACKEND``:
 
-The lock is per host. Its path defaults to a port-scoped temp file, overridable
-via ``PRIMARY_WORKER_LOCK_PATH``. The path is predictable in a world-writable
-temp dir, so a local process could pre-acquire it and block election — point the
-setting at a gateway-owned directory on hostile hosts.
+- ``filelock`` (default): one primary per host. The first process to acquire the
+  lock is primary; the OS releases it on exit so another caller can take over.
+- ``redis``: one primary across all instances sharing a Redis (see
+  ``mcpgateway.services.leader_election``).
+
+The file lock is per host. Its path defaults to a port-scoped temp file,
+overridable via ``PRIMARY_WORKER_LOCK_PATH``. The path is predictable in a
+world-writable temp dir, so a local process could pre-acquire it and block
+election — point the setting at a gateway-owned directory on hostile hosts.
 """
 
 # Standard
@@ -56,15 +60,23 @@ def _lock_path() -> str:
 
 
 def is_primary_worker() -> bool:
-    """Return ``True`` on exactly one worker process; ``False`` on the others.
+    """Return ``True`` on exactly one worker; ``False`` on the others.
 
-    The first caller to acquire the lock holds it; others retry on later calls,
-    so a new primary is elected if the current one exits. Safe to call from
-    multiple threads.
+    ``filelock`` backend (default): one primary per host via a lazily acquired
+    file lock. ``redis`` backend: one primary across all instances, read from the
+    elector started in the app lifespan (fails closed if it isn't started, so a
+    redis deployment never silently degrades to per-host scope).
 
     Returns:
         Whether this process holds primary status.
     """
+    if settings.primary_worker_election_backend == "redis":
+        # First-Party
+        from mcpgateway.services.leader_election import get_primary_worker_elector  # pylint: disable=import-outside-toplevel
+
+        elector = get_primary_worker_elector()
+        return bool(elector and elector.started and elector.is_primary)
+
     global _lock, _is_primary  # pylint: disable=global-statement
     if _is_primary:
         return True

@@ -888,6 +888,11 @@ test-primary-worker-e2e: uv  ## Primary-worker election E2E: boots a local 2-wor
 		|| { echo "❌ Primary-worker e2e failed!"; exit 1; }
 	@echo "✅ Primary-worker e2e passed!"
 
+test-primary-worker-multiinstance:  ## Multi-instance primary-worker E2E: scales the compose gateway to 2 replicas (redis backend), asserts one primary across containers
+	@echo "🧪 Running multi-instance primary-worker e2e (2 gateway replicas + redis; needs Docker + 'make docker')..."
+	@bash tests/live_gateway/run_primary_worker_multiinstance.sh \
+		|| { echo "❌ Multi-instance primary-worker e2e failed!"; exit 1; }
+
 test-mcp-session-isolation: uv  ## MCP session/auth isolation tests for the Rust public transport path
 	@echo "🧪 Running MCP session/auth isolation tests against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
 	@echo "   Requires: docker-compose stack rebuilt in Rust edge/full mode"
@@ -3287,7 +3292,7 @@ LINTERS := isort pylint mypy bandit pydocstyle pycodestyle \
 FILE_AWARE_LINTERS := isort black pylint mypy bandit pydocstyle \
 	pycodestyle ruff pyright vulture markdownlint
 
-.PHONY: lint $(LINTERS) black black-check isort-check ruff-check ruff-fix ruff-format autoflake lint-py lint-yaml lint-json lint-md lint-strict \
+.PHONY: lint $(LINTERS) pyright-pr black black-check isort-check ruff-check ruff-fix ruff-format autoflake lint-py lint-yaml lint-json lint-md lint-strict \
 	lint-count-errors lint-report lint-changed lint-staged lint-commit \
 	lint-pre-commit lint-pre-push lint-parallel lint-cache-clear lint-stats \
 	lint-complexity lint-watch lint-watch-quick \
@@ -3436,7 +3441,7 @@ lint-smart:
 
 # Temporary roots for ad-hoc linting tools
 LINT_TMP_ROOT ?= /tmp/mcp-context-forge-lint
-
+LINT_GO_ROOT ?= $(LINT_TMP_ROOT)/go
 LINT_HELM_ROOT ?= $(LINT_TMP_ROOT)/helm
 LINT_NODE_ROOT ?= $(LINT_TMP_ROOT)/node
 LINT_PY_VENV ?= $(LINT_TMP_ROOT)/py-venv
@@ -3469,7 +3474,12 @@ linting-python-env:
 linting-workflow-actionlint:         ## 🧭  GitHub Actions workflow linting
 	@echo "🧭 actionlint ($(LINT_ZIZMOR_TARGET); shellcheck integration disabled)..."
 	@command -v go >/dev/null 2>&1 || { echo "❌ go not found"; exit 1; }
-	@go run github.com/rhysd/actionlint/cmd/actionlint@latest -shellcheck=""
+	@/bin/bash -c "set -euo pipefail; \
+		export GOPATH='$(LINT_GO_ROOT)/gopath'; \
+		export GOMODCACHE='$(LINT_GO_ROOT)/gopath/pkg/mod'; \
+		export GOCACHE='$(LINT_GO_ROOT)/gocache'; \
+		mkdir -p '$(LINT_GO_ROOT)/gopath' '$(LINT_GO_ROOT)/gopath/pkg/mod' '$(LINT_GO_ROOT)/gocache'; \
+		go run github.com/rhysd/actionlint/cmd/actionlint@latest -shellcheck="
 
 .PHONY: linting-workflow-zizmor
 linting-workflow-zizmor:             ## 🔐  GitHub Actions security linting
@@ -3483,9 +3493,14 @@ linting-workflow-reviewdog:          ## 🐶  reviewdog in local reporter mode
 	@echo "🐶 reviewdog local run (input: actionlint)..."
 	@command -v go >/dev/null 2>&1 || { echo "❌ go not found"; exit 1; }
 	@/bin/bash -c "set -euo pipefail; \
+		export GOPATH='$(LINT_GO_ROOT)/gopath'; \
+		export GOMODCACHE='$(LINT_GO_ROOT)/gopath/pkg/mod'; \
+		export GOCACHE='$(LINT_GO_ROOT)/gocache'; \
+		export GOBIN='$(LINT_GO_ROOT)/bin'; \
+		mkdir -p '$(LINT_GO_ROOT)/gopath' '$(LINT_GO_ROOT)/gopath/pkg/mod' '$(LINT_GO_ROOT)/gocache' '$(LINT_GO_ROOT)/bin'; \
 		go install github.com/reviewdog/reviewdog/cmd/reviewdog@latest >/dev/null; \
 		go run github.com/rhysd/actionlint/cmd/actionlint@latest -shellcheck= -oneline | \
-			reviewdog -name=actionlint -efm='%f:%l:%c: %m' -reporter=local"
+			'$(LINT_GO_ROOT)/bin/reviewdog' -name=actionlint -efm='%f:%l:%c: %m' -reporter=local"
 
 .PHONY: linting-python-fixit
 linting-python-fixit:                ## 🧪  Fixit Python linting
@@ -3547,12 +3562,17 @@ linting-helm-lint:                   ## ⎈  Helm lint wrapper
 linting-helm-chart-testing:          ## ⎈  chart-testing lint (relaxed local defaults)
 	@echo "⎈ chart-testing lint..."
 	@command -v go >/dev/null 2>&1 || { echo "❌ go not found"; exit 1; }
-	@go run github.com/helm/chart-testing/v3/ct@latest lint \
-		--charts $(CHART_DIR) \
-		--validate-chart-schema=false \
-		--validate-yaml=false \
-		--validate-maintainers=false \
-		--check-version-increment=false
+	@/bin/bash -c "set -euo pipefail; \
+		export GOPATH='$(LINT_GO_ROOT)/gopath'; \
+		export GOMODCACHE='$(LINT_GO_ROOT)/gopath/pkg/mod'; \
+		export GOCACHE='$(LINT_GO_ROOT)/gocache'; \
+		mkdir -p '$(LINT_GO_ROOT)/gopath' '$(LINT_GO_ROOT)/gopath/pkg/mod' '$(LINT_GO_ROOT)/gocache'; \
+		go run github.com/helm/chart-testing/v3/ct@latest lint \
+			--charts $(CHART_DIR) \
+			--validate-chart-schema=false \
+			--validate-yaml=false \
+			--validate-maintainers=false \
+			--check-version-increment=false"
 
 .PHONY: linting-helm-unittest
 linting-helm-unittest:               ## 🧪  Helm template unit tests
@@ -3581,8 +3601,13 @@ linting-security-kube-linter:        ## 🧱  Kubernetes best-practice linting
 	@echo "🧱 kube-linter scan of $(LINT_KUBE_LINTER_TARGET)..."
 	@command -v go >/dev/null 2>&1 || { echo "❌ go not found"; exit 1; }
 	@/bin/bash -c "set -euo pipefail; \
+		export GOPATH='$(LINT_GO_ROOT)/gopath'; \
+		export GOMODCACHE='$(LINT_GO_ROOT)/gopath/pkg/mod'; \
+		export GOCACHE='$(LINT_GO_ROOT)/gocache'; \
+		export GOBIN='$(LINT_GO_ROOT)/bin'; \
+		mkdir -p '$(LINT_GO_ROOT)/gopath' '$(LINT_GO_ROOT)/gopath/pkg/mod' '$(LINT_GO_ROOT)/gocache' '$(LINT_GO_ROOT)/bin'; \
 		go install golang.stackrox.io/kube-linter/cmd/kube-linter@latest >/dev/null; \
-		kube-linter lint '$(LINT_KUBE_LINTER_TARGET)'"
+		'$(LINT_GO_ROOT)/bin/kube-linter' lint '$(LINT_KUBE_LINTER_TARGET)'"
 
 .PHONY: linting-coverage-diff-cover
 linting-coverage-diff-cover:         ## 📊  Changed-lines coverage gate
@@ -3769,6 +3794,16 @@ ty:                                 ## ⚡  Ty type checker
 
 pyright:                            ## 🏷️  Pyright type-checking
 	@echo "🏷️ pyright $(TARGET)..." && $(VENV_DIR)/bin/pyright $(TARGET)
+
+pyright-pr:                         ## 🏷️  Pyright — check only files changed vs main (CI gate for PRs)
+	@base=$${BASE_BRANCH:-origin/main}; \
+	files=$$(git diff --name-only --diff-filter=ACM "$$base"...HEAD 2>/dev/null | grep '\.py$$' || true); \
+	if [ -z "$$files" ]; then \
+		echo "🏷️ pyright-pr: no Python files changed vs $$base — nothing to check"; \
+		exit 0; \
+	fi; \
+	echo "🏷️ pyright-pr: checking $$(echo $$files | wc -w) changed file(s) vs $$base"; \
+	$(VENV_DIR)/bin/pyright $$files
 
 radon: uv                           ## 📈  Complexity / MI metrics
 	@$(UV_BIN) tool run radon==$(RADON_VERSION) mi -s $(TARGET) && \
@@ -7798,9 +7833,9 @@ snyk-helm-test:                     ## ⎈ Test Helm charts for security issues
 # help: check-header           - Check specific file/directory (use: path=...)
 # help: fix-all-headers        - Fix ALL files with incorrect headers (modifies files!)
 # help: fix-all-headers-no-encoding - Fix headers without encoding line requirement
-# help: fix-all-headers-custom - Fix with custom config (year=YYYY license=... shebang=...)
+# help: fix-all-headers-custom - Fix with custom config (copyright_line=... license=... shebang=...)
 # help: interactive-fix-headers - Fix headers with prompts before each change
-# help: fix-header             - Fix specific file/directory (use: path=... authors=...)
+# help: fix-header             - Fix specific file/directory (use: path=... shebang=... encoding=no)
 # help: pre-commit-check-headers - Check headers for pre-commit hooks
 # help: pre-commit-fix-headers - Fix headers for pre-commit hooks
 
@@ -7854,10 +7889,11 @@ fix-all-headers-no-encoding:        ## 🔧 Fix headers without encoding line re
 	@python3 .github/tools/fix_file_headers.py --fix-all --no-encoding
 
 .PHONY: fix-all-headers-custom
-fix-all-headers-custom:             ## 🔧 Fix with custom config (year=YYYY license=... shebang=...)
+fix-all-headers-custom:             ## 🔧 Fix with custom config (copyright_line=... license=... shebang=...)
 	@echo "🔧 Fixing headers with custom configuration..."
-	@if [ -n "$(year)" ]; then \
-		extra_args="$$extra_args --copyright-year $(year)"; \
+	@extra_args=""; \
+	if [ -n "$(copyright_line)" ]; then \
+		extra_args="$$extra_args --copyright-line \"$(copyright_line)\""; \
 	fi; \
 	if [ -n "$(license)" ]; then \
 		extra_args="$$extra_args --license $(license)"; \
@@ -7865,26 +7901,22 @@ fix-all-headers-custom:             ## 🔧 Fix with custom config (year=YYYY li
 	if [ -n "$(shebang)" ]; then \
 		extra_args="$$extra_args --require-shebang $(shebang)"; \
 	fi; \
-	python3 .github/tools/fix_file_headers.py --fix-all $$extra_args
+	eval python3 .github/tools/fix_file_headers.py --fix-all $$extra_args
 
 interactive-fix-headers:            ## 💬 Fix headers with prompts before each change
 	@echo "💬 Interactively fixing Python file headers..."
 	@echo "You will be prompted before each change."
 	@python3 .github/tools/fix_file_headers.py --interactive
 
-fix-header:                         ## 🔧 Fix specific file/directory (use: path=... authors=... shebang=... encoding=no)
+fix-header:                         ## 🔧 Fix specific file/directory (use: path=... shebang=... encoding=no)
 	@if [ -z "$(path)" ]; then \
 		echo "❌ Error: 'path' parameter is required"; \
-		echo "💡 Usage: make fix-header path=<file_or_directory> [authors=\"Name1, Name2\"] [shebang=auto|always|never] [encoding=no]"; \
+		echo "💡 Usage: make fix-header path=<file_or_directory> [shebang=auto|always|never] [encoding=no]"; \
 		exit 1; \
 	fi
 	@echo "🔧 Fixing headers in $(path)"
 	@echo "⚠️  This will modify the file(s)!"
 	@extra_args=""; \
-	if [ -n "$(authors)" ]; then \
-		echo "   Authors: $(authors)"; \
-		extra_args="$$extra_args --authors \"$(authors)\""; \
-	fi; \
 	if [ -n "$(shebang)" ]; then \
 		echo "   Shebang requirement: $(shebang)"; \
 		extra_args="$$extra_args --require-shebang $(shebang)"; \

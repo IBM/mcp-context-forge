@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/services/mcp_client_chat_service.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Keval Mahajan
 
 MCP Client Service Module.
 
@@ -2411,7 +2410,7 @@ class MCPChatService:
         self._initialized = False
         self._tools: List[BaseTool] = []
 
-        logger.info("MCPChatService initialized for user: %s", user_id or "anonymous")
+        logger.info("MCPChatService initialized for user: %s", SecurityValidator.sanitize_log_message(user_id or "anonymous"))
 
     async def initialize(self) -> None:
         """
@@ -3019,7 +3018,7 @@ class MCPChatService:
             return
 
         await self.history_manager.clear_history(self.user_id)
-        logger.info("Conversation history cleared for user %s", self.user_id)
+        logger.info("Conversation history cleared for user %s", SecurityValidator.sanitize_log_message(self.user_id))
 
     async def shutdown(self) -> None:
         """

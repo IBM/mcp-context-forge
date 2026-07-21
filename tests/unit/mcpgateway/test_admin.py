@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/test_admin.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Tests for the admin module with improved coverage.
 This module tests the admin UI routes for ContextForge, ensuring
@@ -283,7 +282,7 @@ from mcpgateway.services.prompt_service import PromptNotFoundError, PromptServic
 from mcpgateway.services.resource_service import ResourceNotFoundError, ResourceService
 from mcpgateway.services.root_service import RootService, RootServiceNotFoundError
 from mcpgateway.services.server_service import ServerService
-from mcpgateway.services.team_management_service import UNSET
+from mcpgateway.services.team_management_service import JoinRequestNotFoundError, UNSET
 from mcpgateway.services.tool_service import ToolError, ToolNotFoundError, ToolService
 from mcpgateway.utils.passthrough_headers import PassthroughHeadersError
 from mcpgateway.utils.services_auth import decode_auth
@@ -1991,6 +1990,18 @@ class TestAdminToolRoutes:
         result = _build_auth_obj_from_form(form)
         assert result is None
 
+    @pytest.mark.parametrize("scalar_json", ["5", "null", "true", "3.14", '"a string"', '{"key": "X-API-Key"}'])
+    def test_build_auth_obj_from_form_non_list_json(self, scalar_json, mock_request, mock_db):
+        """A non-list JSON value for auth_headers is treated as "no headers", not a 500.
+
+        ``orjson.loads`` accepts any valid JSON scalar/object, so guarding against a non-list
+        value keeps a body like ``auth_headers=5`` from raising an uncaught TypeError when the
+        header list is iterated.
+        """
+        form = FakeForm({"auth_type": "authheaders", "auth_headers": scalar_json})
+        # No usable headers and no legacy key/value pair -> None (never raises).
+        assert _build_auth_obj_from_form(form) is None
+
     def test_build_auth_obj_from_form_basic_missing_password(self, mock_request, mock_db):
         """_build_auth_obj_from_form returns None for basic auth with missing password."""
         form = FakeForm({"auth_type": "basic", "auth_username": "user"})
@@ -2020,6 +2031,58 @@ class TestAdminToolRoutes:
             _build_auth_obj_from_form(form)
         assert exc_info.value.status_code == 422
         assert "oauth" in exc_info.value.detail.lower()
+
+    def test_build_auth_obj_from_form_authheaders_multi(self, mock_request, mock_db):
+        """_build_auth_obj_from_form encodes every populated header row."""
+        form = FakeForm(
+            {
+                "auth_type": "authheaders",
+                "auth_headers": json.dumps([{"key": "X-API-Key", "value": "secret"}, {"key": "X-Tenant", "value": "acme"}]),
+            }
+        )
+        auth_obj = _build_auth_obj_from_form(form)
+        assert auth_obj["auth_type"] == "authheaders"
+        assert decode_auth(auth_obj["auth_value"]) == {"X-API-Key": "secret", "X-Tenant": "acme"}
+
+    def test_build_auth_obj_from_form_authheaders_invalid_key_raises_422(self, mock_request, mock_db):
+        """The admin form rejects malformed header keys with a 422, matching POST /tools."""
+        from fastapi import HTTPException
+
+        form = FakeForm(
+            {
+                "auth_type": "authheaders",
+                "auth_headers": json.dumps([{"key": "Bad@Key!", "value": "secret"}]),
+            }
+        )
+        with pytest.raises(HTTPException) as exc_info:
+            _build_auth_obj_from_form(form)
+        assert exc_info.value.status_code == 422
+        assert "Invalid header key format" in exc_info.value.detail
+
+    def test_build_auth_obj_from_form_authheaders_excessive_headers_raises_422(self, mock_request, mock_db):
+        """The admin form enforces the same 100-header cap as POST /tools."""
+        from fastapi import HTTPException
+
+        form = FakeForm(
+            {
+                "auth_type": "authheaders",
+                "auth_headers": json.dumps([{"key": f"X-Header-{i}", "value": f"v{i}"} for i in range(101)]),
+            }
+        )
+        with pytest.raises(HTTPException) as exc_info:
+            _build_auth_obj_from_form(form)
+        assert exc_info.value.status_code == 422
+        assert "Maximum of 100 headers allowed" in exc_info.value.detail
+
+    def test_build_auth_obj_from_form_authheaders_blank_rows_still_none(self, mock_request, mock_db):
+        """Blank header rows submitted by the admin form still mean 'no auth', not a 422."""
+        form = FakeForm(
+            {
+                "auth_type": "authheaders",
+                "auth_headers": json.dumps([{"key": "", "value": ""}, {"key": "", "value": ""}]),
+            }
+        )
+        assert _build_auth_obj_from_form(form) is None
 
     @patch.object(ToolService, "set_tool_state")
     async def test_admin_set_tool_state_various_activate_values(self, mock_toggle_status, mock_request, mock_db):
@@ -2613,16 +2676,6 @@ class TestAdminResourceRoutes:
         assert isinstance(result, JSONResponse)
         assert result.status_code == 409
 
-        # Test ResourceNameConflictError
-        from mcpgateway.services.resource_service import ResourceNameConflictError
-
-        mock_register_resource.side_effect = ResourceNameConflictError("test_resource")
-        result = await admin_add_resource(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
-        assert isinstance(result, JSONResponse)
-        assert result.status_code == 409
-        body = json.loads(result.body)
-        assert "test_resource" in body.get("message", "")
-
         # Test generic exception
         mock_register_resource.side_effect = Exception("Generic error")
 
@@ -2847,16 +2900,6 @@ class TestAdminResourceRoutes:
         monkeypatch.setattr("mcpgateway.admin.resource_service.update_resource", mock_update)
         response = await admin_edit_resource("550e8400e29b41d4a7164466554400c1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})  # pragma: allowlist secret
         assert response.status_code == 409
-
-        # Test ResourceNameConflictError (lines 13307-13308)
-        from mcpgateway.services.resource_service import ResourceNameConflictError
-
-        mock_update = AsyncMock(side_effect=ResourceNameConflictError("dup-name"))
-        monkeypatch.setattr("mcpgateway.admin.resource_service.update_resource", mock_update)
-        response = await admin_edit_resource("550e8400e29b41d4a7164466554400c1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})  # pragma: allowlist secret
-        assert response.status_code == 409
-        body = json.loads(response.body)
-        assert "dup-name" in body.get("message", "")
 
         # Test ResourceValidationError (lines 13304-13305)
         from mcpgateway.services.resource_service import ResourceValidationError
@@ -19623,11 +19666,23 @@ class TestTeamJoinRequests:
         monkeypatch.setattr("mcpgateway.admin.settings.email_auth_enabled", True, raising=False)
         ts = MagicMock()
         ts.get_user_role_in_team = AsyncMock(return_value="owner")
-        ts.approve_join_request = AsyncMock(return_value=None)
+        ts.approve_join_request = AsyncMock(side_effect=JoinRequestNotFoundError("Join request not found or already processed"))
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: ts)
 
         result = await admin_approve_join_request("team-1", "req-1", mock_db, user={"email": "owner@test.com"})
         assert result.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_admin_approve_join_request_value_error(self, monkeypatch, allow_permission, mock_db):
+        monkeypatch.setattr("mcpgateway.admin.settings.email_auth_enabled", True, raising=False)
+        ts = MagicMock()
+        ts.get_user_role_in_team = AsyncMock(return_value="owner")
+        ts.approve_join_request = AsyncMock(side_effect=ValueError("some other validation error"))
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: ts)
+
+        result = await admin_approve_join_request("team-1", "req-1", mock_db, user={"email": "owner@test.com"})
+        assert result.status_code == 400
+        assert "some other validation error" in result.body.decode()
 
     @pytest.mark.asyncio
     async def test_admin_approve_join_request_exception(self, monkeypatch, allow_permission, mock_db):
@@ -19658,11 +19713,23 @@ class TestTeamJoinRequests:
         monkeypatch.setattr("mcpgateway.admin.settings.email_auth_enabled", True, raising=False)
         ts = MagicMock()
         ts.get_user_role_in_team = AsyncMock(return_value="owner")
-        ts.reject_join_request = AsyncMock(return_value=False)
+        ts.reject_join_request = AsyncMock(side_effect=JoinRequestNotFoundError("Join request not found or already processed"))
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: ts)
 
         result = await admin_reject_join_request("team-1", "req-1", mock_db, user={"email": "owner@test.com"})
         assert result.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_admin_reject_join_request_value_error(self, monkeypatch, allow_permission, mock_db):
+        monkeypatch.setattr("mcpgateway.admin.settings.email_auth_enabled", True, raising=False)
+        ts = MagicMock()
+        ts.get_user_role_in_team = AsyncMock(return_value="owner")
+        ts.reject_join_request = AsyncMock(side_effect=ValueError("some other validation error"))
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: ts)
+
+        result = await admin_reject_join_request("team-1", "req-1", mock_db, user={"email": "owner@test.com"})
+        assert result.status_code == 400
+        assert "some other validation error" in result.body.decode()
 
     @pytest.mark.asyncio
     async def test_admin_reject_join_request_email_auth_disabled(self, monkeypatch, allow_permission, mock_db):

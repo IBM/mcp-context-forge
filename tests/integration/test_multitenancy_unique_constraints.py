@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/integration/test_multitenancy_unique_constraints.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
 
 Integration tests for multi-tenant unique constraints (Bug #5146).

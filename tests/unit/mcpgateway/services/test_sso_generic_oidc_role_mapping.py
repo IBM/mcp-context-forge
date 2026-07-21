@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/services/test_sso_generic_oidc_role_mapping.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Test Generic OIDC role mapping functionality.
 Tests group extraction, role mapping, and role synchronization for generic OIDC providers.

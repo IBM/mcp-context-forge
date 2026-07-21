@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/admin.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Admin UI Routes for ContextForge AI Gateway.
 This module contains all the administrative UI endpoints for ContextForge AI Gateway.
@@ -146,6 +145,7 @@ from mcpgateway.schemas import (
     ToolMetrics,
     ToolRead,
     ToolUpdate,
+    _encode_auth_headers_list,
 )
 from mcpgateway.services.a2a_agent_plugin_binding_service import A2AAgentPluginBindingForbiddenError, A2AAgentPluginBindingNotFoundError, A2AAgentPluginBindingService
 from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService
@@ -176,12 +176,12 @@ from mcpgateway.services.performance_service import get_performance_service
 from mcpgateway.services.permission_service import PermissionService
 from mcpgateway.services.plugin_service import get_plugin_service
 from mcpgateway.services.prompt_service import PromptArgumentsJSONError, PromptNameConflictError, PromptNotFoundError, PromptService
-from mcpgateway.services.resource_service import ResourceNameConflictError, ResourceNotFoundError, ResourceService, ResourceURIConflictError, ResourceValidationError
+from mcpgateway.services.resource_service import ResourceNotFoundError, ResourceService, ResourceURIConflictError, ResourceValidationError
 from mcpgateway.services.root_service import RootService, RootServiceError, RootServiceNotFoundError
 from mcpgateway.services.server_service import ServerError, ServerLockConflictError, ServerNameConflictError, ServerNotFoundError, ServerService
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.tag_service import TagService
-from mcpgateway.services.team_management_service import TeamManagementService, UNSET
+from mcpgateway.services.team_management_service import JoinRequestNotFoundError, TeamManagementService, UNSET
 from mcpgateway.services.token_catalog_service import TokenCatalogService
 from mcpgateway.services.tool_service import ToolError, ToolLockConflictError, ToolNameConflictError, ToolNotFoundError, ToolService
 from mcpgateway.utils.create_jwt_token import create_jwt_token, get_jwt_token
@@ -697,13 +697,23 @@ async def get_hidden_sections_for_user(
                     check_any_team=True,
                 )
             except Exception as e:
-                LOGGER.warning(f"Error checking permission {required_permission} for user {user_email}: {e}")
+                LOGGER.warning(
+                    "Error checking permission %s for user %s: %s",
+                    SecurityValidator.sanitize_log_message(required_permission),
+                    SecurityValidator.sanitize_log_message(user_email),
+                    SecurityValidator.sanitize_log_message(str(e)),
+                )
                 has_permission = False
 
         # Hide section if user doesn't have permission
         if not has_permission:
             hidden.add(section)
-            LOGGER.debug(f"Hiding section '{section}' for user {user_email}: missing permission '{required_permission}'")
+            LOGGER.debug(
+                "Hiding section '%s' for user %s: missing permission '%s'",
+                SecurityValidator.sanitize_log_message(section),
+                SecurityValidator.sanitize_log_message(user_email),
+                SecurityValidator.sanitize_log_message(required_permission),
+            )
 
     return hidden
 
@@ -776,7 +786,7 @@ async def get_user_action_permissions(
             result[flag] = has_permission
         except Exception as e:
             # Fail-closed: deny permission on error
-            LOGGER.warning(f"Error checking {permission} for {user_email}: {e}")
+            LOGGER.warning("Error checking %s for %s: %s", SecurityValidator.sanitize_log_message(permission), SecurityValidator.sanitize_log_message(user_email), e)
             result[flag] = False
 
     return result
@@ -1526,7 +1536,7 @@ def get_user_id(user: Union[str, dict[str, Any], object] = None) -> str:
     if isinstance(user, dict):
         # Try multiple possible ID fields in order of preference.
         # Email is the primary key in the model, so that's our mostly likely result.
-        return user.get("id") or user.get("user_id") or user.get("sub") or user.get("email") or "unknown"
+        return user.get("id") or user.get("user_id") or get_user_email(user)
 
     return "unknown" if user is None else str(getattr(user, "id", user))
 
@@ -2907,7 +2917,7 @@ async def admin_servers_partial_html(
             LOGGER.debug(f"Filtering servers by team_id: {team_id}")
         else:
             # User is not a member of this team, return no results using SQLAlchemy's false()
-            LOGGER.warning(f"User {user_email} attempted to filter by team {team_id} but is not a member")
+            LOGGER.warning("User %s attempted to filter by team %s but is not a member", SecurityValidator.sanitize_log_message(user_email), SecurityValidator.sanitize_log_message(str(team_id)))
             query = query.where(false())
     else:
         # All Teams view: apply standard access conditions (owner, team, public)
@@ -3060,7 +3070,7 @@ async def admin_get_server(server_id: str, request: Request, db: Session = Depen
     except ServerNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
-        LOGGER.error(f"Error getting server {server_id}: {e}")
+        LOGGER.error("Error getting server %s: %s", SecurityValidator.sanitize_log_message(str(server_id)), e)
         raise e
 
 
@@ -3361,7 +3371,7 @@ async def admin_edit_server(
     except IntegrityError as ex:
         return ORJSONResponse(content=ErrorFormatter.format_database_error(ex), status_code=409)
     except PermissionError as e:
-        LOGGER.info(f"Permission denied for user {get_user_email(user)}: {e}")
+        LOGGER.info("Permission denied for user %s: %s", SecurityValidator.sanitize_log_message(get_user_email(user)), e)
         return ORJSONResponse(content={"message": str(e), "success": False}, status_code=403)
     except HTTPException:
         raise
@@ -3411,10 +3421,10 @@ async def admin_set_server_state(
     try:
         await server_service.set_server_state(db, server_id, activate, user_email=user_email)
     except PermissionError as e:
-        LOGGER.warning(f"Permission denied for user {user_email} setting server {server_id} state: {e}")
+        LOGGER.warning("Permission denied for user %s setting server %s state: %s", SecurityValidator.sanitize_log_message(user_email), SecurityValidator.sanitize_log_message(server_id), e)
         error_message = str(e)
     except ServerLockConflictError as e:
-        LOGGER.warning(f"Lock conflict for user {user_email} setting server {server_id} state: {e}")
+        LOGGER.warning("Lock conflict for user %s setting server %s state: %s", SecurityValidator.sanitize_log_message(user_email), SecurityValidator.sanitize_log_message(server_id), e)
         error_message = "Server is being modified by another request. Please try again."
     except Exception as e:
         LOGGER.error(f"Error setting server status: {e}")
@@ -3460,7 +3470,7 @@ async def admin_delete_server(server_id: str, request: Request, db: Session = De
         LOGGER.debug(f"User {user_email} is deleting server ID {server_id}")
         await server_service.delete_server(db, server_id, user_email=user_email, purge_metrics=purge_metrics)
     except PermissionError as e:
-        LOGGER.warning(f"Permission denied for user {get_user_email(user)} deleting server {server_id}: {e}")
+        LOGGER.warning("Permission denied for user %s deleting server %s: %s", SecurityValidator.sanitize_log_message(get_user_email(user)), SecurityValidator.sanitize_log_message(server_id), e)
         error_message = str(e)
     except Exception as e:
         LOGGER.error(f"Error deleting server: {e}")
@@ -3684,7 +3694,7 @@ async def admin_set_gateway_state(
     try:
         await gateway_service.set_gateway_state(db, gateway_id, activate, user_email=user_email)
     except PermissionError as e:
-        LOGGER.warning(f"Permission denied for user {user_email} setting gateway state {gateway_id}: {e}")
+        LOGGER.warning("Permission denied for user %s setting gateway state %s: %s", SecurityValidator.sanitize_log_message(user_email), SecurityValidator.sanitize_log_message(gateway_id), e)
         error_message = str(e)
     except Exception as e:
         LOGGER.error(f"Error setting gateway state: {e}")
@@ -7398,9 +7408,7 @@ async def admin_approve_join_request(
             return HTMLResponse(content='<div class="text-red-500">Only team owners can approve join requests</div>', status_code=403)
 
         # Approve join request
-        member = await team_service.approve_join_request(request_id, approved_by=user_email)
-        if not member:
-            return HTMLResponse(content='<div class="text-red-500">Join request not found</div>', status_code=404)
+        member = await team_service.approve_join_request(team_id, request_id, approved_by=user_email)
 
         response = HTMLResponse(
             content=f"""
@@ -7413,6 +7421,10 @@ async def admin_approve_join_request(
         response.headers["HX-Trigger"] = orjson.dumps({"adminTeamAction": {"teamId": team_id, "refreshJoinRequests": True, "delayMs": 1000}}).decode()
         return response
 
+    except JoinRequestNotFoundError as e:
+        return HTMLResponse(content=f'<div class="text-red-500">{html.escape(str(e))}</div>', status_code=404)
+    except ValueError as e:
+        return HTMLResponse(content=f'<div class="text-red-500">Error approving join request: {html.escape(str(e))}</div>', status_code=400)
     except Exception as e:
         LOGGER.error(f"Error approving join request {request_id}: {e}")
         return HTMLResponse(content=f'<div class="text-red-500">Error approving join request: {html.escape(str(e))}</div>', status_code=400)
@@ -7450,9 +7462,7 @@ async def admin_reject_join_request(
             return HTMLResponse(content='<div class="text-red-500">Only team owners can reject join requests</div>', status_code=403)
 
         # Reject join request
-        success = await team_service.reject_join_request(request_id, rejected_by=user_email)
-        if not success:
-            return HTMLResponse(content='<div class="text-red-500">Join request not found</div>', status_code=404)
+        await team_service.reject_join_request(team_id, request_id, rejected_by=user_email)
 
         response = HTMLResponse(
             content="""
@@ -7465,6 +7475,10 @@ async def admin_reject_join_request(
         response.headers["HX-Trigger"] = orjson.dumps({"adminTeamAction": {"teamId": team_id, "refreshJoinRequests": True, "delayMs": 1000}}).decode()
         return response
 
+    except JoinRequestNotFoundError as e:
+        return HTMLResponse(content=f'<div class="text-red-500">{html.escape(str(e))}</div>', status_code=404)
+    except ValueError as e:
+        return HTMLResponse(content=f'<div class="text-red-500">Error rejecting join request: {html.escape(str(e))}</div>', status_code=400)
     except Exception as e:
         LOGGER.error(f"Error rejecting join request {request_id}: {e}")
         return HTMLResponse(content=f'<div class="text-red-500">Error rejecting join request: {html.escape(str(e))}</div>', status_code=400)
@@ -11780,19 +11794,33 @@ async def admin_get_tool(tool_id: str, request: Request, db: Session = Depends(g
 def _build_auth_obj_from_form(form: Any) -> Optional[dict[str, Any]]:
     """Parse auth fields from a form and return a serialized auth object, or None.
 
+    Custom headers are validated by the same ``_encode_auth_headers_list`` helper the JSON
+    tool/gateway schemas use, so malformed header keys and oversized header sets are rejected
+    here with a 422 instead of being persisted and failing later at tool-invocation time.
+    Rows with a blank key are dropped first: the admin form submits empty rows for headers the
+    user never filled in, and those must keep meaning "no headers" rather than 422.
+
     Args:
         form: Multipart form data containing auth_type and credential fields.
 
     Returns:
         A dict with auth_type and encrypted auth_value, or None if no valid auth provided.
+
+    Raises:
+        HTTPException: 422 if auth_type is 'oauth' (unsupported on tools) or if the supplied
+            custom headers fail validation.
     """
     auth_headers_json = form.get("auth_headers") or ""
     auth_headers: list[dict[str, Any]] = []
     if auth_headers_json:
         try:
-            auth_headers = orjson.loads(auth_headers_json)
+            parsed_headers = orjson.loads(auth_headers_json)
         except (orjson.JSONDecodeError, ValueError):
-            auth_headers = []
+            parsed_headers = []
+        # orjson.loads accepts any JSON scalar (e.g. "5", "null", "true"), so guard against a
+        # non-list value here rather than letting it reach the list comprehension below and raise
+        # an uncaught TypeError (500). A non-list body simply means "no custom headers".
+        auth_headers = parsed_headers if isinstance(parsed_headers, list) else []
 
     auth_type = form.get("auth_type", "")
     if auth_type and auth_type.lower() == "oauth":
@@ -11812,12 +11840,14 @@ def _build_auth_obj_from_form(form: Any) -> Optional[dict[str, Any]]:
                 auth_value = encode_auth({"Authorization": f"Bearer {token}"})
                 auth_obj = {"auth_type": auth_type, "auth_value": auth_value}
         elif auth_type == "authheaders":
-            if auth_headers:
-                header_dict = {h.get("key"): h.get("value", "") for h in auth_headers if h.get("key")}
-                if header_dict:
-                    auth_value = encode_auth(header_dict)
-                    auth_obj = {"auth_type": auth_type, "auth_value": auth_value}
-            else:
+            populated_headers = [h for h in auth_headers if isinstance(h, dict) and h.get("key")]
+            if populated_headers:
+                try:
+                    auth_value = _encode_auth_headers_list(populated_headers)
+                except ValueError as exc:
+                    raise HTTPException(status_code=422, detail=str(exc)) from exc
+                auth_obj = {"auth_type": auth_type, "auth_value": auth_value}
+            elif not auth_headers:
                 header_key = form.get("auth_header_key", "")
                 header_value = form.get("auth_header_value", "")
                 if header_key and header_value:
@@ -12860,7 +12890,7 @@ async def admin_delete_gateway_rest(
             )
         return Response(status_code=204)
     except PermissionError as e:
-        LOGGER.warning(f"Permission denied for user {user_email} deleting gateway {gateway_id}: {e}")
+        LOGGER.warning("Permission denied for user %s deleting gateway %s: %s", SecurityValidator.sanitize_log_message(user_email), SecurityValidator.sanitize_log_message(gateway_id), e)
         return ORJSONResponse(content={"message": str(e), "success": False}, status_code=403)
     except GatewayNotFoundError as e:
         return ORJSONResponse(content={"message": str(e), "success": False}, status_code=404)
@@ -13132,7 +13162,7 @@ async def admin_delete_gateway(gateway_id: str, request: Request, db: Session = 
         if getattr(result, "status", None) == "deleting":
             accepted_message = "Gateway deletion accepted and pending cleanup."
     except PermissionError as e:
-        LOGGER.warning(f"Permission denied for user {user_email} deleting gateway {gateway_id}: {e}")
+        LOGGER.warning("Permission denied for user %s deleting gateway %s: %s", SecurityValidator.sanitize_log_message(user_email), SecurityValidator.sanitize_log_message(gateway_id), e)
         error_message = str(e)
     except Exception as e:
         LOGGER.error(f"Error deleting gateway: {e}")
@@ -13353,9 +13383,6 @@ async def admin_add_resource(request: Request, db: Session = Depends(get_db), us
         if isinstance(ex, ResourceValidationError):
             LOGGER.error(f"ResourceValidationError in admin_add_resource: {ex}")
             return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=422)
-        if isinstance(ex, ResourceNameConflictError):
-            LOGGER.error(f"ResourceNameConflictError in admin_add_resource: {ex}")
-            return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=409)
         if isinstance(ex, ResourceURIConflictError):
             LOGGER.error(f"ResourceURIConflictError in admin_add_resource: {ex}")
             return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=409)
@@ -13488,9 +13515,6 @@ async def admin_edit_resource(
         if isinstance(ex, ResourceValidationError):
             LOGGER.error(f"ResourceValidationError in admin_edit_resource: {ex}")
             return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=422)
-        if isinstance(ex, ResourceNameConflictError):
-            LOGGER.error(f"ResourceNameConflictError in admin_edit_resource: {ex}")
-            return ORJSONResponse(status_code=409, content={"message": str(ex), "success": False})
         if isinstance(ex, ResourceURIConflictError):
             LOGGER.error(f"ResourceURIConflictError in admin_edit_resource: {ex}")
             return ORJSONResponse(status_code=409, content={"message": str(ex), "success": False})

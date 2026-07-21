@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/live_gateway/protocol_compliance/test_oauth_authorization.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 OAuth 2.1 / Authorization compliance tests (MCP 2025-11-25 § Authorization).
 

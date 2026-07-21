@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/routers/tokens.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 JWT Token Catalog API endpoints.
 Provides comprehensive API token management with scoping, revocation, and analytics.
@@ -197,8 +196,8 @@ async def create_token(
 
         logger.info(
             "Admin %s creating token for user %s",
-            caller_email,
-            target_user_email,
+            SecurityValidator.sanitize_log_message(caller_email),
+            SecurityValidator.sanitize_log_message(target_user_email),
         )
 
     # Auto-inherit team_id from the caller's single team when not explicitly provided.
@@ -804,8 +803,8 @@ async def create_team_token(
 
         logger.info(
             "Admin %s creating team token for user %s",
-            caller_email,
-            target_user_email,
+            SecurityValidator.sanitize_log_message(caller_email),
+            SecurityValidator.sanitize_log_message(target_user_email),
         )
 
     service = TokenCatalogService(db)

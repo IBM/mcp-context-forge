@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/services/openapi_service.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 OpenAPI Service for ContextForge AI Gateway.
 This module provides services for fetching and extracting schemas from OpenAPI specifications.

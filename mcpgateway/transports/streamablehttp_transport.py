@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/transports/streamablehttp_transport.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Keval Mahajan
 
 Streamable HTTP Transport Implementation.
 This module implements Streamable Http transport for MCP
@@ -877,8 +876,11 @@ def get_user_email_from_context() -> str:
     """
     user = user_context_var.get()
     if isinstance(user, dict):
-        # First try 'email', then 'sub' (JWT standard claim)
-        return user.get("email") or user.get("sub") or "unknown"
+        # Use canonical email extraction
+        # First-Party
+        from mcpgateway.auth_context import get_user_email
+
+        return get_user_email(user)
     return str(user) if user else "unknown"
 
 
@@ -1385,13 +1387,19 @@ async def _send_streamable_http_json_response(send: Send, *, status_code: int, p
         send: ASGI send callable.
         status_code: HTTP status code for the response.
         payload: JSON-serializable response payload.
+
+    Note:
+        Content-Length is NOT manually set here to allow the compression
+        middleware (or ASGI server) to set it correctly after compression.
+        Setting it manually causes "Content-Length mismatch" errors when
+        compression is enabled (issue #5457).
     """
     body = orjson.dumps(payload)
     await send(
         {
             "type": "http.response.start",
             "status": status_code,
-            "headers": [(b"content-type", b"application/json"), (b"content-length", str(len(body)).encode())],
+            "headers": [(b"content-type", b"application/json")],
         }
     )
     await send({"type": "http.response.body", "body": body})
@@ -4250,7 +4258,6 @@ class SessionManagerWrapper:
                 # Return response to client
                 response_headers = [
                     (b"content-type", b"application/json"),
-                    (b"content-length", str(len(response.content)).encode()),
                 ]
                 if mcp_session_id != "not-provided":
                     response_headers.append((b"mcp-session-id", mcp_session_id.encode()))
@@ -4322,8 +4329,11 @@ class SessionManagerWrapper:
 
                     if response:
                         # Send forwarded response back to client
+                        # Note: Content-Length is NOT manually added to allow compression
+                        # middleware to set it correctly after compression (issue #5457).
+                        # We filter out transfer-encoding, content-encoding, and content-length
+                        # from the forwarded headers to let the middleware handle them.
                         response_headers = [(k.encode(), v.encode()) for k, v in response["headers"].items() if k.lower() not in ("transfer-encoding", "content-encoding", "content-length")]
-                        response_headers.append((b"content-length", str(len(response["body"])).encode()))
 
                         await send(
                             {
@@ -4441,9 +4451,10 @@ class SessionManagerWrapper:
                                 timeout=settings.mcpgateway_pool_rpc_forward_timeout,
                             )
 
+                        # Note: Content-Length is NOT manually set to allow compression
+                        # middleware to set it correctly after compression (issue #5457)
                         response_headers = [
                             (b"content-type", b"application/json"),
-                            (b"content-length", str(len(response.content)).encode()),
                             (b"mcp-session-id", mcp_session_id.encode()),
                         ]
 

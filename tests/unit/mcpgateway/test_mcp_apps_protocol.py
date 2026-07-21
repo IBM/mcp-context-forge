@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Protocol-facing MCP Apps behavior tests."""
+"""Location: ./tests/unit/mcpgateway/test_mcp_apps_protocol.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
+SPDX-License-Identifier: Apache-2.0
+
+Protocol-facing MCP Apps behavior tests.
+"""
 
 # Standard
 from types import SimpleNamespace

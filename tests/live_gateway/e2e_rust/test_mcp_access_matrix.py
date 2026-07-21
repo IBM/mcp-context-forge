@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/live_gateway/e2e_rust/test_mcp_access_matrix.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Compose-backed MCP role/access matrix tests for the Rust public transport path.
 

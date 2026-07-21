@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/playwright/test_innerhtml_guard.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Regression tests for innerHTML sanitizer guard (PR #3129).
 
@@ -14,6 +13,9 @@ correctly after converting from inline onclick to data-action + addEventListener
 # Third-Party
 import pytest
 from playwright.sync_api import expect
+
+# Local
+from .pages.admin_utils import wait_for_js_condition
 
 
 class TestToolTableButtons:
@@ -197,6 +199,11 @@ class TestMetricsRetryButtons:
         page = admin_page.page
         admin_page.navigate()  # Ensure we're on admin page with JS loaded
 
+        # metrics.js is lazy-loaded on demand; window.Admin.showMetricsError only
+        # becomes callable once the metrics tab has triggered its chunk load.
+        page.locator("#tab-metrics").click()
+        wait_for_js_condition(page, "typeof window.Admin.showMetricsError === 'function'", timeout=15000)
+
         result = page.evaluate("""
             () => {
                 // Ensure required container exists
@@ -245,6 +252,11 @@ class TestMetricsRetryButtons:
         """displayMetrics() empty-state refresh button should have working click handler."""
         page = admin_page.page
         admin_page.navigate()  # Ensure we're on admin page with JS loaded
+
+        # metrics.js is lazy-loaded on demand; window.Admin.displayMetrics only
+        # becomes callable once the metrics tab has triggered its chunk load.
+        page.locator("#tab-metrics").click()
+        wait_for_js_condition(page, "typeof window.Admin.displayMetrics === 'function'", timeout=15000)
 
         result = page.evaluate("""
             () => {
@@ -870,6 +882,13 @@ class TestChatServerSelection:
             ),
         )
 
+        # llmChat.js is lazy-loaded on demand; window.Admin.loadFeature itself only
+        # becomes callable once a chunk that pulls it in has loaded, so trigger the
+        # load the same way a real user would (clicking the chat tab) rather than
+        # calling window.Admin.loadFeature directly.
+        page.locator('[data-testid="llm-chat-tab"]').click()
+        wait_for_js_condition(page, "typeof window.Admin.loadVirtualServersForChat === 'function'", timeout=15000)
+
         try:
             result = page.evaluate("""
                 async () => {
@@ -934,6 +953,13 @@ class TestChatServerSelection:
                 body='{"data": [{"id": "srv-a", "name": "Server A", "isActive": true, "visibility": "public", "description": "A", "associatedTools": []}, {"id": "srv-b", "name": "Server B", "isActive": true, "visibility": "public", "description": "B", "associatedTools": []}]}',
             ),
         )
+
+        # llmChat.js is lazy-loaded on demand; window.Admin.loadFeature itself only
+        # becomes callable once a chunk that pulls it in has loaded, so trigger the
+        # load the same way a real user would (clicking the chat tab) rather than
+        # calling window.Admin.loadFeature directly.
+        page.locator('[data-testid="llm-chat-tab"]').click()
+        wait_for_js_condition(page, "typeof window.Admin.loadVirtualServersForChat === 'function'", timeout=15000)
 
         try:
             result = page.evaluate("""

@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/playwright/pages/admin_utils.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti, Marek Dano
 
 Shared utility functions for admin page interactions.
 """
@@ -10,15 +9,114 @@ Shared utility functions for admin page interactions.
 # Standard
 import logging
 import os
+import time
+from typing import Callable
 import urllib.parse
 
 # Third-Party
-from playwright.sync_api import Page
+from playwright.sync_api import Frame, Page
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 # Local
 from mcpgateway.admin import ADMIN_CSRF_COOKIE_NAME, ADMIN_CSRF_HEADER_NAME
 
 logger = logging.getLogger(__name__)
+
+
+def wait_for_js_condition(target: Page | Frame, expression: str, timeout: int = 30000, polling: int = 100) -> None:
+    """Poll a boolean JS expression via ``evaluate()`` until it is truthy.
+
+    ``Page.wait_for_function``/``Frame.wait_for_function`` compile their predicate with
+    ``eval()``-equivalent semantics, which strict CSP (``script-src 'self'``, no
+    ``unsafe-eval``) rejects immediately with an ``EvalError`` right after navigation.
+    ``evaluate()`` is not subject to that restriction, so poll manually instead.
+
+    Args:
+        target: Page or Frame to evaluate the expression against.
+        expression: JS boolean expression to poll.
+        timeout: Maximum time to wait in milliseconds.
+        polling: Interval between polls in milliseconds.
+
+    Raises:
+        PlaywrightTimeoutError: If the expression never evaluates truthy within ``timeout``.
+    """
+    deadline = time.monotonic() + timeout / 1000
+    last_exc: Exception | None = None
+    while True:
+        try:
+            if target.evaluate(expression):
+                return
+            last_exc = None
+        except Exception as exc:  # pylint: disable=broad-except
+            last_exc = exc
+            logger.debug("wait_for_js_condition: evaluate() raised while polling %r: %s", expression, exc)
+        if time.monotonic() >= deadline:
+            break
+        target.wait_for_timeout(polling)
+    raise PlaywrightTimeoutError(f"Condition not met within {timeout}ms: {expression}") from last_exc
+
+
+def wait_for_ui_by_retries(
+    page: Page,
+    predicate: Callable[[], bool],
+    retries: int,
+    delay_ms: Callable[[int], int] | None = None,
+) -> bool:
+    """Poll ``predicate()`` until truthy, bounded by a fixed attempt count.
+
+    Use for API-poll style retries where each attempt is cheap and uniform.
+
+    Args:
+        page: Playwright page, used for ``wait_for_timeout`` between attempts.
+        predicate: Zero-arg callable returning a truthy value once polling should stop.
+        retries: Maximum number of attempts.
+        delay_ms: Optional callable mapping the 0-indexed attempt number to a backoff
+            delay in milliseconds, applied before the next attempt.
+
+    Returns:
+        True if predicate() returned truthy before exhausting retries.
+    """
+    for attempt in range(retries):
+        if predicate():
+            return True
+        if attempt + 1 >= retries:
+            return False
+        if delay_ms is not None:
+            page.wait_for_timeout(delay_ms(attempt))
+    return False
+
+
+def wait_for_ui_by_deadline(
+    page: Page,
+    predicate: Callable[[], bool],
+    deadline_seconds: float,
+    delay_ms: Callable[[int], int] | None = None,
+) -> bool:
+    """Poll ``predicate()`` until truthy, bounded by a wall-clock deadline.
+
+    Use for loops that also perform slow UI actions (navigation, reload) between
+    checks, where attempt count isn't a meaningful bound.
+
+    Args:
+        page: Playwright page, used for ``wait_for_timeout`` between attempts.
+        predicate: Zero-arg callable returning a truthy value once polling should stop.
+        deadline_seconds: Maximum wall-clock time to keep polling, in seconds.
+        delay_ms: Optional callable mapping the 0-indexed attempt number to a backoff
+            delay in milliseconds, applied before the next attempt.
+
+    Returns:
+        True if predicate() returned truthy before the deadline elapsed.
+    """
+    deadline = time.monotonic() + deadline_seconds
+    attempt = 0
+    while True:
+        if predicate():
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        if delay_ms is not None:
+            page.wait_for_timeout(delay_ms(attempt))
+        attempt += 1
 
 
 def _get_auth_headers(page: Page) -> dict:
@@ -107,16 +205,19 @@ def wait_for_entity_deleted(page: Page, endpoint: str, name: str, retries: int =
         True if entity disappeared within retries, False otherwise.
     """
     headers = _get_auth_headers(page)
-    for attempt in range(retries):
-        url = f"/admin/{endpoint}?per_page=500&cache_bust=del{attempt}"
+
+    def _not_found() -> bool:
+        url = f"/admin/{endpoint}?per_page=500&cache_bust=del{_not_found.calls}"
+        _not_found.calls += 1
         response = page.request.get(url, headers=headers)
-        if response.ok:
-            payload = response.json()
-            data = payload if isinstance(payload, list) else payload.get("data", [])
-            if not any(item.get("name") == name for item in data):
-                return True
-        page.wait_for_timeout(min(100 * (2**attempt), 800))
-    return False
+        if not response.ok:
+            return False
+        payload = response.json()
+        data = payload if isinstance(payload, list) else payload.get("data", [])
+        return not any(item.get("name") == name for item in data)
+
+    _not_found.calls = 0
+    return wait_for_ui_by_retries(page, _not_found, retries=retries, delay_ms=lambda attempt: min(100 * (2**attempt), 800))
 
 
 def find_tool(page: Page, tool_name: str, retries: int = 5):

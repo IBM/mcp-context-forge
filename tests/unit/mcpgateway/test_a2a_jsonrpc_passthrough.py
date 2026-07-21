@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/test_a2a_jsonrpc_passthrough.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Rakhi Dutta
 
 A2A JSON-RPC Passthrough Endpoint testing.
 

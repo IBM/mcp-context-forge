@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/services/team_invitation_service.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Team Invitation Service.
 This module provides team invitation creation, management, and acceptance
@@ -252,7 +251,12 @@ class TeamInvitationService:
             self.db.add(invitation)
             self.db.commit()
 
-            logger.info("Created invitation for %s to team %s by %s", SecurityValidator.sanitize_log_message(email), SecurityValidator.sanitize_log_message(team_id), invited_by)
+            logger.info(
+                "Created invitation for %s to team %s by %s",
+                SecurityValidator.sanitize_log_message(email),
+                SecurityValidator.sanitize_log_message(team_id),
+                SecurityValidator.sanitize_log_message(invited_by),
+            )
             return invitation
 
         except Exception as e:
@@ -501,7 +505,7 @@ class TeamInvitationService:
             invitation.is_active = False
             self.db.commit()
 
-            logger.info("Invitation %s revoked by %s", invitation_id, revoked_by)
+            logger.info("Invitation %s revoked by %s", SecurityValidator.sanitize_log_message(invitation_id), SecurityValidator.sanitize_log_message(revoked_by))
             return True
 
         except Exception as e:

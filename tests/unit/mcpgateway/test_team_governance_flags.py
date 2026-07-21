@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/test_team_governance_flags.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Tests for team governance feature flags: allow_team_creation, allow_team_join_requests,
 allow_team_invitations, max_teams_per_user, personal_team_prefix, and
@@ -441,7 +440,7 @@ class TestMaxTeamsInApproveJoinRequest:
         with patch("mcpgateway.services.team_management_service.settings") as mock_settings:
             mock_settings.max_teams_per_user = 5
             with pytest.raises(ValueError, match="maximum team limit"):
-                await service.approve_join_request(request_id="req-1", approved_by="admin@example.com")
+                await service.approve_join_request(team_id="team-1", request_id="req-1", approved_by="admin@example.com")
 
 
 class TestAdminJoinRequestFlag:

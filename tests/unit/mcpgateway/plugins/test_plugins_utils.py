@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/plugins/test_plugins_utils.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Unit tests for mcpgateway.plugins.utils.build_request_extensions() (Task B1 / G0)
 and mcpgateway.plugins.utils.record_plugin_metrics() (Task B2 / G1).
@@ -486,6 +485,29 @@ class TestRecordPluginMetricsS4Validation:
         dropped_records = [r.getMessage() for r in caplog.records if "Dropped" in r.getMessage()]
         assert any("custom_tags" in msg and "not in the explicit string allowlist" in msg for msg in dropped_records)
 
+    def test_bool_value_bypasses_the_string_and_numeric_field_name_allowlists(self, caplog):
+        """A bool value is accepted unconditionally, regardless of field name -- unlike
+        str/int/float values, bools are never checked against _SAFE_STRING_FIELD_NAMES or
+        _SAFE_NUMERIC_FIELD_NAMES. Mirrors the real encoded_exfil_detection.redacted field:
+        `redacted` is not a member of either allowlist, yet the value must still survive.
+        """
+        mock_service = _make_observability_service_mock()
+        mock_session = MagicMock()
+
+        metadata = {"encoded_exfil_detection": {"redacted": True}}
+
+        with (
+            patch("mcpgateway.services.observability_service.ObservabilityService", return_value=mock_service),
+            patch("mcpgateway.db.SessionLocal", return_value=mock_session),
+            caplog.at_level(logging.DEBUG),
+        ):
+            record_plugin_metrics("trace-1", metadata)
+
+        attrs = mock_service.start_span.call_args.kwargs["attributes"]
+        assert attrs["redacted"] is True
+        dropped_records = [r.getMessage() for r in caplog.records if "Dropped" in r.getMessage()]
+        assert not any("redacted" in msg for msg in dropped_records)
+
     def test_key_scan_is_bounded_not_just_accepted_count(self):
         """Invalid keys don't get a free pass: only the first _MAX_PLUGIN_KEYS items of
         the raw dict are ever inspected, so a valid key placed after that window is
@@ -800,3 +822,40 @@ class TestRecordPluginMetricsG2OTelExport:
         assert mock_service.start_span.call_count == 2
         assert mock_service.end_span.call_count == 2
         mock_session.commit.assert_called_once()
+
+
+class TestRecordPluginMetricsIssue5554FieldAllowlist:
+    """Issue #5554 / cpex-plugins#129: extend the S4 allowlists so the 5 non-pii_filter
+    bundled plugins' metrics fields survive sanitization instead of being silently
+    dropped as not-yet-allowlisted field names.
+    """
+
+    def test_new_plugin_fields_survive_sanitization(self):
+        """One representative field per new plugin, all in a single call, all must
+        reach start_span's attributes -- proves each name was added to the allowlist,
+        not just charset/length-valid by coincidence.
+        """
+        mock_service = _make_observability_service_mock()
+        mock_session = MagicMock()
+
+        metadata = {
+            "secrets_detection": {"secret_types": "aws_key", "total_blocked": 1},
+            "encoded_exfil_detection": {"encoding_types": "base64"},
+            "url_reputation": {"reputation_categories": "malware", "total_checked": 4},
+            "rate_limiter": {"backend": "redis", "allowed": 1, "throttled": 0},
+            "retry_with_backoff": {"retry_count": 2, "retry_delay_ms": 250},
+        }
+
+        with (
+            patch("mcpgateway.services.observability_service.ObservabilityService", return_value=mock_service),
+            patch("mcpgateway.db.SessionLocal", return_value=mock_session),
+        ):
+            record_plugin_metrics("trace-1", metadata)
+
+        attrs_by_plugin = {call.kwargs["resource_name"]: call.kwargs["attributes"] for call in mock_service.start_span.call_args_list}
+
+        assert attrs_by_plugin["secrets_detection"] == {"secret_types": "aws_key", "total_blocked": 1}
+        assert attrs_by_plugin["encoded_exfil_detection"] == {"encoding_types": "base64"}
+        assert attrs_by_plugin["url_reputation"] == {"reputation_categories": "malware", "total_checked": 4}
+        assert attrs_by_plugin["rate_limiter"] == {"backend": "redis", "allowed": 1, "throttled": 0}
+        assert attrs_by_plugin["retry_with_backoff"] == {"retry_count": 2, "retry_delay_ms": 250}

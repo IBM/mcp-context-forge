@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/services/test_team_management_service.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Comprehensive tests for Team Management Service functionality.
 """
@@ -10,8 +9,9 @@ Comprehensive tests for Team Management Service functionality.
 # Standard
 import asyncio
 import base64
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import uuid4
 
 # Third-Party
 import orjson
@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.db import EmailTeam, EmailTeamJoinRequest, EmailTeamMember, EmailUser
-from mcpgateway.services.team_management_service import TeamManagementService, TeamMemberLimitExceededError, get_effective_max_members
+from mcpgateway.services.team_management_service import JoinRequestNotFoundError, TeamManagementService, TeamMemberLimitExceededError, get_effective_max_members
 
 
 class TestGetEffectiveMaxMembers:
@@ -1308,10 +1308,45 @@ class TestTeamManagementService:
         """Test approve_join_request when request is missing."""
         mock_db.query.return_value.filter.return_value.first.return_value = None
 
-        with pytest.raises(ValueError, match="not found"):
-            await service.approve_join_request("req-1", "admin@example.com")
+        with pytest.raises(JoinRequestNotFoundError, match="not found"):
+            await service.approve_join_request("team-1", "req-1", "admin@example.com")
 
+        filter_args = mock_db.query.return_value.filter.call_args.args
+        assert len(filter_args) == 3
+        assert filter_args[1].left.name == "team_id"
+        assert filter_args[1].right.value == "team-1"
         mock_db.rollback.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_approve_join_request_rejects_request_from_different_team(self, test_db):
+        """Approving with Team A path must not approve Team B's pending request."""
+        suffix = uuid4().hex
+        owner_email = f"owner-{suffix}@example.com"
+        user_email = f"user-{suffix}@example.com"
+        team_a_id = f"team-a-{suffix}"
+        team_b_id = f"team-b-{suffix}"
+        request_id = f"request-{suffix}"
+
+        test_db.add_all(
+            [
+                EmailUser(email=owner_email, password_hash="hash"),
+                EmailUser(email=user_email, password_hash="hash"),
+                EmailTeam(id=team_a_id, name="Team A", slug=f"team-a-{suffix}", created_by=owner_email),
+                EmailTeam(id=team_b_id, name="Team B", slug=f"team-b-{suffix}", created_by=owner_email),
+                EmailTeamJoinRequest(id=request_id, team_id=team_b_id, user_email=user_email, status="pending", expires_at=datetime.now(timezone.utc) + timedelta(days=7)),
+            ]
+        )
+        test_db.commit()
+
+        real_service = TeamManagementService(test_db)
+        real_service._get_user_team_count = MagicMock(return_value=0)
+
+        with pytest.raises(JoinRequestNotFoundError, match="not found"):
+            await real_service.approve_join_request(team_a_id, request_id, owner_email)
+
+        join_request = test_db.query(EmailTeamJoinRequest).filter(EmailTeamJoinRequest.id == request_id).one()
+        assert join_request.status == "pending"
+        assert test_db.query(EmailTeamMember).filter(EmailTeamMember.team_id == team_b_id, EmailTeamMember.user_email == user_email).count() == 0
 
     @pytest.mark.asyncio
     async def test_approve_join_request_expired(self, service, mock_db):
@@ -1321,7 +1356,7 @@ class TestTeamManagementService:
         mock_db.query.return_value.filter.return_value.first.return_value = join_request
 
         with pytest.raises(ValueError, match="expired"):
-            await service.approve_join_request("req-1", "admin@example.com")
+            await service.approve_join_request("team-1", "req-1", "admin@example.com")
 
         assert join_request.status == "expired"
         mock_db.commit.assert_called_once()
@@ -1360,7 +1395,7 @@ class TestTeamManagementService:
             patch("mcpgateway.services.team_management_service.auth_cache.invalidate_team_membership", new=AsyncMock()),
             patch("mcpgateway.services.team_management_service.admin_stats_cache.invalidate_teams", new=AsyncMock()),
         ):
-            result = await service.approve_join_request("req-1", "admin@example.com")
+            result = await service.approve_join_request("team-1", "req-1", "admin@example.com")
 
         assert result is member
         mock_db.flush.assert_called_once()
@@ -1417,7 +1452,7 @@ class TestTeamManagementService:
                 patch("mcpgateway.services.team_management_service.auth_cache.invalidate_team_membership", new=AsyncMock()),
                 patch("mcpgateway.services.team_management_service.admin_stats_cache.invalidate_teams", new=AsyncMock()),
             ):
-                result = await service.approve_join_request("req-1", "admin@example.com")
+                result = await service.approve_join_request("team-1", "req-1", "admin@example.com")
 
         assert result is member
         mock_role_service.get_role_by_name.assert_called_once_with("viewer", scope="team")
@@ -1470,7 +1505,7 @@ class TestTeamManagementService:
                 patch("mcpgateway.services.team_management_service.auth_cache.invalidate_team_membership", new=AsyncMock()),
                 patch("mcpgateway.services.team_management_service.admin_stats_cache.invalidate_teams", new=AsyncMock()),
             ):
-                result = await service.approve_join_request("req-1", "admin@example.com")
+                result = await service.approve_join_request("team-1", "req-1", "admin@example.com")
 
         # Should still return member even without role
         assert result is member
@@ -1496,7 +1531,7 @@ class TestTeamManagementService:
 
             with patch.object(service, "get_team_by_id", new=AsyncMock(return_value=mock_team)):
                 with pytest.raises(TeamMemberLimitExceededError, match="maximum member limit"):
-                    await service.approve_join_request("req-1", "admin@example.com")
+                    await service.approve_join_request("team-1", "req-1", "admin@example.com")
 
         mock_db.rollback.assert_called_once()
 
@@ -1514,7 +1549,7 @@ class TestTeamManagementService:
 
             with patch.object(service, "get_team_by_id", new=AsyncMock(return_value=None)):
                 with pytest.raises(ValueError, match="not found or inactive"):
-                    await service.approve_join_request("req-1", "admin@example.com")
+                    await service.approve_join_request("team-1", "req-1", "admin@example.com")
 
         mock_db.rollback.assert_called_once()
 
@@ -1526,7 +1561,7 @@ class TestTeamManagementService:
         join_request.team_id = "team-1"
         mock_db.query.return_value.filter.return_value.first.return_value = join_request
 
-        result = await service.reject_join_request("req-1", "admin@example.com")
+        result = await service.reject_join_request("team-1", "req-1", "admin@example.com")
 
         assert result is True
         assert join_request.status == "rejected"
@@ -1537,10 +1572,44 @@ class TestTeamManagementService:
         """Test rejecting missing join request raises error."""
         mock_db.query.return_value.filter.return_value.first.return_value = None
 
-        with pytest.raises(ValueError, match="not found"):
-            await service.reject_join_request("req-1", "admin@example.com")
+        with pytest.raises(JoinRequestNotFoundError, match="not found"):
+            await service.reject_join_request("team-1", "req-1", "admin@example.com")
 
+        filter_args = mock_db.query.return_value.filter.call_args.args
+        assert len(filter_args) == 3
+        assert filter_args[1].left.name == "team_id"
+        assert filter_args[1].right.value == "team-1"
         mock_db.rollback.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_reject_join_request_rejects_request_from_different_team(self, test_db):
+        """Rejecting with Team A path must not reject Team B's pending request."""
+        suffix = uuid4().hex
+        owner_email = f"owner-{suffix}@example.com"
+        user_email = f"user-{suffix}@example.com"
+        team_a_id = f"team-a-{suffix}"
+        team_b_id = f"team-b-{suffix}"
+        request_id = f"request-{suffix}"
+
+        test_db.add_all(
+            [
+                EmailUser(email=owner_email, password_hash="hash"),
+                EmailUser(email=user_email, password_hash="hash"),
+                EmailTeam(id=team_a_id, name="Team A", slug=f"team-a-{suffix}", created_by=owner_email),
+                EmailTeam(id=team_b_id, name="Team B", slug=f"team-b-{suffix}", created_by=owner_email),
+                EmailTeamJoinRequest(id=request_id, team_id=team_b_id, user_email=user_email, status="pending", expires_at=datetime.now(timezone.utc) + timedelta(days=7)),
+            ]
+        )
+        test_db.commit()
+
+        real_service = TeamManagementService(test_db)
+
+        with pytest.raises(JoinRequestNotFoundError, match="not found"):
+            await real_service.reject_join_request(team_a_id, request_id, owner_email)
+
+        join_request = test_db.query(EmailTeamJoinRequest).filter(EmailTeamJoinRequest.id == request_id).one()
+        assert join_request.status == "pending"
+        assert join_request.reviewed_by is None
 
     @pytest.mark.asyncio
     async def test_get_user_join_requests_with_team_filter(self, service, mock_db):

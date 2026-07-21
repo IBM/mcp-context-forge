@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/common/validators.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti, Madhav Kandukuri
 
 SecurityValidator for ContextForge
 This module defines the `SecurityValidator` class, which provides centralized, configurable
@@ -1526,16 +1525,23 @@ class SecurityValidator:
         SSRF attacks and unauthorized proxy usage. It performs:
         1. FQDN normalization (strips trailing dots to prevent bypass)
         2. Allowlist enforcement against provided host patterns
-        3. Unconditional blocking of private IPs, loopback, and link-local addresses
+        3. Conditional blocking of private IPs, loopback, and link-local addresses
+           (when ssrf_protection_enabled=true, the default)
         4. Standard URL validation (scheme, structure, XSS patterns)
         5. DNS resolution capture for outbound IP pinning
 
+        **Security Note - SSRF Protection:**
+        When ssrf_protection_enabled=true (default), private IPs (RFC 1918), loopback
+        addresses, link-local addresses, carrier-grade NAT, and other restricted ranges
+        are blocked regardless of allowlist membership. When ssrf_protection_enabled=false
+        (for development/testing), only allowlist enforcement applies.
+
         **Security Note - DNS Rebinding Mitigation:**
         This validation resolves DNS at validation time, verifies all resolved addresses are
-        safe, and returns the validated hostname plus a pinned resolved IP. Callers must use
-        the pinned IP for the outbound connection while preserving the original hostname in the
-        HTTP Host header and TLS SNI context. This closes the validation-time vs connection-time
-        DNS rebinding gap for the gateway test flow.
+        safe (subject to SSRF flag), and returns the validated hostname plus a pinned resolved
+        IP. Callers must use the pinned IP for the outbound connection while preserving the
+        original hostname in the HTTP Host header and TLS SNI context. This closes the
+        validation-time vs connection-time DNS rebinding gap for the gateway test flow.
 
         Args:
             value (str): The URL to validate
@@ -1576,7 +1582,7 @@ class SecurityValidator:
                 ...
             ValueError: Gateway URL is not allowed
 
-            Private IP address (blocked unconditionally):
+            Private IP address (blocked when ssrf_protection_enabled=true, the default):
 
             >>> await SecurityValidator.validate_gateway_test_url(  # doctest: +SKIP
             ...     'https://192.168.1.1/',
@@ -1587,7 +1593,7 @@ class SecurityValidator:
                 ...
             ValueError: Gateway URL is not allowed
 
-            Loopback address (blocked unconditionally):
+            Loopback address (blocked when ssrf_protection_enabled=true, the default):
 
             >>> await SecurityValidator.validate_gateway_test_url(  # doctest: +SKIP
             ...     'https://127.0.0.1/',
@@ -1597,6 +1603,17 @@ class SecurityValidator:
             Traceback (most recent call last):
                 ...
             ValueError: Gateway URL is not allowed
+
+            Private IP allowed when SSRF protection disabled:
+
+            >>> # With ssrf_protection_enabled=false
+            >>> result = await SecurityValidator.validate_gateway_test_url(  # doctest: +SKIP
+            ...     'https://192.168.1.1/',
+            ...     ['192.168.1.1'],
+            ...     'Gateway URL'
+            ... )  # doctest: +SKIP
+            >>> result["validated_url"]  # doctest: +SKIP
+            'https://192.168.1.1/'
         """
         if not value:
             raise ValueError(f"{field_name} cannot be empty")
@@ -1622,8 +1639,10 @@ class SecurityValidator:
         # Example: evil.com. should be normalized to evil.com before allowlist check
         hostname_normalized = hostname.lower().rstrip(".")
 
-        # Unconditionally block private IPs, loopback, and link-local addresses
-        # This prevents testing internal services regardless of allowlist
+        # Apply additional SSRF protections only when global SSRF protection is enabled.
+        # This ensures consistency with other endpoints that respect ssrf_protection_enabled.
+        # When SSRF protection is disabled (e.g., for development/testing), the gateway test
+        # endpoint will still enforce allowlist-based restrictions but won't block private IPs.
         try:
             ip_addr = ipaddress.ip_address(hostname_normalized)
             # Unwrap IPv4-mapped IPv6 addresses (e.g., ::ffff:127.0.0.1 -> 127.0.0.1)
@@ -1645,12 +1664,21 @@ class SecurityValidator:
             # Block reserved (240.0.0.0/4)
             # Block carrier-grade NAT (100.64.0.0/10)
             if ip_addr.is_private or ip_addr.is_loopback or ip_addr.is_link_local or ip_addr.is_unspecified or ip_addr.is_multicast or ip_addr.is_reserved or is_cgnat:
-                raise ValueError(f"{field_name} is not allowed")
+                if settings.ssrf_protection_enabled:
+                    # Block private IPs, loopback, and link-local addresses
+                    # This prevents testing internal services regardless of allowlist
+                    raise ValueError(f"{field_name} is not allowed")
+                # SSRF protection is disabled - log when direct IP addresses to private/internal
+                # networks are allowed through for forensic visibility
+                logger.warning(
+                    "Gateway test URL validation: SSRF protection bypass - private/internal IP allowed (ssrf_protection_enabled=false). target=%s ip_type=%s",
+                    hostname_normalized,
+                    "private" if ip_addr.is_private else "loopback" if ip_addr.is_loopback else "link-local" if ip_addr.is_link_local else "cgnat",
+                )
         except ValueError as e:
-            # If it's our security error, re-raise it
+            # Re-raise if it's our security error, otherwise it's not a valid IP (continue to hostname check)
             if "is not allowed" in str(e):
                 raise
-            # Otherwise it's not a valid IP, continue to hostname check
 
         # Resolve hostname to check for private IPs and capture a safe IP for outbound pinning.
         # Run DNS resolution in an executor to avoid blocking the event loop and bound it
@@ -1678,13 +1706,30 @@ class SecurityValidator:
                         cgnat_network = ipaddress.IPv4Network("100.64.0.0/10")
                         is_cgnat = resolved_ip in cgnat_network
 
-                    if resolved_ip.is_private or resolved_ip.is_loopback or resolved_ip.is_link_local or resolved_ip.is_unspecified or resolved_ip.is_multicast or resolved_ip.is_reserved or is_cgnat:
-                        raise ValueError(f"{field_name} is not allowed")
+                    # Check for dangerous network ranges
+                    is_dangerous = (
+                        resolved_ip.is_private or resolved_ip.is_loopback or resolved_ip.is_link_local or resolved_ip.is_unspecified or resolved_ip.is_multicast or resolved_ip.is_reserved or is_cgnat
+                    )
+
+                    if is_dangerous:
+                        if settings.ssrf_protection_enabled:
+                            # Apply SSRF checks to resolved IPs only when protection is enabled
+                            raise ValueError(f"{field_name} is not allowed")
+                        # SSRF protection is disabled - log when DNS resolves to private/internal IPs
+                        # for forensic visibility
+                        logger.warning(
+                            "Gateway test URL validation: SSRF protection bypass - hostname resolves to private/internal IP (ssrf_protection_enabled=false). hostname=%s resolved_ip=%s ip_type=%s",
+                            hostname_normalized,
+                            str(resolved_ip),
+                            "private" if resolved_ip.is_private else "loopback" if resolved_ip.is_loopback else "link-local" if resolved_ip.is_link_local else "cgnat",
+                        )
 
                     resolved_ips.append(str(resolved_ip))
                 except ValueError as e:
+                    # Re-raise if it's our security error, otherwise skip this address record
                     if "is not allowed" in str(e):
                         raise
+                    # ValueError from ipaddress.ip_address() - invalid format, skip this record
                     continue
         except (TimeoutError, asyncio.TimeoutError, socket.gaierror, socket.herror):
             # DNS resolution failed - reject with generic message

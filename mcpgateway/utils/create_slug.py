@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/utils/create_slug.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Manav Gupta
 
 Slug generation utilities for ContextForge.
 This module provides utilities for creating URL-friendly slugs from text.

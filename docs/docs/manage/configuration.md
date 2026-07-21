@@ -953,7 +953,17 @@ The gateway includes built-in observability features for tracking HTTP requests,
 | `AUTO_REFRESH_SERVERS` | Auto refresh tools/prompts/resources        | `false` | bool    |
 | `FILELOCK_NAME`         | File lock for leader election             | `gateway_service_leader.lock` | string |
 | `PRIMARY_WORKER_LOCK_PATH` | Override path for the primary-worker election lock file (per-host; default is a port-scoped temp file) | (none) | string |
+| `PRIMARY_WORKER_ELECTION_BACKEND` | Primary-worker election: `filelock` (per host) or `redis` (per cluster) | `filelock` | enum |
+| `PRIMARY_WORKER_REDIS_KEY` | Redis lease key for cross-instance election | `mcpgw:primary_worker` | string |
+| `PRIMARY_WORKER_LEASE_TTL` | Redis lease TTL (secs) | `15` | int > 0 |
+| `PRIMARY_WORKER_HEARTBEAT_INTERVAL` | Lease renewal interval (secs; `< ttl/2`) | `5` | int > 0 |
+| `PRIMARY_WORKER_REDIS_UNAVAILABLE_POLICY` | Redis down: `fail_closed` or `filelock_fallback` | `fail_closed` | enum |
 | `DEFAULT_ROOTS`         | Default root paths for resources          | `[]`    | JSON array |
+
+!!! note "Primary-worker election notes (redis backend)"
+    - **Namespace the key when sharing Redis.** `PRIMARY_WORKER_REDIS_KEY` defaults to `mcpgw:primary_worker`. Two independent gateway deployments pointed at the same Redis instance/DB will collide on this key (electing one primary *across both*). Give each deployment its own key (e.g. suffix the environment name) when sharing Redis.
+    - **Keep `HEARTBEAT_INTERVAL < LEASE_TTL / 2`.** Otherwise the lease can expire before it is renewed, causing continuous re-election. A misconfiguration logs a warning at startup (it does not fail the boot).
+    - **Boot-time Redis outage doesn't auto-recover.** If Redis is unreachable when a worker starts, that worker applies `PRIMARY_WORKER_REDIS_UNAVAILABLE_POLICY` (fail-closed or filelock fallback) and stays in that state for its lifetime — it does not start a background loop that would later pick up a recovered Redis. Restart the worker once Redis is healthy to resume cross-instance election.
 
 ### Database Connection Pool
 
@@ -994,6 +1004,19 @@ The gateway includes built-in observability features for tracking HTTP requests,
 | `REDIS_SSL_CERTFILE`      | Path to client certificate (mTLS) | (none) | file path           |
 | `REDIS_SSL_KEYFILE`       | Path to client private key (mTLS) | (none) | file path           |
 | `REDIS_SSL_CHECK_HOSTNAME`| Verify hostname in TLS cert | `true`   | bool                     |
+
+!!! warning "Redis Server Capacity"
+    `REDIS_MAX_CONNECTIONS` is the **client-side** pool size per worker. The total connections to Redis must not exceed the server-side `maxclients` limit.
+
+    **Formula:** `replicas × workers × REDIS_MAX_CONNECTIONS < maxclients`
+
+    **Example:** 10 replicas × 24 workers × 50 pool = 12,000 connections (within 15000 maxclients limit)
+
+    If you scale replicas or increase workers, ensure Redis `maxclients` is configured accordingly:
+    - docker-compose: Set via `--maxclients` argument
+    - Helm: Set `redis.maxclients` in values.yaml
+
+    See [Scaling Guide](scale.md#redis-sizing) for details.
 
 !!! tip "Cache Backend Selection"
 

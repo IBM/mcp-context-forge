@@ -81,8 +81,6 @@ RUN if [ "$ENABLE_RUST" != "true" ]; then \
         printf 'echo "Rust MCP runtime not built into this image. Rebuild with --build-arg ENABLE_RUST=true." >&2\n' >> /build/target/release/contextforge-mcp-runtime; \
         printf 'exit 1\n' >> /build/target/release/contextforge-mcp-runtime; \
         chmod +x /build/target/release/contextforge-mcp-runtime; \
-
-        exit 0; \
     fi
 
 # Install system deps + Rust toolchain in a single layer (only if ENABLE_RUST=true)

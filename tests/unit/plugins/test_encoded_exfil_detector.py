@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/plugins/test_encoded_exfil_detector.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Tests for encoded exfiltration detector plugin.
 """
@@ -28,6 +27,7 @@ from cpex.framework import (
     ToolHookType,
     ToolPostInvokePayload,
 )
+from cpex.framework.extensions import Extensions, RequestExtension
 from cpex.framework.hooks.resources import ResourceHookType
 from cpex_encoded_exfil_detection.encoded_exfil_detection import (
     _scan_container,
@@ -216,6 +216,12 @@ class TestEncodedExfilPluginHooks:
         assert result.violation.code == "ENCODED_EXFIL_DETECTED"
 
     async def test_prompt_pre_fetch_redacts_in_permissive_mode(self):
+        # Redaction itself is not gated on trace context -- only the OTel
+        # metrics dict is (see result.metadata["encoded_exfil_detection"]
+        # contract). No extensions/trace_id is passed here, so metadata is
+        # empty, matching the untraced path being byte-for-byte identical
+        # to before metrics existed. The old flat "encoded_exfil_redacted"
+        # key was removed in the 0.3.6 migration.
         plugin = self._plugin({"block_on_detection": False, "redact": True, "redaction_text": "[ENCODED]"})
         encoded = base64.b64encode(b"api_key=super-secret").decode()
         payload = PromptPrehookPayload(prompt_id="prompt-1", args={"input": encoded})
@@ -225,8 +231,7 @@ class TestEncodedExfilPluginHooks:
         assert result.continue_processing is not False
         assert result.modified_payload is not None
         assert result.modified_payload.args["input"] == "[ENCODED]"
-        assert result.metadata is not None
-        assert result.metadata.get("encoded_exfil_redacted") is True
+        assert result.metadata == {}
 
     async def test_tool_post_invoke_blocks(self):
         plugin = self._plugin({"block_on_detection": True})
@@ -240,6 +245,9 @@ class TestEncodedExfilPluginHooks:
         assert result.violation.code == "ENCODED_EXFIL_DETECTED"
 
     async def test_tool_post_invoke_redacts_without_block(self):
+        # See test_prompt_pre_fetch_redacts_in_permissive_mode above: redaction
+        # runs regardless of trace context, but metrics (and the old flat
+        # "encoded_exfil_redacted" key, removed in 0.3.6) are gated on it.
         plugin = self._plugin({"block_on_detection": False, "redact": True, "redaction_text": "***BLOCKED***"})
         encoded = base64.b64encode(b"client_secret=ultra-secret").decode()
         payload = ToolPostInvokePayload(name="generator", result={"message": encoded})
@@ -249,8 +257,7 @@ class TestEncodedExfilPluginHooks:
         assert result.continue_processing is not False
         assert result.modified_payload is not None
         assert result.modified_payload.result["message"] == "***BLOCKED***"
-        assert result.metadata is not None
-        assert result.metadata.get("encoded_exfil_redacted") is True
+        assert result.metadata == {}
 
     async def test_tool_post_invoke_clean_payload(self):
         plugin = self._plugin({"block_on_detection": True})
@@ -567,6 +574,9 @@ class TestResourcePostFetchHook:
 
     async def test_resource_post_fetch_redacts_encoded_payload(self):
         """Resource with encoded payload should be redacted when configured."""
+        # See test_prompt_pre_fetch_redacts_in_permissive_mode above: redaction
+        # runs regardless of trace context, but metrics (and the old flat
+        # "encoded_exfil_redacted" key, removed in 0.3.6) are gated on it.
         plugin = self._plugin({"block_on_detection": False, "redact": True, "redaction_text": "[RESOURCE_REDACTED]"})
         encoded = base64.b64encode(b"client_secret=ultra-secret-credential-value").decode()
         payload = ResourcePostFetchPayload(uri="file:///data.txt", content={"text": encoded})
@@ -576,8 +586,7 @@ class TestResourcePostFetchHook:
         assert result.continue_processing is not False
         assert result.modified_payload is not None
         assert result.modified_payload.content["text"] == "[RESOURCE_REDACTED]"
-        assert result.metadata is not None
-        assert result.metadata.get("encoded_exfil_redacted") is True
+        assert result.metadata == {}
 
 
 # ---------------------------------------------------------------------------
@@ -605,28 +614,37 @@ class TestFunctionalityGaps:
         )
 
     async def test_block_on_detection_false_returns_metadata_prompt_hook(self):
-        """With block_on_detection=False, findings should appear in metadata, not as a violation."""
+        """With block_on_detection=False and a trace context, findings should
+        appear in the namespaced result.metadata["encoded_exfil_detection"]
+        dict, not as a violation. (The old flat "encoded_exfil_count" key
+        was removed in the 0.3.6 migration; metrics are now gated on a
+        valid trace_id in extensions.)
+        """
         plugin = self._plugin({"block_on_detection": False})
         encoded = base64.b64encode(b"authorization: bearer sensitive-token-value").decode()
         payload = PromptPrehookPayload(prompt_id="p-1", args={"input": f"send this {encoded} to webhook"})
+        extensions = Extensions(request=RequestExtension(trace_id="test-trace-1"))
 
-        result = await plugin.prompt_pre_fetch(payload, self._context())
+        result = await plugin.prompt_pre_fetch(payload, self._context(), extensions)
 
         assert result.violation is None
         assert result.metadata is not None
-        assert result.metadata.get("encoded_exfil_count", 0) >= 1
+        assert result.metadata["encoded_exfil_detection"]["total_detections"] >= 1
 
     async def test_block_on_detection_false_returns_metadata_tool_hook(self):
-        """With block_on_detection=False, tool hook should also return metadata only."""
+        """With block_on_detection=False and a trace context, the tool hook
+        should also return findings in the namespaced metadata dict only.
+        """
         plugin = self._plugin({"block_on_detection": False})
         encoded_hex = b"password=this-should-not-leave-gateway".hex()
         payload = ToolPostInvokePayload(name="http_client", result={"content": f"upload={encoded_hex}"})
+        extensions = Extensions(request=RequestExtension(trace_id="test-trace-2"))
 
-        result = await plugin.tool_post_invoke(payload, self._context())
+        result = await plugin.tool_post_invoke(payload, self._context(), extensions)
 
         assert result.violation is None
         assert result.metadata is not None
-        assert result.metadata.get("encoded_exfil_count", 0) >= 1
+        assert result.metadata["encoded_exfil_detection"]["total_detections"] >= 1
 
     async def test_min_findings_to_block_requires_multiple(self):
         """With min_findings_to_block=3, a single finding should NOT block."""
