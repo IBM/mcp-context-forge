@@ -179,6 +179,21 @@ class TestJwtPayloadEmailResolution:
 
         assert auth_context.get_jwt_user_email_from_payload(payload) is None
 
+    @pytest.mark.parametrize(
+        ("payload", "expected"),
+        [
+            ({"sub": USER_ID}, True),
+            ({"sub": f"  {USER_ID}  "}, True),
+            ({"sub": "legacy@example.com"}, False),
+            ({"email": "owner@example.com"}, False),
+            ({"sub": ""}, False),
+            ({"sub": None}, False),
+        ],
+    )
+    def test_jwt_subject_is_uuid(self, payload, expected):
+        """Only UUID subjects are treated as unresolved UUID identity candidates."""
+        assert auth_context.jwt_subject_is_uuid(payload) is expected
+
     @pytest.mark.asyncio
     async def test_uuid_sub_resolves_with_injected_resolver(self):
         """UUID-sub fallback uses the injected resolver only when needed."""

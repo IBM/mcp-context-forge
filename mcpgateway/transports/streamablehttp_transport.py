@@ -5095,11 +5095,12 @@ class _StreamableHttpAuthHandler:
 
             # First-Party
             from mcpgateway.auth import _get_auth_context_batched_sync, resolve_trace_team_name  # pylint: disable=import-outside-toplevel
+            from mcpgateway.auth_context import jwt_subject_is_uuid  # pylint: disable=import-outside-toplevel
             from mcpgateway.cache.auth_cache import CachedAuthContext, get_auth_cache  # pylint: disable=import-outside-toplevel
 
             jti = user_payload.get("jti")
             user_email = await _resolve_jwt_user_email_for_streamable(user_payload)
-            if not user_email and settings.require_user_in_db:
+            if not user_email and settings.require_user_in_db and jwt_subject_is_uuid(user_payload):
                 return await self._send_error(detail="User not found in database", headers={"WWW-Authenticate": "Bearer"})
             nested_user = user_payload.get("user", {})
             nested_is_admin = nested_user.get("is_admin", False) if isinstance(nested_user, dict) else False
