@@ -11084,8 +11084,9 @@ async def _handle_tools_list_rpc(
         # Release DB connection early to prevent idle-in-transaction under load
         db.commit()
         db.close()
-        serialized_tools = serializer_func(tools)
-        for tool, payload in zip(tools, serialized_tools):
+        visible_tools = filter_model_visible_tools(tools)
+        serialized_tools = serializer_func(visible_tools)
+        for tool, payload in zip(visible_tools, serialized_tools, strict=True):
             custom_name = getattr(tool, "custom_name", None)
             if isinstance(custom_name, str) and custom_name:
                 payload["name"] = custom_name
