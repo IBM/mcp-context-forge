@@ -31,6 +31,7 @@ from mcpgateway.cache.global_config_cache import global_config_cache
 from mcpgateway.cache.tool_lookup_cache import tool_lookup_cache
 from mcpgateway.config import settings
 from mcpgateway.db import Gateway as DbGateway
+from mcpgateway.db import Server as DbServer
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.schemas import AuthenticationValues, ToolCreate, ToolRead, ToolUpdate
 from mcpgateway.services.tool_service import (
@@ -9644,6 +9645,49 @@ class TestRustMcpExecutionPlan:
         ):
             with pytest.raises(ToolInvocationError, match="ambiguous"):
                 await tool_service.prepare_rust_mcp_tool_execution(MagicMock(), "tool-one", user_email="user@example.com", token_teams=["team-a"])
+
+    @pytest.mark.asyncio
+    async def test_prepare_rust_mcp_tool_execution_rejects_server_custom_name_original_name_collision(self, tool_service, test_db):
+        """A custom-name/original-name collision on one server must fail closed."""
+        server = DbServer(id="server-alias-collision", name="Alias Collision Server")
+        custom_name_gateway = DbGateway(id="gateway-custom-name-match", name="Custom Name Gateway", slug="custom-name-gateway", url="https://custom.example/mcp", capabilities={})
+        original_name_gateway = DbGateway(id="gateway-original-name-match", name="Original Name Gateway", slug="original-name-gateway", url="https://original.example/mcp", capabilities={})
+        custom_name_match = DbTool(
+            id="tool-custom-name-match",
+            original_name="upstream-custom-name",
+            custom_name="shared-name",
+            custom_name_slug="shared-name",
+            input_schema={},
+            visibility="public",
+            gateway=custom_name_gateway,
+        )
+        original_name_match = DbTool(
+            id="tool-original-name-match",
+            original_name="shared-name",
+            custom_name="different-name",
+            custom_name_slug="different-name",
+            input_schema={},
+            visibility="public",
+            gateway=original_name_gateway,
+        )
+        server.tools.extend([custom_name_match, original_name_match])
+        test_db.add_all([server, custom_name_gateway, original_name_gateway])
+        test_db.flush()
+        candidates = tool_service._load_invocable_tools(test_db, "shared-name", server_id=server.id)
+        assert {tool.id for tool in candidates} == {"tool-custom-name-match", "tool-original-name-match"}
+        assert all(tool.name != "shared-name" for tool in candidates)
+        cache = self._cache_mock(None)
+
+        with (
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=cache),
+            patch("mcpgateway.services.tool_service.current_trace_id", MagicMock(get=MagicMock(return_value=None))),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+            patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=None)),
+        ):
+            with pytest.raises(ToolInvocationError, match="ambiguous"):
+                await tool_service.prepare_rust_mcp_tool_execution(test_db, "shared-name", server_id=server.id, user_email="user@example.com")
+
+        cache.get.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_prepare_rust_mcp_tool_execution_selects_highest_priority_accessible_candidate(self, tool_service):

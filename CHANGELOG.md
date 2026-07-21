@@ -15,6 +15,7 @@
 
 ### Changed
 
+- **MCP Tool Names and Virtual-Server Aliases** ([#5553](https://github.com/IBM/mcp-context-forge/pull/5553)) - Virtual servers now expose custom tool names and resolve them to upstream names. Tool names follow the MCP 2025-11-25 character set and 128-character limit. **Breaking:** slash-delimited tool names are no longer accepted; rename them to use letters, numbers, periods, underscores, or hyphens.
 - **Stricter `authheaders` Key Validation (Gateways, Tools, A2A Agents)** ([#5314](https://github.com/IBM/mcp-context-forge/pull/5314)) - Header-key validation is now shared across all create/update schemas and the admin form. Keys with embedded whitespace (e.g. `X Api Key`) were previously accepted and stored as invalid HTTP header names that failed at invocation time; they are now rejected with a 422 at config time, and surrounding whitespace is trimmed before storage. Gateway or A2A configs relying on the old behavior will need their header keys corrected on the next update.
 
 ## [1.0.5] - 2026-07-07 - API Versioning, Auth Hardening, A2A Compatibility, and Build Consolidation
