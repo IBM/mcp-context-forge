@@ -1,10 +1,7 @@
 # 🔐 Security Policy
 
-## ⚠️ Beta Software Notice
+**Current Version: 1.0.6**
 
-**Current Version: 1.0.5**
-
-ContextForge is currently in beta and should be treated as such until the 1.0 release. While we implement comprehensive security measures and follow best practices, important limitations exist:
 
 ### Admin UI is Development-Only
 
