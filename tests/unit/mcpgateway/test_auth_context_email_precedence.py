@@ -13,6 +13,9 @@ and consistency across visibility checks and audit logs.
 # Standard
 from unittest.mock import MagicMock
 
+# Third-Party
+import pytest
+
 # First-Party
 from mcpgateway import admin
 from mcpgateway import auth_context
@@ -145,3 +148,69 @@ class TestEmailSubPrecedenceConsistency:
 
         assert auth_context.get_user_email(user_obj) == "falsy@example.com"
         assert admin.get_user_email(user_obj) == "falsy@example.com"
+
+
+class TestJwtPayloadEmailResolution:
+    """Test JWT email extraction for UUID-sub tokens."""
+
+    USER_ID = "11111111-1111-1111-1111-111111111111"
+
+    def test_signed_user_email_wins_over_uuid_sub(self):
+        """Signed nested user.email is the common UUID-sub token shape."""
+        payload = {"sub": self.USER_ID, "user": {"email": "owner@example.com"}}
+
+        assert auth_context.get_jwt_user_email_from_payload(payload) == "owner@example.com"
+
+    def test_top_level_email_used_when_nested_email_missing(self):
+        """Top-level email is accepted before legacy sub fallback."""
+        payload = {"sub": self.USER_ID, "email": "top-level@example.com"}
+
+        assert auth_context.get_jwt_user_email_from_payload(payload) == "top-level@example.com"
+
+    def test_legacy_email_sub_is_returned(self):
+        """Legacy email-sub tokens continue to resolve without DB lookup."""
+        payload = {"sub": "legacy@example.com"}
+
+        assert auth_context.get_jwt_user_email_from_payload(payload) == "legacy@example.com"
+
+    def test_uuid_sub_without_metadata_is_not_returned_as_email(self):
+        """A raw UUID subject is never treated as user_email."""
+        payload = {"sub": self.USER_ID}
+
+        assert auth_context.get_jwt_user_email_from_payload(payload) is None
+
+    @pytest.mark.asyncio
+    async def test_uuid_sub_resolves_with_injected_resolver(self):
+        """UUID-sub fallback uses the injected resolver only when needed."""
+        calls = []
+
+        async def resolve_user_id(user_id: str) -> str | None:
+            calls.append(user_id)
+            return "resolved@example.com"
+
+        payload = {"sub": self.USER_ID}
+
+        assert await auth_context.resolve_jwt_user_email_from_payload(payload, uuid_email_resolver=resolve_user_id) == "resolved@example.com"
+        assert calls == [self.USER_ID]
+
+    @pytest.mark.asyncio
+    async def test_unknown_uuid_sub_resolves_to_none(self):
+        """Unknown UUID subjects stay unresolved instead of becoming user_email."""
+
+        async def resolve_user_id(_user_id: str) -> str | None:
+            return None
+
+        payload = {"sub": self.USER_ID}
+
+        assert await auth_context.resolve_jwt_user_email_from_payload(payload, uuid_email_resolver=resolve_user_id) is None
+
+    @pytest.mark.asyncio
+    async def test_signed_user_email_does_not_call_uuid_resolver(self):
+        """Well-formed UUID-sub API tokens avoid a DB lookup."""
+
+        async def resolve_user_id(_user_id: str) -> str | None:
+            raise AssertionError("resolver should not be called")
+
+        payload = {"sub": self.USER_ID, "user": {"email": "owner@example.com"}}
+
+        assert await auth_context.resolve_jwt_user_email_from_payload(payload, uuid_email_resolver=resolve_user_id) == "owner@example.com"
