@@ -15,7 +15,7 @@ describe("useTheme", () => {
 
   it("should handle localStorage unavailability gracefully", () => {
     // Mock localStorage.getItem to throw an error
-    const spy = vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+    const spy = vi.spyOn(window.localStorage, "getItem").mockImplementation(() => {
       throw new Error("localStorage is disabled");
     });
 
@@ -190,7 +190,7 @@ describe("useTheme", () => {
     }));
     vi.stubGlobal("matchMedia", mockMatchMedia);
 
-    const getItemSpy = vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+    const getItemSpy = vi.spyOn(window.localStorage, "getItem").mockImplementation(() => {
       throw new Error("localStorage read blocked");
     });
 
@@ -276,7 +276,7 @@ describe("useTheme", () => {
     }));
     vi.stubGlobal("matchMedia", mockMatchMedia);
 
-    const getItemSpy = vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+    const getItemSpy = vi.spyOn(window.localStorage, "getItem").mockImplementation(() => {
       throw new Error("localStorage blocked");
     });
 
@@ -297,7 +297,7 @@ describe("useTheme", () => {
     }));
     vi.stubGlobal("matchMedia", mockMatchMedia);
 
-    const setItemSpy = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+    const setItemSpy = vi.spyOn(window.localStorage, "setItem").mockImplementation(() => {
       throw new Error("localStorage write blocked");
     });
 

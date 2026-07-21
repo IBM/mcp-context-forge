@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { render } from "@testing-library/react";
 import { toast } from "sonner";
 import { Users } from "./Users";
+import { DeleteUserDialog } from "@/components/users/DeleteUserDialog";
 import { RouterProvider } from "@/router";
 import { I18nProvider } from "@/i18n";
 import type { ReactElement } from "react";
@@ -50,7 +51,7 @@ vi.mock("@/components/users/UserForm", () => ({
     user?: { email: string };
     onToggle: () => void;
     onOptimisticCreate: (data: { email: string; full_name: string }) => void;
-    onSuccess: () => void;
+    onSuccess: (result?: { email: string }) => void;
     onError: (data: { email: string }) => void;
   }) => (
     <div data-testid="mock-user-form">
@@ -59,7 +60,8 @@ vi.mock("@/components/users/UserForm", () => ({
       <button onClick={() => onOptimisticCreate({ email: "opt@example.com", full_name: "Opt" })}>
         Optimistic Create
       </button>
-      <button onClick={onSuccess}>Success Form</button>
+      <button onClick={() => onSuccess()}>Success Form</button>
+      <button onClick={() => onSuccess(user)}>Success With Result</button>
       <button onClick={() => onError({ email: "opt@example.com" })}>Error Form</button>
     </div>
   ),
@@ -72,6 +74,7 @@ import * as AuthContextModule from "@/auth/AuthContext";
 const mockUseAuthContext = vi.mocked(AuthContextModule.useAuthContext);
 const mockToastSuccess = vi.mocked(toast.success);
 const mockToastError = vi.mocked(toast.error);
+const mockApiDelete = api.delete as ReturnType<typeof vi.fn>;
 
 function makeAuthContext(email = "admin@example.com") {
   return {
@@ -407,7 +410,7 @@ describe("Users", () => {
       expect(screen.getByText("user0@example.com")).toBeInTheDocument();
     });
 
-    vi.mocked(api.delete).mockResolvedValueOnce({ success: true, message: "Deleted" });
+    mockApiDelete.mockResolvedValueOnce({ success: true, message: "Deleted" });
 
     await user.click(screen.getByRole("button", { name: "Actions for User 0" }));
     await user.click(await screen.findByRole("menuitem", { name: /^delete$/i }));
@@ -437,7 +440,7 @@ describe("Users", () => {
     });
 
     let resolveDelete!: (val: unknown) => void;
-    vi.mocked(api.delete).mockImplementationOnce(
+    mockApiDelete.mockImplementationOnce(
       () =>
         new Promise((resolve) => {
           resolveDelete = resolve;
@@ -474,7 +477,7 @@ describe("Users", () => {
       expect(screen.getByText("user0@example.com")).toBeInTheDocument();
     });
 
-    vi.mocked(api.delete).mockRejectedValueOnce(new Error("500 Internal Server Error"));
+    mockApiDelete.mockRejectedValueOnce(new Error("500 Internal Server Error"));
 
     const actionsButton = screen.getByRole("button", { name: "Actions for User 0" });
     await user.click(actionsButton);
@@ -520,7 +523,7 @@ describe("Users", () => {
     await waitFor(() => {
       expect(mockToastError).toHaveBeenCalledWith("You cannot delete your own account");
     });
-    expect(api.delete).not.toHaveBeenCalled();
+    expect(mockApiDelete).not.toHaveBeenCalled();
 
     expect(screen.queryByRole("button", { name: /delete user/i })).not.toBeInTheDocument();
     expect(screen.getByText("admin@example.com")).toBeInTheDocument();
@@ -545,7 +548,7 @@ describe("Users", () => {
       { detail: "Cannot delete your own account" },
       "HTTP 400",
     );
-    vi.mocked(api.delete).mockRejectedValueOnce(selfDeleteError);
+    mockApiDelete.mockRejectedValueOnce(selfDeleteError);
 
     const actionsButton = screen.getByRole("button", { name: "Actions for User 0" });
     await user.click(actionsButton);
@@ -582,7 +585,7 @@ describe("Users", () => {
       { detail: "Cannot delete the last remaining admin" },
       "HTTP 400",
     );
-    vi.mocked(api.delete).mockRejectedValueOnce(lastAdminError);
+    mockApiDelete.mockRejectedValueOnce(lastAdminError);
 
     const actionsButton = screen.getByRole("button", { name: "Actions for User 0" });
     await user.click(actionsButton);
@@ -615,7 +618,7 @@ describe("Users", () => {
     });
 
     const notFoundError = new ApiError(404, { detail: "User not found" }, "HTTP 404");
-    vi.mocked(api.delete).mockRejectedValueOnce(notFoundError);
+    mockApiDelete.mockRejectedValueOnce(notFoundError);
 
     const actionsButton = screen.getByRole("button", { name: "Actions for User 0" });
     await user.click(actionsButton);
@@ -658,7 +661,7 @@ describe("Users", () => {
 
     expect(screen.getByText("user0@example.com")).toBeInTheDocument();
 
-    expect(api.delete).not.toHaveBeenCalled();
+    expect(mockApiDelete).not.toHaveBeenCalled();
     expect(mockToastSuccess).not.toHaveBeenCalled();
     expect(mockToastError).not.toHaveBeenCalled();
   });
@@ -719,6 +722,32 @@ describe("Users", () => {
 
     // After clicking, the form should be visible (would need to check for form elements)
     expect(screen.queryByText("No users found")).not.toBeInTheDocument();
+  });
+
+  it("opens the edit form from a row action and applies the updated user on success", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.get).mockResolvedValueOnce({
+      users: createMockUsers(0, 1),
+      nextCursor: null,
+    });
+
+    renderWithRouter(<Users />);
+    await waitFor(() => {
+      expect(screen.getByText("user0@example.com")).toBeInTheDocument();
+    });
+
+    // Edit from the row actions opens the form pre-filled for that user.
+    await user.click(screen.getByRole("button", { name: "Actions for User 0" }));
+    await user.click(await screen.findByRole("menuitem", { name: /^edit$/i }));
+    expect(screen.getByText("Edit user: user0@example.com")).toBeInTheDocument();
+
+    // Completing the edit with a result patches the list and shows a success toast.
+    await user.click(screen.getByRole("button", { name: "Success With Result" }));
+
+    await waitFor(() => {
+      expect(mockToastSuccess).toHaveBeenCalled();
+    });
+    expect(screen.queryByTestId("mock-user-form")).not.toBeInTheDocument();
   });
 
   it("closes user form when toggled", async () => {
@@ -930,5 +959,23 @@ describe("Users", () => {
 
     // Check that api.get was called exactly twice (once for initial load, once for first load more)
     expect(api.get).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("DeleteUserDialog", () => {
+  it("renders Deleting... text when isDeleting is true", () => {
+    render(
+      <I18nProvider>
+        <DeleteUserDialog
+          isOpen={true}
+          isDeleting={true}
+          userName="testuser"
+          userEmail="testuser@example.com"
+          onCancel={vi.fn()}
+          onConfirm={vi.fn()}
+        />
+      </I18nProvider>,
+    );
+    expect(screen.getByText("Deleting...")).toBeInTheDocument();
   });
 });

@@ -118,4 +118,4 @@ jobs:
       # -----------------------------------------------------------
       - name: 🧪  Run tests with Vitest
         working-directory: ./client
-        run: npm run test:run
+        run: npm run test:coverage
