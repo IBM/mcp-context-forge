@@ -1,7 +1,5 @@
 # 🔐 Security Policy
 
-## ⚠️ Beta Software Notice
-
 **Current Version: 1.0.6**
 
 
