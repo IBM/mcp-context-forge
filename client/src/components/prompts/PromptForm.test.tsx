@@ -1,3 +1,4 @@
+import type { ComponentProps } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -9,6 +10,7 @@ import { PromptForm } from "./PromptForm";
 vi.mock("@/api/client", () => ({
   api: {
     post: vi.fn(),
+    put: vi.fn(),
   },
 }));
 
@@ -17,17 +19,40 @@ vi.mock("@/auth/AuthContext", () => ({
 }));
 
 const mockPost = vi.mocked(api.post);
+const mockPut = vi.mocked(api.put);
 const mockUseAuthContext = vi.mocked(useAuthContext);
 
-function renderPromptForm(props?: { onToggle?: () => void; onSuccess?: () => void }) {
+function renderPromptForm(props?: {
+  onToggle?: () => void;
+  onSuccess?: () => void;
+  prompt?: ComponentProps<typeof PromptForm>["prompt"];
+}) {
   return renderWithProviders(
     <PromptForm
       isOpen={true}
       onToggle={props?.onToggle ?? vi.fn()}
       onSuccess={props?.onSuccess ?? vi.fn()}
+      prompt={props?.prompt}
     />,
   );
 }
+
+const editablePrompt = {
+  id: "prompt-1",
+  name: "existing_prompt",
+  originalName: "existing_prompt",
+  customName: "existing_prompt",
+  customNameSlug: "existing-prompt",
+  displayName: "Existing prompt",
+  description: "An existing prompt",
+  template: "Hello {{ name }}",
+  arguments: [],
+  createdAt: "2024-01-01T00:00:00Z",
+  updatedAt: "2024-01-01T00:00:00Z",
+  enabled: true,
+  tags: ["greeting"],
+  visibility: "public",
+} as unknown as NonNullable<ComponentProps<typeof PromptForm>["prompt"]>;
 
 async function fillRequiredFields() {
   const user = userEvent.setup();
@@ -42,6 +67,7 @@ describe("PromptForm", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockPost.mockReset();
+    mockPut.mockReset();
     mockUseAuthContext.mockReturnValue({
       selectedTeamId: null,
       user: null,
@@ -203,6 +229,96 @@ describe("PromptForm", () => {
     await user.click(screen.getByRole("button", { name: "Add prompt" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("Prompt name already exists");
+  });
+
+  it("renders in edit mode with prefilled values and updates via PUT", async () => {
+    mockPut.mockResolvedValue({ id: "prompt-1", name: "existing_prompt" });
+    const onSuccess = vi.fn();
+
+    renderPromptForm({ prompt: editablePrompt, onSuccess });
+
+    expect(screen.getByRole("heading", { name: "Edit prompt" })).toBeInTheDocument();
+    expect(screen.getByLabelText(/name/i)).toHaveValue("existing_prompt");
+    expect(screen.getByLabelText(/template/i)).toHaveValue("Hello {{ name }}");
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+
+    await waitFor(() => {
+      expect(mockPut).toHaveBeenCalledWith(
+        "/prompts/prompt-1",
+        expect.objectContaining({
+          name: "existing_prompt",
+          template: "Hello {{ name }}",
+          visibility: "public",
+        }),
+      );
+    });
+    expect(mockPost).not.toHaveBeenCalled();
+    expect(onSuccess).toHaveBeenCalled();
+  });
+
+  it("does not require the template when editing a federated prompt", async () => {
+    mockPut.mockResolvedValue({ id: "prompt-2", name: "federated_prompt" });
+    const federatedPrompt = {
+      ...editablePrompt,
+      id: "prompt-2",
+      name: "federated_prompt",
+      template: "",
+      gatewayId: "gw-hugging-face",
+      gatewaySlug: "hugging-face",
+    } as unknown as NonNullable<ComponentProps<typeof PromptForm>["prompt"]>;
+
+    renderPromptForm({ prompt: federatedPrompt });
+
+    // The template field is optional: no aria-required, no required asterisk.
+    expect(screen.getByLabelText(/template/i)).toHaveAttribute("aria-required", "false");
+
+    // With an empty template the form still submits (federated prompts have none).
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+
+    await waitFor(() => expect(mockPut).toHaveBeenCalled());
+    const payload = mockPut.mock.calls[0][1] as Record<string, unknown>;
+    expect(payload).toMatchObject({ name: "federated_prompt" });
+    // Upstream-managed fields are omitted from the federated PUT payload.
+    expect(payload).not.toHaveProperty("template");
+    expect(payload).not.toHaveProperty("description");
+    expect(payload).not.toHaveProperty("arguments");
+  });
+
+  it("only allows editing name/visibility/tags for a federated prompt (upstream fields disabled)", () => {
+    const federatedPrompt = {
+      ...editablePrompt,
+      id: "prompt-2",
+      name: "federated_prompt",
+      gatewayId: "gw-hugging-face",
+      gatewaySlug: "hugging-face",
+    } as unknown as NonNullable<ComponentProps<typeof PromptForm>["prompt"]>;
+
+    renderPromptForm({ prompt: federatedPrompt });
+
+    // A notice explains why some fields are read-only.
+    expect(screen.getByRole("note")).toBeInTheDocument();
+
+    // Upstream-managed fields are disabled (they get clobbered on re-sync).
+    expect(screen.getByLabelText(/template/i)).toBeDisabled();
+    expect(screen.getByLabelText(/arguments/i)).toBeDisabled();
+    expect(screen.getByLabelText("Description")).toBeDisabled();
+
+    // Locally-owned fields stay editable.
+    expect(screen.getByLabelText(/name/i)).toBeEnabled();
+    expect(screen.getByRole("combobox", { name: /visibility/i })).toBeEnabled();
+    expect(screen.getByLabelText(/tags/i)).toBeEnabled();
+  });
+
+  it("keeps all fields editable when editing a local (non-federated) prompt", () => {
+    renderPromptForm({ prompt: editablePrompt });
+
+    expect(screen.queryByRole("note")).not.toBeInTheDocument();
+    expect(screen.getByLabelText(/template/i)).toBeEnabled();
+    expect(screen.getByLabelText(/arguments/i)).toBeEnabled();
+    expect(screen.getByLabelText("Description")).toBeEnabled();
   });
 
   it("revalidates argument errors while the field is edited", async () => {

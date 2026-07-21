@@ -10,6 +10,7 @@ import { usePromptForm } from "./usePromptForm";
 vi.mock("@/api/client", () => ({
   api: {
     post: vi.fn(),
+    put: vi.fn(),
   },
 }));
 
@@ -18,6 +19,7 @@ vi.mock("@/auth/AuthContext", () => ({
 }));
 
 const mockPost = vi.mocked(api.post);
+const mockPut = vi.mocked(api.put);
 const mockUseAuthContext = vi.mocked(useAuthContext);
 
 const wrapper = ({ children }: { children: ReactNode }) =>
@@ -49,6 +51,7 @@ describe("usePromptForm", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockPost.mockReset();
+    mockPut.mockReset();
     mockAuth();
   });
 
@@ -345,6 +348,243 @@ describe("usePromptForm", () => {
     await waitFor(() => {
       expect(result.current.errors.submit).toBeUndefined();
     });
+  });
+
+  it("prefills fields from initialValues in edit mode", () => {
+    const { result } = renderHook(() =>
+      usePromptForm({
+        promptId: "prompt-1",
+        initialValues: {
+          name: "Existing prompt",
+          visibility: "private",
+          template: "Hello {{ name }}",
+          arguments: "[]",
+          description: "An existing prompt",
+          tags: "greeting, example",
+        },
+      }),
+    );
+
+    expect(result.current.name).toBe("Existing prompt");
+    expect(result.current.visibility).toBe("private");
+    expect(result.current.template).toBe("Hello {{ name }}");
+    expect(result.current.description).toBe("An existing prompt");
+    expect(result.current.tags).toBe("greeting, example");
+    expect(result.current.isValid).toBe(true);
+  });
+
+  it("requires the template by default (REST prompts)", () => {
+    const { result } = renderHook(() => usePromptForm());
+
+    act(() => {
+      result.current.setName("Greeting prompt");
+    });
+
+    let valid: boolean;
+    act(() => {
+      valid = result.current.validateForm();
+    });
+
+    expect(valid!).toBe(false);
+    expect(result.current.errors.template).toBe("Template is required");
+  });
+
+  it("allows an empty template for a federated prompt", () => {
+    const { result } = renderHook(() =>
+      usePromptForm({
+        promptId: "prompt-1",
+        federated: true,
+        initialValues: { name: "Federated prompt", template: "", visibility: "public" },
+      }),
+    );
+
+    let valid: boolean;
+    act(() => {
+      valid = result.current.validateForm();
+    });
+
+    expect(valid!).toBe(true);
+    expect(result.current.errors.template).toBeUndefined();
+    expect(result.current.isValid).toBe(true);
+  });
+
+  it("omits upstream-managed fields from the PUT for a federated prompt", async () => {
+    mockPut.mockResolvedValue({ id: "prompt-1", name: "Federated prompt" });
+    const { result } = renderHook(() =>
+      usePromptForm({
+        promptId: "prompt-1",
+        federated: true,
+        initialValues: {
+          name: "Federated prompt",
+          visibility: "public",
+          template: "Upstream template",
+          description: "Upstream description",
+          arguments: '[{"name":"topic"}]',
+          tags: "a, b",
+        },
+      }),
+    );
+
+    await act(async () => {
+      await result.current.handleSubmit(fakeSubmit());
+    });
+
+    const payload = mockPut.mock.calls[0][1] as Record<string, unknown>;
+    // Locally-owned fields are sent...
+    expect(payload).toMatchObject({
+      name: "Federated prompt",
+      tags: ["a", "b"],
+      visibility: "public",
+    });
+    // ...but upstream-managed fields are omitted entirely (not sent as stale
+    // values that would clobber newer upstream data).
+    expect(payload).not.toHaveProperty("description");
+    expect(payload).not.toHaveProperty("template");
+    expect(payload).not.toHaveProperty("arguments");
+  });
+
+  it("updates an existing prompt via PUT and preserves the form in edit mode", async () => {
+    mockPut.mockResolvedValue({ id: "prompt-1", name: "Existing prompt" });
+    const onSuccess = vi.fn();
+    const { result } = renderHook(() =>
+      usePromptForm({
+        promptId: "prompt-1",
+        initialValues: {
+          name: "Existing prompt",
+          visibility: "public",
+          template: "Hello {{ name }}",
+        },
+      }),
+    );
+
+    act(() => {
+      result.current.setTemplate("Hello {{ name }}, welcome");
+    });
+
+    await act(async () => {
+      await result.current.handleSubmit(fakeSubmit(), onSuccess);
+    });
+
+    expect(mockPost).not.toHaveBeenCalled();
+    expect(mockPut).toHaveBeenCalledWith("/prompts/prompt-1", {
+      name: "Existing prompt",
+      description: "",
+      template: "Hello {{ name }}, welcome",
+      arguments: [],
+      tags: null,
+      teamId: null,
+      visibility: "public",
+    });
+    expect(onSuccess).toHaveBeenCalled();
+    // Edit mode does not reset the form back to its empty state.
+    expect(result.current.name).toBe("Existing prompt");
+    expect(result.current.template).toBe("Hello {{ name }}, welcome");
+  });
+
+  it("clears a description by sending an empty string (not null) in the PUT", async () => {
+    mockPut.mockResolvedValue({ id: "prompt-1", name: "Existing prompt" });
+    const { result } = renderHook(() =>
+      usePromptForm({
+        promptId: "prompt-1",
+        initialValues: {
+          name: "Existing prompt",
+          visibility: "public",
+          template: "Hello {{ name }}",
+          description: "Original description",
+        },
+      }),
+    );
+
+    // The user empties a previously non-empty description.
+    act(() => {
+      result.current.setDescription("");
+    });
+
+    await act(async () => {
+      await result.current.handleSubmit(fakeSubmit());
+    });
+
+    // "" (not null) so the backend actually clears the field — it treats null as
+    // "field not provided" and would otherwise keep the old description.
+    const payload = mockPut.mock.calls[0][1] as Record<string, unknown>;
+    expect(payload.description).toBe("");
+  });
+
+  it("keeps the prompt's own team when editing a team prompt with no sidebar selection", async () => {
+    mockAuth(null); // no team selected in the sidebar
+    mockPut.mockResolvedValue({ id: "prompt-1", name: "Team prompt" });
+    const { result } = renderHook(() =>
+      usePromptForm({
+        promptId: "prompt-1",
+        initialValues: {
+          name: "Team prompt",
+          visibility: "team",
+          template: "Hello {{ name }}",
+          teamId: "team-original",
+        },
+      }),
+    );
+
+    // Valid despite no sidebar team, because the prompt's own team is kept.
+    expect(result.current.teamId).toBe("team-original");
+    expect(result.current.isValid).toBe(true);
+    expect(result.current.errors.visibility).toBeUndefined();
+
+    await act(async () => {
+      await result.current.handleSubmit(fakeSubmit());
+    });
+
+    expect(mockPut).toHaveBeenCalledWith(
+      "/prompts/prompt-1",
+      expect.objectContaining({ visibility: "team", teamId: "team-original" }),
+    );
+  });
+
+  it("preserves the prompt's team over a different selected sidebar team when editing", async () => {
+    mockAuth("team-selected");
+    mockPut.mockResolvedValue({ id: "prompt-1", name: "Team prompt" });
+    const { result } = renderHook(() =>
+      usePromptForm({
+        promptId: "prompt-1",
+        initialValues: {
+          name: "Team prompt",
+          visibility: "team",
+          template: "Hello {{ name }}",
+          teamId: "team-original",
+        },
+      }),
+    );
+
+    expect(result.current.teamId).toBe("team-original");
+
+    await act(async () => {
+      await result.current.handleSubmit(fakeSubmit());
+    });
+
+    expect(mockPut).toHaveBeenCalledWith(
+      "/prompts/prompt-1",
+      expect.objectContaining({ teamId: "team-original" }),
+    );
+  });
+
+  it("falls back to the edit submit error when an update fails", async () => {
+    mockPut.mockRejectedValue(new Error("Network failed"));
+    const { result } = renderHook(() =>
+      usePromptForm({
+        promptId: "prompt-1",
+        initialValues: {
+          name: "Existing prompt",
+          visibility: "public",
+          template: "Hello {{ name }}",
+        },
+      }),
+    );
+
+    await act(async () => {
+      await result.current.handleSubmit(fakeSubmit());
+    });
+
+    expect(result.current.errors.submit).toBe("Failed to update prompt. Please try again.");
   });
 
   it("clears submit errors when visibility changes", async () => {

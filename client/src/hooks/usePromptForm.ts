@@ -3,9 +3,15 @@ import { useIntl } from "react-intl";
 import { z } from "zod";
 import { useAuthContext } from "@/auth/AuthContext";
 import { useQuery } from "@/hooks/useQuery";
+import { promptsApi } from "@/api/prompts";
 import { parseApiError } from "@/lib/errorUtils";
 import { sanitizeString } from "@/lib/sanitize";
-import type { BodyCreatePromptV1PromptsPost, PromptArgument, PromptRead } from "@/generated/types";
+import type {
+  BodyCreatePromptV1PromptsPost,
+  PromptArgument,
+  PromptRead,
+  PromptUpdate,
+} from "@/generated/types";
 import type { PromptFormErrors } from "@/types/prompts";
 import type { Visibility } from "@/types/server";
 
@@ -17,6 +23,36 @@ interface PromptFormValues {
   description: string;
   tags: string;
   teamId?: string;
+}
+
+export interface PromptFormInitialValues {
+  name?: string;
+  visibility?: Visibility;
+  template?: string;
+  arguments?: string;
+  description?: string;
+  tags?: string;
+  /**
+   * The prompt's existing team (edit mode). When set, a `team`-visibility edit
+   * keeps this team instead of forcing the caller to (re)select one in the
+   * sidebar, so editing a team prompt never silently reassigns or blocks it.
+   */
+  teamId?: string | null;
+}
+
+export interface UsePromptFormOptions {
+  /** When set, the form updates this prompt (`PUT /prompts/{id}`) instead of creating one. */
+  promptId?: string;
+  /** Values to prefill the form with (edit mode). */
+  initialValues?: PromptFormInitialValues;
+  /**
+   * Whether this is a federated prompt (sourced from a remote MCP gateway).
+   * Federated prompts have no local template (so it is not required) and their
+   * description/template/arguments are managed upstream — those fields are
+   * omitted from the update payload so an edit never clobbers newer upstream
+   * data with stale, prefilled form state.
+   */
+  federated?: boolean;
 }
 
 // The generated `prompt` field is nullable to match the server's Optional
@@ -67,7 +103,7 @@ function parseTags(value?: string): string[] | undefined {
   return tags && tags.length > 0 ? tags : undefined;
 }
 
-const createPromptFormSchema = (intl: ReturnType<typeof useIntl>) =>
+const createPromptFormSchema = (intl: ReturnType<typeof useIntl>, templateRequired: boolean) =>
   z
     .object({
       name: z
@@ -75,7 +111,13 @@ const createPromptFormSchema = (intl: ReturnType<typeof useIntl>) =>
         .transform((value) => sanitizeString(value, 100))
         .pipe(z.string().min(1, intl.formatMessage({ id: "prompts.add.error.nameRequired" }))),
       visibility: z.enum(["public", "private", "team"]),
-      template: z.string().min(1, intl.formatMessage({ id: "prompts.add.error.templateRequired" })),
+      // Local (REST) prompts carry their content in `template`, so it is
+      // required. Federated prompts have no local template — the upstream MCP
+      // server resolves the content on `prompts/get` — so the field is optional
+      // when editing them.
+      template: templateRequired
+        ? z.string().min(1, intl.formatMessage({ id: "prompts.add.error.templateRequired" }))
+        : z.string(),
       arguments: z.string().transform((value, ctx): PromptArgument[] => {
         if (!value.trim()) return [];
 
@@ -154,26 +196,46 @@ function getApiFieldError(error: unknown): PromptFormErrors | null {
   return null;
 }
 
-export function usePromptForm(): UsePromptFormReturn {
+export function usePromptForm(options: UsePromptFormOptions = {}): UsePromptFormReturn {
+  const { promptId, initialValues, federated = false } = options;
   const intl = useIntl();
   const { selectedTeamId } = useAuthContext();
-  const schema = useMemo(() => createPromptFormSchema(intl), [intl]);
+  // Federated prompts have no local template, so it isn't required.
+  const templateRequired = !federated;
+  const schema = useMemo(
+    () => createPromptFormSchema(intl, templateRequired),
+    [intl, templateRequired],
+  );
 
-  const [name, setNameState] = useState(initialState.name);
-  const [visibility, setVisibilityState] = useState<Visibility>(initialState.visibility);
-  const [template, setTemplateState] = useState(initialState.template);
-  const [argumentsValue, setArgumentsState] = useState(initialState.arguments);
-  const [description, setDescriptionState] = useState(initialState.description);
-  const [tags, setTagsState] = useState(initialState.tags);
+  const [name, setNameState] = useState(initialValues?.name ?? initialState.name);
+  const [visibility, setVisibilityState] = useState<Visibility>(
+    initialValues?.visibility ?? initialState.visibility,
+  );
+  const [template, setTemplateState] = useState(initialValues?.template ?? initialState.template);
+  const [argumentsValue, setArgumentsState] = useState(
+    initialValues?.arguments ?? initialState.arguments,
+  );
+  const [description, setDescriptionState] = useState(
+    initialValues?.description ?? initialState.description,
+  );
+  const [tags, setTagsState] = useState(initialValues?.tags ?? initialState.tags);
   const [errors, setErrors] = useState<PromptFormErrors>({});
-  const teamId = visibility === "team" ? (selectedTeamId ?? undefined) : undefined;
-  const { execute: createPrompt, isLoading: isSubmitting } = useQuery<
+  const [isUpdating, setIsUpdating] = useState(false);
+  // In edit mode, keep the prompt's own team; only fall back to the sidebar
+  // selection (create mode, or when switching a non-team prompt to team).
+  const initialTeamId = initialValues?.teamId ?? undefined;
+  const resolveTeamId = (vis: Visibility): string | undefined =>
+    vis === "team" ? (initialTeamId ?? selectedTeamId ?? undefined) : undefined;
+  const teamId = resolveTeamId(visibility);
+  const { execute: createPrompt, isLoading: isCreating } = useQuery<
     PromptRead,
     CreatePromptPayload
   >("/prompts", {
     method: "POST",
     enabled: false,
   });
+
+  const isSubmitting = isCreating || isUpdating;
 
   const getFormValues = useCallback(
     (): PromptFormValues => ({
@@ -198,7 +260,8 @@ export function usePromptForm(): UsePromptFormReturn {
       };
 
       if (field === "visibility") {
-        nextValues.teamId = value === "team" ? (selectedTeamId ?? undefined) : undefined;
+        nextValues.teamId =
+          value === "team" ? (initialTeamId ?? selectedTeamId ?? undefined) : undefined;
       }
 
       const result = schema.safeParse({
@@ -225,7 +288,7 @@ export function usePromptForm(): UsePromptFormReturn {
         return nextErrors;
       });
     },
-    [getFormValues, schema, selectedTeamId],
+    [getFormValues, schema, selectedTeamId, initialTeamId],
   );
 
   const updateField = useCallback(
@@ -310,15 +373,49 @@ export function usePromptForm(): UsePromptFormReturn {
     [getFormValues, schema],
   );
 
+  const getUpdateData = useCallback((): NonNullable<PromptUpdate> => {
+    const { prompt } = schema.parse(getFormValues());
+    const payload: NonNullable<PromptUpdate> = {
+      name: prompt.name,
+      tags: prompt.tags ?? null,
+      teamId: prompt.teamId,
+      visibility: prompt.visibility,
+    };
+
+    // Federated prompts have their description/template/arguments managed
+    // upstream. Omit them entirely so a name/visibility/tag edit never
+    // overwrites newer upstream data with stale, prefilled form values (the
+    // inputs are read-only in the form, but their values would still be sent).
+    if (!federated) {
+      // Send "" (not null) for an emptied description so the backend actually
+      // clears it — the update service treats null as "field not provided" and
+      // leaves the previous value in place.
+      payload.description = prompt.description ?? "";
+      payload.template = prompt.template;
+      payload.arguments = prompt.arguments;
+    }
+
+    return payload;
+  }, [federated, getFormValues, schema]);
+
   const handleSubmit = useCallback(
     async (event: FormEvent<HTMLFormElement>, onSuccess?: () => void) => {
       event.preventDefault();
       if (!validateForm()) return;
 
       try {
-        await createPrompt(getFormData());
+        if (promptId) {
+          setIsUpdating(true);
+          try {
+            await promptsApi.update(promptId, getUpdateData());
+          } finally {
+            setIsUpdating(false);
+          }
+        } else {
+          await createPrompt(getFormData());
+          resetForm();
+        }
         setErrors({});
-        resetForm();
         onSuccess?.();
       } catch (error) {
         const fieldError = getApiFieldError(error);
@@ -326,12 +423,15 @@ export function usePromptForm(): UsePromptFormReturn {
           setErrors(fieldError);
         } else {
           setErrors({
-            submit: parseApiError(error, intl.formatMessage({ id: "prompts.add.error" })),
+            submit: parseApiError(
+              error,
+              intl.formatMessage({ id: promptId ? "prompts.edit.error" : "prompts.add.error" }),
+            ),
           });
         }
       }
     },
-    [createPrompt, getFormData, intl, resetForm, validateForm],
+    [createPrompt, getFormData, getUpdateData, intl, promptId, resetForm, validateForm],
   );
 
   useEffect(() => {
