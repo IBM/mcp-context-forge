@@ -219,6 +219,57 @@ async def test_logs_api_token_usage_fallback_to_token_decode():
 
 
 @pytest.mark.asyncio
+async def test_logs_api_token_usage_fallback_uses_signed_email_for_uuid_sub():
+    """Verified UUID-sub API token usage should be attributed to signed user.email."""
+    app = AsyncMock()
+
+    async def app_impl(scope, receive, send):
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"ok"})
+
+    app.side_effect = app_impl
+    middleware = TokenUsageMiddleware(app=app)
+
+    scope = {
+        "type": "http",
+        "path": "/api/resources",
+        "method": "POST",
+        "state": {
+            "auth_method": "api_token",
+            "jti": None,
+            "user": None,
+        },
+        "client": ("10.0.0.1", 12345),
+        "headers": [(b"authorization", b"Bearer uuid_sub_token"), (b"user-agent", b"TestClient/2.0")],
+    }
+
+    user_id = "11111111-1111-1111-1111-111111111111"
+    mock_payload = {
+        "jti": "jti-uuid-sub-789",
+        "sub": user_id,
+        "user": {"email": "owner@example.com", "auth_provider": "api_token"},
+    }
+    mock_db = MagicMock()
+    mock_token_service = MagicMock()
+    mock_token_service.log_token_usage = AsyncMock()
+
+    with (
+        patch("mcpgateway.middleware.token_usage_middleware.fresh_db_session") as mock_fresh_session,
+        patch("mcpgateway.middleware.token_usage_middleware.TokenCatalogService", return_value=mock_token_service),
+        patch("mcpgateway.middleware.token_usage_middleware.verify_jwt_token_cached", AsyncMock(return_value=mock_payload)),
+    ):
+        mock_fresh_session.return_value.__enter__.return_value = mock_db
+        await _make_asgi_call(middleware, scope)
+
+    mock_token_service.log_token_usage.assert_awaited_once()
+    call_args = mock_token_service.log_token_usage.call_args
+    assert call_args.kwargs["jti"] == "jti-uuid-sub-789"
+    assert call_args.kwargs["user_email"] == "owner@example.com"
+    assert call_args.kwargs["user_email"] != user_id
+    mock_fresh_session.assert_called_once()
+
+
+@pytest.mark.asyncio
 async def test_handles_missing_authorization_header():
     """Middleware should handle missing Authorization header gracefully."""
     app = AsyncMock()

@@ -29,13 +29,26 @@ from starlette.requests import Request
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 # First-Party
-from mcpgateway.auth_context import is_trusted_internal_mcp_request
+from mcpgateway.auth_context import get_jwt_user_email_from_payload, is_trusted_internal_mcp_request
 from mcpgateway.db import fresh_db_session
 from mcpgateway.middleware.path_filter import should_skip_auth_context
 from mcpgateway.services.token_catalog_service import TokenCatalogService
 from mcpgateway.utils.verify_credentials import get_auth_header_value, verify_jwt_token_cached
 
 logger = logging.getLogger(__name__)
+
+
+def _get_api_token_owner_email_by_jti(jti: str) -> str | None:
+    """Return the DB-owned API token email for a JTI."""
+    # Third-Party
+    from sqlalchemy import select  # pylint: disable=import-outside-toplevel
+
+    # First-Party
+    from mcpgateway.db import EmailApiToken  # pylint: disable=import-outside-toplevel
+
+    with fresh_db_session() as verify_db:
+        token_row = verify_db.execute(select(EmailApiToken.id, EmailApiToken.user_email).where(EmailApiToken.jti == jti)).first()
+        return token_row.user_email if token_row is not None else None
 
 
 class TokenUsageMiddleware:
@@ -151,13 +164,19 @@ class TokenUsageMiddleware:
                     try:
                         payload = await verify_jwt_token_cached(token, request)
                         jti = jti or payload.get("jti")
-                        user_email = user_email or payload.get("sub") or payload.get("email")
+                        user_email = user_email or get_jwt_user_email_from_payload(payload)
                     except Exception as decode_error:
                         logger.debug(f"Failed to decode token for usage logging: {decode_error}")
                         return
                 except Exception as e:
                     logger.debug(f"Error extracting token information: {e}")
                     return
+
+            if jti and not user_email:
+                try:
+                    user_email = _get_api_token_owner_email_by_jti(jti)
+                except Exception:
+                    user_email = None  # DB error: skip logging rather than misattribute usage
 
             if not jti or not user_email:
                 logger.debug("Missing JTI or user_email for token usage logging")
