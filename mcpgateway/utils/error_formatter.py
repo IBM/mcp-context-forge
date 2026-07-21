@@ -109,9 +109,9 @@ class ErrorFormatter:
             'Name may contain only letters, numbers, periods, underscores, and hyphens'
 
             >>> # Test length validation mapping
-            >>> msg = ErrorFormatter._get_user_message("description", "Tool name exceeds maximum length")
+            >>> msg = ErrorFormatter._get_user_message("description", "Tool name exceeds MCP spec limit of 128 characters (got 129)")
             >>> msg
-            'Description is too long (maximum 255 characters)'
+            'Description is too long (maximum 128 characters)'
 
             >>> # Test URL validation mapping
             >>> msg = ErrorFormatter._get_user_message("endpoint", "Tool URL must start with http")
@@ -135,7 +135,7 @@ class ErrorFormatter:
         """
         mappings = {
             "Tool name may contain only": f"{field.title()} may contain only letters, numbers, periods, underscores, and hyphens",
-            "Tool name exceeds maximum length": f"{field.title()} is too long (maximum 255 characters)",
+            "Tool name exceeds MCP spec limit": f"{field.title()} is too long (maximum 128 characters)",
             "Tool URL must start with": f"{field.title()} must be a valid HTTP or WebSocket URL",
             "cannot contain directory traversal": f"{field.title()} contains invalid characters",
             "contains HTML tags": f"{field.title()} cannot contain HTML or script tags",
