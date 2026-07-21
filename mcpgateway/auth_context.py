@@ -61,6 +61,7 @@ The names below are the **module's public API**. Callers in ``main.py``,
 
     Identity resolution
         get_user_email(user) -> str
+        jwt_subject_is_uuid(payload) -> bool
         get_jwt_user_email_from_payload(payload) -> str | None
         resolve_jwt_user_email_from_payload(payload, uuid_email_resolver=None) -> str | None
 
@@ -218,6 +219,15 @@ def _is_uuid_string(value: str) -> bool:
     except ValueError:
         return False
     return True
+
+
+def jwt_subject_is_uuid(payload: dict[str, Any]) -> bool:
+    """Return True when the JWT subject claim is a syntactically valid UUID."""
+    subject = payload.get("sub")
+    if not isinstance(subject, str):
+        return False
+    subject = subject.strip()
+    return bool(subject) and _is_uuid_string(subject)
 
 
 def _non_uuid_identity(value: Any) -> str | None:
