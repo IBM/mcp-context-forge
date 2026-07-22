@@ -104,6 +104,7 @@ from mcpgateway.db import utc_now
 from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG, get_current_user_with_permissions, require_any_permission, require_permission
 from mcpgateway.routers.email_auth import create_access_token
 from mcpgateway.schemas import (
+    _encode_auth_headers_list,
     A2AAgentCreate,
     A2AAgentRead,
     A2AAgentUpdate,
@@ -145,7 +146,6 @@ from mcpgateway.schemas import (
     ToolMetrics,
     ToolRead,
     ToolUpdate,
-    _encode_auth_headers_list,
 )
 from mcpgateway.services.a2a_agent_plugin_binding_service import A2AAgentPluginBindingForbiddenError, A2AAgentPluginBindingNotFoundError, A2AAgentPluginBindingService
 from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService

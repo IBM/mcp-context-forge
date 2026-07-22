@@ -647,10 +647,10 @@ async def test_admin_get_update_delete_user():
             is_active=None,
             email_verified=None,
             password_change_required=None,
-                password="newPassword123!",  # pragma: allowlist secret
-                admin_origin_source="api",
-                requesting_user_email="admin@example.com",
-            )
+            password="newPassword123!",  # pragma: allowlist secret
+            admin_origin_source="api",
+            requesting_user_email="admin@example.com",
+        )
         assert response_input.headers["deprecation"] == "@1775001599"
         assert response_input.headers["sunset"] == "Sun, 16 Aug 2026 23:59:59 GMT"
         # ----------->

@@ -1820,7 +1820,7 @@ class EmailAuthService:
             password_change_required: Whether user must change password on next login (optional)
             password: New password (optional, will be hashed)
             admin_origin_source: Source of admin change for tracking (e.g. "api", "ui"). Callers should pass explicitly.
-            requesting_user_email: Email of the authenticated user making the change. Required when demoting or deactivating an active admin.
+            requesting_user_email: Email of the authenticated user making the change. Required when changing admin status or deactivating an active admin.
 
         Returns:
             EmailUser: Updated user object
@@ -1843,6 +1843,10 @@ class EmailAuthService:
 
             normalized_requester_email = requesting_user_email.lower().strip() if requesting_user_email else None
 
+            admin_status_changes = is_admin is not None and is_admin != user.is_admin
+            if admin_status_changes and not normalized_requester_email:
+                raise ValueError("Requesting user email is required to change administrator privileges")
+
             # Admin protection guard. Peer-admin changes are allowed; self-removal and
             # removal of the last active admin are always denied.
             if user.is_admin and user.is_active:
@@ -1855,8 +1859,6 @@ class EmailAuthService:
                     if await self.is_last_active_admin(email):
                         raise ValueError("Cannot demote or deactivate the last remaining active admin user")
 
-            role_granter = normalized_requester_email or email
-
             # Update fields if provided
             if full_name is not None:
                 user.full_name = full_name
@@ -1867,6 +1869,10 @@ class EmailAuthService:
             if is_admin is not None:
                 # Track admin_origin when status actually changes
                 if is_admin != user.is_admin:
+                    # Validated before mutation. Keep grant attribution tied to authenticated actor.
+                    role_granter = normalized_requester_email
+                    if role_granter is None:  # Defensive guard for future refactors.
+                        raise ValueError("Requesting user email is required to change administrator privileges")
                     user.is_admin = is_admin
                     user.admin_origin = admin_origin_source if is_admin else None
 

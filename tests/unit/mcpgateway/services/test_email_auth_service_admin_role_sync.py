@@ -57,6 +57,22 @@ async def test_create_user_admin_role_not_found(mock_db):
 
 
 @pytest.mark.asyncio
+async def test_update_user_promotion_requires_requester(mock_db):
+    """Test promotion fails when authenticated requester identity is missing."""
+    service = EmailAuthService(mock_db)
+    existing_user = EmailUser(email="test@example.com", password_hash="hashed", is_admin=False, is_active=True)
+    mock_result = MagicMock()
+    mock_result.scalar_one_or_none.return_value = existing_user
+    mock_db.execute.return_value = mock_result
+
+    with pytest.raises(ValueError, match="Requesting user email is required to change administrator privileges"):
+        await service.update_user(email="test@example.com", is_admin=True)
+
+    assert existing_user.is_admin is False
+    mock_db.commit.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_update_user_admin_role_not_found(mock_db):
     """Test update_user when platform_admin role doesn't exist."""
     service = EmailAuthService(mock_db)
@@ -76,7 +92,7 @@ async def test_update_user_admin_role_not_found(mock_db):
         mock_role_service_cls.return_value = mock_role_service
 
         # Update user to admin
-        updated_user = await service.update_user(email="test@example.com", is_admin=True)
+        updated_user = await service.update_user(email="test@example.com", is_admin=True, requesting_user_email="admin@example.com")
 
         # Verify user was updated despite roles not found
         assert updated_user.is_admin is True
@@ -162,7 +178,7 @@ async def test_update_user_admin_role_sync_exception(mock_db):
         mock_role_service_cls.return_value = mock_role_service
 
         # Update user to admin - should succeed despite role sync failure
-        updated_user = await service.update_user(email="test@example.com", is_admin=True)
+        updated_user = await service.update_user(email="test@example.com", is_admin=True, requesting_user_email="admin@example.com")
 
         # Verify user was updated despite role sync failure
         assert updated_user.is_admin is True
@@ -204,14 +220,14 @@ async def test_update_user_assign_admin_role_inactive_assignment(mock_db):
         mock_role_service_cls.return_value = mock_role_service
 
         # Update user to admin
-        updated_user = await service.update_user(email="test@example.com", is_admin=True)
+        updated_user = await service.update_user(email="test@example.com", is_admin=True, requesting_user_email="admin@example.com")
 
         # Verify user was promoted
         assert updated_user.is_admin is True
 
         # Verify platform_admin was assigned (because existing assignment was inactive)
         mock_role_service.assign_role_to_user.assert_called_once_with(
-            user_email="test@example.com", role_id="admin-role-123", scope="global", scope_id=None, granted_by="test@example.com", commit=False
+            user_email="test@example.com", role_id="admin-role-123", scope="global", scope_id=None, granted_by="admin@example.com", commit=False
         )
 
         # Verify platform_viewer was revoked

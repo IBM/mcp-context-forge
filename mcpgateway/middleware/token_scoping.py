@@ -11,7 +11,7 @@ and time-based restrictions.
 
 # Standard
 from datetime import datetime, timedelta, timezone
-from enum import Enum, auto
+from enum import auto, Enum
 from functools import lru_cache
 import ipaddress
 import re
@@ -884,7 +884,9 @@ class TokenScopingMiddleware:
         normalized_path = self._normalize_path_for_matching(request_path)
         return method == "DELETE" and bool(_TARGETED_MISSING_DELETE_PATTERN.fullmatch(normalized_path))
 
-    def _check_resource_team_ownership(self, request_path: str, token_teams: list, db=None, _user_email: str = None) -> ResourceOwnershipResult:  # noqa: PLR0911  # pylint: disable=too-many-return-statements
+    def _check_resource_team_ownership(  # noqa: PLR0911  # pylint: disable=too-many-return-statements
+        self, request_path: str, token_teams: list, db=None, _user_email: str = None
+    ) -> ResourceOwnershipResult:
         """
         Check if the requested resource is accessible by the token.
 

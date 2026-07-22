@@ -2207,7 +2207,7 @@ class TestEmailAuthServiceUserUpdates:
         mock_result.scalar_one_or_none.return_value = mock_user
         mock_db.execute.return_value = mock_result
 
-        result = await service.update_user(email="test@example.com", is_admin=True)
+        result = await service.update_user(email="test@example.com", is_admin=True, requesting_user_email="admin@example.com")
 
         assert mock_user.is_admin is True
         mock_db.commit.assert_called()
@@ -2315,6 +2315,7 @@ class TestEmailAuthServiceUserUpdates:
             is_active=False,
             password_change_required=True,
             password="NewSecurePass4$xVeryLongForAdmin22!",  # pragma: allowlist secret
+            requesting_user_email="admin@example.com",
         )  # pragma: allowlist secret
 
         assert mock_user.full_name == "Updated Name"
