@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/integration/test_vault_integration.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Rakhi Dutta
 
 Integration tests for VaultTokenBackend with real HashiCorp Vault instance.
 

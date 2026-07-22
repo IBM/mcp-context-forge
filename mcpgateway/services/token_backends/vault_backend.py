@@ -1,4 +1,8 @@
-"""
+# -*- coding: utf-8 -*-
+"""Location: ./mcpgateway/services/token_backends/vault_backend.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
+SPDX-License-Identifier: Apache-2.0
+
 Vault token storage backend.
 
 Stores OAuth tokens in HashiCorp Vault KV v2 using httpx for HTTP API calls.
