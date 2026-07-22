@@ -27,7 +27,6 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 # First-Party
-from mcpgateway.admin import _validated_team_id_param, perform_unified_search  # noqa: PLC2701 — reuse admin team_id validation
 from mcpgateway.common.query_params import QueryEntityTypes, QueryGatewayIdList, QueryTagsFilter
 from mcpgateway.config import settings
 from mcpgateway.db import get_db
@@ -52,7 +51,7 @@ async def unified_search(
         description="Optional alias for per-entity result limit",
     ),
     gateway_id: QueryGatewayIdList = None,
-    team_id: Optional[str] = Depends(_validated_team_id_param),
+    team_id: Optional[str] = Query(None, description="Filter by team ID"),
     db: Session = Depends(get_db),
     user: Any = Depends(get_current_user_with_permissions),
 ) -> dict[str, Any]:
@@ -79,6 +78,13 @@ async def unified_search(
     Returns:
         dict[str, Any]: Grouped and flattened search results with metadata.
     """
+    # Import lazily so admin-disabled deployments do not load mcpgateway.admin
+    # (and its module-level service instances) at startup. The search router is
+    # always mounted, but the admin core is only needed once a search runs.
+    # First-Party
+    from mcpgateway.admin import _validated_team_id_param, perform_unified_search  # noqa: PLC2701 — reuse admin core, deferred to keep admin off the startup import path  # pylint: disable=import-outside-toplevel
+
+    team_id = _validated_team_id_param(team_id)
     return await perform_unified_search(
         q=q,
         tags=tags,
