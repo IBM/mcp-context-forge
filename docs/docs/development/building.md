@@ -35,7 +35,7 @@ traditional `pip install -e ".[dev]"` form does not apply:
 ```bash
 uv venv .venv
 source .venv/bin/activate
-uv pip install --group dev '.[plugins]'
+uv pip install --group dev '.[plugins,runtime]'
 ```
 
 This installs:

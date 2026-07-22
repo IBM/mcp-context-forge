@@ -2635,52 +2635,45 @@ class TestGatewayService:
     async def test_initialize_gateway_with_resources_and_prompts(self, gateway_service):
         """Test _initialize_gateway with full resources and prompts support."""
         with (
-            patch("mcpgateway.services.gateway_service.sse_client") as mock_sse_client,
-            patch("mcpgateway.services.gateway_service.ClientSession") as mock_session,
+            patch("mcpgateway.services.gateway_service.mcp_proxy_client") as mock_proxy_client,
             patch("mcpgateway.services.gateway_service.decode_auth") as mock_decode,
         ):
             # Setup mocks
             mock_decode.return_value = {"Authorization": "Bearer token"}
 
-            # Mock SSE client context manager
-            mock_streams = (MagicMock(), MagicMock())
-            mock_sse_context = AsyncMock()
-            mock_sse_context.__aenter__.return_value = mock_streams
-            mock_sse_context.__aexit__.return_value = None
-            mock_sse_client.return_value = mock_sse_context
+            # Mock MCP Proxy client - yields client directly (MCP v2 Client auto-initializes)
+            mock_client = AsyncMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client.server_capabilities = MagicMock()
+            mock_proxy_client.return_value = mock_client
 
-            # Mock ClientSession
-            mock_session_instance = AsyncMock()
-            mock_session_context = AsyncMock()
-            mock_session_context.__aenter__.return_value = mock_session_instance
-            mock_session_context.__aexit__.return_value = None
-            mock_session.return_value = mock_session_context
-
-            # Mock initialization response
-            mock_init_response = MagicMock()
-            mock_init_response.capabilities.model_dump.return_value = {"protocolVersion": "0.1.0", "resources": {"listChanged": True}, "prompts": {"listChanged": True}, "tools": {"listChanged": True}}
-            mock_session_instance.initialize.return_value = mock_init_response
+            # Mock negotiated server capabilities
+            mock_client.server_capabilities.model_dump = MagicMock(
+                return_value={"protocolVersion": "0.1.0", "resources": {"listChanged": True}, "prompts": {"listChanged": True}, "tools": {"listChanged": True}}
+            )
 
             # Mock tools response
             mock_tools_response = MagicMock()
             mock_tool = MagicMock()
             mock_tool.model_dump.return_value = {"name": "test_tool", "description": "Test tool", "inputSchema": {"type": "object"}}
             mock_tools_response.tools = [mock_tool]
-            mock_session_instance.list_tools.return_value = mock_tools_response
+            mock_client.list_tools = AsyncMock(return_value=mock_tools_response)
 
             # Mock resources response with URI handling
             mock_resources_response = MagicMock()
             mock_resource = MagicMock()
             mock_resource.model_dump.return_value = {"uri": "file://test.txt", "name": "test_resource", "description": "Test resource", "mime_type": "text/plain"}
             mock_resources_response.resources = [mock_resource]
-            mock_session_instance.list_resources.return_value = mock_resources_response
+            mock_client.list_resources = AsyncMock(return_value=mock_resources_response)
+            mock_client.list_resource_templates = AsyncMock(return_value=MagicMock(resource_templates=[]))
 
             # Mock prompts response
             mock_prompts_response = MagicMock()
             mock_prompt = MagicMock()
             mock_prompt.model_dump.return_value = {"name": "test_prompt", "description": "Test prompt"}
             mock_prompts_response.prompts = [mock_prompt]
-            mock_session_instance.list_prompts.return_value = mock_prompts_response
+            mock_client.list_prompts = AsyncMock(return_value=mock_prompts_response)
 
             # Execute
             capabilities, tools, resources, prompts, validation_errors = await gateway_service._initialize_gateway("http://test.example.com", {"Authorization": "Bearer token"}, "SSE")
@@ -2699,36 +2692,26 @@ class TestGatewayService:
     async def test_initialize_gateway_resource_validation_error(self, gateway_service):
         """Test _initialize_gateway with resource validation error fallback."""
         with (
-            patch("mcpgateway.services.gateway_service.sse_client") as mock_sse_client,
-            patch("mcpgateway.services.gateway_service.ClientSession") as mock_session,
+            patch("mcpgateway.services.gateway_service.mcp_proxy_client") as mock_proxy_client,
             patch("mcpgateway.services.gateway_service.decode_auth") as mock_decode,
         ):
             # Setup mocks
             mock_decode.return_value = {"Authorization": "Bearer token"}
 
-            # Mock SSE client context manager
-            mock_streams = (MagicMock(), MagicMock())
-            mock_sse_context = AsyncMock()
-            mock_sse_context.__aenter__.return_value = mock_streams
-            mock_sse_context.__aexit__.return_value = None
-            mock_sse_client.return_value = mock_sse_context
+            # Mock MCP Proxy client - yields client directly (MCP v2 Client auto-initializes)
+            mock_client = AsyncMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client.server_capabilities = MagicMock()
+            mock_proxy_client.return_value = mock_client
 
-            # Mock ClientSession
-            mock_session_instance = AsyncMock()
-            mock_session_context = AsyncMock()
-            mock_session_context.__aenter__.return_value = mock_session_instance
-            mock_session_context.__aexit__.return_value = None
-            mock_session.return_value = mock_session_context
-
-            # Mock initialization response with resources support
-            mock_init_response = MagicMock()
-            mock_init_response.capabilities.model_dump.return_value = {"resources": {"listChanged": True}, "tools": {"listChanged": True}}
-            mock_session_instance.initialize.return_value = mock_init_response
+            # Mock negotiated server capabilities with resources support
+            mock_client.server_capabilities.model_dump = MagicMock(return_value={"resources": {"listChanged": True}, "tools": {"listChanged": True}})
 
             # Mock tools response
             mock_tools_response = MagicMock()
             mock_tools_response.tools = []
-            mock_session_instance.list_tools.return_value = mock_tools_response
+            mock_client.list_tools = AsyncMock(return_value=mock_tools_response)
 
             # Mock resources response with complex URI object
             mock_resources_response = MagicMock()
@@ -2740,7 +2723,8 @@ class TestGatewayService:
 
             mock_resource.model_dump.return_value = {"uri": mock_uri, "name": "complex_resource", "description": "Complex resource"}
             mock_resources_response.resources = [mock_resource]
-            mock_session_instance.list_resources.return_value = mock_resources_response
+            mock_client.list_resources = AsyncMock(return_value=mock_resources_response)
+            mock_client.list_resource_templates = AsyncMock(return_value=MagicMock(resource_templates=[]))
 
             # Mock ResourceCreate.model_validate to raise exception first time
             with patch("mcpgateway.services.gateway_service.ResourceCreate") as mock_resource_create:
@@ -2758,43 +2742,33 @@ class TestGatewayService:
     async def test_initialize_gateway_prompt_validation_error(self, gateway_service):
         """Test _initialize_gateway with prompt validation error fallback."""
         with (
-            patch("mcpgateway.services.gateway_service.sse_client") as mock_sse_client,
-            patch("mcpgateway.services.gateway_service.ClientSession") as mock_session,
+            patch("mcpgateway.services.gateway_service.mcp_proxy_client") as mock_proxy_client,
             patch("mcpgateway.services.gateway_service.decode_auth") as mock_decode,
         ):
             # Setup mocks
             mock_decode.return_value = {"Authorization": "Bearer token"}
 
-            # Mock SSE client context manager
-            mock_streams = (MagicMock(), MagicMock())
-            mock_sse_context = AsyncMock()
-            mock_sse_context.__aenter__.return_value = mock_streams
-            mock_sse_context.__aexit__.return_value = None
-            mock_sse_client.return_value = mock_sse_context
+            # Mock MCP Proxy client - yields client directly (MCP v2 Client auto-initializes)
+            mock_client = AsyncMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client.server_capabilities = MagicMock()
+            mock_proxy_client.return_value = mock_client
 
-            # Mock ClientSession
-            mock_session_instance = AsyncMock()
-            mock_session_context = AsyncMock()
-            mock_session_context.__aenter__.return_value = mock_session_instance
-            mock_session_context.__aexit__.return_value = None
-            mock_session.return_value = mock_session_context
-
-            # Mock initialization response with prompts support
-            mock_init_response = MagicMock()
-            mock_init_response.capabilities.model_dump.return_value = {"prompts": {"listChanged": True}, "tools": {"listChanged": True}}
-            mock_session_instance.initialize.return_value = mock_init_response
+            # Mock negotiated server capabilities with prompts support
+            mock_client.server_capabilities.model_dump = MagicMock(return_value={"prompts": {"listChanged": True}, "tools": {"listChanged": True}})
 
             # Mock tools response
             mock_tools_response = MagicMock()
             mock_tools_response.tools = []
-            mock_session_instance.list_tools.return_value = mock_tools_response
+            mock_client.list_tools = AsyncMock(return_value=mock_tools_response)
 
             # Mock prompts response
             mock_prompts_response = MagicMock()
             mock_prompt = MagicMock()
             mock_prompt.model_dump.return_value = {"name": "complex_prompt", "description": "Complex prompt"}
             mock_prompts_response.prompts = [mock_prompt]
-            mock_session_instance.list_prompts.return_value = mock_prompts_response
+            mock_client.list_prompts = AsyncMock(return_value=mock_prompts_response)
 
             # Mock PromptCreate.model_validate to raise exception first time
             with patch("mcpgateway.services.gateway_service.PromptCreate") as mock_prompt_create:
@@ -2812,39 +2786,29 @@ class TestGatewayService:
     async def test_initialize_gateway_resource_fetch_failure(self, gateway_service):
         """Test _initialize_gateway when resource fetching fails."""
         with (
-            patch("mcpgateway.services.gateway_service.sse_client") as mock_sse_client,
-            patch("mcpgateway.services.gateway_service.ClientSession") as mock_session,
+            patch("mcpgateway.services.gateway_service.mcp_proxy_client") as mock_proxy_client,
             patch("mcpgateway.services.gateway_service.decode_auth") as mock_decode,
         ):
             # Setup mocks
             mock_decode.return_value = {"Authorization": "Bearer token"}
 
-            # Mock SSE client context manager
-            mock_streams = (MagicMock(), MagicMock())
-            mock_sse_context = AsyncMock()
-            mock_sse_context.__aenter__.return_value = mock_streams
-            mock_sse_context.__aexit__.return_value = None
-            mock_sse_client.return_value = mock_sse_context
+            # Mock MCP Proxy client - yields client directly (MCP v2 Client auto-initializes)
+            mock_client = AsyncMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client.server_capabilities = MagicMock()
+            mock_proxy_client.return_value = mock_client
 
-            # Mock ClientSession
-            mock_session_instance = AsyncMock()
-            mock_session_context = AsyncMock()
-            mock_session_context.__aenter__.return_value = mock_session_instance
-            mock_session_context.__aexit__.return_value = None
-            mock_session.return_value = mock_session_context
-
-            # Mock initialization response with resources support
-            mock_init_response = MagicMock()
-            mock_init_response.capabilities.model_dump.return_value = {"resources": {"listChanged": True}, "tools": {"listChanged": True}}
-            mock_session_instance.initialize.return_value = mock_init_response
+            # Mock negotiated server capabilities with resources support
+            mock_client.server_capabilities.model_dump = MagicMock(return_value={"resources": {"listChanged": True}, "tools": {"listChanged": True}})
 
             # Mock tools response
             mock_tools_response = MagicMock()
             mock_tools_response.tools = []
-            mock_session_instance.list_tools.return_value = mock_tools_response
+            mock_client.list_tools = AsyncMock(return_value=mock_tools_response)
 
             # Make list_resources fail
-            mock_session_instance.list_resources.side_effect = Exception("Resource fetch failed")
+            mock_client.list_resources = AsyncMock(side_effect=Exception("Resource fetch failed"))
 
             # Execute
             capabilities, tools, resources, prompts, validation_errors = await gateway_service._initialize_gateway("http://test.example.com", {"Authorization": "Bearer token"}, "SSE")
@@ -2857,39 +2821,29 @@ class TestGatewayService:
     async def test_initialize_gateway_prompt_fetch_failure(self, gateway_service):
         """Test _initialize_gateway when prompt fetching fails."""
         with (
-            patch("mcpgateway.services.gateway_service.sse_client") as mock_sse_client,
-            patch("mcpgateway.services.gateway_service.ClientSession") as mock_session,
+            patch("mcpgateway.services.gateway_service.mcp_proxy_client") as mock_proxy_client,
             patch("mcpgateway.services.gateway_service.decode_auth") as mock_decode,
         ):
             # Setup mocks
             mock_decode.return_value = {"Authorization": "Bearer token"}
 
-            # Mock SSE client context manager
-            mock_streams = (MagicMock(), MagicMock())
-            mock_sse_context = AsyncMock()
-            mock_sse_context.__aenter__.return_value = mock_streams
-            mock_sse_context.__aexit__.return_value = None
-            mock_sse_client.return_value = mock_sse_context
+            # Mock MCP Proxy client - yields client directly (MCP v2 Client auto-initializes)
+            mock_client = AsyncMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client.server_capabilities = MagicMock()
+            mock_proxy_client.return_value = mock_client
 
-            # Mock ClientSession
-            mock_session_instance = AsyncMock()
-            mock_session_context = AsyncMock()
-            mock_session_context.__aenter__.return_value = mock_session_instance
-            mock_session_context.__aexit__.return_value = None
-            mock_session.return_value = mock_session_context
-
-            # Mock initialization response with prompts support
-            mock_init_response = MagicMock()
-            mock_init_response.capabilities.model_dump.return_value = {"prompts": {"listChanged": True}, "tools": {"listChanged": True}}
-            mock_session_instance.initialize.return_value = mock_init_response
+            # Mock negotiated server capabilities with prompts support
+            mock_client.server_capabilities.model_dump = MagicMock(return_value={"prompts": {"listChanged": True}, "tools": {"listChanged": True}})
 
             # Mock tools response
             mock_tools_response = MagicMock()
             mock_tools_response.tools = []
-            mock_session_instance.list_tools.return_value = mock_tools_response
+            mock_client.list_tools = AsyncMock(return_value=mock_tools_response)
 
             # Make list_prompts fail
-            mock_session_instance.list_prompts.side_effect = Exception("Prompt fetch failed")
+            mock_client.list_prompts = AsyncMock(side_effect=Exception("Prompt fetch failed"))
 
             # Execute
             capabilities, tools, resources, prompts, validation_errors = await gateway_service._initialize_gateway("http://test.example.com", {"Authorization": "Bearer token"}, "SSE")
@@ -3534,9 +3488,8 @@ class TestGatewayRefresh:
         # so we need the valid tool to exercise the partial-failure path.
         # Capabilities are intentionally empty so resources/prompts fetches are skipped.
         mock_session = AsyncMock()
-        mock_init = MagicMock()
-        mock_init.capabilities.model_dump.return_value = {}
-        mock_session.initialize.return_value = mock_init
+        mock_session.server_capabilities = MagicMock()
+        mock_session.server_capabilities.model_dump = MagicMock(return_value={})
 
         valid_tool = MagicMock()
         valid_tool.model_dump.return_value = {"name": "valid_tool", "description": "ok", "inputSchema": {}}
@@ -3544,15 +3497,11 @@ class TestGatewayRefresh:
         long_name_tool.model_dump.return_value = {"name": long_name, "inputSchema": {}}
         mock_list_tools = MagicMock()
         mock_list_tools.tools = [valid_tool, long_name_tool]
-        mock_session.list_tools.return_value = mock_list_tools
+        mock_session.list_tools = AsyncMock(return_value=mock_list_tools)
 
-        mock_sse_cm = AsyncMock()
-        mock_sse_cm.__aenter__.return_value = (MagicMock(), MagicMock())
-        mock_sse_cm.__aexit__.return_value = None
-
-        mock_client_cm = AsyncMock()
-        mock_client_cm.__aenter__.return_value = mock_session
-        mock_client_cm.__aexit__.return_value = None
+        mock_proxy_cm = AsyncMock()
+        mock_proxy_cm.__aenter__.return_value = mock_session
+        mock_proxy_cm.__aexit__.return_value = None
 
         gateway_service._notify_gateway_added = AsyncMock()
 
@@ -3564,9 +3513,8 @@ class TestGatewayRefresh:
         db.refresh = MagicMock()
         db.commit = MagicMock()
 
-        with patch("mcpgateway.services.gateway_service.sse_client", return_value=mock_sse_cm):
-            with patch("mcpgateway.services.gateway_service.ClientSession", return_value=mock_client_cm):
-                result = await gateway_service.register_gateway(db, gateway_data, created_by="test@example.com")
+        with patch("mcpgateway.services.gateway_service.mcp_proxy_client", return_value=mock_proxy_cm):
+            result = await gateway_service.register_gateway(db, gateway_data, created_by="test@example.com")
 
         assert result.skipped_tools == [f"{long_name}: Tool name exceeds MCP spec limit of 128 characters (got 129)"]
 
@@ -3615,83 +3563,68 @@ class TestGatewayRefresh:
     async def test_connect_to_sse_server_without_validation_success(self, gateway_service):
         """Test successful connection without URL validation."""
 
-        # Mock dependencies
-        mock_session = AsyncMock()
-
-        # Mock responses
-        mock_init_response = MagicMock()
-        mock_init_response.capabilities.model_dump.return_value = {"resources": True, "prompts": True}
-        mock_session.initialize.return_value = mock_init_response
+        # Mock the MCP client (auto-initialized by mcp_proxy_client)
+        mock_client = AsyncMock()
+        mock_client.server_capabilities = MagicMock()
+        mock_client.server_capabilities.model_dump = MagicMock(return_value={"resources": True, "prompts": True})
 
         mock_list_tools = MagicMock()
         mock_list_tools.tools = [MagicMock(model_dump=MagicMock(return_value={"name": "tool1", "inputSchema": {}}))]
-        mock_session.list_tools.return_value = mock_list_tools
+        mock_client.list_tools = AsyncMock(return_value=mock_list_tools)
 
         mock_list_resources = MagicMock()
         mock_list_resources.resources = [MagicMock(model_dump=MagicMock(return_value={"uri": "res1", "name": "res1"}))]
-        mock_session.list_resources.return_value = mock_list_resources
-        mock_session.list_resource_templates.return_value = MagicMock(resourceTemplates=[])
+        mock_client.list_resources = AsyncMock(return_value=mock_list_resources)
+        mock_client.list_resource_templates = AsyncMock(return_value=MagicMock(resource_templates=[]))
 
         mock_list_prompts = MagicMock()
         mock_list_prompts.prompts = [MagicMock(model_dump=MagicMock(return_value={"name": "prompt1"}))]
-        mock_session.list_prompts.return_value = mock_list_prompts
+        mock_client.list_prompts = AsyncMock(return_value=mock_list_prompts)
 
-        # Context managers
-        mock_sse_cm = AsyncMock()
-        mock_sse_cm.__aenter__.return_value = (MagicMock(), MagicMock())
-        mock_sse_cm.__aexit__.return_value = None
+        # Context manager
+        mock_proxy_cm = AsyncMock()
+        mock_proxy_cm.__aenter__.return_value = mock_client
+        mock_proxy_cm.__aexit__.return_value = None
 
-        mock_client_cm = AsyncMock()
-        mock_client_cm.__aenter__.return_value = mock_session
-        mock_client_cm.__aexit__.return_value = None
+        with patch("mcpgateway.services.gateway_service.mcp_proxy_client", return_value=mock_proxy_cm):
+            # Execute
+            capabilities, tools, resources, prompts, validation_errors = await gateway_service._connect_to_sse_server_without_validation("http://test.com")
 
-        with patch("mcpgateway.services.gateway_service.sse_client", return_value=mock_sse_cm):
-            with patch("mcpgateway.services.gateway_service.ClientSession", return_value=mock_client_cm):
-                # Execute
-                capabilities, tools, resources, prompts, validation_errors = await gateway_service._connect_to_sse_server_without_validation("http://test.com")
-
-                assert len(tools) == 1
-                assert len(resources) == 1
-                assert len(prompts) == 1
-                assert capabilities["resources"] is True
+            assert len(tools) == 1
+            assert len(resources) == 1
+            assert len(prompts) == 1
+            assert capabilities["resources"] is True
 
     @pytest.mark.asyncio
     async def test_connect_to_sse_server_without_validation_fetch_errors(self, gateway_service):
         """Test resilience when resource/prompt fetch fails."""
 
-        # Mock dependencies
-        mock_session = AsyncMock()
-        # Mock responses
-        mock_init_response = MagicMock()
-        mock_init_response.capabilities.model_dump.return_value = {"resources": True, "prompts": True}
-        mock_session.initialize.return_value = mock_init_response
+        # Mock the MCP client (auto-initialized by mcp_proxy_client)
+        mock_client = AsyncMock()
+        mock_client.server_capabilities = MagicMock()
+        mock_client.server_capabilities.model_dump = MagicMock(return_value={"resources": True, "prompts": True})
 
         mock_list_tools = MagicMock()
         mock_list_tools.tools = []
-        mock_session.list_tools.return_value = mock_list_tools
+        mock_client.list_tools = AsyncMock(return_value=mock_list_tools)
 
         # Simulate failures
-        mock_session.list_resources.side_effect = Exception("Resource fetch failed")
-        mock_session.list_prompts.side_effect = Exception("Prompt fetch failed")
+        mock_client.list_resources = AsyncMock(side_effect=Exception("Resource fetch failed"))
+        mock_client.list_prompts = AsyncMock(side_effect=Exception("Prompt fetch failed"))
 
-        # Context managers
-        mock_sse_cm = AsyncMock()
-        mock_sse_cm.__aenter__.return_value = (MagicMock(), MagicMock())
-        mock_sse_cm.__aexit__.return_value = None
+        # Context manager
+        mock_proxy_cm = AsyncMock()
+        mock_proxy_cm.__aenter__.return_value = mock_client
+        mock_proxy_cm.__aexit__.return_value = None
 
-        mock_client_cm = AsyncMock()
-        mock_client_cm.__aenter__.return_value = mock_session
-        mock_client_cm.__aexit__.return_value = None
+        with patch("mcpgateway.services.gateway_service.mcp_proxy_client", return_value=mock_proxy_cm):
+            # Execute
+            capabilities, tools, resources, prompts, validation_errors = await gateway_service._connect_to_sse_server_without_validation("http://test.com")
 
-        with patch("mcpgateway.services.gateway_service.sse_client", return_value=mock_sse_cm):
-            with patch("mcpgateway.services.gateway_service.ClientSession", return_value=mock_client_cm):
-                # Execute
-                capabilities, tools, resources, prompts, validation_errors = await gateway_service._connect_to_sse_server_without_validation("http://test.com")
-
-                # Should return empty lists for failed parts, not raise exception
-                assert len(resources) == 0
-                assert len(prompts) == 0
-                assert capabilities["resources"] is True
+            # Should return empty lists for failed parts, not raise exception
+            assert len(resources) == 0
+            assert len(prompts) == 0
+            assert capabilities["resources"] is True
 
 
 class TestGatewayHealth:
@@ -4361,15 +4294,8 @@ async def test_connect_to_sse_server_without_validation_fallbacks(monkeypatch):
             return {"name": "bad-prompt"}
 
     class DummySession:
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, exc_type, exc, tb):
-            return False
-
-        async def initialize(self):
-            capabilities = SimpleNamespace(model_dump=lambda **_kw: {"resources": True, "prompts": True})
-            return DummyResponse(capabilities=capabilities)
+        # MCP v2 Client exposes server_capabilities directly
+        server_capabilities = SimpleNamespace(model_dump=lambda **_kw: {"resources": True, "prompts": True})
 
         async def list_tools(self):
             return DummyResponse(tools=[DummyTool()])
@@ -4383,9 +4309,11 @@ async def test_connect_to_sse_server_without_validation_fallbacks(monkeypatch):
         async def list_prompts(self):
             return DummyResponse(prompts=[DummyPrompt()])
 
-    class DummySSE:
+    class DummyClientCM:
+        """Mock for mcp_proxy_client — yields DummySession as the MCP Client."""
+
         async def __aenter__(self):
-            return ("recv", "send")
+            return DummySession()
 
         async def __aexit__(self, exc_type, exc, tb):
             return False
@@ -4403,8 +4331,7 @@ async def test_connect_to_sse_server_without_validation_fallbacks(monkeypatch):
             raise ValueError("boom")
         return real_prompt_validate(data)
 
-    monkeypatch.setattr("mcpgateway.services.gateway_service.sse_client", lambda **_kw: DummySSE())
-    monkeypatch.setattr("mcpgateway.services.gateway_service.ClientSession", lambda *_args: DummySession())
+    monkeypatch.setattr("mcpgateway.services.gateway_service.mcp_proxy_client", lambda **_kw: DummyClientCM())
     monkeypatch.setattr("mcpgateway.services.gateway_service.ResourceCreate.model_validate", _resource_validate)
     monkeypatch.setattr("mcpgateway.services.gateway_service.PromptCreate.model_validate", _prompt_validate)
 
@@ -4420,14 +4347,14 @@ async def test_connect_to_sse_server_without_validation_fallbacks(monkeypatch):
 async def test_connect_to_sse_server_without_validation_error(monkeypatch):
     service = GatewayService()
 
-    class DummySSE:
+    class DummyClientCM:
         async def __aenter__(self):
             raise RuntimeError("boom")
 
         async def __aexit__(self, exc_type, exc, tb):
             return False
 
-    monkeypatch.setattr("mcpgateway.services.gateway_service.sse_client", lambda **_kw: DummySSE())
+    monkeypatch.setattr("mcpgateway.services.gateway_service.mcp_proxy_client", lambda **_kw: DummyClientCM())
 
     with pytest.raises(GatewayConnectionError):
         await service._connect_to_sse_server_without_validation("http://server")
@@ -4476,9 +4403,8 @@ async def test_connect_to_streamablehttp_server_resources_and_prompts(monkeypatc
         async def __aexit__(self, exc_type, exc, tb):
             return False
 
-        async def initialize(self):
-            capabilities = SimpleNamespace(model_dump=lambda **_kw: {"resources": True, "prompts": True})
-            return DummyResponse(capabilities=capabilities)
+        # MCP v2 Client exposes server_capabilities directly
+        server_capabilities = SimpleNamespace(model_dump=lambda **_kw: {"resources": True, "prompts": True})
 
         async def list_tools(self):
             return DummyResponse(tools=[DummyTool()])
@@ -4493,13 +4419,15 @@ async def test_connect_to_streamablehttp_server_resources_and_prompts(monkeypatc
             return DummyResponse(prompts=[DummyPrompt()])
 
     class DummyStreamable:
+        """Mock for mcp_proxy_client — yields DummySession as the MCP Client."""
+
         def __init__(self, **kwargs):
             factory = kwargs.get("httpx_client_factory")
             if factory:
                 factory()
 
         async def __aenter__(self):
-            return ("read", "write", lambda: "session")
+            return DummySession()  # acts as MCP Client
 
         async def __aexit__(self, exc_type, exc, tb):
             return False
@@ -4515,8 +4443,7 @@ async def test_connect_to_streamablehttp_server_resources_and_prompts(monkeypatc
     monkeypatch.setattr("mcpgateway.services.gateway_service.get_default_verify", lambda: None)
     monkeypatch.setattr("mcpgateway.services.gateway_service.get_http_timeout", lambda: None)
     monkeypatch.setattr(service, "create_ssl_context", MagicMock(return_value="ctx"))
-    monkeypatch.setattr("mcpgateway.services.gateway_service.streamablehttp_client", lambda **kw: DummyStreamable(**kw))
-    monkeypatch.setattr("mcpgateway.services.gateway_service.ClientSession", lambda *_args: DummySession())
+    monkeypatch.setattr("mcpgateway.services.gateway_service.mcp_proxy_client", lambda **kw: DummyStreamable(**kw))
     monkeypatch.setattr("mcpgateway.services.gateway_service.ResourceCreate.model_validate", _resource_validate)
 
     capabilities, tools, resources, prompts, validation_errors = await service.connect_to_streamablehttp_server("http://server", ca_certificate=b"cert")
@@ -4540,13 +4467,12 @@ async def test_connect_to_streamablehttp_server_error_path(monkeypatch):
 
     class DummyStreamable:
         async def __aenter__(self):
-            return ("read", "write", lambda: "session")
+            return ("read", "write")
 
         async def __aexit__(self, exc_type, exc, tb):
             return True
 
-    monkeypatch.setattr("mcpgateway.services.gateway_service.streamablehttp_client", lambda **_kw: DummyStreamable())
-    monkeypatch.setattr("mcpgateway.services.gateway_service.ClientSession", lambda *_args: DummySession())
+    monkeypatch.setattr("mcpgateway.services.gateway_service.mcp_proxy_client", lambda **_kw: DummyStreamable())
 
     with pytest.raises(GatewayConnectionError):
         await service.connect_to_streamablehttp_server("http://server")
@@ -4588,15 +4514,8 @@ async def test_connect_to_sse_server_resources_and_prompts(monkeypatch):
             return {"name": "bad-prompt"}
 
     class DummySession:
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, exc_type, exc, tb):
-            return False
-
-        async def initialize(self):
-            capabilities = SimpleNamespace(model_dump=lambda **_kw: {"resources": True, "prompts": True})
-            return DummyResponse(capabilities=capabilities)
+        # MCP v2 Client exposes server_capabilities directly
+        server_capabilities = SimpleNamespace(model_dump=lambda **_kw: {"resources": True, "prompts": True})
 
         async def list_tools(self):
             return DummyResponse(tools=[DummyTool()])
@@ -4610,9 +4529,11 @@ async def test_connect_to_sse_server_resources_and_prompts(monkeypatch):
         async def list_prompts(self):
             return DummyResponse(prompts=[DummyPrompt()])
 
-    class DummySSE:
+    class DummyClientCM:
+        """Mock for mcp_proxy_client — yields DummySession as the MCP Client."""
+
         async def __aenter__(self):
-            return ("recv", "send")
+            return DummySession()
 
         async def __aexit__(self, exc_type, exc, tb):
             return False
@@ -4630,8 +4551,7 @@ async def test_connect_to_sse_server_resources_and_prompts(monkeypatch):
             raise ValueError("boom")
         return real_prompt_validate(data)
 
-    monkeypatch.setattr("mcpgateway.services.gateway_service.sse_client", lambda **_kw: DummySSE())
-    monkeypatch.setattr("mcpgateway.services.gateway_service.ClientSession", lambda *_args: DummySession())
+    monkeypatch.setattr("mcpgateway.services.gateway_service.mcp_proxy_client", lambda **_kw: DummyClientCM())
     monkeypatch.setattr("mcpgateway.services.gateway_service.ResourceCreate.model_validate", _resource_validate)
     monkeypatch.setattr("mcpgateway.services.gateway_service.PromptCreate.model_validate", _prompt_validate)
 
@@ -4647,22 +4567,19 @@ async def test_connect_to_sse_server_resources_and_prompts(monkeypatch):
 async def test_connect_to_sse_server_error_path(monkeypatch):
     service = GatewayService()
 
-    class DummySession:
-        async def __aenter__(self):
+    class DummyClient:
+        @property
+        def server_capabilities(self):
             raise RuntimeError("boom")
 
-        async def __aexit__(self, exc_type, exc, tb):
-            return False
-
-    class DummySSE:
+    class DummyClientCM:
         async def __aenter__(self):
-            return ("recv", "send")
+            return DummyClient()
 
         async def __aexit__(self, exc_type, exc, tb):
             return True
 
-    monkeypatch.setattr("mcpgateway.services.gateway_service.sse_client", lambda **_kw: DummySSE())
-    monkeypatch.setattr("mcpgateway.services.gateway_service.ClientSession", lambda *_args: DummySession())
+    monkeypatch.setattr("mcpgateway.services.gateway_service.mcp_proxy_client", lambda **_kw: DummyClientCM())
 
     with pytest.raises(GatewayConnectionError):
         await service.connect_to_sse_server("http://server")
@@ -8882,7 +8799,7 @@ class TestMtlsDecryptExceptionBranches:
 
 def test_resolve_tool_title():
     # Third-Party
-    from mcp.types import Tool as MCPTool
+    from mcp_types import Tool as MCPTool
 
     # First-Party
     from mcpgateway.services.gateway_service import _resolve_tool_title

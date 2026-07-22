@@ -105,7 +105,7 @@ jobs:
               env:
                   JWT_SECRET_KEY: ${{ env.DYNAMIC_JWT_SECRET }}
               run: |
-                  TOKEN=$(uv run --no-dev python -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret "$JWT_SECRET_KEY")
+                  TOKEN=$(uv run --no-dev --extra runtime python -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret "$JWT_SECRET_KEY")
                   echo "::add-mask::$TOKEN"
                   echo "token=$TOKEN" >> "${GITHUB_OUTPUT}"
                   echo "JWT token generated successfully"

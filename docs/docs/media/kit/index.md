@@ -91,7 +91,7 @@ And is readily available as open source, published a container image and as a Py
 
     **PyPI:**
     ```bash
-    pip install mcp-contextforge-gateway
+    pip install 'mcp-contextforge-gateway[runtime]'
 
     # Option 1: Use the provided .env.example
     curl -O https://raw.githubusercontent.com/IBM/mcp-context-forge/main/.env.example
@@ -133,7 +133,7 @@ And is readily available as open source, published a container image and as a Py
     **Or install via PyPI:**
 
     ```bash
-    pip install mcp-contextforge-gateway
+    pip install 'mcp-contextforge-gateway[runtime]'
 
     # Option 1: Use the provided .env.example
     curl -O https://raw.githubusercontent.com/IBM/mcp-context-forge/main/.env.example

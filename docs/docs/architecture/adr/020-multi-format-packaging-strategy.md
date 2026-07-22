@@ -244,6 +244,25 @@ sha256sum -c checksums.txt
 
 This decision is implemented. All formats are available through respective registries.
 
+!!! note "Post-decision update: runtime / live-tests dependency partition"
+    The PyPI install examples in this ADR (`pip install mcp-contextforge-gateway`,
+    `pip install mcp-contextforge-gateway mcp-contextforge-plugins-all`) predate
+    the **`runtime` / `live-tests` SDK partition** introduced for the `mcp` 2.x
+    migration. After that change, the bare `pip install mcp-contextforge-gateway`
+    produces a working package install but **omits the `mcp` SDK itself**, so the
+    gateway will not start. Always include the `runtime` extra explicitly:
+
+    ```bash
+    pip install 'mcp-contextforge-gateway[runtime]'
+    pip install 'mcp-contextforge-gateway[runtime] mcp-contextforge-plugins-all'
+    ```
+
+    The `live-tests` extra is mutually exclusive with `runtime` (enforced by
+    `[tool.uv]` conflicts) and is only used by the protocol-compliance test
+    harness. See the [Unreleased CHANGELOG entry](../../../CHANGELOG.md) and the
+    `[tool.uv]` block in [`pyproject.toml`](../../../pyproject.toml) for the
+    design rationale.
+
 ## References
 
 - PyPI: https://pypi.org/project/mcp-contextforge-gateway/

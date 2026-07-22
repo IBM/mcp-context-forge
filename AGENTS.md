@@ -53,6 +53,40 @@ make check-env                     # Verify .env against .env.example
 make build-ui                      # Rebuild Admin UI JS bundle (requires npm)
 ```
 
+### Dependency Layout — `runtime` vs `live-tests`
+
+The `mcp` SDK pin is exposed as two mutually-exclusive extras (enforced
+by `[tool.uv]` conflicts in `pyproject.toml`). Every install or `uv run`
+invocation must select exactly one:
+
+| Extra | When to use | Gives you |
+|---|---|---|
+| `runtime` | Gateway deployment, unit + integration tests, doctests, perf, fuzz, migrations, playwright | `mcp==2.0.0b2` |
+| `live-tests` | `tests/live_gateway/` protocol-compliance + a2a-compliance harness | `fastmcp>=2.0`, `compliance-reference-server`, transitively `mcp<2.0` |
+
+The Makefile already routes targets correctly (`make test` → `runtime`,
+`make test-live-gateway` → `live-tests`). For direct invocations:
+
+```bash
+# Default flow — gateway runtime + unit/integration/doctest/fuzz/etc.
+uv run --extra runtime pytest tests/unit/
+
+# Protocol compliance / live gateway flow
+uv run --extra live-tests pytest tests/live_gateway/protocol_compliance/
+
+# Conflict (uv will refuse) — never combine the two extras in one env
+uv run --extra runtime --extra live-tests pytest ...   # ❌ fails fast
+```
+
+`all` / `dev-all` meta-extras are deliberately agnostic — they don't
+include either SDK extra. Always pair them with one explicitly:
+
+```bash
+pip install 'mcp-contextforge-gateway[all,runtime]'        # gateway runtime
+pip install -e '.[dev-all,runtime]'                        # contributor default
+pip install -e '.[dev-all,live-tests]'                     # compliance work
+```
+
 ### Development
 ```bash
 make dev                          # Dev server on :8000 with autoreload

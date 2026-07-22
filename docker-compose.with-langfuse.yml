@@ -60,13 +60,7 @@ services:
   fast_test_server:
     profiles: []
 
-  register_fast_test:
-    profiles: []
-
   a2a_echo_agent:
-    profiles: []
-
-  register_a2a_echo:
     profiles: []
 
   # ──────────────────────────────────────────────────────────────────────

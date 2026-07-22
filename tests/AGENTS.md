@@ -69,6 +69,30 @@ pytest -k "fragment"              # By name substring
 pytest -m "not slow"              # Exclude slow tests
 pytest -m "api"                   # Only API tests
 pytest tests/unit/path/test_mod.py::TestClass::test_method  # Single test
+```
+
+### Extras routing (direct `uv run` invocations)
+
+Tests are partitioned by which `mcp` SDK they need (see root
+[`AGENTS.md`](../AGENTS.md) "Dependency Layout"):
+
+| Path | Extra | Why |
+|---|---|---|
+| `tests/unit/`, `tests/integration/`, `tests/e2e/`, `tests/security/`, `tests/fuzz/`, `tests/performance/`, `tests/migration/`, `tests/playwright/` | `--extra runtime` | Exercise the gateway built on `mcp==2.0.0b2` |
+| `tests/live_gateway/protocol_compliance/`, `tests/live_gateway/a2a_compliance/`, `tests/live_gateway/mcp/`, `tests/live_gateway/sso/`, `tests/live_gateway/e2e_rust/` | `--extra live-tests` | Use FastMCP client + `compliance-reference-server`, both pinned to `mcp<2.0` |
+
+The Makefile already passes the correct `--extra` for every `make test-*`
+target. When invoking `pytest` via `uv run` directly:
+
+```bash
+# Default / unit / integration
+uv run --extra runtime pytest tests/integration/ -k "fragment"
+
+# Protocol-compliance / live-gateway
+uv run --extra live-tests pytest tests/live_gateway/protocol_compliance/
+
+# Both together is rejected by uv:
+#   error: Extras `live-tests` and `runtime` are incompatible with the declared conflicts
 
 # Database performance
 make dev-query-log                # Dev server with query logging

@@ -132,7 +132,7 @@ The observability packages are included in the Docker containers by default. For
 
 ```bash
 # Install base gateway with core observability support
-pip install mcp-contextforge-gateway[observability]
+pip install 'mcp-contextforge-gateway[observability,runtime]'
 ```
 
 **Important**: Only one exporter backend should be installed at a time - they are mutually exclusive. Install the specific backend package based on your chosen observability platform (see backend-specific instructions in the "Start Your Backend" section below).

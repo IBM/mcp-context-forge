@@ -14,6 +14,24 @@ build_py = "mcpgateway.tools.builder.build_hooks.BuildPyWithUI"
 [tool.uv]
 exclude-newer = "10 days"
 
+# The base runtime needs `mcp` 2.x while the protocol-compliance test
+# harness (fastmcp + compliance-reference-server) is pinned to `mcp` < 2.0.
+# Two mutually-exclusive extras partition the resolver into two worlds:
+#
+#   * `runtime`    → installed for the gateway itself + unit/integration tests
+#   * `live-tests` → installed for `tests/live_gateway/` (fastmcp-based clients
+#                    and the FastMCP reference server)
+#
+# uv refuses to resolve both simultaneously, which is the desired behavior —
+# pick exactly one per environment via `uv run --extra runtime ...` or
+# `uv run --extra live-tests ...`.
+conflicts = [
+    [
+        { extra = "runtime" },
+        { extra = "live-tests" },
+    ],
+]
+
 [tool.uv.exclude-newer-package]
 cpex = "2026-07-14T23:59:59Z"
 # cpex-url-reputation pinned past its normal soak cutoff: 0.3.5 (2026-07-14) is the first
@@ -58,10 +76,13 @@ cpex-retry-with-backoff = "2026-07-15T23:59:59Z"
 # and tests/e2e/test_otel_plugin_metadata_e2e.py depend on. Vetted ahead of the usual window
 # for these reasons.
 cpex-secrets-detection = "2026-07-21T23:59:59Z"
-
+mcp = "2026-07-19T23:59:59Z"
+mcp-types = "2026-07-19T23:59:59Z"
 
 [tool.uv.sources]
 compliance-reference-server = { path = "mcp-servers/python/compliance_reference_server", editable = true }
+cpex = { git = "https://github.com/contextforge-org/cpex", branch = "0.1.x-mcp-2.0.0" }
+# cpex = { git = "https://github.com/contextforge-org/cpex", rev = "eac9437188734a72a2277177de87bca62d2badac" }  # mcp v 2.0.0b1
 
 # ----------------------------------------------------------------
 # 📦 Core project metadata (PEP 621)
@@ -79,16 +100,15 @@ classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Framework :: FastAPI",
     "Framework :: AsyncIO",
     "Topic :: Internet :: WWW/HTTP :: WSGI :: Application",
     "Topic :: Software Development :: Libraries :: Application Frameworks"
 ]
 readme = "README.md"
-requires-python = ">=3.11,<3.14"
+requires-python = ">=3.13,<3.15"
 
 # SPDX licence expression + explicit licence file (PEP 639)
 license = "Apache-2.0"
@@ -108,7 +128,6 @@ dependencies = [
     "base58>=2.1.1",
     "brotli>=1.2.0",
     "click>=8.4.2", # Transitive pin
-    "cpex>=0.1.1",
     "cryptography>=49.0.0",
     "fastapi>=0.139.0",
     "filelock>=3.29.4,<3.31.0", # verified against 3.30.0's fork-safety guard (gateway_service.py rebuilds post-fork); ceiling caps unknown future releases
@@ -121,7 +140,6 @@ dependencies = [
     "jsonpath-ng>=1.8.0",
     "jsonschema>=4.26.0",
     "Mako>=1.3.12", # Transitive pin (alembic)
-    "mcp>=1.28.1",
     "msgpack>=1.2.1",
     "orjson>=3.11.9",
     "parse>=1.22.1",
@@ -167,8 +185,6 @@ dev = [
     "dodgy>=0.2.1",
     "faker>=40.28.1",
     "fakeredis[lua]>=2.36.2",
-    "compliance-reference-server",
-    "fastmcp>=3.4.2",
     "fawltydeps>=0.20.0",
     "gprof2dot>=2025.4.14",
     "hypothesis>=6.152.1",
@@ -237,7 +253,22 @@ dev = [
 # ----------------------------------------------------------------
 [project.optional-dependencies]
 
-# Optional dependency groups (runtime)
+# Pins the MCP SDK the gateway runtime depends on. Mutually exclusive with
+# `live-tests` (see `[tool.uv]` conflicts) — pick exactly one per env.
+runtime = [
+    "cpex>=0.1.1",
+    "mcp==2.0.0b2",
+    "mcp-types==2.0.0b2",
+]
+
+# Protocol-compliance test harness. Pulls `fastmcp` (transitively `mcp<2.0`)
+# and the FastMCP-based `compliance-reference-server` used as ground truth
+# under `tests/live_gateway/protocol_compliance/`.
+live-tests = [
+    "fastmcp>=2.0",
+    "compliance-reference-server",
+]
+
 # Redis with hiredis C parser for up to 83x faster response parsing
 # See ADR-026 for benchmarks and decision rationale
 redis = [
@@ -320,6 +351,14 @@ grpc = [
 ]
 
 # Convenience meta-extras
+# Deliberately do NOT bake in `runtime` or `live-tests` — that choice is
+# mutually exclusive (see `[tool.uv]` conflicts) and uv resolves every
+# meta-extra against every other extra during `uv lock`, so a meta-extra
+# that included `runtime` would transitively conflict with `live-tests`
+# and make the whole project unlockable. Consumers select one of:
+#   pip install 'mcp-contextforge-gateway[all,runtime]'        # gateway runtime
+#   pip install 'mcp-contextforge-gateway[dev-all,runtime]'    # dev work
+#   pip install 'mcp-contextforge-gateway[dev-all,live-tests]' # protocol-compliance harness
 all = [
     "mcp-contextforge-gateway[redis]>=1.0.6",
 ]

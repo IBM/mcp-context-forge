@@ -193,7 +193,10 @@ uvx --from mcp-contextforge-gateway mcpgateway --host 0.0.0.0 --port 4444
 mkdir mcpgateway && cd mcpgateway
 python3 -m venv .venv && source .venv/bin/activate
 pip install --upgrade pip
-pip install mcp-contextforge-gateway
+# The `runtime` extra pins the MCP SDK version the gateway requires.
+# It is mutually exclusive with the `live-tests` extra (used only by the
+# protocol-compliance test harness); pick exactly one per environment.
+pip install 'mcp-contextforge-gateway[runtime]'
 
 # 2️⃣  Download .env.example and generate real secrets
 curl -O https://raw.githubusercontent.com/IBM/mcp-context-forge/main/.env.example
@@ -225,7 +228,8 @@ curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
 mkdir mcpgateway ; cd mcpgateway
 python3 -m venv .venv ; .\.venv\Scripts\Activate.ps1
 pip install --upgrade pip
-pip install mcp-contextforge-gateway
+# The `runtime` extra pins the MCP SDK version the gateway requires.
+pip install 'mcp-contextforge-gateway[runtime]'
 
 # 2️⃣  Download .env.example and generate real secrets
 Invoke-WebRequest -Uri "https://raw.githubusercontent.com/IBM/mcp-context-forge/main/.env.example" -OutFile ".env.example"
@@ -257,7 +261,7 @@ curl -s -H "Authorization: Bearer $Env:MCPGATEWAY_BEARER_TOKEN" `
 mkdir mcpgateway ; cd mcpgateway
 uv venv
 .\.venv\Scripts\activate
-uv pip install mcp-contextforge-gateway
+uv pip install 'mcp-contextforge-gateway[runtime]'
 
 # Continue with steps 2️⃣-4️⃣ above...
 ```
@@ -700,13 +704,15 @@ Rust workspace note:
 <summary><strong>Alternative: UV or pip</strong></summary>
 
 ```bash
-# UV (faster)
+# UV (faster) — install the dev meta-extra plus the `runtime` MCP SDK pin.
+# The `runtime` extra is mutually exclusive with `live-tests` (the protocol-
+# compliance test harness). See `[tool.uv]` conflicts in pyproject.toml.
 uv venv && source .venv/bin/activate
-uv pip install -e '.[dev]'
+uv pip install -e '.[dev-all,runtime]'
 
-# pip
+# pip — same combination
 python3 -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev]"
+pip install -e '.[dev-all,runtime]'
 ```
 
 </details>

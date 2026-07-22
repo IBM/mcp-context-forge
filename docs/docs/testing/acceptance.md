@@ -5,7 +5,7 @@ Acceptance testing for ContextForge. Use these example steps to ensure a deploy 
 ```mermaid
 graph TB
     subgraph "TESTER WORKSTATION"
-        PIP[pip install mcp-contextforge-gateway]
+        PIP["pip install 'mcp-contextforge-gateway[runtime]'"]
         JWT[mcpgateway.utils.create_jwt_token<br/>Generates Bearer Token]
         WRAPPER[mcpgateway.wrapper<br/>stdio to HTTP bridge]
         VSC_SSE[VS Code with SSE/HTTP<br/>Direct connection]
@@ -80,7 +80,7 @@ graph TB
 | Feature | URL/Command | Actions | Expected Result | Status | Notes |
 |---------|-------------|---------|-----------------|--------|-------|
 | Set Gateway URL | `export GW_URL=http://localhost:4444` | Set base URL (can be remote) | Variable exported | ☐ | Use 8080 for docker-compose, 4444 for make serve, 8000 for make dev |
-| Install Gateway Package | `pip install mcp-contextforge-gateway` | Install the gateway package for utilities | Successfully installed | ☐ | Needed for JWT token creation and wrapper testing |
+| Install Gateway Package | `pip install 'mcp-contextforge-gateway[runtime]'` | Install the gateway package for utilities | Successfully installed | ☐ | Needed for JWT token creation and wrapper testing |
 | Generate JWT Token | `export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token -u admin@example.com --secret my-test-key-but-now-longer-than-32-bytes)` | Generate auth token using installed package | Token generated and exported | ☐ | Default expiry 10080 (7 days) |
 | Verify Health | `curl -s $GW_URL/health` | GET request (no auth required) | `{"status":"healthy"}` | ☐ | Basic connectivity check |
 | Verify Ready | `curl -s $GW_URL/ready` | GET request (no auth required) | `{"status":"ready"}` | ☐ | Returns 503 with `{"status":"not ready","error":"..."}` when not ready |
@@ -164,7 +164,7 @@ graph TB
 
 | Feature | URL | Commands | Expected Result | Status | Notes |
 |---------|-----|----------|-----------------|--------|-------|
-| Install Package | `pip install mcp-contextforge-gateway` | Install for wrapper | Package installed | ☐ | If not already done |
+| Install Package | `pip install 'mcp-contextforge-gateway[runtime]'` | Install for wrapper | Package installed | ☐ | If not already done |
 | Set Environment | `export MCP_SERVER_URL="$GW_URL/servers/$TIME_SERVER_UUID" && export MCP_AUTH=$MCPGATEWAY_BEARER_TOKEN` | Configure wrapper | Environment set | ☐ | Point to virtual server |
 | Test Wrapper Init | `echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}' \| python3 -m mcpgateway.wrapper 2>/dev/null \| jq` | Initialize via stdio | Returns capabilities with tools | ☐ | Stdio to HTTP bridge |
 | List Tools via Wrapper | `echo '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}' \| python3 -m mcpgateway.wrapper 2>/dev/null \| jq` | List tools via stdio | Returns tool list | ☐ | Wrapper functionality |

@@ -3930,27 +3930,21 @@ class TestInvokeResourceCoverage:
         mock_session = AsyncMock()
         mock_session.read_resource.return_value = MagicMock(contents=[MagicMock(text="template-result", blob=None)])
 
-        with patch("mcpgateway.services.resource_service.sse_client") as mock_sse:
-            mock_read = AsyncMock()
-            mock_write = AsyncMock()
-            mock_sse.return_value.__aenter__ = AsyncMock(return_value=(mock_read, mock_write))
+        with patch("mcpgateway.services.resource_service.mcp_proxy_client") as mock_sse:
+            mock_cs_instance = AsyncMock()
+            mock_cs_instance.read_resource.return_value = MagicMock(contents=[MagicMock(text="template-result", blob=None)])
+            mock_cs_instance.session = mock_cs_instance
+            mock_sse.return_value.__aenter__ = AsyncMock(return_value=mock_cs_instance)
             mock_sse.return_value.__aexit__ = AsyncMock(return_value=False)
 
-            with patch("mcpgateway.services.resource_service.ClientSession") as MockCS:
-                mock_cs_instance = AsyncMock()
-                mock_cs_instance.initialize = AsyncMock()
-                mock_cs_instance.read_resource.return_value = MagicMock(contents=[MagicMock(text="template-result", blob=None)])
-                MockCS.return_value.__aenter__ = AsyncMock(return_value=mock_cs_instance)
-                MockCS.return_value.__aexit__ = AsyncMock(return_value=False)
-
-                await resource_service.invoke_resource(
-                    db,
-                    "res-1",
-                    "http://direct.com",
-                    resource_template_uri="http://template.com",
-                    resource_obj=resource,
-                    gateway_obj=gateway,
-                )
+            await resource_service.invoke_resource(
+                db,
+                "res-1",
+                "http://direct.com",
+                resource_template_uri="http://template.com",
+                resource_obj=resource,
+                gateway_obj=gateway,
+            )
 
     @pytest.mark.asyncio
     async def test_pre_fetched_objects_skip_db(self, resource_service):
@@ -3975,18 +3969,12 @@ class TestInvokeResourceCoverage:
                 ),
             ),
             patch("mcpgateway.services.resource_service.create_span", MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False)))),
-            patch("mcpgateway.services.resource_service.sse_client") as mock_sse,
-            patch("mcpgateway.services.resource_service.ClientSession") as MockCS,
+            patch("mcpgateway.services.resource_service.mcp_proxy_client") as mock_sse,
         ):
             mock_cs_instance = AsyncMock()
-            mock_cs_instance.initialize = AsyncMock()
             mock_cs_instance.read_resource.return_value = MagicMock(contents=[MagicMock(text="content", blob=None)])
-            MockCS.return_value.__aenter__ = AsyncMock(return_value=mock_cs_instance)
-            MockCS.return_value.__aexit__ = AsyncMock(return_value=False)
-
-            mock_read = AsyncMock()
-            mock_write = AsyncMock()
-            mock_sse.return_value.__aenter__ = AsyncMock(return_value=(mock_read, mock_write))
+            mock_cs_instance.session = mock_cs_instance
+            mock_sse.return_value.__aenter__ = AsyncMock(return_value=mock_cs_instance)
             mock_sse.return_value.__aexit__ = AsyncMock(return_value=False)
 
             await resource_service.invoke_resource(
@@ -4048,18 +4036,12 @@ class TestInvokeResourceCoverage:
                 ),
             ),
             patch("mcpgateway.services.resource_service.create_span", MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False)))),
-            patch("mcpgateway.services.resource_service.sse_client") as mock_sse,
-            patch("mcpgateway.services.resource_service.ClientSession") as MockCS,
+            patch("mcpgateway.services.resource_service.mcp_proxy_client") as mock_sse,
         ):
             mock_cs_instance = AsyncMock()
-            mock_cs_instance.initialize = AsyncMock()
             mock_cs_instance.read_resource.return_value = MagicMock(contents=[MagicMock(text="authed", blob=None)])
-            MockCS.return_value.__aenter__ = AsyncMock(return_value=mock_cs_instance)
-            MockCS.return_value.__aexit__ = AsyncMock(return_value=False)
-
-            mock_read = AsyncMock()
-            mock_write = AsyncMock()
-            mock_sse.return_value.__aenter__ = AsyncMock(return_value=(mock_read, mock_write))
+            mock_cs_instance.session = mock_cs_instance
+            mock_sse.return_value.__aenter__ = AsyncMock(return_value=mock_cs_instance)
             mock_sse.return_value.__aexit__ = AsyncMock(return_value=False)
 
             await resource_service.invoke_resource(
@@ -4090,8 +4072,7 @@ class TestInvokeResourceCoverage:
                 patch("mcpgateway.services.resource_service.ObservabilityService") as MockObs,
                 patch("mcpgateway.services.resource_service.fresh_db_session") as mock_fresh_db_session,
                 patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_metrics_buffer,
-                patch("mcpgateway.services.resource_service.sse_client") as mock_sse,
-                patch("mcpgateway.services.resource_service.ClientSession") as MockCS,
+                patch("mcpgateway.services.resource_service.mcp_proxy_client") as mock_sse,
             ):
                 obs = MagicMock()
                 obs.start_span.return_value = "span-1"
@@ -4104,14 +4085,11 @@ class TestInvokeResourceCoverage:
                 metrics_buffer = MagicMock()
                 mock_metrics_buffer.return_value = metrics_buffer
 
-                mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock()))
-                mock_sse.return_value.__aexit__ = AsyncMock(return_value=False)
-
                 cs_session = AsyncMock()
-                cs_session.initialize = AsyncMock(return_value=None)
                 cs_session.read_resource.return_value = MagicMock(contents=[MagicMock(text="ok", blob=None)])
-                MockCS.return_value.__aenter__ = AsyncMock(return_value=cs_session)
-                MockCS.return_value.__aexit__ = AsyncMock(return_value=False)
+                cs_session.session = cs_session
+                mock_sse.return_value.__aenter__ = AsyncMock(return_value=cs_session)
+                mock_sse.return_value.__aexit__ = AsyncMock(return_value=False)
 
                 result = await resource_service.invoke_resource(db, "res-1", "http://test.com", resource_obj=resource, gateway_obj=gateway)
                 assert result == "ok"
@@ -4141,8 +4119,7 @@ class TestInvokeResourceCoverage:
             with (
                 patch("mcpgateway.services.resource_service.ObservabilityService") as MockObs,
                 patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_metrics_buffer,
-                patch("mcpgateway.services.resource_service.sse_client") as mock_sse,
-                patch("mcpgateway.services.resource_service.ClientSession") as MockCS,
+                patch("mcpgateway.services.resource_service.mcp_proxy_client") as mock_sse,
             ):
                 obs = MagicMock()
                 obs.start_span.side_effect = Exception("boom")
@@ -4152,14 +4129,11 @@ class TestInvokeResourceCoverage:
                 metrics_buffer = MagicMock()
                 mock_metrics_buffer.return_value = metrics_buffer
 
-                mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock()))
-                mock_sse.return_value.__aexit__ = AsyncMock(return_value=False)
-
                 cs_session = AsyncMock()
-                cs_session.initialize = AsyncMock(return_value=None)
                 cs_session.read_resource.return_value = MagicMock(contents=[MagicMock(text="ok", blob=None)])
-                MockCS.return_value.__aenter__ = AsyncMock(return_value=cs_session)
-                MockCS.return_value.__aexit__ = AsyncMock(return_value=False)
+                cs_session.session = cs_session
+                mock_sse.return_value.__aenter__ = AsyncMock(return_value=cs_session)
+                mock_sse.return_value.__aexit__ = AsyncMock(return_value=False)
 
                 result = await resource_service.invoke_resource(db, "res-1", "http://test.com", resource_obj=resource, gateway_obj=gateway)
                 assert result == "ok"
@@ -4189,8 +4163,7 @@ class TestInvokeResourceCoverage:
                 patch("mcpgateway.services.resource_service.ObservabilityService") as MockObs,
                 patch("mcpgateway.services.resource_service.fresh_db_session") as mock_fresh_db_session,
                 patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_metrics_buffer,
-                patch("mcpgateway.services.resource_service.sse_client") as mock_sse,
-                patch("mcpgateway.services.resource_service.ClientSession") as MockCS,
+                patch("mcpgateway.services.resource_service.mcp_proxy_client") as mock_sse,
             ):
                 obs = MagicMock()
                 obs.start_span.return_value = "span-3"
@@ -4203,14 +4176,11 @@ class TestInvokeResourceCoverage:
                 metrics_buffer = MagicMock()
                 mock_metrics_buffer.return_value = metrics_buffer
 
-                mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock()))
-                mock_sse.return_value.__aexit__ = AsyncMock(return_value=False)
-
                 cs_session = AsyncMock()
-                cs_session.initialize = AsyncMock(return_value=None)
                 cs_session.read_resource.return_value = MagicMock(contents=[MagicMock(text="ok", blob=None)])
-                MockCS.return_value.__aenter__ = AsyncMock(return_value=cs_session)
-                MockCS.return_value.__aexit__ = AsyncMock(return_value=False)
+                cs_session.session = cs_session
+                mock_sse.return_value.__aenter__ = AsyncMock(return_value=cs_session)
+                mock_sse.return_value.__aexit__ = AsyncMock(return_value=False)
 
                 result = await resource_service.invoke_resource(db, "res-1", "http://test.com", resource_obj=resource, gateway_obj=gateway)
                 assert result == "ok"
@@ -4267,12 +4237,12 @@ class TestInvokeResourceCoverage:
             patch("mcpgateway.services.resource_service.decode_auth", side_effect=decode_side_effect),
             patch("mcpgateway.services.resource_service.apply_query_param_auth", side_effect=fake_apply),
             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", side_effect=RuntimeError("metrics down")),
-            patch("mcpgateway.services.resource_service.sse_client") as mock_sse,
-            patch("mcpgateway.services.resource_service.ClientSession") as MockCS,
+            patch("mcpgateway.services.resource_service.mcp_proxy_client") as mock_sse,
         ):
             mock_trace.get = MagicMock(return_value=None)
 
-            mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock()))
+            cs_session.session = cs_session
+            mock_sse.return_value.__aenter__ = AsyncMock(return_value=cs_session)
             mock_sse.return_value.__aexit__ = AsyncMock(return_value=False)
 
             def _capture_url(*_a, **kw):
@@ -4280,9 +4250,6 @@ class TestInvokeResourceCoverage:
                 return mock_sse.return_value
 
             mock_sse.side_effect = _capture_url
-
-            MockCS.return_value.__aenter__ = AsyncMock(return_value=cs_session)
-            MockCS.return_value.__aexit__ = AsyncMock(return_value=False)
 
             result = await resource_service.invoke_resource(db, "res-1", "http://test.com", resource_obj=resource, gateway_obj=gateway)
         assert result == "ok"
@@ -4325,8 +4292,7 @@ class TestInvokeResourceCoverage:
             patch("mcpgateway.services.resource_service.fresh_db_session") as mock_fresh,
             patch("mcpgateway.services.token_storage_service.TokenStorageService") as mock_tss,
             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_metrics_buffer,
-            patch("mcpgateway.services.resource_service.sse_client") as mock_sse,
-            patch("mcpgateway.services.resource_service.ClientSession") as MockCS,
+            patch("mcpgateway.services.resource_service.mcp_proxy_client") as mock_sse,
         ):
             mock_trace.get = MagicMock(return_value=None)
             mock_fresh.return_value.__enter__.return_value = MagicMock()
@@ -4334,11 +4300,9 @@ class TestInvokeResourceCoverage:
             mock_tss.return_value.get_user_token = AsyncMock(return_value=None)
             mock_metrics_buffer.return_value = MagicMock()
 
-            mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock()))
+            cs_session.session = cs_session
+            mock_sse.return_value.__aenter__ = AsyncMock(return_value=cs_session)
             mock_sse.return_value.__aexit__ = AsyncMock(return_value=False)
-
-            MockCS.return_value.__aenter__ = AsyncMock(return_value=cs_session)
-            MockCS.return_value.__aexit__ = AsyncMock(return_value=False)
 
             result = await resource_service.invoke_resource(db, "res-1", "http://test.com", resource_obj=resource, gateway_obj=gateway)
         assert result == "ok"
@@ -4383,17 +4347,14 @@ class TestInvokeResourceCoverage:
                 MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=span), __exit__=MagicMock(return_value=False))),
             ),
             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_metrics_buffer,
-            patch("mcpgateway.services.resource_service.sse_client") as mock_sse,
-            patch("mcpgateway.services.resource_service.ClientSession") as MockCS,
+            patch("mcpgateway.services.resource_service.mcp_proxy_client") as mock_sse,
         ):
             mock_trace.get = MagicMock(return_value=None)
             mock_metrics_buffer.return_value = MagicMock()
 
-            mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock()))
+            cs_session.session = cs_session
+            mock_sse.return_value.__aenter__ = AsyncMock(return_value=cs_session)
             mock_sse.return_value.__aexit__ = AsyncMock(return_value=False)
-
-            MockCS.return_value.__aenter__ = AsyncMock(return_value=cs_session)
-            MockCS.return_value.__aexit__ = AsyncMock(return_value=False)
 
             result = await resource_service.invoke_resource(db, "res-1", "http://test.com", resource_obj=resource, gateway_obj=gateway)
         assert result == "ok"
@@ -4438,8 +4399,7 @@ class TestInvokeResourceCoverage:
                 MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False))),
             ),
             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_metrics_buffer,
-            patch("mcpgateway.services.resource_service.sse_client") as mock_sse,
-            patch("mcpgateway.services.resource_service.ClientSession") as MockCS,
+            patch("mcpgateway.services.resource_service.mcp_proxy_client") as mock_sse,
         ):
             mock_trace.get = MagicMock(return_value=None)
             mock_metrics_buffer.return_value = MagicMock()
@@ -4449,11 +4409,9 @@ class TestInvokeResourceCoverage:
                 return mock_sse.return_value
 
             mock_sse.side_effect = _capture_sse
-            mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock()))
+            cs_session.session = cs_session
+            mock_sse.return_value.__aenter__ = AsyncMock(return_value=cs_session)
             mock_sse.return_value.__aexit__ = AsyncMock(return_value=False)
-
-            MockCS.return_value.__aenter__ = AsyncMock(return_value=cs_session)
-            MockCS.return_value.__aexit__ = AsyncMock(return_value=False)
 
             result = await resource_service.invoke_resource(
                 db,
@@ -4507,17 +4465,14 @@ class TestInvokeResourceCoverage:
                 MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=span), __exit__=MagicMock(return_value=False))),
             ),
             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_metrics_buffer,
-            patch("mcpgateway.services.resource_service.sse_client") as mock_sse,
-            patch("mcpgateway.services.resource_service.ClientSession") as MockCS,
+            patch("mcpgateway.services.resource_service.mcp_proxy_client") as mock_sse,
         ):
             mock_trace.get = MagicMock(return_value=None)
             mock_metrics_buffer.return_value = MagicMock()
 
-            mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock()))
+            cs_session.session = cs_session
+            mock_sse.return_value.__aenter__ = AsyncMock(return_value=cs_session)
             mock_sse.return_value.__aexit__ = AsyncMock(return_value=False)
-
-            MockCS.return_value.__aenter__ = AsyncMock(return_value=cs_session)
-            MockCS.return_value.__aexit__ = AsyncMock(return_value=False)
 
             await resource_service.invoke_resource(
                 db,
@@ -4568,8 +4523,7 @@ class TestInvokeResourceCoverage:
             ),
             patch("mcpgateway.services.resource_service.decode_auth", return_value=None),
             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_metrics_buffer,
-            patch("mcpgateway.services.resource_service.sse_client") as mock_sse,
-            patch("mcpgateway.services.resource_service.ClientSession") as MockCS,
+            patch("mcpgateway.services.resource_service.mcp_proxy_client") as mock_sse,
         ):
             mock_trace.get = MagicMock(return_value=None)
             mock_metrics_buffer.return_value = MagicMock()
@@ -4579,11 +4533,9 @@ class TestInvokeResourceCoverage:
                 return mock_sse.return_value
 
             mock_sse.side_effect = _sse_side_effect
-            mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock()))
+            cs_session.session = cs_session
+            mock_sse.return_value.__aenter__ = AsyncMock(return_value=cs_session)
             mock_sse.return_value.__aexit__ = AsyncMock(return_value=False)
-
-            MockCS.return_value.__aenter__ = AsyncMock(return_value=cs_session)
-            MockCS.return_value.__aexit__ = AsyncMock(return_value=False)
 
             result = await resource_service.invoke_resource(db, "res-1", "http://test.com", resource_obj=resource, gateway_obj=gateway)
         assert result == "ok"
@@ -4602,6 +4554,8 @@ class TestInvokeResourceCoverage:
         cs_session = AsyncMock()
         cs_session.initialize = AsyncMock(return_value=None)
         cs_session.read_resource.return_value = MagicMock(contents=[MagicMock(text="http-ok", blob=None)])
+        # For resource_service's client.session path
+        cs_session.session = cs_session
 
         span = MagicMock()
 
@@ -4625,17 +4579,13 @@ class TestInvokeResourceCoverage:
             ),
             patch("mcpgateway.services.resource_service.decode_auth", return_value=None),
             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_metrics_buffer,
-            patch("mcpgateway.services.resource_service.streamablehttp_client") as mock_http,
-            patch("mcpgateway.services.resource_service.ClientSession") as MockCS,
+            patch("mcpgateway.services.resource_service.mcp_proxy_client") as mock_http,
         ):
             mock_trace.get = MagicMock(return_value=None)
             mock_metrics_buffer.return_value = MagicMock()
 
-            mock_http.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock(), MagicMock(return_value="sid")))
+            mock_http.return_value.__aenter__ = AsyncMock(return_value=cs_session)
             mock_http.return_value.__aexit__ = AsyncMock(return_value=False)
-
-            MockCS.return_value.__aenter__ = AsyncMock(return_value=cs_session)
-            MockCS.return_value.__aexit__ = AsyncMock(return_value=False)
 
             result = await resource_service.invoke_resource(db, "res-1", "http://test.com", resource_obj=resource, gateway_obj=gateway)
         assert result == "http-ok"
@@ -6650,14 +6600,12 @@ class TestInvokeResourceCoverageEdges:
             patch("mcpgateway.services.resource_service.current_trace_id") as mock_trace,
             patch("mcpgateway.services.resource_service.create_span", MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False)))),
             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=MagicMock()),
-            patch("mcpgateway.services.resource_service.sse_client") as mock_sse,
-            patch("mcpgateway.services.resource_service.ClientSession") as MockCS,
+            patch("mcpgateway.services.resource_service.mcp_proxy_client") as mock_sse,
         ):
             mock_trace.get = MagicMock(return_value=None)
-            mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock()))
+            cs_session.session = cs_session
+            mock_sse.return_value.__aenter__ = AsyncMock(return_value=cs_session)
             mock_sse.return_value.__aexit__ = AsyncMock(return_value=False)
-            MockCS.return_value.__aenter__ = AsyncMock(return_value=cs_session)
-            MockCS.return_value.__aexit__ = AsyncMock(return_value=False)
 
             out = await svc.invoke_resource(db, "res-1", None, resource_obj=resource, gateway_obj=gateway)
         assert out == "ok"
@@ -6714,16 +6662,14 @@ class TestInvokeResourceCoverageEdges:
             patch("mcpgateway.services.resource_service.decode_auth") as mock_decode,
             patch("mcpgateway.services.resource_service.apply_query_param_auth") as mock_apply,
             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=MagicMock()),
-            patch("mcpgateway.services.resource_service.sse_client") as mock_sse,
-            patch("mcpgateway.services.resource_service.ClientSession") as MockCS,
+            patch("mcpgateway.services.resource_service.mcp_proxy_client") as mock_sse,
         ):
             mock_trace.get = MagicMock(return_value=None)
 
             mock_sse.side_effect = _capture_url
-            mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock()))
+            cs_session.session = cs_session
+            mock_sse.return_value.__aenter__ = AsyncMock(return_value=cs_session)
             mock_sse.return_value.__aexit__ = AsyncMock(return_value=False)
-            MockCS.return_value.__aenter__ = AsyncMock(return_value=cs_session)
-            MockCS.return_value.__aexit__ = AsyncMock(return_value=False)
 
             out = await svc.invoke_resource(db, "res-1", "http://ignored", resource_obj=resource, gateway_obj=gateway)
         assert out == "ok"
@@ -6783,8 +6729,7 @@ class TestInvokeResourceCoverageEdges:
             patch("mcpgateway.services.resource_service.fresh_db_session") as mock_fresh,
             patch("mcpgateway.services.token_storage_service.TokenStorageService") as mock_tss,
             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=MagicMock()),
-            patch("mcpgateway.services.resource_service.sse_client") as mock_sse,
-            patch("mcpgateway.services.resource_service.ClientSession") as MockCS,
+            patch("mcpgateway.services.resource_service.mcp_proxy_client") as mock_sse,
         ):
             mock_trace.get = MagicMock(return_value=None)
             mock_fresh.return_value.__enter__.return_value = MagicMock()
@@ -6792,10 +6737,9 @@ class TestInvokeResourceCoverageEdges:
             mock_tss.return_value.get_user_token = AsyncMock(return_value="tok")
 
             mock_sse.side_effect = _capture_headers
-            mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock()))
+            cs_session.session = cs_session
+            mock_sse.return_value.__aenter__ = AsyncMock(return_value=cs_session)
             mock_sse.return_value.__aexit__ = AsyncMock(return_value=False)
-            MockCS.return_value.__aenter__ = AsyncMock(return_value=cs_session)
-            MockCS.return_value.__aexit__ = AsyncMock(return_value=False)
 
             out = await svc.invoke_resource(
                 db,
@@ -6810,12 +6754,12 @@ class TestInvokeResourceCoverageEdges:
         mock_tss.return_value.get_user_token.assert_awaited_once_with("gw-1", "caller@example.com")
 
     @pytest.mark.asyncio
-    async def test_invoke_resource_sse_connect_to_sse_session_unpacks_two_values(self):
+    async def test_invoke_resource_sse_fallback_returns_content_via_mcp_proxy_client(self):
         """
-        Regression test: connect_to_sse_session must unpack only 2 values from sse_client.
-        sse_client yields (read_stream, write_stream) only — unlike streamablehttp_client
-        which yields a 3rd session ID getter. Unpacking 3 values raises ValueError which
-        is silently caught, causing all SSE resource reads to return None/Incorrect result.
+        Regression test: the SSE per-call fallback must return resource content, not None.
+        Historically this was caused by an incorrect 3-value unpack of sse_client (which
+        yields only (read_stream, write_stream)); the fallback now routes through
+        mcp_proxy_client(transport="sse"), which owns the transport/session lifecycle.
         """
         # First-Party
         from mcpgateway.services.resource_service import ResourceService
@@ -6866,17 +6810,13 @@ class TestInvokeResourceCoverageEdges:
                 ),
             ),
             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=MagicMock()),
-            patch("mcpgateway.services.resource_service.sse_client") as mock_sse,
-            patch("mcpgateway.services.resource_service.ClientSession") as MockCS,
+            patch("mcpgateway.services.resource_service.mcp_proxy_client") as mock_sse,
         ):
             mock_trace.get = MagicMock(return_value=None)
 
-            # Simulate real sse_client: yields exactly 2 values (no session ID getter)
-            # Previously the code unpacked 3 values here, causing silent ValueError -> None
-            mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock()))  # 2 values only — correct sse_client contract
+            cs_session.session = cs_session
+            mock_sse.return_value.__aenter__ = AsyncMock(return_value=cs_session)
             mock_sse.return_value.__aexit__ = AsyncMock(return_value=False)
-            MockCS.return_value.__aenter__ = AsyncMock(return_value=cs_session)
-            MockCS.return_value.__aexit__ = AsyncMock(return_value=False)
 
             out = await svc.invoke_resource(
                 db,
@@ -6887,14 +6827,9 @@ class TestInvokeResourceCoverageEdges:
             )
 
         # Core assertion: SSE resource must return content, not None
-        # Before fix: ValueError from 3-value unpack was silently caught -> returned None
-        # After fix: 2-value unpack succeeds -> returns actual resource content
-        assert out == "sse_resource_content", (
-            "SSE resource read returned None — likely caused by incorrect 3-value unpack of sse_client. "
-            "sse_client yields (read_stream, write_stream) only, not (read_stream, write_stream, get_session_id)."
-        )
+        assert out == "sse_resource_content", "SSE resource read returned None — the per-call fallback via mcp_proxy_client(transport='sse') failed."
 
-        # Verify sse_client was actually called (not streamablehttp_client)
+        # Verify the SSE fallback client was actually constructed
         mock_sse.assert_called_once()
         cs_session.read_resource.assert_awaited_once()
 
@@ -6951,8 +6886,7 @@ class TestInvokeResourceCoverageEdges:
             patch("mcpgateway.services.resource_service.fresh_db_session") as mock_fresh,
             patch("mcpgateway.services.token_storage_service.TokenStorageService") as mock_tss,
             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=MagicMock()),
-            patch("mcpgateway.services.resource_service.sse_client") as mock_sse,
-            patch("mcpgateway.services.resource_service.ClientSession") as MockCS,
+            patch("mcpgateway.services.resource_service.mcp_proxy_client") as mock_sse,
         ):
             mock_trace.get = MagicMock(return_value=None)
             mock_fresh.return_value.__enter__.return_value = MagicMock()
@@ -6960,10 +6894,9 @@ class TestInvokeResourceCoverageEdges:
             mock_tss.return_value.get_user_token = AsyncMock(return_value="tok")
 
             mock_sse.side_effect = _capture_headers
-            mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock()))
+            cs_session.session = cs_session
+            mock_sse.return_value.__aenter__ = AsyncMock(return_value=cs_session)
             mock_sse.return_value.__aexit__ = AsyncMock(return_value=False)
-            MockCS.return_value.__aenter__ = AsyncMock(return_value=cs_session)
-            MockCS.return_value.__aexit__ = AsyncMock(return_value=False)
 
             out = await svc.invoke_resource(db, "res-1", "http://ignored", resource_obj=resource, gateway_obj=gateway)
         assert out == "ok"
@@ -7019,18 +6952,16 @@ class TestInvokeResourceCoverageEdges:
             patch("mcpgateway.services.resource_service.fresh_db_session") as mock_fresh,
             patch("mcpgateway.services.token_storage_service.TokenStorageService") as mock_tss,
             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=MagicMock()),
-            patch("mcpgateway.services.resource_service.sse_client") as mock_sse,
-            patch("mcpgateway.services.resource_service.ClientSession") as MockCS,
+            patch("mcpgateway.services.resource_service.mcp_proxy_client") as mock_sse,
         ):
             mock_trace.get = MagicMock(return_value=None)
             mock_fresh.return_value.__enter__.return_value = MagicMock()
             mock_fresh.return_value.__exit__.return_value = False
             mock_tss.return_value.get_user_token = AsyncMock(side_effect=RuntimeError("boom"))
 
-            mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock()))
+            cs_session.session = cs_session
+            mock_sse.return_value.__aenter__ = AsyncMock(return_value=cs_session)
             mock_sse.return_value.__aexit__ = AsyncMock(return_value=False)
-            MockCS.return_value.__aenter__ = AsyncMock(return_value=cs_session)
-            MockCS.return_value.__aexit__ = AsyncMock(return_value=False)
 
             out = await svc.invoke_resource(db, "res-1", "http://ignored", resource_obj=resource, gateway_obj=gateway)
         assert out == "ok"
@@ -7083,18 +7014,16 @@ class TestInvokeResourceCoverageEdges:
             patch("mcpgateway.services.resource_service.fresh_db_session") as mock_fresh,
             patch("mcpgateway.services.token_storage_service.TokenStorageService") as mock_tss,
             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=MagicMock()),
-            patch("mcpgateway.services.resource_service.sse_client") as mock_sse,
-            patch("mcpgateway.services.resource_service.ClientSession") as MockCS,
+            patch("mcpgateway.services.resource_service.mcp_proxy_client") as mock_sse,
         ):
             mock_trace.get = MagicMock(return_value=None)
             mock_fresh.return_value.__enter__.return_value = MagicMock()
             mock_fresh.return_value.__exit__.return_value = False
             mock_tss.return_value.get_user_token = AsyncMock(return_value=None)
 
-            mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock()))
+            cs_session.session = cs_session
+            mock_sse.return_value.__aenter__ = AsyncMock(return_value=cs_session)
             mock_sse.return_value.__aexit__ = AsyncMock(return_value=False)
-            MockCS.return_value.__aenter__ = AsyncMock(return_value=cs_session)
-            MockCS.return_value.__aexit__ = AsyncMock(return_value=False)
 
             out = await svc.invoke_resource(db, "res-1", "http://ignored", resource_obj=resource, gateway_obj=gateway)
         assert out == "ok"
@@ -7152,16 +7081,14 @@ class TestInvokeResourceCoverageEdges:
             patch("mcpgateway.services.resource_service.current_trace_id") as mock_trace,
             patch("mcpgateway.services.resource_service.create_span", MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False)))),
             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=MagicMock()),
-            patch("mcpgateway.services.resource_service.sse_client") as mock_sse,
-            patch("mcpgateway.services.resource_service.ClientSession") as MockCS,
+            patch("mcpgateway.services.resource_service.mcp_proxy_client") as mock_sse,
         ):
             mock_trace.get = MagicMock(return_value=None)
             mock_sse.side_effect = _capture_headers
 
-            mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock()))
+            cs_session.session = cs_session
+            mock_sse.return_value.__aenter__ = AsyncMock(return_value=cs_session)
             mock_sse.return_value.__aexit__ = AsyncMock(return_value=False)
-            MockCS.return_value.__aenter__ = AsyncMock(return_value=cs_session)
-            MockCS.return_value.__aexit__ = AsyncMock(return_value=False)
 
             out = await svc.invoke_resource(db, "res-1", "http://ignored", resource_obj=resource, gateway_obj=gateway)
         assert out == "ok"
@@ -7214,14 +7141,12 @@ class TestInvokeResourceCoverageEdges:
             patch("mcpgateway.services.resource_service.current_trace_id") as mock_trace,
             patch("mcpgateway.services.resource_service.create_span", MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=None), __exit__=MagicMock(return_value=False)))),
             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=MagicMock()),
-            patch("mcpgateway.services.resource_service.sse_client") as mock_sse,
-            patch("mcpgateway.services.resource_service.ClientSession") as MockCS,
+            patch("mcpgateway.services.resource_service.mcp_proxy_client") as mock_sse,
         ):
             mock_trace.get = MagicMock(return_value=None)
-            mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock()))
+            cs_session.session = cs_session
+            mock_sse.return_value.__aenter__ = AsyncMock(return_value=cs_session)
             mock_sse.return_value.__aexit__ = AsyncMock(return_value=False)
-            MockCS.return_value.__aenter__ = AsyncMock(return_value=cs_session)
-            MockCS.return_value.__aexit__ = AsyncMock(return_value=False)
 
             out = await svc.invoke_resource(db, "res-1", "http://ignored", resource_obj=resource, gateway_obj=gateway)
         assert out == "ok"
@@ -7263,14 +7188,12 @@ class TestInvokeResourceCoverageEdges:
             # Registry not initialized → registry path short-circuits, fallback taken.
             patch("mcpgateway.services.resource_service.get_upstream_session_registry", side_effect=RuntimeError("not initialized")),
             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=MagicMock()),
-            patch("mcpgateway.services.resource_service.sse_client") as mock_sse,
-            patch("mcpgateway.services.resource_service.ClientSession") as MockCS,
+            patch("mcpgateway.services.resource_service.mcp_proxy_client") as mock_sse,
         ):
             mock_trace.get = MagicMock(return_value=None)
-            mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock()))
+            cs_session.session = cs_session
+            mock_sse.return_value.__aenter__ = AsyncMock(return_value=cs_session)
             mock_sse.return_value.__aexit__ = AsyncMock(return_value=False)
-            MockCS.return_value.__aenter__ = AsyncMock(return_value=cs_session)
-            MockCS.return_value.__aexit__ = AsyncMock(return_value=False)
 
             out = await svc.invoke_resource(db, "res-1", "http://ignored", resource_obj=resource, gateway_obj=gateway)
         assert out == "ok"
@@ -7310,14 +7233,12 @@ class TestInvokeResourceCoverageEdges:
             patch("mcpgateway.services.resource_service.current_trace_id") as mock_trace,
             patch("mcpgateway.services.resource_service.create_span", MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False)))),
             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=MagicMock()),
-            patch("mcpgateway.services.resource_service.sse_client") as mock_sse,
-            patch("mcpgateway.services.resource_service.ClientSession") as MockCS,
+            patch("mcpgateway.services.resource_service.mcp_proxy_client") as mock_sse,
         ):
             mock_trace.get = MagicMock(return_value=None)
-            mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock()))
-            mock_sse.return_value.__aexit__ = AsyncMock(return_value=False)
-            MockCS.return_value.__aenter__ = AsyncMock(return_value=cs_session)
-            MockCS.return_value.__aexit__ = AsyncMock(side_effect=RuntimeError("unhandled errors in a TaskGroup"))
+            cs_session.session = cs_session
+            mock_sse.return_value.__aenter__ = AsyncMock(return_value=cs_session)
+            mock_sse.return_value.__aexit__ = AsyncMock(side_effect=RuntimeError("unhandled errors in a TaskGroup"))
 
             with caplog.at_level(logging.WARNING, logger="mcpgateway.services.resource_service"):
                 out = await svc.invoke_resource(db, "res-1", "http://ignored", resource_obj=resource, gateway_obj=gateway)
@@ -7352,6 +7273,7 @@ class TestInvokeResourceCoverageEdges:
         session_context = MagicMock()
         session_context.__aenter__ = AsyncMock(return_value=session)
         session_context.__aexit__ = AsyncMock(return_value=False)
+        session.session = session
 
         with (
             patch(
@@ -7369,12 +7291,9 @@ class TestInvokeResourceCoverageEdges:
             patch("mcpgateway.services.resource_service.create_span", MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False)))),
             patch("mcpgateway.services.resource_service.asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=MagicMock()),
-            patch("mcpgateway.services.resource_service.sse_client") as mock_sse,
-            patch("mcpgateway.services.resource_service.ClientSession", return_value=session_context) as mock_client_session,
+            patch("mcpgateway.services.resource_service.mcp_proxy_client", return_value=session_context) as mock_client_session,
         ):
             mock_trace.get = MagicMock(return_value=None)
-            mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock()))
-            mock_sse.return_value.__aexit__ = AsyncMock(return_value=False)
 
             out = await svc.invoke_resource(db, "res-1", "http://ignored", resource_obj=resource, gateway_obj=gateway)
 
@@ -7540,18 +7459,16 @@ class TestInvokeResourceCoverageEdges:
             patch("mcpgateway.services.resource_service.fresh_db_session") as mock_fresh,
             patch("mcpgateway.services.token_storage_service.TokenStorageService") as mock_tss,
             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=MagicMock()),
-            patch("mcpgateway.services.resource_service.sse_client") as mock_sse,
-            patch("mcpgateway.services.resource_service.ClientSession") as MockCS,
+            patch("mcpgateway.services.resource_service.mcp_proxy_client") as mock_sse,
         ):
             mock_trace.get = MagicMock(return_value=None)
             mock_fresh.return_value.__enter__.return_value = MagicMock()
             mock_fresh.return_value.__exit__.return_value = False
             mock_tss.return_value.get_user_token = AsyncMock(side_effect=RuntimeError("boom"))
 
-            mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock()))
+            cs_session.session = cs_session
+            mock_sse.return_value.__aenter__ = AsyncMock(return_value=cs_session)
             mock_sse.return_value.__aexit__ = AsyncMock(return_value=False)
-            MockCS.return_value.__aenter__ = AsyncMock(return_value=cs_session)
-            MockCS.return_value.__aexit__ = AsyncMock(return_value=False)
 
             out = await svc.invoke_resource(db, "res-1", "http://ignored", resource_obj=resource, gateway_obj=gateway)
         assert out == "ok"
@@ -7584,6 +7501,8 @@ class TestInvokeResourceCoverageEdges:
         cs_session = AsyncMock()
         cs_session.initialize = AsyncMock(return_value=None)
         cs_session.read_resource.return_value = MagicMock(contents=[MagicMock(text="http-ok", blob=None)])
+        # For resource_service's client.session path
+        cs_session.session = cs_session
 
         with (
             patch(
@@ -7602,14 +7521,11 @@ class TestInvokeResourceCoverageEdges:
             # Registry not initialized → registry path short-circuits, fallback taken.
             patch("mcpgateway.services.resource_service.get_upstream_session_registry", side_effect=RuntimeError("not initialized")),
             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=MagicMock()),
-            patch("mcpgateway.services.resource_service.streamablehttp_client") as mock_http,
-            patch("mcpgateway.services.resource_service.ClientSession") as MockCS,
+            patch("mcpgateway.services.resource_service.mcp_proxy_client") as mock_http,
         ):
             mock_trace.get = MagicMock(return_value=None)
-            mock_http.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock(), MagicMock(return_value="sid")))
+            mock_http.return_value.__aenter__ = AsyncMock(return_value=cs_session)
             mock_http.return_value.__aexit__ = AsyncMock(return_value=False)
-            MockCS.return_value.__aenter__ = AsyncMock(return_value=cs_session)
-            MockCS.return_value.__aexit__ = AsyncMock(return_value=False)
 
             out = await svc.invoke_resource(db, "res-1", "http://ignored", resource_obj=resource, gateway_obj=gateway)
         assert out == "http-ok"
@@ -7658,14 +7574,12 @@ class TestInvokeResourceCoverageEdges:
                 patch("mcpgateway.services.resource_service.create_span", MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False)))),
                 patch("mcpgateway.services.resource_service.get_upstream_session_registry", side_effect=RegistryNotInitializedError("not init")),
                 patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=MagicMock()),
-                patch("mcpgateway.services.resource_service.sse_client") as mock_sse,
-                patch("mcpgateway.services.resource_service.ClientSession") as MockCS,
+                patch("mcpgateway.services.resource_service.mcp_proxy_client") as mock_sse,
             ):
                 mock_trace.get = MagicMock(return_value=None)
-                mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock()))
+                cs_session.session = cs_session
+                mock_sse.return_value.__aenter__ = AsyncMock(return_value=cs_session)
                 mock_sse.return_value.__aexit__ = AsyncMock(return_value=False)
-                MockCS.return_value.__aenter__ = AsyncMock(return_value=cs_session)
-                MockCS.return_value.__aexit__ = AsyncMock(return_value=False)
 
                 out = await svc.invoke_resource(db, "res-1", "http://ignored", resource_obj=resource, gateway_obj=gateway)
         finally:
@@ -7705,6 +7619,8 @@ class TestInvokeResourceCoverageEdges:
         cs_session = AsyncMock()
         cs_session.initialize = AsyncMock(return_value=None)
         cs_session.read_resource.return_value = MagicMock(contents=[MagicMock(text="http-fallback-ok", blob=None)])
+        # For resource_service's client.session path
+        cs_session.session = cs_session
 
         headers_token = request_headers_var.set({"mcp-session-id": "downstream-http"})
         try:
@@ -7724,15 +7640,14 @@ class TestInvokeResourceCoverageEdges:
                 patch("mcpgateway.services.resource_service.create_span", MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False)))),
                 patch("mcpgateway.services.resource_service.get_upstream_session_registry", side_effect=RegistryNotInitializedError("not init")),
                 patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=MagicMock()),
-                patch("mcpgateway.services.resource_service.streamablehttp_client") as mock_http,
-                patch("mcpgateway.services.resource_service.ClientSession") as MockCS,
+                patch("mcpgateway.services.resource_service.mcp_proxy_client") as mock_http,
             ):
                 mock_trace.get = MagicMock(return_value=None)
-                mock_http.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock(), MagicMock(return_value="sid")))
+                # mcp_proxy_client yields a client which has .session property
+                session_mock = cs_session
+                cs_session.read_resource.return_value = MagicMock(contents=[MagicMock(text="http-fallback-ok", blob=None)])
+                mock_http.return_value.__aenter__ = AsyncMock(return_value=cs_session)
                 mock_http.return_value.__aexit__ = AsyncMock(return_value=False)
-                MockCS.return_value.__aenter__ = AsyncMock(return_value=cs_session)
-                MockCS.return_value.__aexit__ = AsyncMock(return_value=False)
-
                 out = await svc.invoke_resource(db, "res-1", "http://ignored", resource_obj=resource, gateway_obj=gateway)
         finally:
             request_headers_var.reset(headers_token)
@@ -7850,14 +7765,18 @@ class TestReadResourceDirectProxy:
         return db
 
     def _make_session_mock(self, result):
-        """Create a mock ClientSession async context manager with a read_resource return value."""
+        """Create a mock session with a read_resource return value.
+
+        The mock is designed so that both session.read_resource and session.session.read_resource
+        work (since resource_service uses client.session.read_resource).
+        """
         session_mock = AsyncMock()
         session_mock.read_resource = AsyncMock(return_value=result)
+        # Make session.session also point to the same session_mock so that
+        # resource_service's client.session.read_resource works.
+        session_mock.session = session_mock
 
-        client_session_cm = AsyncMock()
-        client_session_cm.__aenter__.return_value = session_mock
-        client_session_cm.__aexit__.return_value = AsyncMock()
-        return client_session_cm, session_mock
+        return session_mock
 
     def _common_patches(self, resource_service):
         """Return a contextmanager-compatible tuple of patches common to happy-path tests.
@@ -7892,22 +7811,20 @@ class TestReadResourceDirectProxy:
         # Remote session returns text content
         first_content = MagicMock()
         first_content.text = "hello from remote"
-        first_content.mimeType = "text/plain"
+        first_content.mime_type = "text/plain"
         result_mock = MagicMock()
         result_mock.contents = [first_content]
-
-        client_session_cm, session_mock = self._make_session_mock(result_mock)
+        session_mock = self._make_session_mock(result_mock)
 
         @asynccontextmanager
         async def mock_streamable_client(*_args, **_kwargs):
-            yield ("read", "write", None)
+            yield session_mock
 
         with (
             patch("mcpgateway.services.resource_service.settings") as mock_settings,
             patch("mcpgateway.services.resource_service.check_gateway_access", new_callable=AsyncMock, return_value=True),
             patch("mcpgateway.services.resource_service.build_gateway_auth_headers", return_value={"Authorization": "Bearer remote-token"}),
-            patch("mcpgateway.services.resource_service.streamablehttp_client", mock_streamable_client),
-            patch("mcpgateway.services.resource_service.ClientSession", return_value=client_session_cm),
+            patch("mcpgateway.services.resource_service.mcp_proxy_client", mock_streamable_client),
             self._common_patches(resource_service),
         ):
             mock_settings.mcpgateway_direct_proxy_enabled = True
@@ -7937,22 +7854,21 @@ class TestReadResourceDirectProxy:
         # Remote session returns blob content (no .text attribute)
         first_content = MagicMock(spec=[])  # empty spec to control hasattr
         first_content.blob = "base64encodeddata"
-        first_content.mimeType = "application/octet-stream"
+        first_content.mime_type = "application/octet-stream"
         result_mock = MagicMock()
         result_mock.contents = [first_content]
 
-        client_session_cm, session_mock = self._make_session_mock(result_mock)
+        session_mock = self._make_session_mock(result_mock)
 
         @asynccontextmanager
         async def mock_streamable_client(*_args, **_kwargs):
-            yield ("read", "write", None)
+            yield session_mock
 
         with (
             patch("mcpgateway.services.resource_service.settings") as mock_settings,
             patch("mcpgateway.services.resource_service.check_gateway_access", new_callable=AsyncMock, return_value=True),
             patch("mcpgateway.services.resource_service.build_gateway_auth_headers", return_value={}),
-            patch("mcpgateway.services.resource_service.streamablehttp_client", mock_streamable_client),
-            patch("mcpgateway.services.resource_service.ClientSession", return_value=client_session_cm),
+            patch("mcpgateway.services.resource_service.mcp_proxy_client", mock_streamable_client),
             self._common_patches(resource_service),
         ):
             mock_settings.mcpgateway_direct_proxy_enabled = True
@@ -7980,22 +7896,20 @@ class TestReadResourceDirectProxy:
 
         # Remote session returns content with neither text nor blob attribute
         first_content = MagicMock(spec=[])  # empty spec means no text or blob
-        first_content.mimeType = "application/unknown"
+        first_content.mime_type = "application/unknown"
         result_mock = MagicMock()
         result_mock.contents = [first_content]
-
-        client_session_cm, session_mock = self._make_session_mock(result_mock)
+        session_mock = self._make_session_mock(result_mock)
 
         @asynccontextmanager
         async def mock_streamable_client(*_args, **_kwargs):
-            yield ("read", "write", None)
+            yield session_mock
 
         with (
             patch("mcpgateway.services.resource_service.settings") as mock_settings,
             patch("mcpgateway.services.resource_service.check_gateway_access", new_callable=AsyncMock, return_value=True),
             patch("mcpgateway.services.resource_service.build_gateway_auth_headers", return_value={}),
-            patch("mcpgateway.services.resource_service.streamablehttp_client", mock_streamable_client),
-            patch("mcpgateway.services.resource_service.ClientSession", return_value=client_session_cm),
+            patch("mcpgateway.services.resource_service.mcp_proxy_client", mock_streamable_client),
             self._common_patches(resource_service),
         ):
             mock_settings.mcpgateway_direct_proxy_enabled = True
@@ -8025,18 +7939,17 @@ class TestReadResourceDirectProxy:
         result_mock = MagicMock()
         result_mock.contents = []
 
-        client_session_cm, session_mock = self._make_session_mock(result_mock)
+        session_mock = self._make_session_mock(result_mock)
 
         @asynccontextmanager
         async def mock_streamable_client(*_args, **_kwargs):
-            yield ("read", "write", None)
+            yield session_mock
 
         with (
             patch("mcpgateway.services.resource_service.settings") as mock_settings,
             patch("mcpgateway.services.resource_service.check_gateway_access", new_callable=AsyncMock, return_value=True),
             patch("mcpgateway.services.resource_service.build_gateway_auth_headers", return_value={}),
-            patch("mcpgateway.services.resource_service.streamablehttp_client", mock_streamable_client),
-            patch("mcpgateway.services.resource_service.ClientSession", return_value=client_session_cm),
+            patch("mcpgateway.services.resource_service.mcp_proxy_client", mock_streamable_client),
             self._common_patches(resource_service),
         ):
             mock_settings.mcpgateway_direct_proxy_enabled = True
@@ -8077,7 +7990,7 @@ class TestReadResourceDirectProxy:
 
     @pytest.mark.asyncio
     async def test_read_resource_direct_proxy_connection_error(self, resource_service, mock_direct_proxy_resource):
-        """When streamablehttp_client raises, ResourceError is raised."""
+        """When streamable_http_client raises, ResourceError is raised."""
         # Standard
         from contextlib import asynccontextmanager
 
@@ -8092,7 +8005,7 @@ class TestReadResourceDirectProxy:
             patch("mcpgateway.services.resource_service.settings") as mock_settings,
             patch("mcpgateway.services.resource_service.check_gateway_access", new_callable=AsyncMock, return_value=True),
             patch("mcpgateway.services.resource_service.build_gateway_auth_headers", return_value={}),
-            patch("mcpgateway.services.resource_service.streamablehttp_client", mock_streamable_client_error),
+            patch("mcpgateway.services.resource_service.mcp_proxy_client", mock_streamable_client_error),
         ):
             mock_settings.mcpgateway_direct_proxy_enabled = True
             mock_settings.mcpgateway_direct_proxy_timeout = 30
@@ -8117,24 +8030,23 @@ class TestReadResourceDirectProxy:
 
         first_content = MagicMock()
         first_content.text = "meta response"
-        first_content.mimeType = "text/plain"
+        first_content.mime_type = "text/plain"
         result_mock = MagicMock()
         result_mock.contents = [first_content]
 
-        client_session_cm, session_mock = self._make_session_mock(result_mock)
+        session_mock = self._make_session_mock(result_mock)
         # send_request is used instead of read_resource when meta_data is provided
         session_mock.send_request = AsyncMock(return_value=result_mock)
 
         @asynccontextmanager
         async def mock_streamable_client(*_args, **_kwargs):
-            yield ("read", "write", None)
+            yield session_mock
 
         with (
             patch("mcpgateway.services.resource_service.settings") as mock_settings,
             patch("mcpgateway.services.resource_service.check_gateway_access", new_callable=AsyncMock, return_value=True),
             patch("mcpgateway.services.resource_service.build_gateway_auth_headers", return_value={}),
-            patch("mcpgateway.services.resource_service.streamablehttp_client", mock_streamable_client),
-            patch("mcpgateway.services.resource_service.ClientSession", return_value=client_session_cm),
+            patch("mcpgateway.services.resource_service.mcp_proxy_client", mock_streamable_client),
             self._common_patches(resource_service),
         ):
             mock_settings.mcpgateway_direct_proxy_enabled = True
@@ -8155,7 +8067,7 @@ class TestReadResourceDirectProxy:
 
     @pytest.mark.asyncio
     async def test_read_resource_direct_proxy_configurable_timeout(self, resource_service, mock_direct_proxy_resource):
-        """Timeout passed to streamablehttp_client matches settings.mcpgateway_direct_proxy_timeout."""
+        """Timeout passed to streamable_http_client matches settings.mcpgateway_direct_proxy_timeout."""
         # Standard
         from contextlib import asynccontextmanager
 
@@ -8164,23 +8076,22 @@ class TestReadResourceDirectProxy:
 
         first_content = MagicMock()
         first_content.text = "ok"
-        first_content.mimeType = "text/plain"
+        first_content.mime_type = "text/plain"
         result_mock = MagicMock()
         result_mock.contents = [first_content]
 
-        client_session_cm, session_mock = self._make_session_mock(result_mock)
+        session_mock = self._make_session_mock(result_mock)
 
         @asynccontextmanager
         async def mock_streamable_client(*_args, **kwargs):
             captured_kwargs.update(kwargs)
-            yield ("read", "write", None)
+            yield session_mock
 
         with (
             patch("mcpgateway.services.resource_service.settings") as mock_settings,
             patch("mcpgateway.services.resource_service.check_gateway_access", new_callable=AsyncMock, return_value=True),
             patch("mcpgateway.services.resource_service.build_gateway_auth_headers", return_value={}),
-            patch("mcpgateway.services.resource_service.streamablehttp_client", mock_streamable_client),
-            patch("mcpgateway.services.resource_service.ClientSession", return_value=client_session_cm),
+            patch("mcpgateway.services.resource_service.mcp_proxy_client", mock_streamable_client),
             self._common_patches(resource_service),
         ):
             mock_settings.mcpgateway_direct_proxy_enabled = True
@@ -8531,26 +8442,23 @@ class TestBuildReadResourceRequest:
 
         meta_data = {"trace_id": "xyz", "user": "alice@example.com"}
         request = _build_read_resource_request("file:///test.txt", meta_data)
-        # Unwrap to the inner params model
-        inner_params = request.root.params
-        assert inner_params is not None
-        assert inner_params.meta is not None
-        dumped = inner_params.meta.model_dump()
-        # All meta_data keys must survive; MCP SDK may add progressToken alongside
-        assert meta_data.items() <= dumped.items()
+        # Request is ReadResourceRequest directly (no ClientRequest wrapper in MCP v2)
+        assert request.params is not None
+        assert request.params.meta is not None
+        # meta is a plain dict in MCP v2 (was RequestMeta model in v1)
+        meta_dict = request.params.meta if isinstance(request.params.meta, dict) else request.params.meta.model_dump()
+        assert meta_data.items() <= meta_dict.items()
 
     def test_returns_client_request_type(self):
-        """Return value must be a ClientRequest wrapping ReadResourceRequest."""
+        """Return value must be a ReadResourceRequest (no ClientRequest wrapper in MCP v2)."""
         # Third-Party
-        from mcp import types
-        from mcp.types import ReadResourceRequest
+        from mcp_types import ReadResourceRequest
 
         # First-Party
         from mcpgateway.services.resource_service import _build_read_resource_request
 
         req = _build_read_resource_request("file:///test.txt", {"k": "v"})
-        assert isinstance(req, types.ClientRequest)
-        assert isinstance(req.root, ReadResourceRequest)
+        assert isinstance(req, ReadResourceRequest)
 
 
 class TestReadResourceMetaDataValidationIntegration:

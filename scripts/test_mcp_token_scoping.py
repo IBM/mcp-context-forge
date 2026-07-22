@@ -252,12 +252,12 @@ async def test_mcp_transport(mcp_url: str, token: str, test_name: str, expected_
     print(f"  Expected tools: {expected_count}")
 
     try:
-        from mcp.client.streamable_http import streamablehttp_client
+        from mcp.client.streamable_http import streamable_http_client
         from mcp.client.session import ClientSession
 
         headers = {"Authorization": f"Bearer {token}"}
 
-        async with streamablehttp_client(mcp_url, headers=headers) as (read, write, _):
+        async with streamable_http_client(mcp_url, headers=headers) as (read, write, _):
             async with ClientSession(read, write) as session:
                 await session.initialize()
                 tools = await session.list_tools()

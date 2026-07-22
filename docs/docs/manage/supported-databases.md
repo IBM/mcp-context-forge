@@ -31,7 +31,7 @@ The `psycopg` driver is used for PostgreSQL connections:
 
 ```bash
 # Install with PostgreSQL support
-pip install mcp-contextforge-gateway[postgres]
+pip install 'mcp-contextforge-gateway[postgres,runtime]'
 ```
 
 ## Known Limitations

@@ -45,7 +45,7 @@ make install-grpc
 
 For the gateway (if not already installed):
 ```bash
-pip install "mcp-contextforge-gateway[grpc]"
+pip install "mcp-contextforge-gateway[grpc,runtime]"
 ```
 
 ### 2. Start the gRPC Plugin Server

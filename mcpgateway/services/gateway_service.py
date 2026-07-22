@@ -58,9 +58,8 @@ import uuid
 # Third-Party
 from filelock import FileLock, Timeout
 import httpx
-from mcp import ClientSession
-from mcp.client.sse import sse_client
-from mcp.client.streamable_http import streamablehttp_client
+import httpx2
+from mcpgateway.utils.mcp_proxy_client import mcp_proxy_client
 from pydantic import ValidationError
 from sqlalchemy import and_, delete, desc, or_, select, update
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
@@ -4612,13 +4611,13 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 Returns:
                     httpx.AsyncClient: Configured HTTPX async client
                 """
-                return httpx.AsyncClient(
+                return httpx2.AsyncClient(
                     verify=ssl_context if ssl_context else get_default_verify(),
                     follow_redirects=False,
                     headers=headers,
                     timeout=timeout if timeout else get_http_timeout(),
                     auth=auth,
-                    limits=httpx.Limits(
+                    limits=httpx2.Limits(
                         max_connections=settings.httpx_max_connections,
                         max_keepalive_connections=settings.httpx_max_keepalive_connections,
                         keepalive_expiry=settings.httpx_keepalive_expiry,
@@ -4713,13 +4712,13 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         # so they don't go through the UpstreamSessionRegistry (which requires
                         # a downstream session id). A fresh per-call session suffices — the
                         # probe is cheap and verifies that an initialize round-trip works.
-                        async with streamablehttp_client(url=gateway_url, headers=headers, timeout=settings.health_check_timeout, httpx_client_factory=get_httpx_client_factory) as (
-                            read_stream,
-                            write_stream,
-                            _get_session_id,
-                        ):
-                            async with ClientSession(read_stream, write_stream) as session:
-                                response = await session.initialize()
+                        async with mcp_proxy_client(
+                            url=gateway_url,
+                            headers=headers,
+                            timeout=settings.health_check_timeout,
+                            httpx_client_factory=get_httpx_client_factory,
+                        ) as client:
+                            pass  # Client auto-initializes on first RPC call (health check only does initialize)
 
                     # Reset failure counter on any successful health check
                     self._gateway_failure_counts[gateway_id] = 0
@@ -6632,108 +6631,106 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         if validation_warnings is None:
             validation_warnings = []
 
-        # Use async with for both sse_client and ClientSession
+        # Client auto-initializes on entry; no manual initialize() needed.
         try:
-            async with sse_client(url=server_url, headers=authentication) as streams:
-                async with ClientSession(*streams) as session:
-                    # Initialize the session
-                    response = await session.initialize()
-                    capabilities = response.capabilities.model_dump(by_alias=True, exclude_none=True)
-                    logger.debug("Server capabilities: %s", capabilities)
+            async with mcp_proxy_client(url=server_url, headers=authentication, transport="sse") as client:
+                # Read negotiated capabilities from the auto-initialized session
+                capabilities = client.server_capabilities.model_dump(by_alias=True, exclude_none=True)
+                logger.debug("Server capabilities: %s", capabilities)
 
-                    response = await session.list_tools()
-                    tools = response.tools
-                    tools = [tool.model_dump(by_alias=True, exclude_none=True, exclude_unset=True) for tool in tools]
+                response = await client.list_tools()
+                tools = response.tools
+                tools = [tool.model_dump(by_alias=True, exclude_none=True, exclude_unset=True) for tool in tools]
 
-                    tools, validation_errors = self._validate_tools(tools, context="oauth")
-                    if tools:
-                        logger.info("Fetched %s tools from gateway", len(tools))
-                    # Fetch resources if supported
+                tools, validation_errors = self._validate_tools(tools, context="oauth")
+                if tools:
+                    logger.info("Fetched %s tools from gateway", len(tools))
+                # Fetch resources if supported
 
-                    logger.debug("Checking for resources support: %s", capabilities.get("resources"))
-                    resources = []
-                    if capabilities.get("resources"):
-                        try:
-                            response = await session.list_resources()
-                            raw_resources = response.resources
-                            for resource in raw_resources:
-                                resource_data = resource.model_dump(by_alias=True, exclude_none=True)
-                                merge_mcp_protocol_meta(resource_data)
-                                # Convert AnyUrl to string if present
-                                if "uri" in resource_data and hasattr(resource_data["uri"], "unicode_string"):
-                                    resource_data["uri"] = str(resource_data["uri"])
-                                # Add default content if not present (will be fetched on demand)
-                                if "content" not in resource_data:
-                                    resource_data["content"] = ""
-                                try:
-                                    resources.append(ResourceCreate.model_validate(resource_data))
-                                except Exception:
-                                    # If validation fails, create minimal resource
-                                    resources.append(
-                                        ResourceCreate(
-                                            uri=str(resource_data.get("uri", "")),
-                                            name=resource_data.get("name", ""),
-                                            description=resource_data.get("description"),
-                                            mime_type=resource_data.get("mimeType"),
-                                            uri_template=resource_data.get("uriTemplate") or None,
-                                            content="",
-                                            extension_metadata=resource_data.get("extensionMetadata"),
-                                        )
+                logger.debug("Checking for resources support: %s", capabilities.get("resources"))
+                resources = []
+                if capabilities.get("resources"):
+                    try:
+                        response = await client.list_resources()
+                        raw_resources = response.resources
+                        for resource in raw_resources:
+                            resource_data = resource.model_dump(by_alias=True, exclude_none=True)
+                            merge_mcp_protocol_meta(resource_data)
+                            # Convert AnyUrl to string if present
+                            if "uri" in resource_data and hasattr(resource_data["uri"], "unicode_string"):
+                                resource_data["uri"] = str(resource_data["uri"])
+                            # Add default content if not present (will be fetched on demand)
+                            if "content" not in resource_data:
+                                resource_data["content"] = ""
+                            try:
+                                resources.append(ResourceCreate.model_validate(resource_data))
+                            except Exception:
+                                # If validation fails, create minimal resource
+                                resources.append(
+                                    ResourceCreate(
+                                        uri=str(resource_data.get("uri", "")),
+                                        name=resource_data.get("name", ""),
+                                        description=resource_data.get("description"),
+                                        mime_type=resource_data.get("mimeType"),
+                                        uri_template=resource_data.get("uriTemplate") or None,
+                                        content="",
+                                        extension_metadata=resource_data.get("extensionMetadata"),
                                     )
-                            logger.info("Fetched %s resources from gateway", len(resources))
-                        except Exception as e:
-                            logger.warning("Failed to fetch resources: %s", e)
+                                )
+                        logger.info("Fetched %s resources from gateway", len(resources))
+                    except Exception as e:
+                        logger.warning("Failed to fetch resources: %s", e)
 
-                        # resource template URI
-                        try:
-                            response_templates = await session.list_resource_templates()
-                            raw_resources_templates = response_templates.resourceTemplates
-                            resource_templates = []
-                            for resource_template in raw_resources_templates:
-                                resource_template_data = resource_template.model_dump(by_alias=True, exclude_none=True)
-                                merge_mcp_protocol_meta(resource_template_data)
+                    # resource template URI
+                    try:
+                        response_templates = await client.list_resource_templates()
+                        raw_resources_templates = response_templates.resource_templates
+                        resource_templates = []
+                        for resource_template in raw_resources_templates:
+                            resource_template_data = resource_template.model_dump(by_alias=True, exclude_none=True)
+                            merge_mcp_protocol_meta(resource_template_data)
 
-                                if "uriTemplate" in resource_template_data:  # and hasattr(resource_template_data["uriTemplate"], "unicode_string"):
-                                    resource_template_data["uri_template"] = str(resource_template_data["uriTemplate"])
-                                    resource_template_data["uri"] = str(resource_template_data["uriTemplate"])
+                            if "uriTemplate" in resource_template_data:  # and hasattr(resource_template_data["uriTemplate"], "unicode_string"):
+                                resource_template_data["uri_template"] = str(resource_template_data["uriTemplate"])
+                                resource_template_data["uri"] = str(resource_template_data["uriTemplate"])
 
-                                if "content" not in resource_template_data:
-                                    resource_template_data["content"] = ""
+                            if "content" not in resource_template_data:
+                                resource_template_data["content"] = ""
 
-                                resources.append(ResourceCreate.model_validate(resource_template_data))
-                                resource_templates.append(ResourceCreate.model_validate(resource_template_data))
-                            logger.info("Fetched %s resource templates from gateway", len(resource_templates))
-                        except Exception as e:
-                            logger.warning("Failed to fetch resource templates: %s", e)
+                            resources.append(ResourceCreate.model_validate(resource_template_data))
+                            resource_templates.append(ResourceCreate.model_validate(resource_template_data))
+                        logger.info("Fetched %s resource templates from gateway", len(resource_templates))
+                    except Exception as e:
+                        logger.warning("Failed to fetch resource templates: %s", e)
 
-                    # Fetch prompts if supported
-                    prompts = []
-                    logger.debug("Checking for prompts support: %s", capabilities.get("prompts"))
-                    if capabilities.get("prompts"):
-                        try:
-                            response = await session.list_prompts()
-                            raw_prompts = response.prompts
-                            for prompt in raw_prompts:
-                                prompt_data = prompt.model_dump(by_alias=True, exclude_none=True)
-                                # Add default template if not present
-                                if "template" not in prompt_data:
-                                    prompt_data["template"] = ""
-                                try:
-                                    prompts.append(PromptCreate.model_validate(prompt_data))
-                                except Exception:
-                                    # If validation fails, create minimal prompt
-                                    prompts.append(
-                                        PromptCreate(
-                                            name=prompt_data.get("name", ""),
-                                            description=prompt_data.get("description"),
-                                            template=prompt_data.get("template", ""),
-                                        )
+                # Fetch prompts if supported
+                prompts = []
+                logger.debug("Checking for prompts support: %s", capabilities.get("prompts"))
+                if capabilities.get("prompts"):
+                    try:
+                        response = await client.list_prompts()
+                        raw_prompts = response.prompts
+                        for prompt in raw_prompts:
+                            prompt_data = prompt.model_dump(by_alias=True, exclude_none=True)
+                            # Add default template if not present
+                            if "template" not in prompt_data:
+                                prompt_data["template"] = ""
+                            try:
+                                prompts.append(PromptCreate.model_validate(prompt_data))
+                            except Exception:
+                                # If validation fails, create minimal prompt
+                                prompts.append(
+                                    PromptCreate(
+                                        name=prompt_data.get("name", ""),
+                                        description=prompt_data.get("description"),
+                                        template=prompt_data.get("template", ""),
                                     )
-                            logger.info("Fetched %s prompts from gateway", len(prompts))
-                        except Exception as e:
-                            logger.warning("Failed to fetch prompts: %s", e)
+                                )
+                        logger.info("Fetched %s prompts from gateway", len(prompts))
+                    except Exception as e:
+                        logger.warning("Failed to fetch prompts: %s", e)
 
-                    return capabilities, tools, resources, prompts, validation_errors
+                return capabilities, tools, resources, prompts, validation_errors
         except Exception as e:
             # Note: This function is for OAuth servers only, which don't use query param auth
             # Still sanitize in case exception contains URL with static sensitive params
@@ -6812,109 +6809,106 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 ),
             )
 
-        # Use async with for both sse_client and ClientSession
-        async with sse_client(url=server_url, headers=authentication, httpx_client_factory=get_httpx_client_factory) as streams:
-            async with ClientSession(*streams) as session:
-                # Initialize the session
-                response = await session.initialize()
+        # Client auto-initializes on entry; no manual initialize() needed.
+        async with mcp_proxy_client(url=server_url, headers=authentication, httpx_client_factory=get_httpx_client_factory, transport="sse") as client:
+            # Read negotiated capabilities from the auto-initialized session
+            capabilities = client.server_capabilities.model_dump(by_alias=True, exclude_none=True)
+            logger.debug("Server capabilities: %s", capabilities)
 
-                capabilities = response.capabilities.model_dump(by_alias=True, exclude_none=True)
-                logger.debug("Server capabilities: %s", capabilities)
+            response = await client.list_tools()
+            tools = response.tools
+            tools = [tool.model_dump(by_alias=True, exclude_none=True, exclude_unset=True) for tool in tools]
 
-                response = await session.list_tools()
-                tools = response.tools
-                tools = [tool.model_dump(by_alias=True, exclude_none=True, exclude_unset=True) for tool in tools]
-
-                tools, validation_errors = self._validate_tools(tools)
-                if tools:
-                    logger.info("Fetched %s tools from gateway", len(tools))
-                # Fetch resources if supported
-                resources = []
-                if include_resources:
-                    logger.debug("Checking for resources support: %s", capabilities.get("resources"))
-                    if capabilities.get("resources"):
-                        try:
-                            response = await session.list_resources()
-                            raw_resources = response.resources
-                            for resource in raw_resources:
-                                resource_data = resource.model_dump(by_alias=True, exclude_none=True)
-                                merge_mcp_protocol_meta(resource_data)
-                                # Convert AnyUrl to string if present
-                                if "uri" in resource_data and hasattr(resource_data["uri"], "unicode_string"):
-                                    resource_data["uri"] = str(resource_data["uri"])
-                                # Add default content if not present (will be fetched on demand)
-                                if "content" not in resource_data:
-                                    resource_data["content"] = ""
-                                try:
-                                    resources.append(ResourceCreate.model_validate(resource_data))
-                                except Exception:
-                                    # If validation fails, create minimal resource
-                                    resources.append(
-                                        ResourceCreate(
-                                            uri=str(resource_data.get("uri", "")),
-                                            name=resource_data.get("name", ""),
-                                            description=resource_data.get("description"),
-                                            mime_type=resource_data.get("mimeType"),
-                                            uri_template=resource_data.get("uriTemplate") or None,
-                                            content="",
-                                            extension_metadata=resource_data.get("extensionMetadata"),
-                                        )
+            tools, validation_errors = self._validate_tools(tools)
+            if tools:
+                logger.info("Fetched %s tools from gateway", len(tools))
+            # Fetch resources if supported
+            resources = []
+            if include_resources:
+                logger.debug("Checking for resources support: %s", capabilities.get("resources"))
+                if capabilities.get("resources"):
+                    try:
+                        response = await client.list_resources()
+                        raw_resources = response.resources
+                        for resource in raw_resources:
+                            resource_data = resource.model_dump(by_alias=True, exclude_none=True)
+                            merge_mcp_protocol_meta(resource_data)
+                            # Convert AnyUrl to string if present
+                            if "uri" in resource_data and hasattr(resource_data["uri"], "unicode_string"):
+                                resource_data["uri"] = str(resource_data["uri"])
+                            # Add default content if not present (will be fetched on demand)
+                            if "content" not in resource_data:
+                                resource_data["content"] = ""
+                            try:
+                                resources.append(ResourceCreate.model_validate(resource_data))
+                            except Exception:
+                                # If validation fails, create minimal resource
+                                resources.append(
+                                    ResourceCreate(
+                                        uri=str(resource_data.get("uri", "")),
+                                        name=resource_data.get("name", ""),
+                                        description=resource_data.get("description"),
+                                        mime_type=resource_data.get("mimeType"),
+                                        uri_template=resource_data.get("uriTemplate") or None,
+                                        content="",
+                                        extension_metadata=resource_data.get("extensionMetadata"),
                                     )
-                            logger.info("Fetched %s resources from gateway", len(resources))
-                        except Exception as e:
-                            logger.warning("Failed to fetch resources: %s", e)
+                                )
+                        logger.info("Fetched %s resources from gateway", len(resources))
+                    except Exception as e:
+                        logger.warning("Failed to fetch resources: %s", e)
 
-                        # resource template URI
-                        try:
-                            response_templates = await session.list_resource_templates()
-                            raw_resources_templates = response_templates.resourceTemplates
-                            resource_templates = []
-                            for resource_template in raw_resources_templates:
-                                resource_template_data = resource_template.model_dump(by_alias=True, exclude_none=True)
-                                merge_mcp_protocol_meta(resource_template_data)
+                    # resource template URI
+                    try:
+                        response_templates = await client.list_resource_templates()
+                        raw_resources_templates = response_templates.resource_templates
+                        resource_templates = []
+                        for resource_template in raw_resources_templates:
+                            resource_template_data = resource_template.model_dump(by_alias=True, exclude_none=True)
+                            merge_mcp_protocol_meta(resource_template_data)
 
-                                if "uriTemplate" in resource_template_data:  # and hasattr(resource_template_data["uriTemplate"], "unicode_string"):
-                                    resource_template_data["uri_template"] = str(resource_template_data["uriTemplate"])
-                                    resource_template_data["uri"] = str(resource_template_data["uriTemplate"])
+                            if "uriTemplate" in resource_template_data:  # and hasattr(resource_template_data["uriTemplate"], "unicode_string"):
+                                resource_template_data["uri_template"] = str(resource_template_data["uriTemplate"])
+                                resource_template_data["uri"] = str(resource_template_data["uriTemplate"])
 
-                                if "content" not in resource_template_data:
-                                    resource_template_data["content"] = ""
+                            if "content" not in resource_template_data:
+                                resource_template_data["content"] = ""
 
-                                resources.append(ResourceCreate.model_validate(resource_template_data))
-                                resource_templates.append(ResourceCreate.model_validate(resource_template_data))
-                            logger.info("Fetched %s resource templates from gateway", len(raw_resources_templates))
-                        except Exception as ei:
-                            logger.warning("Failed to fetch resource templates: %s", ei)
+                            resources.append(ResourceCreate.model_validate(resource_template_data))
+                            resource_templates.append(ResourceCreate.model_validate(resource_template_data))
+                        logger.info("Fetched %s resource templates from gateway", len(raw_resources_templates))
+                    except Exception as ei:
+                        logger.warning("Failed to fetch resource templates: %s", ei)
 
-                # Fetch prompts if supported
-                prompts = []
-                if include_prompts:
-                    logger.debug("Checking for prompts support: %s", capabilities.get("prompts"))
-                    if capabilities.get("prompts"):
-                        try:
-                            response = await session.list_prompts()
-                            raw_prompts = response.prompts
-                            for prompt in raw_prompts:
-                                prompt_data = prompt.model_dump(by_alias=True, exclude_none=True)
-                                # Add default template if not present
-                                if "template" not in prompt_data:
-                                    prompt_data["template"] = ""
-                                try:
-                                    prompts.append(PromptCreate.model_validate(prompt_data))
-                                except Exception:
-                                    # If validation fails, create minimal prompt
-                                    prompts.append(
-                                        PromptCreate(
-                                            name=prompt_data.get("name", ""),
-                                            description=prompt_data.get("description"),
-                                            template=prompt_data.get("template", ""),
-                                        )
+            # Fetch prompts if supported
+            prompts = []
+            if include_prompts:
+                logger.debug("Checking for prompts support: %s", capabilities.get("prompts"))
+                if capabilities.get("prompts"):
+                    try:
+                        response = await client.list_prompts()
+                        raw_prompts = response.prompts
+                        for prompt in raw_prompts:
+                            prompt_data = prompt.model_dump(by_alias=True, exclude_none=True)
+                            # Add default template if not present
+                            if "template" not in prompt_data:
+                                prompt_data["template"] = ""
+                            try:
+                                prompts.append(PromptCreate.model_validate(prompt_data))
+                            except Exception:
+                                # If validation fails, create minimal prompt
+                                prompts.append(
+                                    PromptCreate(
+                                        name=prompt_data.get("name", ""),
+                                        description=prompt_data.get("description"),
+                                        template=prompt_data.get("template", ""),
                                     )
-                            logger.info("Fetched %s prompts from gateway", len(prompts))
-                        except Exception as e:
-                            logger.warning("Failed to fetch prompts: %s", e)
+                                )
+                        logger.info("Fetched %s prompts from gateway", len(prompts))
+                    except Exception as e:
+                        logger.warning("Failed to fetch prompts: %s", e)
 
-                return capabilities, tools, resources, prompts, validation_errors
+            return capabilities, tools, resources, prompts, validation_errors
         sanitized_url = sanitize_url_for_logging(server_url, auth_query_params)
         raise GatewayConnectionError(f"Failed to initialize gateway at {sanitized_url}: Connection could not be established")
 
@@ -6970,113 +6964,112 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             else:
                 ctx = None
 
-            return httpx.AsyncClient(
+            return httpx2.AsyncClient(
                 verify=ctx if ctx else get_default_verify(),
                 follow_redirects=False,
                 headers=headers,
                 timeout=timeout if timeout else get_http_timeout(),
                 auth=auth,
-                limits=httpx.Limits(
+                limits=httpx2.Limits(
                     max_connections=settings.httpx_max_connections,
                     max_keepalive_connections=settings.httpx_max_keepalive_connections,
                     keepalive_expiry=settings.httpx_keepalive_expiry,
                 ),
             )
 
-        async with streamablehttp_client(url=server_url, headers=authentication, httpx_client_factory=get_httpx_client_factory) as (read_stream, write_stream, _get_session_id):
-            async with ClientSession(read_stream, write_stream) as session:
-                # Initialize the session
-                response = await session.initialize()
-                capabilities = response.capabilities.model_dump(by_alias=True, exclude_none=True)
-                logger.debug("Server capabilities: %s", capabilities)
+        async with mcp_proxy_client(
+            url=server_url,
+            headers=authentication,
+            httpx_client_factory=get_httpx_client_factory,
+        ) as client:
+            # Client auto-initializes; get capabilities from the auto-initialized session
+            capabilities = client.server_capabilities.model_dump(by_alias=True, exclude_none=True)
+            logger.debug("Server capabilities: %s", capabilities)
 
-                response = await session.list_tools()
-                tools = response.tools
-                tools = [tool.model_dump(by_alias=True, exclude_none=True, exclude_unset=True) for tool in tools]
+            response = await client.list_tools()
+            tools = response.tools
+            tools = [tool.model_dump(by_alias=True, exclude_none=True, exclude_unset=True) for tool in tools]
 
-                tools, validation_errors = self._validate_tools(tools)
-                for tool in tools:
-                    tool.request_type = "STREAMABLEHTTP"
-                if tools:
-                    logger.info("Fetched %s tools from gateway", len(tools))
+            tools, validation_errors = self._validate_tools(tools)
+            for tool in tools:
+                tool.request_type = "STREAMABLEHTTP"
+            if tools:
+                logger.info("Fetched %s tools from gateway", len(tools))
 
-                # Fetch resources if supported
-                resources = []
-                if include_resources:
-                    logger.debug("Checking for resources support: %s", capabilities.get("resources"))
-                    if capabilities.get("resources"):
-                        try:
-                            response = await session.list_resources()
-                            raw_resources = response.resources
-                            for resource in raw_resources:
-                                resource_data = resource.model_dump(by_alias=True, exclude_none=True)
-                                merge_mcp_protocol_meta(resource_data)
-                                # Convert AnyUrl to string if present
-                                if "uri" in resource_data and hasattr(resource_data["uri"], "unicode_string"):
-                                    resource_data["uri"] = str(resource_data["uri"])
-                                # Add default content if not present
-                                if "content" not in resource_data:
-                                    resource_data["content"] = ""
-                                try:
-                                    resources.append(ResourceCreate.model_validate(resource_data))
-                                except Exception:
-                                    # If validation fails, create minimal resource
-                                    resources.append(
-                                        ResourceCreate(
-                                            uri=str(resource_data.get("uri", "")),
-                                            name=resource_data.get("name", ""),
-                                            description=resource_data.get("description"),
-                                            mime_type=resource_data.get("mimeType"),
-                                            uri_template=resource_data.get("uriTemplate") or None,
-                                            content="",
-                                            extension_metadata=resource_data.get("extensionMetadata"),
-                                        )
+            # Fetch resources if supported
+            resources = []
+            if include_resources:
+                logger.debug("Checking for resources support: %s", capabilities.get("resources"))
+                if capabilities.get("resources"):
+                    try:
+                        response = await client.list_resources()
+                        raw_resources = response.resources
+                        for resource in raw_resources:
+                            resource_data = resource.model_dump(by_alias=True, exclude_none=True)
+                            # Convert AnyUrl to string if present
+                            if "uri" in resource_data and hasattr(resource_data["uri"], "unicode_string"):
+                                resource_data["uri"] = str(resource_data["uri"])
+                            # Add default content if not present
+                            if "content" not in resource_data:
+                                resource_data["content"] = ""
+                            try:
+                                resources.append(ResourceCreate.model_validate(resource_data))
+                            except Exception:
+                                # If validation fails, create minimal resource
+                                resources.append(
+                                    ResourceCreate(
+                                        uri=str(resource_data.get("uri", "")),
+                                        name=resource_data.get("name", ""),
+                                        description=resource_data.get("description"),
+                                        mime_type=resource_data.get("mimeType"),
+                                        uri_template=resource_data.get("uriTemplate") or None,
+                                        content="",
                                     )
-                            logger.info("Fetched %s resources from gateway", len(resources))
-                        except Exception as e:
-                            logger.warning("Failed to fetch resources: %s", e)
+                                )
+                        logger.info("Fetched %s resources from gateway", len(resources))
+                    except Exception as e:
+                        logger.warning("Failed to fetch resources: %s", e)
 
-                        # resource template URI
-                        try:
-                            response_templates = await session.list_resource_templates()
-                            raw_resources_templates = response_templates.resourceTemplates
-                            resource_templates = []
-                            for resource_template in raw_resources_templates:
-                                resource_template_data = resource_template.model_dump(by_alias=True, exclude_none=True)
-                                merge_mcp_protocol_meta(resource_template_data)
+                    # resource template URI
+                    try:
+                        response_templates = await client.list_resource_templates()
+                        raw_resources_templates = response_templates.resource_templates
+                        resource_templates = []
+                        for resource_template in raw_resources_templates:
+                            resource_template_data = resource_template.model_dump(by_alias=True, exclude_none=True)
 
-                                if "uriTemplate" in resource_template_data:  # and hasattr(resource_template_data["uriTemplate"], "unicode_string"):
-                                    resource_template_data["uri_template"] = str(resource_template_data["uriTemplate"])
-                                    resource_template_data["uri"] = str(resource_template_data["uriTemplate"])
+                            if "uriTemplate" in resource_template_data:  # and hasattr(resource_template_data["uriTemplate"], "unicode_string"):
+                                resource_template_data["uri_template"] = str(resource_template_data["uriTemplate"])
+                                resource_template_data["uri"] = str(resource_template_data["uriTemplate"])
 
-                                if "content" not in resource_template_data:
-                                    resource_template_data["content"] = ""
+                            if "content" not in resource_template_data:
+                                resource_template_data["content"] = ""
 
-                                resources.append(ResourceCreate.model_validate(resource_template_data))
-                                resource_templates.append(ResourceCreate.model_validate(resource_template_data))
-                            logger.info("Fetched %s resource templates from gateway", len(resource_templates))
-                        except Exception as e:
-                            logger.warning("Failed to fetch resource templates: %s", e)
+                            resources.append(ResourceCreate.model_validate(resource_template_data))
+                            resource_templates.append(ResourceCreate.model_validate(resource_template_data))
+                        logger.info("Fetched %s resource templates from gateway", len(resource_templates))
+                    except Exception as e:
+                        logger.warning("Failed to fetch resource templates: %s", e)
 
-                # Fetch prompts if supported
-                prompts = []
-                if include_prompts:
-                    logger.debug("Checking for prompts support: %s", capabilities.get("prompts"))
-                    if capabilities.get("prompts"):
-                        try:
-                            response = await session.list_prompts()
-                            raw_prompts = response.prompts
-                            for prompt in raw_prompts:
-                                prompt_data = prompt.model_dump(by_alias=True, exclude_none=True)
-                                # Add default template if not present
-                                if "template" not in prompt_data:
-                                    prompt_data["template"] = ""
-                                prompts.append(PromptCreate.model_validate(prompt_data))
-                            logger.info("Fetched %s prompts from gateway", len(prompts))
-                        except Exception as e:
-                            logger.warning("Failed to fetch prompts: %s", e)
+            # Fetch prompts if supported
+            prompts = []
+            if include_prompts:
+                logger.debug("Checking for prompts support: %s", capabilities.get("prompts"))
+                if capabilities.get("prompts"):
+                    try:
+                        response = await client.list_prompts()
+                        raw_prompts = response.prompts
+                        for prompt in raw_prompts:
+                            prompt_data = prompt.model_dump(by_alias=True, exclude_none=True)
+                            # Add default template if not present
+                            if "template" not in prompt_data:
+                                prompt_data["template"] = ""
+                            prompts.append(PromptCreate.model_validate(prompt_data))
+                        logger.info("Fetched %s prompts from gateway", len(prompts))
+                    except Exception as e:
+                        logger.warning("Failed to fetch prompts: %s", e)
 
-                return capabilities, tools, resources, prompts, validation_errors
+            return capabilities, tools, resources, prompts, validation_errors
         sanitized_url = sanitize_url_for_logging(server_url, auth_query_params)
         raise GatewayConnectionError(f"Failed to initialize gateway at {sanitized_url}: Connection could not be established")
 

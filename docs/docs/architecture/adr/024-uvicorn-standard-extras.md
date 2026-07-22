@@ -123,6 +123,20 @@ uv pip list | grep -E "uvicorn|uvloop|httptools|websockets|watchfiles"
 
 This decision has been implemented. The `pyproject.toml` now specifies `uvicorn[standard]>=0.38.0`.
 
+!!! note "Post-decision update: install command in Migration Path"
+    Step 2 of the Migration Path (`uv sync` or `pip install -e .`) was written
+    before the **`runtime` / `live-tests` SDK partition**. After that change, a
+    bare `pip install -e .` or `uv sync` resolves the package but omits the `mcp`
+    SDK, so the gateway will not start. Use one of:
+
+    ```bash
+    pip install -e '.[dev-all,runtime]'
+    uv sync --extra runtime --group dev    # or: make install-dev
+    ```
+
+    See the [Unreleased CHANGELOG entry](../../../CHANGELOG.md) for the full
+    `runtime` vs `live-tests` rationale.
+
 ## References
 
 - GitHub Issue: #1699

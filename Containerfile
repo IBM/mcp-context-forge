@@ -10,7 +10,6 @@
 # variants were consolidated here).
 #
 # Key design points:
-#   - Builder stage has full DNF + devel headers for wheel compilation
 #   - Runtime stage uses ubi10-minimal for cross-platform compatibility
 #   - Optional Rust builder stage for native extensions (ENABLE_RUST=true)
 #   - Development headers are dropped from the final image
@@ -21,7 +20,7 @@
 # Build-time arguments
 ###########################
 # Python major.minor series to track
-ARG PYTHON_VERSION=3.12
+ARG PYTHON_VERSION=3.14
 ARG ENABLE_RUST=false
 ARG ENABLE_RUST_MCP_RMCP=false
 # Enable profiling tools (memray, py-spy) - off by default for smaller images
@@ -41,7 +40,6 @@ ARG ENABLE_PROFILING=false
 # Example (Dreadnought):
 #   docker build -f Containerfile \
 #     --build-arg ENABLE_FIPS=true \
-#     --build-arg UBI_BASE=<internal-registry>/ubi9/ubi:latest \
 #     --build-arg NODEJS_IMAGE=<internal-registry>/ubi9/nodejs-20:latest \
 #     --build-arg UBI_MINIMAL=<internal-registry>/ubi9/ubi-minimal:latest \
 #     .
@@ -65,8 +63,8 @@ RUN mkdir -p /wheels
 # To build WITH Rust: docker build --build-arg ENABLE_RUST=true -f Containerfile .
 # To build WITHOUT Rust (default): docker build -f Containerfile .
 ###############################################################################
-FROM ${UBI_BASE} AS rust-builder
-ARG PYTHON_VERSION=3.12
+FROM ${UBI_MINIMAL} AS rust-builder
+ARG PYTHON_VERSION=3.14
 ARG ENABLE_RUST
 ARG ENABLE_RUST_MCP_RMCP
 
@@ -86,8 +84,8 @@ RUN if [ "$ENABLE_RUST" != "true" ]; then \
 # Install system deps + Rust toolchain in a single layer (only if ENABLE_RUST=true)
 # hadolint ignore=DL3041
 RUN if [ "$ENABLE_RUST" = "true" ]; then \
-        dnf upgrade -y && \
-        dnf install -y \
+        microdnf upgrade -y && \
+        microdnf install -y \
             python${PYTHON_VERSION} \
             python${PYTHON_VERSION}-devel \
             python${PYTHON_VERSION}-pip \
@@ -99,7 +97,7 @@ RUN if [ "$ENABLE_RUST" = "true" ]; then \
             findutils \
             curl && \
         update-alternatives --install /usr/bin/python3 python3 /usr/bin/python${PYTHON_VERSION} 1 && \
-        dnf clean all && \
+        microdnf clean all && \
         curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable; \
     fi
 ENV PATH="/root/.cargo/bin:$PATH"
@@ -220,10 +218,10 @@ RUN if [ "$(uname -m)" = "s390x" ]; then \
 ###########################
 # Builder stage
 ###########################
-FROM ${UBI_BASE} AS builder
+FROM ${UBI_MINIMAL} AS builder
 SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
 
-ARG PYTHON_VERSION
+ARG PYTHON_VERSION=3.14
 ARG GRPC_PYTHON_BUILD_SYSTEM_OPENSSL='False'
 
 # ----------------------------------------------------------------------------
@@ -235,13 +233,14 @@ ARG GRPC_PYTHON_BUILD_SYSTEM_OPENSSL='False'
 # ----------------------------------------------------------------------------
 # hadolint ignore=DL3041
 RUN set -euo pipefail \
-    && dnf upgrade -y \
-    && dnf install -y --allowerasing \
+    && microdnf upgrade -y \
+    && microdnf install -y \
         python${PYTHON_VERSION} \
         python${PYTHON_VERSION}-devel \
         binutils openssl-devel gcc postgresql-devel gcc-c++ curl libpq-devel \
+        git \
     && update-alternatives --install /usr/bin/python3 python3 /usr/bin/python${PYTHON_VERSION} 1 \
-    && dnf clean all
+    && microdnf clean all
 
 WORKDIR /app
 
@@ -300,9 +299,9 @@ RUN set -euo pipefail \
     && /app/.venv/bin/pip install --no-cache-dir --upgrade pip setuptools wheel uv \
     && if [ -n "$(ls -A /tmp/wheels/*.whl 2>/dev/null)" ]; then \
         echo "📦 Hermetic install from prebuilt wheel closure"; \
-        /app/.venv/bin/uv pip install --no-index --find-links=/tmp/wheels ".[redis,observability,plugins,llmchat]" "psycopg[c]>=3.3.3"; \
+        /app/.venv/bin/uv pip install --no-index --find-links=/tmp/wheels ".[runtime,redis,observability,granian,plugins,llmchat]" "psycopg[c,binary]>=3.3.4"; \
     else \
-        /app/.venv/bin/uv pip install ".[redis,postgres,observability,plugins,llmchat]"; \
+        /app/.venv/bin/uv pip install ".[runtime,redis,postgres,observability,granian,plugins,llmchat]"; \
     fi \
     && echo "✅ Plugins installed from PyPI via [plugins] extra" \
     && if [ "$ENABLE_RUST" = "true" ] && ls "/tmp/local-native-extension-wheels/"*.whl 1> /dev/null 2>&1; then \
@@ -373,7 +372,7 @@ RUN python3 -OO -m compileall -x 'cpex/templates' -q /app/.venv /app/mcpgateway 
 FROM ${UBI_MINIMAL} AS runtime
 ARG ENABLE_FIPS=false
 
-ARG PYTHON_VERSION=3.12
+ARG PYTHON_VERSION=3.14
 ARG ENABLE_RUST=false
 ARG ENABLE_RUST_MCP_RMCP=false
 ARG ENABLE_PROFILING=false

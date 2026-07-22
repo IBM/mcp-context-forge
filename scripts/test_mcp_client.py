@@ -9,7 +9,7 @@ import sys
 
 async def main():
     # Import MCP client
-    from mcp.client.streamable_http import streamablehttp_client
+    from mcp.client.streamable_http import streamable_http_client
     from mcp.client.session import ClientSession
 
     # Generate JWT token
@@ -43,7 +43,7 @@ async def main():
             # Create headers with auth
             headers = {"Authorization": f"Bearer {token}"}
 
-            async with streamablehttp_client(url, headers=headers) as (read_stream, write_stream, _):
+            async with streamable_http_client(url, headers=headers) as (read_stream, write_stream, _):
                 async with ClientSession(read_stream, write_stream) as session:
                     # Initialize the session
                     print("\n1. INITIALIZE")

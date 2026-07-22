@@ -83,7 +83,7 @@ Perfect when:
 ```bash
 pipx install --include-deps mcp-contextforge-gateway          # isolates in ~/.local/pipx/venvs
 #   - or -
-uv pip install mcp-contextforge-gateway                       # inside any uv/venv you like
+uv pip install 'mcp-contextforge-gateway[runtime]'            # inside any uv/venv you like
 ```
 
 ### 2 - Create `.vscode/mcp.json`

@@ -27,10 +27,10 @@ from cpex.framework import GlobalContext, PluginContextTable, PromptHookType, Pr
 from jinja2 import meta, select_autoescape, Template
 from jinja2.exceptions import SecurityError as JinjaSecurityError
 from jinja2.sandbox import SandboxedEnvironment
-from mcp import ClientSession, types
-from mcp.client.sse import sse_client
-from mcp.client.streamable_http import streamablehttp_client
-from mcp.types import GetPromptRequest, GetPromptRequestParams
+from mcp import ClientSession
+import mcp_types as types
+from mcpgateway.utils.mcp_proxy_client import mcp_proxy_client
+from mcp_types import GetPromptRequest, GetPromptRequestParams
 import orjson
 from pydantic import ValidationError
 from sqlalchemy import and_, delete, desc, not_, or_, select
@@ -160,11 +160,11 @@ def _build_get_prompt_request(name: str, arguments: Optional[Dict[str, str]], me
         meta_data: Validated metadata dict to inject as ``_meta``.
 
     Returns:
-        A :class:`types.ClientRequest` ready to be passed to ``session.send_request``.
+        A :class:`GetPromptRequest` ready to be passed to ``session.send_request``.
     """
     _gp_dict = GetPromptRequestParams(name=name, arguments=arguments).model_dump(by_alias=True)
     _gp_dict["_meta"] = meta_data
-    return types.ClientRequest(GetPromptRequest(params=GetPromptRequestParams.model_validate(_gp_dict)))
+    return GetPromptRequest(params=GetPromptRequestParams.model_validate(_gp_dict))
 
 
 async def _get_prompt_with_meta(session: "ClientSession", name: str, arguments: Optional[Dict[str, str]], meta_data: Optional[Dict[str, Any]]) -> Any:
@@ -448,15 +448,20 @@ class PromptService(BaseService):
                         )
 
             if transport == "sse":
-                async with sse_client(url=gateway_url, headers=headers, timeout=settings.health_check_timeout) as streams:
-                    async with ClientSession(*streams) as session:
-                        await session.initialize()
-                        remote_result = await _get_prompt_with_meta(session, remote_name, prompt_arguments, meta_data)
+                async with mcp_proxy_client(
+                    url=gateway_url,
+                    headers=headers,
+                    timeout=settings.health_check_timeout,
+                    transport="sse",
+                ) as client:
+                    remote_result = await _get_prompt_with_meta(client.session, remote_name, prompt_arguments, meta_data)
             else:
-                async with streamablehttp_client(url=gateway_url, headers=headers, timeout=settings.health_check_timeout) as (read_stream, write_stream, _get_session_id):
-                    async with ClientSession(read_stream, write_stream) as session:
-                        await session.initialize()
-                        remote_result = await _get_prompt_with_meta(session, remote_name, prompt_arguments, meta_data)
+                async with mcp_proxy_client(
+                    url=gateway_url,
+                    headers=headers,
+                    timeout=settings.health_check_timeout,
+                ) as client:
+                    remote_result = await _get_prompt_with_meta(client.session, remote_name, prompt_arguments, meta_data)
 
             return PromptResult(
                 messages=[
