@@ -66,7 +66,7 @@ COPY uv.lock pyproject.toml /build/
 # Containerfile's extras don't include `postgres`) and the
 # setuptools/wheel pair the main build needs for PEP 517 isolation.
 RUN uv export --frozen --no-emit-project --no-default-groups \
-        --extra redis --extra observability --extra granian \
+        --extra redis --extra observability \
         --extra plugins --extra llmchat \
         --format requirements-txt > /tmp/reqs.txt \
     && python3 -m pip wheel -r /tmp/reqs.txt --wheel-dir /wheels \
