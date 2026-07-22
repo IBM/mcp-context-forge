@@ -357,6 +357,12 @@ def build_v1_router(
         export_import_router=export_import_router,
         a2a_router=a2a_router,
     )
+
+    # First-Party
+    from mcpgateway.routers.catalog import router as catalog_router  # pylint: disable=import-outside-toplevel
+
+    v1_router.include_router(catalog_router)
+    logger.info("Catalog router included - v1 only")
     return v1_router
 
 
