@@ -1,9 +1,8 @@
 # -*- coding: utf-8 -*-
 # pylint: disable=wrong-import-position, import-outside-toplevel, no-name-in-module
 """Location: ./mcpgateway/main.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti, Eleni Kechrioti
 
 ContextForge AI Gateway - Main FastAPI Application.
 
@@ -78,14 +77,15 @@ from mcpgateway import version as version_module
 from mcpgateway.auth import get_current_user, get_user_team_roles, TokenValidationError, validate_token_user
 from mcpgateway.auth_context import (
     decode_internal_mcp_auth_context,
+    encode_internal_mcp_auth_context,
     get_internal_mcp_auth_context,
     get_request_identity,
     get_rpc_filter_context,
     get_scoped_resource_access_context,
     get_token_teams_from_request,
     get_user_email,
-    has_valid_internal_mcp_runtime_auth_header,
     INTERNAL_MCP_SESSION_VALIDATED_HEADER,
+    is_trusted_internal_mcp_request,
 )
 from mcpgateway.cache import ResourceCache, SessionRegistry
 from mcpgateway.common.models import InitializeResult
@@ -112,7 +112,7 @@ from mcpgateway.middleware.rate_limit_middleware import RateLimitMiddleware
 from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG, get_current_user_with_permissions, PermissionChecker, require_permission
 from mcpgateway.middleware.request_logging_middleware import RequestLoggingMiddleware
 from mcpgateway.middleware.security_headers import SecurityHeadersMiddleware
-from mcpgateway.middleware.token_scoping import token_scoping_middleware
+from mcpgateway.middleware.token_scoping import ResourceOwnershipResult, token_scoping_middleware
 from mcpgateway.middleware.validation_middleware import ValidationMiddleware
 from mcpgateway.observability import configure_baggage_span_attribute_policy, extract_baggage_span_attribute_policy, init_telemetry, OpenTelemetryRequestMiddleware, otel_tracing_enabled
 from mcpgateway.plugins import (
@@ -179,10 +179,20 @@ from mcpgateway.services.import_service import ImportError as ImportServiceError
 from mcpgateway.services.import_service import ImportService, ImportValidationError
 from mcpgateway.services.log_aggregator import get_log_aggregator
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.services.mcp_apps import (
+    apply_tool_meta,
+    build_mcp_apps_capabilities,
+    filter_model_visible_tools,
+    get_mcp_app_session_cleanup_service,
+    mcp_app_session_service,
+    mcp_apps_enabled,
+    MCPAppsValidationError,
+    serialize_resource_content_for_mcp,
+)
 from mcpgateway.services.metrics import setup_metrics
 from mcpgateway.services.permission_service import PermissionService
 from mcpgateway.services.prompt_service import PromptError, PromptLockConflictError, PromptNameConflictError, PromptNotFoundError
-from mcpgateway.services.resource_service import ResourceError, ResourceLockConflictError, ResourceNotFoundError, ResourceURIConflictError
+from mcpgateway.services.resource_service import ResourceError, ResourceLockConflictError, ResourceNotFoundError, ResourceURIConflictError, ResourceValidationError
 from mcpgateway.services.server_service import ServerError, ServerLockConflictError, ServerNameConflictError, ServerNotFoundError
 from mcpgateway.services.tag_service import TagService
 from mcpgateway.services.tool_service import ToolError, ToolLockConflictError, ToolNameConflictError, ToolNotFoundError
@@ -285,26 +295,26 @@ _INTERNAL_MCP_AUTH_CONTEXT_HEADER = "x-contextforge-auth-context"
 
 
 def _is_trusted_internal_mcp_runtime_request(request: Request) -> bool:
-    """Return whether the request came from the local Rust runtime sidecar.
+    """Return whether the request came from a trusted local internal source.
+
+    Two callers are trusted today:
+
+    - ``"rust"`` — the local Rust runtime sidecar (over loopback).
+    - ``"affinity"`` — the in-process dispatch used by session-affinity
+      forwarding to reach the owner worker, carrying the identity the edge
+      already validated.
+
+    Both share the same gates: a shared-secret HMAC header AND a loopback client
+    address. Only the ``x-contextforge-mcp-runtime`` marker value differs.
 
     Args:
         request: Incoming request to inspect.
 
     Returns:
-        ``True`` when the request carries the trusted Rust runtime marker from
-        loopback, otherwise ``False``.
+        ``True`` when the request carries a trusted internal-runtime marker
+        from loopback, otherwise ``False``.
     """
-    runtime_marker = request.headers.get("x-contextforge-mcp-runtime")
-    client_host = getattr(getattr(request, "client", None), "host", None)
-    if runtime_marker != "rust" or not has_valid_internal_mcp_runtime_auth_header(request) or client_host not in ("127.0.0.1", "::1"):
-        return False
-    # Defense-in-depth: /_internal/a2a/* endpoints must refuse requests when
-    # A2A support is disabled, even from an otherwise-trusted local sidecar.
-    # A legitimate sidecar should not be running when the feature is off.
-    path = getattr(getattr(request, "url", None), "path", "") or ""
-    if path.startswith("/_internal/a2a/") and not settings.mcpgateway_a2a_enabled:
-        return False
-    return True
+    return is_trusted_internal_mcp_request(request)
 
 
 def _is_jwt_token(token: str) -> bool:
@@ -330,6 +340,48 @@ def _is_jwt_token(token: str) -> bool:
         except Exception:  # pylint: disable=broad-exception-caught
             return False
     return True
+
+
+def _validate_internal_mcp_auth_context(auth_context: Dict[str, Any]) -> None:
+    """Validate a decoded trusted-internal auth context, failing closed on malformed input.
+
+    The public-only RBAC skip in ``_ensure_rpc_permission`` trusts this context, so a
+    public-only context (``is_authenticated is False``) must not carry authenticated-only
+    or elevated attributes. Field types are checked first to avoid downstream confusion
+    (for example a string ``scoped_permissions`` would be iterated per-character).
+
+    Args:
+        auth_context: Decoded auth-context dict from ``decode_internal_mcp_auth_context``.
+
+    Raises:
+        HTTPException: 400 when the context is malformed or a public-only context claims
+            teams, admin, or an identity.
+    """
+    teams = auth_context.get("teams")
+    if teams is not None and not isinstance(teams, list):
+        raise HTTPException(status_code=400, detail="Invalid trusted MCP auth context: teams must be a list")
+
+    scoped_permissions = auth_context.get("scoped_permissions")
+    if scoped_permissions is not None and not isinstance(scoped_permissions, list):
+        raise HTTPException(status_code=400, detail="Invalid trusted MCP auth context: scoped_permissions must be a list")
+
+    # is_authenticated must be a real bool so the ``is False`` identity checks below (and the
+    # public-only RBAC skip in _ensure_rpc_permission) are reliable. A truthy non-bool like
+    # the string "false" or 0 would slip past ``is False`` and defeat the public-only flooring.
+    is_authenticated = auth_context.get("is_authenticated")
+    if is_authenticated is not None and not isinstance(is_authenticated, bool):
+        raise HTTPException(status_code=400, detail="Invalid trusted MCP auth context: is_authenticated must be a bool")
+
+    # A public-only (unauthenticated) context must map to exactly public privileges.
+    # The RBAC skip relies on this invariant, so reject any contradictory attributes
+    # rather than letting them ride an unauthenticated dispatch.
+    if is_authenticated is False:
+        if teams:
+            raise HTTPException(status_code=400, detail="Invalid public-only auth context: teams must be empty")
+        if auth_context.get("is_admin") is True or auth_context.get("permission_is_admin") is True:
+            raise HTTPException(status_code=400, detail="Invalid public-only auth context: admin not permitted")
+        if auth_context.get("email"):
+            raise HTTPException(status_code=400, detail="Invalid public-only auth context: email not permitted")
 
 
 def _build_internal_mcp_forwarded_user(request: Request) -> Dict[str, Any]:
@@ -358,6 +410,10 @@ def _build_internal_mcp_forwarded_user(request: Request) -> Dict[str, Any]:
         logger.debug("Invalid trusted MCP auth context: %s", exc)
         raise HTTPException(status_code=400, detail="Invalid trusted MCP auth context") from exc
 
+    # Fail closed on a malformed or self-contradictory context before it is stored
+    # and trusted by the public-only RBAC skip downstream.
+    _validate_internal_mcp_auth_context(auth_context)
+
     setattr(request.state, "_mcp_internal_auth_context", auth_context)
 
     if "teams" in auth_context and (auth_context["teams"] is None or isinstance(auth_context["teams"], list)):
@@ -383,6 +439,58 @@ def _build_internal_mcp_forwarded_user(request: Request) -> Dict[str, Any]:
         "auth_method": forwarded_auth_method,
         "token_use": auth_context.get("token_use"),
     }
+
+
+def _build_internal_mcp_auth_context_for_rpc(request: Request, user: Any) -> Dict[str, Any]:
+    """Build the trusted-internal auth context for an affinity-forwarded ``/rpc`` request.
+
+    Affinity forwarding of a JSON-RPC ``/rpc`` request must carry the caller's
+    already-validated identity to the owner worker's ``/_internal/mcp/rpc`` dispatch, so the
+    owner does not re-authenticate at the public route boundary (which would 401 OAuth and
+    ``MCP_REQUIRE_AUTH=false`` public-only callers).
+
+    The identity is derived from the verified request state via ``get_rpc_filter_context``
+    (the canonical Layer-1 policy source) and the cached verified JWT payload, never from
+    inbound headers, so token-team and admin semantics are preserved. The result has the
+    same shape ``get_streamable_http_auth_context()`` emits, so the owner-side
+    ``_build_internal_mcp_forwarded_user`` reconstructs both forward paths identically, and
+    it satisfies ``_validate_internal_mcp_auth_context``.
+
+    Args:
+        request: The incoming ``/rpc`` request (already authenticated by the route).
+        user: The user object produced by the auth dependency.
+
+    Returns:
+        Encodable auth-context dict for ``encode_internal_mcp_auth_context``.
+    """
+    email, token_teams, is_admin = get_rpc_filter_context(request, user)
+    # Genuine anonymous / MCP_REQUIRE_AUTH=false public-only callers have no email.
+    is_authenticated = email is not None
+
+    scoped = _extract_scoped_permissions(request)
+    scoped_permissions = sorted(scoped) if scoped else None
+
+    cached = getattr(request.state, "_jwt_verified_payload", None)
+    payload = cached[1] if (isinstance(cached, tuple) and len(cached) == 2 and isinstance(cached[1], dict)) else {}
+    scopes = payload.get("scopes") if isinstance(payload.get("scopes"), dict) else {}
+    scoped_server_id = scopes.get("server_id")
+
+    context: Dict[str, Any] = {
+        "email": email,
+        # Authenticated callers keep their token teams (None == admin bypass); public-only
+        # callers are floored to no teams so _validate_internal_mcp_auth_context accepts them.
+        "teams": token_teams if is_authenticated else [],
+        "is_authenticated": is_authenticated,
+        "is_admin": bool(is_admin) if is_authenticated else False,
+        "permission_is_admin": bool(is_admin) if is_authenticated else False,
+        "auth_method": payload.get("auth_method") or ("jwt" if is_authenticated else "anonymous"),
+        "token_use": payload.get("token_use"),
+    }
+    if scoped_permissions is not None:
+        context["scoped_permissions"] = scoped_permissions
+    if scoped_server_id:
+        context["scoped_server_id"] = scoped_server_id
+    return context
 
 
 def _enforce_internal_mcp_server_scope(request: Request, server_id: str) -> None:
@@ -714,6 +822,16 @@ async def _ensure_rpc_permission(user, db: Session, permission: str, method: str
     Raises:
         JSONRPCError: If the requester lacks the required permission.
     """
+    # Trusted-internal public-only dispatch: the originating edge already applied public-only
+    # visibility (and per-server OAuth), so an unauthenticated internal hop must not be re-denied
+    # by RBAC. Mirrors _authorize_internal_mcp_request(). This only fires for HMAC-trusted internal
+    # requests (the auth context is set on request.state only after the trust gate passes); the
+    # public /rpc path and authenticated internal callers (is_authenticated True) fall through.
+    if request is not None:
+        _internal_ctx = get_internal_mcp_auth_context(request)
+        if isinstance(_internal_ctx, dict) and _internal_ctx.get("is_authenticated", True) is False:
+            return
+
     # Layer 1: Token scope cap
     if request is not None:
         scoped = _extract_scoped_permissions(request)
@@ -781,6 +899,9 @@ def _serialize_mcp_tool_definition(tool: Any) -> Dict[str, Any]:
     if annotations is not None:
         payload["annotations"] = annotations
 
+    extension_metadata = data.get("extensionMetadata") or data.get("extension_metadata") or getattr(tool, "extension_metadata", None)
+    apply_tool_meta(payload, extension_metadata)
+
     return {key: value for key, value in payload.items() if value is not None}
 
 
@@ -793,7 +914,7 @@ def _serialize_mcp_tool_definitions(tools: List[Any]) -> List[Dict[str, Any]]:
     Returns:
         List of MCP-compatible tool definitions.
     """
-    return [_serialize_mcp_tool_definition(tool) for tool in tools]
+    return [_serialize_mcp_tool_definition(tool) for tool in filter_model_visible_tools(tools)]
 
 
 def _serialize_legacy_tool_payloads(tools: List[Any]) -> List[Dict[str, Any]]:
@@ -806,7 +927,7 @@ def _serialize_legacy_tool_payloads(tools: List[Any]) -> List[Dict[str, Any]]:
         List of legacy tool payload dictionaries.
     """
     payloads: List[Dict[str, Any]] = []
-    for tool in tools:
+    for tool in filter_model_visible_tools(tools):
         if hasattr(tool, "model_dump"):
             payload = tool.model_dump(by_alias=True, exclude_none=True)
         elif isinstance(tool, dict):
@@ -838,11 +959,14 @@ def _enforce_scoped_resource_access(request: Request, db: Session, user, resourc
     if scoped_token_teams is None:
         return
 
-    if not token_scoping_middleware._check_resource_team_ownership(  # pylint: disable=protected-access
-        resource_path,
-        scoped_token_teams,
-        db=db,
-        _user_email=scoped_user_email,
+    if (
+        token_scoping_middleware._check_resource_team_ownership(  # pylint: disable=protected-access
+            resource_path,
+            scoped_token_teams,
+            db=db,
+            _user_email=scoped_user_email,
+        )
+        is not ResourceOwnershipResult.ALLOWED
     ):
         logger.warning("Scoped resource access denied: user=%s, resource=%s", scoped_user_email, resource_path)
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_ACCESS_DENIED_MSG)
@@ -1471,6 +1595,16 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         # First-Party
         from mcpgateway.plugins.policy import HOOK_PAYLOAD_POLICIES  # pylint: disable=import-outside-toplevel
 
+        # Start the primary-worker elector before plugins initialize, since a
+        # non-hook plugin may call is_primary_worker() in initialize(). Only the
+        # redis backend needs an elector; the filelock backend stays lazy.
+        if settings.primary_worker_election_backend == "redis":
+            # First-Party
+            from mcpgateway.services.leader_election import start_primary_worker_elector  # pylint: disable=import-outside-toplevel
+
+            await start_primary_worker_elector()
+            logger.info("Primary-worker elector started (backend=redis)")
+
         try:
             init_plugin_manager_factory(
                 yaml_path=settings.plugins.config_file,
@@ -1613,6 +1747,12 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             metrics_cleanup_service = get_metrics_cleanup_service()
             await metrics_cleanup_service.start()
             logger.info("Metrics cleanup service initialized (retention: %d days)", settings.metrics_retention_days)
+
+        # Initialize MCP Apps session cleanup service for automatic deletion of expired AppBridge sessions
+        if settings.mcpgateway_mcp_apps_enabled and settings.mcpgateway_mcp_apps_session_cleanup_enabled:
+            mcp_app_session_cleanup_service = get_mcp_app_session_cleanup_service()
+            await mcp_app_session_cleanup_service.start()
+            logger.info("MCP Apps session cleanup service initialized")
 
         # Initialize metrics rollup service for hourly aggregation
         if settings.metrics_rollup_enabled:
@@ -1848,10 +1988,21 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             metrics_cleanup_service = get_metrics_cleanup_service()
             services_to_shutdown.insert(2, metrics_cleanup_service)
 
+        if settings.mcpgateway_mcp_apps_enabled and settings.mcpgateway_mcp_apps_session_cleanup_enabled:
+            mcp_app_session_cleanup_service = get_mcp_app_session_cleanup_service()
+            services_to_shutdown.insert(3, mcp_app_session_cleanup_service)
+
         if dataplane_publisher_service is not None:
             services_to_shutdown.insert(3, dataplane_publisher_service)
 
         await shutdown_services(services_to_shutdown)
+
+        # Stop the primary-worker elector (releases the redis lease if held).
+        if settings.primary_worker_election_backend == "redis":
+            # First-Party
+            from mcpgateway.services.leader_election import stop_primary_worker_elector  # pylint: disable=import-outside-toplevel
+
+            await stop_primary_worker_elector()
 
         # Shutdown session-affinity service (before shared HTTP client).
         if settings.mcpgateway_session_affinity_enabled:
@@ -1989,9 +2140,9 @@ def validate_security_configuration():
             else:
                 logger.warning(
                     "⚠️  UAID_ALLOWED_DOMAINS is empty - cross-gateway routing allows ALL domains. "
-                    "Any UAID-based agent can route to any remote gateway endpoint. "
-                    "RECOMMENDED: Configure UAID_ALLOWED_DOMAINS to restrict routing to trusted gateways only. "
-                    'Example: UAID_ALLOWED_DOMAINS=["trusted-gateway.example.com", "partner.org"]'
+                    + "Any UAID-based agent can route to any remote gateway endpoint. "
+                    + "RECOMMENDED: Configure UAID_ALLOWED_DOMAINS to restrict routing to trusted gateways only. "
+                    + 'Example: UAID_ALLOWED_DOMAINS=["trusted-gateway.example.com", "partner.org"]'
                 )
 
         # Audit logging for explicit security overrides in production
@@ -3286,6 +3437,11 @@ else:
 # If AuthContextMiddleware is already registered, ObservabilityMiddleware wraps it
 # Execution order will be: AuthContext -> Observability -> Request Handler
 # Wire observability adapter into the plugin manager when observability is enabled
+# _service is a module-level global read later in lifespan(); it must always be bound
+# (even when this branch doesn't run at import time) so tests that flip
+# observability_enabled to True after import and then invoke lifespan() don't hit a
+# NameError on the module global.
+_service = None  # pylint: disable=invalid-name
 if settings.observability_enabled:
     # First-Party
     from mcpgateway.middleware.observability_middleware import ObservabilityMiddleware
@@ -4258,7 +4414,7 @@ async def set_server_state(
         HTTPException: If the server is not found or there is an error.
     """
     try:
-        user_email = user.get("email") if isinstance(user, dict) else str(user)
+        user_email = get_user_email(user)
         logger.debug(f"User {safe_log_user(user)} is setting server with ID {server_id} to {'active' if activate else 'inactive'}")
         return await server_service.set_server_state(db, server_id, activate, user_email=user_email)
     except PermissionError as e:
@@ -4314,7 +4470,7 @@ async def delete_server(
         request (Request): Incoming FastAPI request (for visibility scope resolution).
         purge_metrics (bool): Whether to delete raw + hourly rollup metrics for this server.
         db (Session): The database session used to interact with the data store.
-        user (str): The authenticated user making the request.
+        user (str): The authenticated user making the request. Email extracted via get_user_email() with email-over-sub precedence.
 
     Returns:
         Dict[str, str]: A success message indicating the server was deleted.
@@ -4324,7 +4480,7 @@ async def delete_server(
     """
     try:
         logger.debug(f"User {safe_log_user(user)} is deleting server with ID {server_id}")
-        user_email = user.get("email") if isinstance(user, dict) else str(user)
+        user_email = get_user_email(user)
         auth_user_email, auth_token_teams = get_scoped_resource_access_context(request, user)
         await server_service.get_server(db, server_id, user_email=auth_user_email, token_teams=auth_token_teams)
         await server_service.delete_server(db, server_id, user_email=user_email, purge_metrics=purge_metrics)
@@ -4924,7 +5080,7 @@ async def update_a2a_agent(
 
         if a2a_service is None:
             raise HTTPException(status_code=503, detail="A2A service not available")
-        user_email = user.get("email") if isinstance(user, dict) else str(user)
+        user_email = get_user_email(user)
         return await a2a_service.update_agent(
             db,
             agent_id,
@@ -4975,7 +5131,7 @@ async def set_a2a_agent_state(
         HTTPException: If the agent is not found or there is an error.
     """
     try:
-        user_email = user.get("email") if isinstance(user, dict) else str(user)
+        user_email = get_user_email(user)
         logger.debug(f"User {safe_log_user(user)} is toggling A2A agent with ID {agent_id} to {'active' if activate else 'inactive'}")
         if a2a_service is None:
             raise HTTPException(status_code=503, detail="A2A service not available")
@@ -5041,7 +5197,7 @@ async def delete_a2a_agent(
         logger.debug(f"User {safe_log_user(user)} is deleting A2A agent with ID {agent_id}")
         if a2a_service is None:
             raise HTTPException(status_code=503, detail="A2A service not available")
-        user_email = user.get("email") if isinstance(user, dict) else str(user)
+        user_email = get_user_email(user)
         await a2a_service.delete_agent(db, agent_id, user_email=user_email, purge_metrics=purge_metrics)
         return {
             "status": "success",
@@ -5071,6 +5227,91 @@ def _prepare_request_headers(request_headers: Dict[str, str]) -> Dict[str, str]:
     if settings.enable_sensitive_header_passthrough:
         return {k.lower(): v for k, v in request_headers.items()}
     return _filter_sensitive_headers({k.lower(): v for k, v in request_headers.items()})
+
+
+def _extract_a2a_request_context(
+    request: Request,
+    user: Any,
+) -> Dict[str, Any]:
+    """
+    Extract authentication and request context for A2A agent invocation.
+
+    This helper consolidates token scoping, admin bypass, hop count reading,
+    bearer token extraction, and header filtering logic shared between
+    /invoke and /jsonrpc endpoints to prevent code drift.
+
+    Args:
+        request: FastAPI Request object
+        user: Authenticated user (from get_current_user_with_permissions)
+
+    Returns:
+        Dict containing:
+        - user_id: str
+        - user_email: str
+        - token_teams: Optional[List[str]]
+        - hop_count: int
+        - bearer_token: Optional[str]
+        - content_type: Optional[str]
+        - request_headers: Dict[str, str]
+    """
+    # Get filtering context from token (respects token scope)
+    user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
+
+    # Admin bypass - only when token has NO team restrictions
+    if is_admin and token_teams is None:
+        token_teams = None  # Admin unrestricted
+    elif token_teams is None:
+        token_teams = []  # Non-admin without teams = public-only
+
+    # Extract user ID
+    user_id = None
+    if isinstance(user, dict):
+        user_id = str(user.get("id") or user.get("sub") or user_email)
+    else:
+        user_id = str(user)
+
+    # Read federation hop counter from request headers
+    hop_count = uaid_utils.read_hop_count(request.headers)
+
+    # Extract bearer token for cross-gateway forwarding
+    # Prefer token extracted by auth middleware (validated and normalized)
+    bearer_token = getattr(request.state, "bearer_token", None)
+
+    # Fallback: extract from Authorization header if middleware didn't set it
+    if not bearer_token:
+        auth_header = request.headers.get("authorization", "")
+        if auth_header.lower().startswith("bearer "):
+            bearer_token = auth_header[7:]  # Remove "Bearer " prefix
+
+    # Only forward JWT-shaped tokens; local opaque tokens cannot be validated by remote gateways
+    if bearer_token and not _is_jwt_token(bearer_token):
+        logger.info("Non-JWT token detected, not forwarding for cross-gateway auth")
+        bearer_token = None
+
+    # Extract inbound request metadata for plugin context
+    # When ENABLE_SENSITIVE_HEADER_PASSTHROUGH=false: strip sensitive headers at router level
+    # When ENABLE_SENSITIVE_HEADER_PASSTHROUGH=true: pass all headers; service layer filters after whitelist check
+    content_type = request.headers.get("content-type")
+    request_headers = _prepare_request_headers(request.headers)
+
+    return {
+        "user_id": user_id,
+        "user_email": user_email,
+        "token_teams": token_teams,
+        "hop_count": hop_count,
+        "bearer_token": bearer_token,
+        "content_type": content_type,
+        "request_headers": request_headers,
+    }
+
+
+def _extract_mcp_session_id(request: Request, body: Optional[Dict[str, Any]] = None) -> Optional[str]:
+    """Extract the MCP session id from supported transport headers or JSON body fields."""
+    mcp_session_id = request.headers.get("mcp-session-id") or request.headers.get("x-mcp-session-id")
+    if mcp_session_id or not isinstance(body, dict):
+        return mcp_session_id
+    body_session_id = body.get("mcpSessionId") or body.get("mcp_session_id")
+    return body_session_id if isinstance(body_session_id, str) and body_session_id else None
 
 
 @a2a_router.post("/{agent_name}/invoke", response_model=Dict[str, Any])
@@ -5105,71 +5346,15 @@ async def invoke_a2a_agent(
         if a2a_service is None:
             raise HTTPException(status_code=503, detail="A2A service not available")
 
-        # Get filtering context from token (respects token scope)
-        user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
-
-        # Admin bypass - only when token has NO team restrictions
-        if is_admin and token_teams is None:
-            token_teams = None  # Admin unrestricted
-        elif token_teams is None:
-            token_teams = []  # Non-admin without teams = public-only
-
-        user_id = None
-        if isinstance(user, dict):
-            user_id = str(user.get("id") or user.get("sub") or user_email)
-        else:
-            user_id = str(user)
-
-        # Read the federation hop counter from the request header using
-        # the shared parser so Python and Rust behave identically: strict
-        # ASCII-digit decoding with saturation on overflow, warn on
-        # malformed input.  `invoke_agent` rejects at `uaid_max_federation_hops`
-        # before any UAID or agent dispatch, breaking both A→B→A loops
-        # and self-referential `endpoint_url` loops.
-        hop_count = uaid_utils.read_hop_count(request.headers)
-
-        # Extract bearer token for cross-gateway forwarding
-        # Prefer token extracted by auth middleware (validated and normalized)
-        bearer_token = getattr(request.state, "bearer_token", None)
-
-        # Fallback: extract from Authorization header if middleware didn't set it
-        # (e.g., when auth middleware is disabled or skipped for certain paths)
-        #
-        # Security Note: This fallback extracts the token without local validation,
-        # but security is preserved because:
-        # 1. Remote gateway MUST validate the token (AUTH_REQUIRED enforcement)
-        # 2. Invalid/expired tokens will be rejected by remote gateway's auth middleware
-        # 3. This enables token forwarding even when local auth is disabled for A2A endpoints
-        #
-        # If the token is invalid, remote gateway returns 401, and we propagate error to caller.
-        if not bearer_token:
-            auth_header = request.headers.get("authorization", "")
-            if auth_header.lower().startswith("bearer "):
-                bearer_token = auth_header[7:]  # Remove "Bearer " prefix
-
-        # Only forward JWT-shaped tokens; local opaque tokens cannot be validated by remote gateways
-        if bearer_token and not _is_jwt_token(bearer_token):
-            logger.info("Non-JWT token detected, not forwarding for cross-gateway auth")
-            bearer_token = None
-
-        # Extract inbound request metadata for plugin context
-        # When ENABLE_SENSITIVE_HEADER_PASSTHROUGH=false: strip sensitive headers at router level
-        # When ENABLE_SENSITIVE_HEADER_PASSTHROUGH=true: pass all headers; service layer filters after whitelist check
-        content_type = request.headers.get("content-type")
-        request_headers = _prepare_request_headers(request.headers)
+        # Extract authentication and request context (shared with /jsonrpc endpoint)
+        context = _extract_a2a_request_context(request, user)
 
         return await a2a_service.invoke_agent(
             db,
             agent_name,
             parameters,
             interaction_type,
-            user_id=user_id,
-            user_email=user_email,
-            token_teams=token_teams,
-            hop_count=hop_count,
-            bearer_token=bearer_token,
-            content_type=content_type,
-            request_headers=request_headers,
+            **context,  # Unpack: user_id, user_email, token_teams, hop_count, bearer_token, content_type, request_headers
         )
     except A2AAgentNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -5213,43 +5398,8 @@ async def invoke_a2a_agent_by_id(
         if a2a_service is None:
             raise HTTPException(status_code=503, detail="A2A service not available")
 
-        # Get filtering context from token (respects token scope)
-        user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
-
-        # Admin bypass - only when token has NO team restrictions
-        if is_admin and token_teams is None:
-            token_teams = None  # Admin unrestricted
-        elif token_teams is None:
-            token_teams = []  # Non-admin without teams = public-only
-
-        user_id = None
-        if isinstance(user, dict):
-            user_id = str(user.get("id") or user.get("sub") or user_email)
-        else:
-            user_id = str(user)
-
-        # Read the federation hop counter from the request header
-        hop_count = uaid_utils.read_hop_count(request.headers)
-
-        # Extract bearer token for cross-gateway forwarding
-        bearer_token = getattr(request.state, "bearer_token", None)
-
-        # Fallback: extract from Authorization header if middleware didn't set it
-        if not bearer_token:
-            auth_header = request.headers.get("authorization", "")
-            if auth_header.lower().startswith("bearer "):
-                bearer_token = auth_header[7:]  # Remove "Bearer " prefix
-
-        # Only forward JWT-shaped tokens; local opaque tokens cannot be validated by remote gateways
-        if bearer_token and not _is_jwt_token(bearer_token):
-            logger.info("Non-JWT token detected, not forwarding for cross-gateway auth")
-            bearer_token = None
-
-        # Extract inbound request metadata for plugin context
-        # When ENABLE_SENSITIVE_HEADER_PASSTHROUGH=false: strip sensitive headers at router level
-        # When ENABLE_SENSITIVE_HEADER_PASSTHROUGH=true: pass all headers; service layer filters after whitelist check
-        content_type = request.headers.get("content-type")
-        request_headers = _prepare_request_headers(request.headers)
+        # Extract authentication and request context (shared with /invoke and /jsonrpc endpoints)
+        context = _extract_a2a_request_context(request, user)
 
         return await a2a_service.invoke_agent(
             db,
@@ -5257,18 +5407,236 @@ async def invoke_a2a_agent_by_id(
             parameters=parameters,
             interaction_type=interaction_type,
             agent_id=agent_id,  # Pass agent_id for UUID/UAID lookup
-            user_id=user_id,
-            user_email=user_email,
-            token_teams=token_teams,
-            hop_count=hop_count,
-            bearer_token=bearer_token,
-            content_type=content_type,
-            request_headers=request_headers,
+            **context,  # Unpack: user_id, user_email, token_teams, hop_count, bearer_token, content_type, request_headers
         )
     except A2AAgentNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except A2AAgentError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@a2a_router.post("/{agent_name}/jsonrpc", response_model=Dict[str, Any])
+@require_permission("a2a.invoke")
+async def invoke_a2a_agent_jsonrpc(
+    agent_name: str,
+    request: Request,
+    body: Dict[str, Any] = Body(...),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> Dict[str, Any]:
+    """
+    Transparent A2A JSON-RPC proxy endpoint.
+
+    Accepts raw A2A JSON-RPC requests (no envelope wrapping), applies ContextForge
+    governance (auth, RBAC, rate limiting, observability), and returns raw JSON-RPC
+    responses. This enables standard A2A SDKs (e.g., Google ADK RemoteA2aAgent) to
+    work without custom adapters.
+
+    Expected request format:
+    ```json
+    {
+      "jsonrpc": "2.0",
+      "method": "SendMessage",
+      "params": {
+        "message": {
+          "messageId": "test-123",
+          "role": "ROLE_USER",
+          "parts": [{"text": "Hello!"}]
+        }
+      },
+      "id": 1
+    }
+    ```
+
+    Returns JSON-RPC response:
+    ```json
+    {
+      "jsonrpc": "2.0",
+      "result": {...},
+      "id": 1
+    }
+    ```
+
+    Args:
+        agent_name (str): The name of the agent to invoke.
+        request (Request): The FastAPI request object for team_id retrieval.
+        body (Dict[str, Any]): Raw JSON-RPC request body.
+        db (Session): The database session used to interact with the data store.
+        user (str): The authenticated user making the request.
+
+    Returns:
+        Dict[str, Any]: Raw JSON-RPC response from the A2A agent.
+
+    Raises:
+        HTTPException: If the JSON-RPC format is invalid, agent is not found,
+                      user lacks access, or there is an error during invocation.
+
+    Examples:
+        >>> # Validate JSON-RPC 2.0 version is required
+        >>> body = {"method": "SendMessage", "params": {}, "id": 1}
+        >>> body.get("jsonrpc") == "2.0"
+        False
+
+        >>> # Valid JSON-RPC request structure
+        >>> valid_body = {
+        ...     "jsonrpc": "2.0",
+        ...     "method": "SendMessage",
+        ...     "params": {"query": "Hello"},
+        ...     "id": 1
+        ... }
+        >>> valid_body.get("jsonrpc") == "2.0"
+        True
+        >>> isinstance(valid_body.get("method"), str)
+        True
+        >>> isinstance(valid_body.get("params"), dict)
+        True
+
+        >>> # Method field must be a string
+        >>> invalid_method = {"jsonrpc": "2.0", "method": 123, "id": 1}
+        >>> isinstance(invalid_method.get("method"), str)
+        False
+
+        >>> # Params can be null/missing (defaults to empty dict)
+        >>> notification = {"jsonrpc": "2.0", "method": "SendMessage"}
+        >>> notification.get("params", {})
+        {}
+
+        >>> # ID field is optional for notifications
+        >>> "id" in notification
+        False
+
+        >>> # Params must be dict or None, not array
+        >>> invalid_params = {"jsonrpc": "2.0", "method": "SendMessage", "params": ["invalid"]}
+        >>> params = invalid_params.get("params")
+        >>> params is None or isinstance(params, dict)
+        False
+
+        >>> # Extract user ID from various user formats
+        >>> user_dict = {"sub": "user@example.com", "email": "user@example.com"}
+        >>> user_id = str(user_dict.get("id") or user_dict.get("sub") or user_dict.get("email"))
+        >>> user_id
+        'user@example.com'
+
+        >>> # Token scoping: admin with no restrictions
+        >>> is_admin, token_teams = True, None
+        >>> token_teams if is_admin and token_teams is None else (token_teams or [])
+        >>> # Non-admin without teams = public-only
+        >>> is_admin, token_teams = False, None
+        >>> [] if token_teams is None else token_teams
+        []
+
+        >>> # Response format validation
+        >>> response = {"jsonrpc": "2.0", "result": {"taskId": "123"}, "id": 1}
+        >>> response.get("jsonrpc") == "2.0"
+        True
+        >>> "result" in response or "error" in response
+        True
+    """
+    # Extract request ID early for error responses (optional in JSON-RPC 2.0 for notifications)
+    request_id = body.get("id")
+
+    try:
+        # Validate JSON-RPC format
+        jsonrpc_version = body.get("jsonrpc")
+        if jsonrpc_version != "2.0":
+            error_response = {
+                "jsonrpc": "2.0",
+                "error": {"code": -32600, "message": f"Invalid or missing jsonrpc field. Expected '2.0', got '{jsonrpc_version}'"},
+            }
+            # JSON-RPC 2.0 spec: omit 'id' field for notifications (when id is None), don't include "id": null
+            if request_id is not None:
+                error_response["id"] = request_id
+            return ORJSONResponse(status_code=400, content=error_response)
+
+        method = body.get("method")
+        if not method or not isinstance(method, str):
+            error_response = {
+                "jsonrpc": "2.0",
+                "error": {"code": -32600, "message": "Missing or invalid 'method' field in JSON-RPC request"},
+            }
+            # JSON-RPC 2.0 spec: omit 'id' field for notifications (when id is None), don't include "id": null
+            if request_id is not None:
+                error_response["id"] = request_id
+            return ORJSONResponse(status_code=400, content=error_response)
+
+        # Extract params (can be null/missing for methods that don't require parameters)
+        params = body.get("params", {})
+        if params is not None and not isinstance(params, dict):
+            error_response = {
+                "jsonrpc": "2.0",
+                "error": {"code": -32600, "message": "JSON-RPC 'params' field must be an object or null"},
+            }
+            # JSON-RPC 2.0 spec: omit 'id' field for notifications (when id is None), don't include "id": null
+            if request_id is not None:
+                error_response["id"] = request_id
+            return ORJSONResponse(status_code=400, content=error_response)
+
+        logger.debug(f"User {safe_log_user(user)} invoking A2A agent '{agent_name}' via JSON-RPC passthrough with method '{method}'")
+
+        if a2a_service is None:
+            raise HTTPException(status_code=503, detail="A2A service not available")
+
+        # Extract authentication and request context (shared with /invoke endpoint)
+        context = _extract_a2a_request_context(request, user)
+
+        # Wrap the JSON-RPC request in ContextForge's internal format
+        # The full JSON-RPC request becomes the parameters
+        parameters = body
+
+        # Invoke the agent using the existing service method
+        result = await a2a_service.invoke_agent(
+            db,
+            agent_name,
+            parameters,
+            interaction_type="query",  # Default for JSON-RPC requests
+            **context,  # Unpack: user_id, user_email, token_teams, hop_count, bearer_token, content_type, request_headers
+        )
+
+        # Return raw JSON-RPC response format
+        # The agent's response should already be in JSON-RPC format if it's A2A-compliant
+        # If the response is already JSON-RPC formatted, return it as-is
+        if isinstance(result, dict) and "jsonrpc" in result:
+            return result
+
+        # Otherwise, wrap the result in JSON-RPC response format
+        response = {"jsonrpc": "2.0", "result": result}
+        # JSON-RPC 2.0 spec: omit 'id' field for notifications (when id is None), don't include "id": null
+        if request_id is not None:
+            response["id"] = request_id
+        return response
+
+    except HTTPException:
+        # Re-raise HTTP exceptions as-is
+        raise
+    except A2AAgentNotFoundError as e:
+        # Return JSON-RPC error format for agent not found
+        # JSON-RPC 2.0: -32001 is in server error range (-32000 to -32099) for application-defined errors
+        # Note: -32601 would mean "JSON-RPC method not found", not "agent resource not found"
+        logger.warning(f"A2A agent not found: {e}")
+        error_response = {"jsonrpc": "2.0", "error": {"code": -32001, "message": str(e)}}
+        # JSON-RPC 2.0 spec: omit 'id' field for notifications (when id is None), don't include "id": null
+        if request_id is not None:
+            error_response["id"] = request_id
+        return ORJSONResponse(status_code=404, content=error_response)
+    except A2AAgentError as e:
+        # Return JSON-RPC error format for A2A errors
+        logger.warning(f"A2A agent error: {e}")
+        error_response = {"jsonrpc": "2.0", "error": {"code": -32603, "message": str(e)}}
+        # JSON-RPC 2.0 spec: omit 'id' field for notifications (when id is None), don't include "id": null
+        if request_id is not None:
+            error_response["id"] = request_id
+        return ORJSONResponse(status_code=400, content=error_response)
+    except Exception as e:
+        # Return JSON-RPC error format for unexpected errors
+        # Note: Returning ORJSONResponse instead of raising bypasses ObservabilityMiddleware's
+        # exception capture (no exception.type/message/stacktrace in spans), but logger.error
+        # below ensures the error is still logged with full context for debugging.
+        logger.error(f"Unexpected error in JSON-RPC passthrough: {e}", exc_info=True)
+        error_response = {"jsonrpc": "2.0", "error": {"code": -32603, "message": "Internal server error"}}
+        # JSON-RPC 2.0 spec: omit 'id' field for notifications (when id is None), don't include "id": null
+        if request_id is not None:
+            error_response["id"] = request_id
+        return ORJSONResponse(status_code=500, content=error_response)
 
 
 #############
@@ -5580,7 +5948,7 @@ async def update_tool(
         tool (ToolUpdate): The updated tool information.
         request (Request): The FastAPI request object for metadata extraction.
         db (Session): The database session dependency.
-        user (str): The authenticated user making the request.
+        user (str): The authenticated user making the request. Email extracted via get_user_email() with email-over-sub precedence.
 
     Returns:
         ToolRead: The updated tool data.
@@ -5597,7 +5965,7 @@ async def update_tool(
         mod_metadata = MetadataCapture.extract_modification_metadata(request, user, current_version)
 
         logger.debug(f"User {safe_log_user(user)} is updating tool with ID {tool_id}")
-        user_email = user.get("email") if isinstance(user, dict) else str(user)
+        user_email = get_user_email(user)
         result = await tool_service.update_tool(
             db,
             tool_id,
@@ -5643,7 +6011,7 @@ async def delete_tool(
         tool_id (str): The ID of the tool to delete.
         purge_metrics (bool): Whether to delete raw + hourly rollup metrics for this tool.
         db (Session): The database session dependency.
-        user (str): The authenticated user making the request.
+        user (str): The authenticated user making the request. Email extracted via get_user_email() with email-over-sub precedence.
 
     Returns:
         Dict[str, str]: A confirmation message upon successful deletion.
@@ -5653,7 +6021,7 @@ async def delete_tool(
     """
     try:
         logger.debug(f"User {safe_log_user(user)} is deleting tool with ID {tool_id}")
-        user_email = user.get("email") if isinstance(user, dict) else str(user)
+        user_email = get_user_email(user)
         await tool_service.delete_tool(db, tool_id, user_email=user_email, purge_metrics=purge_metrics)
         db.commit()
         db.close()
@@ -5681,7 +6049,7 @@ async def set_tool_state(
         tool_id (str): The ID of the tool to update.
         activate (bool): Whether to activate (`True`) or deactivate (`False`) the tool.
         db (Session): The database session dependency.
-        user (str): The authenticated user making the request.
+        user (str): The authenticated user making the request. Email extracted via get_user_email() with email-over-sub precedence.
 
     Returns:
         Dict[str, Any]: The status, message, and updated tool data.
@@ -5691,7 +6059,7 @@ async def set_tool_state(
     """
     try:
         logger.debug(f"User {safe_log_user(user)} is setting tool state for ID {tool_id} to {'active' if activate else 'inactive'}")
-        user_email = user.get("email") if isinstance(user, dict) else str(user)
+        user_email = get_user_email(user)
         tool = await tool_service.set_tool_state(db, tool_id, activate, reachable=activate, user_email=user_email)
         return {
             "status": "success",
@@ -5801,7 +6169,7 @@ async def set_resource_state(
         resource_id (str): The ID of the resource.
         activate (bool): True to activate, False to deactivate.
         db (Session): Database session.
-        user (str): Authenticated user.
+        user (str): Authenticated user. Email extracted via get_user_email() with email-over-sub precedence.
 
     Returns:
         Dict[str, Any]: Status message and updated resource data.
@@ -5811,7 +6179,7 @@ async def set_resource_state(
     """
     logger.debug(f"User {safe_log_user(user)} is toggling resource with ID {resource_id} to {'active' if activate else 'inactive'}")
     try:
-        user_email = user.get("email") if isinstance(user, dict) else str(user)
+        user_email = get_user_email(user)
         resource = await resource_service.set_resource_state(db, resource_id, activate, user_email=user_email)
         return {
             "status": "success",
@@ -6022,12 +6390,17 @@ async def create_resource(
         return result
     except ResourceURIConflictError as e:
         raise HTTPException(status_code=409, detail=str(e))
+    except ResourceValidationError as e:
+        raise HTTPException(status_code=422, detail=str(e))
     except ResourceError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except ValidationError as e:
         # Handle validation errors from Pydantic
         logger.error(f"Validation error while creating resource: {e}")
         raise HTTPException(status_code=422, detail=ErrorFormatter.format_validation_error(e))
+    except MCPAppsValidationError as e:
+        logger.error(f"MCP Apps validation error while creating resource: {e}")
+        raise HTTPException(status_code=422, detail=str(e))
     except IntegrityError as e:
         logger.error(f"Integrity error while creating resource: {e}")
         raise HTTPException(status_code=409, detail=ErrorFormatter.format_database_error(e))
@@ -6037,6 +6410,42 @@ async def create_resource(
     except ContentTypeError as e:
         logger.error(f"MIME type not allowed in creating resource: {e}")
         raise HTTPException(status_code=415, detail={"error": "Unsupported Media Type", "message": str(e), "mime_type": e.mime_type, "allowed_types": e.allowed_types})
+
+
+@resource_router.get("/test/{resource_uri:path}")
+@require_permission("resources.read", allow_admin_bypass=False)
+async def test_resource_by_uri(
+    resource_uri: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> Dict[str, Any]:
+    """Read a resource by URI and return its content.
+
+    Args:
+        resource_uri (str): URI of the resource to read.
+        request (Request): FastAPI request object for context.
+        db (Session): Database session.
+        user: Authenticated user with permissions.
+
+    Returns:
+        Dict[str, Any]: Dictionary with a ``content`` key containing the resolved resource content.
+
+    Raises:
+        HTTPException: 404 if the resource is not found or not accessible to the caller.
+    """
+    logger.debug("Reading resource by URI %s for user %s", resource_uri, safe_log_user(user))
+    auth_user_email, auth_token_teams = get_scoped_resource_access_context(request, user)
+    try:
+        resource_content = await resource_service.read_resource(db, resource_uri=resource_uri, user=auth_user_email, token_teams=auth_token_teams)
+        db.commit()
+        db.close()
+        return {"content": resource_content}
+    except ResourceNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error("Error reading resource by URI %s: %s", resource_uri, e)
+        raise
 
 
 @resource_router.get("/{resource_id}")
@@ -6083,6 +6492,7 @@ async def read_resource(resource_id: str, request: Request, db: Session = Depend
             token_teams=auth_token_teams,
             plugin_context_table=plugin_context_table,
             plugin_global_context=plugin_global_context,
+            request_headers=dict(request.headers),
         )
         _enforce_scoped_resource_access(request, db, user, f"/resources/{resource_id}")
         # Release transaction before response serialization
@@ -6100,7 +6510,10 @@ async def read_resource(resource_id: str, request: Request, db: Session = Depend
 
         # If already a ResourceContent, serialize directly
         if isinstance(content, ResourceContent):
-            return content.model_dump()
+            payload = content.model_dump()
+            if payload.get("meta") is None:
+                payload.pop("meta", None)
+            return payload
 
         # If TextContent, wrap into resource envelope with text
         if isinstance(content, TextContent):
@@ -6181,7 +6594,7 @@ async def update_resource(
         resource (ResourceUpdate): New resource data.
         request (Request): The FastAPI request object for metadata extraction.
         db (Session): Database session.
-        user (str): Authenticated user.
+        user (str): Authenticated user. Email extracted via get_user_email() with email-over-sub precedence.
 
     Returns:
         ResourceRead: The updated resource.
@@ -6194,7 +6607,7 @@ async def update_resource(
         # Extract modification metadata
         mod_metadata = MetadataCapture.extract_modification_metadata(request, user, 0)  # Version will be incremented in service
 
-        user_email = user.get("email") if isinstance(user, dict) else str(user)
+        user_email = get_user_email(user)
         result = await resource_service.update_resource(
             db,
             resource_id,
@@ -6212,6 +6625,9 @@ async def update_resource(
     except ValidationError as e:
         logger.error(f"Validation error while updating resource {resource_id}: {e}")
         raise HTTPException(status_code=422, detail=ErrorFormatter.format_validation_error(e))
+    except MCPAppsValidationError as e:
+        logger.error(f"MCP Apps validation error while updating resource {resource_id}: {e}")
+        raise HTTPException(status_code=422, detail=str(e))
     except IntegrityError as e:
         logger.error(f"Integrity error while updating resource {resource_id}: {e}")
         raise HTTPException(status_code=409, detail=ErrorFormatter.format_database_error(e))
@@ -6244,7 +6660,7 @@ async def delete_resource(
         resource_id (str): ID of the resource to delete.
         purge_metrics (bool): Whether to delete raw + hourly rollup metrics for this resource.
         db (Session): Database session.
-        user (str): Authenticated user.
+        user (str): Authenticated user. Email extracted via get_user_email() with email-over-sub precedence.
 
     Returns:
         Dict[str, str]: Status message indicating deletion success.
@@ -6254,7 +6670,7 @@ async def delete_resource(
     """
     try:
         logger.debug(f"User {safe_log_user(user)} is deleting resource with id {resource_id}")
-        user_email = user.get("email") if isinstance(user, dict) else str(user)
+        user_email = get_user_email(user)
         await resource_service.delete_resource(db, resource_id, user_email=user_email, purge_metrics=purge_metrics)
         db.commit()
         db.close()
@@ -6321,7 +6737,7 @@ async def set_prompt_state(
         prompt_id: ID of the prompt to update.
         activate: True to activate, False to deactivate.
         db: Database session.
-        user: Authenticated user.
+        user: Authenticated user. Email extracted via get_user_email() with email-over-sub precedence.
 
     Returns:
         Status message and updated prompt details.
@@ -6331,7 +6747,7 @@ async def set_prompt_state(
     """
     logger.debug(f"User: {safe_log_user(user)} requested state change for prompt {prompt_id}, activate={activate}")
     try:
-        user_email = user.get("email") if isinstance(user, dict) else str(user)
+        user_email = get_user_email(user)
         prompt = await prompt_service.set_prompt_state(db, prompt_id, activate, user_email=user_email)
         return {
             "status": "success",
@@ -6725,7 +7141,7 @@ async def update_prompt(
         # Extract modification metadata
         mod_metadata = MetadataCapture.extract_modification_metadata(request, user, 0)  # Version will be incremented in service
 
-        user_email = user.get("email") if isinstance(user, dict) else str(user)
+        user_email = get_user_email(user)
         result = await prompt_service.update_prompt(
             db,
             prompt_id,
@@ -6785,7 +7201,7 @@ async def delete_prompt(
         prompt_id: ID of the prompt.
         purge_metrics: Whether to delete raw + hourly rollup metrics for this prompt.
         db: Database session.
-        user: Authenticated user.
+        user: Authenticated user. Email extracted via get_user_email() with email-over-sub precedence.
 
     Returns:
         Status message.
@@ -6795,7 +7211,7 @@ async def delete_prompt(
     """
     logger.debug(f"User: {safe_log_user(user)} requested deletion of prompt {prompt_id}")
     try:
-        user_email = user.get("email") if isinstance(user, dict) else str(user)
+        user_email = get_user_email(user)
         await prompt_service.delete_prompt(db, prompt_id, user_email=user_email, purge_metrics=purge_metrics)
         db.commit()
         db.close()
@@ -6834,7 +7250,7 @@ async def set_gateway_state(
         gateway_id (str): String ID of the gateway to update.
         activate (bool): ``True`` to activate, ``False`` to deactivate.
         db (Session): Active SQLAlchemy session.
-        user (str): Authenticated username.
+        user (str): Authenticated username. Email extracted via get_user_email() with email-over-sub precedence.
 
     Returns:
         Dict[str, Any]: A dict containing the operation status, a message, and the updated gateway object.
@@ -6844,7 +7260,7 @@ async def set_gateway_state(
     """
     logger.debug(f"User '{safe_log_user(user)}' requested state change for gateway {gateway_id}, activate={activate}")
     try:
-        user_email = user.get("email") if isinstance(user, dict) else str(user)
+        user_email = get_user_email(user)
         gateway = await gateway_service.set_gateway_state(
             db,
             gateway_id,
@@ -7045,6 +7461,8 @@ async def register_gateway(
             response.headers["Retry-After"] = str(max(1, math.ceil(settings.gateway_async_lifecycle_poll_interval)))
         return result
     except Exception as ex:
+        if isinstance(ex, PermissionError):
+            return ORJSONResponse(content={"message": str(ex)}, status_code=status.HTTP_403_FORBIDDEN)
         if isinstance(ex, GatewayConnectionError):
             return ORJSONResponse(content={"message": str(ex)}, status_code=status.HTTP_502_BAD_GATEWAY)
         if isinstance(ex, ValueError):
@@ -7113,7 +7531,7 @@ async def update_gateway(
         request (Request): The FastAPI request object for metadata extraction.
         response: Outgoing response used to set `202 Accepted` for async lifecycle.
         db: Database session.
-        user: Authenticated user.
+        user: Authenticated user. Email extracted via get_user_email() with email-over-sub precedence.
 
     Returns:
         Updated gateway.
@@ -7123,7 +7541,7 @@ async def update_gateway(
         # Extract modification metadata
         mod_metadata = MetadataCapture.extract_modification_metadata(request, user, 0)  # Version will be incremented in service
 
-        user_email = user.get("email") if isinstance(user, dict) else str(user)
+        user_email = get_user_email(user)
         result = await gateway_service.update_gateway(
             db,
             gateway_id,
@@ -7182,7 +7600,7 @@ async def delete_gateway(
         request: Incoming FastAPI request (for visibility scope resolution).
         response: Outgoing response used to set `202 Accepted` for async lifecycle.
         db: Database session.
-        user: Authenticated user.
+        user: Authenticated user. Email extracted via get_user_email() with email-over-sub precedence.
 
     Returns:
         Status message.
@@ -7192,7 +7610,7 @@ async def delete_gateway(
     """
     logger.debug(f"User '{safe_log_user(user)}' requested deletion of gateway {gateway_id}")
     try:
-        user_email = user.get("email") if isinstance(user, dict) else str(user)
+        user_email = get_user_email(user)
         auth_user_email, auth_token_teams = get_scoped_resource_access_context(request, user)
         current = await gateway_service.get_gateway(db, gateway_id, user_email=auth_user_email, token_teams=auth_token_teams)
         has_resources = bool(current.capabilities.get("resources"))
@@ -7247,7 +7665,7 @@ async def refresh_gateway_tools(
         include_resources: Whether to include resources in the refresh.
         include_prompts: Whether to include prompts in the refresh.
         db: Database session used to validate gateway access.
-        user: Authenticated user.
+        user: Authenticated user. Email extracted via get_user_email() with email-over-sub precedence.
 
     Returns:
         GatewayRefreshResponse with counts of changes and any validation errors.
@@ -7261,7 +7679,7 @@ async def refresh_gateway_tools(
         await gateway_service.get_gateway(db, gateway_id, user_email=auth_user_email, token_teams=auth_token_teams)
         _enforce_scoped_resource_access(request, db, user, f"/gateways/{gateway_id}")
 
-        user_email = user.get("email") if isinstance(user, dict) else str(user)
+        user_email = get_user_email(user)
         result = await gateway_service.refresh_gateway_manually(
             gateway_id=gateway_id,
             include_resources=include_resources,
@@ -7488,10 +7906,10 @@ async def remove_root(
     try:
         await root_service.remove_root(uri)
     except RootServiceNotFoundError as e:
-        raise HTTPException(status_code=404, detail=f"Root not found: {uri}") from e
+        raise HTTPException(status_code=404, detail=str(e)) from e
     except Exception as e:
-        logger.exception(f"Unexpected error removing root {uri}: {e}")
-        raise HTTPException(status_code=500, detail=f"Internal error: {str(e)}") from e
+        logger.error(f"Failed to remove root {uri}: {e}")
+        raise HTTPException(status_code=500, detail="Internal error removing root") from e
     return {"status": "success", "message": f"Root {uri} removed"}
 
 
@@ -7647,13 +8065,18 @@ async def handle_internal_mcp_initialize(request: Request):
         else:
             server_id = params.get("server_id")
 
-        result = await _execute_rpc_initialize(
-            request,
-            user,
-            params=params,
-            server_id=server_id,
-            mcp_session_id=request.headers.get("mcp-session-id") or request.headers.get("x-mcp-session-id"),
-        )
+        db = SessionLocal()
+        try:
+            result = await _execute_rpc_initialize(
+                request,
+                db,
+                user,
+                params=params,
+                server_id=server_id,
+                mcp_session_id=_extract_mcp_session_id(request),
+            )
+        finally:
+            db.close()
         return ORJSONResponse(content={"jsonrpc": "2.0", "result": result, "id": req_id})
     except JSONRPCError as exc:
         error = exc.to_dict()
@@ -7682,7 +8105,7 @@ async def handle_internal_mcp_session_delete(request: Request):
     """
     _build_internal_mcp_forwarded_user(request)
     auth_context = get_internal_mcp_auth_context(request) or {}
-    mcp_session_id = request.headers.get("mcp-session-id") or request.headers.get("x-mcp-session-id")
+    mcp_session_id = _extract_mcp_session_id(request)
     if not mcp_session_id:
         return ORJSONResponse(status_code=400, content={"detail": "mcp-session-id header is required"})
 
@@ -8165,23 +8588,9 @@ async def handle_internal_mcp_resources_read(request: Request):
             plugin_context_table=plugin_context_table,
             plugin_global_context=plugin_global_context,
             meta_data=meta_data,
+            request_headers=dict(request.headers),
         )
-        # First-Party
-        from mcpgateway.common.models import ResourceContent  # pylint: disable=import-outside-toplevel
-
-        if isinstance(result, ResourceContent):
-            normalized_content = {"uri": result.uri}
-            if result.mime_type:
-                normalized_content["mimeType"] = result.mime_type
-            if result.text is not None:
-                normalized_content["text"] = result.text
-            elif result.blob is not None:
-                normalized_content["blob"] = base64.b64encode(result.blob).decode("ascii")
-            payload = {"contents": [normalized_content]}
-        elif hasattr(result, "model_dump"):
-            payload = {"contents": [result.model_dump(by_alias=True, exclude_none=True)]}
-        else:
-            payload = {"contents": [result]}
+        payload = {"contents": [serialize_resource_content_for_mcp(result, fallback_uri=uri)]}
 
         if db.is_active and db.in_transaction() is not None:
             db.commit()
@@ -9829,6 +10238,7 @@ async def _maybe_forward_affinitized_rpc_request(
     params: Dict[str, Any],
     req_id: Any,
     lowered_request_headers: Dict[str, str],
+    user: Any,
 ) -> Optional[Dict[str, Any]]:
     """Forward an MCP request to the owning worker when session affinity requires it.
 
@@ -9838,6 +10248,8 @@ async def _maybe_forward_affinitized_rpc_request(
         params: Parsed JSON-RPC params payload.
         req_id: JSON-RPC request identifier.
         lowered_request_headers: Lower-cased request headers used for forwarding.
+        user: Authenticated user from the route dependency, used to build the verified
+            edge auth context carried to the owner's trusted-internal dispatch.
 
     Returns:
         Forwarded JSON-RPC response payload when affinity forwarding handled the
@@ -9846,7 +10258,7 @@ async def _maybe_forward_affinitized_rpc_request(
     request_headers = request.headers
     rpc_client_host = getattr(getattr(request, "client", None), "host", None)
     rpc_from_loopback = rpc_client_host in ("127.0.0.1", "::1") if rpc_client_host else False
-    mcp_session_id = request_headers.get("mcp-session-id") or request_headers.get("x-mcp-session-id")
+    mcp_session_id = _extract_mcp_session_id(request)
     is_internally_forwarded = rpc_from_loopback and request_headers.get("x-forwarded-internally") == "true"
 
     if settings.mcpgateway_session_affinity_enabled and mcp_session_id and method != "initialize" and not is_internally_forwarded:
@@ -9864,9 +10276,14 @@ async def _maybe_forward_affinitized_rpc_request(
             from mcpgateway.services.session_affinity import get_session_affinity  # pylint: disable=import-outside-toplevel
 
             pool = get_session_affinity()
+            # Carry the verified edge identity (built from request state, not headers) so the
+            # owner dispatches to the trusted internal endpoint without re-authenticating, so
+            # OAuth and MCP_REQUIRE_AUTH=false public-only callers survive the rpc forward.
+            encoded_auth_context = encode_internal_mcp_auth_context(_build_internal_mcp_auth_context_for_rpc(request, user))
             forwarded_response = await pool.forward_request_to_owner(
                 mcp_session_id,
                 {"method": method, "params": params, "headers": lowered_request_headers, "req_id": req_id},
+                encoded_auth_context,
             )
             if forwarded_response is not None:
                 logger.info("[AFFINITY] Worker %s | Session %s... | Method: %s | Forwarded response received", WORKER_ID, session_short, method)
@@ -9887,8 +10304,27 @@ async def _maybe_forward_affinitized_rpc_request(
     return None
 
 
+async def _mcp_apps_initialize_authorized(request: Request, db: Session, user, server_id: Optional[str]) -> bool:
+    """Return whether initialize may advertise MCP Apps for this target."""
+    if not get_user_email(user):
+        return False
+    if not server_id:
+        return True
+
+    user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
+    if not (is_admin and token_teams is None) and token_teams is None:
+        token_teams = []
+
+    try:
+        await server_service.get_server(db, server_id, user_email=user_email, token_teams=token_teams)
+    except ServerNotFoundError:
+        return False
+    return True
+
+
 async def _execute_rpc_initialize(
     request: Request,
+    db: Session,
     user,
     *,
     params: Dict[str, Any],
@@ -9899,6 +10335,7 @@ async def _execute_rpc_initialize(
 
     Args:
         request: Incoming RPC request.
+        db: Active database session.
         user: Authenticated user payload.
         params: Initialize params payload.
         server_id: Optional virtual server identifier.
@@ -9924,6 +10361,10 @@ async def _execute_rpc_initialize(
     result = await session_registry.handle_initialize_logic(params, session_id=init_session_id, server_id=server_id)
     if hasattr(result, "model_dump"):
         result = result.model_dump(by_alias=True, exclude_none=True)
+
+    extensions = build_mcp_apps_capabilities(authorized=await _mcp_apps_initialize_authorized(request, db, user, server_id))
+    if extensions:
+        result.setdefault("capabilities", {})["extensions"] = extensions
 
     if settings.mcpgateway_session_affinity_enabled and mcp_session_id and mcp_session_id != "not-provided":
         try:
@@ -10038,6 +10479,7 @@ async def _execute_rpc_tools_call(
                     plugin_global_context=plugin_global_context,
                     meta_data=meta_data,
                     skip_pre_invoke=skip_pre_invoke,
+                    require_model_visible=True,
                 )
             except (ToolNotFoundError, ValueError):
                 logger.error("Tool not found: %s", name)
@@ -10061,6 +10503,167 @@ async def _execute_rpc_tools_call(
     finally:
         if settings.mcpgateway_tool_cancellation_enabled and run_id:
             await cancellation_service.unregister_run(run_id)
+
+
+@utility_router.post("/appbridge/sessions")
+@require_permission("resources.read")
+async def create_mcp_app_session(request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)):
+    """Create a short-lived AppBridge session for an authorized UI resource."""
+    if not mcp_apps_enabled():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="MCP Apps are disabled")
+
+    try:
+        body = orjson.loads(await request.body() or b"{}")
+    except orjson.JSONDecodeError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Parse error") from exc
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid request body")
+
+    resource_uri = body.get("resourceUri") or body.get("resource_uri")
+    if not resource_uri or not isinstance(resource_uri, str) or not resource_uri.startswith("ui://"):
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="resourceUri must use the ui:// scheme")
+
+    mcp_session_id = _extract_mcp_session_id(request, body)
+    if not mcp_session_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="mcp-session-id header is required")
+    await _assert_session_owner_or_admin(request, user, mcp_session_id)
+
+    server_id = body.get("serverId") or body.get("server_id") or request.headers.get("x-contextforge-server-id")
+    if not server_id or not isinstance(server_id, str):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="serverId is required for MCP Apps sessions")
+    user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
+    if is_admin and token_teams is None:
+        resource_user_email = None
+    else:
+        resource_user_email = user_email
+        if token_teams is None:
+            token_teams = []
+
+    try:
+        await resource_service.read_resource(
+            db,
+            resource_uri=resource_uri,
+            user=resource_user_email,
+            server_id=server_id,
+            token_teams=token_teams,
+        )
+    except (ResourceNotFoundError, ResourceError) as exc:
+        logger.info("AppBridge session resource lookup failed for %s on server %s: %s", resource_uri, server_id, exc)
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Resource not found") from exc
+
+    requester_email = get_user_email(user)
+    if not requester_email:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_ACCESS_DENIED_MSG)
+
+    app_session = mcp_app_session_service.create_session(
+        db,
+        mcp_session_id=mcp_session_id,
+        user_email=requester_email,
+        server_id=server_id,
+        resource_uri=resource_uri,
+        token_teams=token_teams,
+    )
+    return ORJSONResponse(
+        content={
+            "appSessionId": app_session.id,
+            "resourceUri": app_session.resource_uri,
+            "serverId": app_session.server_id,
+            "expiresAt": app_session.expires_at.isoformat(),
+        }
+    )
+
+
+@utility_router.post("/appbridge/sessions/{app_session_id}/rpc")
+@require_permission("tools.execute")
+async def handle_mcp_app_session_rpc(app_session_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)):
+    """Execute an app-visible tool through a validated AppBridge session."""
+    if not mcp_apps_enabled():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="MCP Apps are disabled")
+
+    try:
+        body = orjson.loads(await request.body())
+    except orjson.JSONDecodeError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Parse error") from exc
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid request body")
+
+    req_id = body.get("id")
+    method = body.get("method")
+    params = body.get("params") if isinstance(body.get("params"), dict) else {}
+    if method != "tools/call":
+        return {"jsonrpc": "2.0", "error": {"code": -32601, "message": f"Method not found: {method}"}, "id": req_id}
+
+    mcp_session_id = _extract_mcp_session_id(request, body)
+    if not mcp_session_id:
+        return {"jsonrpc": "2.0", "error": {"code": -32003, "message": _ACCESS_DENIED_MSG}, "id": req_id}
+    try:
+        await _assert_session_owner_or_admin(request, user, mcp_session_id)
+    except HTTPException as exc:
+        error_code = -32002 if exc.status_code == status.HTTP_404_NOT_FOUND else -32003
+        return {"jsonrpc": "2.0", "error": {"code": error_code, "message": str(exc.detail)}, "id": req_id}
+
+    requester_email, requester_is_admin = get_request_identity(request, user)
+    server_id = params.get("server_id") or params.get("serverId") or body.get("serverId") or body.get("server_id") or request.headers.get("x-contextforge-server-id")
+    app_session = mcp_app_session_service.get_valid_session(
+        db,
+        app_session_id=app_session_id,
+        mcp_session_id=mcp_session_id,
+        user_email=requester_email,
+        server_id=None,
+        is_admin=requester_is_admin,
+    )
+    if app_session is None:
+        return {"jsonrpc": "2.0", "error": {"code": -32003, "message": _ACCESS_DENIED_MSG}, "id": req_id}
+    if not app_session.server_id or (server_id is not None and server_id != app_session.server_id):
+        return {"jsonrpc": "2.0", "error": {"code": -32003, "message": _ACCESS_DENIED_MSG}, "id": req_id}
+
+    name = params.get("name")
+    if not name:
+        return {"jsonrpc": "2.0", "error": {"code": -32602, "message": "Missing tool name in parameters"}, "id": req_id}
+
+    try:
+        token_teams = app_session.token_teams
+        tool_user_email = None if token_teams is None else app_session.user_email
+        request_headers = {k.lower(): v for k, v in request.headers.items()}
+        request_headers.pop("x-context-forge-gateway-id", None)
+        result = await tool_service.invoke_tool(
+            db=db,
+            name=name,
+            arguments=params.get("arguments", {}),
+            request_headers=request_headers,
+            app_user_email=requester_email,
+            user_email=tool_user_email,
+            token_teams=token_teams,
+            server_id=app_session.server_id,
+            plugin_context_table=getattr(request.state, "plugin_context_table", None),
+            plugin_global_context=getattr(request.state, "plugin_global_context", None),
+            meta_data=params.get("_meta"),
+            require_app_visible=True,
+        )
+        if hasattr(result, "model_dump"):
+            result = result.model_dump(by_alias=True, exclude_none=True)
+        return {"jsonrpc": "2.0", "result": result, "id": req_id}
+    except ToolNotFoundError:
+        return {"jsonrpc": "2.0", "error": {"code": -32601, "message": f"Tool not found: {name}"}, "id": req_id}
+    except ToolError as exc:
+        logger.info("AppBridge tool call failed with tool error for %s: %s", name, exc)
+        return {"jsonrpc": "2.0", "error": {"code": -32000, "message": str(exc)}, "id": req_id}
+    except PluginViolationError as exc:
+        error_code = -32602
+        if exc.violation and hasattr(exc.violation, "mcp_error_code") and isinstance(exc.violation.mcp_error_code, int):
+            error_code = exc.violation.mcp_error_code
+        return {"jsonrpc": "2.0", "error": {"code": error_code, "message": str(exc)}, "id": req_id}
+    except PluginError as exc:
+        error_code = -32603
+        if exc.error and hasattr(exc.error, "mcp_error_code") and isinstance(exc.error.mcp_error_code, int):
+            error_code = exc.error.mcp_error_code
+        return {"jsonrpc": "2.0", "error": {"code": error_code, "message": str(exc)}, "id": req_id}
+    except (ValidationError, ValueError) as exc:
+        logger.info("AppBridge tool call received invalid parameters for %s: %s", name, exc)
+        return {"jsonrpc": "2.0", "error": {"code": -32602, "message": str(exc)}, "id": req_id}
+    except Exception:
+        logger.exception("AppBridge tool call failed for %s", name)
+        return {"jsonrpc": "2.0", "error": {"code": -32603, "message": "Internal error"}, "id": req_id}
 
 
 @utility_router.post("/_internal/mcp/tools/call/")
@@ -10124,6 +10727,7 @@ async def handle_internal_mcp_tools_call(request: Request):
             params=params,
             req_id=req_id,
             lowered_request_headers=lowered_request_headers,
+            user=user,
         )
         if forwarded_response is not None:
             return forwarded_response
@@ -10269,6 +10873,7 @@ async def handle_internal_mcp_tools_call_resolve(request: Request):
             server_id=server_id,
             plugin_global_context=plugin_global_context,
             plugin_context_table=plugin_context_table,
+            require_model_visible=True,
         )
 
         if db.is_active and db.in_transaction() is not None:
@@ -10428,6 +11033,79 @@ async def handle_internal_mcp_tools_call_metric(request: Request):
     return ORJSONResponse(content={"status": "ok"})
 
 
+async def _handle_tools_list_rpc(
+    request: Request,
+    db: Session,
+    user,
+    tool_svc,
+    server_id: Optional[str],
+    cursor: Optional[str],
+    serializer_func,
+) -> Dict[str, Any]:
+    """Handle tools/list and list_tools RPC methods with shared logic.
+
+    Args:
+        request: The FastAPI request object
+        db: Database session
+        user: Authenticated user with permissions
+        tool_svc: Tool service instance
+        server_id: Optional server ID for server-scoped tool listing
+        cursor: Optional pagination cursor
+        serializer_func: Function to serialize tool definitions (either _serialize_mcp_tool_definitions or _serialize_legacy_tool_payloads)
+
+    Returns:
+        Dictionary containing tools list and optional nextCursor
+
+    Raises:
+        HTTPException: If permission check fails
+    """
+    user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
+    _req_email, _req_is_admin = user_email, is_admin
+    _req_team_roles = get_user_team_roles(db, _req_email) if _req_email and not _req_is_admin else None
+
+    # Admin bypass - only when token has NO team restrictions
+    if is_admin and token_teams is None:
+        # user_email stays as-is (not None) for owner matching (PR #4341 / issue #4694)
+        token_teams = None  # Admin unrestricted
+    elif token_teams is None:
+        token_teams = []  # Non-admin without teams = public-only (secure default)
+
+    if server_id:
+        tools = await tool_svc.list_server_tools(
+            db,
+            server_id,
+            cursor=cursor,
+            user_email=user_email,
+            token_teams=token_teams,
+            requesting_user_email=_req_email,
+            requesting_user_is_admin=_req_is_admin,
+            requesting_user_team_roles=_req_team_roles,
+        )
+        # Release DB connection early to prevent idle-in-transaction under load
+        db.commit()
+        db.close()
+        result = {"tools": serializer_func(tools)}
+    else:
+        tools, next_cursor = await tool_svc.list_tools(
+            db,
+            cursor=cursor,
+            limit=0,
+            user_email=user_email,
+            token_teams=token_teams,
+            requesting_user_email=_req_email,
+            requesting_user_is_admin=_req_is_admin,
+            requesting_user_team_roles=_req_team_roles,
+        )
+        # Release DB connection early to prevent idle-in-transaction under load
+        db.commit()
+        db.close()
+        result = {"tools": serializer_func(tools)}
+        if next_cursor:
+            result["nextCursor"] = next_cursor
+
+    return result
+
+
 async def _handle_rpc_authenticated(request: Request, db: Session, user):
     """Handle RPC requests.
 
@@ -10446,10 +11124,11 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
     req_id: Optional[Union[int, str]] = None
     try:
         # Extract user identifier from either RBAC user object or JWT payload
+        # Cache this early to avoid duplicate extraction in get_rpc_filter_context
         if hasattr(user, "email"):
             user_id = getattr(user, "email", None)  # RBAC user object
         elif isinstance(user, dict):
-            user_id = user.get("sub") or user.get("email") or user.get("username", "unknown")  # JWT payload
+            user_id = get_user_email(user)  # JWT payload with canonical email extraction
         else:
             user_id = str(user)  # String username from basic auth
 
@@ -10510,7 +11189,7 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
             params["server_id"] = _internal_runtime_server_id
         server_id = params.get("server_id", None)
         cursor = params.get("cursor")  # Extract cursor parameter
-        mcp_session_id = request_headers.get("mcp-session-id") or request_headers.get("x-mcp-session-id")
+        mcp_session_id = _extract_mcp_session_id(request)
 
         # RBAC: Enforce server_id scoping for server-scoped tokens.
         # Extract token scopes once, then:
@@ -10547,6 +11226,7 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
             params=params,
             req_id=req_id,
             lowered_request_headers=_lowered_request_headers(),
+            user=user,
         )
         if forwarded_response is not None:
             return forwarded_response
@@ -10562,6 +11242,7 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
         if method == "initialize":
             result = await _execute_rpc_initialize(
                 request,
+                db,
                 user,
                 params=params,
                 server_id=server_id,
@@ -10569,97 +11250,32 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
             )
         elif method == "tools/list":
             await _ensure_rpc_permission(user, db, "tools.read", method, request=request)
-            user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
-            _req_email, _req_is_admin = user_email, is_admin
-            _req_team_roles = get_user_team_roles(db, _req_email) if _req_email and not _req_is_admin else None
-            # Admin bypass - only when token has NO team restrictions
-            # Keep user_email for owner matching (PR #4341 / issue #4694)
-            if is_admin and token_teams is None:
-                # user_email stays as-is (not None) for owner matching
-                token_teams = None  # Admin unrestricted
-            elif token_teams is None:
-                token_teams = []  # Non-admin without teams = public-only (secure default)
-            if server_id:
-                tools = await tool_service.list_server_tools(
-                    db,
-                    server_id,
-                    cursor=cursor,
-                    user_email=user_email,
-                    token_teams=token_teams,
-                    requesting_user_email=_req_email,
-                    requesting_user_is_admin=_req_is_admin,
-                    requesting_user_team_roles=_req_team_roles,
-                )
-                # Release DB connection early to prevent idle-in-transaction under load
-                db.commit()
-                db.close()
-                result = {"tools": _serialize_mcp_tool_definitions(tools)}
-            else:
-                tools, next_cursor = await tool_service.list_tools(
-                    db,
-                    cursor=cursor,
-                    limit=0,
-                    user_email=user_email,
-                    token_teams=token_teams,
-                    requesting_user_email=_req_email,
-                    requesting_user_is_admin=_req_is_admin,
-                    requesting_user_team_roles=_req_team_roles,
-                )
-                # Release DB connection early to prevent idle-in-transaction under load
-                db.commit()
-                db.close()
-                result = {"tools": _serialize_mcp_tool_definitions(tools)}
-                if next_cursor:
-                    result["nextCursor"] = next_cursor
+            result = await _handle_tools_list_rpc(
+                request=request,
+                db=db,
+                user=user,
+                tool_svc=tool_service,
+                server_id=server_id,
+                cursor=cursor,
+                serializer_func=_serialize_mcp_tool_definitions,
+            )
         elif method == "list_tools":  # Legacy endpoint
             await _ensure_rpc_permission(user, db, "tools.read", method, request=request)
-            user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
-            _req_email, _req_is_admin = user_email, is_admin
-            _req_team_roles = get_user_team_roles(db, _req_email) if _req_email and not _req_is_admin else None
-            # Admin bypass - only when token has NO team restrictions (token_teams is None)
-            # Keep user_email for owner matching (PR #4341 / issue #4694)
-            # If token has explicit team scope (even empty [] for public-only), respect it
-            if is_admin and token_teams is None:
-                # user_email stays as-is (not None) for owner matching
-                token_teams = None  # Admin unrestricted
-            elif token_teams is None:
-                token_teams = []  # Non-admin without teams = public-only (secure default)
-            if server_id:
-                tools = await tool_service.list_server_tools(
-                    db,
-                    server_id,
-                    cursor=cursor,
-                    user_email=user_email,
-                    token_teams=token_teams,
-                    requesting_user_email=_req_email,
-                    requesting_user_is_admin=_req_is_admin,
-                    requesting_user_team_roles=_req_team_roles,
-                )
-                db.commit()
-                db.close()
-                result = {"tools": _serialize_legacy_tool_payloads(tools)}
-            else:
-                tools, next_cursor = await tool_service.list_tools(
-                    db,
-                    cursor=cursor,
-                    limit=0,
-                    user_email=user_email,
-                    token_teams=token_teams,
-                    requesting_user_email=_req_email,
-                    requesting_user_is_admin=_req_is_admin,
-                    requesting_user_team_roles=_req_team_roles,
-                )
-                db.commit()
-                db.close()
-                result = {"tools": _serialize_legacy_tool_payloads(tools)}
-                if next_cursor:
-                    result["nextCursor"] = next_cursor
+            result = await _handle_tools_list_rpc(
+                request=request,
+                db=db,
+                user=user,
+                tool_svc=tool_service,
+                server_id=server_id,
+                cursor=cursor,
+                serializer_func=_serialize_legacy_tool_payloads,
+            )
         elif method == "list_gateways":
             await _ensure_rpc_permission(user, db, "gateways.read", method, request=request)
             user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
             # Admin bypass - only when token has NO team restrictions
             if is_admin and token_teams is None:
-                user_email = None
+                # Keep user_email set for owner matching on the admin's own private rows (PR #4341 / issue #4694)
                 token_teams = None  # Admin unrestricted
             elif token_teams is None:
                 token_teams = []  # Non-admin without teams = public-only (secure default)
@@ -10677,9 +11293,8 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
             await _ensure_rpc_permission(user, db, "resources.read", method, request=request)
             user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
             # Admin bypass - only when token has NO team restrictions
-            # Keep user_email for owner matching (PR #4341 / issue #4694)
             if is_admin and token_teams is None:
-                # user_email stays as-is (not None) for owner matching
+                # Keep user_email set for owner matching on the admin's own private rows (PR #4341 / issue #4694)
                 token_teams = None  # Admin unrestricted
             elif token_teams is None:
                 token_teams = []  # Non-admin without teams = public-only (secure default)
@@ -10704,12 +11319,10 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
                 raise JSONRPCError(-32602, "Missing resource URI in parameters", params)
 
             # Get authorization context (same as resources/list)
-            # Keep user_email for owner matching (PR #4341 / issue #4694)
             auth_user_email, auth_token_teams, auth_is_admin = get_rpc_filter_context(request, user)
             if auth_is_admin and auth_token_teams is None:
-                # auth_user_email stays as-is (not None) for owner matching
-                # auth_token_teams stays None (unrestricted)
-                pass
+                # Keep auth_user_email set for owner matching on the admin's own private rows (PR #4341 / issue #4694)
+                pass  # auth_token_teams stays None (unrestricted)
             elif auth_token_teams is None:
                 auth_token_teams = []  # Non-admin without teams = public-only
 
@@ -10729,22 +11342,17 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
                     plugin_context_table=plugin_context_table,
                     plugin_global_context=plugin_global_context,
                     meta_data=meta_data,
+                    request_headers=dict(request.headers),
                 )
-                if hasattr(result, "model_dump"):
-                    result = {"contents": [result.model_dump(by_alias=True, exclude_none=True)]}
-                else:
-                    result = {"contents": [result]}
+                result = {"contents": [serialize_resource_content_for_mcp(result, fallback_uri=uri)]}
             except (ValueError, ResourceNotFoundError) as e:
                 # Resource not found in the gateway
                 logger.error("Resource not found: %s", uri)
                 raise JSONRPCError(-32002, f"Resource not found: {uri}", {"uri": uri}) from e
             except ResourceError as e:
-                # Other resource errors (ambiguous URI, proxy failures, path validation, etc.)
-                logger.error("Resource read failed: %s", str(e))
-                raise JSONRPCError(-32000, f"Resource read failed: {str(e)}", {"uri": uri}) from e
-            except Exception as e:
-                logger.exception(f"Unexpected error in resources/read for {uri}: {e}")
-                raise JSONRPCError(-32603, f"Internal error: {str(e)}", {"uri": uri}) from e
+                # Generic resource error (e.g., ambiguous URI, proxy failure)
+                logger.error("RPC error: %s", str(e))
+                raise JSONRPCError(-32000, f"Resource read failed: {e}", {"uri": uri}) from e
             # Release transaction after resources/read completes
             db.commit()
             db.close()
@@ -10782,9 +11390,8 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
             await _ensure_rpc_permission(user, db, "prompts.read", method, request=request)
             user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
             # Admin bypass - only when token has NO team restrictions
-            # Keep user_email for owner matching (PR #4341 / issue #4694)
             if is_admin and token_teams is None:
-                # user_email stays as-is (not None) for owner matching
+                # Keep user_email set for owner matching on the admin's own private rows (PR #4341 / issue #4694)
                 token_teams = None  # Admin unrestricted
             elif token_teams is None:
                 token_teams = []  # Non-admin without teams = public-only (secure default)
@@ -10809,12 +11416,10 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
                 raise JSONRPCError(-32602, "Missing prompt name in parameters", params)
 
             # Get authorization context (same as prompts/list)
-            # Keep user_email for owner matching (PR #4341 / issue #4694)
             auth_user_email, auth_token_teams, auth_is_admin = get_rpc_filter_context(request, user)
             if auth_is_admin and auth_token_teams is None:
-                # auth_user_email stays as-is (not None) for owner matching
-                # auth_token_teams stays None (unrestricted)
-                pass
+                # Keep auth_user_email set for owner matching on the admin's own private rows (PR #4341 / issue #4694)
+                pass  # auth_token_teams stays None (unrestricted)
             elif auth_token_teams is None:
                 auth_token_teams = []  # Non-admin without teams = public-only
 
@@ -10833,15 +11438,16 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
                     plugin_global_context=plugin_global_context,
                     _meta_data=meta_data,
                 )
+                if hasattr(result, "model_dump"):
+                    result = result.model_dump(by_alias=True, exclude_none=True)
             except PromptNotFoundError as e:
-                raise JSONRPCError(-32002, str(e), {"name": name}) from e
+                # Prompt not found in the gateway
+                logger.error("Prompt not found: %s", name)
+                raise JSONRPCError(-32002, f"Prompt not found: {name}", {"name": name}) from e
             except PromptError as e:
-                raise JSONRPCError(-32000, f"Prompt retrieval failed: {str(e)}", {"name": name}) from e
-            except Exception as e:
-                logger.exception(f"Unexpected error in prompts/get for {name}: {e}")
-                raise JSONRPCError(-32603, f"Internal error: {str(e)}", {"name": name}) from e
-            if hasattr(result, "model_dump"):
-                result = result.model_dump(by_alias=True, exclude_none=True)
+                # Generic prompt error (e.g., validation failure)
+                logger.error("RPC error: %s", str(e))
+                raise JSONRPCError(-32000, f"Prompt retrieval failed: {e}", {"name": name}) from e
             # Release transaction after prompts/get completes
             db.commit()
             db.close()
@@ -11034,6 +11640,15 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
         elif method.startswith("logging/"):
             # Catch-all for other logging/* methods (currently unsupported)
             result = {}
+        elif method.startswith("extensions/") or method.startswith("io.modelcontextprotocol/"):
+            # Check if this is a known MCP Apps method.
+            # First-Party
+            from mcpgateway.services.mcp_method_registry import mcp_method_registry
+
+            if not mcp_method_registry.is_known_method(method):
+                raise JSONRPCError(-32601, f"Method not found: {method}", {})
+            # Known MCP Apps method but not yet implemented here.
+            raise JSONRPCError(-32601, f"Method not found: {method}", {})
         else:
             # Backward compatibility: Try to invoke as a tool directly
             # This allows both old format (method=tool_name) and new format (method=tools/call)
@@ -11070,6 +11685,7 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
                     plugin_context_table=plugin_context_table,
                     plugin_global_context=plugin_global_context,
                     meta_data=meta_data,
+                    require_model_visible=True,
                 )
                 if hasattr(result, "model_dump"):
                     result = result.model_dump(by_alias=True, exclude_none=True)
@@ -11437,10 +12053,15 @@ async def set_log_level(request: Request, user=Depends(get_current_user_with_per
     logger.debug(f"User {safe_log_user(user)} requested to set log level")
     body = await _read_request_json(request)
     try:
-        # Normalize to lowercase before enum construction
-        level = LogLevel(body["level"].lower())
-    except (ValueError, KeyError, AttributeError) as e:
-        raise HTTPException(status_code=422, detail=f"Invalid log level: {body.get('level', 'missing')}") from e
+        level_value = body["level"]
+        # Accept both uppercase and lowercase
+        if isinstance(level_value, str):
+            level_value = level_value.lower()
+        level = LogLevel(level_value)
+    except KeyError:
+        raise HTTPException(status_code=422, detail="Invalid log level: 'level' field is required")
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=f"Invalid log level: {e}")
     await logging_service.set_level(level)
 
 
@@ -11946,7 +12567,7 @@ async def export_selective_configuration(
         if hasattr(user, "email"):
             username = getattr(user, "email", None)
         elif isinstance(user, dict):
-            username = user.get("email")
+            username = get_user_email(user)
 
         # Get root path for URL construction - prefer configured APP_ROOT_PATH
         root_path = settings.app_root_path
@@ -12204,6 +12825,16 @@ try:
     logger.info("A2A agent plugin bindings router included")
 except ImportError as e:
     logger.error(f"A2A agent plugin bindings router not available: {e}")
+
+# MCP servers REST API router (provides POST /v1/mcp-servers/test for React UI)
+try:
+    # First-Party
+    from mcpgateway.routers.mcp_servers_router import router as mcp_servers_router  # pylint: disable=import-outside-toplevel
+
+    app.include_router(mcp_servers_router)
+    logger.info("MCP servers router included")
+except ImportError as e:
+    logger.error(f"MCP servers router not available: {e}")
 
 # Include log search router if structured logging is enabled
 if getattr(settings, "structured_logging_enabled", True):

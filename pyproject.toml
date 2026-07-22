@@ -15,16 +15,48 @@ build_py = "mcpgateway.tools.builder.build_hooks.BuildPyWithUI"
 exclude-newer = "10 days"
 
 [tool.uv.exclude-newer-package]
-cpex = "2026-06-29T23:59:59Z"
-cpex-url-reputation = "2026-06-29T23:59:59Z"
-cpex-rate-limiter = "2026-06-29T23:59:59Z"
-cpex-encoded-exfil-detection = "2026-06-29T23:59:59Z"
-cpex-pii-filter = "2026-06-29T23:59:59Z"
-cpex-retry-with-backoff = "2026-06-29T23:59:59Z"
-cpex-secrets-detection = "2026-06-29T23:59:59Z"
-langsmith = "2026-06-29T23:59:59Z"
-prometheus-fastapi-instrumentator = "2026-06-29T23:59:59Z"
-
+cpex = "2026-07-14T23:59:59Z"
+# cpex-url-reputation pinned past its normal soak cutoff: 0.3.5 (2026-07-14) is the first
+# release that emits result.metadata["url_reputation"] for resource_pre_fetch, which
+# tests/integration/plugins/test_plugin_metrics_consumer_integration.py and
+# tests/e2e/test_otel_plugin_metadata_e2e.py depend on. Vetted ahead of the usual window for
+# this reason.
+cpex-url-reputation = "2026-07-14T23:59:59Z"
+# cpex-rate-limiter pinned past its normal soak cutoff: 0.1.7 (2026-07-14) is the first
+# release that emits result.metadata["rate_limiter"] for prompt_pre_fetch/tool_pre_invoke, which
+# tests/integration/plugins/test_plugin_metrics_consumer_integration.py and
+# tests/e2e/test_otel_plugin_metadata_e2e.py depend on. Vetted ahead of the usual window for
+# this reason.
+cpex-rate-limiter = "2026-07-14T23:59:59Z"
+# cpex-encoded-exfil-detection pinned past its normal soak cutoff: 0.3.6 (2026-07-14) is the
+# first release that emits result.metadata["encoded_exfil_detection"] for
+# tool_post_invoke/tool_pre_invoke/resource hooks, which
+# tests/integration/plugins/test_plugin_metrics_consumer_integration.py and
+# tests/e2e/test_otel_plugin_metadata_e2e.py depend on. Vetted ahead of the usual window for
+# this reason.
+cpex-encoded-exfil-detection = "2026-07-14T23:59:59Z"
+# cpex-pii-filter pinned past its normal soak cutoff: 0.3.6 (2026-07-07) is the first
+# release that emits result.metadata for tool_post_invoke, which tests/e2e/test_otel_plugin_metadata_e2e.py
+# depends on. Vetted ahead of the usual window for this reason.
+cpex-pii-filter = "2026-07-07T23:59:59Z"
+# cpex-retry-with-backoff pinned past its normal soak cutoff: 0.3.7 (2026-07-15) is required.
+# 0.3.6 first emitted result.metadata["retry_with_backoff"] for tool_post_invoke (which
+# tests/integration/plugins/test_plugin_metrics_consumer_integration.py and
+# tests/e2e/test_otel_plugin_metadata_e2e.py depend on) but shipped a retry-detection
+# regression: is_failure read the tool_post_invoke result via PyDict::get_item (C-level dict
+# storage), which silently misses every key on the gateway's CopyOnWriteDict payload-isolation
+# wrapper (its data lives in a Python-level overlay) -- every retryable failure looked like a
+# success and the plugin never retried. 0.3.7 fixes this by reading through the Python mapping
+# protocol instead. See IBM/cpex-plugins#124 / #137. Vetted ahead of the usual window for both
+# reasons.
+cpex-retry-with-backoff = "2026-07-15T23:59:59Z"
+# cpex-secrets-detection pinned past its normal soak cutoff: 0.3.9 (2026-07-15)
+# adds field_allowlist and field_denylist support for gateway plugin config.
+# 0.3.7 is the first release that emits result.metadata["secrets_detection"] for
+# tool_post_invoke, which tests/integration/plugins/test_plugin_metrics_consumer_integration.py
+# and tests/e2e/test_otel_plugin_metadata_e2e.py depend on. Vetted ahead of the usual window
+# for both reasons.
+cpex-secrets-detection = "2026-07-15T23:59:59Z"
 
 
 [tool.uv.sources]
@@ -35,7 +67,7 @@ compliance-reference-server = { path = "mcp-servers/python/compliance_reference_
 # ----------------------------------------------------------------
 [project]
 name = "mcp-contextforge-gateway"
-version = "1.0.4"
+version = "1.0.6"
 description = "ContextForge AI Gateway — an AI gateway, registry, and proxy for MCP, A2A, and REST/gRPC APIs. Exposes a unified control plane with centralized governance, discovery, and observability. Optimizes agent and tool calling, and supports plugins."
 keywords = ["MCP","API","gateway","proxy","tools",
   "agents","agentic ai","model context protocol","multi-agent","fastapi",
@@ -70,15 +102,15 @@ maintainers = [
 # Runtime dependencies
 # ----------------------------------------------------------------
 dependencies = [
-    "alembic>=1.18.4",
+    "alembic>=1.18.5",
     "argon2-cffi>=25.1.0",
     "base58>=2.1.1",
     "brotli>=1.2.0",
-    "click>=8.4.1", # Transitive pin
+    "click>=8.4.2", # Transitive pin
     "cpex>=0.1.1",
     "cryptography>=49.0.0",
-    "fastapi>=0.136.3",
-    "filelock>=3.29.4",
+    "fastapi>=0.139.0",
+    "filelock>=3.29.4,<3.31.0", # verified against 3.30.0's fork-safety guard (gateway_service.py rebuilds post-fork); ceiling caps unknown future releases
     "gunicorn>=26.0.0",
     "httpx>=0.28.1",
     "httpx[http2]>=0.28.1",
@@ -88,28 +120,28 @@ dependencies = [
     "jsonpath-ng>=1.8.0",
     "jsonschema>=4.26.0",
     "Mako>=1.3.12", # Transitive pin (alembic)
-    "mcp>=1.27.2",
+    "mcp>=1.28.1",
     "msgpack>=1.2.1",
     "orjson>=3.11.9",
     "parse>=1.22.1",
-    "prometheus-fastapi-instrumentator>=8.0.1",  # 8.0.1: fix _IncludedRouter crash (issue #370)
+    "prometheus-fastapi-instrumentator>=8.0.2",  # 8.0.1: fix _IncludedRouter crash (issue #370)
     "prometheus_client>=0.25.0", # 0.25.0 exceeds 10-day min-release-age policy
     "psutil>=7.2.2",
     "pydantic>=2.13.4",
     "pydantic[email]>=2.13.4",
-    "pydantic-settings>=2.14.1",
+    "pydantic-settings>=2.14.2",
     "pyjwt>=2.13.0",
     "python-json-logger>=4.1.0",
     "python-multipart>=0.0.32", # Transitive pin (mcp, fastapi); dependabot/81
     "PyYAML>=6.0.3",
-    "redis>=8.0.0",
+    "redis>=8.0.1",
     "requests>=2.34.2", # Transivite pin (requests-oauthlib)
     "requests-oauthlib>=2.0.0",
     "sqlalchemy>=2.0.51",
-    "sse-starlette>=3.4.4",
+    "sse-starlette>=3.4.5",
     "starlette>=1.3.1",
     "starlette-compress>=1.7.1",
-    "typer>=0.26.7",
+    "typer>=0.26.8",
     "urllib3>=2.7.0", # Transitive pin (requests); dependabot/76
     "uvicorn[standard]>=0.49.0",
 ]
@@ -132,7 +164,8 @@ dev = [
     "coverage>=7.10.7",
     "diff-cover>=10.3.0",
     "dodgy>=0.2.1",
-    "faker>=40.23.0",
+    "faker>=40.28.1",
+    "fakeredis[lua]>=2.36.2",
     "compliance-reference-server",
     "fastmcp>=3.4.2",
     "fawltydeps>=0.20.0",
@@ -144,14 +177,14 @@ dev = [
     "pip-licenses>=5.5.5",
     "pip_audit>=2.10.1",
     "pre-commit>=4.6.0",
-    "prospector[with_everything]>=1.17.3",
+    "prospector[with_everything]>=1.19.0",
     "pydocstyle>=6.3.0",
     "pyrefly>=1.1.1",
-    "pyright>=1.1.406",
+    "pyright>=1.1.411",
     "pyroma>=5.0.1",
-    "playwright>=1.60.0",
+    "playwright>=1.61.0",
     "python-owasp-zap-v2.4>=0.1.0",
-    "pytest>=9.0.3",
+    "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
     "pytest-benchmark>=5.2.3",
     "pytest-cov>=7.1.0",
@@ -163,7 +196,7 @@ dev = [
     "pytest-integration-mark>=0.2.0",
     # "pytest-md-report>=0.7.0",
     "pytest-playwright>=0.8.0",
-    "pytest-rerunfailures>=16.3",
+    "pytest-rerunfailures>=16.4",
     "pytest-timeout>=2.4.0",
     "pytest-trio>=0.8.0",
     "pytest-xdist>=3.8.0",
@@ -171,7 +204,7 @@ dev = [
     "pytype>=2024.10.11",
     "pyupgrade>=3.21.2",
     "radon>=6.0.1",
-    "redis>=6.4.0",
+    "redis>=8.0.1",
     "rich>=15.0.0",
     #"semgrep>=1.136.0",   # conflicts with opentelemetry-sdk
     "settings-doc>=4.3.2",
@@ -207,12 +240,12 @@ dev = [
 # Redis with hiredis C parser for up to 83x faster response parsing
 # See ADR-026 for benchmarks and decision rationale
 redis = [
-    "redis[hiredis]>=8.0.0",
+    "redis[hiredis]>=8.0.1",
 ]
 
 # Pure-Python Redis parser fallback (for environments where hiredis wheels aren't available)
 redis-pure = [
-    "redis>=8.0.0",
+    "redis>=8.0.1",
 ]
 
 # PostgreSQL adapter with psycopg3
@@ -233,17 +266,10 @@ llmchat = [
 
 # Observability dependencies (optional)
 observability = [
-    "opentelemetry-api>=1.42.1",
-    "opentelemetry-exporter-otlp-proto-grpc>=1.42.1",
-    "opentelemetry-exporter-otlp-proto-http>=1.42.1",
-    "opentelemetry-sdk>=1.42.1",
-]
-
-# Granian HTTP server (optional, alternative to Gunicorn+Uvicorn)
-# Rust-based ASGI server with native HTTP/2, WebSocket, and mTLS support
-# Includes extras: pname (process naming), uvloop (faster event loop), reload (dev hot-reload)
-granian = [
-    "granian[pname,uvloop,reload]>=2.7.6",
+    "opentelemetry-api>=1.43.0",
+    "opentelemetry-exporter-otlp-proto-grpc>=1.43.0",
+    "opentelemetry-exporter-otlp-proto-http>=1.43.0",
+    "opentelemetry-sdk>=1.43.0",
 ]
 
 # Async SQLite Driver (optional)
@@ -275,12 +301,12 @@ templating = [
 # External plugin packages (optional)
 # Install with: pip install mcp-contextforge-gateway[plugins]
 plugins = [
-    "cpex-encoded-exfil-detection>=0.3.5",
-    "cpex-pii-filter>=0.3.5",
-    "cpex-rate-limiter>=0.1.6",
-    "cpex-retry-with-backoff>=0.3.5",
-    "cpex-secrets-detection>=0.3.6",
-    "cpex-url-reputation>=0.3.4",
+    "cpex-encoded-exfil-detection>=0.3.6",  # 0.3.6 is the first release that emits result.metadata
+    "cpex-pii-filter>=0.3.6",  # 0.3.6 is the first release that emits result.metadata on tool_post_invoke
+    "cpex-rate-limiter>=0.1.7",  # 0.1.7 is the first release that emits result.metadata
+    "cpex-retry-with-backoff>=0.3.7",  # 0.3.7 fixes a retry-detection regression against the gateway's CopyOnWriteDict payload isolation (IBM/cpex-plugins#124); 0.3.6 added the result.metadata emission but never actually retried in the gateway. Prior <0.3.2 CI pin (from #5332) is superseded.
+    "cpex-secrets-detection>=0.3.9",  # 0.3.9 adds field_allowlist and field_denylist support; 0.3.7 is the first release that emits result.metadata
+    "cpex-url-reputation>=0.3.5",  # 0.3.5 is the first release that emits result.metadata
 ]
 
 # gRPC Support (EXPERIMENTAL - optional, disabled by default)
@@ -294,11 +320,11 @@ grpc = [
 
 # Convenience meta-extras
 all = [
-    "mcp-contextforge-gateway[redis]>=1.0.4",
+    "mcp-contextforge-gateway[redis]>=1.0.6",
 ]
 
 dev-all = [
-    "mcp-contextforge-gateway[redis,dev,plugins]>=1.0.4",
+    "mcp-contextforge-gateway[redis,dev,plugins]>=1.0.6",
 ]
 
 # --------------------------------------------------------------------
@@ -366,6 +392,12 @@ mcpgateway = [
 inputs = ["mcpgateway"]
 python_version = "3.11"          # match default runtime
 
+[tool.pyright]
+typeCheckingMode = "standard"
+reportUnusedCoroutine = "error"
+reportMissingTypeStubs = "warning"
+exclude = ["build", ".venv", ".cache", "tests/async/profiles"]
+
 [tool.check-manifest]
 ignore = [
     "docs/**",
@@ -373,6 +405,10 @@ ignore = [
     ".github/**",
     "Makefile",
     "mcpgateway/admin_ui/**",
+    "mcpgateway/static/assets/**",
+    "mcpgateway/static/css/**",
+    "mcpgateway/static/chunk-*.js",
+    "mcpgateway/static/bundle-*.js",
 ]
 
 [tool.black]

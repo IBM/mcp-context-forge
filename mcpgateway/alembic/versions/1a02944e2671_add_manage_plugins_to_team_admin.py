@@ -1,9 +1,8 @@
 # -*- coding: utf-8 -*-
 # pylint: disable=no-member
 """Location: ./mcpgateway/alembic/versions/1a02944e2671_add_manage_plugins_to_team_admin.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Add tools.manage_plugins permission to team_admin role.
 

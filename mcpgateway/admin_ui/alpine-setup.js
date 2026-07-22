@@ -4,11 +4,13 @@ import { appRoot } from './components/app-root.js';
 import { mainLayout } from './components/main-layout.js';
 import { overflowMenu } from './components/overflow-menu.js';
 import { teamSelector } from './components/team-selector.js';
+import { maintenancePanel } from './components/maintenance-panel.js';
 
 Alpine.data('appRoot', appRoot);
 Alpine.data('mainLayout', mainLayout);
 Alpine.data('overflowMenu', overflowMenu);
 Alpine.data('teamSelector', teamSelector);
+Alpine.data('maintenancePanel', maintenancePanel);
 
 Alpine.magic('syncCheckbox', function () {
   return syncCheckboxFromUrl;

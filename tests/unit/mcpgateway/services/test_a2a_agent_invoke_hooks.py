@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/services/test_a2a_agent_invoke_hooks.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Unit tests for A2A agent invoke plugin hook integration.
 
@@ -92,7 +91,7 @@ def _make_plugin_manager(has_pre=True, has_post=True):
         return False
 
     pm.has_hooks_for = MagicMock(side_effect=_has_hooks)
-    pm.invoke_hook = AsyncMock(return_value=(SimpleNamespace(modified_payload=None, retry_delay_ms=0), {}))
+    pm.invoke_hook = AsyncMock(return_value=(SimpleNamespace(modified_payload=None, retry_delay_ms=0, metadata=None), {}))
     return pm
 
 
@@ -318,6 +317,7 @@ class TestA2AInvokePreHook:
                 headers=HttpHeaderPayload(root={"X-Custom": "value", "X-Request-ID": "plugin-req-123"}),
             ),
             retry_delay_ms=0,
+            metadata=None,
         )
         pm.invoke_hook = AsyncMock(return_value=(modified, {}))
 
@@ -501,7 +501,7 @@ class TestA2AInvokePostHook:
             nonlocal call_count
             call_count += 1
             if call_count == 1:
-                return (SimpleNamespace(modified_payload=None), {})
+                return (SimpleNamespace(modified_payload=None, metadata=None), {})
             raise RuntimeError("post crash")
 
         pm.invoke_hook = AsyncMock(side_effect=_invoke_hook_side_effect)
@@ -696,9 +696,9 @@ class TestA2AInvokeGlobalContext:
         async def _capture_plugin_manager(agent_context_id):
             pm.last_context_id = agent_context_id
 
-            async def _invoke_hook(hook_type, payload, global_context=None, local_contexts=None, violations_as_exceptions=True):
+            async def _invoke_hook(hook_type, payload, global_context=None, local_contexts=None, violations_as_exceptions=True, extensions=None):
                 captured_context["global"] = global_context
-                return (SimpleNamespace(modified_payload=None, retry_delay_ms=0), {})
+                return (SimpleNamespace(modified_payload=None, retry_delay_ms=0, metadata=None), {})
 
             pm.invoke_hook = _invoke_hook
             return pm
@@ -752,9 +752,9 @@ class TestA2AInvokeGlobalContext:
 
         captured_context = {}
 
-        async def _invoke_hook(hook_type, payload, global_context=None, local_contexts=None, violations_as_exceptions=True):
+        async def _invoke_hook(hook_type, payload, global_context=None, local_contexts=None, violations_as_exceptions=True, extensions=None):
             captured_context["global"] = global_context
-            return (SimpleNamespace(modified_payload=None, retry_delay_ms=0), {})
+            return (SimpleNamespace(modified_payload=None, retry_delay_ms=0, metadata=None), {})
 
         pm.invoke_hook = _invoke_hook
 
@@ -807,9 +807,9 @@ class TestA2AInvokeGlobalContext:
 
         captured_context = {}
 
-        async def _invoke_hook(hook_type, payload, global_context=None, local_contexts=None, violations_as_exceptions=True):
+        async def _invoke_hook(hook_type, payload, global_context=None, local_contexts=None, violations_as_exceptions=True, extensions=None):
             captured_context["global"] = global_context
-            return (SimpleNamespace(modified_payload=None, retry_delay_ms=0), {})
+            return (SimpleNamespace(modified_payload=None, retry_delay_ms=0, metadata=None), {})
 
         pm.invoke_hook = _invoke_hook
 

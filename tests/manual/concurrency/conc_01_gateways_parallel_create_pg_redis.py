@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """Location: ./tests/manual/concurrency/conc_01_gateways_parallel_create_pg_redis.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 CONC-01 manual concurrency check: parallel same-name gateway creation.
 

@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/utils/test_passthrough_headers.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Unit tests for HTTP header passthrough functionality.
 This module contains comprehensive unit tests for the passthrough_headers utility
@@ -497,3 +496,40 @@ class TestPassthroughHeaders:
 
         # Should log warning about conflict
         assert any("conflicts with pre-defined headers" in record.message for record in caplog.records)
+
+
+class TestLoopbackSkipTrustedInternalHeaders:
+    """Deny-path: client passthrough must never carry the gateway-internal trust headers.
+
+    The ``/_internal/mcp/*`` dispatch sets ``x-contextforge-auth-context`` (the
+    server-established identity), ``x-contextforge-mcp-runtime``, and the HMAC.
+    If the loopback passthrough echoed a client-supplied copy of those, a caller
+    could spoof the trusted identity while the server's valid HMAC still rode
+    along. The loopback skip set must strip them.
+    """
+
+    def test_filter_strips_trusted_internal_headers(self):
+        # First-Party
+        from mcpgateway.utils.passthrough_headers import filter_loopback_skip_headers
+
+        spoofed = {
+            "x-contextforge-auth-context": "SPOOFED",
+            "x-contextforge-mcp-runtime": "affinity",
+            "x-contextforge-mcp-runtime-auth": "SPOOFED-HMAC",  # pragma: allowlist secret
+            "x-contextforge-session-validated": "rust",
+            "x-business-header": "kept",
+        }
+        out = filter_loopback_skip_headers(spoofed)
+        assert "x-contextforge-auth-context" not in out
+        assert "x-contextforge-mcp-runtime" not in out
+        assert "x-contextforge-mcp-runtime-auth" not in out
+        assert "x-contextforge-session-validated" not in out
+        # Non-trusted business headers are unaffected.
+        assert out.get("x-business-header") == "kept"
+
+    def test_filter_strips_trusted_headers_case_insensitively(self):
+        # First-Party
+        from mcpgateway.utils.passthrough_headers import filter_loopback_skip_headers
+
+        out = filter_loopback_skip_headers({"X-ContextForge-Auth-Context": "SPOOFED"})
+        assert not any(k.lower() == "x-contextforge-auth-context" for k in out)

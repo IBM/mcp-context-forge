@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/middleware/rate_limit_middleware.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: ContextForge Team
 
 Redis-backed rate limiting middleware for ContextForge API endpoints.
 
@@ -38,6 +37,7 @@ from starlette.responses import JSONResponse
 
 # First-Party
 from mcpgateway import auth
+from mcpgateway.auth_context import is_trusted_internal_mcp_request
 from mcpgateway.config import settings
 from mcpgateway.services.security_logger import SecurityEventType, SecurityLogger, SecuritySeverity
 
@@ -107,6 +107,11 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             },
             "HIGH": {
                 "pattern": r"^/(tokens|oauth|rbac)(/|$)",
+                "limit": settings.rate_limit_high_rpm,
+                "burst": settings.rate_limit_high_burst,
+            },
+            "HIGH_APPBRIDGE": {
+                "pattern": r"^/appbridge/sessions(/|$)",
                 "limit": settings.rate_limit_high_rpm,
                 "burst": settings.rate_limit_high_burst,
             },
@@ -198,6 +203,10 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         """Process request with rate limiting."""
         if not self.enabled:
+            return await call_next(request)
+
+        # Skip rate limiting for the trusted-internal dispatch; the edge request was already counted.
+        if is_trusted_internal_mcp_request(request):
             return await call_next(request)
 
         tier = self.get_endpoint_tier(request.url.path)

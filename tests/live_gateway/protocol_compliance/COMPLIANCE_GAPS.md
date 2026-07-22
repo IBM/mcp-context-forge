@@ -84,52 +84,6 @@ the marker and the entry per the rules above.
 
 ---
 
-### GAP-001 — Server-initiated log notifications not delivered
-
-| | |
-|---|---|
-| **Targets affected** | `gateway_proxy`, `gateway_virtual` |
-| **Tests** | `test_logging.py::test_log_message_reaches_client`; secondary blocker for `test_notifications.py::test_tools_list_changed_notification_delivered` and `::test_resources_list_changed_notification_delivered` (primary GAP-008) |
-| **Spec** | [MCP 2025-11-25 — server `logging` capability](https://modelcontextprotocol.io/specification/2025-11-25/server/utilities/logging) |
-
-**Observed**: when an upstream tool calls `ctx.log(...)` during a tool
-invocation, the gateway accepts the upstream's `notifications/message`
-but does not relay it to the downstream client. The client's
-`log_handler` is never invoked.
-
-**Expected**: the spec requires the server to emit `notifications/message`
-to clients that subscribed via `logging/setLevel`. Federation should
-forward upstream-emitted log messages.
-
-**Why**: the log emitted during a tool call is a request-tied
-notification — it SHOULD ride the POST-correlated stream for that call.
-The gateway isn't relaying notifications on that stream. (Logs emitted
-*between* calls — e.g. in response to a `logging/setLevel` change —
-would ride the standalone stream, which #4205 also closes, but the
-test exercises the in-call path.)
-
----
-
-### GAP-002 — Progress notifications not delivered
-
-| | |
-|---|---|
-| **Targets affected** | `gateway_proxy`, `gateway_virtual` |
-| **Tests** | `test_utilities.py::test_progress_notifications_delivered`; secondary blocker for `test_notifications.py::test_tools_list_changed_notification_delivered` and `::test_resources_list_changed_notification_delivered` (primary GAP-008) |
-| **Spec** | [MCP 2025-11-25 — `progress` notifications](https://modelcontextprotocol.io/specification/2025-11-25/basic/utilities/progress) |
-
-**Observed**: a tool calling `ctx.report_progress(...)` returns successfully,
-but the client's `progress_handler` is never invoked.
-
-**Expected**: with a `progressToken` on the request, the server must emit
-`notifications/progress` events the client can observe.
-
-**Why**: progress notifications are request-tied (the `progressToken`
-is scoped to one client request) and ride the POST-correlated stream
-of that request. Root cause is the gateway not relaying notifications
-on the POST-correlated stream — **not** #4205, which only closes the
-standalone GET stream that progress wouldn't have used anyway.
-
 ---
 
 ### GAP-003 — Client roots not forwarded to upstream
@@ -363,7 +317,7 @@ session that opened the subscription.
 not tied to any specific client request — per spec it rides the
 standalone stream (`GET /mcp/`). The gateway currently closes that
 stream with 405 (see #4205), so the notification has no channel to
-the client. Unlike the other server→client gaps (GAP-001/002/003/004/
+the client. Unlike the other server→client gaps (GAP-003/004/
 005), this one is genuinely about the standalone stream and #4205 is
 the correct blocker.
 
@@ -438,6 +392,18 @@ on this test.
 ---
 
 ## Closed gaps
+
+### GAP-001 — Server-initiated log notifications not delivered *(closed 2026-07-13)*
+
+**Was**: `test_logging.py::test_log_message_reaches_client` xfailed on `gateway_proxy` and `gateway_virtual` because the gateway did not relay `notifications/message` on the POST-correlated stream.
+
+**How closed**: Tests now pass on both gateway targets — the POST-correlated notification relay was fixed. `xfail_on` removed from `test_log_message_reaches_client`. Note: `test_logging_set_level_filters_below_threshold` retains its `xfail_on` (separate test with additional setLevel filtering assertions).
+
+### GAP-002 — Progress notifications not delivered *(closed 2026-07-13)*
+
+**Was**: `test_utilities.py::test_progress_notifications_delivered` xfailed on `gateway_proxy` and `gateway_virtual` because the gateway did not relay `notifications/progress` on the POST-correlated stream.
+
+**How closed**: Tests now pass on both gateway targets — same POST-correlated notification relay fix as GAP-001. `xfail_on` removed from `test_progress_notifications_delivered`.
 
 ### GAP-007 — `tools/list` pagination cap below upstream tool count *(closed 2026-04-18)*
 

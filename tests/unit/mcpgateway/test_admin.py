@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/test_admin.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Tests for the admin module with improved coverage.
 This module tests the admin UI routes for ContextForge, ensuring
@@ -283,7 +282,7 @@ from mcpgateway.services.prompt_service import PromptNotFoundError, PromptServic
 from mcpgateway.services.resource_service import ResourceNotFoundError, ResourceService
 from mcpgateway.services.root_service import RootService, RootServiceNotFoundError
 from mcpgateway.services.server_service import ServerService
-from mcpgateway.services.team_management_service import UNSET
+from mcpgateway.services.team_management_service import JoinRequestNotFoundError, UNSET
 from mcpgateway.services.tool_service import ToolError, ToolNotFoundError, ToolService
 from mcpgateway.utils.passthrough_headers import PassthroughHeadersError
 from mcpgateway.utils.services_auth import decode_auth
@@ -1991,6 +1990,18 @@ class TestAdminToolRoutes:
         result = _build_auth_obj_from_form(form)
         assert result is None
 
+    @pytest.mark.parametrize("scalar_json", ["5", "null", "true", "3.14", '"a string"', '{"key": "X-API-Key"}'])
+    def test_build_auth_obj_from_form_non_list_json(self, scalar_json, mock_request, mock_db):
+        """A non-list JSON value for auth_headers is treated as "no headers", not a 500.
+
+        ``orjson.loads`` accepts any valid JSON scalar/object, so guarding against a non-list
+        value keeps a body like ``auth_headers=5`` from raising an uncaught TypeError when the
+        header list is iterated.
+        """
+        form = FakeForm({"auth_type": "authheaders", "auth_headers": scalar_json})
+        # No usable headers and no legacy key/value pair -> None (never raises).
+        assert _build_auth_obj_from_form(form) is None
+
     def test_build_auth_obj_from_form_basic_missing_password(self, mock_request, mock_db):
         """_build_auth_obj_from_form returns None for basic auth with missing password."""
         form = FakeForm({"auth_type": "basic", "auth_username": "user"})
@@ -2020,6 +2031,58 @@ class TestAdminToolRoutes:
             _build_auth_obj_from_form(form)
         assert exc_info.value.status_code == 422
         assert "oauth" in exc_info.value.detail.lower()
+
+    def test_build_auth_obj_from_form_authheaders_multi(self, mock_request, mock_db):
+        """_build_auth_obj_from_form encodes every populated header row."""
+        form = FakeForm(
+            {
+                "auth_type": "authheaders",
+                "auth_headers": json.dumps([{"key": "X-API-Key", "value": "secret"}, {"key": "X-Tenant", "value": "acme"}]),
+            }
+        )
+        auth_obj = _build_auth_obj_from_form(form)
+        assert auth_obj["auth_type"] == "authheaders"
+        assert decode_auth(auth_obj["auth_value"]) == {"X-API-Key": "secret", "X-Tenant": "acme"}
+
+    def test_build_auth_obj_from_form_authheaders_invalid_key_raises_422(self, mock_request, mock_db):
+        """The admin form rejects malformed header keys with a 422, matching POST /tools."""
+        from fastapi import HTTPException
+
+        form = FakeForm(
+            {
+                "auth_type": "authheaders",
+                "auth_headers": json.dumps([{"key": "Bad@Key!", "value": "secret"}]),
+            }
+        )
+        with pytest.raises(HTTPException) as exc_info:
+            _build_auth_obj_from_form(form)
+        assert exc_info.value.status_code == 422
+        assert "Invalid header key format" in exc_info.value.detail
+
+    def test_build_auth_obj_from_form_authheaders_excessive_headers_raises_422(self, mock_request, mock_db):
+        """The admin form enforces the same 100-header cap as POST /tools."""
+        from fastapi import HTTPException
+
+        form = FakeForm(
+            {
+                "auth_type": "authheaders",
+                "auth_headers": json.dumps([{"key": f"X-Header-{i}", "value": f"v{i}"} for i in range(101)]),
+            }
+        )
+        with pytest.raises(HTTPException) as exc_info:
+            _build_auth_obj_from_form(form)
+        assert exc_info.value.status_code == 422
+        assert "Maximum of 100 headers allowed" in exc_info.value.detail
+
+    def test_build_auth_obj_from_form_authheaders_blank_rows_still_none(self, mock_request, mock_db):
+        """Blank header rows submitted by the admin form still mean 'no auth', not a 422."""
+        form = FakeForm(
+            {
+                "auth_type": "authheaders",
+                "auth_headers": json.dumps([{"key": "", "value": ""}, {"key": "", "value": ""}]),
+            }
+        )
+        assert _build_auth_obj_from_form(form) is None
 
     @patch.object(ToolService, "set_tool_state")
     async def test_admin_set_tool_state_various_activate_values(self, mock_toggle_status, mock_request, mock_db):
@@ -2621,6 +2684,16 @@ class TestAdminResourceRoutes:
         assert result.status_code == 500
 
     @patch.object(ResourceService, "register_resource")
+    async def test_admin_add_resource_validation_error(self, mock_register_resource, mock_request, mock_db):
+        """ResourceValidationError in admin_add_resource returns 422 (lines 13169-13170)."""
+        from mcpgateway.services.resource_service import ResourceValidationError
+
+        mock_register_resource.side_effect = ResourceValidationError("invalid team id")
+        result = await admin_add_resource(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 422
+
+    @patch.object(ResourceService, "register_resource")
     async def test_admin_add_resource_content_size_error(self, mock_register_resource, mock_request, mock_db, monkeypatch):
         """Test adding resource with ContentSizeError."""
         # First-Party
@@ -2827,6 +2900,14 @@ class TestAdminResourceRoutes:
         monkeypatch.setattr("mcpgateway.admin.resource_service.update_resource", mock_update)
         response = await admin_edit_resource("550e8400e29b41d4a7164466554400c1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})  # pragma: allowlist secret
         assert response.status_code == 409
+
+        # Test ResourceValidationError (lines 13304-13305)
+        from mcpgateway.services.resource_service import ResourceValidationError
+
+        mock_update = AsyncMock(side_effect=ResourceValidationError("bad team"))
+        monkeypatch.setattr("mcpgateway.admin.resource_service.update_resource", mock_update)
+        response = await admin_edit_resource("550e8400e29b41d4a7164466554400c1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})  # pragma: allowlist secret
+        assert response.status_code == 422
 
         # Test generic Exception
         mock_update = AsyncMock(side_effect=Exception("boom"))
@@ -3798,7 +3879,7 @@ class TestAdminGatewayTestRoute:
                 body={"test": "data"} if method in ["POST", "PUT", "PATCH"] else None,
             )
 
-            with patch("mcpgateway.admin.ResilientHttpClient") as mock_client_class:
+            with patch("mcpgateway.services.gateway_service.ResilientHttpClient") as mock_client_class:
                 mock_response = MagicMock()
                 mock_response.status_code = 200
                 mock_response.json.return_value = {"result": "success"}
@@ -3842,7 +3923,7 @@ class TestAdminGatewayTestRoute:
                 body=None,
             )
 
-            with patch("mcpgateway.admin.ResilientHttpClient") as mock_client_class:
+            with patch("mcpgateway.services.gateway_service.ResilientHttpClient") as mock_client_class:
                 mock_response = MagicMock()
                 mock_response.status_code = 200
                 mock_response.json.return_value = {}
@@ -3876,7 +3957,7 @@ class TestAdminGatewayTestRoute:
             body=None,
         )
 
-        with patch("mcpgateway.admin.ResilientHttpClient") as mock_client_class:
+        with patch("mcpgateway.services.gateway_service.ResilientHttpClient") as mock_client_class:
             mock_client = AsyncMock()
             mock_client.request = AsyncMock(side_effect=httpx.TimeoutException("Request timed out"))
             mock_client.__aenter__ = AsyncMock(return_value=mock_client)
@@ -3909,7 +3990,7 @@ class TestAdminGatewayTestRoute:
                 body=None,
             )
 
-            with patch("mcpgateway.admin.ResilientHttpClient") as mock_client_class:
+            with patch("mcpgateway.services.gateway_service.ResilientHttpClient") as mock_client_class:
                 mock_response = MagicMock()
                 mock_response.status_code = 200
                 mock_response.text = response_text
@@ -3963,7 +4044,7 @@ class TestAdminGatewayTestRoute:
             body=None,
         )
 
-        with patch("mcpgateway.admin.ResilientHttpClient") as mock_client_class:
+        with patch("mcpgateway.services.gateway_service.ResilientHttpClient") as mock_client_class:
             mock_response = MagicMock()
             mock_response.status_code = 200
             mock_response.json.return_value = {"result": "success"}
@@ -4011,7 +4092,7 @@ class TestAdminGatewayTestRoute:
             body=None,
         )
 
-        with patch("mcpgateway.admin.ResilientHttpClient") as mock_client_class:
+        with patch("mcpgateway.services.gateway_service.ResilientHttpClient") as mock_client_class:
             mock_response = MagicMock()
             mock_response.status_code = 200
             mock_response.json.return_value = {}
@@ -4054,7 +4135,7 @@ class TestAdminGatewayTestRoute:
             body=None,
         )
 
-        with patch("mcpgateway.admin.ResilientHttpClient") as mock_client_class:
+        with patch("mcpgateway.services.gateway_service.ResilientHttpClient") as mock_client_class:
             mock_response = MagicMock()
             mock_response.status_code = 200
             mock_response.json.return_value = {}
@@ -4095,7 +4176,7 @@ class TestAdminGatewayTestRoute:
             body=None,
         )
 
-        with patch("mcpgateway.admin.ResilientHttpClient") as mock_client_class:
+        with patch("mcpgateway.services.gateway_service.ResilientHttpClient") as mock_client_class:
             mock_response = MagicMock()
             mock_response.status_code = 200
             mock_response.json.return_value = {}
@@ -4137,7 +4218,7 @@ class TestAdminGatewayTestRoute:
             body=None,
         )
 
-        with patch("mcpgateway.admin.ResilientHttpClient") as mock_client_class:
+        with patch("mcpgateway.services.gateway_service.ResilientHttpClient") as mock_client_class:
             mock_response = MagicMock()
             mock_response.status_code = 200
             mock_response.json.return_value = {"result": "success"}
@@ -4178,7 +4259,7 @@ class TestAdminGatewayTestRoute:
             body=None,
         )
 
-        with patch("mcpgateway.admin.ResilientHttpClient") as mock_client_class:
+        with patch("mcpgateway.services.gateway_service.ResilientHttpClient") as mock_client_class:
             mock_response = MagicMock()
             mock_response.status_code = 200
             mock_response.json.return_value = {"result": "success"}
@@ -4674,8 +4755,283 @@ class TestAdminUIRoute:
         assert isinstance(response, HTMLResponse)
         assert response.status_code == 200
 
-        # Verify template was called (cookies are now set during login, not on admin page access)
+        # Verify template was called and cookie handling did not prevent rendering.
         mock_request.app.state.templates.TemplateResponse.assert_called_once()
+
+    @patch.object(ServerService, "list_servers", new_callable=AsyncMock)
+    @patch.object(ToolService, "list_tools", new_callable=AsyncMock)
+    @patch.object(ResourceService, "list_resources", new_callable=AsyncMock)
+    @patch.object(PromptService, "list_prompts", new_callable=AsyncMock)
+    @patch.object(GatewayService, "list_gateways", new_callable=AsyncMock)
+    @patch.object(RootService, "list_roots", new_callable=AsyncMock)
+    async def test_admin_ui_non_email_auth_sets_bound_csrf_cookie(
+        self,
+        mock_roots,
+        mock_gateways,
+        mock_prompts,
+        mock_resources,
+        mock_tools,
+        mock_servers,
+        mock_request,
+        mock_db,
+        monkeypatch,
+    ):
+        """Platform-admin page load must bind CSRF to the JWT session it issues."""
+        mock_servers.return_value = []
+        mock_tools.return_value = ([], None)
+        mock_resources.return_value = []
+        mock_prompts.return_value = []
+        mock_gateways.return_value = []
+        mock_roots.return_value = []
+        mock_request.cookies = {}
+        mock_db.query.return_value.filter.return_value.first.return_value = None
+
+        captured_payload = {}
+
+        async def fake_create_jwt_token(payload):
+            captured_payload.update(payload)
+            return "session-jwt"
+
+        mock_csrf_service = MagicMock()
+        mock_csrf_service.generate_csrf_token.return_value = "bound-csrf-token"
+
+        monkeypatch.setattr("mcpgateway.admin.settings.email_auth_enabled", False, raising=False)
+        monkeypatch.setattr("mcpgateway.admin.create_jwt_token", fake_create_jwt_token)
+        monkeypatch.setattr("mcpgateway.admin.set_auth_cookie", MagicMock())
+        monkeypatch.setattr("mcpgateway.admin.get_csrf_service", lambda: mock_csrf_service)
+
+        response = await admin_ui(
+            request=mock_request,
+            team_id=None,
+            include_inactive=False,
+            db=mock_db,
+            user={"email": "admin@example.com", "is_admin": True},
+        )
+
+        assert isinstance(response, HTMLResponse)
+        assert captured_payload["sub"] == "admin@example.com"
+        assert captured_payload["jti"]
+        mock_csrf_service.generate_csrf_token.assert_called_once_with(user_id="admin@example.com", session_id=captured_payload["jti"])
+        assert "mcpgateway_csrf_token=bound-csrf-token" in (response.headers.get("set-cookie") or "")
+
+    @patch.object(ServerService, "list_servers", new_callable=AsyncMock)
+    @patch.object(ToolService, "list_tools", new_callable=AsyncMock)
+    @patch.object(ResourceService, "list_resources", new_callable=AsyncMock)
+    @patch.object(PromptService, "list_prompts", new_callable=AsyncMock)
+    @patch.object(GatewayService, "list_gateways", new_callable=AsyncMock)
+    @patch.object(RootService, "list_roots", new_callable=AsyncMock)
+    async def test_admin_ui_session_init_failure_fails_loud_without_random_csrf(
+        self,
+        mock_roots,
+        mock_gateways,
+        mock_prompts,
+        mock_resources,
+        mock_tools,
+        mock_servers,
+        mock_request,
+        mock_db,
+        monkeypatch,
+    ):
+        """Authenticated /admin must not fall back to random CSRF if JWT refresh fails."""
+        mock_servers.return_value = []
+        mock_tools.return_value = ([], None)
+        mock_resources.return_value = []
+        mock_prompts.return_value = []
+        mock_gateways.return_value = []
+        mock_roots.return_value = []
+        mock_request.cookies = {}
+
+        mock_set_auth_cookie = MagicMock()
+        mock_token_urlsafe = MagicMock(return_value="random-csrf-token")
+        monkeypatch.setattr("mcpgateway.admin.settings.email_auth_enabled", False, raising=False)
+        monkeypatch.setattr("mcpgateway.admin.create_jwt_token", AsyncMock(side_effect=RuntimeError("jwt mint failed")))
+        monkeypatch.setattr("mcpgateway.admin.set_auth_cookie", mock_set_auth_cookie)
+        monkeypatch.setattr("mcpgateway.admin.secrets.token_urlsafe", mock_token_urlsafe)
+
+        with pytest.raises(HTTPException) as exc_info:
+            await admin_ui(
+                request=mock_request,
+                team_id=None,
+                include_inactive=False,
+                db=mock_db,
+                user={"email": "admin@example.com", "is_admin": True},
+            )
+
+        assert exc_info.value.status_code == 500
+        assert exc_info.value.detail == "Unable to initialize admin session"
+        mock_set_auth_cookie.assert_not_called()
+        mock_token_urlsafe.assert_not_called()
+
+    @patch.object(ServerService, "list_servers", new_callable=AsyncMock)
+    @patch.object(ToolService, "list_tools", new_callable=AsyncMock)
+    @patch.object(ResourceService, "list_resources", new_callable=AsyncMock)
+    @patch.object(PromptService, "list_prompts", new_callable=AsyncMock)
+    @patch.object(GatewayService, "list_gateways", new_callable=AsyncMock)
+    @patch.object(RootService, "list_roots", new_callable=AsyncMock)
+    async def test_admin_ui_refresh_preserves_matching_session_team_narrowing(
+        self,
+        mock_roots,
+        mock_gateways,
+        mock_prompts,
+        mock_resources,
+        mock_tools,
+        mock_servers,
+        mock_request,
+        mock_db,
+        monkeypatch,
+    ):
+        """Refreshing admin browser JWT preserves teams only from matching cookie identity."""
+        mock_servers.return_value = []
+        mock_tools.return_value = ([], None)
+        mock_resources.return_value = []
+        mock_prompts.return_value = []
+        mock_gateways.return_value = []
+        mock_roots.return_value = []
+        mock_request.cookies = {"jwt_token": "existing-session-jwt"}
+        mock_db.query.return_value.filter.return_value.first.return_value = None
+
+        captured_payload = {}
+
+        async def fake_create_jwt_token(payload):
+            captured_payload.update(payload)
+            return "refreshed-session-jwt"
+
+        monkeypatch.setattr("mcpgateway.admin.settings.email_auth_enabled", False, raising=False)
+        monkeypatch.setattr("mcpgateway.admin.create_jwt_token", fake_create_jwt_token)
+        monkeypatch.setattr("mcpgateway.admin.set_auth_cookie", MagicMock())
+        mock_csrf_service = MagicMock()
+        mock_csrf_service.generate_csrf_token.return_value = "bound-csrf-token"
+        monkeypatch.setattr("mcpgateway.admin.get_csrf_service", lambda: mock_csrf_service)
+        monkeypatch.setattr(
+            "mcpgateway.admin.verify_jwt_token_cached",
+            AsyncMock(return_value={"sub": "admin@example.com", "jti": "old-jti", "token_use": "session", "teams": ["team-1"], "auth_provider": "local"}),
+        )
+
+        response = await admin_ui(
+            request=mock_request,
+            team_id=None,
+            include_inactive=False,
+            db=mock_db,
+            user={"email": "admin@example.com", "is_admin": True},
+        )
+
+        assert isinstance(response, HTMLResponse)
+        assert captured_payload["teams"] == ["team-1"]
+        assert captured_payload["token_use"] == "session"
+        assert captured_payload["jti"] != "old-jti"
+
+    @patch.object(ServerService, "list_servers", new_callable=AsyncMock)
+    @patch.object(ToolService, "list_tools", new_callable=AsyncMock)
+    @patch.object(ResourceService, "list_resources", new_callable=AsyncMock)
+    @patch.object(PromptService, "list_prompts", new_callable=AsyncMock)
+    @patch.object(GatewayService, "list_gateways", new_callable=AsyncMock)
+    @patch.object(RootService, "list_roots", new_callable=AsyncMock)
+    async def test_admin_ui_refresh_ignores_stale_cookie_identity(
+        self,
+        mock_roots,
+        mock_gateways,
+        mock_prompts,
+        mock_resources,
+        mock_tools,
+        mock_servers,
+        mock_request,
+        mock_db,
+        monkeypatch,
+    ):
+        """Bearer-authenticated user must not inherit sub or teams from stale cookie."""
+        mock_servers.return_value = []
+        mock_tools.return_value = ([], None)
+        mock_resources.return_value = []
+        mock_prompts.return_value = []
+        mock_gateways.return_value = []
+        mock_roots.return_value = []
+        mock_request.cookies = {"jwt_token": "stale-session-jwt"}
+        mock_db.query.return_value.filter.return_value.first.return_value = None
+
+        captured_payload = {}
+
+        async def fake_create_jwt_token(payload):
+            captured_payload.update(payload)
+            return "refreshed-session-jwt"
+
+        monkeypatch.setattr("mcpgateway.admin.settings.email_auth_enabled", False, raising=False)
+        monkeypatch.setattr("mcpgateway.admin.create_jwt_token", fake_create_jwt_token)
+        monkeypatch.setattr("mcpgateway.admin.set_auth_cookie", MagicMock())
+        mock_csrf_service = MagicMock()
+        mock_csrf_service.generate_csrf_token.return_value = "bound-csrf-token"
+        monkeypatch.setattr("mcpgateway.admin.get_csrf_service", lambda: mock_csrf_service)
+        monkeypatch.setattr(
+            "mcpgateway.admin.verify_jwt_token_cached",
+            AsyncMock(return_value={"sub": "old@example.com", "jti": "old-jti", "token_use": "session", "teams": ["old-team"], "auth_provider": "local"}),
+        )
+
+        response = await admin_ui(
+            request=mock_request,
+            team_id=None,
+            include_inactive=False,
+            db=mock_db,
+            user={"email": "new@example.com", "is_admin": True},
+        )
+
+        assert isinstance(response, HTMLResponse)
+        assert captured_payload["sub"] == "new@example.com"
+        assert "teams" not in captured_payload
+
+    @patch.object(ServerService, "list_servers", new_callable=AsyncMock)
+    @patch.object(ToolService, "list_tools", new_callable=AsyncMock)
+    @patch.object(ResourceService, "list_resources", new_callable=AsyncMock)
+    @patch.object(PromptService, "list_prompts", new_callable=AsyncMock)
+    @patch.object(GatewayService, "list_gateways", new_callable=AsyncMock)
+    @patch.object(RootService, "list_roots", new_callable=AsyncMock)
+    async def test_admin_ui_refresh_does_not_copy_empty_session_teams(
+        self,
+        mock_roots,
+        mock_gateways,
+        mock_prompts,
+        mock_resources,
+        mock_tools,
+        mock_servers,
+        mock_request,
+        mock_db,
+        monkeypatch,
+    ):
+        """Empty session teams claim means no explicit narrowing and must not be copied."""
+        mock_servers.return_value = []
+        mock_tools.return_value = ([], None)
+        mock_resources.return_value = []
+        mock_prompts.return_value = []
+        mock_gateways.return_value = []
+        mock_roots.return_value = []
+        mock_request.cookies = {"jwt_token": "existing-session-jwt"}
+        mock_db.query.return_value.filter.return_value.first.return_value = None
+
+        captured_payload = {}
+
+        async def fake_create_jwt_token(payload):
+            captured_payload.update(payload)
+            return "refreshed-session-jwt"
+
+        monkeypatch.setattr("mcpgateway.admin.settings.email_auth_enabled", False, raising=False)
+        monkeypatch.setattr("mcpgateway.admin.create_jwt_token", fake_create_jwt_token)
+        monkeypatch.setattr("mcpgateway.admin.set_auth_cookie", MagicMock())
+        mock_csrf_service = MagicMock()
+        mock_csrf_service.generate_csrf_token.return_value = "bound-csrf-token"
+        monkeypatch.setattr("mcpgateway.admin.get_csrf_service", lambda: mock_csrf_service)
+        monkeypatch.setattr(
+            "mcpgateway.admin.verify_jwt_token_cached",
+            AsyncMock(return_value={"sub": "admin@example.com", "jti": "old-jti", "token_use": "session", "teams": [], "auth_provider": "local"}),
+        )
+
+        response = await admin_ui(
+            request=mock_request,
+            team_id=None,
+            include_inactive=False,
+            db=mock_db,
+            user={"email": "admin@example.com", "is_admin": True},
+        )
+
+        assert isinstance(response, HTMLResponse)
+        assert "teams" not in captured_payload
 
     @patch.object(ServerService, "list_servers", new_callable=AsyncMock)
     @patch.object(ToolService, "list_tools", new_callable=AsyncMock)
@@ -11420,7 +11776,7 @@ async def test_admin_tools_partial_html_gateway_filters_and_access_conditions(mo
     monkeypatch.setattr(
         "mcpgateway.admin.paginate_query",
         AsyncMock(
-            return_value={"data": [SimpleNamespace(id="550e8400e29b41d4a7164466554400b1", team_id="team-1", name="Tool 1")], "pagination": pagination, "links": None}
+            return_value={"data": [SimpleNamespace(id="550e8400e29b41d4a7164466554400b1", team_id="team-1", name="Tool 1")], "pagination": pagination, "links": None}  # pragma: allowlist secret
         ),  # pragma: allowlist secret
     )
     setup_team_service(monkeypatch, ["team-1"])
@@ -15725,8 +16081,8 @@ async def test_admin_test_gateway_json_and_text(monkeypatch, mock_db):
         async def request(self, **_kwargs):
             return MockResponseText()
 
-    monkeypatch.setattr("mcpgateway.admin.get_structured_logger", lambda *_args, **_kwargs: MagicMock(log=MagicMock()))
-    monkeypatch.setattr("mcpgateway.admin.ResilientHttpClient", lambda **_kwargs: MockClient())
+    monkeypatch.setattr("mcpgateway.services.gateway_service.get_structured_logger", lambda *_args, **_kwargs: MagicMock(log=MagicMock()))
+    monkeypatch.setattr("mcpgateway.services.gateway_service.ResilientHttpClient", lambda **_kwargs: MockClient())
     mock_db.execute.return_value.scalars.return_value.first.return_value = None
 
     request = GatewayTestRequest(base_url="https://api.example.com", path="/test", method="GET", headers={}, body=None)
@@ -15741,7 +16097,7 @@ async def test_admin_test_gateway_json_and_text(monkeypatch, mock_db):
             captured_text.update(kwargs)
             return MockResponseText()
 
-    monkeypatch.setattr("mcpgateway.admin.ResilientHttpClient", lambda **_kwargs: MockClientText())
+    monkeypatch.setattr("mcpgateway.services.gateway_service.ResilientHttpClient", lambda **_kwargs: MockClientText())
     response = await admin_test_gateway(request, None, user={"email": "user@example.com", "db": mock_db}, db=mock_db)
     assert response.body.get("details") == "plain text"
     assert captured_text["url"] == "https://8.8.8.8/test"
@@ -15773,7 +16129,7 @@ async def test_admin_test_gateway_rejects_private_ssrf_target(monkeypatch, mock_
             raise AssertionError("Outbound request should not execute for blocked SSRF target")
 
     monkeypatch.setattr("mcpgateway.common.validators.settings", StrictSSRFSettings())
-    monkeypatch.setattr("mcpgateway.admin.ResilientHttpClient", lambda **_kwargs: ShouldNotBeCalled())
+    monkeypatch.setattr("mcpgateway.services.gateway_service.ResilientHttpClient", lambda **_kwargs: ShouldNotBeCalled())
 
     request = GatewayTestRequest(base_url="http://127.0.0.1", path="/test", method="GET", headers={}, body=None)
     response = await admin_test_gateway(request, None, user={"email": "user@example.com", "db": mock_db}, db=mock_db)
@@ -15804,7 +16160,7 @@ async def test_admin_test_gateway_oauth_authorization_code_missing_user_email(mo
     """Cover the 401 branch when OAuth auth-code flow requires a user email."""
     gateway = SimpleNamespace(id="gw-1", name="GW", auth_type="oauth", oauth_config={"grant_type": "authorization_code"})
     mock_db.execute.return_value.scalars.return_value.first.return_value = gateway
-    monkeypatch.setattr("mcpgateway.admin.get_user_email", lambda _user: "", raising=True)
+    monkeypatch.setattr("mcpgateway.auth_context.get_user_email", lambda _user: "", raising=True)
     monkeypatch.setattr("mcpgateway.services.token_storage_service.TokenStorageService", lambda _db: MagicMock(), raising=True)
 
     request = GatewayTestRequest(base_url="https://api.example.com", path="/test", method="GET", headers={}, body=None)
@@ -15842,8 +16198,8 @@ async def test_admin_test_gateway_oauth_authorization_code_token_success_sets_he
             captured.update(kwargs)
             return MockResponse()
 
-    monkeypatch.setattr("mcpgateway.admin.get_structured_logger", lambda *_args, **_kwargs: MagicMock(log=MagicMock()))
-    monkeypatch.setattr("mcpgateway.admin.ResilientHttpClient", lambda **_kwargs: MockClient())
+    monkeypatch.setattr("mcpgateway.services.gateway_service.get_structured_logger", lambda *_args, **_kwargs: MagicMock(log=MagicMock()))
+    monkeypatch.setattr("mcpgateway.services.gateway_service.ResilientHttpClient", lambda **_kwargs: MockClient())
 
     gateway = SimpleNamespace(id="gw-1", name="GW", auth_type="oauth", oauth_config={"grant_type": "authorization_code"})
     mock_db.execute.return_value.scalars.return_value.first.return_value = gateway
@@ -15911,10 +16267,10 @@ async def test_admin_test_gateway_oauth_client_credentials_success(monkeypatch, 
 
     oauth_manager = MagicMock()
     oauth_manager.get_access_token = AsyncMock(return_value="tok")
-    monkeypatch.setattr("mcpgateway.admin.OAuthManager", lambda **_kwargs: oauth_manager)
+    monkeypatch.setattr("mcpgateway.services.gateway_service.OAuthManager", lambda **_kwargs: oauth_manager)
 
-    monkeypatch.setattr("mcpgateway.admin.get_structured_logger", lambda *_args, **_kwargs: MagicMock(log=MagicMock()))
-    monkeypatch.setattr("mcpgateway.admin.ResilientHttpClient", lambda **_kwargs: MockClient())
+    monkeypatch.setattr("mcpgateway.services.gateway_service.get_structured_logger", lambda *_args, **_kwargs: MagicMock(log=MagicMock()))
+    monkeypatch.setattr("mcpgateway.services.gateway_service.ResilientHttpClient", lambda **_kwargs: MockClient())
 
     request = GatewayTestRequest(base_url="https://api.example.com", path="/test", method="GET", headers={}, body=None)
     response = await admin_test_gateway(request, None, user={"email": "user@example.com", "db": mock_db}, db=mock_db)
@@ -15947,10 +16303,10 @@ async def test_admin_test_gateway_oauth_client_credentials_token_error(monkeypat
 
     oauth_manager = MagicMock()
     oauth_manager.get_access_token = AsyncMock(side_effect=RuntimeError("oauth failed"))
-    monkeypatch.setattr("mcpgateway.admin.OAuthManager", lambda **_kwargs: oauth_manager)
+    monkeypatch.setattr("mcpgateway.services.gateway_service.OAuthManager", lambda **_kwargs: oauth_manager)
 
-    monkeypatch.setattr("mcpgateway.admin.get_structured_logger", lambda *_args, **_kwargs: MagicMock(log=MagicMock()))
-    monkeypatch.setattr("mcpgateway.admin.ResilientHttpClient", lambda **_kwargs: MockClient())
+    monkeypatch.setattr("mcpgateway.services.gateway_service.get_structured_logger", lambda *_args, **_kwargs: MagicMock(log=MagicMock()))
+    monkeypatch.setattr("mcpgateway.services.gateway_service.ResilientHttpClient", lambda **_kwargs: MockClient())
 
     request = GatewayTestRequest(base_url="https://api.example.com", path="/test", method="GET", headers={}, body=None)
     response = await admin_test_gateway(request, None, user={"email": "user@example.com", "db": mock_db}, db=mock_db)
@@ -15992,8 +16348,8 @@ async def test_admin_test_gateway_form_urlencoded_body_handling(monkeypatch, moc
             captured.update(kwargs)
             return MockResponse()
 
-    monkeypatch.setattr("mcpgateway.admin.get_structured_logger", lambda *_args, **_kwargs: MagicMock(log=MagicMock()))
-    monkeypatch.setattr("mcpgateway.admin.ResilientHttpClient", lambda **_kwargs: MockClient())
+    monkeypatch.setattr("mcpgateway.services.gateway_service.get_structured_logger", lambda *_args, **_kwargs: MagicMock(log=MagicMock()))
+    monkeypatch.setattr("mcpgateway.services.gateway_service.ResilientHttpClient", lambda **_kwargs: MockClient())
     mock_db.execute.return_value.scalars.return_value.first.return_value = None
 
     request = GatewayTestRequest(
@@ -16041,8 +16397,8 @@ async def test_admin_test_gateway_basic_auth_dict_value(monkeypatch, mock_db):
             captured.update(kwargs)
             return MockResponse()
 
-    monkeypatch.setattr("mcpgateway.admin.get_structured_logger", lambda *_args, **_kwargs: MagicMock(log=MagicMock()))
-    monkeypatch.setattr("mcpgateway.admin.ResilientHttpClient", lambda **_kwargs: MockClient())
+    monkeypatch.setattr("mcpgateway.services.gateway_service.get_structured_logger", lambda *_args, **_kwargs: MagicMock(log=MagicMock()))
+    monkeypatch.setattr("mcpgateway.services.gateway_service.ResilientHttpClient", lambda **_kwargs: MockClient())
 
     gateway = SimpleNamespace(id="gw-1", name="GW", auth_type="bearer", auth_value={"Authorization": "Bearer my-token"}, oauth_config=None)
     mock_db.execute.return_value.scalars.return_value.first.return_value = gateway
@@ -16084,9 +16440,9 @@ async def test_admin_test_gateway_bearer_auth_str_value(monkeypatch, mock_db):
             captured.update(kwargs)
             return MockResponse()
 
-    monkeypatch.setattr("mcpgateway.admin.get_structured_logger", lambda *_args, **_kwargs: MagicMock(log=MagicMock()))
-    monkeypatch.setattr("mcpgateway.admin.ResilientHttpClient", lambda **_kwargs: MockClient())
-    monkeypatch.setattr("mcpgateway.admin.decode_auth", lambda val: {"Authorization": "Basic decoded"})
+    monkeypatch.setattr("mcpgateway.services.gateway_service.get_structured_logger", lambda *_args, **_kwargs: MagicMock(log=MagicMock()))
+    monkeypatch.setattr("mcpgateway.services.gateway_service.ResilientHttpClient", lambda **_kwargs: MockClient())
+    monkeypatch.setattr("mcpgateway.services.gateway_service.decode_auth", lambda val: {"Authorization": "Basic decoded"})
 
     gateway = SimpleNamespace(id="gw-2", name="GW2", auth_type="basic", auth_value="encrypted-string", oauth_config=None)
     mock_db.execute.return_value.scalars.return_value.first.return_value = gateway
@@ -16128,8 +16484,8 @@ async def test_admin_test_gateway_no_auth_skips_decode(monkeypatch, mock_db):
             captured.update(kwargs)
             return MockResponse()
 
-    monkeypatch.setattr("mcpgateway.admin.get_structured_logger", lambda *_args, **_kwargs: MagicMock(log=MagicMock()))
-    monkeypatch.setattr("mcpgateway.admin.ResilientHttpClient", lambda **_kwargs: MockClient())
+    monkeypatch.setattr("mcpgateway.services.gateway_service.get_structured_logger", lambda *_args, **_kwargs: MagicMock(log=MagicMock()))
+    monkeypatch.setattr("mcpgateway.services.gateway_service.ResilientHttpClient", lambda **_kwargs: MockClient())
 
     gateway = SimpleNamespace(id="gw-3", name="GW3", auth_type=None, auth_value=None, oauth_config=None)
     mock_db.execute.return_value.scalars.return_value.first.return_value = gateway
@@ -16171,8 +16527,8 @@ async def test_admin_test_gateway_preserves_caller_headers(monkeypatch, mock_db)
             captured.update(kwargs)
             return MockResponse()
 
-    monkeypatch.setattr("mcpgateway.admin.get_structured_logger", lambda *_args, **_kwargs: MagicMock(log=MagicMock()))
-    monkeypatch.setattr("mcpgateway.admin.ResilientHttpClient", lambda **_kwargs: MockClient())
+    monkeypatch.setattr("mcpgateway.services.gateway_service.get_structured_logger", lambda *_args, **_kwargs: MagicMock(log=MagicMock()))
+    monkeypatch.setattr("mcpgateway.services.gateway_service.ResilientHttpClient", lambda **_kwargs: MockClient())
 
     gateway = SimpleNamespace(id="gw-4", name="GW4", auth_type="bearer", auth_value={"Authorization": "Bearer stored-token"}, oauth_config=None)
     mock_db.execute.return_value.scalars.return_value.first.return_value = gateway
@@ -16222,8 +16578,8 @@ async def test_admin_test_gateway_wraps_ipv6_pinned_netloc(monkeypatch, mock_db)
             captured.update(kwargs)
             return MockResponse()
 
-    monkeypatch.setattr("mcpgateway.admin.get_structured_logger", lambda *_args, **_kwargs: MagicMock(log=MagicMock()))
-    monkeypatch.setattr("mcpgateway.admin.ResilientHttpClient", lambda **_kwargs: MockClient())
+    monkeypatch.setattr("mcpgateway.services.gateway_service.get_structured_logger", lambda *_args, **_kwargs: MagicMock(log=MagicMock()))
+    monkeypatch.setattr("mcpgateway.services.gateway_service.ResilientHttpClient", lambda **_kwargs: MockClient())
 
     async def mock_validate_gateway_test_url(value, _allowed_hosts, _field_name="Gateway test URL"):
         return {
@@ -16232,7 +16588,7 @@ async def test_admin_test_gateway_wraps_ipv6_pinned_netloc(monkeypatch, mock_db)
             "resolved_ip": "2001:4860:4860::8888",
         }
 
-    monkeypatch.setattr("mcpgateway.admin.SecurityValidator.validate_gateway_test_url", mock_validate_gateway_test_url)
+    monkeypatch.setattr("mcpgateway.services.gateway_service.SecurityValidator.validate_gateway_test_url", mock_validate_gateway_test_url)
 
     mock_db.execute.return_value.scalars.return_value.first.return_value = None
 
@@ -16272,8 +16628,8 @@ async def test_admin_test_gateway_direct_ip_preserves_literal_target(monkeypatch
             captured.update(kwargs)
             return MockResponse()
 
-    monkeypatch.setattr("mcpgateway.admin.get_structured_logger", lambda *_args, **_kwargs: MagicMock(log=MagicMock()))
-    monkeypatch.setattr("mcpgateway.admin.ResilientHttpClient", lambda **_kwargs: MockClient())
+    monkeypatch.setattr("mcpgateway.services.gateway_service.get_structured_logger", lambda *_args, **_kwargs: MagicMock(log=MagicMock()))
+    monkeypatch.setattr("mcpgateway.services.gateway_service.ResilientHttpClient", lambda **_kwargs: MockClient())
 
     async def mock_validate_gateway_test_url(value, _allowed_hosts, _field_name="Gateway test URL"):
         return {
@@ -16282,7 +16638,7 @@ async def test_admin_test_gateway_direct_ip_preserves_literal_target(monkeypatch
             "resolved_ip": "8.8.8.8",
         }
 
-    monkeypatch.setattr("mcpgateway.admin.SecurityValidator.validate_gateway_test_url", mock_validate_gateway_test_url)
+    monkeypatch.setattr("mcpgateway.services.gateway_service.SecurityValidator.validate_gateway_test_url", mock_validate_gateway_test_url)
 
     mock_db.execute.return_value.scalars.return_value.first.return_value = None
 
@@ -16319,8 +16675,8 @@ async def test_admin_test_gateway_skips_disabled_gateway(monkeypatch, mock_db):
         async def request(self, **kwargs):
             return MockResponse()
 
-    monkeypatch.setattr("mcpgateway.admin.get_structured_logger", lambda *_args, **_kwargs: MagicMock(log=MagicMock()))
-    monkeypatch.setattr("mcpgateway.admin.ResilientHttpClient", lambda **_kwargs: MockClient())
+    monkeypatch.setattr("mcpgateway.services.gateway_service.get_structured_logger", lambda *_args, **_kwargs: MagicMock(log=MagicMock()))
+    monkeypatch.setattr("mcpgateway.services.gateway_service.ResilientHttpClient", lambda **_kwargs: MockClient())
 
     async def mock_validate_gateway_test_url(value, _allowed_hosts, _field_name="Gateway test URL"):
         return {
@@ -16329,7 +16685,7 @@ async def test_admin_test_gateway_skips_disabled_gateway(monkeypatch, mock_db):
             "resolved_ip": "8.8.8.8",
         }
 
-    monkeypatch.setattr("mcpgateway.admin.SecurityValidator.validate_gateway_test_url", mock_validate_gateway_test_url)
+    monkeypatch.setattr("mcpgateway.services.gateway_service.SecurityValidator.validate_gateway_test_url", mock_validate_gateway_test_url)
     execute_result = MagicMock()
     execute_result.scalars.return_value.all.return_value = ["https://api.example.com"]
     execute_result.scalars.return_value.first.return_value = None
@@ -17837,7 +18193,7 @@ async def test_admin_edit_a2a_agent_oauth_with_audience(monkeypatch, mock_db):
             "auth_type": "oauth",
             "oauth_grant_type": "authorization_code",
             "oauth_client_id": "client-id",
-            "oauth_client_secret": "client-secret",
+            "oauth_client_secret": "client-secret",  # pragma: allowlist secret
             "oauth_audience": "api.atlassian.com",
             "oauth_scopes": "read:jira-work write:jira-work",
         }
@@ -19310,11 +19666,23 @@ class TestTeamJoinRequests:
         monkeypatch.setattr("mcpgateway.admin.settings.email_auth_enabled", True, raising=False)
         ts = MagicMock()
         ts.get_user_role_in_team = AsyncMock(return_value="owner")
-        ts.approve_join_request = AsyncMock(return_value=None)
+        ts.approve_join_request = AsyncMock(side_effect=JoinRequestNotFoundError("Join request not found or already processed"))
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: ts)
 
         result = await admin_approve_join_request("team-1", "req-1", mock_db, user={"email": "owner@test.com"})
         assert result.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_admin_approve_join_request_value_error(self, monkeypatch, allow_permission, mock_db):
+        monkeypatch.setattr("mcpgateway.admin.settings.email_auth_enabled", True, raising=False)
+        ts = MagicMock()
+        ts.get_user_role_in_team = AsyncMock(return_value="owner")
+        ts.approve_join_request = AsyncMock(side_effect=ValueError("some other validation error"))
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: ts)
+
+        result = await admin_approve_join_request("team-1", "req-1", mock_db, user={"email": "owner@test.com"})
+        assert result.status_code == 400
+        assert "some other validation error" in result.body.decode()
 
     @pytest.mark.asyncio
     async def test_admin_approve_join_request_exception(self, monkeypatch, allow_permission, mock_db):
@@ -19345,11 +19713,23 @@ class TestTeamJoinRequests:
         monkeypatch.setattr("mcpgateway.admin.settings.email_auth_enabled", True, raising=False)
         ts = MagicMock()
         ts.get_user_role_in_team = AsyncMock(return_value="owner")
-        ts.reject_join_request = AsyncMock(return_value=False)
+        ts.reject_join_request = AsyncMock(side_effect=JoinRequestNotFoundError("Join request not found or already processed"))
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: ts)
 
         result = await admin_reject_join_request("team-1", "req-1", mock_db, user={"email": "owner@test.com"})
         assert result.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_admin_reject_join_request_value_error(self, monkeypatch, allow_permission, mock_db):
+        monkeypatch.setattr("mcpgateway.admin.settings.email_auth_enabled", True, raising=False)
+        ts = MagicMock()
+        ts.get_user_role_in_team = AsyncMock(return_value="owner")
+        ts.reject_join_request = AsyncMock(side_effect=ValueError("some other validation error"))
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: ts)
+
+        result = await admin_reject_join_request("team-1", "req-1", mock_db, user={"email": "owner@test.com"})
+        assert result.status_code == 400
+        assert "some other validation error" in result.body.decode()
 
     @pytest.mark.asyncio
     async def test_admin_reject_join_request_email_auth_disabled(self, monkeypatch, allow_permission, mock_db):

@@ -6,7 +6,6 @@ on:
         types: [opened, synchronize, reopened]
         paths:
             - "crates/wrapper/**"
-            - "mcp-servers/rust/fast-time-server/**"
             - "Cargo.toml"
             - "Cargo.lock"
             - "rust-toolchain.toml"
@@ -55,11 +54,6 @@ jobs:
                       venv-${{ runner.os }}-python-3.12-
                       venv-${{ runner.os }}-
 
-            - name: Install Rust stable
-              run: |
-                  rustup toolchain install stable
-                  rustup default stable
-
             - name: Cache Cargo
               uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
               with:
@@ -89,7 +83,6 @@ jobs:
               run: |
                   make venv
                   make install
-                  make stop-serve
                   make serve &
 
                   echo "Waiting for gateway to start..."
@@ -123,19 +116,12 @@ jobs:
                     -H "Authorization: Bearer ${{ steps.generate_jwt.outputs.token }}" \
                     -H "Content-Type: application/json"
 
-            - name: Build fast-time-server
-              run: |
-                  cargo build -p fast-time-server
-
             - name: Start fast-time-server
               run: |
-                  pkill -9 -f "fast-time-server" 2>/dev/null || true
-                  sleep 1
-
-                  nohup target/debug/fast-time-server \
-                    -transport=dual -listen=0.0.0.0 -port=8080 -log-level=info \
-                    > fast-time-server.log 2>&1 &
-                  echo $! > fast-time-server.pid
+                  docker run --detach \
+                    --publish 127.0.0.1:8080:9080 \
+                    --name fast-time-server \
+                    ghcr.io/ibm/cfex-mcp-fast-time-server:latest
 
                   echo "Waiting for fast-time-server..."
                   for i in {1..30}; do
@@ -152,7 +138,6 @@ jobs:
                     cat fast-time-server.log
                     exit 1
                   fi
-                  echo "fast-time-server PID: $(cat fast-time-server.pid)"
 
             - name: Register gateway and create virtual server
               run: |
@@ -171,7 +156,7 @@ jobs:
                     -H "Content-Type: application/json" \
                     -d '{
                       "name": "fast_time",
-                      "url": "http://localhost:8080/http",
+                      "url": "http://localhost:8080/mcp",
                       "transport": "STREAMABLEHTTP"
                     }')
                   echo "Gateway response: $GATEWAY_RESPONSE"
@@ -189,6 +174,7 @@ jobs:
 
                   # Wait for tools to sync
                   echo "Waiting for tools to sync..."
+                  TOOL_COUNT=0
                   for i in {1..30}; do
                     TOOLS=$(curl -s http://localhost:4444/tools \
                       -H "Authorization: Bearer $TOKEN")
@@ -202,6 +188,12 @@ jobs:
                     sleep 2
                   done
 
+                  # Explicit failure check after loop exhaustion
+                  if [ "$TOOL_COUNT" -eq 0 ]; then
+                    echo "ERROR: no tools synced after 30 attempts"
+                    exit 1
+                  fi
+
                   TOOLS=$(curl -s http://localhost:4444/tools \
                     -H "Authorization: Bearer $TOKEN")
                   TOOL_IDS=$(echo "$TOOLS" | jq --arg gid "$GATEWAY_ID" -c '[.[] | select(.gatewayId==$gid) | .id]')
@@ -212,6 +204,10 @@ jobs:
                     exit 1
                   fi
 
+                  # Generate dynamic server ID
+                  SERVER_ID=$(uuidgen | tr -d '-')
+                  echo "Generated server ID: $SERVER_ID"
+
                   # Create virtual server
                   echo "Creating virtual server..."
                   SERVER_RESPONSE=$(curl -s -X POST http://localhost:4444/servers \
@@ -219,7 +215,7 @@ jobs:
                     -H "Content-Type: application/json" \
                     -d "{
                       \"server\": {
-                        \"id\": \"9779b6698cbd4b4995ee04a4fab38737\",
+                        \"id\": \"$SERVER_ID\",
                         \"name\": \"Fast Time Server\",
                         \"description\": \"Virtual server exposing Fast Time MCP tools\",
                         \"associated_tools\": $TOOL_IDS,
@@ -229,6 +225,9 @@ jobs:
                     }")
                   echo "Server response: $SERVER_RESPONSE"
 
+                  # Export for next step
+                  echo "SERVER_ID=$SERVER_ID" >> "${GITHUB_ENV}"
+
             - name: Build and test wrapper
               run: |
                   cd crates/wrapper
@@ -236,7 +235,9 @@ jobs:
                   cd -
 
                   TOKEN="${{ steps.generate_jwt.outputs.token }}"
-                  SERVER_ID="9779b6698cbd4b4995ee04a4fab38737"
+                  # SERVER_ID is written to GITHUB_ENV by the previous step;
+                  # read from the shell environment (already exported by the runner).
+                  : "${SERVER_ID:?SERVER_ID is empty — virtual server was not created}"
                   URL="http://localhost:4444/servers/${SERVER_ID}/mcp"
                   AUTH="Bearer $TOKEN"
                   WRAPPER_BIN="target/release/mcp_stdio_wrapper"

@@ -1,10 +1,9 @@
 # -*- coding: utf-8 -*-
-"""CRUD tests for Users entity in ContextForge Admin UI.
-
-Location: ./tests/playwright/entities/test_users.py
-Copyright 2026
+"""Location: ./tests/playwright/entities/test_users.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Marek Dano
+
+CRUD tests for Users entity in ContextForge Admin UI.
 """
 
 # Third-Party

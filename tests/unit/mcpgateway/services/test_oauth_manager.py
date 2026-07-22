@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/services/test_oauth_manager.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Unit tests for OAuthManager service.
 """
@@ -278,6 +277,93 @@ async def test_prepare_runtime_credentials_falls_back_when_decryption_fails(oaut
         runtime_credentials = await oauth_manager._prepare_runtime_credentials(credentials, "client_credentials")
 
     assert runtime_credentials == credentials
+
+
+# ---------- SSRF deny-path regression tests (issue #407) ----------
+
+
+@pytest.mark.asyncio
+async def test_prepare_runtime_credentials_rejects_ssrf_token_url(oauth_manager):
+    """token_url in an always-blocked SSRF range (cloud metadata) is rejected at the service layer (defense-in-depth)."""
+    credentials = {"token_url": "http://169.254.169.254/latest/meta-data/"}
+
+    with (
+        patch("mcpgateway.services.oauth_manager.decrypt_oauth_config_for_runtime", new_callable=AsyncMock, return_value=credentials.copy()),
+        pytest.raises(ValueError, match="SSRF protection"),
+    ):
+        await oauth_manager._prepare_runtime_credentials(credentials, "client_credentials")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("field_name", ["redirect_uri", "jwks_uri"])
+async def test_prepare_runtime_credentials_rejects_ssrf_redirect_and_jwks_uri(oauth_manager, field_name):
+    """redirect_uri and jwks_uri are validated against SSRF rules (Gap B)."""
+    credentials = {field_name: "http://169.254.169.254/latest/meta-data/"}
+
+    with (
+        patch("mcpgateway.services.oauth_manager.decrypt_oauth_config_for_runtime", new_callable=AsyncMock, return_value=credentials.copy()),
+        pytest.raises(ValueError, match="SSRF protection"),
+    ):
+        await oauth_manager._prepare_runtime_credentials(credentials, "client_credentials")
+
+
+@pytest.mark.asyncio
+async def test_prepare_runtime_credentials_allows_public_redirect_and_jwks_uri(oauth_manager):
+    """Public redirect_uri/jwks_uri pass validation and are returned unchanged."""
+    credentials = {
+        "redirect_uri": "https://gateway.example.com/oauth/callback",
+        "jwks_uri": "https://issuer.example.com/.well-known/jwks.json",
+    }
+
+    with patch("mcpgateway.services.oauth_manager.decrypt_oauth_config_for_runtime", new_callable=AsyncMock, return_value=credentials.copy()):
+        runtime_credentials = await oauth_manager._prepare_runtime_credentials(credentials, "authorization_code_exchange")
+
+    assert runtime_credentials["redirect_uri"] == "https://gateway.example.com/oauth/callback"
+    assert runtime_credentials["jwks_uri"] == "https://issuer.example.com/.well-known/jwks.json"
+
+
+@pytest.mark.asyncio
+async def test_post_token_request_disables_redirect_follow(oauth_manager):
+    """Gap A: token POST must set follow_redirects=False so a public token_url cannot 302 into an internal target."""
+    mock_response = MagicMock()
+    mock_client = AsyncMock()
+    mock_client.post.return_value = mock_response
+
+    with patch.object(oauth_manager, "_get_client", new_callable=AsyncMock, return_value=mock_client):
+        await oauth_manager._post_token_request("https://auth.example.com/token", {"grant_type": "client_credentials"})
+
+    assert mock_client.post.call_args.kwargs["follow_redirects"] is False
+
+
+@pytest.mark.asyncio
+async def test_client_credentials_flow_disables_redirect_follow(oauth_manager):
+    """End-to-end: the client-credentials flow issues a non-redirect-following POST."""
+    mock_response = MagicMock()
+    mock_response.raise_for_status = MagicMock()
+    mock_response.headers = {"content-type": "application/json"}
+    mock_response.json.return_value = {"access_token": "tok"}
+
+    mock_client = AsyncMock()
+    mock_client.post.return_value = mock_response
+    with patch.object(oauth_manager, "_get_client", new_callable=AsyncMock, return_value=mock_client):
+        await oauth_manager._client_credentials_flow({"client_id": "cid", "client_secret": "short", "token_url": "https://auth/token"})  # pragma: allowlist secret
+
+    assert mock_client.post.call_args.kwargs["follow_redirects"] is False
+
+
+@pytest.mark.asyncio
+async def test_client_credentials_flow_ssrf_token_url_never_fetched(oauth_manager):
+    """A blocked token_url must fail validation before any HTTP call is made."""
+    mock_client = AsyncMock()
+    with (
+        patch.object(oauth_manager, "_get_client", new_callable=AsyncMock, return_value=mock_client),
+        patch("mcpgateway.services.oauth_manager.decrypt_oauth_config_for_runtime", new_callable=AsyncMock, side_effect=lambda cfg, **_: cfg),
+        pytest.raises(ValueError, match="SSRF protection"),
+    ):
+        await oauth_manager._client_credentials_flow(
+            {"client_id": "cid", "client_secret": "short", "token_url": "http://169.254.169.254/latest/meta-data/"}  # pragma: allowlist secret
+        )
+    mock_client.post.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -589,7 +675,7 @@ async def test_exchange_code_for_token_with_basic_auth_non_pkce(oauth_manager):
     with patch.object(oauth_manager, "_get_client", new_callable=AsyncMock, return_value=mock_client):
         credentials = {
             "client_id": "test-client",
-            "client_secret": "test-secret",
+            "client_secret": "test-secret",  # pragma: allowlist secret
             "token_url": "https://example.com/token",
             "redirect_uri": "https://example.com/callback",
             "token_endpoint_auth_method": "client_secret_basic",
@@ -1053,7 +1139,7 @@ async def test_refresh_token_400_error(oauth_manager):
     mock_client = AsyncMock()
     mock_client.post.return_value = mock_response
     with patch.object(oauth_manager, "_get_client", new_callable=AsyncMock, return_value=mock_client):
-        with pytest.raises(OAuthError, match=r"Refresh token invalid.*invalid_grant"):
+        with pytest.raises(OAuthError, match=r"Refresh token permanently invalid \(invalid_grant\)"):
             await oauth_manager.refresh_token("old-rt", {"client_id": "cid", "token_url": "https://auth/token"})
 
 
@@ -1079,7 +1165,7 @@ async def test_refresh_token_4xx_redacts_echoed_refresh_token(oauth_manager):
     mock_response = MagicMock()
     mock_response.status_code = 400
     mock_response.headers = {"content-type": "application/x-www-form-urlencoded"}
-    mock_response.text = "error=invalid_grant&refresh_token=leaked-rt-value&client_secret=leaked-secret"
+    mock_response.text = "error=invalid_grant&refresh_token=leaked-rt-value&client_secret=leaked-secret"  # pragma: allowlist secret
     mock_response.content = mock_response.text.encode()
 
     mock_client = AsyncMock()

@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/utils/passthrough_headers.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 HTTP Header Passthrough Utilities.
 This module provides utilities for handling HTTP header passthrough functionality
@@ -353,6 +352,7 @@ def compute_passthrough_headers_cached(
     allowed_headers: List[str],
     gateway_auth_type: Optional[str] = None,
     gateway_passthrough_headers: Optional[List[str]] = None,
+    is_token_exchange: bool = False,
 ) -> Dict[str, str]:
     """Compute passthrough headers without database query.
 
@@ -368,6 +368,10 @@ def compute_passthrough_headers_cached(
         allowed_headers: List of header names allowed to pass through (from GlobalConfig).
         gateway_auth_type: The gateway's auth_type (basic, bearer, oauth, none) if applicable.
         gateway_passthrough_headers: Gateway-specific passthrough headers override.
+        is_token_exchange: True when base_headers["Authorization"] was produced by a
+            token-exchange resolver. Blocks the X-Upstream-Authorization rename and the
+            auth_type="none" client-Authorization passthrough from overwriting it, since
+            either would let a caller replace the exchanged token with an arbitrary one.
 
     Returns:
         Combined dictionary of base headers plus allowed passthrough headers.
@@ -393,7 +397,7 @@ def compute_passthrough_headers_cached(
     request_headers_lower = {k.lower(): v for k, v in request_headers.items()} if request_headers else {}
     upstream_auth = request_headers_lower.get("x-upstream-authorization")
 
-    if upstream_auth:
+    if upstream_auth and not is_token_exchange:
         try:
             sanitized_value = sanitize_header_value(upstream_auth)
             if sanitized_value:
@@ -401,7 +405,7 @@ def compute_passthrough_headers_cached(
                 logger.debug("Renamed X-Upstream-Authorization to Authorization for upstream passthrough")
         except Exception as e:
             logger.warning(f"Failed to sanitize X-Upstream-Authorization header: {e}")
-    elif gateway_auth_type == "none":
+    elif gateway_auth_type == "none" and not is_token_exchange:
         # When gateway has no auth, pass through client's Authorization if present
         client_auth = request_headers_lower.get("authorization")
         if client_auth and "authorization" not in [h.lower() for h in base_headers.keys()]:
@@ -606,6 +610,25 @@ _LOOPBACK_SKIP_HEADERS: frozenset[str] = frozenset(
         "upgrade",
         "x-mcp-session-id",
         "x-forwarded-internally",
+        # Gateway-internal trust headers for the /_internal/mcp/* dispatch: the
+        # server-established auth context, runtime marker, and HMAC. A client
+        # passthrough header must never overwrite them, or a caller could spoof
+        # the trusted identity while the server's valid HMAC still rides along.
+        "x-contextforge-auth-context",
+        "x-contextforge-mcp-runtime",
+        "x-contextforge-mcp-runtime-auth",
+        "x-contextforge-session-validated",
+        # Forwarded / client-IP headers: strip so a caller cannot spoof the loopback
+        # client address that ProxyHeaders(trusted_hosts="*") would otherwise trust.
+        "forwarded",
+        "x-forwarded-for",
+        "x-forwarded-host",
+        "x-forwarded-proto",
+        "x-forwarded-port",
+        "x-forwarded-prefix",
+        "x-real-ip",
+        "cf-connecting-ip",
+        "true-client-ip",
     }
 )
 

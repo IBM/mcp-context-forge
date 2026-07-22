@@ -34,6 +34,17 @@ spec:
       serviceAccountName: {{ include "mcp-stack.serviceAccountName" . }}
       {{- end }}
       automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
+      {{- if gt (int .Values.mcpFastTimeServer.replicaCount) 1 }}
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: {{ include "mcp-stack.fullname" . }}-mcp-fast-time-server
+                topologyKey: kubernetes.io/hostname
+      {{- end }}
       securityContext:
         seccompProfile:
           type: RuntimeDefault
@@ -41,6 +52,7 @@ spec:
         - name: mcp-fast-time-server
           securityContext:
             allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
             runAsNonRoot: true
             capabilities:
               drop:

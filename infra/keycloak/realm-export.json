@@ -128,12 +128,12 @@
   ],
   "users": [
     {
-      "username": "admin@example.com",
+      "username": "admincf@example.com",
       "enabled": true,
       "emailVerified": true,
       "firstName": "Platform",
       "lastName": "Admin",
-      "email": "admin@example.com",
+      "email": "admincf@example.com",
       "credentials": [
         {
           "type": "password",

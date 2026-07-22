@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/test_auth_ratelimiter_redis.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Unit tests for rate limiter Redis client initialization in auth.py.
 """
@@ -232,7 +231,7 @@ def test_get_ratelimiter_redis_ssl_valueerror_no_backoff():
 def test_get_ratelimiter_redis_success_log_sanitization(caplog):
     """Test credentials sanitized in success log message."""
     with patch("mcpgateway.auth.settings") as mock_settings:
-        mock_settings.ratelimiter_redis_url = "redis://user:password@localhost:6380/1"
+        mock_settings.ratelimiter_redis_url = "redis://user:password@localhost:6380/1"  # pragma: allowlist secret
         mock_settings.ratelimiter_redis_max_connections = 10
         mock_settings.ratelimiter_redis_socket_timeout = 5
         mock_settings.ratelimiter_redis_socket_connect_timeout = 5

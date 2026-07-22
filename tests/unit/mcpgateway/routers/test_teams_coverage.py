@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/routers/test_teams_coverage.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Coverage tests for mcpgateway.routers.teams — error branches, edge cases.
 """
@@ -32,7 +31,7 @@ with patch("mcpgateway.middleware.rbac.require_permission", _noop_decorator):
         from mcpgateway.db import EmailTeam, EmailTeamInvitation, EmailTeamMember, EmailUser
         from mcpgateway.routers import teams
         from mcpgateway.services.team_invitation_service import TeamInvitationService
-        from mcpgateway.services.team_management_service import TeamManagementService
+        from mcpgateway.services.team_management_service import JoinRequestNotFoundError, TeamManagementService, TeamSeedResult
 
         importlib.reload(teams)
 
@@ -161,7 +160,7 @@ class TestUpdateTeamMaxMembersCap:
     @pytest.mark.asyncio
     async def test_non_admin_create_exceeds_cap_rejected(self, user_ctx, db):
         """Non-admin create with max_members > cap returns 400."""
-        with mock_permission_check(is_admin=user_ctx.get("is_admin", False)), _svc(create_team=AsyncMock(side_effect=ValueError("max_members cannot exceed the configured limit of 100"))):
+        with mock_permission_check(is_admin=user_ctx.get("is_admin", False)), _svc(create_team_with_members=AsyncMock(side_effect=ValueError("max_members cannot exceed the configured limit of 100"))):
             from mcpgateway.schemas import TeamCreateRequest
 
             req = TeamCreateRequest(name="BigTeam", max_members=200)
@@ -174,7 +173,7 @@ class TestUpdateTeamMaxMembersCap:
     async def test_admin_create_exceeds_cap_allowed(self, admin_ctx, db, mock_team):
         """Admin create with max_members > cap succeeds."""
         mock_team.max_members = 500
-        with mock_permission_check(is_admin=admin_ctx.get("is_admin", False)), _svc(create_team=AsyncMock(return_value=mock_team), get_member_counts_batch_cached=AsyncMock(return_value={})):
+        with mock_permission_check(is_admin=admin_ctx.get("is_admin", False)), _svc(create_team_with_members=AsyncMock(return_value=TeamSeedResult(team=mock_team)), get_member_counts_batch_cached=AsyncMock(return_value={})):
             from mcpgateway.schemas import TeamCreateRequest
 
             req = TeamCreateRequest(name="BigTeam", max_members=500)
@@ -185,7 +184,7 @@ class TestUpdateTeamMaxMembersCap:
     async def test_non_admin_create_at_cap_allowed(self, user_ctx, db, mock_team):
         """Non-admin create with max_members == cap succeeds."""
         mock_team.max_members = 100
-        with mock_permission_check(is_admin=user_ctx.get("is_admin", False)), _svc(create_team=AsyncMock(return_value=mock_team)):
+        with mock_permission_check(is_admin=user_ctx.get("is_admin", False)), _svc(create_team_with_members=AsyncMock(return_value=TeamSeedResult(team=mock_team))):
             from mcpgateway.schemas import TeamCreateRequest
 
             req = TeamCreateRequest(name="Team", max_members=100)
@@ -804,18 +803,19 @@ class TestApproveJoinRequestErrors:
             assert exc.value.status_code == status.HTTP_403_FORBIDDEN
 
     @pytest.mark.asyncio
-    async def test_member_none(self, user_ctx, db, mock_team):
+    async def test_value_error_not_found(self, user_ctx, db, mock_team):
         with (
             mock_permission_check(is_admin=user_ctx.get("is_admin", False)),
             _svc(
                 get_team_by_id=AsyncMock(return_value=mock_team),
                 get_user_role_in_team=AsyncMock(return_value="owner"),
-                approve_join_request=AsyncMock(return_value=None),
+                approve_join_request=AsyncMock(side_effect=JoinRequestNotFoundError("Join request not found or already processed")),
             ),
         ):
             with pytest.raises(HTTPException) as exc:
                 await teams.approve_join_request(mock_team.id, "rid", current_user=user_ctx, db=db)
             assert exc.value.status_code == status.HTTP_404_NOT_FOUND
+            assert "not found" in exc.value.detail
 
     @pytest.mark.asyncio
     async def test_value_error_max_team_limit(self, user_ctx, db, mock_team):
@@ -884,18 +884,34 @@ class TestRejectJoinRequestErrors:
             assert exc.value.status_code == status.HTTP_404_NOT_FOUND
 
     @pytest.mark.asyncio
-    async def test_request_not_found(self, user_ctx, db, mock_team):
+    async def test_value_error_not_found(self, user_ctx, db, mock_team):
         with (
             mock_permission_check(is_admin=user_ctx.get("is_admin", False)),
             _svc(
                 get_team_by_id=AsyncMock(return_value=mock_team),
                 get_user_role_in_team=AsyncMock(return_value="owner"),
-                reject_join_request=AsyncMock(return_value=False),
+                reject_join_request=AsyncMock(side_effect=JoinRequestNotFoundError("Join request not found or already processed")),
             ),
         ):
             with pytest.raises(HTTPException) as exc:
                 await teams.reject_join_request(mock_team.id, "rid", current_user=user_ctx, db=db)
             assert exc.value.status_code == status.HTTP_404_NOT_FOUND
+            assert "not found" in exc.value.detail
+
+    @pytest.mark.asyncio
+    async def test_value_error_generic(self, user_ctx, db, mock_team):
+        with (
+            mock_permission_check(is_admin=user_ctx.get("is_admin", False)),
+            _svc(
+                get_team_by_id=AsyncMock(return_value=mock_team),
+                get_user_role_in_team=AsyncMock(return_value="owner"),
+                reject_join_request=AsyncMock(side_effect=ValueError("some other validation error")),
+            ),
+        ):
+            with pytest.raises(HTTPException) as exc:
+                await teams.reject_join_request(mock_team.id, "rid", current_user=user_ctx, db=db)
+            assert exc.value.status_code == status.HTTP_400_BAD_REQUEST
+            assert "some other validation error" in exc.value.detail
 
     @pytest.mark.asyncio
     async def test_exception(self, user_ctx, db):

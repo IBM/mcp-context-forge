@@ -33,18 +33,10 @@
 
   <!-- Metrics Maintenance Card -->
   {% if payload.settings.metrics_cleanup_enabled or payload.settings.metrics_rollup_enabled %}
-  <div class="bg-white rounded-lg shadow p-6 dark:bg-gray-800" x-data="{
-    cleanupLoading: false,
-    rollupLoading: false,
-    cleanupResult: null,
-    rollupResult: null,
-    showCleanupConfirm: false,
-    showRollupConfirm: false,
+  <div class="bg-white rounded-lg shadow p-6 dark:bg-gray-800" x-data="maintenancePanel({
     retentionDays: {{ payload.settings.metrics_retention_days | default(7) }},
-    deleteAll: false,
-    rollupHoursBack: 1,
-    includeRollupData: true
-  }">
+    rootPath: '{{ root_path }}'
+  })">
     <h3 class="text-lg font-medium mb-4 dark:text-gray-200 flex items-center">
       <svg
         class="h-6 w-6 mr-2 text-indigo-600"
@@ -168,25 +160,7 @@
                   Cancel
                 </button>
                 <button
-                  @click="
-                    showCleanupConfirm = false;
-                    cleanupLoading = true;
-                    cleanupResult = null;
-                    fetch('{{ root_path }}/api/metrics/cleanup', {
-                      method: 'POST',
-                      headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': 'Bearer ' + (document.cookie.match(/jwt_token=([^;]+)/)?.[1] || '')
-                      },
-                      body: JSON.stringify({
-                        retention_days: deleteAll ? 0 : retentionDays,
-                        include_rollup: includeRollupData
-                      })
-                    })
-                    .then(r => r.json())
-                    .then(data => { cleanupResult = data; cleanupLoading = false; })
-                    .catch(e => { cleanupResult = {error: e.message}; cleanupLoading = false; })
-                  "
+                  @click="runCleanup()"
                   class="px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-md"
                 >
                   Yes, Delete
@@ -202,7 +176,7 @@
             <template x-if="!cleanupResult.error">
               <div>
                 <span class="font-medium">Deleted:</span> <span x-text="cleanupResult.total_deleted"></span> records
-                <span class="text-gray-500 dark:text-gray-400 ml-2">(<span x-text="cleanupResult.duration_seconds?.toFixed(2)"></span>s)</span>
+                <span class="text-gray-500 dark:text-gray-400 ml-2">(<span x-text="cleanupDuration"></span>s)</span>
               </div>
             </template>
             <template x-if="cleanupResult.error">
@@ -289,22 +263,7 @@
                   Cancel
                 </button>
                 <button
-                  @click="
-                    showRollupConfirm = false;
-                    rollupLoading = true;
-                    rollupResult = null;
-                    fetch('{{ root_path }}/api/metrics/rollup', {
-                      method: 'POST',
-                      headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': 'Bearer ' + (document.cookie.match(/jwt_token=([^;]+)/)?.[1] || '')
-                      },
-                      body: JSON.stringify({hours_back: parseInt(rollupHoursBack)})
-                    })
-                    .then(r => r.json())
-                    .then(data => { rollupResult = data; rollupLoading = false; })
-                    .catch(e => { rollupResult = {error: e.message}; rollupLoading = false; })
-                  "
+                  @click="runRollup()"
                   class="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md"
                 >
                   Yes, Run Rollup
@@ -321,7 +280,7 @@
               <div>
                 <span class="font-medium">New:</span> <span x-text="rollupResult.total_rollups_created"></span>,
                 <span class="font-medium">Updated:</span> <span x-text="rollupResult.total_rollups_updated"></span> rollups
-                <span class="text-gray-500 dark:text-gray-400 ml-2">(<span x-text="rollupResult.duration_seconds?.toFixed(2)"></span>s)</span>
+                <span class="text-gray-500 dark:text-gray-400 ml-2">(<span x-text="rollupDuration"></span>s)</span>
               </div>
             </template>
             <template x-if="rollupResult.error">

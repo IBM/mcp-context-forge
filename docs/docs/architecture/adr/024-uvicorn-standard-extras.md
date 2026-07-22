@@ -93,17 +93,7 @@ Based on uvloop and httptools benchmarks:
 |--------|---------|
 | **Base uvicorn only** | Leaves 15-30% performance on the table |
 | **Manual installation of extras** | Error-prone, inconsistent across environments |
-| **Granian (Rust HTTP server)** | Larger migration, under evaluation (see #1695) |
 | **Hypercorn** | Less community adoption, similar feature set |
-
-## Relationship to Granian Migration
-
-This change is complementary to the potential Granian migration (#1695):
-
-- **uvicorn[standard]**: Low-effort optimization (this ADR) - implement now
-- **Granian**: Larger migration to Rust-based server - evaluate separately
-
-If Granian is adopted in the future, this change would be superseded. Until then, uvicorn[standard] provides immediate benefits with minimal risk.
 
 ## Migration Path
 
@@ -136,7 +126,6 @@ This decision has been implemented. The `pyproject.toml` now specifies `uvicorn[
 ## References
 
 - GitHub Issue: #1699
-- Related Issue: #1695 (Granian evaluation)
 - uvicorn deployment docs: https://www.uvicorn.org/deployment/
 - uvloop GitHub: https://github.com/MagicStack/uvloop
 - httptools GitHub: https://github.com/MagicStack/httptools

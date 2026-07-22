@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/helpers/auth.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Shared authentication helpers for tests.
 
@@ -33,7 +32,7 @@ def make_test_jwt(
     is_admin: bool = False,
     teams: object = _UNSET,
     scopes: dict[str, Any] | None = None,
-    expires_in_minutes: int = 30,
+    expires_in_minutes: int = 180,
     secret: str = "",
     algorithm: str = "",
     auth_provider: str = "local",
@@ -87,7 +86,7 @@ def make_legacy_test_jwt(
     *,
     is_admin: bool = False,
     teams: object = _UNSET,
-    expires_in_minutes: int = 30,
+    expires_in_minutes: int = 180,
     secret: str = "",
     algorithm: str = "",
     include_email_claim: bool = False,
@@ -130,7 +129,7 @@ def make_auth_header_for_email(
     is_admin: bool = False,
     teams: object = _UNSET,
     scopes: dict[str, Any] | None = None,
-    expires_in_minutes: int = 30,
+    expires_in_minutes: int = 180,
     secret: str = "",
     algorithm: str = "",
     accept: str | None = None,

@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/routers/a2a_agent_plugin_bindings.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Madhumohan Jaishankar
 
 A2A Agent Plugin Bindings Router.
 Provides endpoints for configuring per-agent per-tenant plugin policies for A2A agents.

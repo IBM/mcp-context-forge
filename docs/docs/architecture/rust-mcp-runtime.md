@@ -1,9 +1,9 @@
 # Rust MCP Runtime
 
 !!! warning "Deprecated as of 2026-06-11; sunsets on 2026-07-07"
-    The Rust MCP runtime sidecar and Rust A2A runtime sidecar are deprecated.
-    New deployments should use the default Python MCP transport and Python A2A
-    invocation paths. See [Deprecations](../deprecations.md).
+    The Rust MCP runtime sidecar is deprecated.
+    New deployments should use the default Python MCP transport.
+    See [Deprecations](../deprecations.md).
 
 The Rust MCP runtime is an optional sidecar/runtime path for ContextForge's
 streamable HTTP MCP traffic. It is designed to move the public MCP hot path out
@@ -41,18 +41,16 @@ make testing-rebuild-rust-full
 ## Runtime Mode Override
 
 !!! warning "Deprecated runtime controls"
-    `RUST_MCP_MODE`, `RUST_A2A_MODE`, and the related runtime override APIs
+    `RUST_MCP_MODE` and the related runtime override APIs
     control deprecated Rust sidecar paths. They remain for compatibility.
 
-The boot env vars `RUST_MCP_MODE` and `RUST_A2A_MODE` still pick the initial
+The boot env var `RUST_MCP_MODE` still picks the initial
 mode. When the boot mode is `edge` an authorized admin can flip the public
-`/mcp` ingress (and the registered-A2A invocation path) between `shadow` and
-`edge` at runtime, without a restart.
+`/mcp` ingress between `shadow` and `edge` at runtime, without a restart.
 
 **Why only `edge`?** The repo's safety invariant for routing public traffic
 to Rust requires BOTH `experimental_rust_mcp_runtime_enabled` and
-`experimental_rust_mcp_session_auth_reuse_enabled` (and the analogous
-`experimental_rust_a2a_runtime_delegate_enabled` for A2A). Only `edge` boot
+`experimental_rust_mcp_session_auth_reuse_enabled`. Only `edge` boot
 sets both flags. A `shadow`-booted deployment has the Rust sidecar present
 but session-auth-reuse disabled, so an override to `edge` cannot safely
 route public traffic — the API rejects such PATCHes with 409. Operators who
@@ -64,13 +62,11 @@ freely.
 |---|---|---|---|
 | GET | `/admin/runtime/mcp-mode` | — | `admin.system_config` |
 | PATCH | `/admin/runtime/mcp-mode` | `{"mode": "shadow" \| "edge"}` | `admin.system_config` |
-| GET | `/admin/runtime/a2a-mode` | — | `admin.system_config` |
-| PATCH | `/admin/runtime/a2a-mode` | `{"mode": "shadow" \| "edge"}` | `admin.system_config` |
 
 Behavior:
 
-- The override lives in process memory. A restart re-reads `RUST_MCP_MODE` /
-  `RUST_A2A_MODE`; there is no new persistence surface in Postgres.
+- The override lives in process memory. A restart re-reads `RUST_MCP_MODE`;
+  there is no new persistence surface in Postgres.
 - Drain semantics are natural: in-flight requests complete on their original
   transport and only newly-accepted requests follow the flip.
 - Runtime flip gating is per-target-mode:
@@ -118,7 +114,7 @@ Behavior:
     so the caller knows whether peers received the flip.
   - `audit_persisted: bool`.
 - The currently effective mode and propagation status surface on `/health`
-  under `mcp_runtime` and `a2a_runtime` (`boot_mode`, `effective_mode`,
+  under `mcp_runtime` (`boot_mode`, `effective_mode`,
   `override_active`, `cluster_propagation`, `last_change`).
 - `cluster_propagation` is one of:
   - `"redis"` — coordinator is publishing/subscribing successfully.
@@ -183,20 +179,19 @@ successful PATCH on any pod publishes a versioned message; every other pod
 applies it under monotonic versioning (last writer wins, ties impossible
 because the version is allocated via `INCR` on a per-runtime Redis counter).
 
-A short-lived hint key per runtime (`contextforge:runtime:mode_state:mcp` and
-`contextforge:runtime:mode_state:a2a`, TTL 24h) lets a freshly started pod
-reconcile to the cluster's current desired override on boot.
+A short-lived hint key (`contextforge:runtime:mode_state:mcp`, TTL 24h) lets a
+freshly started pod reconcile to the cluster's current desired override on boot.
 
 When Redis is unavailable, the coordinator degrades to per-pod scope; the
 endpoint still works on the pod that received the PATCH and the response
 payload reports `cluster_propagation: "disabled"` so operators know to flip
 each pod individually.
 
-To revert the cluster to env-var defaults, delete the hint keys and restart
+To revert the cluster to env-var defaults, delete the hint key and restart
 the pods:
 
 ```bash
-redis-cli DEL contextforge:runtime:mode_state:mcp contextforge:runtime:mode_state:a2a
+redis-cli DEL contextforge:runtime:mode_state:mcp
 ```
 
 ### Quick-start examples
@@ -210,12 +205,6 @@ curl -X PATCH -H "Authorization: Bearer $JWT" \
      -H "Content-Type: application/json" \
      -d '{"mode": "shadow"}' \
      .../admin/runtime/mcp-mode
-
-# Flip A2A delegate back to Rust
-curl -X PATCH -H "Authorization: Bearer $JWT" \
-     -H "Content-Type: application/json" \
-     -d '{"mode": "edge"}' \
-     .../admin/runtime/a2a-mode
 ```
 
 ## Request Flows

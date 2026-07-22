@@ -286,6 +286,8 @@ plugin_settings:
   plugin_health_check_interval: 60
 ```
 
+For A2A tools, `TOOL_PRE_INVOKE` receives `payload.headers` with the non-sensitive request headers that pass the A2A agent's explicit `passthrough_headers` allowlist. When the field is unset or empty, no request headers are forwarded. Sensitive headers, such as `Authorization`, are not exposed to tool pre-invoke plugin payloads.
+
 To integrate this plugin with the gateway, all you need to do is copying the following configuration under the `plugins` list in the gateway's `plugins/config.yaml` file:
 
 ```yaml
@@ -339,3 +341,30 @@ make serve
 
 !!! note
         `PLUGINS_ENABLED=true` should be set in your gateway `.env` file.
+
+## Multi-Worker Execution
+
+Under multiple workers (`GUNICORN_WORKERS`), every worker calls each plugin's
+`initialize()`, so **hooks run on every worker by design**. A non-hook plugin
+that does a **side effect** at startup or in a background task would otherwise
+run it once per worker. Gate it with `is_primary_worker()` to run on one worker
+per host:
+
+```python
+from mcpgateway.utils.primary_worker import is_primary_worker
+
+class InventorySync(Plugin):
+    async def initialize(self) -> None:
+        if not is_primary_worker():
+            return
+        ...  # runs on one worker only
+```
+
+One worker is elected via a file lock; the OS frees it on process exit, so a
+follower takes over. Re-check it each cycle for recurring work. The lock is per
+host and its path is overridable with `PRIMARY_WORKER_LOCK_PATH`.
+
+By default election is per host (`PRIMARY_WORKER_ELECTION_BACKEND=filelock`). For
+a single primary across **multiple instances/replicas**, set the backend to
+`redis`, which elects one primary across all instances sharing the same Redis
+(best-effort under network partitions, so keep side effects idempotent).

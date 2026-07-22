@@ -36,6 +36,16 @@ Use centralized helpers in `tests/helpers/`:
 - `auth.py` - JWT token creation (`make_test_jwt`, `make_auth_headers`)
 - `api_helpers.py` - API test utilities (`ApiTestHelper` class)
 
+### JWT expiry defaults
+
+The token helpers in `auth.py` (`make_test_jwt`, `make_legacy_test_jwt`,
+`make_auth_header_for_email`) default to `expires_in_minutes=180` (3 hours).
+This covers long Playwright runs — session-scoped fixtures (e.g.
+`api_request_context`) mint one token at suite startup, and a shorter
+expiry can lead to spurious 401s later in a suite that runs past its
+lifetime. Individual tests that specifically want to assert expiration
+behavior should pass an explicit shorter `expires_in_minutes`.
+
 ## Quick Commands
 
 ```bash
@@ -129,12 +139,47 @@ All extend `BasePage` which provides `SidebarComponent` for tab navigation. Use 
 
 Fixtures in `conftest.py` handle login automatically (JWT cookie injection by default).
 
+### CSP-Safe JS Polling
+
+Strict CSP (`script-src 'self'`, no `unsafe-eval`) rejects `Page.wait_for_function()`/`Frame.wait_for_function()` immediately after navigation. Use `wait_for_js_condition()` instead — it polls via `evaluate()`, which isn't subject to that restriction:
+
+```python
+from .pages.admin_utils import wait_for_js_condition
+wait_for_js_condition(page, "typeof window.Admin !== 'undefined'", timeout=30000)
+```
+
 ### Writing New Playwright Tests
 
 1. Create a page object in `tests/playwright/pages/` extending `BasePage`
 2. Add a fixture in `tests/playwright/conftest.py`
 3. Create test file in `tests/playwright/test_<feature>.py`
 4. Use `pytest.skip()` when prerequisites aren't met (e.g., plugins not enabled)
+
+### Handling Async DB Operations
+
+After a DELETE, use `wait_for_entity_deleted()` to ride out DB commit propagation lag instead of asserting immediately:
+
+```python
+from .pages.admin_utils import wait_for_entity_deleted
+assert delete_resource(page, resource_id)
+assert wait_for_entity_deleted(page, "resources", resource_name)
+```
+
+### Polling Utilities
+
+Lower-level primitives behind `wait_for_entity_deleted()`, for custom predicates:
+
+```python
+from .pages.admin_utils import wait_for_ui_by_retries, wait_for_ui_by_deadline
+
+# Fixed attempt count — API-poll style, each attempt cheap and uniform
+wait_for_ui_by_retries(page, lambda: check_something(), retries=5)
+
+# Wall-clock deadline — loops that also perform slow UI actions (navigation, reload)
+wait_for_ui_by_deadline(page, lambda: check_something(), deadline_seconds=8)
+```
+
+Both accept an optional `delay_ms(attempt) -> int` callable for backoff between attempts.
 
 ## JavaScript Unit Tests
 

@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/transports/rust_mcp_runtime_proxy.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Experimental MCP transport proxy for the Rust runtime edge.
 
@@ -15,18 +14,17 @@ from __future__ import annotations
 
 # Standard
 import asyncio
-import base64
 import logging
 import re
 from urllib.parse import urlsplit, urlunsplit
 
 # Third-Party
 import httpx
-import orjson
 from sqlalchemy import exists as sa_exists
 from starlette.types import Receive, Scope, Send
 
 # First-Party
+from mcpgateway.auth_context import encode_internal_mcp_auth_context
 from mcpgateway.config import settings
 from mcpgateway.db import fresh_db_session
 from mcpgateway.db import Server as DbServer
@@ -368,5 +366,4 @@ def _build_forwarded_auth_context_header() -> str | None:
     auth_context = get_streamable_http_auth_context()
     if not auth_context:
         return None
-    encoded = base64.urlsafe_b64encode(orjson.dumps(auth_context)).decode("ascii")
-    return encoded.rstrip("=")
+    return encode_internal_mcp_auth_context(auth_context)

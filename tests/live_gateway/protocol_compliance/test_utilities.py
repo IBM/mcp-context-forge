@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/live_gateway/protocol_compliance/test_utilities.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 MCP utility compliance tests — progress notifications and cancellation.
 """
@@ -20,14 +19,8 @@ from .helpers.compliance import resolve_tool, xfail_on
 pytestmark = [pytest.mark.protocol_compliance, pytest.mark.mcp_utilities]
 
 
-async def test_progress_notifications_delivered(connect, request) -> None:
+async def test_progress_notifications_delivered(connect) -> None:
     """progress_reporter tool emits progress events observable on the client."""
-    xfail_on(
-        request,
-        "gateway_proxy",
-        "gateway_virtual",
-        reason=("GAP-002: gateway does not relay progress notifications on the " "POST-correlated stream of the originating tool call (spec § " "Listening for Messages from the Server)."),
-    )
     events: list[tuple[float, float | None, str | None]] = []
 
     async def on_progress(progress, total, message):

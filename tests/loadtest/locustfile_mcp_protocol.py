@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/loadtest/locustfile_mcp_protocol.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 MCP Streamable HTTP protocol load test — pure MCP protocol RPS measurement.
 This locustfile tests ONLY the MCP Streamable HTTP transport path through the

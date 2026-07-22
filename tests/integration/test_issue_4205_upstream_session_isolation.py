@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/integration/test_issue_4205_upstream_session_isolation.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Integration reproducer for issue #4205 — upstream session isolation.
 The original reproducer (Dawid Nowak, issue #4205): start a stateful MCP

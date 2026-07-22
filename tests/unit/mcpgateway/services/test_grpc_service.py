@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/services/test_grpc_service.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: ContextForge Contributors
 
 Tests for gRPC Service functionality.
 """
@@ -1407,7 +1406,7 @@ class TestInvokeMethodGuards:
             def __init__(self, **_kw):
                 self._services = None
 
-            async def start(self, timeout=None):
+            async def start(self, timeout=None, trusted_local=False):
                 raise asyncio.CancelledError()
 
             async def invoke(self, *_a, **_kw):
@@ -1439,7 +1438,7 @@ class TestInvokeMethodGuards:
             def __init__(self, **_kw):
                 self._services = None
 
-            async def start(self, timeout=None):
+            async def start(self, timeout=None, trusted_local=False):
                 raise asyncio.TimeoutError()
 
             async def invoke(self, *_a, **_kw):
@@ -1472,7 +1471,7 @@ class TestInvokeMethodGuards:
             def __init__(self, **_kw):
                 self._services = None
 
-            async def start(self, timeout=None):
+            async def start(self, timeout=None, trusted_local=False):
                 return None
 
             async def invoke(self, *_a, **_kw):
@@ -1645,7 +1644,7 @@ class TestInvokeMethodExceptionWrapping:
             def __init__(self, **_kw):
                 self._services = None
 
-            async def start(self, timeout=None):
+            async def start(self, timeout=None, trusted_local=False):
                 pass
 
             async def invoke(self, *_a, **_kw):
@@ -1698,7 +1697,7 @@ class TestInvokeMethodFinallyClose:
                 self._services = None
                 _sentinel_endpoint = self
 
-            async def start(self, timeout=None):
+            async def start(self, timeout=None, trusted_local=False):
                 pass
 
             async def invoke(self, *_a, **_kw):

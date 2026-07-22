@@ -1,9 +1,8 @@
 # -*- coding: utf-8 -*-
 
 """Location: ./tests/unit/mcpgateway/test_main_extended.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Extended tests for main.py to achieve 100% coverage.
 These tests focus on uncovered code paths including conditional branches,
@@ -36,6 +35,7 @@ from starlette.routing import Mount
 # First-Party
 from mcpgateway.common.models import LogLevel
 from mcpgateway.config import settings
+from mcpgateway.middleware.token_scoping import ResourceOwnershipResult
 import mcpgateway.db as db_mod
 from mcpgateway.auth_context import _expected_internal_mcp_runtime_auth_header
 from mcpgateway.auth import TokenValidationError
@@ -846,7 +846,11 @@ class TestInternalTrustedMcpTransportBridge:
 
         await bridge.handle_streamable_http(scope, receive, send)
 
-        assert events[0]["status"] == 400
+        # A missing auth context now fails the internal trust gate itself
+        # (require_auth_context is folded into is_trusted_internal_mcp_request),
+        # so the request is rejected as untrusted (403) before reaching the
+        # "missing auth context" (400) branch.
+        assert events[0]["status"] == 403
 
     def test_build_internal_mcp_auth_scope_uses_public_request_shape(self):
         """Synthetic auth scope should preserve the public MCP path and client IP."""
@@ -1443,6 +1447,62 @@ class TestInternalMcpHelperCoverage:
 
         with patch("mcpgateway.main.PermissionChecker.has_permission", new=AsyncMock(side_effect=AssertionError("RBAC should be skipped"))):
             await _ensure_rpc_permission({"permission_is_admin": True}, MagicMock(), "admin.system_config", "roots/list", request)
+
+    @pytest.mark.asyncio
+    async def test_ensure_rpc_permission_skips_rbac_for_public_only_internal_dispatch(self):
+        """Public-only trusted-internal dispatch (is_authenticated=False) must skip RBAC.
+
+        Mirrors ``_authorize_internal_mcp_request()``: the originating edge already applied
+        public-only visibility, so the forwarded internal hop must not be re-denied. The
+        auth context is only present on ``request.state`` for HMAC-trusted internal requests,
+        so the skip cannot be triggered by a forged/untrusted request.  If the skip fires the
+        RBAC checker is never reached.
+        """
+        request = MagicMock(spec=Request)
+        request.headers = {}
+        request.state = SimpleNamespace(_mcp_internal_auth_context={"is_authenticated": False, "teams": []})
+
+        with patch("mcpgateway.main.PermissionChecker.has_permission", new=AsyncMock(side_effect=AssertionError("RBAC must be skipped for public-only internal dispatch"))):
+            # No raise == skip fired; the method's own visibility filtering then proceeds.
+            await _ensure_rpc_permission({"email": None, "is_admin": False}, MagicMock(), "tools.read", "tools/list", request)
+
+    @pytest.mark.asyncio
+    async def test_ensure_rpc_permission_enforces_rbac_for_authenticated_internal_dispatch(self):
+        """An authenticated forwarded caller (is_authenticated=True) still goes through RBAC and is denied without permission."""
+        # First-Party
+        from mcpgateway.main import JSONRPCError  # pylint: disable=import-outside-toplevel
+
+        request = MagicMock(spec=Request)
+        request.headers = {}
+        request.state = SimpleNamespace(_mcp_internal_auth_context={"is_authenticated": True, "teams": ["t1"]})
+
+        with (
+            patch("mcpgateway.main._extract_scoped_permissions", return_value=None),
+            patch("mcpgateway.main._build_rpc_permission_user", return_value=MagicMock()),
+            patch("mcpgateway.main.PermissionChecker.has_permission", new=AsyncMock(return_value=False)),
+        ):
+            with pytest.raises(JSONRPCError) as exc:
+                await _ensure_rpc_permission({"email": "u@example.com", "is_admin": False}, MagicMock(), "tools.read", "tools/list", request)
+        assert exc.value.code == -32003
+
+    @pytest.mark.asyncio
+    async def test_ensure_rpc_permission_enforces_rbac_without_trusted_internal_context(self):
+        """A request with no trusted internal auth context (forged HMAC never sets it, or a normal public /rpc request) gets no public-only skip — RBAC is enforced."""
+        # First-Party
+        from mcpgateway.main import JSONRPCError  # pylint: disable=import-outside-toplevel
+
+        request = MagicMock(spec=Request)
+        request.headers = {}
+        request.state = SimpleNamespace()  # no _mcp_internal_auth_context -> not a trusted internal dispatch
+
+        with (
+            patch("mcpgateway.main._extract_scoped_permissions", return_value=None),
+            patch("mcpgateway.main._build_rpc_permission_user", return_value=MagicMock()),
+            patch("mcpgateway.main.PermissionChecker.has_permission", new=AsyncMock(return_value=False)),
+        ):
+            with pytest.raises(JSONRPCError) as exc:
+                await _ensure_rpc_permission({"email": "u@example.com", "is_admin": False}, MagicMock(), "tools.read", "tools/list", request)
+        assert exc.value.code == -32003
 
 
 class TestEndpointErrorHandling:
@@ -2767,7 +2827,7 @@ class TestAdminAuthMiddleware:
         mock_auth_service.get_user_by_email = AsyncMock(return_value=mock_user)
         mock_permission_service = MagicMock()
         mock_permission_service.has_admin_permission = AsyncMock(return_value=True)
-        request.state.token_teams = ["a1b2c3d4e5f6789012345678abcdef01"]
+        request.state.token_teams = ["a1b2c3d4e5f6789012345678abcdef01"]  # pragma: allowlist secret
 
         with (
             patch("mcpgateway.main.get_db", _db_gen),
@@ -4153,6 +4213,15 @@ class TestCrudEndpoints:
             await create_resource(resource_input, request, db=MagicMock(), user={"email": "user@example.com"})
         assert excinfo.value.status_code == 422
 
+        # First-Party
+        from mcpgateway.services.mcp_apps import MCPAppsValidationError
+
+        monkeypatch.setattr("mcpgateway.main.resource_service.register_resource", AsyncMock(side_effect=MCPAppsValidationError("bad MCP Apps metadata")))
+        with pytest.raises(HTTPException) as excinfo:
+            await create_resource(resource_input, request, db=MagicMock(), user={"email": "user@example.com"})
+        assert excinfo.value.status_code == 422
+        assert excinfo.value.detail == "bad MCP Apps metadata"
+
         # Third-Party
         from sqlalchemy.exc import IntegrityError
 
@@ -4181,6 +4250,27 @@ class TestCrudEndpoints:
         with pytest.raises(HTTPException) as excinfo:
             await update_resource("res-1", ResourceUpdate(name="Res Updated"), request, db=MagicMock(), user={"email": "user@example.com"})
         assert excinfo.value.status_code == 409
+
+    @pytest.mark.asyncio
+    async def test_update_resource_mcp_apps_validation_error_maps_to_422(self, monkeypatch, allow_permission):
+        request = _make_request("/resources/res-1")
+        monkeypatch.setattr(
+            "mcpgateway.main.MetadataCapture.extract_modification_metadata",
+            lambda *_args, **_kwargs: {
+                "modified_by": "user",
+                "modified_from_ip": "127.0.0.1",
+                "modified_via": "api",
+                "modified_user_agent": "test",
+            },
+        )
+        # First-Party
+        from mcpgateway.services.mcp_apps import MCPAppsValidationError
+
+        monkeypatch.setattr("mcpgateway.main.resource_service.update_resource", AsyncMock(side_effect=MCPAppsValidationError("bad MCP Apps metadata")))
+        with pytest.raises(HTTPException) as excinfo:
+            await update_resource("res-1", ResourceUpdate(name="Res Updated"), request, db=MagicMock(), user={"email": "user@example.com"})
+        assert excinfo.value.status_code == 422
+        assert excinfo.value.detail == "bad MCP Apps metadata"
 
     @pytest.mark.asyncio
     async def test_delete_resource_permission_not_found_and_error(self, monkeypatch, allow_permission):
@@ -4941,6 +5031,7 @@ class TestGatewayEndpointsCoverage:
             "duration_ms": 1.0,
             "refreshed_at": datetime.now(timezone.utc),
             "tools_added": 1,
+            "validation_errors": [],
         }
         monkeypatch.setattr(main_mod.gateway_service, "get_gateway", AsyncMock(return_value=SimpleNamespace(id="gw-1")))
         monkeypatch.setattr(main_mod, "_enforce_scoped_resource_access", lambda *_args, **_kwargs: None)
@@ -4955,6 +5046,25 @@ class TestGatewayEndpointsCoverage:
         )
         assert response.gateway_id == "gw-1"
         assert response.tools_added == 1
+        assert response.validation_errors == []
+
+        # Test with non-empty validation errors
+        result_payload_with_errors = {
+            "duration_ms": 1.0,
+            "refreshed_at": datetime.now(timezone.utc),
+            "tools_added": 0,
+            "validation_errors": ["bad_tool: Tool name exceeds MCP spec limit of 128 characters (got 129)"],
+        }
+        monkeypatch.setattr(main_mod.gateway_service, "refresh_gateway_manually", AsyncMock(return_value=result_payload_with_errors))
+        response_with_errors = await main_mod.refresh_gateway_tools(
+            "gw-1",
+            request,
+            include_resources=True,
+            include_prompts=False,
+            db=db,
+            user={"email": "user@example.com"},
+        )
+        assert response_with_errors.validation_errors == result_payload_with_errors["validation_errors"]
 
         monkeypatch.setattr(main_mod.gateway_service, "refresh_gateway_manually", AsyncMock(side_effect=GatewayNotFoundError("missing")))
         with pytest.raises(HTTPException) as excinfo:
@@ -6661,6 +6771,7 @@ class TestRpcHandling:
 
         init_result = MagicMock()
         init_result.model_dump.return_value = {"protocolVersion": "2025-11-25", "capabilities": {}}
+        monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", False)
         monkeypatch.setattr("mcpgateway.main.session_registry.claim_session_owner", AsyncMock(return_value="user@example.com"))
         handle_initialize_logic = AsyncMock(return_value=init_result)
         monkeypatch.setattr("mcpgateway.main.session_registry.handle_initialize_logic", handle_initialize_logic)
@@ -9698,7 +9809,9 @@ class TestRpcHandling:
         ):
             result = await handle_rpc(request_logging, db=MagicMock(), user={"sub": "user@example.com"})
             assert result["result"] == {}
-            get_user_email.assert_called_once_with({"sub": "user@example.com"})
+            # get_user_email is called twice: once for logging (line 10297) and once in get_rpc_filter_context (auth_context.py:380)
+            assert get_user_email.call_count == 2
+            get_user_email.assert_called_with({"sub": "user@example.com"})
 
     async def test_handle_rpc_fallback_tool_error(self):
         payload = {"jsonrpc": "2.0", "id": "17", "method": "custom/tool", "params": {"a": 1}}
@@ -10068,6 +10181,7 @@ class TestRpcHandling:
             params={"name": "echo"},
             req_id="aff-local",
             lowered_request_headers={"mcp-session-id": "sess-123"},
+            user={"email": "u@example.com"},
         )
 
         assert forwarded is None
@@ -10081,6 +10195,7 @@ class TestRpcHandling:
 
         init_result = MagicMock()
         init_result.model_dump.return_value = {"capabilities": {}}
+        monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", False)
         monkeypatch.setattr("mcpgateway.main.session_registry.handle_initialize_logic", AsyncMock(return_value=init_result))
         monkeypatch.setattr("mcpgateway.main.session_registry.claim_session_owner", AsyncMock(return_value="user@example.com"))
 
@@ -10114,6 +10229,7 @@ class TestRpcHandling:
 
         init_result = MagicMock()
         init_result.model_dump.return_value = {"capabilities": {}}
+        monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", False)
         claim_owner = AsyncMock(return_value="user@example.com")
         monkeypatch.setattr("mcpgateway.main.session_registry.claim_session_owner", claim_owner)
         monkeypatch.setattr("mcpgateway.main.session_registry.handle_initialize_logic", AsyncMock(return_value=init_result))
@@ -13223,12 +13339,40 @@ class TestHardeningHelperCoverage:
 
         with (
             patch.object(main_mod, "get_scoped_resource_access_context", return_value=("user@example.com", ["team-1"])),
-            patch.object(main_mod.token_scoping_middleware, "_check_resource_team_ownership", return_value=False),
+            patch.object(main_mod.token_scoping_middleware, "_check_resource_team_ownership", return_value=ResourceOwnershipResult.DENIED),
         ):
             with pytest.raises(HTTPException) as excinfo:
                 main_mod._enforce_scoped_resource_access(request, db, {"email": "user@example.com"}, "/servers/server-1")
 
         assert excinfo.value.status_code == 403
+
+    @pytest.mark.parametrize("ownership_result", [ResourceOwnershipResult.DENIED, ResourceOwnershipResult.NOT_FOUND])
+    def test_enforce_scoped_resource_access_rejects_non_allowed_results(self, ownership_result):
+        import mcpgateway.main as main_mod
+
+        request = MagicMock(spec=Request)
+        db = MagicMock()
+
+        with (
+            patch.object(main_mod, "get_scoped_resource_access_context", return_value=("user@example.com", ["team-1"])),
+            patch.object(main_mod.token_scoping_middleware, "_check_resource_team_ownership", return_value=ownership_result),
+        ):
+            with pytest.raises(HTTPException) as excinfo:
+                main_mod._enforce_scoped_resource_access(request, db, {"email": "user@example.com"}, "/servers/server-1")
+
+        assert excinfo.value.status_code == 403
+
+    def test_enforce_scoped_resource_access_allows_allowed_result(self):
+        import mcpgateway.main as main_mod
+
+        request = MagicMock(spec=Request)
+        db = MagicMock()
+
+        with (
+            patch.object(main_mod, "get_scoped_resource_access_context", return_value=("user@example.com", ["team-1"])),
+            patch.object(main_mod.token_scoping_middleware, "_check_resource_team_ownership", return_value=ResourceOwnershipResult.ALLOWED),
+        ):
+            main_mod._enforce_scoped_resource_access(request, db, {"email": "user@example.com"}, "/servers/server-1")
 
 
 @pytest.mark.asyncio

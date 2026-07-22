@@ -296,8 +296,6 @@ media/
 # Exclude generated CSS (built during Docker build)
 mcpgateway/static/css/tailwind.min.css
 
-# Exclude vendor directory (downloaded during Docker build via download-cdn-assets.sh)
-# This ensures fresh CDN assets are downloaded for each build
 mcpgateway/static/vendor/
 
 # Exclude generated/temporary files in static/

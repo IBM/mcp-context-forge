@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/test_admin_module.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Tests for mcpgateway.admin helpers and auth flows.
 """
@@ -258,12 +257,12 @@ class _StubTeamService:
     async def list_join_requests(self, team_id: str):
         return self.join_requests
 
-    async def approve_join_request(self, request_id: str, approved_by: str):
-        self.approve_args = (request_id, approved_by)
+    async def approve_join_request(self, team_id: str, request_id: str, approved_by: str):
+        self.approve_args = (team_id, request_id, approved_by)
         return self.approve_member
 
-    async def reject_join_request(self, request_id: str, rejected_by: str):
-        self.reject_args = (request_id, rejected_by)
+    async def reject_join_request(self, team_id: str, request_id: str, rejected_by: str):
+        self.reject_args = (team_id, request_id, rejected_by)
         return self.reject_ok
 
     def count_team_owners(self, team_id: str) -> int:
@@ -1343,6 +1342,23 @@ async def test_admin_approve_join_request_success(monkeypatch):
     assert response.status_code == 200
     assert "Join request approved" in _response_text(response)
     assert "HX-Trigger" in response.headers
+    assert team_service.approve_args == ("team-1", "req-1", "owner@example.com")
+
+
+@pytest.mark.asyncio
+async def test_admin_reject_join_request_forwards_team_id(monkeypatch):
+    mock_db = MagicMock()
+    user = {"email": "owner@example.com"}
+    monkeypatch.setattr(admin.settings, "email_auth_enabled", True)
+
+    team_service = _StubTeamService(db=mock_db, user_role="owner", reject_ok=True)
+    monkeypatch.setattr(admin, "TeamManagementService", lambda db: team_service)
+
+    _allow_permissions(monkeypatch)
+    response = await admin.admin_reject_join_request("team-1", "req-1", db=mock_db, user=user)
+    assert response.status_code == 200
+    assert "Join request rejected" in _response_text(response)
+    assert team_service.reject_args == ("team-1", "req-1", "owner@example.com")
 
 
 @pytest.mark.asyncio
@@ -1867,3 +1883,173 @@ def test_get_bundle_js_filename_no_bundles_returns_empty_string(monkeypatch, tmp
     monkeypatch.setattr(admin, "_bundle_js_cache", {"filename": None})
 
     assert admin.get_bundle_js_filename() == ""
+
+
+# ---------------------------------------------------------------------------
+# get_bundle_css_files
+# ---------------------------------------------------------------------------
+
+
+def test_get_bundle_css_files_entry_level_css(monkeypatch, tmp_path):
+    """Entry has its own 'css' array — returned as-is."""
+    static_dir = _setup_static_dir(tmp_path)
+    _write_manifest(static_dir, {"file": "bundle-abc123.js", "css": ["assets/index-abc123.css"]})
+
+    monkeypatch.setattr(admin, "__file__", str(tmp_path / "admin.py"))
+    monkeypatch.setattr(admin, "_bundle_css_cache", {"files": None})
+
+    assert admin.get_bundle_css_files() == ["assets/index-abc123.css"]
+    assert admin._bundle_css_cache["files"] == ["assets/index-abc123.css"]
+
+
+def test_get_bundle_css_files_walks_chunk_imports(monkeypatch, tmp_path):
+    """CSS attached to a statically-imported chunk (e.g. the CodeMirror/Font Awesome vendor
+    chunk) must be collected too, not just the top-level entry's own 'css' key."""
+    static_dir = _setup_static_dir(tmp_path)
+    vite_dir = static_dir / ".vite"
+    vite_dir.mkdir()
+    manifest = {
+        "mcpgateway/admin_ui/index.js": {
+            "file": "bundle-abc123.js",
+            "css": ["assets/index-abc123.css"],
+            "imports": ["_chunk-vendor-editor-xyz.js"],
+        },
+        "_chunk-vendor-editor-xyz.js": {
+            "file": "chunk-vendor-editor-xyz.js",
+            "css": ["assets/vendor-editor-xyz.css"],
+        },
+    }
+    (vite_dir / "manifest.json").write_text(json.dumps(manifest))
+
+    monkeypatch.setattr(admin, "__file__", str(tmp_path / "admin.py"))
+    monkeypatch.setattr(admin, "_bundle_css_cache", {"files": None})
+
+    result = admin.get_bundle_css_files()
+    assert "assets/index-abc123.css" in result
+    assert "assets/vendor-editor-xyz.css" in result
+
+
+def test_get_bundle_css_files_dedupes(monkeypatch, tmp_path):
+    """The same CSS path referenced from multiple chunks is only returned once."""
+    static_dir = _setup_static_dir(tmp_path)
+    vite_dir = static_dir / ".vite"
+    vite_dir.mkdir()
+    manifest = {
+        "mcpgateway/admin_ui/index.js": {
+            "file": "bundle-abc123.js",
+            "css": ["assets/shared.css"],
+            "imports": ["_chunk-a.js"],
+        },
+        "_chunk-a.js": {
+            "file": "chunk-a.js",
+            "css": ["assets/shared.css"],
+        },
+    }
+    (vite_dir / "manifest.json").write_text(json.dumps(manifest))
+
+    monkeypatch.setattr(admin, "__file__", str(tmp_path / "admin.py"))
+    monkeypatch.setattr(admin, "_bundle_css_cache", {"files": None})
+
+    assert admin.get_bundle_css_files() == ["assets/shared.css"]
+
+
+def test_get_bundle_css_files_no_css_returns_empty_list(monkeypatch, tmp_path):
+    """Entry has no 'css' key at all — returns an empty list."""
+    static_dir = _setup_static_dir(tmp_path)
+    _write_manifest(static_dir, {"file": "bundle-abc123.js"})
+
+    monkeypatch.setattr(admin, "__file__", str(tmp_path / "admin.py"))
+    monkeypatch.setattr(admin, "_bundle_css_cache", {"files": None})
+
+    assert admin.get_bundle_css_files() == []
+
+
+def test_get_bundle_css_files_no_manifest_returns_empty_list(monkeypatch, tmp_path):
+    """No manifest on disk — returns an empty list rather than raising."""
+    _setup_static_dir(tmp_path)
+
+    monkeypatch.setattr(admin, "__file__", str(tmp_path / "admin.py"))
+    monkeypatch.setattr(admin, "_bundle_css_cache", {"files": None})
+
+    assert admin.get_bundle_css_files() == []
+
+
+def test_get_bundle_css_files_malformed_manifest_returns_empty_list(monkeypatch, tmp_path):
+    """Malformed manifest JSON — logs a warning and returns an empty list."""
+    static_dir = _setup_static_dir(tmp_path)
+    vite_dir = static_dir / ".vite"
+    vite_dir.mkdir()
+    (vite_dir / "manifest.json").write_text("not { valid json <<<")
+
+    monkeypatch.setattr(admin, "__file__", str(tmp_path / "admin.py"))
+    monkeypatch.setattr(admin, "_bundle_css_cache", {"files": None})
+
+    assert admin.get_bundle_css_files() == []
+
+
+def test_get_bundle_css_files_cache_hit(monkeypatch, tmp_path):
+    """Cache is warm and every cached file still exists on disk — returns cached value without I/O."""
+    static_dir = _setup_static_dir(tmp_path)
+    (static_dir / "cached.css").touch()
+
+    monkeypatch.setattr(admin, "__file__", str(tmp_path / "admin.py"))
+    monkeypatch.setattr(admin, "_bundle_css_cache", {"files": ["cached.css"]})
+
+    assert admin.get_bundle_css_files() == ["cached.css"]
+
+
+def test_get_bundle_css_files_stale_cache_rereads_manifest(monkeypatch, tmp_path):
+    """Cached CSS file no longer exists on disk — falls through and rereads the manifest."""
+    static_dir = _setup_static_dir(tmp_path)
+    _write_manifest(static_dir, {"file": "bundle-new.js", "css": ["assets/new.css"]})
+
+    monkeypatch.setattr(admin, "__file__", str(tmp_path / "admin.py"))
+    monkeypatch.setattr(admin, "_bundle_css_cache", {"files": ["assets/stale.css"]})  # stale; file absent
+
+    assert admin.get_bundle_css_files() == ["assets/new.css"]
+
+
+def test_get_bundle_css_files_falls_back_to_disk_scan_when_manifest_missing(monkeypatch, tmp_path):
+    """No manifest on disk but assets/*.css exist — falls back to scanning them, like
+    get_bundle_js_filename's bundle-*.js disk fallback."""
+    static_dir = _setup_static_dir(tmp_path)
+    assets_dir = static_dir / "assets"
+    assets_dir.mkdir()
+    (assets_dir / "index-abc123.css").touch()
+    (assets_dir / "vendor-editor-xyz.css").touch()
+
+    monkeypatch.setattr(admin, "__file__", str(tmp_path / "admin.py"))
+    monkeypatch.setattr(admin, "_bundle_css_cache", {"files": None})
+
+    result = admin.get_bundle_css_files()
+    assert sorted(result) == ["assets/index-abc123.css", "assets/vendor-editor-xyz.css"]
+
+
+def test_get_bundle_css_files_disk_fallback_excludes_stale_build(monkeypatch, tmp_path):
+    """Disk fallback only picks files from the newest build, not leftover CSS from an
+    older build that Vite's emptyOutDir:false left behind."""
+    static_dir = _setup_static_dir(tmp_path)
+    assets_dir = static_dir / "assets"
+    assets_dir.mkdir()
+
+    old_css = assets_dir / "index-old111.css"
+    old_css.touch()
+    old_time = time.time() - 3600
+    os.utime(old_css, (old_time, old_time))
+
+    (assets_dir / "index-new222.css").touch()
+
+    monkeypatch.setattr(admin, "__file__", str(tmp_path / "admin.py"))
+    monkeypatch.setattr(admin, "_bundle_css_cache", {"files": None})
+
+    assert admin.get_bundle_css_files() == ["assets/index-new222.css"]
+
+
+def test_get_bundle_css_files_no_manifest_no_assets_returns_empty_list(monkeypatch, tmp_path):
+    """Neither manifest nor assets directory exists — returns an empty list rather than raising."""
+    _setup_static_dir(tmp_path)
+
+    monkeypatch.setattr(admin, "__file__", str(tmp_path / "admin.py"))
+    monkeypatch.setattr(admin, "_bundle_css_cache", {"files": None})
+
+    assert admin.get_bundle_css_files() == []

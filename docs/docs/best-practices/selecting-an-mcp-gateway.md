@@ -61,7 +61,7 @@ This framework applies regardless of which path you choose. ContextForge is used
 | **Security-first** | Zero-trust architecture, defense-in-depth, no implicit trust between components |
 | **Governance by default** | RBAC, audit trails, and policy enforcement enabled out of the box |
 | **Observable** | OpenTelemetry instrumentation throughout, not bolted on afterward |
-| **Scale-tested** | Rust-based HTTP server (Granian), connection pooling, multi-tier caching |
+| **Scale-tested** | Connection pooling, multi-tier caching |
 | **Air-gap ready** | No telemetry, bundled assets, runs fully disconnected |
 | **Open standards** | MCP and A2A protocol compliance, no proprietary extensions |
 
@@ -405,7 +405,7 @@ flowchart LR
 
 | Component | Implementation | Impact |
 |-----------|----------------|--------|
-| HTTP Server | Granian (Rust-based) | 10x latency reduction vs Gunicorn |
+| HTTP Server | Gunicorn with Uvicorn | Battle-tested, stable |
 | JSON Serialization | orjson (Rust-based) | 5-6x faster message processing |
 | Connection Pooling | PgBouncer compatible | Handles thundering herd scaling |
 | Caching | L1 (memory) + L2 (Redis) | Sub-millisecond tool schema lookups |

@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/transports/test_streamable_rpc_permission_fallback.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Regression tests for session-token team-permission fallback in the /mcp transport.
 Ref: https://github.com/IBM/mcp-context-forge/issues/3515

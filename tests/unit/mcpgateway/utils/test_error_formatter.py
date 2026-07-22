@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/utils/test_error_formatter.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Full-coverage unit tests for **mcpgateway.utils.error_formatter**
 Running:
@@ -199,6 +198,9 @@ def make_mock_integrity_error(msg):
         ("UNIQUE constraint failed: gateways.slug", "A gateway with this name already exists"),
         ("UNIQUE constraint failed: tools.name", "A tool with this name already exists"),
         ("UNIQUE constraint failed: resources.uri", "A resource with this URI already exists"),
+        ("UNIQUE constraint failed: resources.name", "A resource with this name already exists"),
+        ("uq_team_owner_gateway_name_resource", "A resource with this name already exists"),
+        ("uq_team_owner_name_resource_local", "A resource with this name already exists"),
         ("UNIQUE constraint failed: servers.name", "A server with this name already exists"),
         ("UNIQUE constraint failed: prompts.name", "A prompt with this name already exists"),
         ("UNIQUE constraint failed: servers.id", "A server with this ID already exists"),

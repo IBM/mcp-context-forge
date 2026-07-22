@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/routers/rbac.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 RBAC API Router.
 
@@ -205,7 +204,7 @@ async def get_role(role_id: str, user=Depends(get_current_user_with_permissions)
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Failed to get role {role_id}: {e}")
+        logger.error("Failed to get role %s: %s", SecurityValidator.sanitize_log_message(role_id), e)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to retrieve role")
 
 
@@ -238,7 +237,7 @@ async def update_role(role_id: str, role_data: RoleUpdateRequest, user=Depends(g
         if not role:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Role not found")
 
-        logger.info(f"Role updated: {role_id} by {SecurityValidator.sanitize_log_message(user['email'])}")
+        logger.info("Role updated: %s by %s", SecurityValidator.sanitize_log_message(role_id), SecurityValidator.sanitize_log_message(user["email"]))
         db.commit()
         db.close()
         return RoleResponse.model_validate(role)
@@ -284,7 +283,7 @@ async def delete_role(role_id: str, user=Depends(get_current_user_with_permissio
         if not success:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Role not found")
 
-        logger.info(f"Role deleted: {role_id} by {SecurityValidator.sanitize_log_message(user['email'])}")
+        logger.info("Role deleted: %s by %s", SecurityValidator.sanitize_log_message(role_id), SecurityValidator.sanitize_log_message(user["email"]))
         db.commit()
         db.close()
         return {"message": "Role deleted successfully"}
@@ -333,7 +332,12 @@ async def assign_role_to_user(user_email: str, assignment_data: UserRoleAssignRe
             user_email=user_email, role_id=assignment_data.role_id, scope=assignment_data.scope, scope_id=assignment_data.scope_id, granted_by=user["email"], expires_at=assignment_data.expires_at
         )
 
-        logger.info(f"Role assigned: {assignment_data.role_id} to {SecurityValidator.sanitize_log_message(user_email)} by {SecurityValidator.sanitize_log_message(user['email'])}")
+        logger.info(
+            "Role assigned: %s to %s by %s",
+            SecurityValidator.sanitize_log_message(assignment_data.role_id),
+            SecurityValidator.sanitize_log_message(user_email),
+            SecurityValidator.sanitize_log_message(user["email"]),
+        )
         db.commit()
         db.close()
         return UserRoleResponse.model_validate(user_role)
@@ -430,7 +434,12 @@ async def revoke_user_role(
         if not success:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Role assignment not found")
 
-        logger.info(f"Role revoked: {role_id} from {SecurityValidator.sanitize_log_message(user_email)} by {SecurityValidator.sanitize_log_message(user['email'])}")
+        logger.info(
+            "Role revoked: %s from %s by %s",
+            SecurityValidator.sanitize_log_message(role_id),
+            SecurityValidator.sanitize_log_message(user_email),
+            SecurityValidator.sanitize_log_message(user["email"]),
+        )
         db.commit()
         db.close()
         return {"message": "Role revoked successfully"}

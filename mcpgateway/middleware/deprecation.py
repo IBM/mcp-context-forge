@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/middleware/deprecation.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
 
 Deprecation headers middleware for ContextForge.
@@ -70,6 +70,7 @@ _LEGACY_PREFIXES: frozenset[str] = frozenset(
         "/tags",
         "/export",
         "/import",
+        "/search",  # unified search router (always mounted)
         # Feature-flagged routers (conditionally mounted)
         "/a2a",  # MCPGATEWAY_A2A_ENABLED
         "/observability",  # OBSERVABILITY_ENABLED

@@ -22,9 +22,20 @@ export function teamSelector() {
           this.selectedTeam = requestedTeamId;
           this.selectedTeamName = (team.is_personal ? '👤 ' : '🏢 ') + team.name;
         } else if (teams.length > 0) {
-          const cleanUrl = new URL(window.location.href);
-          cleanUrl.searchParams.delete('team_id');
-          if (window.Admin) window.Admin.safeReplaceState({}, '', cleanUrl);
+          // Cache is frozen at page load — verify with the server before
+          // stripping a team_id that may be newer than the cache.
+          const rootPath = window.ROOT_PATH || '';
+          fetch(rootPath + '/admin/teams/ids', { credentials: 'same-origin' })
+            .then((resp) => (resp.ok ? resp.json() : null))
+            .then((data) => {
+              const ids = Array.isArray(data?.team_ids) ? data.team_ids : [];
+              if (!ids.includes(requestedTeamId)) {
+                const cleanUrl = new URL(window.location.href);
+                cleanUrl.searchParams.delete('team_id');
+                if (window.Admin) window.Admin.safeReplaceState({}, '', cleanUrl);
+              }
+            })
+            .catch(() => { /* fail open: don't strip on network error */ });
         }
       }
     },

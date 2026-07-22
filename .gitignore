@@ -276,6 +276,9 @@ jwt/
 # Static assets (downloaded or built during container build)
 mcpgateway/static/vendor/
 mcpgateway/static/bundle-*.js
+mcpgateway/static/chunk-*.js
+mcpgateway/static/app/
+mcpgateway/static/assets/
 mcpgateway/static/.vite/
 public/
 

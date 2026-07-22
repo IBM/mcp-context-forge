@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/plugins/test_secrets_detection.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Tests for the packaged secrets detection plugin.
 """
@@ -55,7 +54,7 @@ async def test_resource_post_fetch_receives_resolved_content():
     pm.has_hooks_for.return_value = True
     pm._initialized = True
 
-    async def invoke_hook(hook_type, payload, global_ctx, local_contexts=None, violations_as_exceptions=True):
+    async def invoke_hook(hook_type, payload, global_ctx, local_contexts=None, violations_as_exceptions=True, extensions=None):
         if hook_type == ResourceHookType.RESOURCE_POST_FETCH:
             await plugin.resource_post_fetch(payload, global_ctx)
         return MagicMock(modified_payload=None), None

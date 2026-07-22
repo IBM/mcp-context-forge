@@ -210,7 +210,6 @@ For detailed guidance on resource limits and process management, see `docs/docs/
 | mcpContextForge.env.postgres.passwordKey | string | `"POSTGRES_PASSWORD"` |  |
 | mcpContextForge.env.redis.host | string | `""` |  |
 | mcpContextForge.env.redis.port | int | `6379` |  |
-| mcpContextForge.config.HTTP_SERVER | string | `"gunicorn"` |  |
 | mcpContextForge.config.GUNICORN_WORKERS | string | `"2"` |  |
 | mcpContextForge.config.GUNICORN_TIMEOUT | string | `"600"` |  |
 | mcpContextForge.config.GUNICORN_MAX_REQUESTS | string | `"100000"` |  |
@@ -218,12 +217,6 @@ For detailed guidance on resource limits and process management, see `docs/docs/
 | mcpContextForge.config.GUNICORN_PRELOAD_APP | string | `"true"` |  |
 | mcpContextForge.config.GUNICORN_DEV_MODE | string | `"false"` |  |
 | mcpContextForge.config.DISABLE_ACCESS_LOG | string | `"true"` |  |
-| mcpContextForge.config.GRANIAN_WORKERS | string | `"auto"` |  |
-| mcpContextForge.config.GRANIAN_BACKLOG | string | `"4096"` |  |
-| mcpContextForge.config.GRANIAN_BACKPRESSURE | string | `"64"` |  |
-| mcpContextForge.config.GRANIAN_HTTP1_BUFFER_SIZE | string | `"524288"` |  |
-| mcpContextForge.config.GRANIAN_BLOCKING_THREADS | string | `"1"` |  |
-| mcpContextForge.config.GRANIAN_RESPAWN_FAILED | string | `"true"` |  |
 | mcpContextForge.config.APP_NAME | string | `"ContextForge"` |  |
 | mcpContextForge.config.HOST | string | `"0.0.0.0"` |  |
 | mcpContextForge.config.PORT | string | `"4444"` |  |

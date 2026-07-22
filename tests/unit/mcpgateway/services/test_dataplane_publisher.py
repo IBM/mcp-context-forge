@@ -1,14 +1,13 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/services/test_dataplane_publisher.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Unit tests for DataplanePublisherService.
 """
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -16,6 +15,19 @@ import pytest
 async def _wait_forever():
     """Block until cancelled by the test cleanup."""
     await asyncio.Event().wait()
+
+
+def test_worker_id_is_computed_per_service_instance():
+    """Each publisher instance gets the current worker PID."""
+    from mcpgateway.services import dataplane_publisher
+
+    with patch.object(dataplane_publisher.os, "getpid", side_effect=[11111, 22222]):
+        first_service = dataplane_publisher.DataplanePublisherService()
+        second_service = dataplane_publisher.DataplanePublisherService()
+
+    assert first_service.worker_id != second_service.worker_id
+    assert first_service.worker_id.endswith(":11111")
+    assert second_service.worker_id.endswith(":22222")
 
 
 # ============================================================================
@@ -166,8 +178,9 @@ async def test_full_payload_generation_with_mock_db():
     gateway1.id = "g1"
     gateway1.name = "Gateway 1"
     gateway1.url = "http://localhost:9000"
-    gateway1.transport = "sse"
+    gateway1.transport = "STREAMABLEHTTP"
     gateway1.passthrough_headers = ["Authorization"]
+    gateway1.capabilities = {"resources": {"subscribe": True}}
     gateway1.owner_email = "user1@example.com"
     gateway1.team_id = "team1"
     gateway1.visibility = "public"
@@ -184,6 +197,7 @@ async def test_full_payload_generation_with_mock_db():
     resource1 = Mock()
     resource1.id = "r1"
     resource1.name = "Resource 1"
+    resource1.uri = "resource://one"
     resource1.owner_email = "user1@example.com"
     resource1.team_id = "team1"
     resource1.visibility = "public"
@@ -191,7 +205,8 @@ async def test_full_payload_generation_with_mock_db():
 
     tool1 = Mock()
     tool1.id = "t1"
-    tool1.name = "public_tool"
+    tool1.name = "gw1-public_tool"
+    tool1.original_name = "public_tool"
     tool1.owner_email = "user1@example.com"
     tool1.team_id = "team1"
     tool1.visibility = "public"
@@ -199,7 +214,8 @@ async def test_full_payload_generation_with_mock_db():
 
     tool2 = Mock()
     tool2.id = "t2"
-    tool2.name = "private_tool"
+    tool2.name = "gw1-private_tool"
+    tool2.original_name = "private_tool"
     tool2.owner_email = "user1@example.com"
     tool2.team_id = "team1"
     tool2.visibility = "private"
@@ -207,7 +223,8 @@ async def test_full_payload_generation_with_mock_db():
 
     tool3 = Mock()
     tool3.id = "t3"
-    tool3.name = "team2_tool"
+    tool3.name = "gw1-team2_tool"
+    tool3.original_name = "team2_tool"
     tool3.owner_email = "user2@example.com"
     tool3.team_id = "team2"
     tool3.visibility = "team"
@@ -261,16 +278,20 @@ async def test_full_payload_generation_with_mock_db():
         backend = server1["backends"]["g1"]
         assert backend["name"] == "Gateway 1"
         assert backend["url"] == "http://localhost:9000"
-        assert backend["transport"] == "sse"
+        assert backend["transport"] == "STREAMABLEHTTP"
         assert backend["passthrough_headers"] == ["Authorization"]
+        assert backend["capabilities"] == {"resources": {"subscribe": True}}
         assert backend["allowed_tool_names"] == ["public_tool", "private_tool"]
         assert backend["allowed_resource_names"] == ["Resource 1"]
+        assert backend["allowed_resource_uris"] == ["resource://one"]
         assert backend["allowed_prompt_names"] == ["Prompt 1"]
 
         # Verify user2 sees public server but not private server from user1
         user2_config = payload["user2@example.com"]
         assert "s1" in user2_config["virtual_hosts"]  # public
-        assert "s2" in user2_config["virtual_hosts"]  # own private
+        # Own private server exists but has no backend associations, so it
+        # is omitted from the payload (no publishable backends).
+        assert "s2" not in user2_config["virtual_hosts"]
         user2_backend = user2_config["virtual_hosts"]["s1"]["backends"]["g1"]
         assert user2_backend["allowed_tool_names"] == ["public_tool", "team2_tool"]
 
@@ -361,7 +382,7 @@ def test_create_payload_filters_empty_backends():
                     },
                 }
             ],
-            "gateways": [{"id": "gateway1", "name": "Gateway 1", "url": "http://localhost:9000", "transport": "sse", "passthrough_headers": None}],
+            "gateways": [{"id": "gateway1", "name": "Gateway 1", "url": "http://localhost:9000", "transport": "STREAMABLEHTTP", "passthrough_headers": None}],
             "prompts": [],
             "resources": [],
         }
@@ -369,9 +390,64 @@ def test_create_payload_filters_empty_backends():
 
     result = service.create_payload(data)
 
-    # Server exists but has no backends (all empty)
-    assert "server1" in result["user@example.com"]["virtual_hosts"]
-    assert result["user@example.com"]["virtual_hosts"]["server1"]["backends"] == {}
+    # A server with no publishable backends is omitted entirely so the
+    # dataplane 404s it instead of serving an empty tool list.
+    assert "server1" not in result["user@example.com"]["virtual_hosts"]
+
+
+def test_create_payload_excludes_non_streamable_gateways():
+    """create_payload() drops backends whose transport the dataplane cannot serve."""
+    from mcpgateway.services.dataplane_publisher import DataplanePublisherService
+
+    service = DataplanePublisherService()
+    data = {
+        "user@example.com": {
+            "servers": [
+                {
+                    "id": "server1",
+                    "backend_items": {
+                        "gateway_sse": {"tools": ["tool1"], "resources": [], "prompts": []},
+                    },
+                }
+            ],
+            "gateways": [{"id": "gateway_sse", "name": "SSE Gateway", "url": "http://localhost:9000/sse", "transport": "SSE", "passthrough_headers": None}],
+            "prompts": [],
+            "resources": [],
+        }
+    }
+
+    result = service.create_payload(data)
+
+    # The SSE backend is excluded and the now-backendless server is omitted.
+    assert result["user@example.com"]["virtual_hosts"] == {}
+
+
+def test_create_payload_normalizes_null_passthrough_headers():
+    """create_payload() emits an empty list for gateways without passthrough headers."""
+    from mcpgateway.services.dataplane_publisher import DataplanePublisherService
+
+    service = DataplanePublisherService()
+    data = {
+        "user@example.com": {
+            "servers": [
+                {
+                    "id": "server1",
+                    "backend_items": {
+                        "gateway1": {"tools": ["tool1"], "resources": [], "prompts": []},
+                    },
+                }
+            ],
+            "gateways": [{"id": "gateway1", "name": "Gateway 1", "url": "http://localhost:9000", "transport": "STREAMABLEHTTP", "passthrough_headers": None}],
+            "prompts": [],
+            "resources": [],
+        }
+    }
+
+    result = service.create_payload(data)
+
+    backend = result["user@example.com"]["virtual_hosts"]["server1"]["backends"]["gateway1"]
+    assert backend["passthrough_headers"] == []
+    assert backend["capabilities"] == {}
 
 
 def test_create_payload_handles_missing_references():
@@ -398,14 +474,15 @@ def test_create_payload_handles_missing_references():
     result = service.create_payload(data)
 
     # Server exists but has no backends (gateway missing)
-    assert "server1" in result["user@example.com"]["virtual_hosts"]
-    assert result["user@example.com"]["virtual_hosts"]["server1"]["backends"] == {}
+    # With its only gateway missing, the server has no publishable backends
+    # and is omitted from the payload.
+    assert "server1" not in result["user@example.com"]["virtual_hosts"]
 
 
 @pytest.mark.asyncio
 async def test_publish_skips_when_redis_unavailable():
     """publish_to_redis() continues gracefully when Redis is unavailable."""
-    from mcpgateway.services.dataplane_publisher import REDIS_PUBLISHER_TIME, DataplanePublisherService
+    from mcpgateway.services.dataplane_publisher import DataplanePublisherService, get_publisher_interval
 
     service = DataplanePublisherService()
     real_sleep = asyncio.sleep
@@ -425,7 +502,7 @@ async def test_publish_skips_when_redis_unavailable():
         await service.shutdown()
 
         # Should not raise, just log and continue
-        mock_sleep.assert_awaited_once_with(REDIS_PUBLISHER_TIME)
+        mock_sleep.assert_awaited_once_with(get_publisher_interval())
 
 
 @pytest.mark.asyncio
@@ -482,7 +559,7 @@ async def test_publish_continues_when_lock_acquisition_raises():
 @pytest.mark.asyncio
 async def test_publish_skips_when_lock_not_acquired():
     """publish_to_redis() skips publishing when another worker holds the lock."""
-    from mcpgateway.services.dataplane_publisher import REDIS_PUBLISHER_TIME, DataplanePublisherService
+    from mcpgateway.services.dataplane_publisher import DataplanePublisherService, get_publisher_interval
 
     service = DataplanePublisherService()
     real_sleep = asyncio.sleep
@@ -508,7 +585,7 @@ async def test_publish_skips_when_lock_not_acquired():
         await service.shutdown()
 
         mock_redis.set.assert_awaited_once()
-        mock_sleep.assert_awaited_once_with(REDIS_PUBLISHER_TIME)
+        mock_sleep.assert_awaited_once_with(get_publisher_interval())
         mock_fetch.assert_not_awaited()
         mock_redis.pipeline.assert_not_called()
         mock_redis.eval.assert_not_awaited()
@@ -519,7 +596,7 @@ async def test_publish_writes_payload_releases_lock_and_exits_when_shutdown_wait
     """publish_to_redis() writes msgpack payloads and releases the worker lock."""
     import msgpack
 
-    from mcpgateway.services.dataplane_publisher import PUBLISHER_LOCK_KEY, PUBLISHER_TTL, USER_CONFIG_KEY, WORKER_ID, DataplanePublisherService
+    from mcpgateway.services.dataplane_publisher import PUBLISHER_LOCK_KEY, USER_CONFIG_KEY, DataplanePublisherService, get_publisher_interval, get_publisher_ttl
 
     service = DataplanePublisherService()
     payload = {"user@example.com": {"virtual_hosts": {"server1": {"backends": {}}}}}
@@ -548,11 +625,44 @@ async def test_publish_writes_payload_releases_lock_and_exits_when_shutdown_wait
     key_arg, value_arg = pipe.set.call_args.args
     assert msgpack.unpackb(key_arg, raw=False) == [USER_CONFIG_KEY, "user@example.com"]
     assert msgpack.unpackb(value_arg, raw=False) == payload["user@example.com"]
-    assert pipe.set.call_args.kwargs == {"ex": PUBLISHER_TTL}
+    assert pipe.set.call_args.kwargs == {"ex": get_publisher_ttl()}
     pipe.execute.assert_awaited_once()
+    mock_redis.set.assert_awaited_once_with(PUBLISHER_LOCK_KEY, service.worker_id, nx=True, ex=get_publisher_interval() + 30)
     mock_redis.eval.assert_awaited_once()
-    assert mock_redis.eval.await_args.args[1:] == (1, PUBLISHER_LOCK_KEY, WORKER_ID)
+    assert mock_redis.eval.await_args.args[1:] == (1, PUBLISHER_LOCK_KEY, service.worker_id)
     mock_wait_for.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_publish_uses_configured_interval_for_ttl_lock_and_wait():
+    """A runtime interval override propagates to every publisher timeout."""
+    from mcpgateway.services import dataplane_publisher
+
+    service = dataplane_publisher.DataplanePublisherService()
+    payload = {"user@example.com": {"virtual_hosts": {}}}
+
+    pipe = MagicMock()
+    pipe.execute = AsyncMock()
+    mock_redis = MagicMock()
+    mock_redis.set = AsyncMock(return_value=True)
+    mock_redis.pipeline.return_value = pipe
+    mock_redis.eval = AsyncMock()
+
+    async def _finish_cycle(awaitable, timeout):
+        del timeout
+        awaitable.close()
+
+    with (
+        patch.object(dataplane_publisher.settings, "dataplane_publisher_interval_seconds", 2),
+        patch.object(dataplane_publisher, "get_redis_client", new_callable=AsyncMock, return_value=mock_redis),
+        patch.object(dataplane_publisher.asyncio, "wait_for", new_callable=AsyncMock, side_effect=_finish_cycle) as mock_wait_for,
+        patch.object(service, "fetch_payload", new_callable=AsyncMock, return_value=payload),
+    ):
+        await service.publish_to_redis()
+
+    assert pipe.set.call_args.kwargs == {"ex": 14}
+    mock_redis.set.assert_awaited_once_with(dataplane_publisher.PUBLISHER_LOCK_KEY, service.worker_id, nx=True, ex=32)
+    mock_wait_for.assert_awaited_once_with(ANY, timeout=2)
 
 
 @pytest.mark.asyncio

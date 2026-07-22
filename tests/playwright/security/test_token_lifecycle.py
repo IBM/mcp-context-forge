@@ -3,9 +3,8 @@
 # SPDX-License-Identifier: Apache-2.0
 
 """Location: ./tests/playwright/security/test_token_lifecycle.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Token Lifecycle E2E Tests.
 
@@ -20,8 +19,12 @@ import logging
 import uuid
 
 # Third-Party
-from playwright.sync_api import APIRequestContext
+from playwright.sync_api import APIRequestContext, expect
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 import pytest
+
+# Local
+from ..pages.admin_utils import wait_for_ui_by_deadline
 
 logger = logging.getLogger(__name__)
 
@@ -179,20 +182,43 @@ class TestTokenRevokeUI:
         revoke_resp = admin_api.delete(f"/tokens/{token_id}")
         assert revoke_resp.status in (200, 204)
 
-        # Navigate to tokens tab with include_inactive=true so revoked token IS listed
-        tokens_page.navigate_to_tokens_tab()
-        # Enable "Show inactive" to make revoked tokens visible in the list
-        inactive_checkbox = tokens_page.page.locator("#tokens-inactive-toggle, [name='include_inactive']")
-        if inactive_checkbox.count() > 0 and not inactive_checkbox.first.is_checked():
-            inactive_checkbox.first.click()
-            tokens_page.page.wait_for_timeout(2000)
+        # Navigate to tokens tab with include_inactive=true so revoked token IS listed.
+        counts = {"card": None, "revoke": None}
+
+        def _settled() -> bool:
+            tokens_page.page.reload(wait_until="domcontentloaded")
+            tokens_page.navigate_to_tokens_tab()
+            # Enable "Show inactive" to make revoked tokens visible in the list
+            inactive_checkbox = tokens_page.page.locator("#show-inactive-tokens")
+            if inactive_checkbox.count() > 0 and not inactive_checkbox.first.is_checked():
+                inactive_checkbox.first.click()
+
+            # Wait for the list to actually settle before reading counts. Without this,
+            # a not-yet-rendered list (0 cards) is indistinguishable from a genuinely
+            # absent token, and the loop below would break on the first pass and fall
+            # through to the API-only check — skipping the UI assertion entirely.
+            token_card = tokens_page.page.locator(f"text={token_name}")
+            try:
+                expect(token_card.first).to_be_visible(timeout=3000)
+            except (PlaywrightTimeoutError, AssertionError):
+                pass
+
+            counts["card"] = token_card.count()
+            counts["revoke"] = tokens_page.get_token_revoke_btn(token_name).count()
+            return counts["card"] == 0 or counts["revoke"] == 0
+
+        # The nginx admin-page cache has a 5s TTL keyed on URL+cookies (see
+        # infra/nginx/nginx.conf), so a GET for this exact listing issued by an
+        # earlier test in the same session can still be served stale here. Retry
+        # past that window instead of asserting on a single fetch.
+        wait_for_ui_by_deadline(tokens_page.page, _settled, deadline_seconds=8)
+        token_card_count = counts["card"]
+        revoke_btn_count = counts["revoke"]
 
         # Verify the token card IS rendered (not vacuously absent)
-        token_card = tokens_page.page.locator(f"text={token_name}")
-        if token_card.count() > 0:
+        if token_card_count and token_card_count > 0:
             # Token is visible — the revoke button must NOT be present
-            revoke_btn = tokens_page.get_token_revoke_btn(token_name)
-            assert revoke_btn.count() == 0, "Revoke button should be hidden for already-revoked tokens"
+            assert revoke_btn_count == 0, "Revoke button should be hidden for already-revoked tokens"
         else:
             # If include_inactive toggle is not available, verify via API that token is truly revoked
             resp = admin_api.get(f"/tokens/{token_id}")

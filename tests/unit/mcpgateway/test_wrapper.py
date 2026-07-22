@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/test_wrapper.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti + contributors
 
 Tests for the MCP *wrapper* module (single file, full coverage).
 This suite fakes the "mcp" dependency tree so that no real network or
@@ -356,12 +355,17 @@ async def test_stdin_reader_valid_and_invalid(monkeypatch):
         except StopIteration:
             return b""
 
+    # Run the fake blocking read inline so this test does not depend on worker-thread scheduling.
+    async def fake_to_thread(func, *args, **kwargs):
+        return func(*args, **kwargs)
+
     # Mock buffer.readline if available, else stdin.readline (but existing test ran on host python which likely has buffer)
     # The wrapper uses sys.stdin.buffer.readline if available.
     if hasattr(sys.stdin, "buffer"):
         monkeypatch.setattr(sys.stdin.buffer, "readline", fake_readline)
     else:
         monkeypatch.setattr(sys.stdin, "readline", fake_readline)
+    monkeypatch.setattr(wrapper.asyncio, "to_thread", fake_to_thread)
 
     task = asyncio.create_task(wrapper.stdin_reader(q))
 

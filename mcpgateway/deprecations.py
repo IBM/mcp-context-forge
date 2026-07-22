@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/deprecations.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Shared deprecation metadata for runtime warnings.
 """
@@ -21,9 +20,6 @@ DEPRECATION_RESPONSE_HEADERS = {
 
 RUST_MCP_RUNTIME_DEPRECATION_MESSAGE = (
     "The Rust MCP runtime sidecar is deprecated as of 2026-06-11 and will sunset on 2026-07-07. Use the default Python MCP transport path. See https://ibm.github.io/mcp-context-forge/deprecations/."
-)
-RUST_A2A_RUNTIME_DEPRECATION_MESSAGE = (
-    "The Rust A2A runtime sidecar is deprecated as of 2026-06-11 and will sunset on 2026-07-07. Use the default Python A2A invocation path. See https://ibm.github.io/mcp-context-forge/deprecations/."
 )
 VALIDATION_MIDDLEWARE_DEPRECATION_MESSAGE = (
     "ValidationMiddleware is deprecated as of 2026-06-11 and will sunset on 2026-07-07. "

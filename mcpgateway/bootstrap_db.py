@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/bootstrap_db.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Madhav Kandukuri
 
 Database bootstrap/upgrade entry-point for ContextForge.
 The script:
@@ -47,6 +46,7 @@ from alembic.script import ScriptDirectory
 from filelock import FileLock
 from sqlalchemy import create_engine, or_, text
 from sqlalchemy.engine import Connection
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 # First-Party
@@ -741,9 +741,11 @@ async def bootstrap_resource_assignments(conn: Connection) -> None:
 
                     # Track names claimed within this batch to catch intra-batch duplicates
                     batch_assigned: set[str] = set()
+                    assigned_count = 0
 
                     for resource in unassigned:
                         original_value = getattr(resource, field)
+                        added_to_batch = None  # Track what we add to batch_assigned for cleanup on rollback
 
                         if original_value is not None:
                             taken = existing_taken | batch_assigned
@@ -757,8 +759,10 @@ async def bootstrap_resource_assignments(conn: Connection) -> None:
                                 )
                                 setattr(resource, field, new_value)
                                 batch_assigned.add(new_value)
+                                added_to_batch = new_value
                             else:
                                 batch_assigned.add(original_value)
+                                added_to_batch = original_value
 
                         resource.team_id = personal_team.id
                         resource.owner_email = admin_user.email
@@ -766,8 +770,35 @@ async def bootstrap_resource_assignments(conn: Connection) -> None:
                         if hasattr(resource, "federation_source") and not resource.federation_source:
                             resource.federation_source = "mcpgateway-0.7.0-migration"
 
-                    db.commit()
-                    total_assigned += len(unassigned)
+                        # Per-row commit with race-condition handling (issue #4993)
+                        # If another worker assigned this resource concurrently, gracefully skip it
+                        try:
+                            db.commit()
+                            assigned_count += 1
+                        except IntegrityError:
+                            # Another worker assigned this resource first - rollback and continue
+                            db.rollback()
+
+                            # Expunge the resource from session to prevent re-flush on subsequent commits
+                            # Without this, the rolled-back resource remains "dirty" and SQLAlchemy will
+                            # attempt to flush it again on every subsequent commit in this loop
+                            db.expunge(resource)
+
+                            # Clean up batch_assigned to prevent false conflicts in subsequent iterations
+                            # Use the tracked value since resource state is unpredictable after expunge
+                            if added_to_batch is not None:
+                                batch_assigned.discard(added_to_batch)
+
+                            logger.debug(
+                                f"Skipping {SecurityValidator.sanitize_log_message(resource_name)} "
+                                f"'{SecurityValidator.sanitize_log_message(str(original_value))}' "
+                                f"- already assigned by concurrent worker"
+                            )
+                            continue
+
+                    # Per-row commits mean some rows may already be persisted if a non-IntegrityError
+                    # is raised mid-loop; those rows are not counted here and won't be retried.
+                    total_assigned += assigned_count
 
                 except Exception as e:
                     logger.error(f"Failed to assign {SecurityValidator.sanitize_log_message(resource_name)}: {SecurityValidator.sanitize_log_message(str(e))}")

@@ -39,6 +39,17 @@ spec:
       serviceAccountName: {{ include "mcp-stack.serviceAccountName" . }}
       {{- end }}
       automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
+      {{- if gt (int .Values.mcpContextForge.replicaCount) 1 }}
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: {{ include "mcp-stack.fullname" . }}-mcpgateway
+                topologyKey: kubernetes.io/hostname
+      {{- end }}
       securityContext:
         {{- toYaml .Values.mcpContextForge.podSecurityContext | nindent 8 }}
         seccompProfile:
@@ -306,19 +317,22 @@ spec:
           resources:
 {{- toYaml .Values.mcpContextForge.resources | nindent 12 }}
 
-          {{- /* Plugins enabled need the plugins configuration */}}
-          {{- if .Values.mcpContextForge.pluginConfig.enabled }}
           volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          {{- if .Values.mcpContextForge.pluginConfig.enabled }}
             - name: plugin-config-volume
               mountPath: /app/{{ $pluginsConfigFile }}
               subPath: config.yaml
           {{- end }}
-{{- if .Values.mcpContextForge.pluginConfig.enabled }}
       volumes:
-      - name: plugin-config-volume
-        configMap:
-          name: {{ include "mcp-stack.fullname" . }}-gateway-plugins
-          items:
-          - key: config.yaml
-            path: config.yaml
-{{- end }}
+        - name: tmp
+          emptyDir: {}
+      {{- if .Values.mcpContextForge.pluginConfig.enabled }}
+        - name: plugin-config-volume
+          configMap:
+            name: {{ include "mcp-stack.fullname" . }}-gateway-plugins
+            items:
+              - key: config.yaml
+                path: config.yaml
+      {{- end }}

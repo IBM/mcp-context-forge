@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/integration/test_concurrency_row_locking.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Concurrency tests for row-level locking implementation.
 Tests verify that concurrent operations on tools, gateways, prompts, resources,
@@ -55,7 +54,7 @@ def is_postgresql() -> bool:
 SKIP_IF_NOT_POSTGRES = pytest.mark.skipif(not is_postgresql(), reason="Row-level locking only works on PostgreSQL")
 
 
-TEST_JWT_SECRET = "integration-test-jwt-secret-key-with-minimum-32-bytes"
+TEST_JWT_SECRET = "integration-test-jwt-secret-key-with-minimum-32-bytes"  # pragma: allowlist secret
 
 TEST_JWT_TOKEN = make_test_jwt(
     "admin@example.com",

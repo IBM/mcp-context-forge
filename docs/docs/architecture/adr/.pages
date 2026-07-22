@@ -26,7 +26,7 @@ nav:
   - 22 Elicitation Passthrough Implementation: 022-elicitation-passthrough-implementation.md
   - 23 One-Time Authentication Servers: 023-one-time-authentication-servers.md
   - 24 Uvicorn Standard Extras: 024-uvicorn-standard-extras.md
-  - 25 Granian HTTP Server: 025-granian-http-server.md
+  - 25 Granian HTTP Server (Superseded): 025-granian-http-server.md
   - 26 Hiredis Redis Parser: 026-hiredis-redis-parser.md
   - 27 Migrate Psycopg3: 027-migrate-psycopg3.md
   - 28 Auth Caching: 028-auth-caching.md

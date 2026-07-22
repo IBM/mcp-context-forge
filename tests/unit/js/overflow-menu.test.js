@@ -712,6 +712,116 @@ describe("dispatch", () => {
   });
 });
 
+// ─── Regression: x-data access pattern (issue #5155) ─────────────────────────
+//
+// The bug: admin.html used window.Admin?.overflowMenu?.('roots-table-wrapper')
+// as the x-data expression. Since overflowMenu is registered via Alpine.data()
+// (not attached to window.Admin), optional chaining returned undefined and
+// Alpine initialized the component with an empty scope — menuOpen and openMenu
+// were never defined, causing "Undefined variable: openMenu" on click.
+//
+// All other sections (gateways, tools, agents, resources, servers, prompts)
+// use the Alpine-registered name directly: x-data="overflowMenu(...)".
+// These tests confirm that pattern works and the broken one does not.
+
+describe("Regression: x-data access pattern (issue #5155)", () => {
+  afterEach(() => {
+    delete window.Admin;
+  });
+
+  test("overflowMenu is NOT on window.Admin (Alpine.data, not window.Admin)", () => {
+    window.Admin = {};
+    expect(window.Admin.overflowMenu).toBeUndefined();
+  });
+
+  test("window.Admin?.overflowMenu?.() evaluates to undefined (the bug)", () => {
+    window.Admin = {};
+    const result = window.Admin?.overflowMenu?.("roots-table-wrapper");
+    expect(result).toBeUndefined();
+  });
+
+  test("window.Admin?.overflowMenu?.() evaluates to undefined even with null Admin", () => {
+    window.Admin = null;
+    const result = window.Admin?.overflowMenu?.("roots-table-wrapper");
+    expect(result).toBeUndefined();
+  });
+
+  test("window.Admin?.overflowMenu?.() evaluates to undefined when Admin is absent", () => {
+    delete window.Admin;
+    const result = window.Admin?.overflowMenu?.("roots-table-wrapper");
+    expect(result).toBeUndefined();
+  });
+
+  test("overflowMenu('...') called directly returns a valid component with menuOpen/openMenu", () => {
+    const component = overflowMenu("roots-table-wrapper");
+    expect(component).toBeDefined();
+    expect(component.menuOpen).toBe(false);
+    expect(typeof component.openMenu).toBe("function");
+    expect(typeof component.init).toBe("function");
+  });
+
+  test("overflowMenu('...') called directly works when window.Admin is absent (full isolation)", () => {
+    delete window.Admin;
+    const component = overflowMenu("roots-table-wrapper");
+    expect(component).toBeDefined();
+    expect(component.menuOpen).toBe(false);
+    expect(typeof component.openMenu).toBe("function");
+
+    // Simulate a real click flow (as Alpine would)
+    const { menu } = createMenuItems(1);
+    const trigger = document.createElement("button");
+    trigger.getBoundingClientRect = vi.fn(() => ({ bottom: 100, left: 50, top: 80 }));
+    component.$refs = { trigger, menu };
+    component.$watch = vi.fn();
+    component.$nextTick = vi.fn((cb) => cb());
+    component.init();
+
+    component.openMenu();
+    expect(component.menuOpen).toBe(true);
+    expect(component.menuTop).toBe(104);
+  });
+
+  test("overflowMenu('...') returns component with closeMenu and navigate", () => {
+    // These are used in the template markup alongside overflowMenu
+    const component = overflowMenu("roots-table-wrapper");
+    expect(typeof component.closeMenu).toBe("function");
+    expect(typeof component.navigate).toBe("function");
+    expect(typeof component.dispatch).toBe("function");
+    expect(typeof component.destroy).toBe("function");
+  });
+
+  test("BUG REPRODUCTION: inline x-data expression matches broken pattern", () => {
+    // This is what admin.html line 7938 *was* before the fix:
+    //   x-data="window.Admin?.overflowMenu?.('roots-table-wrapper')"
+    // Alpine evaluates that as a JS expression. We confirm the result is
+    // always undefined regardless of window.Admin state.
+    window.Admin = {};
+    const expression1 = window.Admin?.overflowMenu?.("roots-table-wrapper");
+    expect(expression1).toBeUndefined();
+
+    window.Admin = { overflowMenu: undefined };
+    const expression2 = window.Admin?.overflowMenu?.("roots-table-wrapper");
+    expect(expression2).toBeUndefined();
+
+    // With a real function on window.Admin.overflowMenu it would work,
+    // but that's not how overflowMenu is registered.
+  });
+
+  test("BUG REPRODUCTION: undefined x-data scope cannot provide openMenu", () => {
+    // When x-data="window.Admin?.overflowMenu?.('...')" evaluates to undefined,
+    // Alpine initializes the component with an empty/undefined scope.
+    // In that scenario, calling openMenu is impossible because it doesn't exist.
+    const brokenExpression = window.Admin?.overflowMenu?.("roots-table-wrapper");
+    expect(brokenExpression).toBeUndefined();
+
+    // In contrast, the correct pattern returns a component with openMenu.
+    const fixedExpression = overflowMenu("roots-table-wrapper");
+    expect(fixedExpression).toBeDefined();
+    expect(typeof fixedExpression.openMenu).toBe("function");
+    expect(typeof fixedExpression.menuOpen).toBe("boolean");
+  });
+});
+
 // ─── Multi-menu coordination ──────────────────────────────────────────────────
 
 describe("Multi-menu coordination", () => {

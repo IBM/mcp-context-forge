@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/__init__.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 ContextForge - A flexible feature-rich FastAPI-based gateway for the Model Context Protocol (MCP).
 """
@@ -10,7 +9,7 @@ ContextForge - A flexible feature-rich FastAPI-based gateway for the Model Conte
 __author__ = "Mihai Criveti"
 __copyright__ = "Copyright 2025"
 __license__ = "Apache 2.0"
-__version__ = "1.0.4"
+__version__ = "1.0.6"
 __description__ = "IBM Consulting Assistants - Extensions API Library"
 __url__ = "https://ibm.github.io/mcp-context-forge/"
 __download_url__ = "https://github.com/IBM/mcp-context-forge"

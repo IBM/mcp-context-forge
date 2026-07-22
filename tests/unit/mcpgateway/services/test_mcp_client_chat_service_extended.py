@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/services/test_mcp_client_chat_service_extended.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Extended tests to achieve >95% coverage for mcp_client_chat_service module.
 """
@@ -1409,7 +1408,7 @@ def test_gateway_provider_watsonx_chat(monkeypatch):
         config={"project_id": "proj", "min_new_tokens": 5, "decoding_method": "greedy", "top_k": 30, "top_p": 0.8},
     )
     _patch_gateway_session(monkeypatch, model, provider)
-    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})
+    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})  # pragma: allowlist secret
 
     gateway = svc.GatewayProvider(svc.GatewayConfig(model="gpt-4"))
     llm = gateway.get_llm(model_type="chat")

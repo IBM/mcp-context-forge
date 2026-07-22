@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/routers/llmchat_router.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Keval Mahajan
 
 LLM Chat Router Module
 
@@ -37,6 +36,7 @@ except ImportError:
     REDIS_AVAILABLE = False
 
 # First-Party
+from mcpgateway.auth_context import get_user_email
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
@@ -290,7 +290,7 @@ def _get_user_id_from_context(user: Dict[str, Any]) -> str:
         User identifier string or "unknown" if missing.
     """
     if isinstance(user, dict):
-        return user.get("id") or user.get("user_id") or user.get("sub") or user.get("email") or "unknown"
+        return user.get("id") or user.get("user_id") or get_user_email(user)
     return "unknown" if user is None else str(getattr(user, "id", user))
 
 

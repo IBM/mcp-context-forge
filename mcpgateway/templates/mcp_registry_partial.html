@@ -736,4 +736,15 @@ if (!window._catalogRegistrationListenerAttached) {
     }, delayMs);
   });
 }
+
+// Register functions on window.Admin so eventDelegation.js can resolve them
+window.Admin = window.Admin || {};
+window.Admin.refreshCatalog = refreshCatalog;
+window.Admin.filterByCategory = filterByCategory;
+window.Admin.filterByAuthType = filterByAuthType;
+window.Admin.filterByProvider = filterByProvider;
+window.Admin.registerServerWithApiKey = registerServerWithApiKey;
+// showApiKeyModal / closeApiKeyModal are intentionally NOT registered here —
+// they are provided by the bundled modals.js (registered on window.Admin in
+// admin.js) and must not be overridden by the partial's copies (see #5154).
 </script>

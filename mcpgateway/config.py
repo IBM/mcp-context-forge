@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/config.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti, Manav Gupta, Eleni Kechrioti
 
 ContextForge AI Gateway Configuration.
 This module defines configuration settings for ContextForge AI Gateway using Pydantic.
@@ -324,32 +323,6 @@ class Settings(BaseSettings):
         default="http://127.0.0.1:8787",
         description=("Upstream URL the 'public' MCP ingress shape forwards to. Defaults to the loopback address that matches docker-entrypoint.sh's MCP_RUST_PUBLIC_LISTEN_HTTP=0.0.0.0:8787 default."),
     )
-    experimental_rust_a2a_runtime_enabled: bool = Field(
-        default=False,
-        description="Deprecated. Enable the experimental Rust A2A runtime sidecar for registered A2A agent invocations.",
-    )
-    experimental_rust_a2a_runtime_delegate_enabled: bool = Field(
-        default=False,
-        description="Deprecated. Delegate registered A2A agent invocations to the experimental Rust A2A runtime sidecar.",
-    )
-    experimental_rust_a2a_runtime_managed: bool = Field(
-        default=True,
-        description="Deprecated. Whether the gateway should launch and supervise the experimental Rust A2A runtime sidecar locally.",
-    )
-    experimental_rust_a2a_runtime_url: str = Field(
-        default="http://127.0.0.1:8788",
-        description="Deprecated. Base URL for the experimental Rust A2A runtime sidecar.",
-    )
-    experimental_rust_a2a_runtime_uds: Optional[str] = Field(
-        default=None,
-        description="Deprecated. Optional Unix domain socket path for the experimental Rust A2A runtime sidecar.",
-    )
-    experimental_rust_a2a_runtime_timeout_seconds: int = Field(
-        default=30,
-        ge=1,
-        le=300,
-        description="Deprecated. Timeout in seconds for Python-to-Rust A2A runtime proxy requests.",
-    )
 
     # Authentication
     auth_header_name: str = Field(
@@ -466,9 +439,19 @@ class Settings(BaseSettings):
             "/teams/",
             "/llmchat/",
             "/api/logs/",
+            "/_internal/mcp/",  # Exempt: loopback-only, HMAC-gated internal dispatch (affinity/Rust forwards); not browser-reachable
         ],
         description="Paths exempt from CSRF protection",
     )
+
+    @field_validator("csrf_exempt_paths", mode="after")
+    @classmethod
+    def ensure_internal_mcp_csrf_exempt(cls, v: List[str]) -> List[str]:
+        """Keep trusted loopback MCP dispatch CSRF-exempt even with env overrides."""
+        required_path = "/_internal/mcp/"
+        if required_path in v:
+            return v
+        return [*v, required_path]
 
     # JSON Schema Validation for registration (Tool Input Schemas, Prompt schemas, etc)
     json_schema_validation_strict: bool = Field(default=True, description="Strict schema validation mode - reject invalid JSON schemas")
@@ -1056,6 +1039,7 @@ class Settings(BaseSettings):
     personal_team_prefix: str = Field(default="", description="Personal team naming prefix")
     max_teams_per_user: int = Field(default=50, description="Maximum number of teams a user can belong to")
     max_members_per_team: int = Field(default=100, description="Maximum number of members per team")
+    max_team_member_seeds: int = Field(default=500, description="Hard ceiling on how many members can be seeded in a single POST /teams request (validated before any write)")
     invitation_expiry_days: int = Field(default=7, description="Number of days before team invitations expire")
     require_email_verification_for_invites: bool = Field(default=True, description="Require email verification for team invitations")
 
@@ -1169,6 +1153,13 @@ class Settings(BaseSettings):
     mcpgateway_elicitation_enabled: bool = Field(default=True, description="Enable elicitation passthrough support (MCP 2025-06-18)")
     mcpgateway_elicitation_timeout: int = Field(default=60, description="Default timeout for elicitation requests in seconds")
     mcpgateway_elicitation_max_concurrent: int = Field(default=100, description="Maximum concurrent elicitation requests")
+
+    # MCP Apps support (disabled by default)
+    mcpgateway_mcp_apps_enabled: bool = Field(default=False, description="Enable MCP Apps support through capabilities.extensions")
+    mcpgateway_mcp_apps_session_ttl: int = Field(default=900, ge=1, le=86400, description="AppBridge session TTL in seconds")
+    mcpgateway_mcp_apps_session_cleanup_enabled: bool = Field(default=True, description="Enable automatic cleanup of expired AppBridge sessions")
+    mcpgateway_mcp_apps_session_cleanup_interval_seconds: int = Field(default=300, ge=60, le=86400, description="Seconds between expired AppBridge session cleanup runs")
+    mcpgateway_mcp_apps_session_cleanup_batch_size: int = Field(default=1000, ge=1, le=100000, description="Maximum expired AppBridge sessions to delete per cleanup batch")
 
     # Security
     skip_ssl_verify: bool = Field(
@@ -1912,6 +1903,14 @@ class Settings(BaseSettings):
     # Enable span events
     observability_events_enabled: bool = Field(default=True, description="Enable event logging within spans")
 
+    # Plugin metrics consumer (G1: PluginResult.metadata -> observability). Independent
+    # on/off switches so the internal DB sink and the optional OTel export sink can each
+    # be disabled without touching the other (DB growth vs external-collector concerns
+    # are separate operational trade-offs).
+    plugin_metrics_db_spans_enabled: bool = Field(default=True, description="Record plugin metadata as internal observability DB spans (plugin.metrics.<name>)")
+    plugin_metrics_db_numeric_rows_enabled: bool = Field(default=True, description="Additionally record numeric plugin metadata fields as internal ObservabilityMetric rows")
+    plugin_metrics_max_numeric_per_call: int = Field(default=16, ge=0, description="Max numeric ObservabilityMetric rows written per invoke_hook() call, across all plugins")
+
     # Correlation ID Settings
     correlation_id_enabled: bool = Field(default=True, description="Enable automatic correlation ID tracking for requests")
     correlation_id_header: str = Field(default="X-Correlation-ID", description="HTTP header name for correlation ID")
@@ -2542,6 +2541,41 @@ class Settings(BaseSettings):
 
     filelock_name: str = "gateway_service_leader.lock"
 
+    # Override path for the primary-worker election lock file used by
+    # mcpgateway/utils/primary_worker.py. Defaults to a port-scoped file in the
+    # system temp dir when unset.
+    primary_worker_lock_path: Optional[str] = None
+
+    # Primary-worker election backend: "filelock" (one primary per host, default)
+    # or "redis" (one primary across instances sharing a Redis).
+    primary_worker_election_backend: Literal["filelock", "redis"] = "filelock"
+    primary_worker_redis_key: str = "mcpgw:primary_worker"
+    primary_worker_lease_ttl: int = Field(default=15, description="Redis lease TTL (secs) for primary-worker election")
+    primary_worker_heartbeat_interval: int = Field(default=5, description="Seconds between primary-worker lease renewals (should be < lease_ttl/2)")
+    # Redis unreachable: fail_closed (no primary) preserves the global guarantee;
+    # filelock_fallback degrades to per-host.
+    primary_worker_redis_unavailable_policy: Literal["fail_closed", "filelock_fallback"] = "fail_closed"
+
+    @model_validator(mode="after")
+    def validate_primary_worker_timing(self) -> Self:
+        """Warn when the primary-worker heartbeat is too slow to keep the redis lease alive.
+
+        The lease must be renewed at least twice per TTL to tolerate a single missed
+        heartbeat; ``heartbeat_interval >= lease_ttl / 2`` lets the lease expire before
+        renewal, causing continuous primary re-election across instances. Only relevant
+        to the redis backend. Warns (does not raise) to avoid breaking existing configs.
+
+        Returns:
+            Self for chaining.
+        """
+        if self.primary_worker_election_backend == "redis" and self.primary_worker_heartbeat_interval * 2 >= self.primary_worker_lease_ttl:
+            logger.warning(
+                "⚠️  PRIMARY_WORKER_HEARTBEAT_INTERVAL (%ss) should be < PRIMARY_WORKER_LEASE_TTL/2 (%ss); otherwise the redis lease can expire before it is renewed, causing continuous primary re-election.",
+                self.primary_worker_heartbeat_interval,
+                self.primary_worker_lease_ttl,
+            )
+        return self
+
     # Default Roots
     default_roots: List[str] = []
 
@@ -2808,6 +2842,12 @@ class Settings(BaseSettings):
 
     dataplane_publisher: bool = Field(default=False, description="Send data from CF to Rust experimental dataplane")
 
+    dataplane_publisher_interval_seconds: int = Field(
+        default=60,
+        ge=1,
+        description="Seconds between dataplane publisher snapshots to Redis; UserConfig keys expire after two snapshot intervals plus 10 seconds",
+    )
+
     # Well-Known URI Configuration
     # ===================================
 
@@ -2931,7 +2971,7 @@ Disallow: /
             return bool(info.data["well_known_security_txt"].strip())
         return bool(v)
 
-    @field_validator("experimental_rust_mcp_runtime_uds", "experimental_rust_a2a_runtime_uds", mode="after")
+    @field_validator("experimental_rust_mcp_runtime_uds", mode="after")
     @classmethod
     def _validate_experimental_rust_runtime_uds(cls, value: Optional[str], info: ValidationInfo) -> Optional[str]:
         """Validate the optional UDS path used for a Rust sidecar runtime.

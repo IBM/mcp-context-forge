@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/admin.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Admin UI Routes for ContextForge AI Gateway.
 This module contains all the administrative UI endpoints for ContextForge AI Gateway.
@@ -53,7 +52,7 @@ import orjson
 from pydantic import BaseModel, SecretStr, ValidationError
 from pydantic_core import ValidationError as CoreValidationError
 from sqlalchemy import and_, bindparam, case, cast, desc, false, func, or_, select, String, text
-from sqlalchemy.exc import DataError, IntegrityError, InvalidRequestError, OperationalError, SQLAlchemyError
+from sqlalchemy.exc import DataError, IntegrityError, InvalidRequestError, OperationalError
 from sqlalchemy.orm import joinedload, selectinload, Session, with_loader_criteria
 from sqlalchemy.sql.functions import coalesce
 from starlette.background import BackgroundTask
@@ -146,6 +145,7 @@ from mcpgateway.schemas import (
     ToolMetrics,
     ToolRead,
     ToolUpdate,
+    _encode_auth_headers_list,
 )
 from mcpgateway.services.a2a_agent_plugin_binding_service import A2AAgentPluginBindingForbiddenError, A2AAgentPluginBindingNotFoundError, A2AAgentPluginBindingService
 from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService
@@ -153,27 +153,35 @@ from mcpgateway.services.argon2_service import Argon2PasswordService
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.catalog_service import catalog_service
 from mcpgateway.services.content_security import ContentSizeError, ContentTypeError, TemplateValidationError
+from mcpgateway.services.csrf_service import get_csrf_service
 from mcpgateway.services.email_auth_service import AuthenticationError, EmailAuthService, PasswordValidationError
 from mcpgateway.services.encryption_service import get_encryption_service
 from mcpgateway.services.export_service import ExportError, ExportService
-from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayDuplicateConflictError, GatewayLookupConflictError, GatewayNameConflictError, GatewayNotFoundError, GatewayService
+from mcpgateway.services.gateway_service import (
+    GatewayConnectionError,
+    GatewayDuplicateConflictError,
+    GatewayLookupConflictError,
+    GatewayNameConflictError,
+    GatewayNotFoundError,
+    GatewayService,
+    test_gateway_connectivity,
+)
 from mcpgateway.services.import_service import ConflictStrategy
 from mcpgateway.services.import_service import ImportError as ImportServiceError
 from mcpgateway.services.import_service import ImportService, ImportValidationError
 from mcpgateway.services.logging_service import LoggingService
-from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.openapi_service import fetch_and_extract_schemas
-from mcpgateway.services.password_policy_service import PasswordPolicyError, PasswordPolicyService
+from mcpgateway.services.password_policy_service import PasswordPolicyService
 from mcpgateway.services.performance_service import get_performance_service
 from mcpgateway.services.permission_service import PermissionService
 from mcpgateway.services.plugin_service import get_plugin_service
 from mcpgateway.services.prompt_service import PromptArgumentsJSONError, PromptNameConflictError, PromptNotFoundError, PromptService
-from mcpgateway.services.resource_service import ResourceNotFoundError, ResourceService, ResourceURIConflictError
+from mcpgateway.services.resource_service import ResourceNotFoundError, ResourceService, ResourceURIConflictError, ResourceValidationError
 from mcpgateway.services.root_service import RootService, RootServiceError, RootServiceNotFoundError
 from mcpgateway.services.server_service import ServerError, ServerLockConflictError, ServerNameConflictError, ServerNotFoundError, ServerService
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.tag_service import TagService
-from mcpgateway.services.team_management_service import TeamManagementService, UNSET
+from mcpgateway.services.team_management_service import JoinRequestNotFoundError, TeamManagementService, UNSET
 from mcpgateway.services.token_catalog_service import TokenCatalogService
 from mcpgateway.services.tool_service import ToolError, ToolLockConflictError, ToolNameConflictError, ToolNotFoundError, ToolService
 from mcpgateway.utils.create_jwt_token import create_jwt_token, get_jwt_token
@@ -183,11 +191,9 @@ from mcpgateway.utils.orjson_response import ORJSONResponse
 from mcpgateway.utils.pagination import paginate_query
 from mcpgateway.utils.passthrough_headers import PassthroughHeadersError
 from mcpgateway.utils.paths import resolve_root_path as _resolve_root_path
-from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.security_cookies import clear_auth_cookie, CookieTooLargeError, set_auth_cookie
-from mcpgateway.utils.services_auth import decode_auth, encode_auth
+from mcpgateway.utils.services_auth import encode_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
-from mcpgateway.utils.url_auth import sanitize_url_for_logging
 from mcpgateway.utils.validate_signature import sign_data
 from mcpgateway.utils.verify_credentials import verify_jwt_token_cached
 
@@ -405,6 +411,9 @@ UI_HIDE_SECTIONS_COOKIE_MAX_AGE = 30 * 24 * 60 * 60  # 30 days
 # Using a mutable dict to avoid the need for a global statement in the accessor function
 _bundle_js_cache: dict[str, Optional[str]] = {"filename": None}
 
+# Cache for the bundle's CSS asset paths (e.g. Font Awesome, CodeMirror) emitted by Vite
+_bundle_css_cache: dict[str, Optional[list]] = {"files": None}
+
 
 def get_bundle_js_filename() -> str:
     """Get the hashed bundle.js filename from Vite manifest.
@@ -444,6 +453,72 @@ def get_bundle_js_filename() -> str:
 
     LOGGER.error("No bundle-*.js found in %s — admin UI will not load", static_dir)
     return ""
+
+
+def get_bundle_css_files() -> list:
+    """Get the hashed CSS asset paths bundled with the admin entry from the Vite manifest.
+
+    Vite emits CSS pulled in via JS imports (Font Awesome, CodeMirror, etc.) as separate
+    files rather than inlining them into the JS bundle or the HTML automatically, so callers
+    must link them explicitly. CSS for a statically-imported chunk (e.g. the CodeMirror/
+    Font Awesome vendor chunk) is listed under that *chunk's own* manifest entry, not the
+    top-level entry, so the entry's "imports" graph must be walked to collect all of it.
+
+    Falls back to scanning ``assets/*.css`` on disk if the manifest is unreadable or has
+    no CSS for the entry, mirroring :func:`get_bundle_js_filename`'s disk fallback. Since a
+    single build can emit more than one CSS file (e.g. the CodeMirror/Font Awesome vendor
+    chunk plus the entry's own CSS), the fallback keeps every file whose mtime is within a
+    few seconds of the newest one, rather than just the single newest file, so it doesn't
+    pick only half of the current build's assets.
+
+    Returns:
+        list[str]: Paths relative to the static dir (e.g. ['assets/index-abc123.css']),
+            or an empty list if neither the manifest nor the assets directory has any CSS.
+    """
+    static_dir = Path(__file__).parent / "static"
+
+    cached = _bundle_css_cache.get("files")
+    if cached is not None and all((static_dir / f).exists() for f in cached):
+        return cached
+
+    manifest_path = static_dir / ".vite" / "manifest.json"
+    try:
+        if manifest_path.exists():
+            with open(manifest_path, "r", encoding="utf-8") as f:
+                manifest = orjson.loads(f.read())
+                entry_key = "mcpgateway/admin_ui/index.js"
+                if entry_key in manifest:
+                    css_files: list = []
+                    seen_chunks: set = set()
+                    queue = [entry_key]
+                    while queue:
+                        chunk_key = queue.pop()
+                        if chunk_key in seen_chunks or chunk_key not in manifest:
+                            continue
+                        seen_chunks.add(chunk_key)
+                        chunk = manifest[chunk_key]
+                        for css_path in chunk.get("css") or []:
+                            if css_path not in css_files:
+                                css_files.append(css_path)
+                        queue.extend(chunk.get("imports") or [])
+                    if css_files:
+                        _bundle_css_cache["files"] = css_files
+                        return css_files
+    except Exception as e:
+        LOGGER.warning(f"Failed to read Vite manifest for CSS assets: {e}")
+
+    # Manifest unreadable, missing, or missing the entry — find CSS assets directly on disk.
+    assets_dir = static_dir / "assets"
+    if assets_dir.exists():
+        css_paths = sorted(assets_dir.glob("*.css"), key=lambda p: p.stat().st_mtime, reverse=True)
+        if css_paths:
+            newest_mtime = css_paths[0].stat().st_mtime
+            recent_paths = [p for p in css_paths if newest_mtime - p.stat().st_mtime < 5]
+            css_files = [f"assets/{p.name}" for p in recent_paths]
+            _bundle_css_cache["files"] = css_files
+            return css_files
+
+    return []
 
 
 def _normalize_ui_hide_values(raw: Any, valid_values: frozenset[str], aliases: Optional[Dict[str, str]] = None) -> set[str]:
@@ -622,13 +697,23 @@ async def get_hidden_sections_for_user(
                     check_any_team=True,
                 )
             except Exception as e:
-                LOGGER.warning(f"Error checking permission {required_permission} for user {user_email}: {e}")
+                LOGGER.warning(
+                    "Error checking permission %s for user %s: %s",
+                    SecurityValidator.sanitize_log_message(required_permission),
+                    SecurityValidator.sanitize_log_message(user_email),
+                    SecurityValidator.sanitize_log_message(str(e)),
+                )
                 has_permission = False
 
         # Hide section if user doesn't have permission
         if not has_permission:
             hidden.add(section)
-            LOGGER.debug(f"Hiding section '{section}' for user {user_email}: missing permission '{required_permission}'")
+            LOGGER.debug(
+                "Hiding section '%s' for user %s: missing permission '%s'",
+                SecurityValidator.sanitize_log_message(section),
+                SecurityValidator.sanitize_log_message(user_email),
+                SecurityValidator.sanitize_log_message(required_permission),
+            )
 
     return hidden
 
@@ -701,7 +786,7 @@ async def get_user_action_permissions(
             result[flag] = has_permission
         except Exception as e:
             # Fail-closed: deny permission on error
-            LOGGER.warning(f"Error checking {permission} for {user_email}: {e}")
+            LOGGER.warning("Error checking %s for %s: %s", SecurityValidator.sanitize_log_message(permission), SecurityValidator.sanitize_log_message(user_email), e)
             result[flag] = False
 
     return result
@@ -1451,7 +1536,7 @@ def get_user_id(user: Union[str, dict[str, Any], object] = None) -> str:
     if isinstance(user, dict):
         # Try multiple possible ID fields in order of preference.
         # Email is the primary key in the model, so that's our mostly likely result.
-        return user.get("id") or user.get("user_id") or user.get("sub") or user.get("email") or "unknown"
+        return user.get("id") or user.get("user_id") or get_user_email(user)
 
     return "unknown" if user is None else str(getattr(user, "id", user))
 
@@ -1538,6 +1623,9 @@ def validate_password_strength(password: str, email: str = "", is_admin: bool = 
     # If password policy is disabled, skip all validation
     if not getattr(settings, "password_policy_enabled", True):
         return True, ""
+
+    # First-Party
+    from mcpgateway.services.password_policy_service import PasswordPolicyError
 
     with SessionLocal() as db:
         policy = PasswordPolicyService(db)
@@ -1655,18 +1743,23 @@ def _request_origin_matches(request: Request) -> bool:
     return False
 
 
-def _set_admin_csrf_cookie(request: Request, response: Response) -> str:
+def _set_admin_csrf_cookie(request: Request, response: Response, *, user_id: str | None = None, session_id: str | None = None) -> str:
     """Set or refresh admin CSRF cookie and return token value.
 
     Args:
         request: Incoming request used for existing token and path scoping.
         response: Outgoing response where the cookie will be written.
+        user_id: Optional authenticated user binding for HMAC CSRF tokens.
+        session_id: Optional JWT session binding for HMAC CSRF tokens.
 
     Returns:
         CSRF token value stored in the response cookie.
     """
-    existing_token = request.cookies.get(ADMIN_CSRF_COOKIE_NAME)
-    csrf_token = existing_token if isinstance(existing_token, str) and len(existing_token) >= 32 else secrets.token_urlsafe(32)
+    if user_id and session_id:
+        csrf_token = get_csrf_service().generate_csrf_token(user_id=user_id, session_id=session_id)
+    else:
+        existing_token = request.cookies.get(ADMIN_CSRF_COOKIE_NAME)
+        csrf_token = existing_token if isinstance(existing_token, str) and len(existing_token) >= 32 else secrets.token_urlsafe(32)
 
     use_secure = (settings.environment == "production") or settings.secure_cookies
     max_age = max(300, int(getattr(settings, "token_expiry", 60)) * 60)
@@ -2824,7 +2917,7 @@ async def admin_servers_partial_html(
             LOGGER.debug(f"Filtering servers by team_id: {team_id}")
         else:
             # User is not a member of this team, return no results using SQLAlchemy's false()
-            LOGGER.warning(f"User {user_email} attempted to filter by team {team_id} but is not a member")
+            LOGGER.warning("User %s attempted to filter by team %s but is not a member", SecurityValidator.sanitize_log_message(user_email), SecurityValidator.sanitize_log_message(str(team_id)))
             query = query.where(false())
     else:
         # All Teams view: apply standard access conditions (owner, team, public)
@@ -2977,7 +3070,7 @@ async def admin_get_server(server_id: str, request: Request, db: Session = Depen
     except ServerNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
-        LOGGER.error(f"Error getting server {server_id}: {e}")
+        LOGGER.error("Error getting server %s: %s", SecurityValidator.sanitize_log_message(str(server_id)), e)
         raise e
 
 
@@ -3278,7 +3371,7 @@ async def admin_edit_server(
     except IntegrityError as ex:
         return ORJSONResponse(content=ErrorFormatter.format_database_error(ex), status_code=409)
     except PermissionError as e:
-        LOGGER.info(f"Permission denied for user {get_user_email(user)}: {e}")
+        LOGGER.info("Permission denied for user %s: %s", SecurityValidator.sanitize_log_message(get_user_email(user)), e)
         return ORJSONResponse(content={"message": str(e), "success": False}, status_code=403)
     except HTTPException:
         raise
@@ -3328,10 +3421,10 @@ async def admin_set_server_state(
     try:
         await server_service.set_server_state(db, server_id, activate, user_email=user_email)
     except PermissionError as e:
-        LOGGER.warning(f"Permission denied for user {user_email} setting server {server_id} state: {e}")
+        LOGGER.warning("Permission denied for user %s setting server %s state: %s", SecurityValidator.sanitize_log_message(user_email), SecurityValidator.sanitize_log_message(server_id), e)
         error_message = str(e)
     except ServerLockConflictError as e:
-        LOGGER.warning(f"Lock conflict for user {user_email} setting server {server_id} state: {e}")
+        LOGGER.warning("Lock conflict for user %s setting server %s state: %s", SecurityValidator.sanitize_log_message(user_email), SecurityValidator.sanitize_log_message(server_id), e)
         error_message = "Server is being modified by another request. Please try again."
     except Exception as e:
         LOGGER.error(f"Error setting server status: {e}")
@@ -3377,7 +3470,7 @@ async def admin_delete_server(server_id: str, request: Request, db: Session = De
         LOGGER.debug(f"User {user_email} is deleting server ID {server_id}")
         await server_service.delete_server(db, server_id, user_email=user_email, purge_metrics=purge_metrics)
     except PermissionError as e:
-        LOGGER.warning(f"Permission denied for user {get_user_email(user)} deleting server {server_id}: {e}")
+        LOGGER.warning("Permission denied for user %s deleting server %s: %s", SecurityValidator.sanitize_log_message(get_user_email(user)), SecurityValidator.sanitize_log_message(server_id), e)
         error_message = str(e)
     except Exception as e:
         LOGGER.error(f"Error deleting server: {e}")
@@ -3601,7 +3694,7 @@ async def admin_set_gateway_state(
     try:
         await gateway_service.set_gateway_state(db, gateway_id, activate, user_email=user_email)
     except PermissionError as e:
-        LOGGER.warning(f"Permission denied for user {user_email} setting gateway state {gateway_id}: {e}")
+        LOGGER.warning("Permission denied for user %s setting gateway state %s: %s", SecurityValidator.sanitize_log_message(user_email), SecurityValidator.sanitize_log_message(gateway_id), e)
         error_message = str(e)
     except Exception as e:
         LOGGER.error(f"Error setting gateway state: {e}")
@@ -4103,6 +4196,7 @@ async def admin_ui(
             "include_inactive": include_inactive,
             "root_path": root_path,
             "bundle_js": get_bundle_js_filename(),
+            "bundle_css": get_bundle_css_files(),
             "max_name_length": max_name_length,
             "gateway_tool_name_separator": settings.gateway_tool_name_separator,
             "bulk_import_max_tools": settings.mcpgateway_bulk_import_max_tools,
@@ -4137,74 +4231,99 @@ async def admin_ui(
         },
     )
 
-    # Set JWT token cookie for HTMX requests if email auth is enabled
-    if getattr(settings, "email_auth_enabled", False):
-        try:
-            # JWT library is imported at top level as jwt
+    csrf_user_id: str | None = None
+    csrf_session_id: str | None = None
+    try:
+        # Determine the admin user email
+        admin_email = get_user_email(user)
+        is_admin_flag = bool(user.get("is_admin") if isinstance(user, dict) else True)
+        full_name = getattr(settings, "platform_admin_full_name", "Platform User")
+        if isinstance(user, dict):
+            full_name = user.get("full_name") or full_name
+        else:
+            full_name = getattr(user, "full_name", full_name) or full_name
 
-            # Determine the admin user email
-            admin_email = get_user_email(user)
-            is_admin_flag = bool(user.get("is_admin") if isinstance(user, dict) else True)
-            full_name = getattr(settings, "platform_admin_full_name", "Platform User")
-            if isinstance(user, dict):
-                full_name = user.get("full_name") or full_name
-            else:
-                full_name = getattr(user, "full_name", full_name) or full_name
+        # Preserve auth provider across admin UI token refreshes so logout behavior
+        # can reliably detect SSO sessions (e.g., Keycloak) later.
+        auth_provider = "local"
+        if isinstance(user, dict):
+            provider_from_user = user.get("auth_provider")
+            if isinstance(provider_from_user, str) and provider_from_user.strip():
+                auth_provider = provider_from_user.strip()
+        else:
+            provider_from_user = getattr(user, "auth_provider", None)
+            if isinstance(provider_from_user, str) and provider_from_user.strip():
+                auth_provider = provider_from_user.strip()
 
-            # Preserve auth provider across admin UI token refreshes so logout behavior
-            # can reliably detect SSO sessions (e.g., Keycloak) later.
-            auth_provider = "local"
-            if isinstance(user, dict):
-                provider_from_user = user.get("auth_provider")
-                if isinstance(provider_from_user, str) and provider_from_user.strip():
-                    auth_provider = provider_from_user.strip()
-            else:
-                provider_from_user = getattr(user, "auth_provider", None)
-                if isinstance(provider_from_user, str) and provider_from_user.strip():
-                    auth_provider = provider_from_user.strip()
+        # get_current_user_with_permissions may not include auth_provider in its dict.
+        # Fall back to the current jwt_token cookie payload before refreshing it,
+        # but only reuse cookie metadata after confirming it matches this user.
+        existing_payload: dict[str, Any] | None = None
+        jwt_cookie = request.cookies.get("jwt_token")
+        if isinstance(jwt_cookie, str) and jwt_cookie:
+            try:
+                existing_payload = await verify_jwt_token_cached(jwt_cookie, request)
+            except Exception as provider_error:  # nosec B110 - best-effort provider preservation
+                LOGGER.warning("Could not verify existing JWT cookie for admin session refresh: %s", provider_error)
+                if settings.sso_keycloak_enabled:
+                    auth_provider = "keycloak"
 
-            # get_current_user_with_permissions may not include auth_provider in its dict.
-            # Fall back to the current jwt_token cookie payload before refreshing it.
-            if auth_provider == "local":
-                jwt_cookie = request.cookies.get("jwt_token")
-                if isinstance(jwt_cookie, str) and jwt_cookie:
-                    try:
-                        existing_payload = await verify_jwt_token_cached(jwt_cookie, request)
-                        existing_user = existing_payload.get("user")
-                        provider_from_token = existing_user.get("auth_provider") if isinstance(existing_user, dict) else None
-                        if not provider_from_token:
-                            provider_from_token = existing_payload.get("auth_provider")
-                        if isinstance(provider_from_token, str) and provider_from_token.strip():
-                            auth_provider = provider_from_token.strip()
-                    except Exception as provider_error:  # nosec B110 - best-effort provider preservation
-                        LOGGER.warning("Could not resolve auth_provider from existing JWT cookie; SSO logout may not function correctly: %s", provider_error)
-                        if settings.sso_keycloak_enabled:
-                            auth_provider = "keycloak"
+        # Generate a lightweight session JWT token for browser admin calls in every auth mode.
+        email_user = db.query(EmailUser).filter(EmailUser.email == admin_email).first()
+        sub_claim = str(email_user.id) if email_user else admin_email
+        existing_token_teams: list[str] | None = None
+        if isinstance(existing_payload, dict):
+            existing_user = existing_payload.get("user")
+            provider_from_token = existing_user.get("auth_provider") if isinstance(existing_user, dict) else None
+            if not provider_from_token:
+                provider_from_token = existing_payload.get("auth_provider")
+            if auth_provider == "local" and isinstance(provider_from_token, str) and provider_from_token.strip():
+                auth_provider = provider_from_token.strip()
 
-            # Generate a lightweight session JWT token
-            email_user = db.query(EmailUser).filter(EmailUser.email == admin_email).first()
-            sub_claim = str(email_user.id) if email_user else admin_email
-            now = datetime.now(timezone.utc)
-            payload = {
-                "sub": sub_claim,
-                "iss": settings.jwt_issuer,
-                "aud": settings.jwt_audience,
-                "iat": int(now.timestamp()),
-                "exp": int((now + timedelta(minutes=settings.token_expiry)).timestamp()),
-                "jti": str(uuid.uuid4()),
-                "auth_provider": auth_provider,
-                "token_use": "session",  # nosec B105 - token type marker, not a password
-                "scopes": {"server_id": None, "permissions": ["*"] if is_admin_flag else [], "ip_restrictions": [], "time_restrictions": {}},
-            }
+            existing_email = existing_payload.get("email")
+            if not existing_email and isinstance(existing_user, dict):
+                existing_email = existing_user.get("email")
+            existing_sub = existing_payload.get("sub")
+            cookie_matches_user = existing_email == admin_email or (isinstance(existing_sub, str) and existing_sub in {admin_email, sub_claim})
 
-            # Generate token using centralized token creation
-            token = await create_jwt_token(payload)
+            if cookie_matches_user:
+                raw_existing_teams = existing_payload.get("teams")
+                if isinstance(raw_existing_teams, list) and raw_existing_teams:
+                    copied_teams: list[str] = []
+                    for raw_team in raw_existing_teams:
+                        if isinstance(raw_team, str) and raw_team:
+                            copied_teams.append(raw_team)
+                        elif isinstance(raw_team, dict) and raw_team.get("id"):
+                            copied_teams.append(str(raw_team["id"]))
+                    if copied_teams:
+                        existing_token_teams = copied_teams
 
-            # Set HTTP-only cookie using centralized security cookie utility
-            set_auth_cookie(response, token, remember_me=False)
-            LOGGER.debug(f"Set session JWT token cookie for user: {admin_email}")
-        except Exception as e:
-            LOGGER.warning(f"Failed to set JWT token cookie for user {user}: {e}")
+        now = datetime.now(timezone.utc)
+        payload = {
+            "sub": sub_claim,
+            "iss": settings.jwt_issuer,
+            "aud": settings.jwt_audience,
+            "iat": int(now.timestamp()),
+            "exp": int((now + timedelta(minutes=settings.token_expiry)).timestamp()),
+            "jti": str(uuid.uuid4()),
+            "auth_provider": auth_provider,
+            "token_use": "session",  # nosec B105 - token type marker, not a password
+            "scopes": {"server_id": None, "permissions": ["*"] if is_admin_flag else [], "ip_restrictions": [], "time_restrictions": {}},
+        }
+        if existing_token_teams:
+            payload["teams"] = existing_token_teams
+
+        # Generate token using centralized token creation
+        token = await create_jwt_token(payload)
+
+        # Set HTTP-only cookie using centralized security cookie utility
+        set_auth_cookie(response, token, remember_me=False)
+        csrf_user_id = str(payload["sub"])
+        csrf_session_id = str(payload["jti"])
+        LOGGER.debug(f"Set session JWT token cookie for user: {admin_email}")
+    except Exception as e:
+        LOGGER.exception("Failed to initialize admin browser session for user %s", get_user_email(user))
+        raise HTTPException(status_code=500, detail="Unable to initialize admin session") from e
 
     cookie_action = ui_visibility_config.get("cookie_action")
     if cookie_action:
@@ -4231,7 +4350,7 @@ async def admin_ui(
                 samesite=samesite,
             )
 
-    _set_admin_csrf_cookie(request, response)
+    _set_admin_csrf_cookie(request, response, user_id=csrf_user_id, session_id=csrf_session_id)
     return response
 
 
@@ -4331,6 +4450,7 @@ async def admin_login_page(request: Request) -> Response:
             "prefill_email": prefill_email,
             "password_reset_enabled": getattr(settings, "password_reset_enabled", True),
             "sri_hashes": load_sri_hashes(),
+            "bundle_css": get_bundle_css_files(),
         },
     )
 
@@ -5008,6 +5128,7 @@ async def change_password_required_page(request: Request) -> HTMLResponse:
             "password_policy_enabled": getattr(settings, "password_policy_enabled", True),
             "password_requirements": password_requirements,
             "sri_hashes": load_sri_hashes(),
+            "bundle_css": get_bundle_css_files(),
         },
     )
     _set_admin_csrf_cookie(request, response)
@@ -5470,9 +5591,17 @@ async def admin_search_teams(
         # Non-admin search
         # Reuse user team fetching
         all_teams = await team_service.get_user_teams(user_email, include_personal=True)
+        # Narrow to the caller's normalized token scope (Layer 1). get_user_teams
+        # returns every membership and ignores token scope, so a token narrowed to
+        # a team subset would otherwise leak sibling teams the caller belongs to but
+        # is scoped out of. _get_user_team_ids honors token_teams/_cached_team_ids;
+        # the caller's own personal team stays visible (owner is always visible).
+        scoped_team_ids = set(await _get_user_team_ids(user, db))
         # Filter in memory
         filtered = []
         for t in all_teams:
+            if not getattr(t, "is_personal", False) and t.id not in scoped_team_ids:
+                continue
             if not include_inactive and not t.is_active:
                 continue
             if visibility and t.visibility != visibility:
@@ -7287,9 +7416,7 @@ async def admin_approve_join_request(
             return HTMLResponse(content='<div class="text-red-500">Only team owners can approve join requests</div>', status_code=403)
 
         # Approve join request
-        member = await team_service.approve_join_request(request_id, approved_by=user_email)
-        if not member:
-            return HTMLResponse(content='<div class="text-red-500">Join request not found</div>', status_code=404)
+        member = await team_service.approve_join_request(team_id, request_id, approved_by=user_email)
 
         response = HTMLResponse(
             content=f"""
@@ -7302,6 +7429,10 @@ async def admin_approve_join_request(
         response.headers["HX-Trigger"] = orjson.dumps({"adminTeamAction": {"teamId": team_id, "refreshJoinRequests": True, "delayMs": 1000}}).decode()
         return response
 
+    except JoinRequestNotFoundError as e:
+        return HTMLResponse(content=f'<div class="text-red-500">{html.escape(str(e))}</div>', status_code=404)
+    except ValueError as e:
+        return HTMLResponse(content=f'<div class="text-red-500">Error approving join request: {html.escape(str(e))}</div>', status_code=400)
     except Exception as e:
         LOGGER.error(f"Error approving join request {request_id}: {e}")
         return HTMLResponse(content=f'<div class="text-red-500">Error approving join request: {html.escape(str(e))}</div>', status_code=400)
@@ -7339,9 +7470,7 @@ async def admin_reject_join_request(
             return HTMLResponse(content='<div class="text-red-500">Only team owners can reject join requests</div>', status_code=403)
 
         # Reject join request
-        success = await team_service.reject_join_request(request_id, rejected_by=user_email)
-        if not success:
-            return HTMLResponse(content='<div class="text-red-500">Join request not found</div>', status_code=404)
+        await team_service.reject_join_request(team_id, request_id, rejected_by=user_email)
 
         response = HTMLResponse(
             content="""
@@ -7354,6 +7483,10 @@ async def admin_reject_join_request(
         response.headers["HX-Trigger"] = orjson.dumps({"adminTeamAction": {"teamId": team_id, "refreshJoinRequests": True, "delayMs": 1000}}).decode()
         return response
 
+    except JoinRequestNotFoundError as e:
+        return HTMLResponse(content=f'<div class="text-red-500">{html.escape(str(e))}</div>', status_code=404)
+    except ValueError as e:
+        return HTMLResponse(content=f'<div class="text-red-500">Error rejecting join request: {html.escape(str(e))}</div>', status_code=400)
     except Exception as e:
         LOGGER.error(f"Error rejecting join request {request_id}: {e}")
         return HTMLResponse(content=f'<div class="text-red-500">Error rejecting join request: {html.escape(str(e))}</div>', status_code=400)
@@ -11339,26 +11472,25 @@ async def admin_search_a2a_agents(
     return _build_search_response(entity_key="agents", entity_type="agents", items=agents, query=search_query, tags=normalized_tags, tag_groups=tag_groups)
 
 
-@admin_router.get("/search", response_class=JSONResponse)
-@require_permission("admin.dashboard", allow_admin_bypass=False)
-async def admin_unified_search(
-    q: str = Query("", max_length=500, description="Search query"),
-    tags: QueryTagsFilter = None,
-    entity_types: QueryEntityTypes = None,
-    include_inactive: bool = False,
-    limit: int = Query(8, ge=1, le=settings.pagination_max_page_size, description="Per-entity result limit"),
-    limit_per_type: Optional[int] = Query(
-        None,
-        ge=1,
-        le=settings.pagination_max_page_size,
-        description="Optional alias for per-entity result limit",
-    ),
-    gateway_id: QueryGatewayIdList = None,
-    team_id: Optional[str] = Depends(_validated_team_id_param),
-    db: Session = Depends(get_db),
-    user=Depends(get_current_user_with_permissions),
-):
-    """Unified search across primary admin entities.
+async def perform_unified_search(
+    *,
+    q: str,
+    tags: Optional[str],
+    entity_types: Optional[str],
+    include_inactive: bool,
+    limit: int,
+    limit_per_type: Optional[int],
+    gateway_id: Optional[str],
+    team_id: Optional[str],
+    db: Session,
+    user: Any,
+) -> dict[str, Any]:
+    """Unified search across primary entities (shared, permission-agnostic core).
+
+    Single source of truth for unified search. Performs no top-level permission
+    check — callers own the outer gate (``admin.dashboard`` for the admin route,
+    auth-only for ``/v1/search``). Per-entity RBAC and token scoping are still
+    enforced inside each ``admin_search_*`` call.
 
     Searches servers, gateways, tools, resources, prompts, agents, teams, roots,
     and optionally users (when the caller has ``admin.user_management`` permission).
@@ -11614,6 +11746,61 @@ async def admin_unified_search(
     }
 
 
+@admin_router.get("/search", response_class=JSONResponse)
+@require_permission("admin.dashboard", allow_admin_bypass=False)
+async def admin_unified_search(
+    q: str = Query("", max_length=500, description="Search query"),
+    tags: QueryTagsFilter = None,
+    entity_types: QueryEntityTypes = None,
+    include_inactive: bool = False,
+    limit: int = Query(8, ge=1, le=settings.pagination_max_page_size, description="Per-entity result limit"),
+    limit_per_type: Optional[int] = Query(
+        None,
+        ge=1,
+        le=settings.pagination_max_page_size,
+        description="Optional alias for per-entity result limit",
+    ),
+    gateway_id: QueryGatewayIdList = None,
+    team_id: Optional[str] = Depends(_validated_team_id_param),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+):
+    """Unified search across primary admin entities (admin-gated wrapper).
+
+    Thin wrapper that enforces the ``admin.dashboard`` permission and delegates
+    to :func:`perform_unified_search`.
+
+    Args:
+        q (str): Free-text search query.
+        tags (Optional[str]): Tag filter expression (comma=OR, plus=AND).
+        entity_types (Optional[str]): Optional comma-separated entity type list.
+            Supported values: servers, gateways, tools, resources, prompts,
+            agents, teams, users, roots.
+        include_inactive (bool): Whether to include inactive entities.
+        limit (int): Default per-entity limit for returned items.
+        limit_per_type (Optional[int]): Optional alias overriding ``limit``.
+        gateway_id (Optional[str]): Gateway filter for tools/resources/prompts.
+        team_id (Optional[str]): Team scope filter.
+        db (Session): Database session.
+        user: Authenticated user context.
+
+    Returns:
+        dict[str, Any]: Grouped and flattened search results with metadata.
+    """
+    return await perform_unified_search(
+        q=q,
+        tags=tags,
+        entity_types=entity_types,
+        include_inactive=include_inactive,
+        limit=limit,
+        limit_per_type=limit_per_type,
+        gateway_id=gateway_id,
+        team_id=team_id,
+        db=db,
+        user=user,
+    )
+
+
 @admin_router.get("/tools/{tool_id}", response_model=ToolRead)
 @require_permission("tools.read", allow_admin_bypass=False)
 async def admin_get_tool(tool_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
@@ -11669,19 +11856,33 @@ async def admin_get_tool(tool_id: str, request: Request, db: Session = Depends(g
 def _build_auth_obj_from_form(form: Any) -> Optional[dict[str, Any]]:
     """Parse auth fields from a form and return a serialized auth object, or None.
 
+    Custom headers are validated by the same ``_encode_auth_headers_list`` helper the JSON
+    tool/gateway schemas use, so malformed header keys and oversized header sets are rejected
+    here with a 422 instead of being persisted and failing later at tool-invocation time.
+    Rows with a blank key are dropped first: the admin form submits empty rows for headers the
+    user never filled in, and those must keep meaning "no headers" rather than 422.
+
     Args:
         form: Multipart form data containing auth_type and credential fields.
 
     Returns:
         A dict with auth_type and encrypted auth_value, or None if no valid auth provided.
+
+    Raises:
+        HTTPException: 422 if auth_type is 'oauth' (unsupported on tools) or if the supplied
+            custom headers fail validation.
     """
     auth_headers_json = form.get("auth_headers") or ""
     auth_headers: list[dict[str, Any]] = []
     if auth_headers_json:
         try:
-            auth_headers = orjson.loads(auth_headers_json)
+            parsed_headers = orjson.loads(auth_headers_json)
         except (orjson.JSONDecodeError, ValueError):
-            auth_headers = []
+            parsed_headers = []
+        # orjson.loads accepts any JSON scalar (e.g. "5", "null", "true"), so guard against a
+        # non-list value here rather than letting it reach the list comprehension below and raise
+        # an uncaught TypeError (500). A non-list body simply means "no custom headers".
+        auth_headers = parsed_headers if isinstance(parsed_headers, list) else []
 
     auth_type = form.get("auth_type", "")
     if auth_type and auth_type.lower() == "oauth":
@@ -11701,12 +11902,14 @@ def _build_auth_obj_from_form(form: Any) -> Optional[dict[str, Any]]:
                 auth_value = encode_auth({"Authorization": f"Bearer {token}"})
                 auth_obj = {"auth_type": auth_type, "auth_value": auth_value}
         elif auth_type == "authheaders":
-            if auth_headers:
-                header_dict = {h.get("key"): h.get("value", "") for h in auth_headers if h.get("key")}
-                if header_dict:
-                    auth_value = encode_auth(header_dict)
-                    auth_obj = {"auth_type": auth_type, "auth_value": auth_value}
-            else:
+            populated_headers = [h for h in auth_headers if isinstance(h, dict) and h.get("key")]
+            if populated_headers:
+                try:
+                    auth_value = _encode_auth_headers_list(populated_headers)
+                except ValueError as exc:
+                    raise HTTPException(status_code=422, detail=str(exc)) from exc
+                auth_obj = {"auth_type": auth_type, "auth_value": auth_value}
+            elif not auth_headers:
                 header_key = form.get("auth_header_key", "")
                 header_value = form.get("auth_header_value", "")
                 if header_key and header_value:
@@ -12547,6 +12750,8 @@ async def admin_add_gateway(
             content["gateway"] = gateway_payload
         return ORJSONResponse(content=content, status_code=202 if is_pending else 200)
 
+    except PermissionError as ex:
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=403)
     except GatewayConnectionError as ex:
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=502)
     except GatewayDuplicateConflictError as ex:
@@ -12747,7 +12952,7 @@ async def admin_delete_gateway_rest(
             )
         return Response(status_code=204)
     except PermissionError as e:
-        LOGGER.warning(f"Permission denied for user {user_email} deleting gateway {gateway_id}: {e}")
+        LOGGER.warning("Permission denied for user %s deleting gateway %s: %s", SecurityValidator.sanitize_log_message(user_email), SecurityValidator.sanitize_log_message(gateway_id), e)
         return ORJSONResponse(content={"message": str(e), "success": False}, status_code=403)
     except GatewayNotFoundError as e:
         return ORJSONResponse(content={"message": str(e), "success": False}, status_code=404)
@@ -13019,7 +13224,7 @@ async def admin_delete_gateway(gateway_id: str, request: Request, db: Session = 
         if getattr(result, "status", None) == "deleting":
             accepted_message = "Gateway deletion accepted and pending cleanup."
     except PermissionError as e:
-        LOGGER.warning(f"Permission denied for user {user_email} deleting gateway {gateway_id}: {e}")
+        LOGGER.warning("Permission denied for user %s deleting gateway %s: %s", SecurityValidator.sanitize_log_message(user_email), SecurityValidator.sanitize_log_message(gateway_id), e)
         error_message = str(e)
     except Exception as e:
         LOGGER.error(f"Error deleting gateway: {e}")
@@ -13237,6 +13442,9 @@ async def admin_add_resource(request: Request, db: Session = Depends(get_db), us
             error_message = ErrorFormatter.format_database_error(ex)
             LOGGER.error(f"IntegrityError in admin_add_resource: {error_message}")
             return ORJSONResponse(status_code=409, content=error_message)
+        if isinstance(ex, ResourceValidationError):
+            LOGGER.error(f"ResourceValidationError in admin_add_resource: {ex}")
+            return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=422)
         if isinstance(ex, ResourceURIConflictError):
             LOGGER.error(f"ResourceURIConflictError in admin_add_resource: {ex}")
             return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=409)
@@ -13366,6 +13574,9 @@ async def admin_edit_resource(
             error_message = ErrorFormatter.format_database_error(ex)
             LOGGER.error(f"IntegrityError in admin_edit_resource: {error_message}")
             return ORJSONResponse(status_code=409, content=error_message)
+        if isinstance(ex, ResourceValidationError):
+            LOGGER.error(f"ResourceValidationError in admin_edit_resource: {ex}")
+            return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=422)
         if isinstance(ex, ResourceURIConflictError):
             LOGGER.error(f"ResourceURIConflictError in admin_edit_resource: {ex}")
             return ORJSONResponse(status_code=409, content={"message": str(ex), "success": False})
@@ -14391,224 +14602,14 @@ async def admin_test_gateway(
         >>> admin_test_gateway.__name__
         'admin_test_gateway'
     """
-    start_time: float = time.monotonic()
-
-    # Build allowlist for gateway test endpoint
-    allowed_hosts_set: set[str] = set()
-
-    if settings.gateway_test_allow_registered_only:
-        # Mode 1: Only allow testing registered gateway URLs
-        # Query all enabled gateways to build allowlist from their base URLs
-        try:
-            query = select(DbGateway.url).where(DbGateway.enabled)
-            if team_id:
-                query = query.where(DbGateway.team_id == team_id)
-            registered_urls = db.execute(query).scalars().all()
-
-            # Extract hostnames from registered gateway URLs
-            for url in registered_urls:
-                try:
-                    parsed = urllib.parse.urlparse(url)
-                    if parsed.hostname:
-                        # Normalize: lowercase and strip trailing dots
-                        hostname = parsed.hostname.lower().rstrip(".")
-                        allowed_hosts_set.add(hostname)
-                except (ValueError, AttributeError) as e:
-                    # Log parse failures to help debug "URL not in allowlist" mysteries
-                    LOGGER.debug("Failed to parse registered gateway URL '%s': %s", url, e)
-                    continue
-        except SQLAlchemyError as e:
-            LOGGER.warning("Failed to build allowlist from registered gateways: %s", e)
-    else:
-        # Mode 2: Use configured host patterns from settings
-        allowed_hosts_set = set(settings.gateway_test_allowed_hosts)
-
-    allowed_hosts = list(allowed_hosts_set)
-
-    # Validate URL with allowlist enforcement and pin a safe resolved IP to close
-    # the DNS rebinding gap between validation-time and connection-time resolution.
-    try:
-        validated_gateway_target = await SecurityValidator.validate_gateway_test_url(str(request.base_url), allowed_hosts, "Gateway test URL")
-    except ValueError as e:
-        # Log the actual error for security monitoring, but return generic message
-        safe_url = sanitize_url_for_logging(str(request.base_url))
-        LOGGER.warning(
-            "Gateway test URL validation failed for %s by user %s: %s",
-            safe_url,
-            get_user_email(user),
-            str(e),
-        )
-        latency_ms = int((time.monotonic() - start_time) * 1000)
-        # Generic error message - don't expose allowlist or validation details
-        return GatewayTestResponse(status_code=400, latency_ms=latency_ms, body={"error": "Invalid gateway URL"})
-
-    validated_base_url = validated_gateway_target["validated_url"]
-    validated_hostname = validated_gateway_target["hostname"]
-    pinned_resolved_ip = validated_gateway_target["resolved_ip"]
-
-    parsed_validated_base_url = urllib.parse.urlparse(validated_base_url)
-    pinned_ip_is_ipv6 = ":" in pinned_resolved_ip
-    if parsed_validated_base_url.port is not None:
-        pinned_netloc = f"[{pinned_resolved_ip}]:{parsed_validated_base_url.port}" if pinned_ip_is_ipv6 else f"{pinned_resolved_ip}:{parsed_validated_base_url.port}"
-        original_authority = f"{validated_hostname}:{parsed_validated_base_url.port}"
-    else:
-        pinned_netloc = f"[{pinned_resolved_ip}]" if pinned_ip_is_ipv6 else pinned_resolved_ip
-        original_authority = validated_hostname
-
-    pinned_base_url = urllib.parse.urlunparse(parsed_validated_base_url._replace(netloc=pinned_netloc))
-    full_url = pinned_base_url.rstrip("/") + "/" + request.path.lstrip("/")
-    full_url = full_url.rstrip("/")
-    safe_validated_url = sanitize_url_for_logging(validated_base_url)
-    LOGGER.info(
-        "Gateway test pinned outbound address for user %s: url=%s hostname=%s pinned_ip=%s",
-        get_user_email(user),
-        safe_validated_url,
-        validated_hostname,
-        pinned_resolved_ip,
-    )
-
-    headers = dict(request.headers or {})
-    headers["Host"] = original_authority
-
-    # Attempt to find a registered gateway matching this URL and team.
-    # Query the raw DB object directly so we get the unmasked auth_value
-    # (get_first_gateway_by_url returns a masked GatewayRead where
-    # auth_value="*****", which cannot be decoded).
-    try:
-        query = select(DbGateway).where(DbGateway.url == validated_base_url, DbGateway.enabled)
-        if team_id:
-            query = query.where(DbGateway.team_id == team_id)
-        gateway = db.execute(query).scalars().first()
-    except Exception:
-        gateway = None
-
-    try:
-        user_email = get_user_email(user)
-        if gateway and gateway.auth_type == "oauth" and gateway.oauth_config:
-            grant_type = gateway.oauth_config.get("grant_type", "client_credentials")
-
-            if grant_type == "authorization_code":
-                # For Authorization Code flow, try to get stored tokens
-                try:
-                    # First-Party
-                    from mcpgateway.services.token_storage_service import TokenStorageService  # pylint: disable=import-outside-toplevel
-
-                    token_storage = TokenStorageService(db)
-
-                    # Get user-specific OAuth token
-                    if not user_email:
-                        latency_ms = int((time.monotonic() - start_time) * 1000)
-                        return GatewayTestResponse(
-                            status_code=401, latency_ms=latency_ms, body={"error": f"User authentication required for OAuth-protected gateway '{gateway.name}'. Please ensure you are authenticated."}
-                        )
-
-                    access_token: str = await token_storage.get_user_token(gateway.id, user_email)
-
-                    if access_token:
-                        headers["Authorization"] = f"Bearer {access_token}"
-                    else:
-                        latency_ms = int((time.monotonic() - start_time) * 1000)
-                        return GatewayTestResponse(
-                            status_code=401, latency_ms=latency_ms, body={"error": f"Please authorize {gateway.name} first. Visit /oauth/authorize/{gateway.id} to complete OAuth flow."}
-                        )
-                except Exception as e:
-                    LOGGER.error(f"Failed to obtain stored OAuth token for gateway {gateway.name}: {e}")
-                    latency_ms = int((time.monotonic() - start_time) * 1000)
-                    return GatewayTestResponse(status_code=500, latency_ms=latency_ms, body={"error": f"OAuth token retrieval failed for gateway: {str(e)}"})
-            else:
-                # For Client Credentials flow, get token directly
-                try:
-                    oauth_manager = OAuthManager(request_timeout=int(os.getenv("OAUTH_REQUEST_TIMEOUT", "30")), max_retries=int(os.getenv("OAUTH_MAX_RETRIES", "3")))
-                    access_token: str = await oauth_manager.get_access_token(
-                        gateway.oauth_config, ca_certificate=gateway.ca_certificate, client_cert=gateway.client_cert, client_key=gateway.client_key
-                    )
-                    headers["Authorization"] = f"Bearer {access_token}"
-                except Exception as e:
-                    LOGGER.error(f"Failed to obtain OAuth access token for gateway {gateway.name}: {e}")
-                    response_body = {"error": f"OAuth token retrieval failed for gateway: {str(e)}"}
-        elif gateway and gateway.auth_type in ("basic", "bearer", "authheaders") and gateway.auth_value:
-            if isinstance(gateway.auth_value, dict):
-                headers.update(gateway.auth_value)
-            elif isinstance(gateway.auth_value, str):
-                headers.update(decode_auth(gateway.auth_value))
-
-        # Prepare request based on content type
-        content_type = getattr(request, "content_type", "application/json")
-        request_kwargs = {
-            "method": request.method.upper(),
-            "url": full_url,
-            "headers": headers,
-            "extensions": {"sni_hostname": validated_hostname},
-        }
-
-        if request.body is not None:
-            if content_type == "application/x-www-form-urlencoded":
-                # Set proper content type header and use data parameter for form encoding
-                headers["Content-Type"] = "application/x-www-form-urlencoded"
-                request_kwargs["data"] = request.body
-            else:
-                # Default to JSON
-                headers["Content-Type"] = "application/json"
-                request_kwargs["json"] = request.body
-
-        async with ResilientHttpClient(client_args={"timeout": settings.federation_timeout, "verify": not settings.skip_ssl_verify}) as client:
-            response: httpx.Response = await client.request(**request_kwargs)
-        latency_ms = int((time.monotonic() - start_time) * 1000)
-        try:
-            response_body: Union[Dict[str, Any], str] = response.json()
-        except ValueError:
-            response_body = {"details": response.text}
-
-        # Structured logging: Log successful gateway test
-        structured_logger = get_structured_logger("gateway_service")
-        structured_logger.log(
-            level="INFO",
-            message=f"Gateway test completed: {safe_validated_url}",
-            event_type="gateway_tested",
-            component="gateway_service",
-            user_email=get_user_email(user),
-            team_id=team_id,
-            resource_type="gateway",
-            resource_id=gateway.id if gateway else None,
-            custom_fields={
-                "gateway_name": gateway.name if gateway else None,
-                "gateway_url": safe_validated_url,
-                "test_method": request.method,
-                "test_path": request.path,
-                "status_code": response.status_code,
-                "latency_ms": latency_ms,
-            },
-        )
-
-        return GatewayTestResponse(status_code=response.status_code, latency_ms=latency_ms, body=response_body)
-
-    except httpx.RequestError as e:
-        safe_url = sanitize_url_for_logging(str(request.base_url))
-        LOGGER.warning("Gateway test failed for %s: %s", safe_url, e)
-        latency_ms = int((time.monotonic() - start_time) * 1000)
-
-        # Structured logging: Log failed gateway test
-        structured_logger = get_structured_logger("gateway_service")
-        structured_logger.log(
-            level="ERROR",
-            message=f"Gateway test failed: {safe_url}",
-            event_type="gateway_test_failed",
-            component="gateway_service",
-            user_email=get_user_email(user),
-            team_id=team_id,
-            resource_type="gateway",
-            resource_id=gateway.id if gateway else None,
-            error=e,
-            custom_fields={
-                "gateway_name": gateway.name if gateway else None,
-                "gateway_url": safe_url,
-                "test_method": request.method,
-                "test_path": request.path,
-                "latency_ms": latency_ms,
-            },
-        )
-
-        return GatewayTestResponse(status_code=502, latency_ms=latency_ms, body={"error": "Request failed", "details": str(e)})
+    # Reject cross-team access: token_teams=None means admin bypass; a list means the
+    # caller is scoped to those teams only. A caller-supplied team_id outside that list
+    # would allow enumerating other teams' registered gateway hostnames (SSRF allowlist).
+    if team_id is not None:
+        token_teams = user.get("token_teams") if isinstance(user, dict) else None
+        if token_teams is not None and team_id not in token_teams:
+            raise HTTPException(status_code=403, detail="Access to requested team is not permitted")
+    return await test_gateway_connectivity(request, team_id, user, db)
 
 
 # Event Streaming via SSE to the Admin UI

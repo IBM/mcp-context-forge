@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/routers/email_auth.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Email Authentication Router.
 This module provides FastAPI routes for email-based authentication
@@ -274,7 +273,7 @@ async def login(login_request: EmailLoginRequest, request: Request, db: Session 
                         except Exception as exc:  # log commit failures
                             logger.warning("Failed to commit password_change_required flag for %s: %s", login_request.email, exc)
                     else:
-                        logger.info("User %s is using default password but enforcement is disabled", login_request.email)
+                        logger.info("User %s is using default password but enforcement is disabled", SecurityValidator.sanitize_log_message(login_request.email))
 
         if needs_password_change:
             logger.info(f"Login blocked for {SecurityValidator.sanitize_log_message(login_request.email)}: password change required")

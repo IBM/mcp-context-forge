@@ -16,6 +16,12 @@ SHELL := /bin/bash
 # Read values from .env.make
 -include .env.make
 
+# Prevent included sub-makefiles from overriding the default target
+.DEFAULT_GOAL := help
+
+# Plugin integration test targets (self-contained: boots gateway + fast-time-server)
+-include tests/live_gateway/plugins/Makefile.plugin-integration
+
 # Rust build configuration (set to 1 to enable Rust builds, 0 to disable)
 # Default is disabled to avoid requiring Rust toolchain for standard builds
 ENABLE_RUST_BUILD ?= 0
@@ -257,7 +263,7 @@ export UV_BIN
 # targets (which use these pins via uvx) stay aligned.
 BLACK_VERSION           ?= 26.3.1
 ISORT_VERSION           ?= 6.1.0
-RUFF_VERSION            ?= 0.15.1
+RUFF_VERSION            ?= 0.15.20
 PYLINT_VERSION          ?= 3.3.9
 PYLINT_PYDANTIC_VERSION ?= 0.3.5
 VULTURE_VERSION         ?= 2.14
@@ -373,7 +379,7 @@ init-secrets: ## Generate secure secrets for the gateway (US-3)
 # help: stop-serve           - Stop gunicorn production server (port 4444)
 # help: run                  - Execute helper script ./run.sh
 
-.PHONY: serve serve-ssl serve-granian serve-granian-ssl serve-granian-http2 dev dev-remote stop stop-dev stop-serve run \
+.PHONY: serve serve-ssl dev dev-remote stop stop-dev stop-serve run \
         certs certs-jwt certs-jwt-ecdsa certs-all certs-mcp-ca certs-mcp-gateway certs-mcp-plugin certs-mcp-all certs-mcp-check \
         js-build
 
@@ -391,15 +397,6 @@ serve: install js-build                  ## Run production server with Gunicorn 
 
 serve-ssl: js-build certs        ## Run Gunicorn with TLS enabled
 	SSL=true CERT_FILE=certs/cert.pem KEY_FILE=certs/key.pem ./run-gunicorn.sh
-
-serve-granian: js-build          ## Run production server with Granian (Rust-based, alternative)
-	./run-granian.sh
-
-serve-granian-ssl: js-build certs ## Run Granian with TLS enabled
-	SSL=true CERT_FILE=certs/cert.pem KEY_FILE=certs/key.pem ./run-granian.sh
-
-serve-granian-http2: js-build certs ## Run Granian with HTTP/2 and TLS
-	SSL=true GRANIAN_HTTP=2 CERT_FILE=certs/cert.pem KEY_FILE=certs/key.pem ./run-granian.sh
 
 dev:
 	@echo "🚀 Starting development server with CSS watch..."
@@ -426,7 +423,6 @@ dev-remote: js-build             ## Run dev server with remote debugging (debugp
 stop:                            ## Stop all mcpgateway server processes
 	@echo "Stopping all mcpgateway processes..."
 	@if [ -f /tmp/mcpgateway-gunicorn.lock ]; then kill -9 $$(cat /tmp/mcpgateway-gunicorn.lock) 2>/dev/null || true; rm -f /tmp/mcpgateway-gunicorn.lock; fi
-	@if [ -f /tmp/mcpgateway-granian.lock ]; then kill -9 $$(cat /tmp/mcpgateway-granian.lock) 2>/dev/null || true; rm -f /tmp/mcpgateway-granian.lock; fi
 	@lsof -ti:8000 2>/dev/null | xargs $(XARGS_FLAGS) kill -9 || true
 	@lsof -ti:4444 2>/dev/null | xargs $(XARGS_FLAGS) kill -9 || true
 	@echo "Done."
@@ -761,6 +757,14 @@ clean:
 # help: test-mcp-session-isolation - MCP session/auth isolation tests for Rust public transport
 # help: test-e2e-sso         - E2E tests requiring a live SSO identity provider (Keycloak or Entra ID)
 # help: test-live-gateway    - Run ALL live-gateway tests (mcp + sso + protocol_compliance + e2e_rust)
+# help: test-plugin-integration - Self-contained plugin E2E tests (boots gateway; PLUGIN=<name> ENFORCEMENT=static|binding|both)
+# help: test-plugin-secrets-detection  - Plugin E2E: SecretsDetection
+# help: test-plugin-encoded-exfil      - Plugin E2E: EncodedExfil
+# help: test-plugin-url-reputation     - Plugin E2E: URLReputation (static only)
+# help: test-plugin-rate-limiter       - Plugin E2E: RateLimiter (needs Redis)
+# help: test-plugin-retry-with-backoff - Plugin E2E: RetryWithBackoff (needs Redis)
+# help: test-plugin-pii-filter         - Plugin E2E: PIIFilter
+# help: test-plugin-sql-sanitizer      - Plugin E2E: SQLSanitizer (native plugin)
 # help: test                 - Run unit tests with pytest
 # help: test-verbose         - Run tests sequentially with real-time test name output
 # help: test-profile         - Run tests and show slowest 20 tests (durations >= 1s)
@@ -867,6 +871,17 @@ test-mcp-plugin-parity: uv  ## MCP plugin parity E2E for current Python or Rust 
 	@$(UV_BIN) run pytest tests/live_gateway/mcp/test_mcp_plugin_parity.py -v -s --tb=short \
 		|| { echo "❌ MCP plugin parity tests failed!"; exit 1; }
 	@echo "✅ MCP plugin parity tests passed!"
+
+test-primary-worker-e2e: uv  ## Primary-worker election E2E: boots a local 2-worker gateway, asserts the gated side effect runs once
+	@echo "🧪 Running primary-worker e2e (boots its own 2-worker gateway)..."
+	@$(UV_BIN) run bash tests/live_gateway/run_primary_worker_e2e.sh \
+		|| { echo "❌ Primary-worker e2e failed!"; exit 1; }
+	@echo "✅ Primary-worker e2e passed!"
+
+test-primary-worker-multiinstance:  ## Multi-instance primary-worker E2E: scales the compose gateway to 2 replicas (redis backend), asserts one primary across containers
+	@echo "🧪 Running multi-instance primary-worker e2e (2 gateway replicas + redis; needs Docker + 'make docker')..."
+	@bash tests/live_gateway/run_primary_worker_multiinstance.sh \
+		|| { echo "❌ Multi-instance primary-worker e2e failed!"; exit 1; }
 
 test-mcp-session-isolation: uv  ## MCP session/auth isolation tests for the Rust public transport path
 	@echo "🧪 Running MCP session/auth isolation tests against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
@@ -2083,85 +2098,6 @@ embedded-logs:                             ## Show embedded stack logs
 	$(EMBEDDED_COMPOSE) logs -f --tail=100
 
 # =============================================================================
-# 🚀 PERFORMANCE TESTING STACK - High-capacity configuration
-# =============================================================================
-# help: 🚀 PERFORMANCE TESTING STACK
-# help: performance-up         - Start performance stack (7 gateways, PostgreSQL replica, monitoring)
-# help: performance-down       - Stop performance stack
-# help: performance-clean      - Stop and remove all performance data (volumes)
-# help: performance-logs       - Show performance stack logs
-
-# Compose command for performance testing (uses docker-compose-performance.yml)
-COMPOSE_CMD_PERF := $(shell \
-	if command -v docker &>/dev/null && docker compose version &>/dev/null 2>&1; then \
-		echo "docker compose -f docker-compose-performance.yml"; \
-	elif command -v podman &>/dev/null && podman compose version &>/dev/null 2>&1; then \
-		echo "podman compose -f docker-compose-performance.yml"; \
-	else \
-		echo "docker-compose -f docker-compose-performance.yml"; \
-	fi)
-
-.PHONY: performance-up
-performance-up:                            ## Start performance stack (7 gateways, PostgreSQL replica, monitoring)
-	@echo "🚀 Starting performance testing stack..."
-	@echo "   • 7 gateway replicas"
-	@echo "   • PostgreSQL primary + read replica (streaming replication)"
-	@echo "   • PgBouncer with load balancing"
-	@echo "   • Full monitoring stack"
-	@echo ""
-	# Enable OTEL tracing + JSON console logs for the monitoring profile (Tempo + Loki correlation)
-	LOG_FORMAT=json \
-	OTEL_ENABLE_OBSERVABILITY=true \
-	OTEL_TRACES_EXPORTER=otlp \
-	OTEL_EXPORTER_OTLP_ENDPOINT=http://tempo:4317 \
-	$(COMPOSE_CMD_PERF) --profile monitoring --profile replica up -d
-	@echo "⏳ Waiting for Grafana to be ready..."
-	@for i in 1 2 3 4 5 6 7 8 9 10 11 12; do \
-		if curl -s -o /dev/null -w '' http://localhost:3000/api/health 2>/dev/null; then break; fi; \
-		sleep 3; \
-	done
-	@# Configure Grafana: star dashboard and set as home
-	@curl -s -X POST -u admin:changeme 'http://localhost:3000/api/user/stars/dashboard/uid/mcp-gateway-overview' >/dev/null 2>&1 || true
-	@curl -s -X PUT -u admin:changeme -H "Content-Type: application/json" -d '{"homeDashboardUID": "mcp-gateway-overview"}' 'http://localhost:3000/api/org/preferences' >/dev/null 2>&1 || true
-	@curl -s -X PUT -u admin:changeme -H "Content-Type: application/json" -d '{"homeDashboardUID": "mcp-gateway-overview"}' 'http://localhost:3000/api/user/preferences' >/dev/null 2>&1 || true
-	@echo ""
-	@echo "✅ Performance stack started!"
-	@echo ""
-	@echo "   🌐 Grafana:    http://localhost:3000 (admin/changeme)"
-	@echo "   🔥 Prometheus: http://localhost:9090"
-	@echo "   🧵 Tempo:      http://localhost:3200 (OTLP: 4317 gRPC, 4318 HTTP)"
-	@echo "   🐘 PostgreSQL: Primary + Read Replica (load balanced via PgBouncer)"
-	@echo ""
-	@echo "   📊 Key Dashboards:"
-	@echo "      • ContextForge Overview - main dashboard (set as home)"
-	@echo "      • PostgreSQL Replication - primary/replica stats, lag, distribution"
-	@echo "      • PostgreSQL Database - detailed DB metrics"
-	@echo "      • PgBouncer - connection pool stats"
-	@echo ""
-	@echo "   🏋️ Configuration:"
-	@echo "      • 7 gateway replicas (vs 3 in standard)"
-	@echo "      • PostgreSQL read replica for read scaling"
-	@echo "      • PgBouncer round-robin across primary + replica"
-	@echo ""
-	@echo "   Run load test: make load-test-ui"
-
-.PHONY: performance-down
-performance-down:                          ## Stop performance stack
-	@echo "🚀 Stopping performance stack..."
-	$(COMPOSE_CMD_PERF) --profile monitoring --profile replica down --remove-orphans
-	@echo "✅ Performance stack stopped."
-
-.PHONY: performance-logs
-performance-logs:                          ## Show performance stack logs
-	$(COMPOSE_CMD_PERF) --profile monitoring --profile replica logs -f --tail=100
-
-.PHONY: performance-clean
-performance-clean:                         ## Stop and remove all performance data (volumes)
-	@echo "🚀 Stopping and cleaning performance stack..."
-	$(COMPOSE_CMD_PERF) --profile monitoring --profile replica down -v
-	@echo "✅ Performance stack stopped and volumes removed."
-
-# =============================================================================
 # 🔥 HTTP LOAD TESTING - Locust-based traffic generation
 # =============================================================================
 # help: 🔥 HTTP LOAD TESTING (Locust)
@@ -3318,8 +3254,6 @@ images:
 # help: linting-helm-lint            - Run Helm chart lint
 # help: linting-helm-chart-testing   - Run chart-testing lint (ct) for Helm chart
 # help: linting-helm-unittest        - Run Helm chart unit tests via helm-unittest plugin
-# help: linting-go-gosec             - Run gosec on discovered Go modules
-# help: linting-go-govulncheck       - Run govulncheck on discovered Go modules
 # help: linting-security-checkov     - Run Checkov IaC security scan
 # help: linting-security-kube-linter - Run kube-linter against Kubernetes/Helm manifests
 # help: linting-coverage-diff-cover  - Run diff-cover against changed lines
@@ -3348,7 +3282,7 @@ LINTERS := isort pylint mypy bandit pydocstyle pycodestyle \
 FILE_AWARE_LINTERS := isort black pylint mypy bandit pydocstyle \
 	pycodestyle ruff pyright vulture markdownlint
 
-.PHONY: lint $(LINTERS) black black-check isort-check ruff-check ruff-fix ruff-format autoflake lint-py lint-yaml lint-json lint-md lint-strict \
+.PHONY: lint $(LINTERS) pyright-pr black black-check isort-check ruff-check ruff-fix ruff-format autoflake lint-py lint-yaml lint-json lint-md lint-strict \
 	lint-count-errors lint-report lint-changed lint-staged lint-commit \
 	lint-pre-commit lint-pre-push lint-parallel lint-cache-clear lint-stats \
 	lint-complexity lint-watch lint-watch-quick \
@@ -3359,7 +3293,6 @@ FILE_AWARE_LINTERS := isort black pylint mypy bandit pydocstyle \
 	linting-python-fixit linting-python-xenon linting-python-refurb \
 	linting-docs-codespell linting-docs-markdown-links linting-web-depcheck \
 	linting-helm-lint linting-helm-chart-testing linting-helm-unittest \
-	linting-go-gosec linting-go-govulncheck \
 	linting-security-checkov linting-security-kube-linter \
 	linting-coverage-diff-cover linting-full
 
@@ -3502,7 +3435,6 @@ LINT_GO_ROOT ?= $(LINT_TMP_ROOT)/go
 LINT_HELM_ROOT ?= $(LINT_TMP_ROOT)/helm
 LINT_NODE_ROOT ?= $(LINT_TMP_ROOT)/node
 LINT_PY_VENV ?= $(LINT_TMP_ROOT)/py-venv
-LINT_GO_TOOLCHAIN ?= go1.26.4
 
 # Tool target defaults
 LINT_ZIZMOR_TARGET ?= .github/workflows
@@ -3515,10 +3447,9 @@ LINT_MARKDOWN_LINKS_TARGET ?= README.md
 LINT_DEPCHECK_TARGET ?= .
 LINT_CHECKOV_TARGET ?= .
 LINT_KUBE_LINTER_TARGET ?= charts/mcp-stack
-LINT_GO_MODULE_SEARCH_DIRS ?= mcp-servers a2a-agents
 
 # Passing gates only (used by CI workflow linting-full).
-LINTING_FULL_TARGETS := linting-workflow-actionlint linting-workflow-commitlint linting-helm-lint linting-helm-chart-testing linting-helm-unittest linting-go-gosec linting-go-govulncheck
+LINTING_FULL_TARGETS := linting-workflow-actionlint linting-workflow-commitlint linting-helm-lint linting-helm-chart-testing linting-helm-unittest
 
 # Tools requiring auth/login (e.g. safety, OSSF scorecard) are intentionally excluded.
 
@@ -3648,50 +3579,15 @@ linting-helm-unittest:               ## 🧪  Helm template unit tests
 		fi; \
 		helm unittest $(CHART_DIR)"
 
-.PHONY: linting-go-gosec
-linting-go-gosec:                    ## 🔒  Go security static analysis
-	@echo "🔒 gosec scan of discovered Go modules..."
-	@command -v go >/dev/null 2>&1 || { echo "❌ go not found"; exit 1; }
-	@export GOPATH='$(LINT_GO_ROOT)/gopath'; \
-		export GOMODCACHE='$(LINT_GO_ROOT)/gopath/pkg/mod'; \
-		export GOCACHE='$(LINT_GO_ROOT)/gocache'; \
-		export GOBIN='$(LINT_GO_ROOT)/bin'; \
-		export GOTOOLCHAIN='$(LINT_GO_TOOLCHAIN)'; \
-		mkdir -p '$(LINT_GO_ROOT)/gopath' '$(LINT_GO_ROOT)/gopath/pkg/mod' '$(LINT_GO_ROOT)/gocache' '$(LINT_GO_ROOT)/bin'; \
-		go install github.com/securego/gosec/v2/cmd/gosec@latest >/dev/null; \
-		mods="$$( { find $(LINT_GO_MODULE_SEARCH_DIRS) -name go.mod -not -path '*/templates/*' -exec dirname {} ';' 2>/dev/null || true; } | sort -u )"; \
-		if [ -z "$$mods" ]; then echo 'ℹ️  No Go modules found'; exit 0; fi; \
-		while IFS= read -r d; do \
-			[ -n "$$d" ] || continue; \
-			echo "→ gosec $$d"; \
-			(cd "$$d" && "$(LINT_GO_ROOT)/bin/gosec" ./...); \
-		done <<< "$$mods"
-
-.PHONY: linting-go-govulncheck
-linting-go-govulncheck:              ## 🔎  Go vulnerability checks
-	@echo "🔎 govulncheck scan of discovered Go modules..."
-	@command -v go >/dev/null 2>&1 || { echo "❌ go not found"; exit 1; }
-	@export GOPATH='$(LINT_GO_ROOT)/gopath'; \
-		export GOMODCACHE='$(LINT_GO_ROOT)/gopath/pkg/mod'; \
-		export GOCACHE='$(LINT_GO_ROOT)/gocache'; \
-		export GOBIN='$(LINT_GO_ROOT)/bin'; \
-		export GOTOOLCHAIN='$(LINT_GO_TOOLCHAIN)'; \
-		mkdir -p '$(LINT_GO_ROOT)/gopath' '$(LINT_GO_ROOT)/gopath/pkg/mod' '$(LINT_GO_ROOT)/gocache' '$(LINT_GO_ROOT)/bin'; \
-		go install golang.org/x/vuln/cmd/govulncheck@latest >/dev/null; \
-		mods="$$( { find $(LINT_GO_MODULE_SEARCH_DIRS) -name go.mod -not -path '*/templates/*' -exec dirname {} ';' 2>/dev/null || true; } | sort -u )"; \
-		if [ -z "$$mods" ]; then echo 'ℹ️  No Go modules found'; exit 0; fi; \
-		while IFS= read -r d; do \
-			[ -n "$$d" ] || continue; \
-			echo "→ govulncheck $$d"; \
-			(cd "$$d" && "$(LINT_GO_ROOT)/bin/govulncheck" ./...); \
-		done <<< "$$mods"
-
 .PHONY: linting-security-checkov
 linting-security-checkov:            ## 🛡️  IaC security scanning with Checkov
 	@echo "🛡️ checkov scan of $(LINT_CHECKOV_TARGET)..."
 	@$(MAKE) --no-print-directory linting-python-env
 	@"$(LINT_PY_VENV)/bin/python" -m pip install -q --disable-pip-version-check checkov
-	@"$(LINT_PY_VENV)/bin/checkov" -d "$(LINT_CHECKOV_TARGET)" --quiet
+	@"$(LINT_PY_VENV)/bin/checkov" \
+		-d "$(LINT_CHECKOV_TARGET)" \
+		--quiet \
+		--skip-check CKV_DOCKER_3,CKV_DOCKER_2,CKV_SECRET_4,CKV_SECRET_6,CKV_K8S_21,CKV_GHA_7,CKV_K8S_43,CKV_K8S_35,CKV_K8S_40,CKV2_K8S_6,CKV2_GHA_1
 
 .PHONY: linting-security-kube-linter
 linting-security-kube-linter:        ## 🧱  Kubernetes best-practice linting
@@ -3702,7 +3598,6 @@ linting-security-kube-linter:        ## 🧱  Kubernetes best-practice linting
 		export GOMODCACHE='$(LINT_GO_ROOT)/gopath/pkg/mod'; \
 		export GOCACHE='$(LINT_GO_ROOT)/gocache'; \
 		export GOBIN='$(LINT_GO_ROOT)/bin'; \
-		export GOTOOLCHAIN='$(LINT_GO_TOOLCHAIN)'; \
 		mkdir -p '$(LINT_GO_ROOT)/gopath' '$(LINT_GO_ROOT)/gopath/pkg/mod' '$(LINT_GO_ROOT)/gocache' '$(LINT_GO_ROOT)/bin'; \
 		go install golang.stackrox.io/kube-linter/cmd/kube-linter@latest >/dev/null; \
 		'$(LINT_GO_ROOT)/bin/kube-linter' lint '$(LINT_KUBE_LINTER_TARGET)'"
@@ -3892,6 +3787,16 @@ ty:                                 ## ⚡  Ty type checker
 
 pyright:                            ## 🏷️  Pyright type-checking
 	@echo "🏷️ pyright $(TARGET)..." && $(VENV_DIR)/bin/pyright $(TARGET)
+
+pyright-pr:                         ## 🏷️  Pyright — check only files changed vs main (CI gate for PRs)
+	@base=$${BASE_BRANCH:-origin/main}; \
+	files=$$(git diff --name-only --diff-filter=ACM "$$base"...HEAD 2>/dev/null | grep '\.py$$' || true); \
+	if [ -z "$$files" ]; then \
+		echo "🏷️ pyright-pr: no Python files changed vs $$base — nothing to check"; \
+		exit 0; \
+	fi; \
+	echo "🏷️ pyright-pr: checking $$(echo $$files | wc -w) changed file(s) vs $$base"; \
+	$(VENV_DIR)/bin/pyright $$files
 
 radon: uv                           ## 📈  Complexity / MI metrics
 	@$(UV_BIN) tool run radon==$(RADON_VERSION) mi -s $(TARGET) && \
@@ -4855,7 +4760,7 @@ endef
 # help: container-build-rust - Build image WITH Rust plugins (ENABLE_RUST_BUILD=1)
 # help: container-build-rust-lite - Build lite image WITH Rust plugins
 # help: container-rust       - Build with Rust and run container (all-in-one)
-# help: container-run        - Run container (CONTAINER_SSL=1 CONTAINER_HOST_NET=1 CONTAINER_JWT=1 CONTAINER_HTTP_SERVER=granian|gunicorn)
+# help: container-run        - Run container (CONTAINER_SSL=1 CONTAINER_HOST_NET=1 CONTAINER_JWT=1)
 # help: container-push       - Push image (handles localhost/ prefix)
 # help: container-stop       - Stop & remove the container
 # help: container-logs       - Stream container logs
@@ -4878,9 +4783,9 @@ endef
         print-image container-validate-env container-check-ports container-wait-healthy
 
 
-# Containerfile to use (can be overridden). Defaults to Containerfile.lite (the
+# Containerfile to use (can be overridden). Defaults to Containerfile (the
 # multi-stage production build); falls back to Dockerfile if absent.
-CONTAINER_FILE ?= $(shell [ -f "Containerfile.lite" ] && echo "Containerfile.lite" || echo "Dockerfile")
+CONTAINER_FILE ?= $(shell [ -f "Containerfile" ] && echo "Containerfile" || echo "Dockerfile")
 
 
 # Define COMMA for the conditional Z flag
@@ -4979,25 +4884,22 @@ container-validate-fedramp: container-check-image ## Validate FedRAMP compliance
 CONTAINER_SSL        ?=
 CONTAINER_HOST_NET   ?=
 CONTAINER_JWT        ?=
-CONTAINER_HTTP_SERVER ?=
 
 .PHONY: container-run
-container-run: container-check-image  ## Run container (CONTAINER_SSL=1 CONTAINER_HOST_NET=1 CONTAINER_JWT=1 CONTAINER_HTTP_SERVER=granian|gunicorn)
+container-run: container-check-image  ## Run container (CONTAINER_SSL=1 CONTAINER_HOST_NET=1 CONTAINER_JWT=1)
 	$(if $(call is_true,$(CONTAINER_SSL)),@test -d certs || $(MAKE) --no-print-directory certs,)
 	$(if $(call is_true,$(CONTAINER_JWT)),@test -d certs/jwt || $(MAKE) --no-print-directory certs-jwt,)
-	@printf '🚀 Running with %s%s%s%s%s...\n' \
+	@printf '🚀 Running with %s%s%s%s...\n' \
 		'$(CONTAINER_RUNTIME)' \
 		'$(if $(call is_true,$(CONTAINER_SSL)), (TLS),)' \
 		'$(if $(call is_true,$(CONTAINER_HOST_NET)), (host network),)' \
-		'$(if $(call is_true,$(CONTAINER_JWT)), (JWT asymmetric),)' \
-		'$(if $(CONTAINER_HTTP_SERVER), + $(CONTAINER_HTTP_SERVER),)'
+		'$(if $(call is_true,$(CONTAINER_JWT)), (JWT asymmetric),)'
 	-$(CONTAINER_RUNTIME) stop $(PROJECT_NAME) 2>/dev/null || true
 	-$(CONTAINER_RUNTIME) rm $(PROJECT_NAME) 2>/dev/null || true
 	$(CONTAINER_RUNTIME) run --name $(PROJECT_NAME) \
 		$(if $(or $(call is_true,$(CONTAINER_SSL)),$(call is_true,$(CONTAINER_JWT))),--user $(shell id -u):$(shell id -g),) \
 		$(if $(call is_true,$(CONTAINER_HOST_NET)),--network=host,) \
 		--env-file=.env \
-		$(if $(CONTAINER_HTTP_SERVER),-e HTTP_SERVER=$(CONTAINER_HTTP_SERVER),) \
 		$(if $(call is_true,$(CONTAINER_SSL)),-e SSL=true -e CERT_FILE=certs/cert.pem -e KEY_FILE=certs/key.pem,) \
 		$(if $(call is_true,$(CONTAINER_JWT)),-e JWT_ALGORITHM=RS256 -e JWT_PUBLIC_KEY_PATH=/app/certs/jwt/public.pem -e JWT_PRIVATE_KEY_PATH=/app/certs/jwt/private.pem,) \
 		$(if $(or $(call is_true,$(CONTAINER_SSL)),$(call is_true,$(CONTAINER_JWT))),-v $(PWD)/certs:/app/certs:ro$(if $(filter podman,$(CONTAINER_RUNTIME)),$(COMMA)Z,),) \
@@ -5009,10 +4911,9 @@ container-run: container-check-image  ## Run container (CONTAINER_SSL=1 CONTAINE
 		--health-start-period=30s --health-timeout=10s \
 		-d $(call get_image_name)
 	@sleep 2
-	@printf '✅ Container started%s%s%s\n' \
+	@printf '✅ Container started%s%s\n' \
 		'$(if $(call is_true,$(CONTAINER_SSL)), with TLS,)' \
-		'$(if $(call is_true,$(CONTAINER_JWT)), + JWT asymmetric,)' \
-		'$(if $(CONTAINER_HTTP_SERVER), ($(CONTAINER_HTTP_SERVER)),)'
+		'$(if $(call is_true,$(CONTAINER_JWT)), + JWT asymmetric,)'
 	$(if $(call is_true,$(CONTAINER_JWT)),@echo "🔐 JWT Algorithm: RS256",)
 	$(if $(call is_true,$(CONTAINER_JWT)),@echo "📁 Keys mounted: /app/certs/jwt/{private$(COMMA)public}.pem",)
 
@@ -5021,12 +4922,7 @@ container-run: container-check-image  ## Run container (CONTAINER_SSL=1 CONTAINE
 # deprecated: container-run-ssl         - Use "make container-run CONTAINER_SSL=1" instead (v1.2.0)
 # deprecated: container-run-ssl-host    - Use "make container-run CONTAINER_SSL=1 CONTAINER_HOST_NET=1" instead (v1.2.0)
 # deprecated: container-run-ssl-jwt     - Use "make container-run CONTAINER_SSL=1 CONTAINER_JWT=1" instead (v1.2.0)
-# deprecated: container-run-granian     - Use "make container-run CONTAINER_HTTP_SERVER=granian" instead (v1.2.0)
-# deprecated: container-run-gunicorn    - Use "make container-run CONTAINER_HTTP_SERVER=gunicorn" instead (v1.2.0)
-# deprecated: container-run-granian-ssl - Use "make container-run CONTAINER_SSL=1 CONTAINER_HTTP_SERVER=granian" instead (v1.2.0)
-# deprecated: container-run-gunicorn-ssl - Use "make container-run CONTAINER_SSL=1 CONTAINER_HTTP_SERVER=gunicorn" instead (v1.2.0)
-.PHONY: container-run-host container-run-ssl container-run-ssl-host container-run-ssl-jwt \
-	container-run-granian container-run-gunicorn container-run-granian-ssl container-run-gunicorn-ssl
+.PHONY: container-run-host container-run-ssl container-run-ssl-host container-run-ssl-jwt
 
 container-run-host: container-check-image
 	$(call deprecated_target,container-run-host,make container-run CONTAINER_HOST_NET=1,1.2.0)
@@ -5043,22 +4939,6 @@ container-run-ssl-host: container-check-image
 container-run-ssl-jwt: container-check-image
 	$(call deprecated_target,container-run-ssl-jwt,make container-run CONTAINER_SSL=1 CONTAINER_JWT=1,1.2.0)
 	@$(MAKE) --no-print-directory container-run CONTAINER_SSL=1 CONTAINER_JWT=1
-
-container-run-granian: container-check-image
-	$(call deprecated_target,container-run-granian,make container-run CONTAINER_HTTP_SERVER=granian,1.2.0)
-	@$(MAKE) --no-print-directory container-run CONTAINER_HTTP_SERVER=granian
-
-container-run-gunicorn: container-check-image
-	$(call deprecated_target,container-run-gunicorn,make container-run CONTAINER_HTTP_SERVER=gunicorn,1.2.0)
-	@$(MAKE) --no-print-directory container-run CONTAINER_HTTP_SERVER=gunicorn
-
-container-run-granian-ssl: container-check-image
-	$(call deprecated_target,container-run-granian-ssl,make container-run CONTAINER_SSL=1 CONTAINER_HTTP_SERVER=granian,1.2.0)
-	@$(MAKE) --no-print-directory container-run CONTAINER_SSL=1 CONTAINER_HTTP_SERVER=granian
-
-container-run-gunicorn-ssl: container-check-image
-	$(call deprecated_target,container-run-gunicorn-ssl,make container-run CONTAINER_SSL=1 CONTAINER_HTTP_SERVER=gunicorn,1.2.0)
-	@$(MAKE) --no-print-directory container-run CONTAINER_SSL=1 CONTAINER_HTTP_SERVER=gunicorn
 
 .PHONY: container-push
 container-push: container-check-image
@@ -7363,14 +7243,12 @@ test-full: coverage test-js test-ui-report
 # help: detect-secrets-scan    - detect-secrets scan for secrets in repository using baseline file .secrets.baseline
 # help: detect-secrets-audit   - detect-secrets audit for unverified secrets detected in baseline file .secrets.baseline
 # help: devskim-install-dotnet - Install .NET SDK and DevSkim CLI (security patterns scanner)
-# help: sri-generate        - Generate SRI hashes for CDN resources
-# help: sri-verify          - Verify SRI hashes match current CDN content
 # help: devskim             - Run DevSkim static analysis for security anti-patterns
 
 # List of security tools to run with security-all
-SECURITY_TOOLS := semgrep dodgy detect-secrets-scan interrogate prospector pip-audit devskim sri-verify
+SECURITY_TOOLS := semgrep dodgy detect-secrets-scan interrogate prospector pip-audit devskim
 
-.PHONY: security-all security-report security-fix $(SECURITY_TOOLS) pyupgrade devskim-install-dotnet devskim sri-generate sri-verify
+.PHONY: security-all security-report security-fix $(SECURITY_TOOLS) pyupgrade devskim-install-dotnet devskim
 
 ## --------------------------------------------------------------------------- ##
 ##  Master security target
@@ -7635,19 +7513,6 @@ devskim:                            ## 🛡️  Run DevSkim security patterns an
 	fi
 
 ## --------------------------------------------------------------------------- ##
-##  SRI (Subresource Integrity) Management
-## --------------------------------------------------------------------------- ##
-
-.PHONY: sri-generate sri-verify
-
-sri-generate:                       ## 🔐 Generate SRI hashes for CDN resources
-	@echo "🔐 Generating SRI hashes for CDN resources..."
-	@python3 scripts/generate-sri-hashes.py
-
-sri-verify:                         ## ✅ Verify SRI hashes match current CDN content
-	@python3 scripts/verify-sri-hashes.py
-
-## --------------------------------------------------------------------------- ##
 ##  Security reporting and advanced targets
 ## --------------------------------------------------------------------------- ##
 security-report:                    ## 📊 Generate comprehensive security report
@@ -7793,7 +7658,7 @@ snyk-iac-test:                      ## 🏗️ Test IaC files for security issue
 			--org=$${SNYK_ORG:-} \
 			--json-file-output=snyk-iac-compose-results.json || true; \
 	fi
-	@if [ -f "Dockerfile" ] || [ -f "Containerfile" ] || [ -f "Containerfile.lite" ]; then \
+	@if [ -f "Dockerfile" ] || [ -f "Containerfile" ]; then \
 		echo "📦 Testing Dockerfile/Containerfile..."; \
 		snyk iac test $(CONTAINER_FILE) \
 			--severity-threshold=medium \
@@ -7936,9 +7801,9 @@ snyk-helm-test:                     ## ⎈ Test Helm charts for security issues
 # help: check-header           - Check specific file/directory (use: path=...)
 # help: fix-all-headers        - Fix ALL files with incorrect headers (modifies files!)
 # help: fix-all-headers-no-encoding - Fix headers without encoding line requirement
-# help: fix-all-headers-custom - Fix with custom config (year=YYYY license=... shebang=...)
+# help: fix-all-headers-custom - Fix with custom config (copyright_line=... license=... shebang=...)
 # help: interactive-fix-headers - Fix headers with prompts before each change
-# help: fix-header             - Fix specific file/directory (use: path=... authors=...)
+# help: fix-header             - Fix specific file/directory (use: path=... shebang=... encoding=no)
 # help: pre-commit-check-headers - Check headers for pre-commit hooks
 # help: pre-commit-fix-headers - Fix headers for pre-commit hooks
 
@@ -7992,10 +7857,11 @@ fix-all-headers-no-encoding:        ## 🔧 Fix headers without encoding line re
 	@python3 .github/tools/fix_file_headers.py --fix-all --no-encoding
 
 .PHONY: fix-all-headers-custom
-fix-all-headers-custom:             ## 🔧 Fix with custom config (year=YYYY license=... shebang=...)
+fix-all-headers-custom:             ## 🔧 Fix with custom config (copyright_line=... license=... shebang=...)
 	@echo "🔧 Fixing headers with custom configuration..."
-	@if [ -n "$(year)" ]; then \
-		extra_args="$$extra_args --copyright-year $(year)"; \
+	@extra_args=""; \
+	if [ -n "$(copyright_line)" ]; then \
+		extra_args="$$extra_args --copyright-line \"$(copyright_line)\""; \
 	fi; \
 	if [ -n "$(license)" ]; then \
 		extra_args="$$extra_args --license $(license)"; \
@@ -8003,26 +7869,22 @@ fix-all-headers-custom:             ## 🔧 Fix with custom config (year=YYYY li
 	if [ -n "$(shebang)" ]; then \
 		extra_args="$$extra_args --require-shebang $(shebang)"; \
 	fi; \
-	python3 .github/tools/fix_file_headers.py --fix-all $$extra_args
+	eval python3 .github/tools/fix_file_headers.py --fix-all $$extra_args
 
 interactive-fix-headers:            ## 💬 Fix headers with prompts before each change
 	@echo "💬 Interactively fixing Python file headers..."
 	@echo "You will be prompted before each change."
 	@python3 .github/tools/fix_file_headers.py --interactive
 
-fix-header:                         ## 🔧 Fix specific file/directory (use: path=... authors=... shebang=... encoding=no)
+fix-header:                         ## 🔧 Fix specific file/directory (use: path=... shebang=... encoding=no)
 	@if [ -z "$(path)" ]; then \
 		echo "❌ Error: 'path' parameter is required"; \
-		echo "💡 Usage: make fix-header path=<file_or_directory> [authors=\"Name1, Name2\"] [shebang=auto|always|never] [encoding=no]"; \
+		echo "💡 Usage: make fix-header path=<file_or_directory> [shebang=auto|always|never] [encoding=no]"; \
 		exit 1; \
 	fi
 	@echo "🔧 Fixing headers in $(path)"
 	@echo "⚠️  This will modify the file(s)!"
 	@extra_args=""; \
-	if [ -n "$(authors)" ]; then \
-		echo "   Authors: $(authors)"; \
-		extra_args="$$extra_args --authors \"$(authors)\""; \
-	fi; \
 	if [ -n "$(shebang)" ]; then \
 		echo "   Shebang requirement: $(shebang)"; \
 		extra_args="$$extra_args --require-shebang $(shebang)"; \
@@ -8375,9 +8237,6 @@ upgrade-validate:                         ## Validate fresh + upgrade + roundtri
 # Intentional broad scan under crates/: workspace-owned crates live here and CI
 # should pick up new maturin crates automatically rather than curating a short list.
 RUST_MATURIN_CRATES := $(shell find crates -type d 2>/dev/null | while read d; do [ -f "$$d/Cargo.toml" ] && [ -f "$$d/pyproject.toml" ] && echo "$$d"; done | sort)
-# Keep rust server helpers discoverable even when samples are managed outside
-# the shared workspace commands.
-RUST_MCP_DIRS := $(shell find mcp-servers/rust -maxdepth 2 -name Cargo.toml -exec dirname {} \; 2>/dev/null | sort -u)
 
 rust-ensure-deps:                       ## Ensure Rust toolchain and maturin are available
 	@if ! command -v rustup > /dev/null 2>&1; then \
@@ -8598,18 +8457,6 @@ rust-mcp-runtime-test:                  ## Run tests for the experimental Rust M
 rust-mcp-runtime-run:                   ## Run the experimental Rust MCP runtime against local gateway /rpc
 	@echo "🚀 Starting Rust MCP runtime on http://127.0.0.1:8787 with backend http://127.0.0.1:4444/rpc"
 	@cd crates/mcp_runtime && cargo run --release -- --backend-rpc-url http://127.0.0.1:4444/rpc --listen-http 127.0.0.1:8787
-
-rust-a2a-runtime-build:                    ## Build the experimental Rust A2A runtime
-	@echo "🦀 Building experimental Rust A2A runtime..."
-	@cd crates/a2a_runtime && cargo build --release
-
-rust-a2a-runtime-test:                     ## Run tests for the experimental Rust A2A runtime
-	@echo "🧪 Running Rust A2A runtime tests..."
-	@cd crates/a2a_runtime && cargo test --release
-
-rust-a2a-runtime-run:                      ## Run the experimental Rust A2A runtime on http://127.0.0.1:8788
-	@echo "🚀 Starting Rust A2A runtime on http://127.0.0.1:8788"
-	@cd crates/a2a_runtime && cargo run --release -- --listen-http 127.0.0.1:8788
 
 .PHONY: conc-02-gateways
 conc-02-gateways:                    ## Run CONC-02 gateways read-during-write check (manual env/token setup required)

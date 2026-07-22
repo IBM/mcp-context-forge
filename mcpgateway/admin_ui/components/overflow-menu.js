@@ -10,8 +10,8 @@
  *   - The dropdown container must have `x-ref="menu"` and `role="menu"`.
  *   - Each action inside the menu must carry `role="menuitem"`.
  *
- * Usage:
- *   <div x-data="Admin.overflowMenu('tools-table-wrapper')"
+ * Usage (in HTML templates):
+ *   <div x-data="overflowMenu('tools-table-wrapper')"
  *        @click.away="menuOpen = false"
  *        @keydown.escape="menuOpen = false; $refs.trigger.focus()">
  *     <button x-ref="trigger" @click="menuOpen ? (menuOpen = false) : openMenu()" ...>…</button>
@@ -19,6 +19,12 @@
  *       <button role="menuitem" ...>Edit</button>
  *     </div>
  *   </div>
+ *
+ * NOTE: overflowMenu is registered via Alpine.data('overflowMenu', overflowMenu)
+ * in alpine-setup.js. Templates must reference it directly as `overflowMenu('...')`,
+ * NOT via window.Admin.overflowMenu(...) — the latter pattern causes Alpine to
+ * initialize with an empty scope (no menuOpen, no openMenu) because optional
+ * chaining returns undefined when the property is missing on window.Admin.
  *
  * @param {string|null} wrapperId - Optional id of a scroll-constrained wrapper
  *   (e.g. `tools-table-wrapper`) whose `overflow` should also be pinned while

@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/services/test_gateway_service_health_oauth.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Claude Code for coverage improvement
 
 Additional health check and OAuth tests for GatewayService to improve coverage.
 These tests specifically target uncovered areas in gateway_service.py including:
@@ -382,7 +381,8 @@ class TestCheckSingleGatewayHealthReal:
         update_db.commit.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_oauth_authorization_code_missing_user_email_marks_unhealthy_and_handles_failure(self):
+    async def test_oauth_authorization_code_missing_user_email_proceeds_without_auth(self):
+        """Bug fix #5237: Missing user_email should not fail health check, just proceed without auth."""
         service = GatewayService()
         service._handle_gateway_failure = AsyncMock()
 
@@ -393,6 +393,9 @@ class TestCheckSingleGatewayHealthReal:
         )
 
         update_db = MagicMock()
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.raise_for_status = MagicMock()  # No exception - 200 OK
 
         class _DBCM:
             def __enter__(self):
@@ -410,7 +413,13 @@ class TestCheckSingleGatewayHealthReal:
 
         class _IsoClientCM:
             async def __aenter__(self):
-                return MagicMock()
+                client = MagicMock()
+                # Mock stream method to return our response
+                stream_cm = MagicMock()
+                stream_cm.__aenter__ = AsyncMock(return_value=mock_response)
+                stream_cm.__aexit__ = AsyncMock(return_value=False)
+                client.stream = MagicMock(return_value=stream_cm)
+                return client
 
             async def __aexit__(self, *exc):
                 return False
@@ -436,10 +445,11 @@ class TestCheckSingleGatewayHealthReal:
             patch("mcpgateway.services.gateway_service.fresh_db_session", return_value=_DBCM()),
             patch("mcpgateway.services.token_storage_service.TokenStorageService") as mock_tss,
         ):
-            mock_tss.return_value.get_user_token = AsyncMock(return_value="token")
+            mock_tss.return_value.get_user_token = AsyncMock(return_value=None)  # No token available
             await service._check_single_gateway_health(gateway, user_email=None)
 
-        service._handle_gateway_failure.assert_awaited_once()
+        # Bug fix: Gateway should NOT be marked unhealthy - proceeds with unauthenticated check
+        service._handle_gateway_failure.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_oauth_client_credentials_failure_marks_unhealthy_and_handles_failure(self):
@@ -489,6 +499,59 @@ class TestCheckSingleGatewayHealthReal:
             await service._check_single_gateway_health(gateway, user_email="user@test.com")
 
         service._handle_gateway_failure.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_oauth_token_exchange_health_check_skips_without_failing(self):
+        # Token-exchange (RFC 8693) needs an inbound end-user JWT as the subject token.
+        # A periodic health check has no user request, so the grant cannot be satisfied.
+        # It must skip the probe (mirroring the discovery/registration path) rather than
+        # marking the gateway unhealthy -- otherwise every periodic check would fail and
+        # the gateway would be permanently flagged unreachable.
+        service = GatewayService()
+        service._handle_gateway_failure = AsyncMock()
+
+        gateway = self._make_gateway(
+            transport="sse",
+            auth_type="oauth",
+            oauth_config={"grant_type": "token-exchange", "target_audience": "aud"},
+        )
+
+        class _SpanCM:
+            def __enter__(self):
+                return MagicMock()
+
+            def __exit__(self, *exc):
+                return False
+
+        class _IsoClientCM:
+            async def __aenter__(self):
+                return MagicMock()
+
+            async def __aexit__(self, *exc):
+                return False
+
+        with (
+            patch(
+                "mcpgateway.services.gateway_service.settings",
+                MagicMock(
+                    enable_ed25519_signing=False,
+                    ed25519_public_key="pk",
+                    httpx_max_connections=10,
+                    httpx_max_keepalive_connections=5,
+                    httpx_keepalive_expiry=30,
+                    httpx_admin_read_timeout=1,
+                    health_check_timeout=1,
+                    mcp_session_pool_enabled=False,
+                    mcp_session_pool_explicit_health_rpc=False,
+                    auto_refresh_servers=False,
+                ),
+            ),
+            patch("mcpgateway.services.gateway_service.create_span", return_value=_SpanCM()),
+            patch("mcpgateway.services.gateway_service.get_isolated_http_client", return_value=_IsoClientCM()),
+        ):
+            await service._check_single_gateway_health(gateway, user_email="user@test.com")
+
+        service._handle_gateway_failure.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_query_param_decryption_applied_and_sse_stream_health_check(self):

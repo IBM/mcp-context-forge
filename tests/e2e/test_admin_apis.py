@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/e2e/test_admin_apis.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 End-to-end tests for ContextForge admin APIs.
 This module contains comprehensive end-to-end tests for all admin API endpoints.
@@ -646,7 +645,7 @@ class TestAdminResourceAPIs:
         created_resources: list[tuple[str, str]] = []
         for mime_value in accepted_mime_types:
             resource_name = f"Parameterized MIME Resource {uuid.uuid4().hex[:8]}"
-            resource_uri = f"ui://resource-{uuid.uuid4().hex[:8]}"
+            resource_uri = f"resource://resource-{uuid.uuid4().hex[:8]}"
 
             form_data = {
                 "uri": resource_uri,
@@ -804,7 +803,7 @@ class TestAdminGatewayAPIs:
 
         # Configure allowlist
         with patch.object(settings, "gateway_test_allowed_hosts", ["api.approved.com"]):
-            with patch("mcpgateway.admin.ResilientHttpClient") as mock_client_class:
+            with patch("mcpgateway.services.gateway_service.ResilientHttpClient") as mock_client_class:
                 request_data = {"base_url": "https://evil.com", "path": "/", "method": "GET", "headers": {}, "body": None}
 
                 response = await client.post("/admin/gateways/test", json=request_data, headers=TEST_AUTH_HEADER)
@@ -824,7 +823,7 @@ class TestAdminGatewayAPIs:
         with patch.object(settings, "gateway_test_allow_registered_only", False):
             with patch.object(settings, "gateway_test_allowed_hosts", ["api.example.com"]):
                 with patch("mcpgateway.common.validators.socket.getaddrinfo", return_value=[(2, 1, 6, "", ("93.184.216.34", 0))]):
-                    with patch("mcpgateway.admin.ResilientHttpClient") as mock_client_class:
+                    with patch("mcpgateway.services.gateway_service.ResilientHttpClient") as mock_client_class:
                         mock_client = MagicMock()
                         mock_response = MagicMock()
                         mock_response.status_code = 200
@@ -853,7 +852,7 @@ class TestAdminGatewayAPIs:
         # Empty allowlist with registered-only mode off = reject all
         with patch.object(settings, "gateway_test_allow_registered_only", False):
             with patch.object(settings, "gateway_test_allowed_hosts", []):
-                with patch("mcpgateway.admin.ResilientHttpClient") as mock_client_class:
+                with patch("mcpgateway.services.gateway_service.ResilientHttpClient") as mock_client_class:
                     request_data = {"base_url": "http://169.254.169.254/", "path": "/", "method": "GET", "headers": {}, "body": None}
 
                     response = await client.post("/admin/gateways/test", json=request_data, headers=TEST_AUTH_HEADER)
@@ -874,7 +873,7 @@ class TestAdminGatewayAPIs:
             with patch.object(settings, "gateway_test_allowed_hosts", ["127.0.0.1"]):
                 with patch.object(settings, "ssrf_protection_enabled", True):
                     with patch.object(settings, "ssrf_allow_localhost", False):
-                        with patch("mcpgateway.admin.ResilientHttpClient") as mock_client_class:
+                        with patch("mcpgateway.services.gateway_service.ResilientHttpClient") as mock_client_class:
                             request_data = {"base_url": "http://127.0.0.1/", "path": "/", "method": "GET", "headers": {}, "body": None}
 
                             response = await client.post("/admin/gateways/test", json=request_data, headers=TEST_AUTH_HEADER)

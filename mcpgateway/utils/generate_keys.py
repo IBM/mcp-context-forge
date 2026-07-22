@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/utils/generate_keys.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Madhav Kandukuri
 
 Utility to generate Ed25519 key pairs for JWT or signing use.
 Safely writes PEM-formatted private and public keys to disk.

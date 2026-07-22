@@ -2,7 +2,7 @@
 
 ## Overview
 
-ContextForge now supports multiple custom authentication headers for gateway connections. This feature allows you to configure multiple header key-value pairs that will be sent with every request to your MCP servers.
+ContextForge supports multiple custom authentication headers for both **gateway** connections and **REST tools**. This feature allows you to configure multiple header key-value pairs that will be sent with every request to your MCP servers or REST endpoints.
 
 !!! tip "Admin UI URL"
     - Direct installs (`uvx`, pip, or `docker run`): `http://localhost:4444/admin/`
@@ -66,9 +66,29 @@ gateway = GatewayCreate(
 )
 ```
 
+## Tools
+
+REST tools accept the same `auth_headers` array on `POST /tools` and `PUT /tools/{tool_id}`, with identical
+validation and precedence rules:
+
+```json
+{
+  "name": "my-tool",
+  "url": "https://api.example.com/endpoint",
+  "request_type": "POST",
+  "auth_type": "authheaders",
+  "auth_headers": [
+    {"key": "X-API-Key", "value": "secret"},
+    {"key": "X-Tenant", "value": "acme"}
+  ]
+}
+```
+
+The same array is used by the "Custom Headers" authentication type in the Tools tab of the Admin UI.
+
 ## Backward Compatibility
 
-The gateway still supports the legacy single-header format for backward compatibility:
+Gateways and tools still support the legacy single-header format for backward compatibility:
 
 ```json
 {
@@ -88,10 +108,15 @@ If both `auth_headers` (multi) and `auth_header_key`/`auth_header_value` (single
 All authentication headers are encrypted before being stored in the database using AES-256-GCM encryption. The encryption key is derived from the `AUTH_ENCRYPTION_SECRET` environment variable.
 
 ### Header Validation
-- Empty header keys are ignored
+Gateways, tools and A2A agents share a single validator, so the same rules apply everywhere:
+
+- Empty header keys are ignored; if no entry has a key, the request is rejected with a 422
+- Header keys may contain only alphanumeric characters, hyphens and underscores — anything else (including embedded spaces) is rejected with a 422
+- Surrounding whitespace on a header key is trimmed before storage
 - Duplicate header keys will use the last provided value
-- Header values can be empty strings if required by your authentication scheme
-- Special characters in header keys and values are supported
+- Header keys and values must be strings; any other JSON type is rejected with a 422
+- Header values can be empty strings if required by your authentication scheme, and may contain special characters
+- A maximum of 100 header entries may be submitted. The cap applies to the entries you send, before duplicates collapse — so 101 entries are rejected even if they resolve to fewer unique keys
 
 ### Best Practices
 1. **Use HTTPS**: Always use HTTPS URLs for your MCP servers to prevent header interception
@@ -183,6 +208,19 @@ The system will automatically convert your configuration to the multi-header for
 ### GatewayUpdate Schema
 ```python
 {
+    "auth_type": "authheaders",
+    "auth_headers": [
+        {"key": str, "value": str},
+        ...
+    ]
+}
+```
+
+### ToolCreate / ToolUpdate Schema
+```python
+{
+    "name": str,           # ToolCreate only
+    "url": str,            # ToolCreate only
     "auth_type": "authheaders",
     "auth_headers": [
         {"key": str, "value": str},

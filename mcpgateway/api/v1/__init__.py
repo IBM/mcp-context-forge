@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
-"""mcpgateway.api.v1 — versioned API v1 router factory.
-
-Copyright 2025
+"""Location: ./mcpgateway/api/v1/__init__.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
 
+mcpgateway.api.v1 — versioned API v1 router factory.
 Usage (Phase 1 — inline routers still live in main.py):
 
     from mcpgateway.api.v1 import build_v1_router
@@ -98,6 +98,14 @@ def _assemble_routers(  # noqa: C901 — deliberate single-function assembly, co
 
     target_router.include_router(version_router)
     logger.info("Version router included")
+
+    # Unified search (/v1/search) — always-on, non-admin route; no admin.dashboard
+    # gate, so client-facing global search does not depend on the admin dashboard.
+    # First-Party
+    from mcpgateway.routers.search import router as search_router  # pylint: disable=import-outside-toplevel
+
+    target_router.include_router(search_router)
+    logger.info("Unified search router included (/search)")
 
     # -------------------------------------------------------------------------
     # Group B — always-tried optional router (tool plugin bindings)
@@ -349,6 +357,12 @@ def build_v1_router(
         export_import_router=export_import_router,
         a2a_router=a2a_router,
     )
+
+    # First-Party
+    from mcpgateway.routers.catalog import router as catalog_router  # pylint: disable=import-outside-toplevel
+
+    v1_router.include_router(catalog_router)
+    logger.info("Catalog router included - v1 only")
     return v1_router
 
 

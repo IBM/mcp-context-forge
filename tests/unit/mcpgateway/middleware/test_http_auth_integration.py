@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/middleware/test_http_auth_integration.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: ContextForge
 
 Integration tests for HTTP authentication middleware using the real main.py app.
 
@@ -42,7 +41,7 @@ class TestHttpAuthMiddlewareIntegration:
         # We'll patch the plugin manager to add our test plugins
 
         # Create mock plugin manager with test hooks
-        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False):  # noqa: ARG001
+        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False, extensions=None):  # noqa: ARG001
             if hook_type == HttpHookType.HTTP_PRE_REQUEST:
                 # Transform X-API-Key → Authorization
                 headers = dict(payload.headers.root)

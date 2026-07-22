@@ -1367,7 +1367,136 @@ curl -s -X DELETE -H "Authorization: Bearer $TOKEN" \
 
 ## Team Management
 
-Teams are the unit of multi-tenancy in ContextForge. The `GET /teams` endpoint lists the teams visible to the caller and is the same endpoint that backs the Admin UI Teams page and the team switcher.
+Teams are the unit of multi-tenancy in ContextForge. Endpoints require a valid Bearer token and the caller must hold the `teams.create` or `teams.read` RBAC permission respectively.
+
+### Create Team
+
+```bash
+POST /teams
+Authorization: Bearer $TOKEN
+Content-Type: application/json
+```
+
+**Request body (`TeamCreateRequest`):**
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `name` | string | ✓ | – | Display name (1–255 chars, letters/numbers/spaces/`_`/`.`/`-`). |
+| `slug` | string | – | auto-generated | URL-friendly identifier (`[a-z0-9-]+`, 2–255 chars). |
+| `description` | string | – | `null` | Team description (max 1 000 chars). |
+| `visibility` | `"private"` \| `"public"` | – | `"private"` | Who can see the team. |
+| `max_members` | int ≥ 1 | – | global setting | Per-team member cap. Omit to inherit `MAX_MEMBERS_PER_TEAM`. |
+| `members` | array of `TeamMemberSeed` | – | `null` | Up to `MAX_TEAM_MEMBER_SEEDS` (500) addresses to seed. |
+
+Each `TeamMemberSeed` object:
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `email` | string (email) | ✓ | – | Address to add or invite. Normalised to lowercase. |
+| `role` | `"owner"` \| `"member"` | – | `"member"` | Role to assign. |
+
+**Seed routing rules (server-decided, not caller-controlled):**
+
+- An address that matches an **active** `EmailUser` record is added as a direct member.
+- Any other address (unknown, or known but deactivated) receives an invitation.
+- The creator's own address is silently skipped — team creation already makes the creator an owner.
+- Email addresses are normalised to lowercase before lookup; `ALICE@example.com` and `alice@example.com` are treated as the same address.
+- Duplicate addresses (case-insensitive) in a single request are rejected with a row-indexed error.
+- The whole operation is **atomic**: a failure on any seed rolls back the team and all prior seeds.
+- Deleting a team also deactivates its **pending invitations**, so an invitation cannot outlive (or be revived alongside) the team it points at.
+
+**Configuration notes:**
+
+| Setting | Default | Effect on `POST /teams` |
+|---------|---------|------------------------|
+| `ALLOW_TEAM_CREATION` | `true` | When `false`, non-admin callers receive `403`. Platform admins bypass this flag. |
+| `ALLOW_TEAM_INVITATIONS` | `true` | When `false`, seeded addresses that would normally become invitations instead fail the whole request with `400`. |
+| `MAX_TEAM_MEMBER_SEEDS` | `500` | Hard ceiling on the `members` array length (validated before any write). |
+| `MAX_MEMBERS_PER_TEAM` | `100` | Seed count + creator must not exceed this limit (or the per-team `max_members` override). |
+
+**Minimal create (no members):**
+
+```bash
+curl -s -X POST \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "Engineering", "visibility": "private"}' \
+  $BASE_URL/teams | jq '.'
+```
+
+**Create with seeded members:**
+
+```bash
+curl -s -X POST \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Engineering",
+    "visibility": "private",
+    "members": [
+      {"email": "alice@example.com", "role": "owner"},
+      {"email": "external@partner.com"}
+    ]
+  }' \
+  $BASE_URL/teams | jq '.'
+```
+
+**Response (`TeamCreateResponse`):**
+
+`TeamCreateResponse` extends `TeamResponse` through Pydantic subclassing, so it is a strict superset: every `TeamResponse` field is present unchanged, plus two extra arrays that report how each seeded member was resolved. Both arrays are always present (empty when no members were seeded), so clients that only care about the team itself can ignore them.
+
+```json
+{
+  "id": "team-abc123",
+  "name": "Engineering",
+  "slug": "engineering",
+  "description": null,
+  "created_by": "admin@example.com",
+  "is_personal": false,
+  "visibility": "private",
+  "max_members": null,
+  "member_count": 2,
+  "created_at": "2026-01-15T10:00:00Z",
+  "updated_at": "2026-01-15T10:00:00Z",
+  "is_active": true,
+  "members_added": [
+    {"email": "alice@example.com", "role": "owner"}
+  ],
+  "invitations_sent": [
+    {"email": "external@partner.com", "role": "member", "invitation_id": "inv-xyz789"}
+  ]
+}
+```
+
+`members_added` entries (`SeededMemberResponse`):
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `email` | string | Canonical lowercase email of the user added directly. |
+| `role` | `"owner"` \| `"member"` | Role assigned. |
+
+`invitations_sent` entries (`SeededInvitationResponse`):
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `email` | string | Canonical lowercase email the invitation was sent to. |
+| `role` | `"owner"` \| `"member"` | Role the invitee will hold after accepting. |
+| `invitation_id` | string | UUID of the created invitation record. |
+
+**Error responses:**
+
+| HTTP status | Condition | Example `detail` |
+|-------------|-----------|-----------------|
+| `400` | Duplicate email in `members` | `members[1] (alice@example.com): duplicate address, already listed at members[0]` |
+| `400` | Seed count + 1 exceeds capacity | `Team would start with 6 members, exceeding the maximum of 5` |
+| `400` | Invalid role value | `Input should be 'owner' or 'member'` |
+| `400` | Invitations disabled and unknown address seeded | `members[1] (external@partner.com): invitations are currently disabled` |
+| `403` | `ALLOW_TEAM_CREATION=false` and caller is not admin | `Team creation is currently disabled` |
+| `422` | `members` array exceeds 500 entries | Pydantic validation error |
+
+### List Teams
+
+The `GET /teams` endpoint lists the teams visible to the caller and is the same endpoint that backs the Admin UI Teams page and the team switcher.
 
 Visibility follows the two-layer security model:
 
@@ -1375,8 +1504,6 @@ Visibility follows the two-layer security model:
 - **Regular users** see only the teams they are a member of (including their own personal team).
 
 The caller's own personal team is derived from the authenticated identity, never from client input, so this endpoint cannot be used to enumerate other users' personal teams.
-
-### List Teams
 
 ```bash
 # List teams visible to the caller (non-paginated response - default)

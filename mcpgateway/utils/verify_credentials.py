@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/utils/verify_credentials.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Authentication verification utilities for ContextForge.
 This module provides JWT and Basic authentication verification functions
@@ -1788,6 +1787,7 @@ class _NoRedirectPyJWKClient(jwt.PyJWKClient):
     """
 
     def fetch_data(self) -> Any:
+        """Fetch JWKS data without following redirects."""
         try:
             with httpx.Client(follow_redirects=False, timeout=self.timeout) as _client:
                 resp = _client.get(self.uri, headers=self.headers)

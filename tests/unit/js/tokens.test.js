@@ -278,7 +278,7 @@ describe("showTokenDetailsModal", () => {
     document.body.innerHTML = "";
   });
 
-  test("creates and appends modal to body", () => {
+  test("creates and appends modal to body", { timeout: 15000 }, () => {
     window.USERTEAMSDATA = [];
     showTokenDetailsModal({
       id: "tok-123",

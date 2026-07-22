@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/test_schemas.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Tests for the MCP types module.
 This module contains tests for the various MCP protocol type definitions
@@ -115,6 +114,7 @@ class TestMCPTypes:
     def test_image_content(self):
         """Test ImageContent model."""
         # ImageContent now uses base64-encoded string per MCP spec
+        # Standard
         import base64
 
         binary_data = b"binary_image_data"
@@ -201,6 +201,7 @@ class TestMCPTypes:
         assert text_message.content.text == "Hello, world!"
 
         # ImageContent now uses base64-encoded string per MCP spec
+        # Standard
         import base64
 
         binary_data = b"binary_image_data"
@@ -1315,6 +1316,7 @@ class TestSchemaValidators:
 
     def test_gateway_create_with_valid_gateway_modes(self):
         """Test GatewayCreate accepts valid gateway_mode values."""
+        # First-Party
         from mcpgateway.schemas import GatewayCreate
 
         # Test with cache mode (default)
@@ -1345,6 +1347,7 @@ class TestSchemaValidators:
 
     def test_gateway_create_with_invalid_gateway_mode(self):
         """Test GatewayCreate rejects invalid gateway_mode values."""
+        # First-Party
         from mcpgateway.schemas import GatewayCreate
 
         with pytest.raises(ValidationError) as exc_info:
@@ -1360,6 +1363,7 @@ class TestSchemaValidators:
 
     def test_gateway_update_with_valid_gateway_modes(self):
         """Test GatewayUpdate accepts valid gateway_mode values."""
+        # First-Party
         from mcpgateway.schemas import GatewayUpdate
 
         # Test updating to cache mode
@@ -1376,6 +1380,7 @@ class TestSchemaValidators:
 
     def test_gateway_update_with_invalid_gateway_mode(self):
         """Test GatewayUpdate rejects invalid gateway_mode values."""
+        # First-Party
         from mcpgateway.schemas import GatewayUpdate
 
         with pytest.raises(ValidationError) as exc_info:
@@ -1386,6 +1391,7 @@ class TestSchemaValidators:
 
     def test_gateway_read_includes_gateway_mode(self):
         """Test GatewayRead includes gateway_mode field with default."""
+        # First-Party
         from mcpgateway.schemas import GatewayRead
 
         # Test with explicit cache mode
@@ -1412,6 +1418,7 @@ class TestSchemaValidators:
 
     def test_gateway_read_tool_count_defaults_to_zero(self):
         """GatewayRead.tool_count should default to 0 and serialize as toolCount."""
+        # First-Party
         from mcpgateway.schemas import GatewayRead
 
         gateway = GatewayRead(
@@ -1427,6 +1434,7 @@ class TestSchemaValidators:
 
     def test_gateway_read_tool_count_set_explicitly(self):
         """GatewayRead.tool_count should accept an explicit value."""
+        # First-Party
         from mcpgateway.schemas import GatewayRead
 
         gateway = GatewayRead(
@@ -1443,6 +1451,7 @@ class TestSchemaValidators:
 
     def test_resource_subscription_rejects_empty_subscriber_id(self):
         """ResourceSubscription should reject empty subscriber IDs."""
+        # First-Party
         from mcpgateway.schemas import ResourceSubscription
 
         with pytest.raises(ValidationError) as exc_info:
@@ -1452,6 +1461,7 @@ class TestSchemaValidators:
 
     def test_resource_subscription_rejects_unsafe_email_like_subscriber_id(self):
         """Email-like IDs should still honor unsafe-character validation pattern."""
+        # First-Party
         from mcpgateway.common.validators import SecurityValidator
         from mcpgateway.schemas import ResourceSubscription
 
@@ -1463,6 +1473,7 @@ class TestSchemaValidators:
 
     def test_resource_subscription_rejects_too_long_email_like_subscriber_id(self):
         """Email-like IDs should respect max-length limits."""
+        # First-Party
         from mcpgateway.common.validators import SecurityValidator
         from mcpgateway.schemas import ResourceSubscription
 
@@ -1496,6 +1507,7 @@ class TestGatewayCreateCamelCase:
 
     def test_accepts_camel_case_fields(self):
         """GatewayCreate must accept camelCase field names."""
+        # First-Party
         from mcpgateway.schemas import GatewayCreate
 
         gw = GatewayCreate(
@@ -1519,6 +1531,7 @@ class TestGatewayCreateCamelCase:
 
     def test_accepts_snake_case_fields(self):
         """GatewayCreate must still accept snake_case field names."""
+        # First-Party
         from mcpgateway.schemas import GatewayCreate
 
         gw = GatewayCreate(
@@ -1538,6 +1551,7 @@ class TestGatewayCreateCamelCase:
 
     def test_serializes_to_camel_case(self):
         """GatewayCreate.model_dump(by_alias=True) must use camelCase keys."""
+        # First-Party
         from mcpgateway.schemas import GatewayCreate
 
         gw = GatewayCreate(
@@ -1561,6 +1575,7 @@ class TestGatewayCreateCamelCase:
 
     def test_consistent_with_gateway_update(self):
         """GatewayCreate and GatewayUpdate must both accept camelCase."""
+        # First-Party
         from mcpgateway.schemas import GatewayCreate, GatewayUpdate
 
         create = GatewayCreate(name="gw", url="https://example.com", authType="bearer", authToken="t")
@@ -1682,6 +1697,7 @@ class TestAuthValidationErrors:
 
     def test_gateway_create_invalid_query_param_key(self):
         """Test GatewayCreate field validator rejects invalid query_param_key format."""
+        # First-Party
         from mcpgateway.schemas import GatewayCreate
 
         # Test the field validator directly by calling it
@@ -1690,6 +1706,7 @@ class TestAuthValidationErrors:
 
     def test_gateway_update_invalid_query_param_key(self):
         """Test GatewayUpdate field validator rejects invalid query_param_key format."""
+        # First-Party
         from mcpgateway.schemas import GatewayUpdate
 
         # Test the field validator directly by calling it
@@ -1698,6 +1715,7 @@ class TestAuthValidationErrors:
 
     def test_gateway_create_invalid_auth_type(self):
         """Test GatewayCreate rejects invalid auth_type."""
+        # First-Party
         from mcpgateway.schemas import GatewayCreate
 
         with pytest.raises(ValidationError) as exc_info:
@@ -1706,6 +1724,7 @@ class TestAuthValidationErrors:
 
     def test_gateway_update_invalid_auth_type(self):
         """Test GatewayUpdate rejects invalid auth_type."""
+        # First-Party
         from mcpgateway.schemas import GatewayUpdate
 
         with pytest.raises(ValidationError) as exc_info:
@@ -1714,6 +1733,7 @@ class TestAuthValidationErrors:
 
     def test_a2a_agent_create_invalid_auth_type(self):
         """Test A2AAgentCreate rejects invalid auth_type."""
+        # First-Party
         from mcpgateway.schemas import A2AAgentCreate
 
         with pytest.raises(ValidationError) as exc_info:
@@ -1722,6 +1742,7 @@ class TestAuthValidationErrors:
 
     def test_a2a_agent_update_invalid_auth_type(self):
         """Test A2AAgentUpdate rejects invalid auth_type."""
+        # First-Party
         from mcpgateway.schemas import A2AAgentUpdate
 
         with pytest.raises(ValidationError) as exc_info:
@@ -1730,6 +1751,7 @@ class TestAuthValidationErrors:
 
     def test_gateway_create_query_param_missing_key(self):
         """Test GatewayCreate validation when query param key is missing."""
+        # First-Party
         from mcpgateway.schemas import GatewayCreate
 
         with patch("mcpgateway.schemas.settings") as mock_settings:
@@ -1748,6 +1770,7 @@ class TestAuthValidationErrors:
 
     def test_gateway_create_query_param_missing_value(self):
         """Test GatewayCreate validation when query param value is missing."""
+        # First-Party
         from mcpgateway.schemas import GatewayCreate
 
         with patch("mcpgateway.schemas.settings") as mock_settings:
@@ -1766,6 +1789,7 @@ class TestAuthValidationErrors:
 
     def test_gateway_create_query_param_disabled(self):
         """Test GatewayCreate validation when query param auth is disabled."""
+        # First-Party
         from mcpgateway.schemas import GatewayCreate
 
         with patch("mcpgateway.schemas.settings") as mock_settings:
@@ -1785,6 +1809,7 @@ class TestAuthValidationErrors:
 
     def test_gateway_create_query_param_host_not_allowed(self):
         """Test GatewayCreate validation when host is not in allowlist."""
+        # First-Party
         from mcpgateway.schemas import GatewayCreate
 
         with patch("mcpgateway.schemas.settings") as mock_settings:
@@ -1806,6 +1831,7 @@ class TestAuthValidationErrors:
 
     def test_gateway_create_authheaders_empty_list(self):
         """Test GatewayCreate validation when auth_headers list is empty."""
+        # First-Party
         from mcpgateway.schemas import GatewayCreate
 
         with pytest.raises(ValidationError) as exc_info:
@@ -1820,6 +1846,7 @@ class TestAuthValidationErrors:
 
     def test_gateway_create_authheaders_no_valid_keys(self):
         """Test GatewayCreate validation when auth_headers has no valid keys."""
+        # First-Party
         from mcpgateway.schemas import GatewayCreate
 
         with pytest.raises(ValidationError) as exc_info:
@@ -1837,6 +1864,7 @@ class TestAuthValidationErrors:
 
     def test_gateway_create_authheaders_invalid_key_format(self):
         """Test GatewayCreate validation when auth_headers has invalid key format."""
+        # First-Party
         from mcpgateway.schemas import GatewayCreate
 
         with pytest.raises(ValidationError) as exc_info:
@@ -1854,6 +1882,7 @@ class TestAuthValidationErrors:
 
     def test_gateway_create_authheaders_excessive_headers(self):
         """Test GatewayCreate validation when auth_headers exceeds limit."""
+        # First-Party
         from mcpgateway.schemas import GatewayCreate
 
         # Create 101 headers (exceeds 100 limit)
@@ -1871,8 +1900,11 @@ class TestAuthValidationErrors:
 
     def test_gateway_create_authheaders_duplicate_keys_warning(self, caplog):
         """Test GatewayCreate logs warning for duplicate header keys."""
-        from mcpgateway.schemas import GatewayCreate
+        # Standard
         import logging
+
+        # First-Party
+        from mcpgateway.schemas import GatewayCreate
 
         with caplog.at_level(logging.WARNING, logger="mcpgateway.schemas"):
             gw = GatewayCreate(
@@ -1892,6 +1924,7 @@ class TestAuthValidationErrors:
 
     def test_gateway_create_authheaders_empty_value_allowed(self):
         """Test GatewayCreate allows empty header values."""
+        # First-Party
         from mcpgateway.schemas import GatewayCreate
 
         gw = GatewayCreate(
@@ -1908,6 +1941,7 @@ class TestAuthValidationErrors:
 
     def test_gateway_create_authheaders_non_dict_items_rejected(self):
         """Test GatewayCreate rejects non-dict items in auth_headers."""
+        # First-Party
         from mcpgateway.schemas import GatewayCreate
 
         with pytest.raises(ValidationError):
@@ -1924,6 +1958,7 @@ class TestAuthValidationErrors:
 
     def test_gateway_create_authheaders_legacy_missing_key(self):
         """Test GatewayCreate validation for legacy format missing key."""
+        # First-Party
         from mcpgateway.schemas import GatewayCreate
 
         with pytest.raises(ValidationError) as exc_info:
@@ -1939,6 +1974,7 @@ class TestAuthValidationErrors:
 
     def test_gateway_create_authheaders_legacy_missing_value(self):
         """Test GatewayCreate validation for legacy format missing value."""
+        # First-Party
         from mcpgateway.schemas import GatewayCreate
 
         with pytest.raises(ValidationError) as exc_info:
@@ -1954,6 +1990,7 @@ class TestAuthValidationErrors:
 
     def test_authentication_values_rejects_oauth(self):
         """AuthenticationValues raises ValidationError when auth_type is 'oauth'."""
+        # First-Party
         from mcpgateway.schemas import AuthenticationValues
 
         with pytest.raises(ValidationError) as exc_info:
@@ -1962,6 +1999,7 @@ class TestAuthValidationErrors:
 
     def test_authentication_values_rejects_oauth_case_insensitive(self):
         """AuthenticationValues rejects oauth regardless of case."""
+        # First-Party
         from mcpgateway.schemas import AuthenticationValues
 
         for value in ("OAuth", "OAUTH", "oAuth"):
@@ -1970,8 +2008,145 @@ class TestAuthValidationErrors:
 
     def test_authentication_values_accepts_valid_auth_types(self):
         """AuthenticationValues accepts basic, bearer, and authheaders."""
+        # First-Party
         from mcpgateway.schemas import AuthenticationValues
 
         for auth_type in ("basic", "bearer", "authheaders"):
             obj = AuthenticationValues(auth_type=auth_type)
             assert obj.auth_type == auth_type
+
+
+class TestGatewayTransportValidation:
+    """Test transport validation on GatewayCreate and GatewayUpdate."""
+
+    def test_gateway_create_valid_uppercase(self):
+        """GatewayCreate accepts uppercase transport values."""
+        # First-Party
+        from mcpgateway.schemas import GatewayCreate
+
+        gw = GatewayCreate(name="gw", url="http://example.com", transport="SSE")
+        assert gw.transport == "SSE"
+
+        gw = GatewayCreate(name="gw", url="http://example.com", transport="STREAMABLEHTTP")
+        assert gw.transport == "STREAMABLEHTTP"
+
+    def test_gateway_create_valid_lowercase(self):
+        """GatewayCreate accepts lowercase and normalizes to uppercase."""
+        # First-Party
+        from mcpgateway.schemas import GatewayCreate
+
+        gw = GatewayCreate(name="gw", url="http://example.com", transport="sse")
+        assert gw.transport == "SSE"
+
+        gw = GatewayCreate(name="gw", url="http://example.com", transport="streamablehttp")
+        assert gw.transport == "STREAMABLEHTTP"
+
+    def test_gateway_create_valid_mixed_case(self):
+        """GatewayCreate accepts mixed case and normalizes to uppercase."""
+        # First-Party
+        from mcpgateway.schemas import GatewayCreate
+
+        gw = GatewayCreate(name="gw", url="http://example.com", transport="Sse")
+        assert gw.transport == "SSE"
+
+        gw = GatewayCreate(name="gw", url="http://example.com", transport="StreamableHttp")
+        assert gw.transport == "STREAMABLEHTTP"
+
+    def test_gateway_create_supported_transports(self):
+        """GatewayCreate accepts only SSE and STREAMABLEHTTP."""
+        # First-Party
+        from mcpgateway.schemas import GatewayCreate
+
+        for transport in ("SSE", "STREAMABLEHTTP"):
+            gw = GatewayCreate(name="gw", url="http://example.com", transport=transport)
+            assert gw.transport == transport
+
+    def test_gateway_create_rejects_http_and_stdio(self):
+        """GatewayCreate rejects HTTP and STDIO (not supported at runtime)."""
+        # First-Party
+        from mcpgateway.schemas import GatewayCreate
+
+        for transport in ("HTTP", "STDIO", "http", "stdio"):
+            with pytest.raises(ValidationError, match="Invalid transport type"):
+                GatewayCreate(name="gw", url="http://example.com", transport=transport)
+
+    def test_gateway_create_invalid_transport(self):
+        """GatewayCreate rejects invalid transport values."""
+        # First-Party
+        from mcpgateway.schemas import GatewayCreate
+
+        with pytest.raises(ValidationError, match="Invalid transport type"):
+            GatewayCreate(name="gw", url="http://example.com", transport="invalid")
+
+    def test_gateway_create_empty_transport(self):
+        """GatewayCreate rejects empty transport string."""
+        # First-Party
+        from mcpgateway.schemas import GatewayCreate
+
+        with pytest.raises(ValidationError, match="Invalid transport type"):
+            GatewayCreate(name="gw", url="http://example.com", transport="")
+
+    def test_gateway_create_non_string_transport(self):
+        """GatewayCreate rejects non-string transport values."""
+        # First-Party
+        from mcpgateway.schemas import GatewayCreate
+
+        with pytest.raises(ValidationError, match="Transport must be a string"):
+            GatewayCreate(name="gw", url="http://example.com", transport=123)
+
+    def test_gateway_create_whitespace_padded(self):
+        """GatewayCreate strips whitespace from transport values."""
+        # First-Party
+        from mcpgateway.schemas import GatewayCreate
+
+        gw = GatewayCreate(name="gw", url="http://example.com", transport=" sse ")
+        assert gw.transport == "SSE"
+
+        gw = GatewayCreate(name="gw", url="http://example.com", transport="  streamablehttp  ")
+        assert gw.transport == "STREAMABLEHTTP"
+
+    def test_gateway_update_valid_transport(self):
+        """GatewayUpdate accepts valid transport values (case-insensitive)."""
+        # First-Party
+        from mcpgateway.schemas import GatewayUpdate
+
+        update = GatewayUpdate(transport="SSE")
+        assert update.transport == "SSE"
+
+        update = GatewayUpdate(transport="sse")
+        assert update.transport == "SSE"
+
+    def test_gateway_update_invalid_transport(self):
+        """GatewayUpdate rejects invalid transport values."""
+        # First-Party
+        from mcpgateway.schemas import GatewayUpdate
+
+        with pytest.raises(ValidationError, match="Invalid transport type"):
+            GatewayUpdate(transport="invalid")
+
+    def test_gateway_update_none_transport(self):
+        """GatewayUpdate accepts None for optional transport field."""
+        # First-Party
+        from mcpgateway.schemas import GatewayUpdate
+
+        update = GatewayUpdate()
+        assert update.transport is None
+
+        update = GatewayUpdate(transport=None)
+        assert update.transport is None
+
+    def test_gateway_update_empty_transport(self):
+        """GatewayUpdate rejects empty transport string."""
+        # First-Party
+        from mcpgateway.schemas import GatewayUpdate
+
+        with pytest.raises(ValidationError, match="Invalid transport type"):
+            GatewayUpdate(transport="")
+
+    def test_gateway_update_non_string_transport(self):
+        """GatewayUpdate rejects non-string transport values."""
+        # First-Party
+        from mcpgateway.schemas import GatewayUpdate
+
+        with pytest.raises(ValidationError, match="Transport must be a string"):
+            GatewayUpdate(transport=123)

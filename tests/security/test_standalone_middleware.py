@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/security/test_standalone_middleware.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Standalone Security Middleware Testing.
 
@@ -112,9 +111,11 @@ def test_csp_header_structure():
     assert "connect-src 'self'" in csp
     assert "frame-ancestors 'none'" in csp
 
-    # Check that required CDN domains are allowed for Admin UI
-    assert "https://cdnjs.cloudflare.com" in csp
-    assert "https://cdn.jsdelivr.net" in csp
+    # Admin UI assets (Font Awesome, CodeMirror, Chart.js, etc.) are bundled locally via
+    # Vite, so no third-party CDN origins should be allowlisted in the CSP.
+    assert "cdnjs.cloudflare.com" not in csp
+    assert "cdn.jsdelivr.net" not in csp
+    assert "unpkg.com" not in csp
 
     # Verify CSP ends with semicolon
     assert csp.endswith(";")

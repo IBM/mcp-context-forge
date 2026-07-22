@@ -114,7 +114,7 @@ ContextForge supports multiple database backends with full feature parity across
 | `BASIC_AUTH_PASSWORD`       | Password for HTTP Basic authentication (when enabled)                        | `changeme`          | string      |
 | `API_ALLOW_BASIC_AUTH`      | Enable Basic auth for API endpoints (disabled by default for security)       | `false`             | bool        |
 | `DOCS_ALLOW_BASIC_AUTH`     | Enable Basic auth for docs endpoints (disabled by default)                   | `false`             | bool        |
-| `PLATFORM_ADMIN_EMAIL`      | Email for bootstrap platform admin user (auto-created with admin privileges) | `admin@example.com` | string      |
+| `PLATFORM_ADMIN_EMAIL`      | Email for bootstrap platform admin user (auto-created with admin privileges). Also used as the default identity for OAuth health-check token lookups on `authorization_code` gateways — if this user has not completed consent for a gateway, health checks proceed unauthenticated (expected behaviour). | `admin@example.com` | string      |
 | `AUTH_REQUIRED`             | Require authentication for all API routes                                    | `true`              | bool        |
 | `JWT_ALGORITHM`             | Algorithm used to sign the JWTs (`HS256` is default, HMAC-based)             | `HS256`             | PyJWT algs  |
 | `JWT_SECRET_KEY`            | Secret key used to **sign JWT tokens** for API access                        | `my-test-key-but-now-longer-than-32-bytes`       | string      |
@@ -178,6 +178,11 @@ For detailed guidance on embedding and section customization, see [Admin UI Cust
 | `MCPGATEWAY_BULK_IMPORT_MAX_TOOLS` | Maximum number of tools per bulk import request | `200` | int |
 | `MCPGATEWAY_BULK_IMPORT_RATE_LIMIT` | Rate limit for bulk import endpoint (requests per minute) | `10` | int |
 | `MCPGATEWAY_UI_TOOL_TEST_TIMEOUT` | Tool test timeout in milliseconds for the admin UI | `60000` | int |
+| `MCPGATEWAY_MCP_APPS_ENABLED` | Enable MCP Apps capability advertising and AppBridge routes | `false` | bool |
+| `MCPGATEWAY_MCP_APPS_SESSION_TTL` | AppBridge session lifetime in seconds | `900` | int, 1-86400 |
+| `MCPGATEWAY_MCP_APPS_SESSION_CLEANUP_ENABLED` | Enable automatic cleanup of expired AppBridge sessions | `true` | bool |
+| `MCPGATEWAY_MCP_APPS_SESSION_CLEANUP_INTERVAL_SECONDS` | Seconds between expired AppBridge session cleanup runs | `300` | int, 60-86400 |
+| `MCPGATEWAY_MCP_APPS_SESSION_CLEANUP_BATCH_SIZE` | Maximum expired AppBridge sessions to delete per cleanup batch | `1000` | int, 1-100000 |
 
 !!! note "Per-Request UI Hiding"
     For embedded contexts, you can also hide UI sections per-request by adding `?ui_hide=...` to the Admin UI URL.
@@ -195,6 +200,12 @@ For detailed guidance on embedding and section customization, see [Admin UI Cust
 !!! tip "Production Settings"
     Set both UI and Admin API to `false` to disable management UI and APIs in production.
 
+!!! note "MCP Apps"
+    MCP Apps support is disabled by default. When enabled, `ui://` resources must
+    be registered as `text/html` with explicit CSP and sandbox metadata. See
+    [MCP Apps](../architecture/mcp-apps.md) for the security model and
+    AppBridge flow.
+
 ### A2A (Agent-to-Agent) Features
 
 | Setting                        | Description                            | Default | Options |
@@ -209,6 +220,17 @@ For detailed guidance on embedding and section customization, see [Admin UI Cust
 
 - `MCPGATEWAY_A2A_ENABLED=false`: Completely disables A2A features (API endpoints return 404, admin tab hidden)
 - `MCPGATEWAY_A2A_METRICS_ENABLED=false`: Disables metrics collection while keeping functionality
+
+### Experimental Dataplane Publisher
+
+| Setting                                  | Description                                           | Default | Options |
+| ---------------------------------------- | ----------------------------------------------------- | ------- | ------- |
+| `DATAPLANE_PUBLISHER`                    | Publish gateway configuration for the Rust dataplane  | `false` | bool    |
+| `DATAPLANE_PUBLISHER_INTERVAL_SECONDS`   | Interval between configuration snapshots, in seconds | `60`    | int ≥ 1 |
+
+User configuration keys expire after twice the configured snapshot interval plus 10 seconds. Shorter intervals can reduce
+convergence time in test environments; production deployments should retain the default unless their Redis and database
+capacity has been sized for more frequent snapshots.
 
 ### Direct Proxy Mode
 
@@ -531,6 +553,7 @@ ContextForge implements **OAuth 2.0 Dynamic Client Registration (RFC 7591)** and
 | `PERSONAL_TEAM_PREFIX`                   | Personal team naming prefix (empty = derive from display name) | `""` | string  |
 | `MAX_TEAMS_PER_USER`                     | Maximum number of teams a user can belong to    | `50`       | int > 0 |
 | `MAX_MEMBERS_PER_TEAM`                   | Default maximum members per team, resolved at check time. Teams without an explicit per-team override use this value. Platform admins are exempt from this limit. | `100`      | int > 0 |
+| `MAX_TEAM_MEMBER_SEEDS`                  | Hard ceiling on how many members can be seeded in a single `POST /teams` request (the `members` array), validated at the request boundary before any write. `MAX_MEMBERS_PER_TEAM` still applies underneath. | `500`      | int > 0 |
 | `INVITATION_EXPIRY_DAYS`                 | Number of days before team invitations expire   | `7`        | int > 0 |
 | `REQUIRE_EMAIL_VERIFICATION_FOR_INVITES` | Require email verification for team invitations | `true`     | bool    |
 | `ALLOW_TEAM_CREATION`                    | Allow users to create organizational teams (admins always can) | `true`  | bool    |
@@ -930,7 +953,18 @@ The gateway includes built-in observability features for tracking HTTP requests,
 | `MAX_CONCURRENT_HEALTH_CHECKS` | Max concurrent health checks        | `20`    | int > 0 |
 | `AUTO_REFRESH_SERVERS` | Auto refresh tools/prompts/resources        | `false` | bool    |
 | `FILELOCK_NAME`         | File lock for leader election             | `gateway_service_leader.lock` | string |
+| `PRIMARY_WORKER_LOCK_PATH` | Override path for the primary-worker election lock file (per-host; default is a port-scoped temp file) | (none) | string |
+| `PRIMARY_WORKER_ELECTION_BACKEND` | Primary-worker election: `filelock` (per host) or `redis` (per cluster) | `filelock` | enum |
+| `PRIMARY_WORKER_REDIS_KEY` | Redis lease key for cross-instance election | `mcpgw:primary_worker` | string |
+| `PRIMARY_WORKER_LEASE_TTL` | Redis lease TTL (secs) | `15` | int > 0 |
+| `PRIMARY_WORKER_HEARTBEAT_INTERVAL` | Lease renewal interval (secs; `< ttl/2`) | `5` | int > 0 |
+| `PRIMARY_WORKER_REDIS_UNAVAILABLE_POLICY` | Redis down: `fail_closed` or `filelock_fallback` | `fail_closed` | enum |
 | `DEFAULT_ROOTS`         | Default root paths for resources          | `[]`    | JSON array |
+
+!!! note "Primary-worker election notes (redis backend)"
+    - **Namespace the key when sharing Redis.** `PRIMARY_WORKER_REDIS_KEY` defaults to `mcpgw:primary_worker`. Two independent gateway deployments pointed at the same Redis instance/DB will collide on this key (electing one primary *across both*). Give each deployment its own key (e.g. suffix the environment name) when sharing Redis.
+    - **Keep `HEARTBEAT_INTERVAL < LEASE_TTL / 2`.** Otherwise the lease can expire before it is renewed, causing continuous re-election. A misconfiguration logs a warning at startup (it does not fail the boot).
+    - **Boot-time Redis outage doesn't auto-recover.** If Redis is unreachable when a worker starts, that worker applies `PRIMARY_WORKER_REDIS_UNAVAILABLE_POLICY` (fail-closed or filelock fallback) and stays in that state for its lifetime — it does not start a background loop that would later pick up a recovered Redis. Restart the worker once Redis is healthy to resume cross-instance election.
 
 ### Database Connection Pool
 
@@ -971,6 +1005,19 @@ The gateway includes built-in observability features for tracking HTTP requests,
 | `REDIS_SSL_CERTFILE`      | Path to client certificate (mTLS) | (none) | file path           |
 | `REDIS_SSL_KEYFILE`       | Path to client private key (mTLS) | (none) | file path           |
 | `REDIS_SSL_CHECK_HOSTNAME`| Verify hostname in TLS cert | `true`   | bool                     |
+
+!!! warning "Redis Server Capacity"
+    `REDIS_MAX_CONNECTIONS` is the **client-side** pool size per worker. The total connections to Redis must not exceed the server-side `maxclients` limit.
+
+    **Formula:** `replicas × workers × REDIS_MAX_CONNECTIONS < maxclients`
+
+    **Example:** 10 replicas × 24 workers × 50 pool = 12,000 connections (within 15000 maxclients limit)
+
+    If you scale replicas or increase workers, ensure Redis `maxclients` is configured accordingly:
+    - docker-compose: Set via `--maxclients` argument
+    - Helm: Set `redis.maxclients` in values.yaml
+
+    See [Scaling Guide](scale.md#redis-sizing) for details.
 
 !!! tip "Cache Backend Selection"
 
@@ -1096,7 +1143,8 @@ maxclients >= (num_gateway_instances × (REDIS_MAX_CONNECTIONS + RATELIMITER_RED
 | ------------------------------ | ------------------------------------------------ | --------------------- | ------- |
 | `ENABLE_HEADER_PASSTHROUGH`   | Enable HTTP header passthrough feature           | `false`               | bool    |
 | `ENABLE_OVERWRITE_BASE_HEADERS` | Enable overwriting of base headers             | `false`               | bool    |
-| `DEFAULT_PASSTHROUGH_HEADERS` | Default headers to pass through (JSON array)    | `["X-Tenant-Id", "X-Trace-Id"]` | JSON array |
+| `ENABLE_SENSITIVE_HEADER_PASSTHROUGH` | Allow allowlisted sensitive headers to reach outbound A2A invocations. Tool pre-invoke plugin payloads still receive only non-sensitive headers. Requires `ENABLE_HEADER_PASSTHROUGH=true`. | `false` | bool |
+| `DEFAULT_PASSTHROUGH_HEADERS` | Default headers to pass through for gateways. A2A agents require an explicit `passthrough_headers` allowlist; an unset or empty A2A list blocks request-header forwarding. | `["X-Tenant-Id", "X-Trace-Id"]` | JSON array |
 | `GLOBAL_CONFIG_CACHE_TTL`     | In-memory cache TTL for GlobalConfig (seconds)  | `60`                  | int     |
 
 !!! warning "Security Warning"

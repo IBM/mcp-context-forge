@@ -22,7 +22,7 @@ on:
     branches: ["main"]
     paths-ignore:
       - '.dockerignore'
-      - 'Containerfile.lite'
+      - 'Containerfile'
       - 'mcpgateway/**'
       - 'plugins/**'
       - 'pyproject.toml'

@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/test_docker_entrypoint.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Direct unit tests for docker-entrypoint.sh plugin requirement reload logic.
 """
@@ -85,21 +84,6 @@ def test_print_mcp_runtime_mode_warns_when_rust_enabled(tmp_path: Path) -> None:
     assert result.returncode == 0
     assert "Rust MCP runtime sidecar is deprecated as of 2026-06-11 and will sunset on 2026-07-07" in result.stdout
 
-
-def test_print_a2a_runtime_mode_warns_when_rust_enabled(tmp_path: Path) -> None:
-    app_root = _make_app_root(tmp_path)
-
-    result = _run_entrypoint_function(
-        app_root,
-        "print_a2a_runtime_mode",
-        {
-            "EXPERIMENTAL_RUST_A2A_RUNTIME_ENABLED": "true",
-            "EXPERIMENTAL_RUST_A2A_RUNTIME_MANAGED": "true",
-        },
-    )
-
-    assert result.returncode == 0
-    assert "Rust A2A runtime sidecar is deprecated as of 2026-06-11 and will sunset on 2026-07-07" in result.stdout
 
 
 def test_install_plugin_requirements_refuses_path_outside_app_root(tmp_path: Path) -> None:

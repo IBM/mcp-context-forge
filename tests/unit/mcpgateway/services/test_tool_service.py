@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/services/test_tool_service.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Tests for tool service implementation.
 """
@@ -42,6 +41,7 @@ from mcpgateway.services.tool_service import (
     _get_validator_class_and_check,
     _is_sensitive_tool_header_name,
     _protect_tool_headers_for_storage,
+    _sync_meta_traceparent,
     _validate_header_mapping_targets,
     _validate_mapping_contents,
     apply_mapping_into_target,
@@ -61,6 +61,94 @@ from mcpgateway.utils.services_auth import encode_auth
 
 # Local
 from tests.helpers.admin_mocks import install_admin_user
+
+
+def test_sync_meta_traceparent_updates_existing_value_from_outbound_header():
+    meta = {"traceparent": "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-1111111111111111-01", "existing": True}
+    headers = {
+        "Traceparent": "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-2222222222222222-01",
+        "traceparent": "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-3333333333333333-01",
+    }
+
+    result = _sync_meta_traceparent(meta, headers)
+
+    assert result == {"traceparent": "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-3333333333333333-01", "existing": True}
+    assert meta["traceparent"] == "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-1111111111111111-01"
+
+
+def test_sync_meta_traceparent_none_meta_returns_none_when_no_traceparent():
+    assert _sync_meta_traceparent(None, {"Authorization": "Bearer token"}) is None
+
+
+def test_sync_meta_traceparent_empty_headers_returns_original_meta():
+    meta = {"traceparent": "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-1111111111111111-01", "existing": True}
+
+    result = _sync_meta_traceparent(meta, {})
+
+    assert result is meta
+
+
+def test_sync_meta_traceparent_case_insensitive_fallback():
+    meta = {"existing": True}
+    headers = {"Traceparent": "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-2222222222222222-01"}
+
+    result = _sync_meta_traceparent(meta, headers)
+
+    assert result == {"traceparent": "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-2222222222222222-01", "existing": True}
+    assert "traceparent" not in meta
+
+
+def test_sync_meta_traceparent_empty_value_returns_original_meta():
+    meta = {"traceparent": "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-1111111111111111-01"}
+
+    result = _sync_meta_traceparent(meta, {"traceparent": ""})
+
+    assert result is meta
+
+
+def test_sync_meta_traceparent_malformed_header_returns_original_meta():
+    meta = {"existing": True}
+
+    result = _sync_meta_traceparent(meta, {"traceparent": "not-a-real-traceparent"})
+
+    assert result is meta
+    assert "traceparent" not in meta
+
+
+def test_sync_meta_traceparent_rejects_zero_trace_id():
+    meta = {"existing": True}
+
+    result = _sync_meta_traceparent(meta, {"traceparent": "00-00000000000000000000000000000000-1111111111111111-01"})
+
+    assert result is meta
+    assert "traceparent" not in meta
+
+
+def test_sync_meta_traceparent_rejects_zero_span_id():
+    meta = {"existing": True}
+
+    result = _sync_meta_traceparent(meta, {"traceparent": "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-0000000000000000-01"})
+
+    assert result is meta
+    assert "traceparent" not in meta
+
+
+def test_sync_meta_traceparent_rejects_unsupported_version():
+    meta = {"existing": True}
+
+    result = _sync_meta_traceparent(meta, {"traceparent": "01-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-1111111111111111-01"})
+
+    assert result is meta
+    assert "traceparent" not in meta
+
+
+def test_sync_meta_traceparent_rejects_uppercase_header_value():
+    meta = {"existing": True}
+
+    result = _sync_meta_traceparent(meta, {"traceparent": "00-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA-1111111111111111-01"})
+
+    assert result is meta
+    assert "traceparent" not in meta
 
 
 @pytest.fixture(autouse=True)
@@ -2973,6 +3061,11 @@ class TestToolService:
         async def mock_sse_client(*_args, **_kwargs):
             yield ("read", "write")
 
+        def inject_headers(headers):
+            traced = dict(headers)
+            traced["traceparent"] = "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-3333333333333333-01"
+            return traced
+
         headers_token = request_headers_var.set({"mcp-session-id": "downstream-sse"})
         try:
             with (
@@ -2980,14 +3073,25 @@ class TestToolService:
                 patch("mcpgateway.services.tool_service.ClientSession", return_value=client_session_cm),
                 patch("mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": "Bearer xyz"}),
                 patch("mcpgateway.services.tool_service.extract_using_jq", side_effect=lambda data, _filt: data),
+                patch("mcpgateway.services.tool_service.inject_trace_context_headers", side_effect=inject_headers),
                 patch("mcpgateway.services.tool_service.get_upstream_session_registry", side_effect=RegistryNotInitializedError("not init")),
             ):
-                result = await tool_service.invoke_tool(test_db, "dummy_tool", {"p": "v"}, request_headers=None)
+                result = await tool_service.invoke_tool(
+                    test_db,
+                    "dummy_tool",
+                    {"p": "v"},
+                    request_headers=None,
+                    meta_data={"traceparent": "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-1111111111111111-01"},
+                )
         finally:
             request_headers_var.reset(headers_token)
 
         session_mock.initialize.assert_awaited_once()
-        session_mock.call_tool.assert_awaited_once_with("dummy_tool", {"p": "v"}, meta=None)
+        session_mock.call_tool.assert_awaited_once_with(
+            "dummy_tool",
+            {"p": "v"},
+            meta={"traceparent": "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-3333333333333333-01"},
+        )
         assert result.content[0].text == "sse fallback ok"
 
     @pytest.mark.asyncio
@@ -3078,11 +3182,21 @@ class TestToolService:
             mock_settings.default_passthrough_headers = []
             mock_settings.tool_timeout = 60
 
-            result = await tool_service.invoke_tool(test_db, "dummy_tool", {"param": "value"}, request_headers=None)
+            result = await tool_service.invoke_tool(
+                test_db,
+                "dummy_tool",
+                {"param": "value"},
+                request_headers=None,
+                meta_data={"traceparent": "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-1111111111111111-01", "source": "api-server-runs"},
+            )
 
         assert result.content[0].text == "MCP response"
-        assert captured_headers["traceparent"].startswith("00-")
+        assert captured_headers["traceparent"] == "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01"
         assert captured_headers["X-Correlation-ID"] == "corr-123"
+        assert session_mock.call_tool.await_args.kwargs["meta"] == {
+            "traceparent": "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01",
+            "source": "api-server-runs",
+        }
         assert span_names[:3] == ["tool.invoke", "mcp.client.call", "mcp.client.initialize"]
         assert "mcp.client.request" in span_names
         assert "mcp.client.response" in span_names
@@ -4347,7 +4461,7 @@ class TestToolService:
         tool_service._http_client.request.return_value = mock_response
 
         # Mock compute_passthrough_headers_cached to return modified headers
-        def mock_passthrough(req_headers, base_headers, allowed_headers, gateway_auth_type=None, gateway_passthrough_headers=None):
+        def mock_passthrough(req_headers, base_headers, allowed_headers, gateway_auth_type=None, gateway_passthrough_headers=None, is_token_exchange=False):
             combined = base_headers.copy()
             combined["X-Request-ID"] = req_headers.get("X-Request-ID", "test-123")
             return combined
@@ -4401,7 +4515,7 @@ class TestToolService:
         sse_ctx.__aenter__.return_value = ("read", "write")
 
         # Mock compute_passthrough_headers_cached to return modified headers
-        def mock_passthrough(req_headers, base_headers, allowed_headers, gateway_auth_type=None, gateway_passthrough_headers=None):
+        def mock_passthrough(req_headers, base_headers, allowed_headers, gateway_auth_type=None, gateway_passthrough_headers=None, is_token_exchange=False):
             combined = base_headers.copy()
             combined["X-Custom-Header"] = req_headers.get("X-Custom-Header", "default")
             return combined
@@ -4471,6 +4585,54 @@ class TestToolService:
 
         # Verify result
         assert result.content[0].text == '{\n  "result": "original response"\n}'
+
+    async def test_invoke_tool_pre_invoke_hook_receives_trace_extensions(self, tool_service, mock_tool, mock_global_config_obj, test_db):
+        """G0: TOOL_PRE_INVOKE (and POST_INVOKE) invoke_hook() calls must receive a CPEX
+        Extensions object carrying the active trace_id/span_id from the observability
+        ContextVars, so plugin hooks can correlate their execution with the request trace.
+        """
+        # Third-Party
+        from cpex.framework import ToolHookType
+        from cpex.framework.models import PluginResult
+
+        # First-Party
+        from mcpgateway.services.observability_service import current_span_id, current_trace_id
+
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "POST"
+        mock_tool.auth_value = None
+
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        mock_response = AsyncMock()
+        mock_response.raise_for_status = Mock()
+        mock_response.status_code = 200
+        mock_response.json = Mock(return_value={"result": "ok"})
+        tool_service._http_client.request.return_value = mock_response
+
+        mock_pm = Mock()
+        mock_pm.invoke_hook = AsyncMock(return_value=(PluginResult(continue_processing=True, violation=None, modified_payload=None), None))
+
+        trace_token = current_trace_id.set("trace-g0-abc")
+        span_token = current_span_id.set("span-g0-xyz")
+        try:
+            with (
+                patch("mcpgateway.services.tool_service.decode_auth", return_value={}),
+                patch("mcpgateway.services.tool_service.extract_using_jq", return_value={"result": "ok"}),
+                patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=mock_pm)),
+            ):
+                await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None)
+        finally:
+            current_trace_id.reset(trace_token)
+            current_span_id.reset(span_token)
+
+        assert mock_pm.invoke_hook.call_count == 2  # Pre and post invoke
+        for hook_call in mock_pm.invoke_hook.await_args_list:
+            assert hook_call.args[0] in (ToolHookType.TOOL_PRE_INVOKE, ToolHookType.TOOL_POST_INVOKE)
+            extensions = hook_call.kwargs["extensions"]
+            assert extensions is not None
+            assert extensions.request.trace_id == "trace-g0-abc"
+            assert extensions.request.span_id == "span-g0-xyz"
 
     async def test_invoke_tool_with_plugin_post_invoke_modified_payload(self, tool_service, mock_tool, mock_global_config_obj, test_db):
         """Test invoking tool with plugin post-invoke hook modifying payload."""
@@ -8392,6 +8554,66 @@ class TestInvokeToolDirect:
         session_mock.call_tool.assert_awaited_once_with(name="remote_tool", arguments={"arg": "val"}, meta=meta_data)
 
     @pytest.mark.asyncio
+    async def test_invoke_tool_direct_syncs_meta_traceparent(self, tool_service, mock_direct_gateway):
+        """Direct remote calls should send matching traceparent values in headers and _meta."""
+        expected_result = MagicMock()
+        meta_data = {
+            "traceparent": "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-1111111111111111-01",
+            "request_id": "abc-123",
+        }
+        captured_headers = {}
+
+        session_mock = AsyncMock()
+        session_mock.call_tool = AsyncMock(return_value=expected_result)
+
+        client_session_cm = AsyncMock()
+        client_session_cm.__aenter__.return_value = session_mock
+        client_session_cm.__aexit__.return_value = AsyncMock()
+
+        def inject_headers(headers):
+            traced = dict(headers)
+            traced["traceparent"] = "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-2222222222222222-01"
+            return traced
+
+        @asynccontextmanager
+        async def mock_streamable_client(*_args, **kwargs):
+            captured_headers.update(kwargs["headers"])
+            yield ("read", "write", None)
+
+        with (
+            patch("mcpgateway.services.tool_service.fresh_db_session", self._make_fresh_db_session(mock_direct_gateway)),
+            patch("mcpgateway.services.tool_service.settings") as mock_settings,
+            patch("mcpgateway.services.tool_service.check_gateway_access", new_callable=AsyncMock, return_value=True),
+            patch("mcpgateway.services.tool_service.build_gateway_auth_headers", return_value={}),
+            patch("mcpgateway.services.tool_service.inject_trace_context_headers", side_effect=inject_headers),
+            patch("mcpgateway.services.tool_service.streamablehttp_client", mock_streamable_client),
+            patch("mcpgateway.services.tool_service.ClientSession", return_value=client_session_cm),
+        ):
+            mock_settings.mcpgateway_direct_proxy_enabled = True
+            mock_settings.mcpgateway_direct_proxy_timeout = 30
+
+            result = await tool_service.invoke_tool_direct(
+                gateway_id="gw-direct-1",
+                name="remote_tool",
+                arguments={"arg": "val"},
+                meta_data=meta_data,
+                user_email="user@example.com",
+                token_teams=["team-1"],
+            )
+
+        assert result == expected_result
+        assert captured_headers["traceparent"] == "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-2222222222222222-01"
+        session_mock.call_tool.assert_awaited_once_with(
+            name="remote_tool",
+            arguments={"arg": "val"},
+            meta={
+                "traceparent": "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-2222222222222222-01",
+                "request_id": "abc-123",
+            },
+        )
+        assert meta_data["traceparent"] == "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-1111111111111111-01"
+
+    @pytest.mark.asyncio
     async def test_invoke_tool_direct_gateway_not_found(self, tool_service):
         """Gateway not in DB should raise ToolNotFoundError."""
         with (
@@ -8903,6 +9125,87 @@ class TestRustMcpExecutionPlan:
         mock_cache.set_negative = AsyncMock()
         return mock_cache
 
+    @pytest.mark.asyncio
+    async def test_invoke_tool_prefers_exact_name_over_original_name_collision(self, tool_service):
+        """Python invocation should prefer exact registered name before original_name fallback matches."""
+        cache = self._cache_mock(None)
+        selected_gateway = SimpleNamespace(id="gw-1", auth_value=None, auth_query_params=None, oauth_config=None)
+        exact_name_tool = SimpleNamespace(
+            id="exact-tool",
+            name="helper",
+            original_name="remote_helper",
+            enabled=True,
+            deprecated=False,
+            reachable=True,
+            visibility="public",
+            team_id=None,
+            owner_email=None,
+            gateway=selected_gateway,
+            auth_value=None,
+            oauth_config=None,
+        )
+        original_name_match = SimpleNamespace(
+            id="original-name-match",
+            name="gateway_prefix_helper",
+            original_name="helper",
+            enabled=True,
+            deprecated=False,
+            reachable=True,
+            visibility="team",
+            team_id="team-a",
+            owner_email="user@example.com",
+            gateway=selected_gateway,
+            auth_value=None,
+            oauth_config=None,
+        )
+        exact_payload = self._cache_payload(
+            id="exact-tool",
+            name="helper",
+            original_name="remote_helper",
+            integration_type="REST",
+            request_type="GET",
+            url="http://tool.example/invoke",
+            headers={},
+            auth_type=None,
+            auth_value=None,
+            visibility="public",
+            team_id=None,
+            owner_email=None,
+        )
+        db = MagicMock()
+        db.execute.return_value.first.return_value = ("exact-tool",)
+        db.commit = MagicMock()
+        db.close = MagicMock()
+        response = AsyncMock()
+        response.raise_for_status = Mock()
+        response.status_code = 200
+        response.json = Mock(return_value={"ok": True})
+        tool_service._http_client.get = AsyncMock(return_value=response)
+
+        with (
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=cache),
+            patch("mcpgateway.services.tool_service.global_config_cache.get_passthrough_headers", return_value=[]),
+            patch("mcpgateway.services.tool_service.create_span", MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False)))),
+            patch("mcpgateway.services.tool_service.create_child_span", MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False)))),
+            patch("mcpgateway.services.tool_service.metrics_buffer", MagicMock()),
+            patch.object(tool_service, "_load_invocable_tools", return_value=[original_name_match, exact_name_tool]),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(side_effect=[True, True, True])),
+            patch.object(tool_service, "_build_tool_cache_payload", return_value=exact_payload) as build_payload,
+            patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=None)),
+        ):
+            result = await tool_service.invoke_tool(
+                db,
+                "helper",
+                {},
+                server_id="server-1",
+                user_email="user@example.com",
+                token_teams=["team-a"],
+            )
+
+        build_payload.assert_called_once_with(exact_name_tool, selected_gateway)
+        tool_service._http_client.get.assert_awaited_once_with("http://tool.example/invoke", params={}, headers={})
+        assert result.content[0].text == '{\n  "ok": true\n}'
+
     def _setup_db_for_header_lookup(self, test_db, gateway, tool=None):
         """Set up execute() to return gateway on first call and tool on subsequent calls."""
         call_count = [0]
@@ -9372,6 +9675,68 @@ class TestRustMcpExecutionPlan:
         assert plan["eligible"] is True
         assert plan["gatewayId"] == "gw-1"
         assert plan["toolName"] == "tool-one"
+
+    @pytest.mark.asyncio
+    async def test_prepare_rust_mcp_tool_execution_prefers_exact_name_over_original_name_collision(self, tool_service):
+        """Same-server lookup should prefer exact registered name before original_name fallback matches."""
+        cache = self._cache_mock(None)
+        selected_gateway = SimpleNamespace(
+            id="gw-1",
+            name="gateway-one",
+            url="http://gateway.example/mcp",
+            auth_type=None,
+            auth_value=None,
+            auth_query_params=None,
+            oauth_config=None,
+            ca_certificate=None,
+            ca_certificate_sig=None,
+            passthrough_headers=[],
+        )
+        exact_name_tool = SimpleNamespace(
+            id="exact-tool",
+            name="helper",
+            original_name="remote_helper",
+            enabled=True,
+            deprecated=False,
+            reachable=True,
+            visibility="public",
+            team_id=None,
+            owner_email=None,
+            gateway=selected_gateway,
+        )
+        original_name_match = SimpleNamespace(
+            id="original-name-match",
+            name="gateway_prefix_helper",
+            original_name="helper",
+            enabled=True,
+            deprecated=False,
+            reachable=True,
+            visibility="team",
+            team_id="team-a",
+            owner_email="user@example.com",
+            gateway=selected_gateway,
+        )
+
+        with (
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=cache),
+            patch("mcpgateway.services.tool_service.current_trace_id", MagicMock(get=MagicMock(return_value=None))),
+            patch("mcpgateway.services.tool_service.global_config_cache.get_passthrough_headers", return_value=[]),
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", side_effect=lambda request_headers, headers, *_args, **_kwargs: headers),
+            patch.object(tool_service, "_load_invocable_tools", return_value=[original_name_match, exact_name_tool]),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(side_effect=[True, True, True])),
+            patch.object(tool_service, "_build_tool_cache_payload", return_value=self._cache_payload(id="exact-tool", gateway_id="gw-1")),
+            patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=None)),
+        ):
+            plan = await tool_service.prepare_rust_mcp_tool_execution(
+                MagicMock(),
+                "helper",
+                server_id="server-1",
+                user_email="user@example.com",
+                token_teams=["team-a"],
+            )
+
+        assert plan["eligible"] is True
+        assert plan["toolId"] == "exact-tool"
 
     @pytest.mark.asyncio
     async def test_prepare_rust_mcp_tool_execution_rejects_inaccessible_db_candidates(self, tool_service):
@@ -9871,7 +10236,7 @@ class TestRustMcpExecutionPlan:
             patch("mcpgateway.services.tool_service.current_trace_id", MagicMock(get=MagicMock(return_value=None))),
             patch("mcpgateway.services.tool_service.global_config_cache", MagicMock(get_passthrough_headers=MagicMock(return_value=[]))),
             patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
-            patch("mcpgateway.services.token_storage_service.TokenStorageService", return_value=token_storage),
+            patch("mcpgateway.services.tool_service.TokenStorageService", return_value=token_storage),
             patch("mcpgateway.services.tool_service.fresh_db_session", _fresh_db_session),
             patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", side_effect=lambda _request_headers, headers, *_args, **_kwargs: headers),
             patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=None)),
@@ -9911,7 +10276,7 @@ class TestRustMcpExecutionPlan:
             patch("mcpgateway.services.tool_service.current_trace_id", MagicMock(get=MagicMock(return_value=None))),
             patch("mcpgateway.services.tool_service.global_config_cache", MagicMock(get_passthrough_headers=MagicMock(return_value=[]))),
             patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
-            patch("mcpgateway.services.token_storage_service.TokenStorageService", return_value=token_storage),
+            patch("mcpgateway.services.tool_service.TokenStorageService", return_value=token_storage),
             patch("mcpgateway.services.tool_service.fresh_db_session", _fresh_db_session),
             patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=None)),
         ):
@@ -9948,7 +10313,7 @@ class TestRustMcpExecutionPlan:
         mock_pm = MagicMock()
         mock_pm.has_hooks_for = MagicMock(side_effect=lambda hook_type: hook_type == ToolHookType.TOOL_PRE_INVOKE)
 
-        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False):  # noqa: ARG001
+        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False, **_kwargs):  # noqa: ARG001
             modified = ToolPreInvokePayload(
                 name=payload.name,
                 args=payload.args,
@@ -9963,7 +10328,7 @@ class TestRustMcpExecutionPlan:
             patch("mcpgateway.services.tool_service.current_trace_id", MagicMock(get=MagicMock(return_value=None))),
             patch("mcpgateway.services.tool_service.global_config_cache", MagicMock(get_passthrough_headers=MagicMock(return_value=[]))),
             patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
-            patch("mcpgateway.services.token_storage_service.TokenStorageService", return_value=token_storage),
+            patch("mcpgateway.services.tool_service.TokenStorageService", return_value=token_storage),
             patch("mcpgateway.services.tool_service.fresh_db_session", _fresh_db_session),
             patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", side_effect=lambda _request_headers, headers, *_args, **_kwargs: headers),
             patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=mock_pm)),
@@ -10123,7 +10488,7 @@ class TestRustMcpExecutionPlan:
         mock_pm.has_hooks_for = MagicMock(side_effect=lambda hook_type: hook_type == ToolHookType.TOOL_PRE_INVOKE)
 
         # Mock invoke_hook to return modified args and headers
-        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False):  # noqa: ARG001
+        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False, **_kwargs):  # noqa: ARG001
             modified = ToolPreInvokePayload(
                 name=payload.name,
                 args={"cleaned_arg": "value"},
@@ -10168,7 +10533,7 @@ class TestRustMcpExecutionPlan:
         mock_pm = MagicMock()
         mock_pm.has_hooks_for = MagicMock(side_effect=lambda hook_type: hook_type == ToolHookType.TOOL_PRE_INVOKE)
 
-        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False):  # noqa: ARG001
+        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False, **_kwargs):  # noqa: ARG001
             modified = ToolPreInvokePayload(name="renamed-tool", args=payload.args)
             return PluginResult(modified_payload=modified, continue_processing=True), {}
 
@@ -10230,7 +10595,7 @@ class TestRustMcpExecutionPlan:
 
         received_headers = {}
 
-        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False):  # noqa: ARG001
+        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False, **_kwargs):  # noqa: ARG001
             received_headers.update(payload.headers.root)
             return PluginResult(continue_processing=True), {}
 
@@ -10271,7 +10636,7 @@ class TestRustMcpExecutionPlan:
 
         received_context = {}
 
-        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False):  # noqa: ARG001
+        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False, **_kwargs):  # noqa: ARG001
             received_context["request_id"] = global_context.request_id
             received_context["user"] = global_context.user
             received_context["state"] = dict(global_context.state) if hasattr(global_context, "state") else {}
@@ -10325,7 +10690,7 @@ class TestRustMcpExecutionPlan:
         mock_pm = MagicMock()
         mock_pm.has_hooks_for = MagicMock(side_effect=lambda hook_type: hook_type == ToolHookType.TOOL_PRE_INVOKE)
 
-        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False):  # noqa: ARG001
+        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False, **_kwargs):  # noqa: ARG001
             received_context["user"] = global_context.user
             return PluginResult(continue_processing=True), {}
 
@@ -10386,7 +10751,7 @@ class TestRustMcpExecutionPlan:
         mock_pm = AsyncMock()
         mock_pm.has_hooks_for = MagicMock(side_effect=lambda hook_type: hook_type == ToolHookType.TOOL_PRE_INVOKE)
 
-        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False):  # noqa: ARG001
+        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False, **_kwargs):  # noqa: ARG001
             received_metadata["keys"] = list(global_context.metadata.keys())
             received_metadata["has_tool"] = TOOL_METADATA in global_context.metadata
             received_metadata["has_gateway"] = GATEWAY_METADATA in global_context.metadata

@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Postgres-gated integration harness for async gateway lifecycle."""
+"""Location: ./tests/integration/test_gateway_async_lifecycle_postgres.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
+SPDX-License-Identifier: Apache-2.0
+
+Postgres-gated integration harness for async gateway lifecycle.
+"""
 
 # Standard
 import os

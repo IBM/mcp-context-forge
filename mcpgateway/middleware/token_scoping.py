@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/middleware/token_scoping.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Token Scoping Middleware.
 This middleware enforces token scoping restrictions at the API level,
@@ -12,9 +11,8 @@ and time-based restrictions.
 
 # Standard
 from datetime import datetime, timedelta, timezone
+from enum import Enum, auto
 from functools import lru_cache
-import hashlib
-import hmac
 import ipaddress
 import re
 from typing import List, Optional, Pattern, Tuple
@@ -64,11 +62,17 @@ _RESOURCE_PATTERNS: List[Tuple[Pattern[str], str]] = [
     (re.compile(r"/gateways/?([a-f0-9\-]+)"), "gateway"),
 ]
 _AUTH_COOKIE_NAMES = ("jwt_token", "access_token")
-_INTERNAL_MCP_PATH_PREFIX = "/_internal/mcp"
-_INTERNAL_MCP_RUNTIME_HEADER = "x-contextforge-mcp-runtime"
-_INTERNAL_MCP_AUTH_CONTEXT_HEADER = "x-contextforge-auth-context"
-_INTERNAL_MCP_RUNTIME_AUTH_HEADER = "x-contextforge-mcp-runtime-auth"
-_INTERNAL_MCP_RUNTIME_AUTH_CONTEXT = "contextforge-internal-mcp-runtime-v1"
+
+
+class ResourceOwnershipResult(Enum):
+    """Outcome from a token-scoped resource ownership lookup."""
+
+    ALLOWED = auto()
+    NOT_FOUND = auto()
+    DENIED = auto()
+
+
+_TARGETED_MISSING_DELETE_PATTERN = re.compile(r"^/(?:servers|gateways)/(?:[a-f0-9]{32}|[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12})/?$")
 
 # Permission map with precompiled patterns
 # Maps (HTTP method, path pattern) to required permission
@@ -122,6 +126,8 @@ _PERMISSION_PATTERNS: List[Tuple[str, Pattern[str], str]] = [
     ("POST", re.compile(r"^/gateways/[^/]+/"), Permissions.GATEWAYS_UPDATE),  # POST to sub-resources (state, toggle, refresh)
     ("PUT", re.compile(r"^/gateways/[^/]+(?:$|/)"), Permissions.GATEWAYS_UPDATE),
     ("DELETE", re.compile(r"^/gateways/[^/]+(?:$|/)"), Permissions.GATEWAYS_DELETE),
+    # MCP Servers REST API (v1 prefix stripped by middleware before matching)
+    ("POST", re.compile(r"^/mcp-servers/test(?:$|/)"), Permissions.GATEWAYS_READ),
     # Metrics permissions
     ("GET", re.compile(r"^/metrics(?:$|/)"), Permissions.ADMIN_METRICS),
     ("POST", re.compile(r"^/metrics/reset(?:$|/)"), Permissions.ADMIN_METRICS),
@@ -741,6 +747,15 @@ class TokenScopingMiddleware:
         if not permissions or "*" in permissions:
             return True  # No restrictions or full access
 
+        # Unified search (/v1/search, normalized to /search) is authenticated-only
+        # at this layer: it spans many entity types, each guarded by its own
+        # @require_permission, and per-entity denials are suppressed downstream by
+        # _safe_entity_search. Requiring a single permission here would wrongly 403
+        # a validly-scoped token (e.g. tools.read-only), so let it through and rely
+        # on the handler's per-entity RBAC + token/team scoping to filter results.
+        if request_path == "/search" or request_path.startswith("/search/"):
+            return True
+
         # Handle admin routes with granular route-group mapping.
         # Unmapped /admin/* paths are denied by default (fail-secure).
         if request_path.startswith("/admin"):
@@ -864,7 +879,12 @@ class TokenScopingMiddleware:
                 finally:
                     db.close()
 
-    def _check_resource_team_ownership(self, request_path: str, token_teams: list, db=None, _user_email: str = None) -> bool:  # noqa: PLR0911  # pylint: disable=too-many-return-statements
+    def _is_targeted_missing_resource_delete(self, request_path: str, method: str) -> bool:
+        """Return whether request is an exact server or gateway DELETE path."""
+        normalized_path = self._normalize_path_for_matching(request_path)
+        return method == "DELETE" and bool(_TARGETED_MISSING_DELETE_PATTERN.fullmatch(normalized_path))
+
+    def _check_resource_team_ownership(self, request_path: str, token_teams: list, db=None, _user_email: str = None) -> ResourceOwnershipResult:  # noqa: PLR0911  # pylint: disable=too-many-return-statements
         """
         Check if the requested resource is accessible by the token.
 
@@ -893,7 +913,7 @@ class TokenScopingMiddleware:
                 If None, creates and manages its own session.
 
         Returns:
-            bool: True if resource access is allowed, False otherwise
+            ResourceOwnershipResult: Allowed, missing, or denied ownership result.
         """
         request_path = self._normalize_path_for_matching(request_path)
 
@@ -929,7 +949,7 @@ class TokenScopingMiddleware:
         # If no resource ID in path, allow (general endpoints like /health, /tokens, /metrics)
         if not resource_id or not resource_type:
             logger.debug(f"No resource ID found in path {request_path}, allowing access")
-            return True
+            return ResourceOwnershipResult.ALLOWED
 
         # Import database models
         # First-Party
@@ -947,7 +967,7 @@ class TokenScopingMiddleware:
 
                 if not server:
                     logger.warning(f"Server {SecurityValidator.sanitize_log_message(resource_id)} not found in database")
-                    return False
+                    return ResourceOwnershipResult.NOT_FOUND
 
                 # Get server visibility (default to 'team' if field doesn't exist)
                 server_visibility = getattr(server, "visibility", "team")
@@ -955,7 +975,7 @@ class TokenScopingMiddleware:
                 # PUBLIC SERVERS: Accessible by everyone (including public-only tokens)
                 if server_visibility == "public":
                     logger.debug(f"Access granted: Server {SecurityValidator.sanitize_log_message(resource_id)} is PUBLIC")
-                    return True
+                    return ResourceOwnershipResult.ALLOWED
 
                 # PUBLIC-ONLY TOKEN: Can ONLY access public servers (strict public-only policy)
                 # No owner access - if user needs own resources, use a personal team-scoped token
@@ -963,7 +983,7 @@ class TokenScopingMiddleware:
                     logger.warning(
                         f"Access denied: Public-only token cannot access {SecurityValidator.sanitize_log_message(server_visibility)} server {SecurityValidator.sanitize_log_message(resource_id)}"
                     )
-                    return False
+                    return ResourceOwnershipResult.DENIED
 
                 # TEAM-SCOPED SERVERS: Check if server belongs to token's teams
                 if server_visibility == "team":
@@ -971,28 +991,28 @@ class TokenScopingMiddleware:
                         logger.debug(
                             f"Access granted: Team server {SecurityValidator.sanitize_log_message(resource_id)} belongs to token's team {SecurityValidator.sanitize_log_message(str(server.team_id))}"
                         )
-                        return True
+                        return ResourceOwnershipResult.ALLOWED
 
                     logger.warning(
                         f"Access denied: Server {SecurityValidator.sanitize_log_message(resource_id)} is team-scoped to '{SecurityValidator.sanitize_log_message(str(server.team_id))}', token is scoped to teams {SecurityValidator.sanitize_log_message(str(token_team_ids))}"
                     )
-                    return False
+                    return ResourceOwnershipResult.DENIED
 
                 # PRIVATE SERVERS: Owner-only access (per RBAC doc)
                 if server_visibility == "private":
                     server_owner = getattr(server, "owner_email", None)
                     if server_owner and server_owner == _user_email:
                         logger.debug(f"Access granted: Private server {SecurityValidator.sanitize_log_message(resource_id)} owned by {SecurityValidator.sanitize_log_message(_user_email)}")
-                        return True
+                        return ResourceOwnershipResult.ALLOWED
 
                     logger.warning(
                         f"Access denied: Server {SecurityValidator.sanitize_log_message(resource_id)} is private, owner is '{SecurityValidator.sanitize_log_message(str(server_owner))}', requester is '{SecurityValidator.sanitize_log_message(_user_email)}'"
                     )
-                    return False
+                    return ResourceOwnershipResult.DENIED
 
                 # Unknown visibility - deny by default
                 logger.warning(f"Access denied: Server {SecurityValidator.sanitize_log_message(resource_id)} has unknown visibility: {SecurityValidator.sanitize_log_message(server_visibility)}")
-                return False
+                return ResourceOwnershipResult.DENIED
 
             # CHECK TOOLS
             if resource_type == "tool":
@@ -1000,7 +1020,7 @@ class TokenScopingMiddleware:
 
                 if not tool:
                     logger.warning(f"Tool {SecurityValidator.sanitize_log_message(resource_id)} not found in database")
-                    return False
+                    return ResourceOwnershipResult.DENIED
 
                 # Get tool visibility (default to 'team' if field doesn't exist)
                 tool_visibility = getattr(tool, "visibility", "team")
@@ -1008,7 +1028,7 @@ class TokenScopingMiddleware:
                 # PUBLIC TOOLS: Accessible by everyone (including public-only tokens)
                 if tool_visibility == "public":
                     logger.debug(f"Access granted: Tool {SecurityValidator.sanitize_log_message(resource_id)} is PUBLIC")
-                    return True
+                    return ResourceOwnershipResult.ALLOWED
 
                 # PUBLIC-ONLY TOKEN: Can ONLY access public tools (strict public-only policy)
                 # No owner access - if user needs own resources, use a personal team-scoped token
@@ -1016,7 +1036,7 @@ class TokenScopingMiddleware:
                     logger.warning(
                         f"Access denied: Public-only token cannot access {SecurityValidator.sanitize_log_message(tool_visibility)} tool {SecurityValidator.sanitize_log_message(resource_id)}"
                     )
-                    return False
+                    return ResourceOwnershipResult.DENIED
 
                 # TEAM TOOLS: Check if tool's team matches token's teams
                 if tool_visibility == "team":
@@ -1025,28 +1045,28 @@ class TokenScopingMiddleware:
                         logger.debug(
                             f"Access granted: Team tool {SecurityValidator.sanitize_log_message(resource_id)} belongs to token's team {SecurityValidator.sanitize_log_message(str(tool_team_id))}"
                         )
-                        return True
+                        return ResourceOwnershipResult.ALLOWED
 
                     logger.warning(
                         f"Access denied: Tool {SecurityValidator.sanitize_log_message(resource_id)} is team-scoped to '{SecurityValidator.sanitize_log_message(str(tool_team_id))}', token is scoped to teams {SecurityValidator.sanitize_log_message(str(token_team_ids))}"
                     )
-                    return False
+                    return ResourceOwnershipResult.DENIED
 
                 # PRIVATE TOOLS: Owner-only access (per RBAC doc)
                 if tool_visibility in ["private", "user"]:
                     tool_owner = getattr(tool, "owner_email", None)
                     if tool_owner and tool_owner == _user_email:
                         logger.debug(f"Access granted: Private tool {SecurityValidator.sanitize_log_message(resource_id)} owned by {SecurityValidator.sanitize_log_message(_user_email)}")
-                        return True
+                        return ResourceOwnershipResult.ALLOWED
 
                     logger.warning(
                         f"Access denied: Tool {SecurityValidator.sanitize_log_message(resource_id)} is {SecurityValidator.sanitize_log_message(tool_visibility)}, owner is '{SecurityValidator.sanitize_log_message(str(tool_owner))}', requester is '{SecurityValidator.sanitize_log_message(_user_email)}'"
                     )
-                    return False
+                    return ResourceOwnershipResult.DENIED
 
                 # Unknown visibility - deny by default
                 logger.warning(f"Access denied: Tool {SecurityValidator.sanitize_log_message(resource_id)} has unknown visibility: {SecurityValidator.sanitize_log_message(tool_visibility)}")
-                return False
+                return ResourceOwnershipResult.DENIED
 
             # CHECK RESOURCES
             if resource_type == "resource":
@@ -1054,7 +1074,7 @@ class TokenScopingMiddleware:
 
                 if not resource:
                     logger.warning(f"Resource {SecurityValidator.sanitize_log_message(resource_id)} not found in database")
-                    return False
+                    return ResourceOwnershipResult.DENIED
 
                 # Get resource visibility (default to 'team' if field doesn't exist)
                 resource_visibility = getattr(resource, "visibility", "team")
@@ -1062,7 +1082,7 @@ class TokenScopingMiddleware:
                 # PUBLIC RESOURCES: Accessible by everyone (including public-only tokens)
                 if resource_visibility == "public":
                     logger.debug(f"Access granted: Resource {SecurityValidator.sanitize_log_message(resource_id)} is PUBLIC")
-                    return True
+                    return ResourceOwnershipResult.ALLOWED
 
                 # PUBLIC-ONLY TOKEN: Can ONLY access public resources (strict public-only policy)
                 # No owner access - if user needs own resources, use a personal team-scoped token
@@ -1070,7 +1090,7 @@ class TokenScopingMiddleware:
                     logger.warning(
                         f"Access denied: Public-only token cannot access {SecurityValidator.sanitize_log_message(resource_visibility)} resource {SecurityValidator.sanitize_log_message(resource_id)}"
                     )
-                    return False
+                    return ResourceOwnershipResult.DENIED
 
                 # TEAM RESOURCES: Check if resource's team matches token's teams
                 if resource_visibility == "team":
@@ -1079,28 +1099,28 @@ class TokenScopingMiddleware:
                         logger.debug(
                             f"Access granted: Team resource {SecurityValidator.sanitize_log_message(resource_id)} belongs to token's team {SecurityValidator.sanitize_log_message(str(resource_team_id))}"
                         )
-                        return True
+                        return ResourceOwnershipResult.ALLOWED
 
                     logger.warning(
                         f"Access denied: Resource {SecurityValidator.sanitize_log_message(resource_id)} is team-scoped to '{SecurityValidator.sanitize_log_message(str(resource_team_id))}', token is scoped to teams {SecurityValidator.sanitize_log_message(str(token_team_ids))}"
                     )
-                    return False
+                    return ResourceOwnershipResult.DENIED
 
                 # PRIVATE RESOURCES: Owner-only access (per RBAC doc)
                 if resource_visibility in ["private", "user"]:
                     resource_owner = getattr(resource, "owner_email", None)
                     if resource_owner and resource_owner == _user_email:
                         logger.debug(f"Access granted: Private resource {SecurityValidator.sanitize_log_message(resource_id)} owned by {SecurityValidator.sanitize_log_message(_user_email)}")
-                        return True
+                        return ResourceOwnershipResult.ALLOWED
 
                     logger.warning(
                         f"Access denied: Resource {SecurityValidator.sanitize_log_message(resource_id)} is {SecurityValidator.sanitize_log_message(resource_visibility)}, owner is '{SecurityValidator.sanitize_log_message(str(resource_owner))}', requester is '{SecurityValidator.sanitize_log_message(_user_email)}'"
                     )
-                    return False
+                    return ResourceOwnershipResult.DENIED
 
                 # Unknown visibility - deny by default
                 logger.warning(f"Access denied: Resource {SecurityValidator.sanitize_log_message(resource_id)} has unknown visibility: {SecurityValidator.sanitize_log_message(resource_visibility)}")
-                return False
+                return ResourceOwnershipResult.DENIED
 
             # CHECK PROMPTS
             if resource_type == "prompt":
@@ -1108,7 +1128,7 @@ class TokenScopingMiddleware:
 
                 if not prompt:
                     logger.warning(f"Prompt {SecurityValidator.sanitize_log_message(resource_id)} not found in database")
-                    return False
+                    return ResourceOwnershipResult.DENIED
 
                 # Get prompt visibility (default to 'team' if field doesn't exist)
                 prompt_visibility = getattr(prompt, "visibility", "team")
@@ -1116,7 +1136,7 @@ class TokenScopingMiddleware:
                 # PUBLIC PROMPTS: Accessible by everyone (including public-only tokens)
                 if prompt_visibility == "public":
                     logger.debug(f"Access granted: Prompt {SecurityValidator.sanitize_log_message(resource_id)} is PUBLIC")
-                    return True
+                    return ResourceOwnershipResult.ALLOWED
 
                 # PUBLIC-ONLY TOKEN: Can ONLY access public prompts (strict public-only policy)
                 # No owner access - if user needs own resources, use a personal team-scoped token
@@ -1124,7 +1144,7 @@ class TokenScopingMiddleware:
                     logger.warning(
                         f"Access denied: Public-only token cannot access {SecurityValidator.sanitize_log_message(prompt_visibility)} prompt {SecurityValidator.sanitize_log_message(resource_id)}"
                     )
-                    return False
+                    return ResourceOwnershipResult.DENIED
 
                 # TEAM PROMPTS: Check if prompt's team matches token's teams
                 if prompt_visibility == "team":
@@ -1133,28 +1153,28 @@ class TokenScopingMiddleware:
                         logger.debug(
                             f"Access granted: Team prompt {SecurityValidator.sanitize_log_message(resource_id)} belongs to token's team {SecurityValidator.sanitize_log_message(str(prompt_team_id))}"
                         )
-                        return True
+                        return ResourceOwnershipResult.ALLOWED
 
                     logger.warning(
                         f"Access denied: Prompt {SecurityValidator.sanitize_log_message(resource_id)} is team-scoped to '{SecurityValidator.sanitize_log_message(str(prompt_team_id))}', token is scoped to teams {SecurityValidator.sanitize_log_message(str(token_team_ids))}"
                     )
-                    return False
+                    return ResourceOwnershipResult.DENIED
 
                 # PRIVATE PROMPTS: Owner-only access (per RBAC doc)
                 if prompt_visibility in ["private", "user"]:
                     prompt_owner = getattr(prompt, "owner_email", None)
                     if prompt_owner and prompt_owner == _user_email:
                         logger.debug(f"Access granted: Private prompt {SecurityValidator.sanitize_log_message(resource_id)} owned by {SecurityValidator.sanitize_log_message(_user_email)}")
-                        return True
+                        return ResourceOwnershipResult.ALLOWED
 
                     logger.warning(
                         f"Access denied: Prompt {SecurityValidator.sanitize_log_message(resource_id)} is {SecurityValidator.sanitize_log_message(prompt_visibility)}, owner is '{SecurityValidator.sanitize_log_message(str(prompt_owner))}', requester is '{SecurityValidator.sanitize_log_message(_user_email)}'"
                     )
-                    return False
+                    return ResourceOwnershipResult.DENIED
 
                 # Unknown visibility - deny by default
                 logger.warning(f"Access denied: Prompt {SecurityValidator.sanitize_log_message(resource_id)} has unknown visibility: {SecurityValidator.sanitize_log_message(prompt_visibility)}")
-                return False
+                return ResourceOwnershipResult.DENIED
 
             # CHECK GATEWAYS
             if resource_type == "gateway":
@@ -1162,7 +1182,7 @@ class TokenScopingMiddleware:
 
                 if not gateway:
                     logger.warning(f"Gateway {SecurityValidator.sanitize_log_message(resource_id)} not found in database")
-                    return False
+                    return ResourceOwnershipResult.NOT_FOUND
 
                 # Get gateway visibility (default to 'team' if field doesn't exist)
                 gateway_visibility = getattr(gateway, "visibility", "team")
@@ -1170,7 +1190,7 @@ class TokenScopingMiddleware:
                 # PUBLIC GATEWAYS: Accessible by everyone (including public-only tokens)
                 if gateway_visibility == "public":
                     logger.debug(f"Access granted: Gateway {SecurityValidator.sanitize_log_message(resource_id)} is PUBLIC")
-                    return True
+                    return ResourceOwnershipResult.ALLOWED
 
                 # PUBLIC-ONLY TOKEN: Can ONLY access public gateways (strict public-only policy)
                 # No owner access - if user needs own resources, use a personal team-scoped token
@@ -1178,7 +1198,7 @@ class TokenScopingMiddleware:
                     logger.warning(
                         f"Access denied: Public-only token cannot access {SecurityValidator.sanitize_log_message(gateway_visibility)} gateway {SecurityValidator.sanitize_log_message(resource_id)}"
                     )
-                    return False
+                    return ResourceOwnershipResult.DENIED
 
                 # TEAM GATEWAYS: Check if gateway's team matches token's teams
                 if gateway_visibility == "team":
@@ -1187,37 +1207,37 @@ class TokenScopingMiddleware:
                         logger.debug(
                             f"Access granted: Team gateway {SecurityValidator.sanitize_log_message(resource_id)} belongs to token's team {SecurityValidator.sanitize_log_message(str(gateway_team_id))}"
                         )
-                        return True
+                        return ResourceOwnershipResult.ALLOWED
 
                     logger.warning(
                         f"Access denied: Gateway {SecurityValidator.sanitize_log_message(resource_id)} is team-scoped to '{SecurityValidator.sanitize_log_message(str(gateway_team_id))}', token is scoped to teams {SecurityValidator.sanitize_log_message(str(token_team_ids))}"
                     )
-                    return False
+                    return ResourceOwnershipResult.DENIED
 
                 # PRIVATE GATEWAYS: Owner-only access (per RBAC doc)
                 if gateway_visibility in ["private", "user"]:
                     gateway_owner = getattr(gateway, "owner_email", None)
                     if gateway_owner and gateway_owner == _user_email:
                         logger.debug(f"Access granted: Private gateway {SecurityValidator.sanitize_log_message(resource_id)} owned by {SecurityValidator.sanitize_log_message(_user_email)}")
-                        return True
+                        return ResourceOwnershipResult.ALLOWED
 
                     logger.warning(
                         f"Access denied: Gateway {SecurityValidator.sanitize_log_message(resource_id)} is {SecurityValidator.sanitize_log_message(gateway_visibility)}, owner is '{SecurityValidator.sanitize_log_message(str(gateway_owner))}', requester is '{SecurityValidator.sanitize_log_message(_user_email)}'"
                     )
-                    return False
+                    return ResourceOwnershipResult.DENIED
 
                 # Unknown visibility - deny by default
                 logger.warning(f"Access denied: Gateway {SecurityValidator.sanitize_log_message(resource_id)} has unknown visibility: {SecurityValidator.sanitize_log_message(gateway_visibility)}")
-                return False
+                return ResourceOwnershipResult.DENIED
 
             # UNKNOWN RESOURCE TYPE
             logger.warning(f"Unknown resource type '{SecurityValidator.sanitize_log_message(str(resource_type))}' for path: {SecurityValidator.sanitize_log_message(request_path)}")
-            return False
+            return ResourceOwnershipResult.DENIED
 
         except Exception as e:
             logger.error(f"Error checking resource team ownership for {request_path}: {e}", exc_info=True)
             # Fail securely - deny access on error
-            return False
+            return ResourceOwnershipResult.DENIED
         finally:
             # Only commit/close if we created the session
             if owns_session:
@@ -1330,7 +1350,11 @@ class TokenScopingMiddleware:
                         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Token is invalid: User is no longer a member of the associated team")
 
                     # Check resource team ownership with shared session
-                    if not self._check_resource_team_ownership(normalized_path, token_teams, db=db, _user_email=user_email):
+                    ownership_result = self._check_resource_team_ownership(normalized_path, token_teams, db=db, _user_email=user_email)
+                    if ownership_result is ResourceOwnershipResult.NOT_FOUND and self._is_targeted_missing_resource_delete(request.url.path, request.method):
+                        logger.info("Scoped DELETE target not found: %s", SecurityValidator.sanitize_log_message(normalized_path))
+                        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Resource not found")
+                    if ownership_result is not ResourceOwnershipResult.ALLOWED:
                         logger.warning(f"Access denied: Resource does not belong to token's teams {SecurityValidator.sanitize_log_message(str(token_teams))}")
                         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_ACCESS_DENIED_MSG)
                 finally:
@@ -1348,7 +1372,11 @@ class TokenScopingMiddleware:
                     logger.warning("Token rejected: User no longer member of associated team(s)")
                     raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Token is invalid: User is no longer a member of the associated team")
 
-                if not self._check_resource_team_ownership(normalized_path, token_teams, _user_email=user_email):
+                ownership_result = self._check_resource_team_ownership(normalized_path, token_teams, _user_email=user_email)
+                if ownership_result is ResourceOwnershipResult.NOT_FOUND and self._is_targeted_missing_resource_delete(request.url.path, request.method):
+                    logger.info("Scoped DELETE target not found: %s", SecurityValidator.sanitize_log_message(normalized_path))
+                    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Resource not found")
+                if ownership_result is not ResourceOwnershipResult.ALLOWED:
                     logger.warning(f"Access denied: Resource does not belong to token's teams {SecurityValidator.sanitize_log_message(str(token_teams))}")
                     raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_ACCESS_DENIED_MSG)
 
@@ -1399,70 +1427,24 @@ class TokenScopingMiddleware:
             )
 
     def _is_trusted_internal_mcp_runtime_request(self, request: Request, normalized_path: str) -> bool:
-        """Return whether the request is a trusted loopback Rust MCP sidecar hop.
+        """Return whether the request is a trusted internal MCP/A2A runtime hop.
+
+        Delegates to the shared gate in ``auth_context`` so the trust decision is
+        defined in one place. Unlike the previous local check, this trusts both
+        the ``rust`` and ``affinity`` runtime markers — closing the gap where the
+        in-process session-affinity dispatch was still token-scoped.
 
         Args:
             request: Incoming HTTP request.
             normalized_path: Canonicalized request path used for route matching.
 
         Returns:
-            ``True`` when the request originated from the local Rust MCP runtime and
-            includes the expected trusted headers.
+            ``True`` when the request is a trusted internal MCP/A2A hop.
         """
-        if normalized_path != _INTERNAL_MCP_PATH_PREFIX and not normalized_path.startswith(f"{_INTERNAL_MCP_PATH_PREFIX}/"):
-            return False
+        # First-Party
+        from mcpgateway.auth_context import is_trusted_internal_mcp_request  # pylint: disable=import-outside-toplevel
 
-        if request.headers.get(_INTERNAL_MCP_RUNTIME_HEADER) != "rust":
-            return False
-
-        provided_auth = request.headers.get(_INTERNAL_MCP_RUNTIME_AUTH_HEADER)
-        if not provided_auth:
-            return False
-
-        expected_auth = self._expected_internal_mcp_runtime_auth_header()
-        if not hmac.compare_digest(provided_auth, expected_auth):
-            return False
-
-        if not request.headers.get(_INTERNAL_MCP_AUTH_CONTEXT_HEADER):
-            return False
-
-        client_host = getattr(getattr(request, "client", None), "host", None)
-        return client_host in ("127.0.0.1", "::1")
-
-    @staticmethod
-    def _auth_encryption_secret_value() -> str:
-        """Return the configured auth-encryption secret as a plain string.
-
-        Returns:
-            The auth-encryption secret, normalized to a regular string.
-        """
-        secret = settings.auth_encryption_secret
-        if hasattr(secret, "get_secret_value"):
-            return secret.get_secret_value()
-        return str(secret)
-
-    @staticmethod
-    @lru_cache(maxsize=8)
-    def _expected_internal_mcp_runtime_auth_header_for_secret(secret: str) -> str:
-        """Return the expected shared internal-auth header for a specific secret.
-
-        Args:
-            secret: Auth-encryption secret to derive the trust header from.
-
-        Returns:
-            Hex-encoded SHA-256 digest derived from the provided auth secret.
-        """
-        material = f"{secret}:{_INTERNAL_MCP_RUNTIME_AUTH_CONTEXT}".encode("utf-8")
-        return hashlib.sha256(material).hexdigest()
-
-    @staticmethod
-    def _expected_internal_mcp_runtime_auth_header() -> str:
-        """Return the expected shared internal-auth header for Rust MCP hops.
-
-        Returns:
-            Shared secret-derived digest expected on trusted internal Rust MCP calls.
-        """
-        return TokenScopingMiddleware._expected_internal_mcp_runtime_auth_header_for_secret(TokenScopingMiddleware._auth_encryption_secret_value())
+        return is_trusted_internal_mcp_request(request, path=normalized_path)
 
 
 # Create middleware instance

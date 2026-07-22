@@ -1,14 +1,14 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/test_config.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Test the configuration module.
 Author: Mihai Criveti
 """
 
 # Standard
+import logging
 import os
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -666,6 +666,47 @@ def test_gateway_create_rejects_oauth_authorization_servers_with_blocked_urls():
         )
 
     assert "OAuth config authorization_servers[0]" in str(exc_info.value)
+    assert "SSRF protection" in str(exc_info.value)
+
+
+def test_gateway_create_rejects_ssrf_redirect_uri():
+    """Gateway creation should reject blocked oauth_config.redirect_uri (issue #407 Gap B)."""
+    with pytest.raises(ValidationError) as exc_info:
+        GatewayCreate(
+            name="blocked-oauth-redirect-uri",
+            url="https://example.com/sse",
+            auth_type="oauth",
+            oauth_config={
+                "grant_type": "authorization_code",
+                "client_id": "client-id",
+                "client_secret": "test-client-secret",  # pragma: allowlist secret
+                "authorization_url": "https://issuer.example/authorize",
+                "token_url": "https://issuer.example/token",
+                "redirect_uri": "http://169.254.169.254/latest/meta-data/",
+            },
+        )
+
+    assert "OAuth config redirect_uri" in str(exc_info.value)
+    assert "SSRF protection" in str(exc_info.value)
+
+
+def test_gateway_create_rejects_ssrf_jwks_uri():
+    """Gateway creation should reject blocked oauth_config.jwks_uri (issue #407 Gap B)."""
+    with pytest.raises(ValidationError) as exc_info:
+        GatewayCreate(
+            name="blocked-oauth-jwks-uri",
+            url="https://example.com/sse",
+            auth_type="oauth",
+            oauth_config={
+                "grant_type": "client_credentials",
+                "client_id": "client-id",
+                "client_secret": "test-client-secret",  # pragma: allowlist secret
+                "token_url": "https://issuer.example/token",
+                "jwks_uri": "http://169.254.169.254/.well-known/jwks.json",
+            },
+        )
+
+    assert "OAuth config jwks_uri" in str(exc_info.value)
     assert "SSRF protection" in str(exc_info.value)
 
 
@@ -1418,35 +1459,7 @@ def test_experimental_rust_mcp_runtime_uds_rejects_missing_parent(tmp_path: Path
         Settings(experimental_rust_mcp_runtime_uds=str(missing_parent), _env_file=None)
 
 
-def test_experimental_rust_a2a_runtime_defaults():
-    """Experimental Rust A2A runtime settings should default to disabled with local sidecar URL."""
-    s = Settings(_env_file=None)
-    assert s.experimental_rust_a2a_runtime_enabled is False
-    assert s.experimental_rust_a2a_runtime_delegate_enabled is False
-    assert s.experimental_rust_a2a_runtime_managed is True
-    assert s.experimental_rust_a2a_runtime_url == "http://127.0.0.1:8788"
-    assert s.experimental_rust_a2a_runtime_uds is None
-    assert s.experimental_rust_a2a_runtime_timeout_seconds == 30
 
-
-def test_experimental_rust_a2a_runtime_uds_accepts_absolute_path(tmp_path: Path):
-    """The optional Rust A2A runtime UDS path should round-trip when configured."""
-    uds_path = tmp_path / "contextforge-a2a-rust.sock"
-    s = Settings(experimental_rust_a2a_runtime_uds=str(uds_path), _env_file=None)
-    assert s.experimental_rust_a2a_runtime_uds == str(uds_path)
-
-
-def test_experimental_rust_a2a_runtime_uds_rejects_relative_path():
-    """The Rust A2A runtime UDS path must be absolute."""
-    with pytest.raises(ValueError, match="must be an absolute path"):
-        Settings(experimental_rust_a2a_runtime_uds="relative.sock", _env_file=None)
-
-
-def test_experimental_rust_a2a_runtime_uds_rejects_missing_parent(tmp_path: Path):
-    """The Rust A2A runtime UDS parent directory must already exist."""
-    missing_parent = tmp_path / "missing" / "contextforge-a2a-rust.sock"
-    with pytest.raises(ValueError, match="parent directory does not exist"):
-        Settings(experimental_rust_a2a_runtime_uds=str(missing_parent), _env_file=None)
 
 
 def test_auth_required_true_with_explicit_mcp_permissive_warns(caplog):
@@ -1767,3 +1780,37 @@ def test_uaid_allowed_domains_accepts_valid_with_port():
     """Verify validator accepts valid public domains with ports."""
     settings = Settings(uaid_allowed_domains=["example.com:8443", "gateway.io:4444"], _env_file=None)
     assert settings.uaid_allowed_domains == ["example.com:8443", "gateway.io:4444"]
+
+
+def _pw_heartbeat_warned(caplog):
+    """Return True if the primary-worker heartbeat/lease-ttl warning was logged."""
+    return any("PRIMARY_WORKER_HEARTBEAT_INTERVAL" in r.getMessage() for r in caplog.records)
+
+
+def test_primary_worker_heartbeat_warns_when_too_slow(caplog):
+    """redis backend: warn when heartbeat_interval >= lease_ttl/2 (lease can expire before renewal)."""
+    with caplog.at_level(logging.WARNING, logger="mcpgateway.config"):
+        Settings(primary_worker_election_backend="redis", primary_worker_lease_ttl=15, primary_worker_heartbeat_interval=8, _env_file=None)
+    assert _pw_heartbeat_warned(caplog)
+
+
+def test_primary_worker_heartbeat_ok_when_fast_enough(caplog):
+    """No warning when heartbeat < lease_ttl/2 on the redis backend."""
+    with caplog.at_level(logging.WARNING, logger="mcpgateway.config"):
+        Settings(primary_worker_election_backend="redis", primary_worker_lease_ttl=15, primary_worker_heartbeat_interval=5, _env_file=None)
+    assert not _pw_heartbeat_warned(caplog)
+
+
+def test_primary_worker_heartbeat_not_checked_for_filelock(caplog):
+    """The heartbeat/lease-ttl check only applies to the redis backend, not filelock."""
+    with caplog.at_level(logging.WARNING, logger="mcpgateway.config"):
+        Settings(primary_worker_election_backend="filelock", primary_worker_lease_ttl=15, primary_worker_heartbeat_interval=8, _env_file=None)
+    assert not _pw_heartbeat_warned(caplog)
+
+
+def test_primary_worker_heartbeat_warns_at_exact_boundary(caplog):
+    """Boundary: heartbeat_interval == lease_ttl/2 warns (the requirement is strictly less than)."""
+    # Integer fields, so use an even ttl to hit the exact half: 7 == 14/2.
+    with caplog.at_level(logging.WARNING, logger="mcpgateway.config"):
+        Settings(primary_worker_election_backend="redis", primary_worker_lease_ttl=14, primary_worker_heartbeat_interval=7, _env_file=None)
+    assert _pw_heartbeat_warned(caplog)

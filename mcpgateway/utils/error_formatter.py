@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/utils/error_formatter.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 ContextForge Centralized for Pydantic validation error, SQL exception.
 This module provides centralized error formatting for ContextForge,
@@ -261,6 +260,9 @@ class ErrorFormatter:
                     "message": detail,
                     "success": False,
                 }
+            # PostgreSQL reports constraint names; SQLite reports column paths.
+            if "uq_team_owner_gateway_name_resource" in error_str or "uq_team_owner_name_resource_local" in error_str:
+                return {"message": "A resource with this name already exists", "success": False}
             if "UNIQUE constraint failed" in error_str:
                 if "gateways.url" in error_str:
                     return {"message": "A gateway with this URL already exists", "success": False}
@@ -270,6 +272,8 @@ class ErrorFormatter:
                     return {"message": "A tool with this name already exists", "success": False}
                 elif "resources.uri" in error_str:
                     return {"message": "A resource with this URI already exists", "success": False}
+                elif "resources.name" in error_str:
+                    return {"message": "A resource with this name already exists", "success": False}
                 elif "servers.name" in error_str:
                     return {"message": "A server with this name already exists", "success": False}
                 elif "prompts.name" in error_str:

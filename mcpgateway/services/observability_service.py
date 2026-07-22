@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/services/observability_service.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Observability Service Implementation.
 This module provides OpenTelemetry-style observability for ContextForge,
@@ -78,6 +77,13 @@ _TRACEPARENT_RE: Pattern[str] = re.compile(r"^([0-9a-f]{2})-([0-9a-f]{32})-([0-9
 # ObservabilityMiddleware bridges both — any new code path that sets this
 # variable must also set the framework copy to keep plugin tracing in sync.
 current_trace_id: ContextVar[Optional[str]] = ContextVar("current_trace_id", default=None)
+
+# Context variable for tracking the current top-level (HTTP request) span_id
+# across async calls, mirroring current_trace_id above. Set by
+# ObservabilityMiddleware alongside request.state.span_id so deep service-layer
+# call sites (which don't have access to the Request object) can still report
+# the active span to CPEX plugin Extensions.
+current_span_id: ContextVar[Optional[str]] = ContextVar("current_span_id", default=None)
 
 
 def utc_now() -> datetime:

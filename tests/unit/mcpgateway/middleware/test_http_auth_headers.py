@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/middleware/test_http_auth_headers.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: ContextForge
 
 Tests that verify HTTP auth middleware properly modifies Starlette request headers.
 
@@ -41,7 +40,7 @@ class TestRequestScopeHeaderModification:
         # Create mock plugin manager that transforms X-API-Key → Authorization
         mock_plugin_manager = AsyncMock()
 
-        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False):  # noqa: ARG001
+        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False, extensions=None):  # noqa: ARG001
             if hook_type == HttpHookType.HTTP_PRE_REQUEST:
                 # Transform X-API-Key to Authorization
                 headers = dict(payload.headers.root)
@@ -137,7 +136,7 @@ class TestRequestScopeInspection:
         # Mock plugin manager
         mock_plugin_manager = AsyncMock()
 
-        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False):  # noqa: ARG001
+        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False, extensions=None):  # noqa: ARG001
             if hook_type == HttpHookType.HTTP_PRE_REQUEST:
                 headers = dict(payload.headers.root)
                 if "x-test-header" in headers:
@@ -212,7 +211,7 @@ class TestRequestStateRequestId:
 
         mock_plugin_manager = AsyncMock()
 
-        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False):  # noqa: ARG001
+        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False, extensions=None):  # noqa: ARG001
             # Record the request_id from global_context
             request_ids_seen.append(global_context.request_id)
             return PluginResult(continue_processing=True), {}
@@ -290,7 +289,7 @@ class TestHeaderMergingBehavior:
         # Mock plugin manager that modifies and adds headers
         mock_plugin_manager = AsyncMock()
 
-        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False):  # noqa: ARG001
+        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False, extensions=None):  # noqa: ARG001
             if hook_type == HttpHookType.HTTP_PRE_REQUEST:
                 headers = dict(payload.headers.root)
                 # Modify existing header and add new header
@@ -355,7 +354,7 @@ class TestHeaderMergingBehavior:
 
         mock_plugin_manager = AsyncMock()
 
-        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False):  # noqa: ARG001
+        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False, extensions=None):  # noqa: ARG001
             if hook_type == HttpHookType.HTTP_PRE_REQUEST:
                 headers = dict(payload.headers.root)
                 headers["Authorization"] = "Bearer token123"
@@ -406,7 +405,7 @@ class TestHasHooksForOptimization:
 
         mock_plugin_manager = AsyncMock()
 
-        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False):  # noqa: ARG001
+        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False, extensions=None):  # noqa: ARG001
             hooks_invoked.append(hook_type)
             return PluginResult(continue_processing=True), {}
 
@@ -492,7 +491,7 @@ class TestHasHooksForOptimization:
         """
         captured_local_contexts = []
 
-        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False):  # noqa: ARG001
+        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False, extensions=None):  # noqa: ARG001
             if hook_type == HttpHookType.HTTP_POST_REQUEST:
                 captured_local_contexts.append(local_contexts)
             return PluginResult(continue_processing=True), {}
@@ -517,7 +516,7 @@ class TestHasHooksForOptimization:
         mock_context = {"plugin_a": {"key": "value"}}
         captured_local_contexts = []
 
-        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False):  # noqa: ARG001
+        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False, extensions=None):  # noqa: ARG001
             if hook_type == HttpHookType.HTTP_PRE_REQUEST:
                 return PluginResult(continue_processing=True), mock_context
             if hook_type == HttpHookType.HTTP_POST_REQUEST:
@@ -553,7 +552,7 @@ class TestHasHooksForPerformance:
 
         mock_plugin_manager = AsyncMock()
 
-        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False):  # noqa: ARG001
+        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False, extensions=None):  # noqa: ARG001
             invoke_calls.append({"hook_type": hook_type, "payload_type": type(payload).__name__})
             return PluginResult(continue_processing=True), {}
 
@@ -590,7 +589,7 @@ class TestHasHooksForPerformance:
 
         mock_plugin_manager = AsyncMock()
 
-        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False):  # noqa: ARG001
+        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False, extensions=None):  # noqa: ARG001
             invoke_calls.append({"hook_type": hook_type, "payload_type": type(payload).__name__})
             return PluginResult(continue_processing=True), {}
 
@@ -627,7 +626,7 @@ class TestHasHooksForPerformance:
 
         mock_plugin_manager = AsyncMock()
 
-        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False):  # noqa: ARG001
+        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False, extensions=None):  # noqa: ARG001
             invoke_calls.append({"hook_type": hook_type, "payload_type": type(payload).__name__})
             return PluginResult(continue_processing=True), {}
 
@@ -868,7 +867,7 @@ class TestRunPreRequestHooks:
         pm = MagicMock()
         pm.has_hooks_for.return_value = True
 
-        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False):  # noqa: ARG001
+        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False, extensions=None):  # noqa: ARG001
             modified = dict(payload.headers.root)
             modified["x-injected"] = "plugin-value"
             return PluginResult(modified_payload=HttpHeaderPayload(modified), continue_processing=True), {"ctx": "data"}
@@ -892,7 +891,7 @@ class TestRunPreRequestHooks:
         pm = MagicMock()
         pm.has_hooks_for.return_value = True
 
-        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False):  # noqa: ARG001
+        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False, extensions=None):  # noqa: ARG001
             return PluginResult(continue_processing=True), {}
 
         pm.invoke_hook = mock_invoke_hook
@@ -911,7 +910,7 @@ class TestRunPreRequestHooks:
         pm = MagicMock()
         pm.has_hooks_for.return_value = True
 
-        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False):  # noqa: ARG001
+        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False, extensions=None):  # noqa: ARG001
             return (
                 PluginResult(
                     modified_payload=HttpHeaderPayload({"authorization": "Bearer HIJACKED", "x-new": "allowed"}),
@@ -941,7 +940,7 @@ class TestRunPreRequestHooks:
         pm = MagicMock()
         pm.has_hooks_for.return_value = True
 
-        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False):  # noqa: ARG001
+        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False, extensions=None):  # noqa: ARG001
             return (
                 PluginResult(
                     modified_payload=HttpHeaderPayload({"Authorization": "Bearer HIJACKED", "X-Api-Key": "stolen", "x-new": "ok"}),  # pragma: allowlist secret
@@ -972,7 +971,7 @@ class TestRunPreRequestHooks:
         pm = MagicMock()
         pm.has_hooks_for.return_value = True
 
-        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False):  # noqa: ARG001
+        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False, extensions=None):  # noqa: ARG001
             return (
                 PluginResult(
                     modified_payload=HttpHeaderPayload({"authorization": "Bearer EXCHANGED"}),
@@ -999,7 +998,7 @@ class TestRunPreRequestHooks:
         pm = MagicMock()
         pm.has_hooks_for.return_value = True
 
-        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False):  # noqa: ARG001
+        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False, extensions=None):  # noqa: ARG001
             raise RuntimeError("plugin crashed")
 
         pm.invoke_hook = mock_invoke_hook
@@ -1019,7 +1018,7 @@ class TestRunPreRequestHooks:
         pm = MagicMock()
         pm.has_hooks_for.return_value = True
 
-        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False):  # noqa: ARG001
+        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False, extensions=None):  # noqa: ARG001
             return (
                 PluginResult(
                     modified_payload=HttpHeaderPayload({"X-Plugin-Header": "value"}),
@@ -1050,7 +1049,7 @@ class TestRunPreRequestHooks:
         pm = MagicMock()
         pm.has_hooks_for.return_value = True
 
-        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False):  # noqa: ARG001
+        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False, extensions=None):  # noqa: ARG001
             return PluginResult(continue_processing=True), {}
 
         pm.invoke_hook = mock_invoke_hook
@@ -1069,7 +1068,7 @@ class TestRunPreRequestHooks:
         pm = MagicMock()
         pm.has_hooks_for.return_value = True
 
-        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False):  # noqa: ARG001
+        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False, extensions=None):  # noqa: ARG001
             return PluginResult(continue_processing=True), {}
 
         pm.invoke_hook = mock_invoke_hook
@@ -1089,7 +1088,7 @@ class TestPluginsCanOverrideAuthHeaders:
 
         mock_plugin_manager = AsyncMock()
 
-        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False):  # noqa: ARG001
+        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False, extensions=None):  # noqa: ARG001
             if hook_type == HttpHookType.HTTP_PRE_REQUEST:
                 headers = dict(payload.headers.root)
                 # Plugin always tries to override Authorization
@@ -1139,7 +1138,7 @@ class TestPluginsCanOverrideAuthHeaders:
 
         mock_plugin_manager = AsyncMock()
 
-        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False):  # noqa: ARG001
+        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False, extensions=None):  # noqa: ARG001
             if hook_type == HttpHookType.HTTP_PRE_REQUEST:
                 headers = dict(payload.headers.root)
                 # Plugin uses Title-Case to try to bypass lowercase check

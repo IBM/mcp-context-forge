@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/services/test_upstream_session_registry_lifecycle.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Lifecycle wiring tests for UpstreamSessionRegistry (issue #4205).
 These tests verify the registry's integration points outside the registry
@@ -330,7 +329,7 @@ async def test_update_gateway_with_url_change_calls_registry_evict_gateway():
     test_db.commit = Mock()
     test_db.refresh = Mock()
 
-    service._initialize_gateway = AsyncMock(return_value=({"prompts": {}, "resources": {}, "tools": {}}, [], [], []))
+    service._initialize_gateway = AsyncMock(return_value=({"prompts": {}, "resources": {}, "tools": {}}, [], [], [], []))
     service._notify_gateway_updated = AsyncMock()
     service._active_gateways = set()
     service._classification_service = None

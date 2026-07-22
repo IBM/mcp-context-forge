@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/live_gateway/protocol_compliance/test_logging.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 MCP logging compliance tests — notifications/message delivery.
 """
@@ -16,16 +15,8 @@ from .helpers.compliance import resolve_tool, xfail_on
 pytestmark = [pytest.mark.protocol_compliance, pytest.mark.mcp_server_features]
 
 
-async def test_log_message_reaches_client(connect, request) -> None:
+async def test_log_message_reaches_client(connect) -> None:
     """log_at_level delivers a logging/message notification to the client."""
-    xfail_on(
-        request,
-        "gateway_proxy",
-        "gateway_virtual",
-        reason=(
-            "GAP-001: log emitted during a tool call is a request-tied " "notification and should ride the POST-correlated stream of that " "call; gateway does not relay notifications on that stream."
-        ),
-    )
     received: list[tuple[str, str]] = []
 
     async def log_handler(msg):

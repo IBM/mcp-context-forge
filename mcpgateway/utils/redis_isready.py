@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/utils/redis_isready.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Reeve Barreto, Mihai Criveti
 
 redis_isready - Wait until Redis is ready and accepting connections
 This helper blocks until the given **Redis** server (defined by a connection URL)

@@ -785,6 +785,138 @@ WHERE start_time < NOW() - INTERVAL '7 days';
    echo $OBSERVABILITY_EVENTS_ENABLED  # Should be "true"
    ```
 
+## Plugin Metrics (`result.metadata`)
+
+Plugins can return per-plugin observability data by setting `PluginResult.metadata["<plugin_name>"]`
+in any hook they implement. The gateway consumes this after every `invoke_hook()` call
+(`mcpgateway.plugins.utils.record_plugin_metrics()`) across all wired hook call sites:
+`tool_pre_invoke`/`tool_post_invoke`, `prompt_pre_fetch`/`prompt_post_fetch`,
+`resource_pre_fetch`/`resource_post_fetch`, `http_pre_request`/`http_post_request`,
+`http_auth_resolve_user`, `http_auth_check_permission`, and `agent_pre_invoke`/`agent_post_invoke`.
+
+### Shape
+
+```text
+result.metadata = {
+    "<plugin_name>": {
+        "<field_name>": <value>,
+        ...
+    },
+    ...
+}
+```
+
+Each top-level key namespaces one plugin's own metadata dict; a single hook invocation can carry
+metadata from every plugin that ran in the chain.
+
+### Value types and limits
+
+`result.metadata` is treated as **untrusted plugin output** and validated before it is recorded
+anywhere (`mcpgateway.plugins.utils._sanitize_plugin_metrics()`). None of these bounds are
+configurable — a plugin that needs different limits should be revisited rather than the gateway
+loosening its defaults:
+
+| Element | Contract |
+|---|---|
+| Plugin name / field name (dict key) | Must match `^[A-Za-z0-9_.-]{1,64}$`; otherwise dropped |
+| `bool` value | Recorded as-is |
+| `int` / `float` value | Recorded as-is, but only for field names in a deny-by-default allowlist (currently `total_detections`, `total_masked`); every other numeric field name is dropped regardless of value. Non-finite values (`NaN`/`inf`/`-inf`) are always rejected |
+| `str` value | Recorded as-is, but only for field names in a deny-by-default allowlist (currently `stage`, `detection_types`); every other string field name is dropped regardless of value. Accepted values must match the low-cardinality charset `^[A-Za-z0-9_.,:=/-]*$` and be ≤ 64 chars — overlong values are **rejected outright, not truncated** — this is intentionally **not** a free-text channel |
+| `list[str]` value | Joined into a single comma-separated string, then subject to the same allowlisted `str` contract; only the first 32 items are considered |
+| Any other type (`dict`, mixed list, `None`, etc.) | Dropped |
+| Keys per plugin | Capped at 32 |
+| Plugins per call | Capped at 16 |
+
+Values that are dropped are never logged — only the key name and a short reason — since the value
+itself may be malformed, oversized, or adversarial.
+
+**Plugin metadata is untrusted and must stay low-cardinality and non-sensitive.** It is designed
+for counters, status/type-name tokens, and short enums (e.g. `total_detections: 3`,
+`stage: "tool_post_invoke"`) — not for raw request content or free text.
+
+### DB sink vs. OTel sink
+
+Validated metadata is recorded through up to two independent sinks:
+
+- **Internal DB (primary)**: a dedicated `plugin.metrics.<plugin_name>` span carries the validated
+  fields as span attributes, batched into one DB session per `invoke_hook()` call. Controlled by
+  `PLUGIN_METRICS_DB_SPANS_ENABLED` (default `true`).
+- **Internal DB (secondary, numeric only)**: each numeric field is additionally recorded as an
+  `ObservabilityMetric` row via `record_metric()`, so plugin counters are queryable as metrics, not
+  just span attributes. Each row is its own independent DB session/commit (mirrors the existing
+  "issue #3883" pattern), so this is capped per call across all plugins via
+  `PLUGIN_METRICS_MAX_NUMERIC_PER_CALL` (default `16`) and can be disabled entirely with
+  `PLUGIN_METRICS_DB_NUMERIC_ROWS_ENABLED=false`.
+- **OTel export (optional, additive)**: when an OTel exporter is configured
+  (`otel_tracing_enabled()`) and there is an active OTel context (`otel_context_active()`), the
+  already-sanitized metrics are re-emitted as an OTel span through the gateway's existing exporter.
+  This is purely additive — disabling it does not affect the internal DB sinks above, and the
+  gateway remains the sole export authority (plugins never talk to OTel directly).
+
+All of the above is best-effort (L4): any failure (missing trace, DB error, malformed plugin
+metadata) is logged at debug level and swallowed — it never raises into the request path, and is a
+no-op entirely when no trace is active (metrics recording is gated on `trace_id` presence, so it
+costs nothing on untraced requests).
+
+### Hook coverage
+
+As of this writing, all 17 gateway-side `invoke_hook()` call sites pass trace context in
+(`extensions=`) and consume `result.metadata` out. If you add a new plugin hook call site, wire it
+the same way: pass `extensions=build_request_extensions()` into `invoke_hook()`, then call
+`record_plugin_metrics(current_trace_id.get(), <result>.metadata)` immediately after.
+
+### Dependency on plugin-side metrics emission
+
+This consumer only records something if the plugin actually populates `result.metadata`. The
+bundled PII-filter plugin (`cpex-pii-filter`) emits `result.metadata["pii_filter"]` starting from
+its own `0.3.6` release, the bundled Secrets Detection plugin (`cpex-secrets-detection`) emits
+`result.metadata["secrets_detection"]` starting from its own `0.3.7` release, the bundled
+Encoded Exfil Detector plugin (`cpex-encoded-exfil-detection`) emits
+`result.metadata["encoded_exfil_detection"]` starting from its own `0.3.6` release, and the
+bundled URL Reputation plugin (`cpex-url-reputation`) emits `result.metadata["url_reputation"]`
+starting from its own `0.3.5` release, the bundled Rate Limiter plugin (`cpex-rate-limiter`)
+emits `result.metadata["rate_limiter"]` starting from its own `0.1.7` release, and the bundled
+Retry with Backoff plugin (`cpex-retry-with-backoff`) emits
+`result.metadata["retry_with_backoff"]` starting from its own `0.3.6` release — check
+`pyproject.toml`/`uv.lock` for the currently pinned version before assuming this data is available
+end-to-end. Note that emitting metrics requires
+the plugin to actually run: a plugin whose
+`plugins/config.yaml` block is `mode: "disabled"` is never instantiated (its hooks never fire), so
+no metadata is ever produced regardless of the pinned version.
+
+### Per-plugin metadata fields
+
+Each bundled `cpex-*` plugin that emits `result.metadata` is documented below as it is wired up.
+Every `str`- or `int`/`float`-typed field listed here must also appear in
+`_SAFE_STRING_FIELD_NAMES` / `_SAFE_NUMERIC_FIELD_NAMES` in `mcpgateway/plugins/utils.py`, or it is
+silently dropped per the contract table above. `bool`-typed fields are the one exception: per
+`_sanitize_plugin_metrics()`, any value that is a Python `bool` is always accepted unconditionally
+and is never subject to either allowlist — this is why `encoded_exfil_detection`'s `redacted`
+field below survives even though `redacted` is not a member of `_SAFE_STRING_FIELD_NAMES` or
+`_SAFE_NUMERIC_FIELD_NAMES`.
+
+| Plugin (`result.metadata` key) | Field | Type | Description |
+|---|---|---|---|
+| `pii_filter` | `stage` | `str` | Hook stage the detection occurred in (e.g. `tool_post_invoke`) |
+| `pii_filter` | `detection_types` | `list[str]` | PII category names detected (e.g. `email`, `ssn`) — never the matched value |
+| `pii_filter` | `total_detections` | `int` | Count of PII matches found |
+| `pii_filter` | `total_masked` | `int` | Count of matches redacted/masked |
+| `secrets_detection` | `total_detections` | `int` | Count of secret-shaped matches found |
+| `secrets_detection` | `total_masked` | `int` | Count of matches redacted/masked |
+| `secrets_detection` | `total_blocked` | `int` | Count of matches that triggered a block (`block_on_detection`) |
+| `secrets_detection` | `secret_types` | `list[str]` | Secret category names detected (e.g. `aws_key`, `api_token`) — never the matched value |
+| `encoded_exfil_detection` | `total_detections` | `int` | Count of encoded-payload matches found |
+| `encoded_exfil_detection` | `encoding_types` | `list[str]` | Encoding names detected (e.g. `base64`, `hex`) — never the matched/decoded content |
+| `encoded_exfil_detection` | `redacted` | `bool` | Whether the redact branch fired for this result (present only when it did) |
+| `url_reputation` | `total_checked` | `int` | Always `1` — `resource_pre_fetch` checks one URL per call |
+| `url_reputation` | `total_blocked` | `int` | `0` or `1` — whether this URL tripped a block |
+| `url_reputation` | `reputation_categories` | `list[str]` | Violation-reason slugs for this URL (e.g. `blocked_domain`, `insecure_scheme`, `high_entropy_domain`, `illegal_tld`, `unicode_spoofing`, `blocked_pattern`, `malformed_url`, `malformed_domain`, `internal_error`, `other`) — empty when allowed, never the raw URL/domain |
+| `rate_limiter` | `allowed` | `int` | `1` if this call was allowed through, `0` otherwise — per-call, not cumulative (`prompt_pre_fetch`/`tool_pre_invoke` each evaluate one request at a time) |
+| `rate_limiter` | `throttled` | `int` | `1` if this call was throttled/rejected, `0` otherwise — per-call, mutually exclusive with `allowed` |
+| `rate_limiter` | `backend` | `str` | Which limiter backend served this call — `redis` or `memory` |
+| `retry_with_backoff` | `retry_count` | `int` | Consecutive failures recorded so far for this tool call |
+| `retry_with_backoff` | `retry_delay_ms` | `int` | Per-attempt backoff delay just computed — not a cumulative total; `0` in the success/exhausted-budget branches |
+
 ## Best Practices
 
 ### Development

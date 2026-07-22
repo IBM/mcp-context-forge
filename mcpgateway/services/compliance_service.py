@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/services/compliance_service.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Compliance Report Generator Service.
 
@@ -27,6 +26,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 # First-Party
+from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import AuditTrail, EmailUser, UserRole
 
@@ -548,7 +548,7 @@ class ComplianceService:
             oldest_key = next(iter(ComplianceService._reports))
             del ComplianceService._reports[oldest_key]
         ComplianceService._reports[report.id] = report
-        logger.info("Generated compliance report %s for framework %s", report.id, framework.value)
+        logger.info("Generated compliance report %s for framework %s", SecurityValidator.sanitize_log_message(report.id), SecurityValidator.sanitize_log_message(framework.value))
         return report
 
     # ------------------------------------------------------------------

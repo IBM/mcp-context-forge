@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """Location: ./tests/performance/utils/generate_docker_compose.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Docker Compose Generator for Infrastructure Profiles
 
@@ -66,7 +65,7 @@ networks:
 GATEWAY_SERVICE_TEMPLATE = """  gateway{instance_suffix}:
     build:
       context: .
-      dockerfile: Containerfile.lite
+      dockerfile: Containerfile
     container_name: gateway{instance_suffix}
     extra_hosts:
       - "host.docker.internal:host-gateway"

@@ -33,4 +33,7 @@ data:
     stop-writes-on-bgsave-error yes
     rdbcompression yes
     rdbchecksum yes
+
+    # Connection limits
+    maxclients {{ .Values.redis.maxclients | default 15000 }}
 {{- end }}

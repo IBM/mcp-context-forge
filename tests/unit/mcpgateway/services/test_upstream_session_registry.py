@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/services/test_upstream_session_registry.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Unit tests for UpstreamSessionRegistry (issue #4205).
 The registry's contract under test:
@@ -279,6 +278,53 @@ async def test_concurrent_acquires_for_same_key_create_exactly_one_session(facto
     snap = reg.snapshot()
     assert snap.creates == 1
     assert snap.reuses == 1
+    await reg.close_all()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_acquires_for_same_key_serialize_session_use(factory_and_records):
+    """Reused ClientSession calls must not overlap because MCP SDK request ids are not locked."""
+    factory, _ = factory_and_records
+    reg = UpstreamSessionRegistry(session_factory=factory, idle_validation_seconds=1_000)
+    first_entered = asyncio.Event()
+    release_first = asyncio.Event()
+    order: list[str] = []
+
+    async def first_use():
+        async with reg.acquire(
+            downstream_session_id="s1",
+            gateway_id="g1",
+            url="http://upstream/mcp",
+            headers=None,
+            transport_type=TransportType.STREAMABLE_HTTP,
+        ):
+            order.append("first-enter")
+            first_entered.set()
+            await release_first.wait()
+            order.append("first-exit")
+
+    async def second_use():
+        await first_entered.wait()
+        async with reg.acquire(
+            downstream_session_id="s1",
+            gateway_id="g1",
+            url="http://upstream/mcp",
+            headers=None,
+            transport_type=TransportType.STREAMABLE_HTTP,
+        ):
+            order.append("second-enter")
+
+    task_a = asyncio.create_task(first_use())
+    task_b = asyncio.create_task(second_use())
+    await first_entered.wait()
+    await asyncio.sleep(0.01)
+    assert order == ["first-enter"]
+
+    release_first.set()
+    await task_a
+    await task_b
+
+    assert order == ["first-enter", "first-exit", "second-enter"]
     await reg.close_all()
 
 

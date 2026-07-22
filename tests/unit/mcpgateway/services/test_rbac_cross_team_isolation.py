@@ -3,9 +3,8 @@
 # SPDX-License-Identifier: Apache-2.0
 
 """Location: ./tests/unit/mcpgateway/services/test_rbac_cross_team_isolation.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Cross-Team Isolation Tests for RBAC System.
 

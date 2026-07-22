@@ -333,7 +333,7 @@ ContextForge's architecture already benefits from components that will perform e
 |  +------------------+  +------------------+  +------------------+             |
 |  |  Gateway Pod 1   |  |  Gateway Pod 2   |  |  Gateway Pod N   |             |
 |  |  (16 workers)    |  |  (16 workers)    |  |  (16 workers)    |             |
-|  | Gunicorn/Granian |  | Gunicorn/Granian |  | Gunicorn/Granian |             |
+|  | Gunicorn  |  | Gunicorn  |  | Gunicorn  |             |
 |  | orjson, psycopg3 |  | orjson, psycopg3 |  | orjson, psycopg3 |             |
 |  +--------+---------+  +--------+---------+  +--------+---------+             |
 +-----------|-----------------------|----------------------|-------------------+
@@ -367,7 +367,7 @@ ContextForge's architecture already benefits from components that will perform e
 |-------|-----------|---------|--------------------------|
 | Edge | Load Balancer | Traffic distribution | SSL termination, health checks |
 | Proxy | Nginx | Caching, compression | Brotli/Gzip/Zstd (30-70% bandwidth reduction) |
-| App | Gateway Pods | Request processing | Gunicorn/Granian, orjson, multi-level caching |
+| App | Gateway Pods | Request processing | Gunicorn, orjson, multi-level caching |
 | Pool | PgBouncer | Connection multiplexing | 3000 client → 200 server connections |
 | Cache | Redis | Distributed state | hiredis parser (up to 83x faster) |
 | DB | PostgreSQL 18 | Persistent storage | psycopg3 COPY/pipeline, async I/O |
@@ -487,8 +487,8 @@ services:
   gateway:
     image: mcpgateway/mcpgateway:latest
     environment:
-      # HTTP Server: gunicorn (stable) or granian (faster)
-      - HTTP_SERVER=gunicorn
+      # HTTP Server: Gunicorn (stable for all deployments)
+      # ──────────────────────────────────────────────────────────────────────
       - GUNICORN_WORKERS=16
 
       # Database: via PgBouncer
@@ -496,11 +496,11 @@ services:
       - DB_POOL_SIZE=15              # Smaller with PgBouncer
       - DB_MAX_OVERFLOW=30
 
-      # Redis with hiredis
+      # Redis with hiredis - keep replicas × workers × pool < maxclients (15000)
       - CACHE_TYPE=redis
       - REDIS_URL=redis://redis:6379/0
       - REDIS_PARSER=hiredis
-      - REDIS_MAX_CONNECTIONS=150
+      - REDIS_MAX_CONNECTIONS=100
 
       # Multi-level caching
       - AUTH_CACHE_ENABLED=true
@@ -546,7 +546,7 @@ services:
       - "--maxmemory" - "1gb"
       - "--maxmemory-policy" - "allkeys-lru"
       - "--tcp-backlog" - "2048"
-      - "--maxclients" - "10000"
+      - "--maxclients" - "15000"
 ```
 
 **Access Points:**
@@ -950,8 +950,8 @@ For 1000+ concurrent users:
 
 ```bash
 # Connection pool - Formula: (concurrent_requests / workers) * 1.5
-# Example: 32 workers × 150 = 4800 < Redis maxclients (10000)
-REDIS_MAX_CONNECTIONS=150
+# Example: 32 workers × 50 = 1600 < Redis maxclients (15000)
+REDIS_MAX_CONNECTIONS=50
 
 # Timeouts - keep low for fast failure detection
 REDIS_SOCKET_TIMEOUT=5.0
@@ -972,7 +972,7 @@ redis:
     - "--tcp-backlog"
     - "2048"                    # Higher for pending connections
     - "--maxclients"
-    - "10000"                   # Max client connections
+    - "15000"                   # Max client connections
 ```
 
 #### Kubernetes Deployment
@@ -1013,10 +1013,12 @@ redis:
 
 - Formula: `REDIS_MAX_CONNECTIONS = (concurrent_requests / workers) × 1.5`
 - Default 50 handles ~500 concurrent requests with 10 workers
-- High-concurrency: increase to 100 and lower timeouts
+- High-concurrency: verify `replicas × workers × REDIS_MAX_CONNECTIONS < maxclients (15,000)` before increasing
 
 ```bash
 # High-concurrency production overrides
+# Pool size: replicas × workers × REDIS_MAX_CONNECTIONS must stay below Redis maxclients (15000)
+# Example: 5 replicas × 24 workers × 100 = 12,000 < 15,000
 REDIS_MAX_CONNECTIONS=100
 REDIS_SOCKET_TIMEOUT=1.0
 REDIS_SOCKET_CONNECT_TIMEOUT=1.0
@@ -1192,21 +1194,6 @@ sysctl -p
 ulimit -n
 ```
 
-### HTTP Server Selection
-
-ContextForge supports two production HTTP servers:
-
-| Server | Description | Best For |
-|--------|-------------|----------|
-| **Gunicorn** (default) | Python-based with Uvicorn workers | Stable, well-tested |
-| **Granian** | Rust-based HTTP server | Maximum performance (+20-50%) |
-
-```bash
-# Select HTTP server (in containers)
-HTTP_SERVER=gunicorn    # Default, stable
-HTTP_SERVER=granian     # Alternative, Rust-based
-```
-
 ### Gunicorn Configuration
 
 ```bash
@@ -1233,49 +1220,6 @@ GUNICORN_DEV_MODE=false
 ```
 
 **Worker Class**: UvicornWorker (default) for async support.
-
-### Granian Configuration (Alternative)
-
-Granian is a Rust-based HTTP server with native backpressure for overload protection:
-
-```bash
-# HTTP server selection
-HTTP_SERVER=granian
-
-# Worker count (auto = CPU count, max 16)
-GRANIAN_WORKERS=16
-
-# TCP backlog for pending connections
-GRANIAN_BACKLOG=4096
-
-# Backpressure: max concurrent requests per worker before 503 rejection
-# Total capacity = WORKERS × BACKPRESSURE = 16 × 64 = 1024 concurrent requests
-GRANIAN_BACKPRESSURE=64
-
-# HTTP/1.1 buffer size (bytes)
-GRANIAN_HTTP1_BUFFER_SIZE=524288
-
-# Auto-restart failed workers
-GRANIAN_RESPAWN_FAILED=true
-```
-
-**Backpressure behavior:**
-
-- Requests within capacity (≤1024): Processed normally
-- Requests over capacity (>1024): Immediate 503 Service Unavailable
-- No queuing, no memory growth, no cascading timeouts
-
-**When to use Granian:**
-
-- Load spike protection (backpressure rejects excess gracefully)
-- Bursty or unpredictable traffic patterns
-- High-concurrency deployments (1000+ concurrent users)
-
-**When to use Gunicorn:**
-
-- Memory-constrained environments (32% less RAM)
-- Maximum stability and compatibility
-- Standard deployments with predictable traffic
 
 ### Application Tuning
 
@@ -2519,7 +2463,6 @@ ContextForge is built on a high-performance foundation:
 ✅ **Pydantic v2.11+** - Rust-powered validation (5-50x faster than v1)
 ✅ **FastAPI** - Modern async framework with OpenAPI support
 ✅ **Uvicorn [standard]** - ASGI server with uvloop + httptools (15-30% faster)
-✅ **Granian (optional)** - Rust-based HTTP server with native HTTP/2 (+20-50% faster)
 ✅ **SQLAlchemy 2.0** - Async database operations
 ✅ **psycopg3 [c,binary]** - Modern PostgreSQL adapter (auto-prepared statements, COPY protocol, pipeline mode)
 ✅ **orjson** - High-performance JSON serialization (3x faster)
@@ -2556,7 +2499,7 @@ ContextForge is built on a high-performance foundation:
   - [ ] Enable Redis: `CACHE_TYPE=redis`
   - [ ] Set `REDIS_URL` to shared Redis instance
   - [ ] Configure TTLs: `SESSION_TTL=3600`, `MESSAGE_TTL=600`
-  - [ ] Tune Redis pool: `REDIS_MAX_CONNECTIONS=150` (high concurrency)
+  - [ ] Tune Redis pool: `REDIS_MAX_CONNECTIONS=50` (keep replicas × workers × pool < 15,000 maxclients)
   - [ ] Use hiredis parser: `REDIS_PARSER=hiredis` (up to 83x faster)
   - [ ] Enable JWT caching: `JWT_CACHE_ENABLED=true`
   - [ ] Enable auth caching: `AUTH_CACHE_ENABLED=true`
@@ -2565,9 +2508,7 @@ ContextForge is built on a high-performance foundation:
 
 - [ ] **Performance**
 
-  - [ ] Select HTTP server: `HTTP_SERVER=gunicorn` (stable) or `granian` (faster)
-  - [ ] Tune Gunicorn: `GUNICORN_PRELOAD_APP=true`, `GUNICORN_WORKERS=auto`
-  - [ ] Or tune Granian: `GRANIAN_BACKLOG=4096`, `GRANIAN_BACKPRESSURE=64`
+  - [ ] Configure Gunicorn: `GUNICORN_PRELOAD_APP=true`, `GUNICORN_WORKERS=auto`
   - [ ] Set timeouts: `GUNICORN_TIMEOUT=600`
   - [ ] Configure retries: `RETRY_MAX_ATTEMPTS=3`
   - [ ] Enable compression: `COMPRESSION_ENABLED=true`
@@ -2618,7 +2559,6 @@ ContextForge is built on a high-performance foundation:
 
 - [Gunicorn Documentation](https://docs.gunicorn.org/)
 - [Uvicorn Deployment](https://www.uvicorn.org/deployment/)
-- [Granian Documentation](https://granian.dev/)
 - [uvloop GitHub](https://github.com/MagicStack/uvloop)
 - [httptools GitHub](https://github.com/MagicStack/httptools)
 - [Kubernetes HPA](https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/)

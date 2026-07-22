@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/transports/streamablehttp_transport.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Keval Mahajan
 
 Streamable HTTP Transport Implementation.
 This module implements Streamable Http transport for MCP
@@ -33,12 +32,13 @@ Examples:
 
 # Standard
 import asyncio
+import base64
 from contextlib import asynccontextmanager, AsyncExitStack, ExitStack
 import contextvars
 from dataclasses import dataclass
 from enum import Enum
 import re
-from typing import Any, assert_never, AsyncGenerator, ContextManager, Dict, List, Optional, Pattern, Tuple, Union
+from typing import Any, assert_never, AsyncGenerator, ContextManager, Dict, Iterable, List, Optional, Pattern, Tuple, Union
 from urllib.parse import urlsplit, urlunsplit
 from uuid import uuid4
 
@@ -51,6 +51,7 @@ import jwt
 from mcp import ClientSession, types
 from mcp.client.streamable_http import streamablehttp_client
 from mcp.server.lowlevel import Server
+from mcp.server.lowlevel.helper_types import ReadResourceContents
 from mcp.server.streamable_http import EventCallback, EventId, EventMessage, EventStore, StreamId
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from mcp.types import JSONRPCMessage, PaginatedRequestParams, ReadResourceRequest, ReadResourceRequestParams
@@ -75,6 +76,13 @@ from mcpgateway.observability import create_span
 from mcpgateway.services.completion_service import CompletionService
 from mcpgateway.services.http_client_service import get_http_client, get_http_limits
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.services.mcp_apps import (
+    apply_resource_meta,
+    apply_tool_meta,
+    build_mcp_apps_capabilities,
+    filter_model_visible_tools,
+    serialize_resource_content_for_mcp,
+)
 from mcpgateway.services.metrics import (
     mcp_auth_cache_events_counter,
     oauth_verify_events_counter,
@@ -85,13 +93,13 @@ from mcpgateway.services.metrics import (
 from mcpgateway.services.oauth_manager import OAuthEnforcementUnavailableError, OAuthRequiredError
 from mcpgateway.services.permission_service import PermissionService
 from mcpgateway.services.prompt_service import PromptService
-from mcpgateway.services.resource_service import ResourceService
+from mcpgateway.services.resource_service import ResourceError, ResourceNotFoundError, ResourceService
 from mcpgateway.services.tool_service import ToolService
 from mcpgateway.transports.context import UserContext
 from mcpgateway.transports.redis_event_store import RedisEventStore
 from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_gateway_access, extract_gateway_id_from_headers, GATEWAY_ID_HEADER
 from mcpgateway.utils.identity_propagation import build_identity_headers
-from mcpgateway.utils.internal_http import internal_loopback_base_url, internal_loopback_verify
+from mcpgateway.utils.internal_http import post_rpc_in_process
 from mcpgateway.utils.log_sanitizer import sanitize_for_log
 from mcpgateway.utils.orjson_response import ORJSONResponse
 from mcpgateway.utils.passthrough_headers import compute_passthrough_headers_cached
@@ -188,6 +196,62 @@ def _safe_str_attr(obj: Any, attr: str) -> Optional[str]:
     return value if isinstance(value, str) else None
 
 
+def _to_mcp_tool(tool: Any, *, name: Optional[str] = None) -> types.Tool:
+    """Convert an internal tool record to the MCP transport model."""
+    payload: Dict[str, Any] = {
+        "name": name or tool.name,
+        "title": _safe_str_attr(tool, "title"),
+        "description": tool.description or "",
+        "inputSchema": tool.input_schema,
+        "outputSchema": tool.output_schema,
+        "annotations": tool.annotations,
+    }
+    apply_tool_meta(payload, getattr(tool, "extension_metadata", None))
+    return types.Tool.model_validate({key: value for key, value in payload.items() if value is not None})
+
+
+def _tools_for_client(tools: Iterable[Any]) -> List[types.Tool]:
+    """Serialize model-facing tools/list without exposing app-only helpers."""
+    return [_to_mcp_tool(tool) for tool in filter_model_visible_tools(tools)]
+
+
+def _to_mcp_resource(resource: Any) -> types.Resource:
+    """Convert an internal resource record to the MCP transport model."""
+    payload: Dict[str, Any] = {
+        "uri": resource.uri,
+        "name": resource.name,
+        "title": _safe_str_attr(resource, "title"),
+        "description": resource.description,
+        "mimeType": resource.mime_type,
+    }
+    apply_resource_meta(payload, getattr(resource, "extension_metadata", None))
+    return types.Resource.model_validate({key: value for key, value in payload.items() if value is not None})
+
+
+def _blob_payload_to_bytes(blob: Any) -> bytes:
+    """Return raw bytes for an MCP blob payload."""
+    if isinstance(blob, bytes):
+        return blob
+    if isinstance(blob, str):
+        try:
+            return base64.b64decode(blob, validate=True)
+        except ValueError:
+            return blob.encode("utf-8")
+    return bytes(blob)
+
+
+def _to_read_resource_contents(content: Any, *, fallback_uri: str) -> List[ReadResourceContents]:
+    """Convert service/proxy resource content into SDK read-resource helper contents."""
+    payload = serialize_resource_content_for_mcp(content, fallback_uri=fallback_uri)
+    mime_type = payload.get("mimeType")
+    meta = payload.get("_meta")
+    if payload.get("text") is not None:
+        return [ReadResourceContents(content=payload["text"], mime_type=mime_type, meta=meta)]
+    if payload.get("blob") is not None:
+        return [ReadResourceContents(content=_blob_payload_to_bytes(payload["blob"]), mime_type=mime_type, meta=meta)]
+    return [ReadResourceContents(content="", mime_type=mime_type, meta=meta)]
+
+
 def _to_mcp_prompt(prompt: Any) -> types.Prompt:
     """Convert an internal prompt object to the MCP transport model.
 
@@ -242,7 +306,24 @@ prompt_service: PromptService = PromptService()
 resource_service: ResourceService = ResourceService()
 completion_service: CompletionService = CompletionService()
 
-mcp_app: Server[Any] = Server("mcp-streamable-http")
+
+class ContextForgeMCPServer(Server[Any]):
+    """MCP server with ContextForge extension capability advertising."""
+
+    def get_capabilities(self, notification_options: Any, experimental_capabilities: dict[str, dict[str, Any]]) -> types.ServerCapabilities:
+        """Return SDK capabilities plus enabled ContextForge MCP extensions."""
+        capabilities = super().get_capabilities(notification_options, experimental_capabilities)
+        user_context = user_context_var.get()
+        extensions = build_mcp_apps_capabilities(authorized=bool(user_context))
+        if extensions:
+            current_extensions = getattr(capabilities, "extensions", None)
+            merged_extensions = dict(current_extensions) if isinstance(current_extensions, dict) else {}
+            merged_extensions.update(extensions)
+            capabilities.extensions = merged_extensions
+        return capabilities
+
+
+mcp_app: Server[Any] = ContextForgeMCPServer("mcp-streamable-http")
 
 server_id_var: contextvars.ContextVar[str] = contextvars.ContextVar("server_id", default="default_server_id")
 # First-Party
@@ -795,8 +876,11 @@ def get_user_email_from_context() -> str:
     """
     user = user_context_var.get()
     if isinstance(user, dict):
-        # First try 'email', then 'sub' (JWT standard claim)
-        return user.get("email") or user.get("sub") or "unknown"
+        # Use canonical email extraction
+        # First-Party
+        from mcpgateway.auth_context import get_user_email
+
+        return get_user_email(user)
     return str(user) if user else "unknown"
 
 
@@ -1303,13 +1387,19 @@ async def _send_streamable_http_json_response(send: Send, *, status_code: int, p
         send: ASGI send callable.
         status_code: HTTP status code for the response.
         payload: JSON-serializable response payload.
+
+    Note:
+        Content-Length is NOT manually set here to allow the compression
+        middleware (or ASGI server) to set it correctly after compression.
+        Setting it manually causes "Content-Length mismatch" errors when
+        compression is enabled (issue #5457).
     """
     body = orjson.dumps(payload)
     await send(
         {
             "type": "http.response.start",
             "status": status_code,
-            "headers": [(b"content-type", b"application/json"), (b"content-length", str(len(body)).encode())],
+            "headers": [(b"content-type", b"application/json")],
         }
     )
     await send({"type": "http.response.body", "body": body})
@@ -1361,13 +1451,18 @@ async def _close_streamable_http_session(
     return HTTP_200_OK, {"jsonrpc": "2.0", "result": {}}
 
 
-async def _proxy_list_tools_to_gateway(gateway: Any, request_headers: dict, user_context: dict, meta: Optional[Any] = None) -> List[types.Tool]:  # pylint: disable=unused-argument
+async def _proxy_list_tools_to_gateway(
+    gateway: Any,
+    request_headers: dict,
+    _user_context: dict,
+    meta: Optional[Any] = None,
+) -> List[types.Tool]:  # pylint: disable=unused-argument
     """Proxy tools/list request directly to remote MCP gateway using MCP SDK.
 
     Args:
         gateway: Gateway ORM instance
         request_headers: Request headers from client
-        user_context: User context (not used - _meta comes from MCP SDK)
+        _user_context: User context (not used - _meta comes from MCP SDK)
         meta: Request metadata (_meta) from the original request
 
     Returns:
@@ -1405,7 +1500,7 @@ async def _proxy_list_tools_to_gateway(gateway: Any, request_headers: dict, user
 
                 # List tools with _meta forwarded
                 result = await session.list_tools(params=_build_paginated_params(meta))
-                return result.tools
+                return filter_model_visible_tools(result.tools)
 
     except Exception as e:
         logger.exception("Error proxying tools/list to gateway %s: %s", gateway.id, e)
@@ -1631,7 +1726,6 @@ async def call_tool(
         <class 'dict'>
     """
     server_id, request_headers, user_context = await _get_request_context_or_default()
-
     meta_data = None
     # Extract _meta from request context if available
     try:
@@ -1742,9 +1836,16 @@ async def call_tool(
             except Exception as e:
                 logger.error("Failed to pre-register session mapping for Streamable HTTP: %s", e)
 
+            # First-Party
+            from mcpgateway.auth_context import encode_internal_mcp_auth_context  # pylint: disable=import-outside-toplevel
+
+            # Carry the verified edge identity so the owner dispatches to the trusted internal
+            # endpoint without re-authenticating (OAuth / public-only survive the rpc forward).
+            encoded_auth_context = encode_internal_mcp_auth_context(get_streamable_http_auth_context())
             forwarded_response = await pool.forward_request_to_owner(
                 mcp_session_id,
                 {"method": "tools/call", "params": {"name": name, "arguments": arguments, "_meta": meta_data}, "headers": dict(request_headers) if request_headers else {}},
+                encoded_auth_context,
             )
             if forwarded_response is not None:
                 # Request was handled by another worker - convert response to expected format
@@ -1826,6 +1927,7 @@ async def call_tool(
                 token_teams=token_teams,
                 server_id=server_id,
                 meta_data=meta_data,
+                require_model_visible=True,
             )
             if not result or not result.content:
                 logger.warning("No content returned by tool: %s", name)
@@ -2258,17 +2360,7 @@ async def list_tools() -> List[types.Tool]:
 
                 # Default cache mode: use database
                 tools = await tool_service.list_server_tools(db, server_id, user_email=user_email, token_teams=token_teams, _request_headers=request_headers)
-                return [
-                    types.Tool(
-                        name=tool.name,
-                        title=_safe_str_attr(tool, "title"),
-                        description=tool.description or "",
-                        inputSchema=tool.input_schema,
-                        outputSchema=tool.output_schema,
-                        annotations=tool.annotations,
-                    )
-                    for tool in tools
-                ]
+                return _tools_for_client(tools)
         except Exception as e:
             logger.error("Error listing tools:%s", e)
             return []
@@ -2276,17 +2368,7 @@ async def list_tools() -> List[types.Tool]:
         try:
             async with get_db() as db:
                 tools, _ = await tool_service.list_tools(db, include_inactive=False, limit=0, user_email=user_email, token_teams=token_teams, _request_headers=request_headers)
-                return [
-                    types.Tool(
-                        name=tool.name,
-                        title=_safe_str_attr(tool, "title"),
-                        description=tool.description or "",
-                        inputSchema=tool.input_schema,
-                        outputSchema=tool.output_schema,
-                        annotations=tool.annotations,
-                    )
-                    for tool in tools
-                ]
+                return _tools_for_client(tools)
         except Exception as e:
             logger.exception("Error listing tools:%s", e)
             return []
@@ -2516,10 +2598,7 @@ async def list_resources() -> List[types.Resource]:
 
                 # Default cache mode: use database
                 resources = await resource_service.list_server_resources(db, server_id, user_email=user_email, token_teams=token_teams)
-                return [
-                    types.Resource(uri=resource.uri, name=resource.name, title=_safe_str_attr(resource, "title"), description=resource.description, mimeType=resource.mime_type)
-                    for resource in resources
-                ]
+                return [_to_mcp_resource(resource) for resource in resources]
         except Exception as e:
             logger.exception("Error listing Resources:%s", e)
             return []
@@ -2527,17 +2606,14 @@ async def list_resources() -> List[types.Resource]:
         try:
             async with get_db() as db:
                 resources, _ = await resource_service.list_resources(db, include_inactive=False, limit=0, user_email=user_email, token_teams=token_teams)
-                return [
-                    types.Resource(uri=resource.uri, name=resource.name, title=_safe_str_attr(resource, "title"), description=resource.description, mimeType=resource.mime_type)
-                    for resource in resources
-                ]
+                return [_to_mcp_resource(resource) for resource in resources]
         except Exception as e:
             logger.exception("Error listing resources:%s", e)
             return []
 
 
 @mcp_app.read_resource()
-async def read_resource(resource_uri: str) -> Union[str, bytes]:
+async def read_resource(resource_uri: str) -> Union[str, bytes, Iterable[ReadResourceContents]]:
     """
     Reads the content of a resource specified by its URI.
 
@@ -2545,7 +2621,7 @@ async def read_resource(resource_uri: str) -> Union[str, bytes]:
         resource_uri (str): The URI of the resource to read.
 
     Returns:
-        Union[str, bytes]: The content of the resource as text or binary data.
+        Union[str, bytes, Iterable[ReadResourceContents]]: The resource content.
         Returns empty string on failure or if no content is found.
 
     Raises:
@@ -2559,7 +2635,7 @@ async def read_resource(resource_uri: str) -> Union[str, bytes]:
         >>> list(sig.parameters.keys())
         ['resource_uri']
         >>> sig.return_annotation
-        typing.Union[str, bytes]
+        typing.Union[str, bytes, typing.Iterable[mcp.server.lowlevel.helper_types.ReadResourceContents]]
     """
     server_id, request_headers, user_context = await _get_request_context_or_default()
 
@@ -2624,11 +2700,7 @@ async def read_resource(resource_uri: str) -> Union[str, bytes]:
                     contents = await _proxy_read_resource_to_gateway(gateway, str(resource_uri), user_context, meta_data)
                     if contents:
                         # Return first content (text or blob)
-                        first_content = contents[0]
-                        if hasattr(first_content, "text"):
-                            return first_content.text
-                        if hasattr(first_content, "blob"):
-                            return first_content.blob
+                        return _to_read_resource_contents(contents[0], fallback_uri=str(resource_uri))
                     return ""
                 if gateway:
                     logger.debug("Gateway %s found but not in direct_proxy mode (mode: %s), using cache mode", gateway_id, gateway.gateway_mode)
@@ -2644,22 +2716,27 @@ async def read_resource(resource_uri: str) -> Union[str, bytes]:
                     server_id=server_id,
                     token_teams=token_teams,
                     meta_data=meta_data,
+                    request_headers=request_headers,
                 )
+            except (ResourceError, ResourceNotFoundError):
+                raise
             except Exception as e:
                 logger.exception("Error reading resource '%s': %s", resource_uri, e)
                 return ""
 
             # Return blob content if available (binary resources)
-            if result and result.blob:
-                return result.blob
+            if result and getattr(result, "blob", None):
+                return _to_read_resource_contents(result, fallback_uri=str(resource_uri))
 
             # Return text content if available (text resources)
-            if result and result.text:
-                return result.text
+            if result and getattr(result, "text", None):
+                return _to_read_resource_contents(result, fallback_uri=str(resource_uri))
 
             # No content found
             logger.warning("No content returned by resource: %s", resource_uri)
             return ""
+    except (ResourceError, ResourceNotFoundError):
+        raise
     except Exception as e:
         logger.exception("Error reading resource '%s': %s", resource_uri, e)
         return ""
@@ -4150,55 +4227,56 @@ class SessionManagerWrapper:
                     body = orjson.dumps(json_body)
                     logger.debug("[HTTP_AFFINITY_FORWARDED] Injected server_id %s into /rpc params", server_id)
 
-                async with httpx.AsyncClient(verify=internal_loopback_verify()) as client:
-                    rpc_headers = {
-                        "content-type": "application/json",
-                        "x-mcp-session-id": mcp_session_id,  # Pass session for upstream affinity
-                        "x-forwarded-internally": "true",  # Prevent infinite forwarding loops
+                rpc_headers = {
+                    "content-type": "application/json",
+                    "x-mcp-session-id": mcp_session_id,  # Pass session for upstream affinity
+                    "x-forwarded-internally": "true",  # Prevent infinite forwarding loops
+                }
+                # Preserve the inbound gateway auth header (default: Authorization,
+                # or AUTH_HEADER_NAME when customized) so the CSRF bearer short-circuit
+                # keys on it. The trusted endpoint itself authenticates via the encoded
+                # auth context, not this header; hardcoding "authorization" would drop
+                # auth on deployments using a custom AUTH_HEADER_NAME.
+                _gw_auth_lower = _resolve_auth_header_name(settings).lower()
+                if _gw_auth_lower in headers:
+                    rpc_headers[_gw_auth_lower] = headers[_gw_auth_lower]
+                # Forward passthrough headers for upstream MCP servers (see #3640).
+                # First-Party
+                from mcpgateway.auth_context import encode_internal_mcp_auth_context  # pylint: disable=import-outside-toplevel
+                from mcpgateway.utils.passthrough_headers import safe_extract_and_filter_for_loopback  # pylint: disable=import-outside-toplevel
+
+                rpc_headers.update(safe_extract_and_filter_for_loopback(headers))
+
+                # Dispatch IN-PROCESS to the trusted internal endpoint so it executes in
+                # this worker (the session owner) rather than scattering over the shared
+                # socket. The edge identity established on this request is encoded and
+                # carried as the auth context; this is in-process (no Redis hop), so no
+                # signature is required.
+                encoded_auth_context = encode_internal_mcp_auth_context(get_streamable_http_auth_context())
+                response = await post_rpc_in_process(content=body, headers=rpc_headers, timeout=30.0, auth_context=encoded_auth_context)
+
+                # Return response to client
+                response_headers = [
+                    (b"content-type", b"application/json"),
+                ]
+                if mcp_session_id != "not-provided":
+                    response_headers.append((b"mcp-session-id", mcp_session_id.encode()))
+
+                await send(
+                    {
+                        "type": "http.response.start",
+                        "status": response.status_code,
+                        "headers": response_headers,
                     }
-                    # Forward the inbound gateway auth header (default: Authorization,
-                    # or AUTH_HEADER_NAME when customized) so /rpc can re-authenticate
-                    # the same caller. Hardcoding "authorization" here would silently
-                    # drop auth on deployments using a custom AUTH_HEADER_NAME.
-                    _gw_auth_lower = _resolve_auth_header_name(settings).lower()
-                    if _gw_auth_lower in headers:
-                        rpc_headers[_gw_auth_lower] = headers[_gw_auth_lower]
-                    # Forward passthrough headers for upstream MCP servers (see #3640).
-                    # First-Party
-                    from mcpgateway.utils.passthrough_headers import safe_extract_and_filter_for_loopback  # pylint: disable=import-outside-toplevel
-
-                    rpc_headers.update(safe_extract_and_filter_for_loopback(headers))
-
-                    response = await client.post(
-                        f"{internal_loopback_base_url()}/rpc",
-                        content=body,
-                        headers=rpc_headers,
-                        timeout=30.0,
-                    )
-
-                    # Return response to client
-                    response_headers = [
-                        (b"content-type", b"application/json"),
-                        (b"content-length", str(len(response.content)).encode()),
-                    ]
-                    if mcp_session_id != "not-provided":
-                        response_headers.append((b"mcp-session-id", mcp_session_id.encode()))
-
-                    await send(
-                        {
-                            "type": "http.response.start",
-                            "status": response.status_code,
-                            "headers": response_headers,
-                        }
-                    )
-                    await send(
-                        {
-                            "type": "http.response.body",
-                            "body": response.content,
-                        }
-                    )
-                    logger.debug("[HTTP_AFFINITY_FORWARDED] Response sent | Status: %s", response.status_code)
-                    return
+                )
+                await send(
+                    {
+                        "type": "http.response.body",
+                        "body": response.content,
+                    }
+                )
+                logger.debug("[HTTP_AFFINITY_FORWARDED] Response sent | Status: %s", response.status_code)
+                return
             except Exception as e:
                 logger.error("[HTTP_AFFINITY_FORWARDED] Error routing to /rpc: %s", e)
                 # Fall through to SDK handling as fallback
@@ -4216,6 +4294,14 @@ class SessionManagerWrapper:
                 if owner and owner != WORKER_ID:
                     # Session owned by another worker - forward the entire HTTP request
                     logger.info("[HTTP_AFFINITY] Worker %s | Session %s... | Owner: %s | Forwarding HTTP request", WORKER_ID, mcp_session_id[:8], owner)
+
+                    # Package the edge-validated identity so the owner can dispatch via
+                    # the trusted internal /_internal/mcp/rpc endpoint without
+                    # re-authenticating, letting OAuth and public-only sessions survive.
+                    # First-Party
+                    from mcpgateway.auth_context import encode_internal_mcp_auth_context  # pylint: disable=import-outside-toplevel
+
+                    encoded_auth_context = encode_internal_mcp_auth_context(get_streamable_http_auth_context())
 
                     # Read request body
                     body_parts = []
@@ -4238,12 +4324,16 @@ class SessionManagerWrapper:
                         headers=headers,
                         body=body,
                         query_string=query_string,
+                        auth_context=encoded_auth_context,
                     )
 
                     if response:
                         # Send forwarded response back to client
+                        # Note: Content-Length is NOT manually added to allow compression
+                        # middleware to set it correctly after compression (issue #5457).
+                        # We filter out transfer-encoding, content-encoding, and content-length
+                        # from the forwarded headers to let the middleware handle them.
                         response_headers = [(k.encode(), v.encode()) for k, v in response["headers"].items() if k.lower() not in ("transfer-encoding", "content-encoding", "content-length")]
-                        response_headers.append((b"content-length", str(len(response["body"])).encode()))
 
                         await send(
                             {
@@ -4321,49 +4411,68 @@ class SessionManagerWrapper:
                             body = orjson.dumps(json_body)
                             logger.debug("[HTTP_AFFINITY_LOCAL] Injected server_id %s into /rpc params", server_id)
 
-                        async with httpx.AsyncClient(verify=internal_loopback_verify()) as client:
-                            rpc_headers = {
-                                "content-type": "application/json",
-                                "x-mcp-session-id": mcp_session_id,
-                                "x-forwarded-internally": "true",
-                            }
-                            _gw_auth_lower = _resolve_auth_header_name(settings).lower()
-                            if _gw_auth_lower in headers:
-                                rpc_headers[_gw_auth_lower] = headers[_gw_auth_lower]
-                            # Forward passthrough headers for upstream MCP servers (see #3640).
-                            # First-Party
-                            from mcpgateway.utils.passthrough_headers import safe_extract_and_filter_for_loopback  # pylint: disable=import-outside-toplevel
+                        # Owner-direct path: dispatch to the trusted internal
+                        # /_internal/mcp/rpc endpoint carrying the edge-validated auth
+                        # context, so OAuth and public-only sessions are honored without
+                        # re-authenticating against public /rpc (JWTs/cookies only).
+                        # First-Party
+                        from mcpgateway.auth_context import _expected_internal_mcp_runtime_auth_header, encode_internal_mcp_auth_context  # pylint: disable=import-outside-toplevel,protected-access
+                        from mcpgateway.main import app  # pylint: disable=import-outside-toplevel,cyclic-import
+                        from mcpgateway.utils.internal_http import internal_loopback_base_url  # pylint: disable=import-outside-toplevel
+                        from mcpgateway.utils.passthrough_headers import safe_extract_and_filter_for_loopback  # pylint: disable=import-outside-toplevel
 
-                            rpc_headers.update(safe_extract_and_filter_for_loopback(headers))
+                        rpc_headers = {
+                            "content-type": "application/json",
+                            "x-mcp-session-id": mcp_session_id,
+                            "x-contextforge-mcp-runtime": "affinity",
+                            "x-contextforge-mcp-runtime-auth": _expected_internal_mcp_runtime_auth_header(),
+                            "x-contextforge-auth-context": encode_internal_mcp_auth_context(get_streamable_http_auth_context()),
+                        }
+                        # Preserve the bearer under the configured auth header (AUTH_HEADER_NAME),
+                        # not a hardcoded "authorization": the CSRF bearer short-circuit keys on
+                        # the configured header, so a custom header would otherwise be dropped.
+                        # This is defense-in-depth; the endpoint trusts the auth-context above.
+                        _auth_header_name = _resolve_auth_header_name(settings).lower()
+                        _original_auth = headers.get(_auth_header_name) or headers.get(_resolve_auth_header_name(settings))
+                        if _original_auth:
+                            rpc_headers[_auth_header_name] = _original_auth
+                        # Forward passthrough headers for upstream MCP servers (see #3640).
+                        rpc_headers.update(safe_extract_and_filter_for_loopback(headers))
 
+                        # Dispatch in-process so the request runs on this worker, the
+                        # session owner that holds the bound upstream session, instead of
+                        # looping back over the shared socket to a random worker.
+                        transport = httpx.ASGITransport(app=app, client=("127.0.0.1", 0))
+                        async with httpx.AsyncClient(transport=transport, base_url=internal_loopback_base_url()) as client:
                             response = await client.post(
-                                f"{internal_loopback_base_url()}/rpc",
+                                "/_internal/mcp/rpc",
                                 content=body,
                                 headers=rpc_headers,
-                                timeout=30.0,
+                                timeout=settings.mcpgateway_pool_rpc_forward_timeout,
                             )
 
-                            response_headers = [
-                                (b"content-type", b"application/json"),
-                                (b"content-length", str(len(response.content)).encode()),
-                                (b"mcp-session-id", mcp_session_id.encode()),
-                            ]
+                        # Note: Content-Length is NOT manually set to allow compression
+                        # middleware to set it correctly after compression (issue #5457)
+                        response_headers = [
+                            (b"content-type", b"application/json"),
+                            (b"mcp-session-id", mcp_session_id.encode()),
+                        ]
 
-                            await send(
-                                {
-                                    "type": "http.response.start",
-                                    "status": response.status_code,
-                                    "headers": response_headers,
-                                }
-                            )
-                            await send(
-                                {
-                                    "type": "http.response.body",
-                                    "body": response.content,
-                                }
-                            )
-                            logger.debug("[HTTP_AFFINITY_LOCAL] Response sent | Status: %s", response.status_code)
-                            return
+                        await send(
+                            {
+                                "type": "http.response.start",
+                                "status": response.status_code,
+                                "headers": response_headers,
+                            }
+                        )
+                        await send(
+                            {
+                                "type": "http.response.body",
+                                "body": response.content,
+                            }
+                        )
+                        logger.debug("[HTTP_AFFINITY_LOCAL] Response sent | Status: %s", response.status_code)
+                        return
                     except Exception as e:
                         logger.error("[HTTP_AFFINITY_LOCAL] Error routing to /rpc: %s", e)
                         # Fall through to SDK handling as fallback
@@ -4393,7 +4502,7 @@ class SessionManagerWrapper:
                 message: ASGI message dict.
             """
             nonlocal captured_session_id
-            if message["type"] == "http.response.start" and settings.mcpgateway_session_affinity_enabled:
+            if message["type"] == "http.response.start" and settings.use_stateful_sessions:
                 # Look for mcp-session-id in response headers
                 response_headers = message.get("headers", [])
                 for header_name, header_value in response_headers:

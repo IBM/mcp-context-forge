@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/validation/test_validators_advanced.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Test the validators module.
 Author: Mihai Criveti
@@ -1841,46 +1840,80 @@ class TestGatewayTestUrlValidation:
         assert result["resolved_ip"] == "8.8.8.8"
 
     @pytest.mark.asyncio
-    async def test_private_ip_blocked_unconditionally(self):
-        """Test that private IPs are blocked even if in allowlist (AC #3)."""
+    async def test_private_ip_blocked_when_ssrf_enabled(self):
+        """Test that private IPs are blocked when SSRF protection is enabled (AC #3).
+
+        When ssrf_protection_enabled=true (the default), private IPs are blocked
+        even if explicitly included in the allowlist.
+        """
+        from unittest.mock import patch
+
         # RFC 1918 private ranges
         private_ips = [
             "https://192.168.1.1/",
             "https://10.0.0.1/",
             "https://172.16.0.1/",
         ]
-        # Even if we explicitly allow them, they should be blocked
+        # Even if we explicitly allow them, they should be blocked when SSRF protection is enabled
         allowed_hosts = ["192.168.1.1", "10.0.0.1", "172.16.0.1"]
 
-        for url in private_ips:
-            with pytest.raises(ValueError, match="is not allowed"):
-                await SecurityValidator.validate_gateway_test_url(url, allowed_hosts, "Gateway URL")
+        # Explicitly set SSRF protection to enabled
+        with patch("mcpgateway.common.validators.settings") as mock_settings:
+            mock_settings.ssrf_protection_enabled = True
+            mock_settings.gateway_test_dns_timeout = 5.0
+
+            for url in private_ips:
+                with pytest.raises(ValueError, match="is not allowed"):
+                    await SecurityValidator.validate_gateway_test_url(url, allowed_hosts, "Gateway URL")
 
     @pytest.mark.asyncio
-    async def test_loopback_blocked_unconditionally(self):
-        """Test that loopback addresses are blocked unconditionally (AC #3)."""
+    async def test_loopback_blocked_when_ssrf_enabled(self):
+        """Test that loopback addresses are blocked when SSRF protection is enabled (AC #3).
+
+        When ssrf_protection_enabled=true (the default), loopback addresses are blocked
+        even if explicitly included in the allowlist.
+        """
+        from unittest.mock import patch
+
         loopback_urls = [
             "https://127.0.0.1/",
             "https://127.0.0.2/",
             "https://localhost/",
         ]
-        # Even if we explicitly allow them, they should be blocked
+        # Even if we explicitly allow them, they should be blocked when SSRF protection is enabled
         allowed_hosts = ["127.0.0.1", "localhost"]
 
-        for url in loopback_urls:
-            with pytest.raises(ValueError, match="is not allowed"):
-                await SecurityValidator.validate_gateway_test_url(url, allowed_hosts, "Gateway URL")
+        # Explicitly set SSRF protection to enabled
+        with patch("mcpgateway.common.validators.settings") as mock_settings:
+            mock_settings.ssrf_protection_enabled = True
+            mock_settings.gateway_test_dns_timeout = 5.0
+
+            for url in loopback_urls:
+                with pytest.raises(ValueError, match="is not allowed"):
+                    await SecurityValidator.validate_gateway_test_url(url, allowed_hosts, "Gateway URL")
 
     @pytest.mark.asyncio
-    async def test_link_local_blocked_unconditionally(self):
-        """Test that link-local addresses are blocked unconditionally (AC #3)."""
+    async def test_link_local_blocked_when_ssrf_enabled(self):
+        """Test that link-local addresses are blocked when SSRF protection is enabled (AC #3).
+
+        When ssrf_protection_enabled=true (the default), link-local addresses are blocked
+        even if explicitly included in the allowlist. This is critical for preventing
+        cloud metadata service access (e.g., 169.254.169.254).
+        """
+        from unittest.mock import patch
+
         # Link-local range (169.254.0.0/16) - commonly used for cloud metadata
-        with pytest.raises(ValueError, match="is not allowed"):
-            await SecurityValidator.validate_gateway_test_url(
-                "https://169.254.169.254/",
-                ["169.254.169.254"],
-                "Gateway URL"
-            )
+        # Explicitly set SSRF protection to enabled
+        with patch("mcpgateway.common.validators.settings") as mock_settings:
+            mock_settings.ssrf_protection_enabled = True
+            mock_settings.gateway_test_dns_timeout = 5.0
+
+            with pytest.raises(ValueError, match="is not allowed"):
+                await SecurityValidator.validate_gateway_test_url(
+                    "https://169.254.169.254/",
+                    ["169.254.169.254"],
+                    "Gateway URL"
+                )
 
     @pytest.mark.asyncio
     async def test_dns_rebinding_attack_blocked(self, mock_dns_private):

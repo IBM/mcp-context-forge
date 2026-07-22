@@ -2,10 +2,7 @@
 
 The Admin experience is shipped as a Jinja template (`mcpgateway/templates/admin.html`)
 with supporting assets in `mcpgateway/static/`. It uses **HTMX** for
-request/response swaps, **Alpine.js** for light-weight reactivity, and the
-Tailwind CDN for styling. There are no environment-variable knobs for colors or
-layout—the way to customise it is to edit those files (or layer overrides during
-deployment).
+request/response swaps, **Alpine.js** for light-weight reactivity, and **Tailwind CSS** for styling. Admin UI vendor JavaScript is installed via npm and bundled/chunked with Vite for local serving and air-gapped deployments. There are no environment-variable knobs for colors or layout—the way to customise it is to edit those files (or layer overrides during deployment).
 
 ### Technology Stack
 
@@ -20,7 +17,7 @@ deployment).
 | DOMPurify | - | XSS sanitization |
 | Font Awesome | - | Icons |
 
-All vendor libraries are bundled locally in `mcpgateway/static/vendor/` for air-gapped deployments. Enable with `MCPGATEWAY_UI_AIRGAPPED=true`. See [Air-Gapped Mode](../overview/ui.md#air-gapped-mode).
+**HTMX** and **Alpine.js** are bundled into the main JavaScript bundle via npm/Vite, and the rest of the Admin UI vendor JavaScript is installed from npm and emitted through the Vite build. Enable `MCPGATEWAY_UI_AIRGAPPED=true` for offline deployments. See [Air-Gapped Mode](../overview/ui.md#air-gapped-mode).
 
 ---
 
@@ -105,20 +102,23 @@ app is mounted behind a proxy.
 - Tailwind is pre-compiled into `mcpgateway/static/css/tailwind.min.css` from
   `tailwind.config.js` with `darkMode: "class"`.
 
-- Add a custom config block to extend colours/fonts and swap utility classes, for example:
-  ```html
-  <script>
-    tailwind.config = {
-      darkMode: "class",
-      theme: {
-        extend: {
-          colors: { brand: "#1d4ed8", accent: "#f97316" },
-          fontFamily: { display: ['"IBM Plex Sans"', 'sans-serif'] },
-        },
+- To customise colours, fonts, animations or other Tailwind settings, edit `tailwind.config.js` in the project root:
+  ```javascript
+  // tailwind.config.js
+  module.exports = {
+    theme: {
+      extend: {
+        colors: { brand: "#1d4ed8", accent: "#f97316" },
+        fontFamily: { display: ['"IBM Plex Sans"', "sans-serif"] },
       },
-    };
-  </script>
+    },
+  };
   ```
+  After editing, rebuild the CSS:
+  ```bash
+  make build-css       # local development
+  ```
+  For Docker builds, the CSS is compiled during the `node-builder` stage, so changes to `tailwind.config.js` are picked up automatically on the next container build.
 - For bespoke CSS (animations, overrides), append to `admin.css` or include a
   new stylesheet in the `<head>`:
   ```html

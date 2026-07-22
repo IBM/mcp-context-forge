@@ -745,7 +745,7 @@ describe("updateAuthHeadersJSON - extended", () => {
 
     updateAuthHeadersJSON("auth-headers-container");
 
-    expect(errorSpy).toHaveBeenCalledWith("Maximum of 100 headers allowed per gateway");
+    expect(errorSpy).toHaveBeenCalledWith("Maximum of 100 headers allowed.");
   });
 
   test("maps auth-headers-container-a2a to auth-headers-json-a2a", () => {

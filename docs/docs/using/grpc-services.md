@@ -105,6 +105,9 @@ python3 -m mcpgateway.translate \
   --port 9000
 ```
 
+!!! note "SSRF validation of gRPC targets"
+    The gRPC target is validated against the platform SSRF settings before any channel is opened. Because `SSRF_ALLOW_LOCALHOST` and `SSRF_ALLOW_PRIVATE_NETWORKS` default to `false`, targets such as `localhost:50051` or RFC1918 addresses are rejected out of the box with a `GrpcServiceError`. To allow a loopback target, set `SSRF_ALLOW_LOCALHOST=true`; to allow a specific private/RFC1918 range, add it to `SSRF_ALLOWED_NETWORKS`. See the [1.0.0-RC3 upgrade notes](../manage/upgrade-to-1.0.0-rc3.md) for the full table of SSRF defaults.
+
 ### 2. Admin UI: Register a gRPC Service
 
 1. Navigate to the **Admin UI** at `http://localhost:4444/admin`

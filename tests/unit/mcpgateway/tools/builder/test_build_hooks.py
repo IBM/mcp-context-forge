@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/tools/builder/test_build_hooks.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
 Unit tests for mcpgateway/tools/builder/build_hooks.py.
 """
@@ -27,13 +26,9 @@ from mcpgateway.tools.builder.build_hooks import BuildPyWithUI
 
 
 def _has_build_module() -> bool:
-    """Check if the 'build' module is available."""
-    try:
-        import build  # noqa: F401
-
-        return True
-    except ImportError:
-        return False
+    """Check if the PyPA build frontend is executable."""
+    result = subprocess.run([sys.executable, "-m", "build", "--version"], capture_output=True, text=True)
+    return result.returncode == 0
 
 # ---------------------------------------------------------------------------
 # Helpers

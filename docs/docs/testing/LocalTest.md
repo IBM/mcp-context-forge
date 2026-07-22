@@ -62,7 +62,7 @@ make load-test-ui
 
 ### HTTP Server Selection
 
-Both use **Gunicorn** (battle-tested, lower memory than Granian)
+Both use **Gunicorn** (battle-tested)
 
 - 24 workers per replica (matches CPU cores)
 - Connection pooling via PgBouncer

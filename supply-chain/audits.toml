@@ -1,6 +1,11 @@
 
 # cargo-vet audits file
 
+[[audits.crossbeam-epoch]]
+who = "cafalchio <mcafalchio@gmail.com>"
+criteria = "safe-to-deploy"
+version = "0.9.18"
+
 [[audits.ipnetwork]]
 who = "Mohan Lakshmaiah <mohan.economist@gmail.com>"
 criteria = "safe-to-deploy"

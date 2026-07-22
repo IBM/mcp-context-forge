@@ -3,11 +3,11 @@
 # ===============================================================
 #
 # This workflow runs Docker-specific security checks:
-#   1. Hadolint         — lint shipped runtime Dockerfiles (Containerfile.lite,
+#   1. Hadolint         — lint shipped runtime Dockerfiles (Containerfile,
 #                         Containerfile, Containerfile.scratch, nginx proxy,
 #                         python-sandbox) against best-practice rules
 #   2. Container smoke  — build auxiliary images to verify they compile cleanly
-#   3. Security Scan    — build Containerfile.lite, run FedRAMP compliance validation,
+#   3. Security Scan    — build Containerfile, run FedRAMP compliance validation,
 #                         generate SBOM (Syft), scan for CVEs ≥ HIGH (Grype), upload SBOM
 #
 # Trigger model:
@@ -25,11 +25,8 @@ on:
     types: [opened, synchronize, ready_for_review]
     branches: ["main"]
     paths:
-      - 'Containerfile.lite'
       - 'Containerfile'
-      - 'Containerfile.scratch'
       - 'infra/nginx/**'
-      - 'a2a-agents/rust/a2a-echo-agent/**'
       - 'mcp-servers/python/python_sandbox_server/**'
       - 'mcpgateway/**'
       - 'plugins/**'
@@ -76,12 +73,8 @@ jobs:
         run: |
           set -uo pipefail
           files=(
-            Containerfile.lite
             Containerfile
-            Containerfile.scratch
             infra/nginx/Dockerfile
-            mcp-servers/python/python_sandbox_server/Containerfile
-            mcp-servers/python/python_sandbox_server/docker/Dockerfile.sandbox
           )
           status=0
           for f in "${files[@]}"; do
@@ -106,10 +99,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: a2a-echo-agent
-            context: .
-            file: a2a-agents/rust/a2a-echo-agent/Dockerfile
-            tag: mcp-context-forge-a2a-echo-agent:scan
           - name: python-sandbox
             context: mcp-servers/python/python_sandbox_server
             file: mcp-servers/python/python_sandbox_server/docker/Dockerfile.sandbox
@@ -157,7 +146,7 @@ jobs:
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
-          file: Containerfile.lite
+          file: Containerfile
           platforms: linux/amd64
           push: false
           load: true
@@ -169,7 +158,7 @@ jobs:
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
-          file: Containerfile.lite
+          file: Containerfile
           platforms: linux/amd64
           push: false
           load: true

@@ -1,10 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Module Description.
-Location: ./tests/unit/mcpgateway/test_settings_fields.py
-Copyright 2026
+"""Location: ./tests/unit/mcpgateway/test_settings_fields.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
+Module Description.
 Module documentation...
 """
 
@@ -59,6 +58,12 @@ def test_port_valid(port):
 def test_port_invalid(port):
     with pytest.raises(ValidationError):
         Settings(port=port)
+
+
+def test_dataplane_publisher_interval_rejects_zero():
+    """Dataplane publisher intervals must be at least one second."""
+    with pytest.raises(ValidationError):
+        Settings(dataplane_publisher_interval_seconds=0, _env_file=None)
 
 
 # --- log_detailed_sample_rate tests ---
