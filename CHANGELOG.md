@@ -60,6 +60,8 @@ Release 1.0.6 consolidates **61 PRs** focused on **OAuth RFC 8693 token exchange
 
 ### Changed
 
+- **MCP Tool Names and Virtual-Server Aliases** ([#5553](https://github.com/IBM/mcp-context-forge/pull/5553)) - Virtual servers now expose custom tool names and resolve them to upstream names. Tool names follow the MCP 2025-11-25 character set and 128-character limit, with full-string validation that also rejects trailing newlines. **Breaking:** slash-delimited tool names are no longer accepted; rename them to use letters, numbers, periods, underscores, or hyphens.
+
 #### **API**
 
 - **Custom Auth Headers on Tools** ([#5314](https://github.com/IBM/mcp-context-forge/pull/5314)) - `POST /tools` and `PUT /tools/{tool_id}` now correctly persist the `auth_headers` array instead of silently storing `auth_value: null`. Invalid header keys/values are rejected with a 422 rather than an unhandled 500.

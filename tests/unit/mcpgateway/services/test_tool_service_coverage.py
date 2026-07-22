@@ -5431,23 +5431,17 @@ class TestInvokeToolCachePaths:
     @pytest.mark.asyncio
     async def test_server_scoping_denies_unattached_tool(self, tool_service):
         """Tool not attached to specified server raises not found."""
-        with patch("mcpgateway.services.tool_service._get_tool_lookup_cache") as mock_cache_fn, patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)):
-            mock_cache = AsyncMock()
-            mock_cache.enabled = True
-            mock_cache.get = AsyncMock(
-                return_value={
-                    "status": "active",
-                    "tool": {"enabled": True, "reachable": True, "id": "t1", "visibility": "public", "integration_type": "REST", "annotations": {}},
-                    "gateway": None,
-                }
-            )
-            mock_cache_fn.return_value = mock_cache
-
+        mock_cache = AsyncMock()
+        mock_cache.enabled = True
+        mock_cache.get = AsyncMock(return_value=None)
+        with patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=mock_cache), patch.object(tool_service, "_load_invocable_tools", return_value=[]) as load_invocable_tools:
             db = MagicMock()
-            db.execute = MagicMock(return_value=MagicMock(first=MagicMock(return_value=None)))
 
             with pytest.raises(ToolNotFoundError, match="not found"):
                 await tool_service.invoke_tool(db, "tool", {}, server_id="srv-1")
+
+        mock_cache.get.assert_awaited_once_with("tool", server_id="srv-1")
+        load_invocable_tools.assert_called_once_with(db, "tool", server_id="srv-1")
 
     @pytest.mark.asyncio
     async def test_server_scoping_allows_attached_tool(self, tool_service):
@@ -5463,6 +5457,8 @@ class TestInvokeToolCachePaths:
 
         with (
             _setup_cache_for_invoke(tp),
+            patch.object(tool_service, "_load_invocable_tools", return_value=[MagicMock(enabled=True, reachable=True, gateway=None)]),
+            patch.object(tool_service, "_build_tool_cache_payload", return_value={"tool": tp, "gateway": None}),
             patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
             patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc,
             patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace,
@@ -6193,6 +6189,7 @@ def _make_tool_payload(
         "auth_value": auth_value,
         "oauth_config": None,
         "enabled": True,
+        "deprecated": False,
         "reachable": True,
         "gateway_id": gateway_id,
         "visibility": "public",

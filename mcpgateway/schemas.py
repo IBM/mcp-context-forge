@@ -1853,8 +1853,7 @@ class ToolInvocation(BaseModelWithConfigDict):
     - Arguments matching tool's input schema (validated for depth limits)
 
     Validation Rules:
-    - Tool names must start with a letter, number, or underscore and contain only
-      letters, numbers, periods, underscores, hyphens, and slashes (per SEP-986)
+    - Tool names are 1–128 characters and contain only letters, numbers, periods, underscores, or hyphens
     - Tool names cannot contain HTML special characters (<, >, ", ')
     - Arguments are validated to prevent excessively deep nesting (default max: 10 levels)
 
@@ -1901,12 +1900,17 @@ class ToolInvocation(BaseModelWithConfigDict):
         >>> tool_underscore.name
         '_5gpt_query'
 
-        >>> # Invalid: Tool name starting with hyphen
+        >>> # Valid: Tool name starting with hyphen (per MCP spec)
+        >>> tool_hyphen = ToolInvocation(name="-tool.name", arguments={})
+        >>> tool_hyphen.name
+        '-tool.name'
+
+        >>> # Invalid: Tool name with slash
         >>> try:
-        ...     ToolInvocation(name="-invalid_tool", arguments={})
+        ...     ToolInvocation(name="namespace/tool", arguments={})
         ... except ValidationError as e:
-        ...     print("Validation failed: Must start with letter, number, or underscore")
-        Validation failed: Must start with letter, number, or underscore
+        ...     print("Validation failed: Slashes not allowed")
+        Validation failed: Slashes not allowed
 
         >>> # Valid: Complex but not too deep arguments
         >>> args = {"level1": {"level2": {"level3": {"data": "value"}}}}

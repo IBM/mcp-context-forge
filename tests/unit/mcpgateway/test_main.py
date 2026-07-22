@@ -15,6 +15,7 @@ import importlib
 import json
 import logging
 import os
+from types import SimpleNamespace
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 
@@ -2730,6 +2731,37 @@ class TestRPCEndpoints:
         assert response.status_code == 200
         body = response.json()
         assert body["result"]["tools"][0]["name"] == "test_tool"
+        mock_list_tools.assert_called_once()
+
+    @patch("mcpgateway.main.tool_service.list_server_tools", new_callable=AsyncMock)
+    def test_rpc_list_tools_with_server_id_aligns_custom_names_after_apps_filtering(self, mock_list_tools, test_client, auth_headers):
+        """App-only filtering must not shift custom names onto later visible tools."""
+        extension_key = "io.modelcontextprotocol/ui"
+
+        def _tool(name: str, custom_name: str, visibility: str) -> SimpleNamespace:
+            return SimpleNamespace(
+                name=name,
+                custom_name=custom_name,
+                title=None,
+                description=name,
+                input_schema={"type": "object"},
+                output_schema=None,
+                annotations=None,
+                extension_metadata={extension_key: {"visibility": [visibility]}},
+            )
+
+        mock_list_tools.return_value = [
+            _tool("internal-first", "First.Tool", "model"),
+            _tool("internal-helper", "Helper.Tool", "app"),
+            _tool("internal-last", "Last.Tool", "model"),
+        ]
+        req = {"jsonrpc": "2.0", "id": "test-id", "method": "tools/list", "params": {"server_id": "server-1"}}
+
+        with patch("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", True):
+            response = test_client.post("/rpc/", json=req, headers=auth_headers)
+
+        assert response.status_code == 200
+        assert [tool["name"] for tool in response.json()["result"]["tools"]] == ["First.Tool", "Last.Tool"]
         mock_list_tools.assert_called_once()
 
     @patch("mcpgateway.main.tool_service.list_tools")

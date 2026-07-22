@@ -14,7 +14,7 @@ from collections import defaultdict
 import logging
 import os
 import socket
-from typing import Any, TypedDict
+from typing import Any, NotRequired, Sequence, TypedDict
 
 # Third-Party
 import msgpack
@@ -66,6 +66,7 @@ class BackendConfig(TypedDict):
     passthrough_headers: list[str]
     capabilities: dict[str, Any]
     allowed_tool_names: list[str]
+    tool_name_aliases: dict[str, str]
     allowed_resource_names: list[str]
     allowed_resource_uris: list[str]
     allowed_prompt_names: list[str]
@@ -83,7 +84,15 @@ class UserConfig(TypedDict):
     virtual_hosts: dict[str, VirtualHostConfig]
 
 
-BackendItems = dict[str, list[str]]
+class BackendItems(TypedDict):
+    """Names and identifiers attached to one backend."""
+
+    tools: list[str]
+    resources: list[str]
+    prompts: list[str]
+    tool_name_aliases: NotRequired[dict[str, str]]
+
+
 BackendItemsByServer = dict[str, dict[str, BackendItems]]
 
 
@@ -128,7 +137,7 @@ class DataplanePublisherService:
         self.task = None
         logger.info("Dataplane publisher stopped.")
 
-    async def fetch_payload(self) -> dict[str, dict[str, dict[str, Any]]] | None:
+    async def fetch_payload(self) -> dict[str, UserConfig] | None:
         """Fetch the payload to publish to Redis. Returns None on error."""
         user_data = await self.get_data_from_db()
         if user_data is None:
@@ -227,11 +236,12 @@ class DataplanePublisherService:
 
             prompt_map = {prompt["id"]: prompt["name"] for prompt in prompts}
 
-            # The dataplane proxies streamable-HTTP upstreams only. Legacy
-            # HTTP+SSE gateways are excluded so the published config never
-            # advertises a backend the dataplane cannot serve.
-            gateway_base = {
-                gateway["id"]: {
+            # Backend keys are stable gateway IDs. Names and slugs are mutable
+            # presentation fields and are not globally unique. The dataplane
+            # proxies streamable-HTTP upstreams only, so legacy HTTP+SSE
+            # gateways must not be advertised as publishable backends.
+            gateway_base: dict[str, dict[str, Any]] = {
+                str(gateway["id"]): {
                     "name": gateway["name"],
                     "url": gateway["url"],
                     "transport": gateway["transport"],
@@ -259,8 +269,13 @@ class DataplanePublisherService:
                         continue
 
                     backends[gateway_id] = {
-                        **gateway_config,
+                        "name": gateway_config["name"],
+                        "url": gateway_config["url"],
+                        "transport": gateway_config["transport"],
+                        "passthrough_headers": gateway_config["passthrough_headers"],
+                        "capabilities": gateway_config["capabilities"],
                         "allowed_tool_names": backend_items["tools"],
+                        "tool_name_aliases": backend_items.get("tool_name_aliases", {}),
                         "allowed_resource_names": allowed_resource_names,
                         "allowed_resource_uris": allowed_resource_uris,
                         "allowed_prompt_names": allowed_prompt_names,
@@ -320,7 +335,7 @@ class DataplanePublisherService:
                         DbResource.uri_template.is_(None),
                     )
                 ).all()
-                tool_rows = db.execute(select(DbTool.id, DbTool.original_name, DbTool.owner_email, DbTool.team_id, DbTool.visibility).where(DbTool.enabled.is_(True))).all()
+                tool_rows = db.execute(select(DbTool.id, DbTool.original_name, DbTool.custom_name, DbTool.owner_email, DbTool.team_id, DbTool.visibility).where(DbTool.enabled.is_(True))).all()
                 backend_items_by_server = self._get_backend_items_by_server(db)
 
                 return {
@@ -347,21 +362,21 @@ class DataplanePublisherService:
         user_email: str,
         team_ids: set[str],
         is_admin: bool,
-        server_rows: list[Any],
-        gateway_rows: list[Any],
-        prompt_rows: list[Any],
-        resource_rows: list[Any],
-        tool_rows: list[Any],
+        server_rows: Sequence[Any],
+        gateway_rows: Sequence[Any],
+        prompt_rows: Sequence[Any],
+        resource_rows: Sequence[Any],
+        tool_rows: Sequence[Any],
         backend_items_by_server: BackendItemsByServer,
     ) -> dict[str, Any]:
         """Build already-filtered dataplane data for one user."""
-        tool_name_by_id = {tool.id: tool.original_name for tool in tool_rows if self._filter_for_user(tool, user_email, team_ids, is_admin=is_admin)}
+        tool_names_by_id = {tool.id: (tool.original_name, tool.custom_name or tool.original_name) for tool in tool_rows if self._filter_for_user(tool, user_email, team_ids, is_admin=is_admin)}
 
         return {
             "servers": [
                 {
                     "id": server.id,
-                    "backend_items": self._filter_backend_items_for_user(backend_items_by_server.get(server.id, {}), tool_name_by_id),
+                    "backend_items": self._filter_backend_items_for_user(backend_items_by_server.get(server.id, {}), tool_names_by_id),
                 }
                 for server in server_rows
                 if self._filter_for_user(server, user_email, team_ids, is_admin=is_admin)
@@ -395,16 +410,35 @@ class DataplanePublisherService:
         return row.team_id in team_ids and visibility == "team"
 
     @staticmethod
-    def _filter_backend_items_for_user(backend_items_by_gateway: dict[str, BackendItems], tool_name_by_id: dict[str, str]) -> dict[str, BackendItems]:
+    def _filter_backend_items_for_user(backend_items_by_gateway: dict[str, BackendItems], tool_names_by_id: dict[str, tuple[str, str]]) -> dict[str, BackendItems]:
         """Filter backend tool IDs for one user and convert visible tools to names."""
-        return {
-            gateway_id: {
-                "tools": [tool_name_by_id[tool_id] for tool_id in backend_items["tools"] if tool_id in tool_name_by_id],
+        filtered: dict[str, BackendItems] = {}
+        for gateway_id, backend_items in backend_items_by_gateway.items():
+            tools: list[str] = []
+            tool_name_aliases: dict[str, str] = {}
+            for tool_id in backend_items["tools"]:
+                names = tool_names_by_id.get(tool_id)
+                if names is None:
+                    continue
+                original_name, exposed_name = names
+                tools.append(original_name)
+                if exposed_name in tool_name_aliases and tool_name_aliases[exposed_name] != original_name:
+                    logger.warning(
+                        "Duplicate exposed tool name '%s' on backend %s: keeping alias to '%s', dropping alias to '%s'",
+                        exposed_name,
+                        gateway_id,
+                        tool_name_aliases[exposed_name],
+                        original_name,
+                    )
+                    continue
+                tool_name_aliases[exposed_name] = original_name
+            filtered[gateway_id] = {
+                "tools": tools,
+                "tool_name_aliases": tool_name_aliases,
                 "resources": list(backend_items["resources"]),
                 "prompts": list(backend_items["prompts"]),
             }
-            for gateway_id, backend_items in backend_items_by_gateway.items()
-        }
+        return filtered
 
     def _get_backend_items_by_server(self, db: Any) -> BackendItemsByServer:
         """Fetch tools, resources, and prompts grouped by server and backend gateway."""

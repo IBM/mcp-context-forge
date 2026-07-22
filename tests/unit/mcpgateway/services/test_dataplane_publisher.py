@@ -7,6 +7,7 @@ Unit tests for DataplanePublisherService.
 """
 
 import asyncio
+import logging
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
@@ -207,6 +208,7 @@ async def test_full_payload_generation_with_mock_db():
     tool1.id = "t1"
     tool1.name = "gw1-public_tool"
     tool1.original_name = "public_tool"
+    tool1.custom_name = "Public.Tool"
     tool1.owner_email = "user1@example.com"
     tool1.team_id = "team1"
     tool1.visibility = "public"
@@ -216,6 +218,7 @@ async def test_full_payload_generation_with_mock_db():
     tool2.id = "t2"
     tool2.name = "gw1-private_tool"
     tool2.original_name = "private_tool"
+    tool2.custom_name = "Private-Tool"
     tool2.owner_email = "user1@example.com"
     tool2.team_id = "team1"
     tool2.visibility = "private"
@@ -225,6 +228,7 @@ async def test_full_payload_generation_with_mock_db():
     tool3.id = "t3"
     tool3.name = "gw1-team2_tool"
     tool3.original_name = "team2_tool"
+    tool3.custom_name = "Team2_Tool"
     tool3.owner_email = "user2@example.com"
     tool3.team_id = "team2"
     tool3.visibility = "team"
@@ -273,7 +277,7 @@ async def test_full_payload_generation_with_mock_db():
         # Verify backend configuration
         server1 = user1_config["virtual_hosts"]["s1"]
         assert "backends" in server1
-        assert "g1" in server1["backends"]
+        assert "g1" in server1["backends"], "backends must be keyed by gateway ID"
 
         backend = server1["backends"]["g1"]
         assert backend["name"] == "Gateway 1"
@@ -282,6 +286,7 @@ async def test_full_payload_generation_with_mock_db():
         assert backend["passthrough_headers"] == ["Authorization"]
         assert backend["capabilities"] == {"resources": {"subscribe": True}}
         assert backend["allowed_tool_names"] == ["public_tool", "private_tool"]
+        assert backend["tool_name_aliases"] == {"Public.Tool": "public_tool", "Private-Tool": "private_tool"}
         assert backend["allowed_resource_names"] == ["Resource 1"]
         assert backend["allowed_resource_uris"] == ["resource://one"]
         assert backend["allowed_prompt_names"] == ["Prompt 1"]
@@ -294,6 +299,7 @@ async def test_full_payload_generation_with_mock_db():
         assert "s2" not in user2_config["virtual_hosts"]
         user2_backend = user2_config["virtual_hosts"]["s1"]["backends"]["g1"]
         assert user2_backend["allowed_tool_names"] == ["public_tool", "team2_tool"]
+        assert user2_backend["tool_name_aliases"] == {"Public.Tool": "public_tool", "Team2_Tool": "team2_tool"}
 
         # Verify active users with no team membership still get public-only config.
         user3_config = payload["user3@example.com"]
@@ -301,6 +307,7 @@ async def test_full_payload_generation_with_mock_db():
         assert "s2" not in user3_config["virtual_hosts"]
         user3_backend = user3_config["virtual_hosts"]["s1"]["backends"]["g1"]
         assert user3_backend["allowed_tool_names"] == ["public_tool"]
+        assert user3_backend["tool_name_aliases"] == {"Public.Tool": "public_tool"}
 
 
 # ============================================================================
@@ -420,6 +427,56 @@ def test_create_payload_excludes_non_streamable_gateways():
 
     # The SSE backend is excluded and the now-backendless server is omitted.
     assert result["user@example.com"]["virtual_hosts"] == {}
+
+
+def test_create_payload_keeps_gateways_with_the_same_slug():
+    """Gateway IDs prevent same-slug streamable backends from overwriting each other."""
+    from mcpgateway.services.dataplane_publisher import DataplanePublisherService
+
+    service = DataplanePublisherService()
+    data = {
+        "user@example.com": {
+            "servers": [
+                {
+                    "id": "server1",
+                    "backend_items": {
+                        "gateway1": {"tools": ["tool1"], "resources": [], "prompts": []},
+                        "gateway2": {"tools": ["tool2"], "resources": [], "prompts": []},
+                    },
+                }
+            ],
+            "gateways": [
+                {"id": "gateway1", "name": "Shared Name", "url": "http://one.example/mcp", "transport": "STREAMABLEHTTP", "passthrough_headers": []},
+                {"id": "gateway2", "name": "Shared Name", "url": "http://two.example/mcp", "transport": "STREAMABLEHTTP", "passthrough_headers": []},
+            ],
+            "prompts": [],
+            "resources": [],
+        }
+    }
+
+    backends = service.create_payload(data)["user@example.com"]["virtual_hosts"]["server1"]["backends"]
+
+    assert set(backends) == {"gateway1", "gateway2"}
+    assert backends["gateway1"]["url"] == "http://one.example/mcp"
+    assert backends["gateway2"]["url"] == "http://two.example/mcp"
+
+
+def test_filter_backend_items_keeps_first_alias_on_duplicate_exposed_name(caplog):
+    """Duplicate exposed names on one backend keep the first alias and warn instead of silently overwriting."""
+    from mcpgateway.services.dataplane_publisher import DataplanePublisherService
+
+    backend_items = {"g1": {"tools": ["tool1", "tool2"], "resources": [], "prompts": []}}
+    tool_names_by_id = {
+        "tool1": ("upstream_one", "Shared.Name"),
+        "tool2": ("upstream_two", "Shared.Name"),
+    }
+
+    with caplog.at_level(logging.WARNING, logger="mcpgateway.services.dataplane_publisher"):
+        filtered = DataplanePublisherService._filter_backend_items_for_user(backend_items, tool_names_by_id)
+
+    assert filtered["g1"]["tools"] == ["upstream_one", "upstream_two"]
+    assert filtered["g1"]["tool_name_aliases"] == {"Shared.Name": "upstream_one"}
+    assert "Duplicate exposed tool name 'Shared.Name'" in caplog.text
 
 
 def test_create_payload_normalizes_null_passthrough_headers():

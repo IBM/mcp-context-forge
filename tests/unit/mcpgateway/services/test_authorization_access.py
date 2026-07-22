@@ -646,14 +646,10 @@ class TestServerScoping:
     @pytest.mark.asyncio
     async def test_invoke_tool_requires_server_membership(self, tool_service, mock_db):
         """Tool must be attached to server when server_id is provided."""
-        mock_tool = create_mock_tool(visibility="public")
-
         mock_scalar = Mock()
-        mock_scalar.scalar_one_or_none.return_value = mock_tool
         mock_scalar.scalars.return_value = mock_scalar
-        mock_scalar.all.return_value = [mock_tool]
-        # First call returns tool, second call (server membership check) returns None
-        mock_db.execute = Mock(side_effect=[mock_scalar, MagicMock(first=Mock(return_value=None))])
+        mock_scalar.all.return_value = []
+        mock_db.execute = Mock(return_value=mock_scalar)
 
         with pytest.raises(ToolNotFoundError) as exc_info:
             await tool_service.invoke_tool(
@@ -669,7 +665,7 @@ class TestServerScoping:
 
     @pytest.mark.asyncio
     async def test_invoke_tool_denies_when_tool_id_missing(self, tool_service, mock_db):
-        """Should deny access when tool has no ID (can't verify server membership)."""
+        """Should deny access when a server-scoped tool has no ID."""
         mock_tool = create_mock_tool(visibility="public")
         mock_tool.id = None  # No ID - will fail server membership check
 

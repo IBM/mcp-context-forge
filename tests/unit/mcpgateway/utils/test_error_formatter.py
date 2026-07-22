@@ -19,6 +19,7 @@ import pytest
 from sqlalchemy.exc import DatabaseError, IntegrityError
 
 # First-Party
+from mcpgateway.schemas import ToolCreate
 from mcpgateway.utils.error_formatter import ErrorFormatter, sanitize_validation_error_for_log
 
 
@@ -28,9 +29,9 @@ class NameModel(BaseModel):
     @field_validator("name")
     def validate_name(cls, v):
         if not v.startswith("A"):
-            raise ValueError("Tool name must start with a letter, number, or underscore")
-        if len(v) > 255:
-            raise ValueError("Tool name exceeds maximum length")
+            raise ValueError("Tool name may contain only letters, numbers, underscores, hyphens, and periods")
+        if len(v) > 128:
+            raise ValueError(f"Tool name exceeds MCP spec limit of 128 characters (got {len(v)})")
         return v
 
 
@@ -87,23 +88,23 @@ def test_format_validation_error_empty_errors_verbose(monkeypatch):
     assert result["message"] == "Validation failed: Validation error"
 
 
-def test_format_validation_error_letter_requirement(monkeypatch):
+def test_format_validation_error_tool_name_characters(monkeypatch):
     monkeypatch.setattr("mcpgateway.utils.error_formatter.should_expose_error_details", lambda: True)
     with pytest.raises(ValidationError) as exc:
         NameModel(name="Bobby")
     result = ErrorFormatter.format_validation_error(exc.value)
-    assert result["message"] == "Validation failed: Name must start with a letter, number, or underscore and contain only letters, numbers, periods, underscores, hyphens, and slashes"
+    assert result["message"] == "Validation failed: Name may contain only letters, numbers, periods, underscores, and hyphens"
     assert result["success"] is False
     assert result["details"][0]["field"] == "name"
-    assert "must start with a letter, number, or underscore" in result["details"][0]["message"]
+    assert "may contain only" in result["details"][0]["message"]
 
 
 def test_format_validation_error_length(monkeypatch):
     monkeypatch.setattr("mcpgateway.utils.error_formatter.should_expose_error_details", lambda: True)
     with pytest.raises(ValidationError) as exc:
-        NameModel(name="A" * 300)
+        ToolCreate(name="A" * 129, inputSchema={})
     result = ErrorFormatter.format_validation_error(exc.value)
-    assert "too long" in result["details"][0]["message"]
+    assert result["details"][0]["message"] == "Name is too long (maximum 128 characters)"
 
 
 def test_format_validation_error_url(monkeypatch):
@@ -155,8 +156,8 @@ def test_format_validation_error_multiple_fields(monkeypatch):
 
         @field_validator("name")
         def validate_name(cls, v):
-            if len(v) > 255:
-                raise ValueError("Tool name exceeds maximum length")
+            if len(v) > 128:
+                raise ValueError(f"Tool name exceeds MCP spec limit of 128 characters (got {len(v)})")
             return v
 
         @field_validator("url")
@@ -176,8 +177,8 @@ def test_format_validation_error_multiple_fields(monkeypatch):
 
 def test_get_user_message_all_patterns():
     # Directly test _get_user_message for all mappings and fallback
-    assert "must start with a letter, number, or underscore" in ErrorFormatter._get_user_message("name", "Tool name must start with a letter, number, or underscore")
-    assert "too long" in ErrorFormatter._get_user_message("description", "Tool name exceeds maximum length")
+    assert "may contain only" in ErrorFormatter._get_user_message("name", "Tool name may contain only letters")
+    assert ErrorFormatter._get_user_message("description", "Tool name exceeds MCP spec limit of 128 characters (got 129)") == "Description is too long (maximum 128 characters)"
     assert "valid HTTP" in ErrorFormatter._get_user_message("endpoint", "Tool URL must start with http")
     assert "invalid characters" in ErrorFormatter._get_user_message("path", "cannot contain directory traversal")
     assert "cannot contain HTML" in ErrorFormatter._get_user_message("content", "contains HTML tags")

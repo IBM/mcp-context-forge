@@ -26,7 +26,7 @@ class DummySettings:
     validation_identifier_pattern = r"^[a-zA-Z0-9_\-\.]+$"
     validation_safe_uri_pattern = r"^[a-zA-Z0-9_\-.:/?=&%{}]+$"
     validation_unsafe_uri_pattern = r"[<>\"'\\]"
-    validation_tool_name_pattern = r"^[a-zA-Z0-9_][a-zA-Z0-9._/-]*$"  # SEP-986 pattern
+    validation_tool_name_pattern = r"^[a-zA-Z0-9_.-]+$"  # MCP 2025-11-25 pattern
     validation_max_name_length = 10  # Increased for realistic URIs
     validation_max_description_length = 100
     validation_max_template_length = 100
@@ -204,10 +204,15 @@ def test_validate_tool_name_empty():
         SecurityValidator.validate_tool_name("")
 
 
-def test_validate_tool_name_invalid():
-    # Leading hyphen is not allowed
+@pytest.mark.parametrize("name", ["namespace/tool", "tool\n"])
+def test_validate_tool_name_invalid(name):
     with pytest.raises(ValueError):
-        SecurityValidator.validate_tool_name("-bad")
+        SecurityValidator.validate_tool_name(name)
+
+
+@pytest.mark.parametrize("name", ["-tool", ".tool", "Tool.Name-1_test"])
+def test_validate_tool_name_allows_spec_characters(name):
+    assert SecurityValidator.validate_tool_name(name) == name
 
 
 def test_validate_tool_name_html():

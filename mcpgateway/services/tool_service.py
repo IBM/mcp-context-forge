@@ -17,6 +17,7 @@ It handles:
 import asyncio
 import base64
 import binascii
+from collections import Counter
 from collections.abc import Mapping
 from datetime import datetime, timezone
 from functools import lru_cache
@@ -140,7 +141,7 @@ def _get_registry_cache():
 _downstream_session_id_from_request = downstream_session_id_from_request_context
 
 
-def _get_tool_lookup_cache():
+def _get_tool_lookup_cache() -> Any:
     """Get tool lookup cache singleton lazily.
 
     Returns:
@@ -155,11 +156,39 @@ def _get_tool_lookup_cache():
     return _TOOL_LOOKUP_CACHE
 
 
+def _tool_name_match_priority(tool: Any, requested_name: str) -> int:
+    """Return the lookup priority for exact stored or custom tool-name matches.
+
+    Args:
+        tool: Candidate tool record.
+        requested_name: Name supplied by the caller.
+
+    Returns:
+        Zero for an exact stored-name or custom-name match; one for fallback matches.
+    """
+    return 0 if requested_name in (getattr(tool, "name", None), getattr(tool, "custom_name", None)) else 1
+
+
 # Initialize logging service first
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
 
 _W3C_TRACEPARENT_RE = re.compile(r"^([0-9a-f]{2})-([0-9a-f]{32})-([0-9a-f]{16})-([0-9a-f]{2})$")
+
+
+def _warn_on_duplicate_exposed_tool_names(server_id: str, exposed_names: List[str]) -> None:
+    """Warn when a virtual server exposes the same tool name more than once.
+
+    MCP tool names SHOULD be unique within a server; duplicate exposed names
+    cannot be disambiguated by clients and make scoped invocation ambiguous.
+
+    Args:
+        server_id: Virtual server whose listing is being produced.
+        exposed_names: Protocol-visible tool names in the listing.
+    """
+    duplicates = sorted({name for name, count in Counter(exposed_names).items() if count > 1})
+    if duplicates:
+        logger.warning("Virtual server %s exposes duplicate tool names %s; rename the tools' custom names to keep invocation unambiguous", server_id, duplicates)
 
 
 def _extract_tenant_id_from_payload(team_id: Any) -> Optional[str]:
@@ -3017,6 +3046,7 @@ class ToolService(BaseService):
                     logger.exception("Failed to convert tool %s (%s): %s", getattr(tool, "id", "unknown"), getattr(tool, "name", "unknown"), e)
                     # Continue with remaining tools instead of failing completely
 
+            _warn_on_duplicate_exposed_tool_names(server_id, [tool_read.custom_name for tool_read in result if getattr(tool_read, "custom_name", None)])
             return result
 
     async def list_server_mcp_tool_definitions(
@@ -3055,7 +3085,7 @@ class ToolService(BaseService):
                 "mcp.definition_mode": True,
             },
         ):
-            name_column = DbTool.__table__.c.name
+            name_column = DbTool.__table__.c.custom_name
             query = (
                 select(
                     name_column.label("name"),
@@ -3109,6 +3139,7 @@ class ToolService(BaseService):
                     payload["outputSchema"] = row["output_schema"]
                 result.append(payload)
 
+            _warn_on_duplicate_exposed_tool_names(server_id, [definition["name"] for definition in result])
             return result
 
     async def list_tools_for_user(
@@ -4133,6 +4164,7 @@ class ToolService(BaseService):
         is_direct_proxy = False
         tool = None
         gateway = None
+        tool_lookup_cache = _get_tool_lookup_cache()
         tool_selected_from_server_scope = False
         tool_payload: Dict[str, Any] = {}
         gateway_payload: Optional[Dict[str, Any]] = None
@@ -4167,10 +4199,10 @@ class ToolService(BaseService):
                 }
 
         if not is_direct_proxy:
-            tool_lookup_cache = _get_tool_lookup_cache()
-            cached_payload = await tool_lookup_cache.get(name) if tool_lookup_cache.enabled else None
+            cached_payload = await tool_lookup_cache.get(name, server_id=server_id) if tool_lookup_cache.enabled else None
 
             if cached_payload:
+                tool_selected_from_server_scope = bool(server_id)
                 status = cached_payload.get("status", "active")
                 if status == "missing":
                     raise ToolNotFoundError(f"Tool not found: {name}")
@@ -4197,7 +4229,7 @@ class ToolService(BaseService):
                 for candidate in tools:
                     tool_dict = {"visibility": candidate.visibility, "team_id": candidate.team_id, "owner_email": candidate.owner_email}
                     if await self._check_tool_access(db, tool_dict, user_email, token_teams):
-                        name_priority = 0 if getattr(candidate, "name", None) == name else 1
+                        name_priority = _tool_name_match_priority(candidate, name)
                         priority = visibility_priority.get(candidate.visibility, 99)
                         accessible_tools.append((name_priority, priority, candidate))
 
@@ -4215,7 +4247,8 @@ class ToolService(BaseService):
                 raise ToolNotFoundError(f"Tool '{name}' exists but is inactive")
 
             if not tool.reachable:
-                await tool_lookup_cache.set_negative(name, "offline")
+                if server_id is None:
+                    await tool_lookup_cache.set_negative(name, "offline")
                 raise ToolNotFoundError(f"Tool '{name}' exists but is currently offline. Please verify if it is running.")
 
             gateway = tool.gateway
@@ -4223,7 +4256,11 @@ class ToolService(BaseService):
             tool_payload = cache_payload.get("tool") or {}
             gateway_payload = cache_payload.get("gateway")
             if not multiple_found:
-                await tool_lookup_cache.set(name, cache_payload, gateway_id=tool_payload.get("gateway_id"))
+                gateway_id = tool_payload.get("gateway_id")
+                if server_id:
+                    await tool_lookup_cache.set(name, cache_payload, gateway_id=gateway_id, server_id=server_id)
+                elif server_id is None:
+                    await tool_lookup_cache.set(name, cache_payload, gateway_id=gateway_id)
 
         if tool_payload.get("enabled") is False:
             raise ToolNotFoundError(f"Tool '{name}' exists but is inactive")
@@ -4239,18 +4276,19 @@ class ToolService(BaseService):
         if require_model_visible and not is_model_visible_tool(tool_payload):
             raise ToolNotFoundError(f"Tool not found: {name}")
 
-        if server_id and not tool_selected_from_server_scope:
+        if server_id:
             tool_id_for_check = tool_payload.get("id")
             if not tool_id_for_check:
                 raise ToolNotFoundError(f"Tool not found: {name}")
-            server_match = db.execute(
-                select(server_tool_association.c.tool_id).where(
-                    server_tool_association.c.server_id == server_id,
-                    server_tool_association.c.tool_id == tool_id_for_check,
-                )
-            ).first()
-            if not server_match:
-                raise ToolNotFoundError(f"Tool not found: {name}")
+            if not tool_selected_from_server_scope:
+                server_match = db.execute(
+                    select(server_tool_association.c.tool_id).where(
+                        server_tool_association.c.server_id == server_id,
+                        server_tool_association.c.tool_id == tool_id_for_check,
+                    )
+                ).first()
+                if not server_match:
+                    raise ToolNotFoundError(f"Tool not found: {name}")
 
         tool_integration_type = tool_payload.get("integration_type")
         if tool_integration_type != "MCP":
@@ -4629,12 +4667,16 @@ class ToolService(BaseService):
         Returns:
             A list of candidate tool ORM rows matching the request.
         """
-        name_filter = DbTool.name == name  # pylint: disable=comparison-with-callable
         if server_id:
-            name_filter = or_(name_filter, DbTool.original_name == name)
-        query = select(DbTool).options(joinedload(DbTool.gateway)).where(name_filter)
-        if server_id:
-            query = query.join(server_tool_association, DbTool.id == server_tool_association.c.tool_id).where(server_tool_association.c.server_id == server_id)
+            name_filter = or_(DbTool.custom_name == name, DbTool.name == name, DbTool.original_name == name)  # pylint: disable=comparison-with-callable
+            query = (
+                select(DbTool)
+                .options(joinedload(DbTool.gateway))
+                .join(server_tool_association, DbTool.id == server_tool_association.c.tool_id)
+                .where(name_filter, server_tool_association.c.server_id == server_id)
+            )
+        else:
+            query = select(DbTool).options(joinedload(DbTool.gateway)).where(DbTool.name == name)  # pylint: disable=comparison-with-callable
         return db.execute(query).scalars().all()
 
     # ------------------------------------------------------------------
@@ -4840,6 +4882,8 @@ class ToolService(BaseService):
         is_direct_proxy = False
         tool = None
         gateway = None
+        tool_lookup_cache = _get_tool_lookup_cache()
+        tool_selected_from_server_scope = False
         tool_payload: Dict[str, Any] = {}
         gateway_payload: Optional[Dict[str, Any]] = None
 
@@ -4889,10 +4933,10 @@ class ToolService(BaseService):
 
         # Normal mode: look up tool in database/cache
         if not is_direct_proxy:
-            tool_lookup_cache = _get_tool_lookup_cache()
-            cached_payload = await tool_lookup_cache.get(name) if tool_lookup_cache.enabled else None
+            cached_payload = await tool_lookup_cache.get(name, server_id=server_id) if tool_lookup_cache.enabled else None
 
             if cached_payload:
+                tool_selected_from_server_scope = bool(server_id)
                 status = cached_payload.get("status", "active")
                 if status == "missing":
                     raise ToolNotFoundError(f"Tool not found: {name}")
@@ -4909,6 +4953,7 @@ class ToolService(BaseService):
             # Use scalars().all() instead of scalar_one_or_none() to handle duplicate
             # tool names across teams without crashing on MultipleResultsFound.
             tools = self._load_invocable_tools(db, name, server_id=server_id)
+            tool_selected_from_server_scope = bool(server_id)
 
             if not tools:
                 raise ToolNotFoundError(f"Tool not found: {name}")
@@ -4925,7 +4970,7 @@ class ToolService(BaseService):
                 for t in tools:
                     tool_dict = {"visibility": t.visibility, "team_id": t.team_id, "owner_email": t.owner_email}
                     if await self._check_tool_access(db, tool_dict, user_email, token_teams):
-                        name_priority = 0 if getattr(t, "name", None) == name else 1
+                        name_priority = _tool_name_match_priority(t, name)
                         priority = visibility_priority.get(t.visibility, 99)
                         accessible_tools.append((name_priority, priority, t))
 
@@ -4947,7 +4992,8 @@ class ToolService(BaseService):
                 raise ToolNotFoundError(f"Tool '{name}' exists but is inactive")
 
             if not tool.reachable:
-                await tool_lookup_cache.set_negative(name, "offline")
+                if server_id is None:
+                    await tool_lookup_cache.set_negative(name, "offline")
                 raise ToolNotFoundError(f"Tool '{name}' exists but is currently offline. Please verify if it is running.")
 
             gateway = tool.gateway
@@ -4957,7 +5003,11 @@ class ToolService(BaseService):
             # Skip caching when multiple tools share a name — resolution is
             # user-dependent, so a cached result could be wrong for other users.
             if not multiple_found:
-                await tool_lookup_cache.set(name, cache_payload, gateway_id=tool_payload.get("gateway_id"))
+                gateway_id = tool_payload.get("gateway_id")
+                if server_id:
+                    await tool_lookup_cache.set(name, cache_payload, gateway_id=gateway_id, server_id=server_id)
+                elif server_id is None:
+                    await tool_lookup_cache.set(name, cache_payload, gateway_id=gateway_id)
 
         if tool_payload.get("enabled") is False:
             raise ToolNotFoundError(f"Tool '{name}' exists but is inactive")
@@ -4976,7 +5026,8 @@ class ToolService(BaseService):
             # Check deprecated status after RBAC to avoid leaking tool existence
             if tool_payload.get("deprecated") is True:
                 # Cache the deprecated status to avoid repeated DB queries
-                await tool_lookup_cache.set_negative(name, "deprecated")
+                if server_id is None:
+                    await tool_lookup_cache.set_negative(name, "deprecated")
                 raise ToolInvocationError(f"Tool '{name}' is deprecated and cannot be executed. Please update your agent to use an alternative tool.")
 
             # ═══════════════════════════════════════════════════════════════════════════
@@ -4991,14 +5042,15 @@ class ToolService(BaseService):
                     logger.warning("Tool '%s' has no ID in payload, cannot verify server membership", name)
                     raise ToolNotFoundError(f"Tool not found: {name}")
 
-                server_match = db.execute(
-                    select(server_tool_association.c.tool_id).where(
-                        server_tool_association.c.server_id == server_id,
-                        server_tool_association.c.tool_id == tool_id_for_check,
-                    )
-                ).first()
-                if not server_match:
-                    raise ToolNotFoundError(f"Tool not found: {name}")
+                if not tool_selected_from_server_scope:
+                    server_match = db.execute(
+                        select(server_tool_association.c.tool_id).where(
+                            server_tool_association.c.server_id == server_id,
+                            server_tool_association.c.tool_id == tool_id_for_check,
+                        )
+                    ).first()
+                    if not server_match:
+                        raise ToolNotFoundError(f"Tool not found: {name}")
 
         if require_app_visible:
             if is_direct_proxy or not is_app_visible_tool(tool_payload):

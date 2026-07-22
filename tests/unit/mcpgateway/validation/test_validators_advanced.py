@@ -58,7 +58,7 @@ class DummySettings:
     validation_identifier_pattern = r"^[a-zA-Z0-9_\-\.]+$"  # IDs cannot have spaces
     validation_safe_uri_pattern = r"^[a-zA-Z0-9_\-.:/?=&%{}]+$"
     validation_unsafe_uri_pattern = r'[<>"\'\\]'
-    validation_tool_name_pattern = r"^[a-zA-Z0-9_][a-zA-Z0-9._/-]*$"  # SEP-986 pattern
+    validation_tool_name_pattern = r"^[a-zA-Z0-9_.-]+$"  # MCP 2025-11-25 pattern
 
     # Size limits for various fields
     validation_max_name_length = 100  # Realistic name length
@@ -513,15 +513,16 @@ def test_validate_tool_name_invalid():
     with pytest.raises(ValueError, match="cannot be empty"):
         SecurityValidator.validate_tool_name("")
 
-    # Names starting with hyphen are invalid (not in [a-zA-Z0-9_])
-    with pytest.raises(ValueError, match="must start with a letter, number, or underscore"):
-        SecurityValidator.validate_tool_name("-tool")
+    assert SecurityValidator.validate_tool_name("-tool") == "-tool"
+    assert SecurityValidator.validate_tool_name(".tool") == ".tool"
 
     # Tool name pattern doesn't match - contains invalid characters
-    with pytest.raises(ValueError, match="must start with a letter, number, or underscore"):
+    with pytest.raises(ValueError, match="may contain only"):
         SecurityValidator.validate_tool_name("tool<name>")
-    with pytest.raises(ValueError, match="must start with a letter, number, or underscore"):
+    with pytest.raises(ValueError, match="may contain only"):
         SecurityValidator.validate_tool_name('tool"name')
+    with pytest.raises(ValueError, match="may contain only"):
+        SecurityValidator.validate_tool_name("tool/name")
 
 
 def test_validate_tool_name_valid_with_leading_underscore_or_number():
