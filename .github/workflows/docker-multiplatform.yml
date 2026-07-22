@@ -149,27 +149,43 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # s390x temporarily disabled on push due to runner capacity issues.
-          # Re-enable by uncommenting the entry below once runners are stable.
-          # - platform: linux/s390x
-          #   runner: ubuntu-24.04-s390x
-          #   suffix: s390x
+          # s390x disabled on push due to runner capacity issues, but enabled
+          # for workflow_dispatch so the manual "build all arches" trigger works.
+          - platform: linux/s390x
+            runner: ubuntu-24.04-s390x
+            suffix: s390x
+            build_on_push: false   # runner capacity — skip on normal push
           - platform: linux/ppc64le
             runner: ubuntu-24.04-ppc64le
             suffix: ppc64le
-    runs-on: ${{ matrix.runner }}
+    # Use a cheap ubuntu-24.04 runner when build_on_push=false and the event is
+    # push — avoids acquiring scarce s390x runner slots on every push to main.
+    # workflow_dispatch always uses the native runner to build all arches.
+    runs-on: ${{ github.event_name == 'push' && matrix.build_on_push == false && 'ubuntu-24.04' || matrix.runner }}
     timeout-minutes: 120
     permissions:
       contents: read
       packages: write
 
     steps:
+      - name: Evaluate wheels gate
+        id: gate
+        run: |
+          build="true"
+          if [[ "${{ github.event_name }}" == "push" && "${{ matrix.build_on_push }}" == "false" ]]; then
+            echo "Skipping wheels for ${{ matrix.suffix }}: build_on_push=false"
+            build="false"
+          fi
+          echo "build=${build}" >> "${GITHUB_OUTPUT}"
+
       - name: Checkout code
+        if: steps.gate.outputs.build == 'true'
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
           persist-credentials: false
 
       - name: Compute image ref
+        if: steps.gate.outputs.build == 'true'
         id: ref
         run: |
           WHEELS_IMAGE_LC=$(echo "${{ env.IMAGE_NAME }}-wheels" | tr '[:upper:]' '[:lower:]')
@@ -178,11 +194,13 @@ jobs:
           echo "latest=${{ env.REGISTRY }}/${WHEELS_IMAGE_LC}:${{ matrix.suffix }}-latest" >> "${GITHUB_OUTPUT}"
 
       - name: Set up Docker Buildx
+        if: steps.gate.outputs.build == 'true'
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
         with:
           version: latest
 
       - name: Log in to GHCR
+        if: steps.gate.outputs.build == 'true'
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ${{ env.REGISTRY }}
@@ -190,6 +208,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Check for existing wheel image
+        if: steps.gate.outputs.build == 'true'
         id: check
         run: |
           if docker manifest inspect "${{ steps.ref.outputs.image }}" >/dev/null 2>&1; then
@@ -203,7 +222,7 @@ jobs:
       # `latest` tag per arch (fallback for local builds and for `build`
       # below when the lock-hash image isn't published yet).
       - name: Build and push wheel image
-        if: steps.check.outputs.exists != 'true'
+        if: steps.gate.outputs.build == 'true' && steps.check.outputs.exists != 'true'
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
@@ -462,13 +481,17 @@ jobs:
 
           echo "Creating multiplatform manifest..."
 
-          # s390x temporarily excluded from the manifest due to runner capacity issues.
-          # Re-add "${IMAGE}:s390x-${SHA}" once s390x builds are re-enabled.
+          # s390x is included in the manifest only when triggered via workflow_dispatch
+          # (manual "build all arches" trigger). On normal push it is excluded because
+          # the s390x build is skipped there due to runner capacity constraints.
           IMAGES=(
             "${IMAGE}:amd64-${SHA}"
             "${IMAGE}:arm64-${SHA}"
             "${IMAGE}:ppc64le-${SHA}"
           )
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            IMAGES+=("${IMAGE}:s390x-${SHA}")
+          fi
 
           if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
             docker buildx imagetools create \
