@@ -615,9 +615,10 @@ class TestAppBridgeEndpoints:
             await main_mod.handle_mcp_app_session_rpc.__wrapped__("app-session-1", request=FakeRequest([]), db=mock_db, user={"email": "user@example.com"})
         assert excinfo.value.status_code == 400
 
+        # A core MCP method that is not an AppBridge method must still be rejected.
         result = await main_mod.handle_mcp_app_session_rpc.__wrapped__(
             "app-session-1",
-            request=FakeRequest({"jsonrpc": "2.0", "id": "1", "method": "resources/read"}),
+            request=FakeRequest({"jsonrpc": "2.0", "id": "1", "method": "prompts/list"}),
             db=mock_db,
             user={"email": "user@example.com"},
         )
@@ -821,6 +822,142 @@ class TestAppBridgeEndpoints:
         ):
             result = await main_mod.handle_mcp_app_session_rpc.__wrapped__("app-session-1", request=request, db=mock_db, user={"email": "user@example.com"})
         assert result["error"]["code"] == -32603
+
+    @pytest.mark.asyncio
+    async def test_rpc_ping_is_answered_without_touching_services(self, monkeypatch, mock_db, valid_app_session):
+        """AppBridge ping should be answered by the gateway without an upstream call."""
+        # First-Party
+        from mcpgateway import main as main_mod
+
+        monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", True)
+        request = FakeRequest({"jsonrpc": "2.0", "id": "1", "method": "ping"}, headers={"mcp-session-id": "mcp-session-123"})
+
+        with (
+            patch.object(main_mod, "_assert_session_owner_or_admin", new=AsyncMock()),
+            patch.object(main_mod, "get_request_identity", return_value=("user@example.com", False)),
+            patch.object(main_mod.mcp_app_session_service, "get_valid_session", return_value=valid_app_session),
+            patch.object(main_mod.tool_service, "invoke_tool", new=AsyncMock()) as invoke_mock,
+            patch.object(main_mod.resource_service, "read_resource", new=AsyncMock()) as read_mock,
+        ):
+            result = await main_mod.handle_mcp_app_session_rpc.__wrapped__("test-session-id", request=request, db=mock_db, user={"email": "user@example.com"})
+            invoke_mock.assert_not_awaited()
+            read_mock.assert_not_awaited()
+
+        assert result == {"jsonrpc": "2.0", "result": {}, "id": "1"}
+
+    @pytest.mark.asyncio
+    async def test_rpc_log_notification_is_recorded_and_not_proxied(self, monkeypatch, mock_db, valid_app_session):
+        """AppBridge log notifications terminate at the gateway and are not forwarded upstream."""
+        # First-Party
+        from mcpgateway import main as main_mod
+
+        monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", True)
+        request = FakeRequest(
+            {"jsonrpc": "2.0", "id": None, "method": "notifications/message", "params": {"level": "info", "logger": "widget", "data": "hello"}},
+            headers={"mcp-session-id": "mcp-session-123"},
+        )
+
+        with (
+            patch.object(main_mod, "_assert_session_owner_or_admin", new=AsyncMock()),
+            patch.object(main_mod, "get_request_identity", return_value=("user@example.com", False)),
+            patch.object(main_mod.mcp_app_session_service, "get_valid_session", return_value=valid_app_session),
+            patch.object(main_mod.tool_service, "invoke_tool", new=AsyncMock()) as invoke_mock,
+            patch.object(main_mod.resource_service, "read_resource", new=AsyncMock()) as read_mock,
+        ):
+            result = await main_mod.handle_mcp_app_session_rpc.__wrapped__("test-session-id", request=request, db=mock_db, user={"email": "user@example.com"})
+            invoke_mock.assert_not_awaited()
+            read_mock.assert_not_awaited()
+
+        assert result["result"] == {}
+
+    @pytest.mark.asyncio
+    async def test_rpc_resources_read_is_scoped_to_the_bound_session(self, monkeypatch, mock_db, valid_app_session):
+        """AppBridge resources/read must use the session's server binding and stored identity."""
+        # First-Party
+        from mcpgateway import main as main_mod
+        from mcpgateway.common.models import ResourceContent
+
+        monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", True)
+        request = FakeRequest(
+            {"jsonrpc": "2.0", "id": "1", "method": "resources/read", "params": {"uri": "ui://widgets/example"}},
+            headers={"mcp-session-id": "mcp-session-123", "x-context-forge-gateway-id": "spoofed"},
+        )
+        content = ResourceContent(type="resource", id="r1", uri="ui://widgets/example", mimeType="text/plain", text="hi")
+
+        with (
+            patch.object(main_mod, "_assert_session_owner_or_admin", new=AsyncMock()),
+            patch.object(main_mod, "get_request_identity", return_value=("user@example.com", False)),
+            patch.object(main_mod.mcp_app_session_service, "get_valid_session", return_value=valid_app_session),
+            patch.object(main_mod.resource_service, "read_resource", new=AsyncMock(return_value=content)) as read_mock,
+        ):
+            result = await main_mod.handle_mcp_app_session_rpc.__wrapped__("test-session-id", request=request, db=mock_db, user={"email": "user@example.com"})
+            call_kwargs = read_mock.await_args.kwargs
+
+        assert result["result"]["contents"][0]["uri"] == "ui://widgets/example"
+        assert call_kwargs["server_id"] == "server-123"
+        assert call_kwargs["token_teams"] == ["team1"]
+        assert call_kwargs["user"] == "user@example.com"
+        assert "x-context-forge-gateway-id" not in call_kwargs["request_headers"]
+
+    @pytest.mark.asyncio
+    async def test_rpc_resources_read_cannot_switch_server(self, monkeypatch, mock_db, valid_app_session):
+        """AppBridge resources/read cannot read from a server other than the bound one."""
+        # First-Party
+        from mcpgateway import main as main_mod
+
+        monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", True)
+        request = FakeRequest(
+            {"jsonrpc": "2.0", "id": "1", "method": "resources/read", "params": {"uri": "ui://widgets/example", "serverId": "server-2"}},
+            headers={"mcp-session-id": "mcp-session-123"},
+        )
+
+        with (
+            patch.object(main_mod, "_assert_session_owner_or_admin", new=AsyncMock()),
+            patch.object(main_mod, "get_request_identity", return_value=("user@example.com", False)),
+            patch.object(main_mod.mcp_app_session_service, "get_valid_session", return_value=valid_app_session),
+            patch.object(main_mod.resource_service, "read_resource", new=AsyncMock()) as read_mock,
+        ):
+            result = await main_mod.handle_mcp_app_session_rpc.__wrapped__("test-session-id", request=request, db=mock_db, user={"email": "user@example.com"})
+            read_mock.assert_not_awaited()
+
+        assert result["error"]["code"] == -32003
+
+    @pytest.mark.asyncio
+    async def test_rpc_resources_read_maps_missing_uri_and_lookup_failures(self, monkeypatch, mock_db, valid_app_session):
+        """AppBridge resources/read should map missing URIs and resource errors to JSON-RPC codes."""
+        # First-Party
+        from mcpgateway import main as main_mod
+
+        monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", True)
+
+        with (
+            patch.object(main_mod, "_assert_session_owner_or_admin", new=AsyncMock()),
+            patch.object(main_mod, "get_request_identity", return_value=("user@example.com", False)),
+            patch.object(main_mod.mcp_app_session_service, "get_valid_session", return_value=valid_app_session),
+        ):
+            result = await main_mod.handle_mcp_app_session_rpc.__wrapped__(
+                "test-session-id",
+                request=FakeRequest({"jsonrpc": "2.0", "id": "1", "method": "resources/read", "params": {}}, headers={"mcp-session-id": "mcp-session-123"}),
+                db=mock_db,
+                user={"email": "user@example.com"},
+            )
+            assert result["error"]["code"] == -32602
+
+            request = FakeRequest(
+                {"jsonrpc": "2.0", "id": "1", "method": "resources/read", "params": {"uri": "ui://widgets/missing"}},
+                headers={"mcp-session-id": "mcp-session-123"},
+            )
+            with patch.object(main_mod.resource_service, "read_resource", new=AsyncMock(side_effect=ResourceNotFoundError("nope"))):
+                result = await main_mod.handle_mcp_app_session_rpc.__wrapped__("test-session-id", request=request, db=mock_db, user={"email": "user@example.com"})
+            assert result["error"]["code"] == -32002
+
+            with patch.object(main_mod.resource_service, "read_resource", new=AsyncMock(side_effect=ResourceError("boom"))):
+                result = await main_mod.handle_mcp_app_session_rpc.__wrapped__("test-session-id", request=request, db=mock_db, user={"email": "user@example.com"})
+            assert result["error"]["code"] == -32000
+
+            with patch.object(main_mod.resource_service, "read_resource", new=AsyncMock(side_effect=RuntimeError("boom"))):
+                result = await main_mod.handle_mcp_app_session_rpc.__wrapped__("test-session-id", request=request, db=mock_db, user={"email": "user@example.com"})
+            assert result["error"]["code"] == -32603
 
 
 class TestAppBridgeSessionSecurity:

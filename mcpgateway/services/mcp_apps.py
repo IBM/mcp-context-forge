@@ -33,6 +33,9 @@ logger = logging.getLogger(__name__)
 MCP_UI_EXTENSION = "io.modelcontextprotocol/ui"
 MCP_UI_DEFAULT_VERSION = "2026-01-26"
 MCP_APP_MIME_TYPE = "text/html;profile=mcp-app"
+# Standard MCP messages an app may send over the AppBridge. Ordered so the
+# advertised capability payload stays stable; the router matches on membership.
+MCP_APPS_BRIDGE_METHODS = ("tools/call", "resources/read", "notifications/message", "ping")
 
 _ALLOWED_CSP_DIRECTIVES = frozenset(
     {
@@ -70,7 +73,7 @@ def mcp_apps_capability() -> Dict[str, Any]:
     return {
         "version": MCP_UI_DEFAULT_VERSION,
         "resources": {"schemes": ["ui://"]},
-        "bridge": {"methods": ["tools/call"]},
+        "bridge": {"methods": list(MCP_APPS_BRIDGE_METHODS)},
     }
 
 
