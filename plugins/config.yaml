@@ -1060,7 +1060,7 @@ plugins:
     description: "Generates bearer tokens based on vault-saved tokens"
     version: "0.0.1"
     author: "Adrian Popa"
-    hooks: ["tool_pre_invoke"]
+    hooks: ["tool_pre_invoke", "agent_pre_invoke"]
     tags: ["security", "vault", "OAUTH2"]
     mode: "disabled" # enforce | enforce_ignore_error | permissive | disabled
     priority: 10

@@ -14,6 +14,8 @@ import pytest
 
 # First-Party
 from cpex.framework import (
+    AgentHookType,
+    AgentPreInvokePayload,
     GlobalContext,
     HttpHeaderPayload,
     PluginConfig,
@@ -500,6 +502,206 @@ class TestVaultPluginFunctionality:
         assert "x-github-token" in result.modified_payload.headers.root
         assert result.modified_payload.headers.root["x-github-token"] == "ghp_pat_lowercase_header"
         assert "x-vault-tokens" not in result.modified_payload.headers.root
+
+
+class TestVaultPluginA2AAgent:
+    """Unit tests for the Vault plugin ``agent_pre_invoke`` (A2A) path.
+
+    A2A agent metadata carries ``tags`` as plain strings (``List[str]``), unlike MCP gateway
+    tags which are dicts (``List[Dict{"id","label"}]``). These tests mirror the tool-path tests
+    to confirm token injection and vault-header stripping work identically for agents.
+    """
+
+    @pytest.fixture
+    def plugin_config(self) -> PluginConfig:
+        """Create a test plugin configuration registered for the agent hook."""
+        return PluginConfig(
+            name="TestVault",
+            description="Test Vault Plugin",
+            author="Test",
+            kind="plugins.vault.vault_plugin.Vault",
+            version="1.0",
+            hooks=[AgentHookType.AGENT_PRE_INVOKE],
+            tags=["test", "vault"],
+            mode=PluginMode.SEQUENTIAL,
+            priority=10,
+            config={
+                "system_tag_prefix": "system",
+                "vault_header_name": "X-Vault-Tokens",
+                "vault_handling": "raw",
+                "system_handling": "tag",
+                "auth_header_tag_prefix": "AUTH_HEADER",
+            },
+        )
+
+    @pytest.fixture
+    def agent_context(self) -> PluginContext:
+        """Create a plugin context with A2A agent metadata using plain-string tags."""
+        # A2A agent tags are plain strings (PydanticA2AAgent.tags: List[str]).
+        agent_metadata = type("obj", (object,), {"tags": ["system:github.com", "AUTH_HEADER:X-GitHub-Token"]})()
+        global_context = GlobalContext(request_id="a2a-1", metadata={"a2a_agent": agent_metadata})
+        return PluginContext(global_context=global_context)
+
+    @pytest.mark.asyncio
+    async def test_no_vault_header_returns_empty_result(self, plugin_config, agent_context):
+        """Missing vault header returns an empty result (no modification)."""
+        plugin = Vault(plugin_config)
+        payload = AgentPreInvokePayload(agent_id="agent-1", messages=[], headers=HttpHeaderPayload(root={"content-type": "application/json"}))
+
+        result = await plugin.agent_pre_invoke(payload, agent_context)
+
+        assert result.modified_payload is None
+        assert result.continue_processing
+
+    @pytest.mark.asyncio
+    async def test_oauth2_token_added_as_bearer(self, plugin_config, agent_context):
+        """A string-tagged A2A agent gets the vault token injected as a Bearer token."""
+        plugin = Vault(plugin_config)
+        vault_tokens = {"github.com": "ghp_a2a_oauth_token"}
+        payload = AgentPreInvokePayload(agent_id="agent-1", messages=[], headers=HttpHeaderPayload(root={"content-type": "application/json", "x-vault-tokens": json.dumps(vault_tokens)}))
+
+        result = await plugin.agent_pre_invoke(payload, agent_context)
+
+        assert result.modified_payload is not None
+        assert result.modified_payload.headers.root["authorization"] == "Bearer ghp_a2a_oauth_token"
+        # SECURITY: vault header must never be forwarded upstream
+        assert "x-vault-tokens" not in result.modified_payload.headers.root
+
+    @pytest.mark.asyncio
+    async def test_pat_token_uses_custom_header_from_string_tag(self, plugin_config, agent_context):
+        """PAT token uses the AUTH_HEADER value resolved from the A2A string tags."""
+        plugin = Vault(plugin_config)
+        vault_tokens = {"github.com:USER:PAT:TOKEN": "ghp_a2a_pat_token"}
+        payload = AgentPreInvokePayload(agent_id="agent-1", messages=[], headers=HttpHeaderPayload(root={"content-type": "application/json", "x-vault-tokens": json.dumps(vault_tokens)}))
+
+        result = await plugin.agent_pre_invoke(payload, agent_context)
+
+        assert result.modified_payload is not None
+        assert result.modified_payload.headers.root["x-github-token"] == "ghp_a2a_pat_token"
+        assert "x-vault-tokens" not in result.modified_payload.headers.root
+
+    @pytest.mark.asyncio
+    async def test_no_system_tag_strips_vault_header(self, plugin_config):
+        """When no system tag is present, the vault header is still stripped."""
+        plugin = Vault(plugin_config)
+        agent_metadata = type("obj", (object,), {"tags": ["other:tag"]})()
+        context = PluginContext(global_context=GlobalContext(request_id="a2a-2", metadata={"a2a_agent": agent_metadata}))
+        vault_tokens = {"github.com": "token123"}
+        payload = AgentPreInvokePayload(agent_id="agent-1", messages=[], headers=HttpHeaderPayload(root={"x-vault-tokens": json.dumps(vault_tokens)}))
+
+        result = await plugin.agent_pre_invoke(payload, context)
+
+        # SECURITY: vault header must be removed even when system cannot be determined
+        assert result.modified_payload is not None
+        assert "x-vault-tokens" not in result.modified_payload.headers.root
+        assert result.continue_processing
+
+    @pytest.mark.asyncio
+    async def test_invalid_json_strips_vault_header(self, plugin_config, agent_context):
+        """Malformed vault header JSON is handled gracefully and the header is removed."""
+        plugin = Vault(plugin_config)
+        payload = AgentPreInvokePayload(agent_id="agent-1", messages=[], headers=HttpHeaderPayload(root={"content-type": "application/json", "x-vault-tokens": "invalid json"}))
+
+        result = await plugin.agent_pre_invoke(payload, agent_context)
+
+        assert result.modified_payload is not None
+        assert "x-vault-tokens" not in result.modified_payload.headers.root
+        assert result.continue_processing
+
+    @pytest.mark.asyncio
+    async def test_no_token_match_strips_vault_header(self, plugin_config, agent_context):
+        """A vault header with no matching system still gets stripped, no auth injected."""
+        plugin = Vault(plugin_config)
+        vault_tokens = {"gitlab.com": "glpat_other_system"}
+        payload = AgentPreInvokePayload(agent_id="agent-1", messages=[], headers=HttpHeaderPayload(root={"content-type": "application/json", "x-vault-tokens": json.dumps(vault_tokens)}))
+
+        result = await plugin.agent_pre_invoke(payload, agent_context)
+
+        assert result.modified_payload is not None
+        assert "x-vault-tokens" not in result.modified_payload.headers.root
+        assert "authorization" not in result.modified_payload.headers.root
+
+    @pytest.mark.asyncio
+    async def test_oauth2_config_mode_unsupported_strips_header(self, agent_context):
+        """system_handling='oauth2_config' is gateway-only; for A2A it no-ops but still strips."""
+        oauth2_config = PluginConfig(
+            name="TestVault",
+            description="Test Vault Plugin",
+            author="Test",
+            kind="plugins.vault.vault_plugin.Vault",
+            version="1.0",
+            hooks=[AgentHookType.AGENT_PRE_INVOKE],
+            tags=["test", "vault"],
+            mode=PluginMode.SEQUENTIAL,
+            priority=10,
+            config={
+                "system_tag_prefix": "system",
+                "vault_header_name": "X-Vault-Tokens",
+                "vault_handling": "raw",
+                "system_handling": "oauth2_config",
+                "auth_header_tag_prefix": "AUTH_HEADER",
+            },
+        )
+        plugin = Vault(oauth2_config)
+        vault_tokens = {"github.com": "ghp_should_not_be_used"}
+        payload = AgentPreInvokePayload(agent_id="agent-1", messages=[], headers=HttpHeaderPayload(root={"x-vault-tokens": json.dumps(vault_tokens)}))
+
+        result = await plugin.agent_pre_invoke(payload, agent_context)
+
+        # No system resolved (oauth2_config unsupported for A2A) → header stripped, no auth injected
+        assert result.modified_payload is not None
+        assert "x-vault-tokens" not in result.modified_payload.headers.root
+        assert "authorization" not in result.modified_payload.headers.root
+
+
+class TestVaultPluginTagNormalization:
+    """Regression tests for tag-shape normalization across gateway and A2A targets."""
+
+    @pytest.fixture
+    def plugin(self) -> Vault:
+        """Create a Vault plugin with default tag-mode config."""
+        config = PluginConfig(
+            name="TestVault",
+            description="Test Vault Plugin",
+            author="Test",
+            kind="plugins.vault.vault_plugin.Vault",
+            version="1.0",
+            hooks=[ToolHookType.TOOL_PRE_INVOKE],
+            tags=["test", "vault"],
+            mode=PluginMode.SEQUENTIAL,
+            priority=10,
+            config={"system_tag_prefix": "system", "auth_header_tag_prefix": "AUTH_HEADER"},
+        )
+        return Vault(config)
+
+    def test_string_tags_normalized(self, plugin):
+        """A2A plain-string tags resolve the system key and auth header."""
+        metadata = type("obj", (object,), {"tags": ["system:github.com", "AUTH_HEADER:X-GitHub-Token"]})()
+        system_key, auth_header = plugin._resolve_system_and_auth_from_tags(metadata)
+        assert system_key == "github.com"
+        assert auth_header == "X-GitHub-Token"
+
+    def test_dict_tags_normalized(self, plugin):
+        """Gateway dict tags resolve the system key and auth header."""
+        metadata = type("obj", (object,), {"tags": [{"id": "1", "label": "system:github.com"}, {"id": "2", "label": "AUTH_HEADER:X-GitHub-Token"}]})()
+        system_key, auth_header = plugin._resolve_system_and_auth_from_tags(metadata)
+        assert system_key == "github.com"
+        assert auth_header == "X-GitHub-Token"
+
+    def test_object_tags_normalized(self, plugin):
+        """Tags exposing a `.label` attribute resolve correctly."""
+        tag = type("tag", (object,), {"label": "system:gitlab.com"})()
+        metadata = type("obj", (object,), {"tags": [tag]})()
+        system_key, auth_header = plugin._resolve_system_and_auth_from_tags(metadata)
+        assert system_key == "gitlab.com"
+        assert auth_header is None
+
+    def test_empty_and_missing_tags(self, plugin):
+        """No tags (or empty tags) yields no system key."""
+        metadata = type("obj", (object,), {"tags": []})()
+        system_key, auth_header = plugin._resolve_system_and_auth_from_tags(metadata)
+        assert system_key is None
+        assert auth_header is None
 
 
 if __name__ == "__main__":
