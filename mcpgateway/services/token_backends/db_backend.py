@@ -1,4 +1,8 @@
-"""
+# -*- coding: utf-8 -*-
+"""Location: ./mcpgateway/services/token_backends/db_backend.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
+SPDX-License-Identifier: Apache-2.0
+
 Database token storage backend.
 
 Phase 1: Minimal extraction (copy-paste from existing token_storage_service.py).

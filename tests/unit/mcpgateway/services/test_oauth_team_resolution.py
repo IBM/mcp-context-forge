@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/services/test_oauth_team_resolution.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: Rakhi Dutta
 
 Comprehensive unit tests for OAuth token storage team resolution logic.
 Tests the team_id extraction and routing to appropriate storage paths (DB vs Vault).

@@ -1,9 +1,13 @@
-"""add_team_id_to_oauth_states
+# -*- coding: utf-8 -*-
+"""Location: ./mcpgateway/alembic/versions/12d4a0c7789c_add_team_id_to_oauth_states.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
+SPDX-License-Identifier: Apache-2.0
+
+add_team_id_to_oauth_states
 
 Revision ID: 12d4a0c7789c
 Revises: b6c7d8e9f0a1
 Create Date: 2026-07-10 17:57:41.233008
-
 """
 from typing import Sequence, Union
 
