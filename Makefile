@@ -379,7 +379,7 @@ init-secrets: ## Generate secure secrets for the gateway (US-3)
 # help: stop-serve           - Stop gunicorn production server (port 4444)
 # help: run                  - Execute helper script ./run.sh
 
-.PHONY: serve serve-ssl serve-granian serve-granian-ssl serve-granian-http2 dev dev-remote stop stop-dev stop-serve run \
+.PHONY: serve serve-ssl dev dev-remote stop stop-dev stop-serve run \
         certs certs-jwt certs-jwt-ecdsa certs-all certs-mcp-ca certs-mcp-gateway certs-mcp-plugin certs-mcp-all certs-mcp-check \
         js-build
 
@@ -397,15 +397,6 @@ serve: install js-build                  ## Run production server with Gunicorn 
 
 serve-ssl: js-build certs        ## Run Gunicorn with TLS enabled
 	SSL=true CERT_FILE=certs/cert.pem KEY_FILE=certs/key.pem ./run-gunicorn.sh
-
-serve-granian: js-build          ## Run production server with Granian (Rust-based, alternative)
-	./run-granian.sh
-
-serve-granian-ssl: js-build certs ## Run Granian with TLS enabled
-	SSL=true CERT_FILE=certs/cert.pem KEY_FILE=certs/key.pem ./run-granian.sh
-
-serve-granian-http2: js-build certs ## Run Granian with HTTP/2 and TLS
-	SSL=true GRANIAN_HTTP=2 CERT_FILE=certs/cert.pem KEY_FILE=certs/key.pem ./run-granian.sh
 
 dev:
 	@echo "🚀 Starting development server with CSS watch..."
@@ -432,7 +423,6 @@ dev-remote: js-build             ## Run dev server with remote debugging (debugp
 stop:                            ## Stop all mcpgateway server processes
 	@echo "Stopping all mcpgateway processes..."
 	@if [ -f /tmp/mcpgateway-gunicorn.lock ]; then kill -9 $$(cat /tmp/mcpgateway-gunicorn.lock) 2>/dev/null || true; rm -f /tmp/mcpgateway-gunicorn.lock; fi
-	@if [ -f /tmp/mcpgateway-granian.lock ]; then kill -9 $$(cat /tmp/mcpgateway-granian.lock) 2>/dev/null || true; rm -f /tmp/mcpgateway-granian.lock; fi
 	@lsof -ti:8000 2>/dev/null | xargs $(XARGS_FLAGS) kill -9 || true
 	@lsof -ti:4444 2>/dev/null | xargs $(XARGS_FLAGS) kill -9 || true
 	@echo "Done."
@@ -4770,7 +4760,7 @@ endef
 # help: container-build-rust - Build image WITH Rust plugins (ENABLE_RUST_BUILD=1)
 # help: container-build-rust-lite - Build lite image WITH Rust plugins
 # help: container-rust       - Build with Rust and run container (all-in-one)
-# help: container-run        - Run container (CONTAINER_SSL=1 CONTAINER_HOST_NET=1 CONTAINER_JWT=1 CONTAINER_HTTP_SERVER=granian|gunicorn)
+# help: container-run        - Run container (CONTAINER_SSL=1 CONTAINER_HOST_NET=1 CONTAINER_JWT=1)
 # help: container-push       - Push image (handles localhost/ prefix)
 # help: container-stop       - Stop & remove the container
 # help: container-logs       - Stream container logs
@@ -4894,25 +4884,22 @@ container-validate-fedramp: container-check-image ## Validate FedRAMP compliance
 CONTAINER_SSL        ?=
 CONTAINER_HOST_NET   ?=
 CONTAINER_JWT        ?=
-CONTAINER_HTTP_SERVER ?=
 
 .PHONY: container-run
-container-run: container-check-image  ## Run container (CONTAINER_SSL=1 CONTAINER_HOST_NET=1 CONTAINER_JWT=1 CONTAINER_HTTP_SERVER=granian|gunicorn)
+container-run: container-check-image  ## Run container (CONTAINER_SSL=1 CONTAINER_HOST_NET=1 CONTAINER_JWT=1)
 	$(if $(call is_true,$(CONTAINER_SSL)),@test -d certs || $(MAKE) --no-print-directory certs,)
 	$(if $(call is_true,$(CONTAINER_JWT)),@test -d certs/jwt || $(MAKE) --no-print-directory certs-jwt,)
-	@printf '🚀 Running with %s%s%s%s%s...\n' \
+	@printf '🚀 Running with %s%s%s%s...\n' \
 		'$(CONTAINER_RUNTIME)' \
 		'$(if $(call is_true,$(CONTAINER_SSL)), (TLS),)' \
 		'$(if $(call is_true,$(CONTAINER_HOST_NET)), (host network),)' \
-		'$(if $(call is_true,$(CONTAINER_JWT)), (JWT asymmetric),)' \
-		'$(if $(CONTAINER_HTTP_SERVER), + $(CONTAINER_HTTP_SERVER),)'
+		'$(if $(call is_true,$(CONTAINER_JWT)), (JWT asymmetric),)'
 	-$(CONTAINER_RUNTIME) stop $(PROJECT_NAME) 2>/dev/null || true
 	-$(CONTAINER_RUNTIME) rm $(PROJECT_NAME) 2>/dev/null || true
 	$(CONTAINER_RUNTIME) run --name $(PROJECT_NAME) \
 		$(if $(or $(call is_true,$(CONTAINER_SSL)),$(call is_true,$(CONTAINER_JWT))),--user $(shell id -u):$(shell id -g),) \
 		$(if $(call is_true,$(CONTAINER_HOST_NET)),--network=host,) \
 		--env-file=.env \
-		$(if $(CONTAINER_HTTP_SERVER),-e HTTP_SERVER=$(CONTAINER_HTTP_SERVER),) \
 		$(if $(call is_true,$(CONTAINER_SSL)),-e SSL=true -e CERT_FILE=certs/cert.pem -e KEY_FILE=certs/key.pem,) \
 		$(if $(call is_true,$(CONTAINER_JWT)),-e JWT_ALGORITHM=RS256 -e JWT_PUBLIC_KEY_PATH=/app/certs/jwt/public.pem -e JWT_PRIVATE_KEY_PATH=/app/certs/jwt/private.pem,) \
 		$(if $(or $(call is_true,$(CONTAINER_SSL)),$(call is_true,$(CONTAINER_JWT))),-v $(PWD)/certs:/app/certs:ro$(if $(filter podman,$(CONTAINER_RUNTIME)),$(COMMA)Z,),) \
@@ -4924,10 +4911,9 @@ container-run: container-check-image  ## Run container (CONTAINER_SSL=1 CONTAINE
 		--health-start-period=30s --health-timeout=10s \
 		-d $(call get_image_name)
 	@sleep 2
-	@printf '✅ Container started%s%s%s\n' \
+	@printf '✅ Container started%s%s\n' \
 		'$(if $(call is_true,$(CONTAINER_SSL)), with TLS,)' \
-		'$(if $(call is_true,$(CONTAINER_JWT)), + JWT asymmetric,)' \
-		'$(if $(CONTAINER_HTTP_SERVER), ($(CONTAINER_HTTP_SERVER)),)'
+		'$(if $(call is_true,$(CONTAINER_JWT)), + JWT asymmetric,)'
 	$(if $(call is_true,$(CONTAINER_JWT)),@echo "🔐 JWT Algorithm: RS256",)
 	$(if $(call is_true,$(CONTAINER_JWT)),@echo "📁 Keys mounted: /app/certs/jwt/{private$(COMMA)public}.pem",)
 
@@ -4936,12 +4922,7 @@ container-run: container-check-image  ## Run container (CONTAINER_SSL=1 CONTAINE
 # deprecated: container-run-ssl         - Use "make container-run CONTAINER_SSL=1" instead (v1.2.0)
 # deprecated: container-run-ssl-host    - Use "make container-run CONTAINER_SSL=1 CONTAINER_HOST_NET=1" instead (v1.2.0)
 # deprecated: container-run-ssl-jwt     - Use "make container-run CONTAINER_SSL=1 CONTAINER_JWT=1" instead (v1.2.0)
-# deprecated: container-run-granian     - Use "make container-run CONTAINER_HTTP_SERVER=granian" instead (v1.2.0)
-# deprecated: container-run-gunicorn    - Use "make container-run CONTAINER_HTTP_SERVER=gunicorn" instead (v1.2.0)
-# deprecated: container-run-granian-ssl - Use "make container-run CONTAINER_SSL=1 CONTAINER_HTTP_SERVER=granian" instead (v1.2.0)
-# deprecated: container-run-gunicorn-ssl - Use "make container-run CONTAINER_SSL=1 CONTAINER_HTTP_SERVER=gunicorn" instead (v1.2.0)
-.PHONY: container-run-host container-run-ssl container-run-ssl-host container-run-ssl-jwt \
-	container-run-granian container-run-gunicorn container-run-granian-ssl container-run-gunicorn-ssl
+.PHONY: container-run-host container-run-ssl container-run-ssl-host container-run-ssl-jwt
 
 container-run-host: container-check-image
 	$(call deprecated_target,container-run-host,make container-run CONTAINER_HOST_NET=1,1.2.0)
@@ -4958,22 +4939,6 @@ container-run-ssl-host: container-check-image
 container-run-ssl-jwt: container-check-image
 	$(call deprecated_target,container-run-ssl-jwt,make container-run CONTAINER_SSL=1 CONTAINER_JWT=1,1.2.0)
 	@$(MAKE) --no-print-directory container-run CONTAINER_SSL=1 CONTAINER_JWT=1
-
-container-run-granian: container-check-image
-	$(call deprecated_target,container-run-granian,make container-run CONTAINER_HTTP_SERVER=granian,1.2.0)
-	@$(MAKE) --no-print-directory container-run CONTAINER_HTTP_SERVER=granian
-
-container-run-gunicorn: container-check-image
-	$(call deprecated_target,container-run-gunicorn,make container-run CONTAINER_HTTP_SERVER=gunicorn,1.2.0)
-	@$(MAKE) --no-print-directory container-run CONTAINER_HTTP_SERVER=gunicorn
-
-container-run-granian-ssl: container-check-image
-	$(call deprecated_target,container-run-granian-ssl,make container-run CONTAINER_SSL=1 CONTAINER_HTTP_SERVER=granian,1.2.0)
-	@$(MAKE) --no-print-directory container-run CONTAINER_SSL=1 CONTAINER_HTTP_SERVER=granian
-
-container-run-gunicorn-ssl: container-check-image
-	$(call deprecated_target,container-run-gunicorn-ssl,make container-run CONTAINER_SSL=1 CONTAINER_HTTP_SERVER=gunicorn,1.2.0)
-	@$(MAKE) --no-print-directory container-run CONTAINER_SSL=1 CONTAINER_HTTP_SERVER=gunicorn
 
 .PHONY: container-push
 container-push: container-check-image

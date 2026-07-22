@@ -185,7 +185,6 @@ This decision has been implemented. Both parsers are available:
 ## References
 
 - GitHub Issue: #1702
-- Related ADR: ADR-0025 (Granian HTTP Server - similar pattern)
 - Hiredis GitHub: https://github.com/redis/hiredis
 - Hiredis-py PyPI: https://pypi.org/project/hiredis/
 - Redis-py Documentation: https://redis-py.readthedocs.io/

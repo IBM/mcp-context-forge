@@ -139,21 +139,6 @@ services:
     # Environment - pick ONE database URL line, comment the rest
     # ──────────────────────────────────────────────────────────────────────
     environment:
-      # ═══════════════════════════════════════════════════════════════════════════
-      # HTTP Server Selection: gunicorn vs granian
-      # ═══════════════════════════════════════════════════════════════════════════
-      # Performance comparison (2500 concurrent users, PostgreSQL backend):
-      #   Gunicorn: ~2.7GB RAM, ~740% CPU, no backpressure (queues unbounded)
-      #   Granian:  ~4.0GB RAM, ~680% CPU, native backpressure (rejects excess with 503)
-      #
-      # Choose Gunicorn for: memory-constrained environments (32% less RAM)
-      # Choose Granian for:  load spike protection, bursty traffic (graceful degradation)
-      # Both achieve same RPS when database is the bottleneck.
-      # ═══════════════════════════════════════════════════════════════════════════
-      # - HTTP_SERVER=granian    # Rust-based, native backpressure, +47% memory, -8% CPU
-      - HTTP_SERVER=${HTTP_SERVER:-gunicorn} # Python-based by default; set granian to benchmark the Rust ASGI front door
-      - HOST=0.0.0.0
-      - PORT=4444
       # Domain for CORS/cookies (nginx default at http://localhost:8080)
       - APP_DOMAIN=${APP_DOMAIN:-http://localhost:8080}
       # Transport: sse, streamablehttp, http, or all (default: all)
@@ -570,7 +555,7 @@ services:
       - HTTPX_HTTP2_ENABLED=false           # HTTP/2 support (requires server support)
       - HTTPX_ADMIN_READ_TIMEOUT=30.0       # Admin UI/health check timeout (seconds)
       # ═══════════════════════════════════════════════════════════════════════════
-      # Gunicorn Configuration (used when HTTP_SERVER=gunicorn)
+      # Gunicorn Configuration
       # ═══════════════════════════════════════════════════════════════════════════
       - GUNICORN_WORKERS=${GUNICORN_WORKERS:-24}                    # Worker processes (match CPU cores)
       - GUNICORN_TIMEOUT=${GUNICORN_TIMEOUT:-120}                   # Worker timeout in seconds
@@ -580,40 +565,6 @@ services:
       - GUNICORN_MAX_REQUESTS=${GUNICORN_MAX_REQUESTS:-1000000}          # Recycle workers after 1M requests
       - GUNICORN_MAX_REQUESTS_JITTER=${GUNICORN_MAX_REQUESTS_JITTER:-100000}    # ±100000 jitter prevents thundering herd
       - GUNICORN_BACKLOG=${GUNICORN_BACKLOG:-4096}                  # Connection queue depth
-      # ═══════════════════════════════════════════════════════════════════════════
-      # Granian Backpressure Configuration (used when HTTP_SERVER=granian)
-      # ═══════════════════════════════════════════════════════════════════════════
-      # Backpressure provides overload protection by rejecting excess requests with
-      # immediate 503 responses instead of queuing them (which can cause OOM/timeouts).
-      # Total capacity = GRANIAN_WORKERS × GRANIAN_BACKPRESSURE = 16 × 128 = 2048 concurrent
-      # Requests beyond this limit receive immediate 503 (no queuing, no OOM)
-      - GRANIAN_WORKERS=${GRANIAN_WORKERS:-16}
-      - GRANIAN_BACKLOG=${GRANIAN_BACKLOG:-4096}
-      - GRANIAN_BACKPRESSURE=${GRANIAN_BACKPRESSURE:-128}
-      - GRANIAN_HTTP1_BUFFER_SIZE=${GRANIAN_HTTP1_BUFFER_SIZE:-524288}
-      - GRANIAN_RESPAWN_FAILED=${GRANIAN_RESPAWN_FAILED:-true}
-      # ───────────────────────────────────────────────────────────────────────
-      # Granian Worker Lifecycle (recycling to prevent resource leaks)
-      # ───────────────────────────────────────────────────────────────────────
-      # Workaround for granian issue where SSE connections may not be properly
-      # closed after client disconnect, causing CPU spin loops. See:
-      # - https://github.com/emmett-framework/granian/issues/286
-      # - https://github.com/IBM/mcp-context-forge/issues/2357
-      #
-      # GRANIAN_WORKERS_LIFETIME: Restart workers after this duration (min 60s)
-      # GRANIAN_WORKERS_MAX_RSS: Restart workers exceeding this memory (MiB)
-      #
-      # Using both provides natural jitter - workers hit memory limits at
-      # different times based on load, with lifetime as a backstop.
-      # - GRANIAN_WORKERS_LIFETIME=3600    # 1 hour max worker lifetime
-      # - GRANIAN_WORKERS_MAX_RSS=512      # 512 MiB max RSS per worker
-      # ───────────────────────────────────────────────────────────────────────
-      # HTTP/2: Granian supports native HTTP/2 multiplexing, but not useful here because:
-      # - nginx sits in front and downgrades to HTTP/1.1 for upstream connections
-      # - nginx open-source doesn't support HTTP/2 to backends (only nginx Plus does)
-      # - Internal Docker network is fast enough that HTTP/2 gains are negligible
-      # To use HTTP/2, either bypass nginx or use Granian with TLS directly.
-      # - GRANIAN_HTTP=2
 
       # ═══════════════════════════════════════════════════════════════════════════
       # MCP Session Pool Configuration
@@ -799,10 +750,8 @@ services:
     # - Multi-instance: comment out ports, set replicas: 2+, access via nginx:8080
 
     # ──────────────────────────────────────────────────────────────────────
-    # Server Engine Selection (Default: Granian - Rust-based HTTP server)
+    # Server Engine Selection (Default: Gunicorn + Uvicorn)
     # ──────────────────────────────────────────────────────────────────────
-    # Default is Granian. For Gunicorn with Uvicorn workers:
-    # command: ["./run-gunicorn.sh"]
 
     deploy:
       mode: replicated

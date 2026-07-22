@@ -7,8 +7,6 @@ set -euo pipefail
 if [ "$(uname -m)" = "s390x" ]; then
     export PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python
 fi
-
-HTTP_SERVER="${HTTP_SERVER:-gunicorn}"
 APP_ROOT="${APP_ROOT:-/app}"
 RUST_MCP_MODE="${RUST_MCP_MODE:-off}"
 RUST_MCP_LOG="${RUST_MCP_LOG:-warn}"
@@ -268,21 +266,8 @@ print_mcp_runtime_mode() {
 }
 
 build_server_command() {
-    case "${HTTP_SERVER}" in
-        granian)
-            echo "Starting ContextForge with Granian (Rust-based HTTP server)..."
-            SERVER_CMD=(./run-granian.sh "$@")
-            ;;
-        gunicorn)
-            echo "Starting ContextForge with Gunicorn + Uvicorn..."
-            SERVER_CMD=(./run-gunicorn.sh "$@")
-            ;;
-        *)
-            echo "ERROR: Unknown HTTP_SERVER value: ${HTTP_SERVER}"
-            echo "Valid options: granian, gunicorn"
-            exit 1
-            ;;
-    esac
+    echo "Starting ContextForge with Gunicorn + Uvicorn..."
+    SERVER_CMD=(./run-gunicorn.sh "$@")
 }
 
 start_managed_rust_mcp_runtime() {
