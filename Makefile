@@ -805,7 +805,7 @@ clean:
 # help: test-protocol-compliance-gateway - Protocol compliance harness, gateway-proxy + gateway-virtual targets (requires working gateway boot)
 # help: test-protocol-compliance-matrix - Protocol compliance matrix across every runnable engine; summary table (pass MATRIX_ARGS='--format markdown --out X' to override)
 # help: test-mcp-protocol-e2e - MCP protocol E2E via FastMCP client against live gateway (K=<filter> to pick one; MCP_E2E_CLIENT_TIMEOUT env to extend the 5s client timeout)
-# help: test-mcp-cli         - [DEPRECATED] Alias for test-mcp-protocol-e2e (accepts same K=<filter>)
+# help: test-mcp-cli         - Alias for test-mcp-protocol-e2e (accepts same K=<filter>)
 # help: test-mcp-rbac        - RBAC + multi-transport MCP protocol tests (needs live gateway + SSE)
 # help: test-mcp-access-matrix - MCP role/access matrix (Rust transport, edge/full mode)
 # help: test-mcp-plugin-parity - MCP plugin parity E2E for current Python or Rust stack
@@ -846,7 +846,16 @@ clean:
 # help: query-log-analyze    - Analyze query log for N+1 patterns and slow queries
 # help: query-log-clear      - Clear database query log files
 
-.PHONY: smoketest test-mcp-cli test-mcp-rbac test-mcp-plugin-parity test-mcp-access-matrix test-mcp-session-isolation test-mcp-session-isolation-load test-e2e-sso test-live-gateway test test-verbose test-profile coverage test-docs pytest-examples test-curl htmlcov doctest doctest-verbose doctest-coverage doctest-check test-db-perf test-db-perf-verbose 2025-11-25 2025-11-25-core 2025-11-25-tasks 2025-11-25-auth 2025-11-25-report dev-query-log query-log-tail query-log-analyze query-log-clear load-test load-test-ui load-test-light load-test-heavy load-test-sustained load-test-stress load-test-report load-test-compose load-test-timeserver load-test-fasttime load-test-1000 load-test-summary load-test-baseline load-test-baseline-ui load-test-baseline-stress load-test-agentgateway-mcp-server-time
+.PHONY: smoketest test-mcp-cli test-mcp-rbac test-mcp-plugin-parity test-mcp-access-matrix \
+	test-mcp-session-isolation test-mcp-session-isolation-load test-e2e-sso \
+	test-live-gateway test test-verbose test-profile coverage test-docs pytest-examples \
+	test-curl htmlcov doctest doctest-verbose doctest-coverage doctest-check test-db-perf \
+	test-db-perf-verbose 2025-11-25 2025-11-25-core 2025-11-25-tasks 2025-11-25-auth \
+	2025-11-25-report dev-query-log query-log-tail query-log-analyze query-log-clear \
+	load-test load-test-ui load-test-light load-test-heavy load-test-sustained load-test-stress \
+	load-test-report load-test-compose load-test-timeserver load-test-fasttime load-test-1000 \
+	load-test-summary load-test-baseline load-test-baseline-ui load-test-baseline-stress \
+	load-test-agentgateway-mcp-server-time
 
 # Dirs/files always excluded from standard pytest runs.
 # tests/live_gateway/ — see tests/live_gateway/README.md. Subsuites need
@@ -878,10 +887,7 @@ test-mcp-protocol-e2e: uv  ## MCP protocol E2E via FastMCP client (K=<filter> to
 		|| { echo "❌ MCP protocol E2E tests failed!"; exit 1; }
 	@echo "✅ MCP protocol E2E tests passed!"
 
-test-mcp-cli:  ## [DEPRECATED] Alias for test-mcp-protocol-e2e (subprocess + mcp-cli path removed)
-	@echo "⚠️  'make test-mcp-cli' is deprecated — use 'make test-mcp-protocol-e2e'."
-	@echo "   The mcp-cli + mcpgateway.wrapper subprocess path was replaced by the FastMCP client."
-	@$(MAKE) test-mcp-protocol-e2e
+test-mcp-cli: test-mcp-protocol-e2e
 
 test-protocol-compliance: uv  ## MCP protocol compliance harness — full (target, transport) matrix (K=<filter> to pick one)
 	@echo "📜 Running MCP protocol compliance harness (tests/live_gateway/protocol_compliance)..."
