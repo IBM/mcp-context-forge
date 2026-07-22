@@ -5591,9 +5591,17 @@ async def admin_search_teams(
         # Non-admin search
         # Reuse user team fetching
         all_teams = await team_service.get_user_teams(user_email, include_personal=True)
+        # Narrow to the caller's normalized token scope (Layer 1). get_user_teams
+        # returns every membership and ignores token scope, so a token narrowed to
+        # a team subset would otherwise leak sibling teams the caller belongs to but
+        # is scoped out of. _get_user_team_ids honors token_teams/_cached_team_ids;
+        # the caller's own personal team stays visible (owner is always visible).
+        scoped_team_ids = set(await _get_user_team_ids(user, db))
         # Filter in memory
         filtered = []
         for t in all_teams:
+            if not getattr(t, "is_personal", False) and t.id not in scoped_team_ids:
+                continue
             if not include_inactive and not t.is_active:
                 continue
             if visibility and t.visibility != visibility:
@@ -11464,26 +11472,25 @@ async def admin_search_a2a_agents(
     return _build_search_response(entity_key="agents", entity_type="agents", items=agents, query=search_query, tags=normalized_tags, tag_groups=tag_groups)
 
 
-@admin_router.get("/search", response_class=JSONResponse)
-@require_permission("admin.dashboard", allow_admin_bypass=False)
-async def admin_unified_search(
-    q: str = Query("", max_length=500, description="Search query"),
-    tags: QueryTagsFilter = None,
-    entity_types: QueryEntityTypes = None,
-    include_inactive: bool = False,
-    limit: int = Query(8, ge=1, le=settings.pagination_max_page_size, description="Per-entity result limit"),
-    limit_per_type: Optional[int] = Query(
-        None,
-        ge=1,
-        le=settings.pagination_max_page_size,
-        description="Optional alias for per-entity result limit",
-    ),
-    gateway_id: QueryGatewayIdList = None,
-    team_id: Optional[str] = Depends(_validated_team_id_param),
-    db: Session = Depends(get_db),
-    user=Depends(get_current_user_with_permissions),
-):
-    """Unified search across primary admin entities.
+async def perform_unified_search(
+    *,
+    q: str,
+    tags: Optional[str],
+    entity_types: Optional[str],
+    include_inactive: bool,
+    limit: int,
+    limit_per_type: Optional[int],
+    gateway_id: Optional[str],
+    team_id: Optional[str],
+    db: Session,
+    user: Any,
+) -> dict[str, Any]:
+    """Unified search across primary entities (shared, permission-agnostic core).
+
+    Single source of truth for unified search. Performs no top-level permission
+    check — callers own the outer gate (``admin.dashboard`` for the admin route,
+    auth-only for ``/v1/search``). Per-entity RBAC and token scoping are still
+    enforced inside each ``admin_search_*`` call.
 
     Searches servers, gateways, tools, resources, prompts, agents, teams, roots,
     and optionally users (when the caller has ``admin.user_management`` permission).
@@ -11737,6 +11744,61 @@ async def admin_unified_search(
         "items": flat_items,
         "count": len(flat_items),
     }
+
+
+@admin_router.get("/search", response_class=JSONResponse)
+@require_permission("admin.dashboard", allow_admin_bypass=False)
+async def admin_unified_search(
+    q: str = Query("", max_length=500, description="Search query"),
+    tags: QueryTagsFilter = None,
+    entity_types: QueryEntityTypes = None,
+    include_inactive: bool = False,
+    limit: int = Query(8, ge=1, le=settings.pagination_max_page_size, description="Per-entity result limit"),
+    limit_per_type: Optional[int] = Query(
+        None,
+        ge=1,
+        le=settings.pagination_max_page_size,
+        description="Optional alias for per-entity result limit",
+    ),
+    gateway_id: QueryGatewayIdList = None,
+    team_id: Optional[str] = Depends(_validated_team_id_param),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+):
+    """Unified search across primary admin entities (admin-gated wrapper).
+
+    Thin wrapper that enforces the ``admin.dashboard`` permission and delegates
+    to :func:`perform_unified_search`.
+
+    Args:
+        q (str): Free-text search query.
+        tags (Optional[str]): Tag filter expression (comma=OR, plus=AND).
+        entity_types (Optional[str]): Optional comma-separated entity type list.
+            Supported values: servers, gateways, tools, resources, prompts,
+            agents, teams, users, roots.
+        include_inactive (bool): Whether to include inactive entities.
+        limit (int): Default per-entity limit for returned items.
+        limit_per_type (Optional[int]): Optional alias overriding ``limit``.
+        gateway_id (Optional[str]): Gateway filter for tools/resources/prompts.
+        team_id (Optional[str]): Team scope filter.
+        db (Session): Database session.
+        user: Authenticated user context.
+
+    Returns:
+        dict[str, Any]: Grouped and flattened search results with metadata.
+    """
+    return await perform_unified_search(
+        q=q,
+        tags=tags,
+        entity_types=entity_types,
+        include_inactive=include_inactive,
+        limit=limit,
+        limit_per_type=limit_per_type,
+        gateway_id=gateway_id,
+        team_id=team_id,
+        db=db,
+        user=user,
+    )
 
 
 @admin_router.get("/tools/{tool_id}", response_model=ToolRead)
