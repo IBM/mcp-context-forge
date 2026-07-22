@@ -272,7 +272,7 @@ MCP_SESSION_POOL_TRANSPORT_TIMEOUT=120
 
 ### Health Check Timeout Trade-offs
 
-Pool staleness checks use `MCP_SESSION_POOL_TRANSPORT_TIMEOUT` (default 30s) for session acquisition. When `MCP_SESSION_POOL_EXPLICIT_HEALTH_RPC=true`, the explicit RPC call uses `HEALTH_CHECK_TIMEOUT` (default 5s).
+Pool staleness checks use `MCP_SESSION_POOL_TRANSPORT_TIMEOUT` (default 30s) for session acquisition. When `MCP_SESSION_POOL_EXPLICIT_HEALTH_RPC=true`, the explicit RPC call uses `HEALTH_CHECK_TIMEOUT` (default 30s).
 
 **Behavior summary:**
 
@@ -285,7 +285,7 @@ Pool staleness checks use `MCP_SESSION_POOL_TRANSPORT_TIMEOUT` (default 30s) for
 **Trade-off**: The 30s transport timeout allows long-running tools to complete but means unhealthy sessions may take longer to detect. If you need faster failure detection:
 
 ```bash
-# Stricter health checks (5s timeout for explicit RPC)
+# Stricter health checks (30s timeout for explicit RPC)
 MCP_SESSION_POOL_EXPLICIT_HEALTH_RPC=true
 HEALTH_CHECK_TIMEOUT=30
 
