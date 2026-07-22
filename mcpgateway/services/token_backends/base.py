@@ -1,4 +1,8 @@
-"""
+# -*- coding: utf-8 -*-
+"""Location: ./mcpgateway/services/token_backends/base.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
+SPDX-License-Identifier: Apache-2.0
+
 Base interface for pluggable token storage backends.
 
 This module defines the abstract interface that all token storage backends
