@@ -7,7 +7,6 @@ Unit Tests for Catalog Service .
 """
 
 # Standard
-import asyncio
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -565,6 +564,81 @@ async def test_get_catalog_servers_cache_store_exception(service):
         req = CatalogListRequest(offset=0, limit=10)
         result = await service.get_catalog_servers(req, db)
         assert result.total == 1
+
+
+@pytest.mark.asyncio
+async def test_get_catalog_servers_scoped_registration_state(service):
+    """Scoped catalog calls only mark gateways registered when visible to the caller."""
+    fake_catalog = {
+        "catalog_servers": [
+            {"id": "visible", "name": "Visible", "url": "http://visible", "category": "cat", "auth_type": "Open", "provider": "prov", "tags": [], "description": "visible"},
+            {"id": "wrong-team", "name": "Wrong Team", "url": "http://wrong-team", "category": "cat", "auth_type": "Open", "provider": "prov", "tags": [], "description": "wrong"},
+            {"id": "private-other", "name": "Private Other", "url": "http://private-other", "category": "cat", "auth_type": "Open", "provider": "prov", "tags": [], "description": "private"},
+        ]
+    }
+    with patch.object(service, "load_catalog", AsyncMock(return_value=fake_catalog)), patch.object(service, "_get_registry_cache", return_value=None):
+        db = MagicMock()
+        db.execute.return_value = [
+            ("http://visible", True, None, None, "team", "team-a", "teammate@example.com"),
+            ("http://wrong-team", True, None, None, "team", "team-b", "teammate@example.com"),
+            ("http://private-other", True, None, None, "private", None, "other@example.com"),
+        ]
+        req = CatalogListRequest(offset=0, limit=10)
+
+        result = await service.get_catalog_servers(req, db, user_email="user@example.com", token_teams=["team-a"])
+
+        by_id = {server.id: server for server in result.servers}
+        assert by_id["visible"].is_registered is True
+        assert by_id["wrong-team"].is_registered is False
+        assert by_id["private-other"].is_registered is False
+
+
+@pytest.mark.asyncio
+async def test_get_catalog_servers_scoped_request_bypasses_shared_cache(service):
+    """Scoped catalog responses are not read from or written to the shared catalog cache."""
+    fake_catalog = {
+        "catalog_servers": [
+            {"id": "1", "name": "srv1", "url": "http://a", "category": "cat", "auth_type": "Open", "provider": "prov", "tags": [], "description": "desc"},
+        ]
+    }
+    mock_cache = AsyncMock()
+    mock_cache.get = AsyncMock(return_value={"servers": [], "total": 0, "categories": [], "auth_types": [], "providers": [], "all_tags": []})
+    mock_cache.hash_filters = MagicMock(return_value="hash123")
+    mock_cache.set = AsyncMock()
+    with patch.object(service, "load_catalog", AsyncMock(return_value=fake_catalog)), patch.object(service, "_get_registry_cache", return_value=mock_cache):
+        db = MagicMock()
+        db.execute.return_value = [("http://a", True, None, None, "public", None, None)]
+        req = CatalogListRequest(offset=0, limit=10)
+
+        result = await service.get_catalog_servers(req, db, user_email="user@example.com", token_teams=[])
+
+        assert result.total == 1
+        mock_cache.get.assert_not_called()
+        mock_cache.set.assert_not_called()
+
+
+def test_can_view_registered_gateway_admin_bypass(monkeypatch):
+    """Admin bypass can see team gateways and own private gateways."""
+    monkeypatch.setattr("mcpgateway.services.catalog_service.is_admin_bypass_granted", lambda *_args: True)
+    db = MagicMock()
+
+    assert CatalogService._can_view_registered_gateway(db, "private", None, "admin@example.com", "admin@example.com", None) is True
+    assert CatalogService._can_view_registered_gateway(db, "team", "team-a", "owner@example.com", "admin@example.com", None) is True
+
+
+def test_can_view_registered_gateway_denies_missing_user():
+    """Non-public gateway is hidden when caller identity is missing."""
+    assert CatalogService._can_view_registered_gateway(MagicMock(), "team", "team-a", "owner@example.com", None, ["team-a"]) is False
+
+
+def test_can_view_registered_gateway_denies_public_only_token():
+    """Public-only token cannot see team/private gateway registration state."""
+    assert CatalogService._can_view_registered_gateway(MagicMock(), "team", "team-a", "owner@example.com", "user@example.com", []) is False
+
+
+def test_can_view_registered_gateway_denies_unknown_visibility():
+    """Unknown non-public visibility falls through to deny."""
+    assert CatalogService._can_view_registered_gateway(MagicMock(), "unknown", None, "owner@example.com", "user@example.com", ["team-a"]) is False
 
 
 # ---------- Register with different auth types ----------
