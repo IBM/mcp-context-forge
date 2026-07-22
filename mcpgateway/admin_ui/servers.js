@@ -1216,6 +1216,25 @@ export function resetEditSelections() {
   });
 }
 
+/**
+ * Re-apply checked state from the persistent selection store to all checkboxes
+ * currently in the given container.  Called after any DOM change (search result
+ * render or HTMX scroll-paginated append) that may have added new checkboxes.
+ *
+ * @param {string} containerId - The id of the selector container.
+ */
+export function restoreCheckedStateFromStore(containerId) {
+  const container = document.getElementById(containerId);
+  if (!container) return;
+  const sel = getEditSelections(containerId);
+  if (sel.size === 0) return;
+  container.querySelectorAll("input[type=\"checkbox\"]").forEach((cb) => {
+    if (sel.has(String(cb.value))) {
+      cb.checked = true;
+    }
+  });
+}
+
 export function ensureEditStoreListeners() {
   if (window._editStoreListenersAttached) return;
   window._editStoreListenersAttached = true;
@@ -1224,6 +1243,8 @@ export function ensureEditStoreListeners() {
     (containerId) => {
       const container = document.getElementById(containerId);
       if (!container) return;
+
+      // Track checkbox check/uncheck into the persistent selection store.
       container.addEventListener("change", function (e) {
         const target = e.target;
         if (
@@ -1240,6 +1261,13 @@ export function ensureEditStoreListeners() {
             sel.delete(value);
           }
         }
+      });
+
+      // Re-apply checked state after HTMX scroll-paginates new items into this
+      // container.  The infinite-scroll sentinel uses hx-swap="outerHTML" and
+      // is a child of the container, so htmx:afterSwap bubbles up here.
+      container.addEventListener("htmx:afterSwap", function () {
+        restoreCheckedStateFromStore(containerId);
       });
     }
   );
