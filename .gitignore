@@ -12,7 +12,6 @@ token.txt
 # Virtual Environments
 # ========================================
 .venv
-.venv/
 venv/
 env/
 ENV/
@@ -26,7 +25,6 @@ venv.bak/
 # Python Bytecode & Cache
 # ========================================
 __pycache__/
-**/__pycache__/
 *.py[cod]
 *$py.class
 .cache
@@ -81,11 +79,8 @@ pip-delete-this-directory.txt
 # Testing & Coverage
 # ========================================
 .playwright-mcp/
-.playwright-mcp
 output
-output/
 htmlcov
-htmlcov/
 .tox/
 .nox/
 .coverage
@@ -99,13 +94,9 @@ coverage.xml
 mutants
 .mutmut-cache
 test-results/
-tests/playwright/reports/
 tests/playwright/videos/
 tests/playwright/screenshots/
-tests/async/reports/
 tests/async/profiles/
-tests/migration/reports/
-tests/migration/logs/
 test-results-*.xml
 playwright-report-*.html
 .playwright-cli/
@@ -138,7 +129,6 @@ docs/docs/security/report.md
 # ========================================
 .codex
 .vscode
-.vscode/
 .idea/
 *.swp
 .spyderproject
@@ -154,9 +144,7 @@ ipython_config.py
 *.log
 logs/
 logging/
-logs/db-queries.jsonl
 tmp
-tmp/
 temp/
 .tmp*
 *.bak
@@ -199,6 +187,7 @@ packages.json
 aider*
 .ai*
 .bob
+.omo
 .claude/*
 CLAUDE.local.md
 .continue
@@ -209,7 +198,6 @@ CLAUDE.local.md
 .scannerwork
 .scanner/
 *.sarif
-devskim-results.sarif
 
 # ========================================
 # Documentation Build
@@ -259,7 +247,6 @@ celerybeat-schedule
 # uv Package Manager
 # ========================================
 uv.lock
-**/uv.lock
 .uv-cache/
 .uv-tmp/
 
@@ -309,12 +296,10 @@ FIXMEs
 
 # Upgrade validation outputs
 artifacts/
-artifacts/upgrade-validation*/
 
 # Debug & profiling artifacts
 debug_login_page.png
 docs/pstats.png
-docs/docs/coverage/
 docs/docs/images/coverage.svg
 docs/docs/images/contextforge-*.svg
 docs/docs/design/images/code2flow.dot
@@ -351,7 +336,6 @@ playground/
 .attic
 
 # Miscellaneous
-scribeflow.log
 bin/flagged
 flagged/
 dictionary.dic
@@ -370,8 +354,6 @@ tools_rust/mcp_runtime/profiles/
 tools_rust/mcp_runtime/flamegraph*.svg
 tools_rust/mcp_runtime/flamegraph*.html
 tools_rust/mcp_runtime/perf.data*
-
-.bob
 
 # OCP deployment secrets (never commit)
 *-secrets.yaml
