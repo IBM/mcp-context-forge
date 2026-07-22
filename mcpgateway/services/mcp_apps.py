@@ -33,6 +33,9 @@ logger = logging.getLogger(__name__)
 MCP_UI_EXTENSION = "io.modelcontextprotocol/ui"
 MCP_UI_DEFAULT_VERSION = "2026-01-26"
 MCP_APP_MIME_TYPE = "text/html;profile=mcp-app"
+# Deprecated flat metadata key kept for backward compatibility with servers that
+# predate the nested ``_meta.ui`` shape. Removed from the spec before GA.
+LEGACY_RESOURCE_URI_META_KEY = "ui/resourceUri"
 
 _ALLOWED_CSP_DIRECTIVES = frozenset(
     {
@@ -136,19 +139,51 @@ def mcp_ui_metadata(value: Any) -> Dict[str, Any]:
     return ui if isinstance(ui, dict) else {}
 
 
+def _legacy_ui_resource_uri(meta: Dict[str, Any], ui: Dict[str, Any]) -> Optional[str]:
+    """Return the deprecated flat ``ui/resourceUri`` value when it should be applied."""
+    legacy_uri = meta.get(LEGACY_RESOURCE_URI_META_KEY)
+    if not isinstance(legacy_uri, str) or not legacy_uri:
+        return None
+
+    nested_uri = ui.get("resourceUri") or ui.get("resource_uri")
+    if nested_uri:
+        # The nested key is canonical and wins; upstream servers may legitimately
+        # emit both, so only a genuine disagreement is worth reporting.
+        if nested_uri != legacy_uri:
+            logger.info("Ignoring deprecated _meta[%r]=%r in favour of nested resourceUri %r", LEGACY_RESOURCE_URI_META_KEY, legacy_uri, nested_uri)
+        return None
+
+    if not legacy_uri.startswith("ui://"):
+        # Folding an invalid URI in would fail extension metadata validation and
+        # drop the whole tool, so keep the pre-existing "ignore it" behaviour.
+        logger.warning("Ignoring deprecated _meta[%r]=%r because it does not use the ui:// scheme", LEGACY_RESOURCE_URI_META_KEY, legacy_uri)
+        return None
+
+    return legacy_uri
+
+
 def merge_mcp_protocol_meta(payload: Dict[str, Any]) -> None:
     """Translate MCP protocol ``_meta.ui`` into internal extension metadata.
 
     Upstream MCP servers advertise Apps metadata on protocol objects as
     ``_meta: {"ui": ...}``, while ContextForge stores extension state as
     ``extensionMetadata: {"io.modelcontextprotocol/ui": ...}``.
+
+    The deprecated flat ``_meta["ui/resourceUri"]`` key is also honoured so that
+    servers still emitting only the legacy shape keep their tool/UI association.
     """
     meta = payload.get("_meta")
     if not isinstance(meta, dict):
         return
 
-    ui = meta.get("ui")
-    if not isinstance(ui, dict) or not ui:
+    raw_ui = meta.get("ui")
+    ui = dict(raw_ui) if isinstance(raw_ui, dict) else {}
+
+    legacy_uri = _legacy_ui_resource_uri(meta, ui)
+    if legacy_uri:
+        ui["resourceUri"] = legacy_uri
+
+    if not ui:
         return
 
     extension_metadata = payload.get("extensionMetadata") or payload.get("extension_metadata")

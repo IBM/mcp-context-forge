@@ -24,6 +24,7 @@ from mcpgateway.services.mcp_apps import (
     build_mcp_apps_capabilities,
     filter_model_visible_tools,
     is_app_visible_tool,
+    LEGACY_RESOURCE_URI_META_KEY,
     MCPAppSessionCleanupService,
     mcp_app_session_service,
     MCP_UI_EXTENSION,
@@ -154,6 +155,85 @@ def test_merge_mcp_protocol_meta_ignores_missing_ui_and_merges_existing_metadata
         "visibility": ["model"],
         "resourceUri": "ui://widgets/example",
     }
+
+
+def test_merge_mcp_protocol_meta_honours_deprecated_flat_resource_uri() -> None:
+    """A server emitting only the deprecated flat key should keep its tool/UI association."""
+    payload = {"_meta": {LEGACY_RESOURCE_URI_META_KEY: "ui://widgets/legacy"}}
+
+    merge_mcp_protocol_meta(payload)
+
+    assert payload["extensionMetadata"][MCP_UI_EXTENSION]["resourceUri"] == "ui://widgets/legacy"
+
+
+def test_merge_mcp_protocol_meta_flat_resource_uri_preserves_nested_siblings() -> None:
+    """The deprecated flat key should merge alongside other nested MCP Apps metadata."""
+    payload = {"_meta": {"ui": {"visibility": ["model", "app"]}, LEGACY_RESOURCE_URI_META_KEY: "ui://widgets/legacy"}}
+
+    merge_mcp_protocol_meta(payload)
+
+    assert payload["extensionMetadata"][MCP_UI_EXTENSION] == {
+        "visibility": ["model", "app"],
+        "resourceUri": "ui://widgets/legacy",
+    }
+
+
+def test_merge_mcp_protocol_meta_prefers_nested_resource_uri_over_flat() -> None:
+    """When both shapes disagree the canonical nested key wins."""
+    payload = {
+        "_meta": {
+            "ui": {"resourceUri": "ui://widgets/new"},
+            LEGACY_RESOURCE_URI_META_KEY: "ui://widgets/old",
+        }
+    }
+
+    merge_mcp_protocol_meta(payload)
+
+    assert payload["extensionMetadata"][MCP_UI_EXTENSION]["resourceUri"] == "ui://widgets/new"
+
+
+def test_merge_mcp_protocol_meta_accepts_matching_nested_and_flat_resource_uri() -> None:
+    """SDK-built servers emit both shapes with the same value and should merge cleanly."""
+    payload = {
+        "_meta": {
+            "ui": {"resourceUri": "ui://widgets/example"},
+            LEGACY_RESOURCE_URI_META_KEY: "ui://widgets/example",
+        }
+    }
+
+    merge_mcp_protocol_meta(payload)
+
+    assert payload["extensionMetadata"][MCP_UI_EXTENSION] == {"resourceUri": "ui://widgets/example"}
+
+
+@pytest.mark.parametrize(
+    "legacy_value",
+    [
+        "https://example.com/widget.html",
+        "",
+        123,
+        None,
+        ["ui://widgets/example"],
+    ],
+)
+def test_merge_mcp_protocol_meta_ignores_unusable_flat_resource_uri(legacy_value) -> None:
+    """Only well-formed ui:// strings are folded in, so invalid values cannot drop a tool."""
+    payload = {"_meta": {LEGACY_RESOURCE_URI_META_KEY: legacy_value}}
+
+    merge_mcp_protocol_meta(payload)
+
+    assert "extensionMetadata" not in payload
+
+
+def test_merge_mcp_protocol_meta_does_not_mutate_source_meta() -> None:
+    """Normalizing the deprecated key must not rewrite the caller's _meta payload."""
+    meta = {"ui": {"visibility": ["app"]}, LEGACY_RESOURCE_URI_META_KEY: "ui://widgets/legacy"}
+    payload = {"_meta": meta}
+
+    merge_mcp_protocol_meta(payload)
+
+    assert meta["ui"] == {"visibility": ["app"]}
+    assert payload["extensionMetadata"][MCP_UI_EXTENSION]["resourceUri"] == "ui://widgets/legacy"
 
 
 @pytest.mark.parametrize(
