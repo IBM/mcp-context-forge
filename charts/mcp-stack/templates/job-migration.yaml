@@ -15,6 +15,7 @@ spec:
   # Job configuration
   backoffLimit: {{ .Values.migration.backoffLimit }}
   activeDeadlineSeconds: {{ .Values.migration.activeDeadlineSeconds }}
+  ttlSecondsAfterFinished: {{ .Values.migration.ttlSecondsAfterFinished | default 300 }}
 
   template:
     metadata:
@@ -28,18 +29,23 @@ spec:
       {{- end }}
       automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
       securityContext:
+        {{- if .Values.migration.podSecurityContext }}
+        {{- toYaml .Values.migration.podSecurityContext | nindent 8 }}
+        {{- else }}
         runAsUser: 10001
         runAsGroup: 10001
         fsGroup: 10001
         runAsNonRoot: true
         seccompProfile:
           type: RuntimeDefault
+        {{- end }}
 
       containers:
         - name: migration
           securityContext:
             allowPrivilegeEscalation: false
             runAsNonRoot: true
+            readOnlyRootFilesystem: true
             capabilities:
               drop:
                 - ALL
@@ -127,9 +133,18 @@ spec:
             {{- if .Values.mcpContextForge.extraEnvFrom }}
             {{- toYaml .Values.mcpContextForge.extraEnvFrom | nindent 12 }}
             {{- end }}
+          # Volume mounts for writable directories
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+
           # Resource limits
           resources:
 {{- toYaml .Values.migration.resources | nindent 12 }}
+
+      volumes:
+        - name: tmp
+          emptyDir: {}
 
       {{- if .Values.global.imagePullSecrets }}
       imagePullSecrets:

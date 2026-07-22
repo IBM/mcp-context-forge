@@ -85,8 +85,8 @@ mcpContextForge:
 
   image:
     repository: ghcr.io/ibm/mcp-context-forge
-    tag: latest                 # PRODUCTION: pin a specific immutable tag (e.g. "1.0.0")
-    pullPolicy: IfNotPresent    # use Always only for dev/testing with mutable tags
+    tag: "v1.0.6"                # PRODUCTION: pin a specific immutable tag (e.g. "v1.0.0")
+    pullPolicy: Always          # Always pull to ensure latest security patches
 
   # Service that fronts the gateway
   service:
@@ -165,8 +165,7 @@ mcpContextForge:
     capabilities:
       drop:
         - ALL
-    readOnlyRootFilesystem: false  # Set to true if app doesn't need write access
-
+    readOnlyRootFilesystem: true
 
   # Optional ingress for HTTP traffic
   ingress:
@@ -834,6 +833,7 @@ mcpContextForge:
     API_ALLOW_BASIC_AUTH: "false"          # SECURITY: disabled by default - use JWT instead
     AUTH_REQUIRED: "true"                  # enforce authentication globally (true/false)
     MCP_REQUIRE_AUTH: "true"               # require auth for /mcp endpoints (recommended secure default)
+    #checkov:skip=CKV_SECRET_6:JWT example jwt
     JWT_SECRET_KEY: my-test-key-but-now-longer-than-32-bytes            # secret key used to sign JWT tokens
     JWT_ALGORITHM: HS256                   # signing algorithm for JWT tokens
     JWT_AUDIENCE: mcpgateway-api           # JWT audience claim for token validation
@@ -1043,12 +1043,13 @@ migration:
   restartPolicy: Never                      # Job should not restart on failure
   backoffLimit: 3                           # Retry up to 3 times before giving up
   activeDeadlineSeconds: 600                # Kill job after 10 minutes
+  ttlSecondsAfterFinished: 300              # Clean up completed job after 5 minutes
 
   # Use same image as mcpgateway
   image:
     repository: ghcr.io/ibm/mcp-context-forge
-    tag: latest                             # Should match mcpContextForge.image.tag
-    pullPolicy: IfNotPresent                # use Always only for dev/testing with mutable tags
+    tag: "v1.0.6"                            # Should match mcpContextForge.image.tag
+    pullPolicy: Always                      # Always pull to ensure latest security patches
 
   # Resource limits for the migration job
   resources:
@@ -1073,7 +1074,7 @@ postgres:
   image:
     repository: postgres
     tag: "17"
-    pullPolicy: IfNotPresent
+    pullPolicy: Always
 
   service:
     type: ClusterIP
@@ -1182,7 +1183,7 @@ pgbouncer:
   image:
     repository: edoburu/pgbouncer
     tag: latest
-    pullPolicy: IfNotPresent
+    pullPolicy: Always
 
   service:
     type: ClusterIP
@@ -1242,8 +1243,8 @@ redis:
 
   image:
     repository: redis
-    tag: latest
-    pullPolicy: IfNotPresent
+    tag: "8.0.0"
+    pullPolicy: Always
 
   service:
     type: ClusterIP
@@ -1269,6 +1270,7 @@ redis:
     # Use an existing secret for Redis password (optional)
     existingSecret: ""
     passwordKey: "REDIS_PASSWORD"
+    #checkov:skip=CKV_SECRET_6:Redis example pass
     password: "change-me-redis"      # CHANGE ME in production!
   # Transport recommendation:
   # For production, prefer TLS (for example rediss:// via redis.external.url
@@ -1350,7 +1352,7 @@ pgadmin:
   image:
     repository: dpage/pgadmin4
     tag: latest
-    pullPolicy: IfNotPresent
+    pullPolicy: Always
 
   service:
     type: ClusterIP
@@ -1404,7 +1406,7 @@ redisCommander:
   image:
     repository: rediscommander/redis-commander
     tag: latest
-    pullPolicy: IfNotPresent
+    pullPolicy: Always
 
   service:
     type: ClusterIP
@@ -1450,13 +1452,14 @@ minio:
   image:
     repository: minio/minio
     tag: "RELEASE.2025-09-07T16-13-09Z-cpuv1" # Use a specific stable tag
-    pullPolicy: IfNotPresent
+    pullPolicy: Always
 
   # Credentials for the MinIO root user
   # It's recommended to use existingSecret in production
   existingSecret: ""
   credentials:
     rootUser: minioadmin
+    #checkov:skip=CKV_SECRET_6:Example password
     rootPassword: minioadminchangeme # CHANGE IN PRODUCTION!
 
   service:
@@ -1490,8 +1493,8 @@ mcpFastTimeServer:
   replicaCount: 2
   image:
     repository: ghcr.io/ibm/fast-time-server
-    tag: "latest"
-    pullPolicy: IfNotPresent
+    tag: "0.8.0"
+    pullPolicy: Always
   port: 8080
   # Docker Compose parity flags (optional override)
   command: []
@@ -1559,7 +1562,7 @@ nginxProxy:
   image:
     repository: mcpgateway/nginx-cache
     tag: latest
-    pullPolicy: IfNotPresent
+    pullPolicy: Always
 
   service:
     type: ClusterIP
@@ -1653,7 +1656,7 @@ monitoring:
     image:
       repository: quay.io/prometheuscommunity/postgres-exporter
       tag: latest
-      pullPolicy: IfNotPresent
+      pullPolicy: Always
     service:
       type: ClusterIP
       port: 9187
@@ -1670,7 +1673,7 @@ monitoring:
     image:
       repository: oliver006/redis_exporter
       tag: latest
-      pullPolicy: IfNotPresent
+      pullPolicy: Always
     service:
       type: ClusterIP
       port: 9121
@@ -1687,7 +1690,7 @@ monitoring:
     image:
       repository: prometheuscommunity/pgbouncer-exporter
       tag: latest
-      pullPolicy: IfNotPresent
+      pullPolicy: Always
     service:
       type: ClusterIP
       port: 9127
@@ -1704,7 +1707,7 @@ monitoring:
     image:
       repository: nginx/nginx-prometheus-exporter
       tag: latest
-      pullPolicy: IfNotPresent
+      pullPolicy: Always
     service:
       type: ClusterIP
       port: 9113
@@ -1723,7 +1726,7 @@ monitoring:
     image:
       repository: gcr.io/cadvisor/cadvisor
       tag: latest
-      pullPolicy: IfNotPresent
+      pullPolicy: Always
     service:
       type: ClusterIP
       port: 8080
@@ -1741,7 +1744,7 @@ monitoring:
     image:
       repository: prom/prometheus
       tag: latest
-      pullPolicy: IfNotPresent
+      pullPolicy: Always
     service:
       type: ClusterIP
       port: 9090
@@ -1764,7 +1767,7 @@ monitoring:
     image:
       repository: grafana/loki
       tag: latest
-      pullPolicy: IfNotPresent
+      pullPolicy: Always
     service:
       type: ClusterIP
       port: 3100
@@ -1786,7 +1789,7 @@ monitoring:
     image:
       repository: grafana/tempo
       tag: latest
-      pullPolicy: IfNotPresent
+      pullPolicy: Always
     service:
       type: ClusterIP
       queryPort: 3200
@@ -1810,7 +1813,7 @@ monitoring:
     image:
       repository: grafana/promtail
       tag: latest
-      pullPolicy: IfNotPresent
+      pullPolicy: Always
     resources:
       limits:
         cpu: 500m
@@ -1824,7 +1827,7 @@ monitoring:
     image:
       repository: grafana/grafana
       tag: latest
-      pullPolicy: IfNotPresent
+      pullPolicy: Always
     service:
       type: ClusterIP
       port: 3000
@@ -1854,7 +1857,7 @@ testing:
     image:
       repository: mcpgateway/mcpgateway
       tag: latest
-      pullPolicy: IfNotPresent
+      pullPolicy: Always
     backoffLimit: 2
     activeDeadlineSeconds: 600
     restartPolicy: Never
@@ -1881,7 +1884,7 @@ testing:
     image:
       repository: mcpgateway/fast-test-server
       tag: latest
-      pullPolicy: IfNotPresent
+      pullPolicy: Always
     service:
       type: ClusterIP
       port: 8880
@@ -1929,7 +1932,7 @@ testing:
     image:
       repository: mcpgateway/a2a-echo-agent
       tag: latest
-      pullPolicy: IfNotPresent
+      pullPolicy: Always
     service:
       type: ClusterIP
       port: 9100
@@ -1978,7 +1981,7 @@ testing:
     image:
       repository: locustio/locust
       tag: latest
-      pullPolicy: IfNotPresent
+      pullPolicy: Always
     service:
       type: ClusterIP
       port: 8089
@@ -2033,7 +2036,7 @@ benchmark:
     image:
       repository: mcpgateway/benchmark-server
       tag: latest
-      pullPolicy: IfNotPresent
+      pullPolicy: Always
     service:
       type: ClusterIP
       startPort: 9000
@@ -2068,7 +2071,7 @@ tls:
   image:
     repository: mcpgateway/nginx-cache
     tag: latest
-    pullPolicy: IfNotPresent
+    pullPolicy: Always
 
   service:
     type: ClusterIP
@@ -2137,7 +2140,7 @@ inspector:
   image:
     repository: ghcr.io/modelcontextprotocol/inspector
     tag: latest
-    pullPolicy: IfNotPresent
+    pullPolicy: Always
 
   service:
     type: ClusterIP
