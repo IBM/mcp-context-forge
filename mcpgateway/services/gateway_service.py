@@ -4482,6 +4482,33 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
         return True
 
+    async def _mark_gateway_reachable(self, gateway_id: str, gateway_name: str, gateway_enabled: bool, gateway_reachable: bool, *, reactivation_reason: str = "healthy") -> None:
+        """Reactivate a previously-unreachable gateway and update its last_seen timestamp.
+
+        Extracted to avoid duplicating the same pattern in the success path and the
+        401/403-as-healthy path of ``_check_single_gateway_health``.
+
+        Args:
+            gateway_id: Gateway DB identifier.
+            gateway_name: Human-readable name used in log messages.
+            gateway_enabled: Whether the gateway is currently enabled.
+            gateway_reachable: Whether the gateway is currently marked reachable.
+            reactivation_reason: Short label included in the reactivation log line.
+        """
+        if gateway_enabled and not gateway_reachable:
+            logger.info("Reactivating gateway: %s, as it is %s", gateway_name, reactivation_reason)
+            with cast(Any, SessionLocal)() as status_db:
+                await self.set_gateway_state(status_db, gateway_id, activate=True, reachable=True, only_update_reachable=True)
+
+        try:
+            with fresh_db_session() as update_db:
+                db_gateway = update_db.execute(select(DbGateway).where(DbGateway.id == gateway_id)).scalar_one_or_none()
+                if db_gateway:
+                    db_gateway.last_seen = datetime.now(timezone.utc)
+                    update_db.commit()
+        except Exception as update_error:
+            logger.warning("Failed to update last_seen for gateway %s: %s", gateway_name, update_error)
+
     async def _check_single_gateway_health(self, gateway: DbGateway, user_email: Optional[str] = None) -> None:
         """Check health of a single gateway.
 
@@ -4612,6 +4639,11 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
                         if grant_type == "authorization_code":
                             # For Authorization Code flow, try to get stored tokens
+                            # Health checks verify service reachability, not token ownership.
+                            # Missing tokens are expected for authorization_code gateways where
+                            # the platform admin has not authorized. We skip authentication
+                            # and proceed with an unauthenticated probe. 401/403 responses
+                            # are treated as "gateway reachable" (handled below in exception logic).
                             try:
                                 # First-Party
                                 from mcpgateway.services.token_storage_service import TokenStorageService  # pylint: disable=import-outside-toplevel
@@ -4620,31 +4652,18 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                                 with fresh_db_session() as token_db:
                                     token_storage = TokenStorageService(token_db)
 
-                                    # Get user-specific OAuth token
-                                    if not user_email:
-                                        if span:
-                                            set_span_attribute(span, "health.status", "unhealthy")
-                                            set_span_error(span, "User email required for OAuth token")
-                                        await self._handle_gateway_failure(gateway)
-                                        return
-
-                                    access_token = await token_storage.get_user_token(gateway_id, user_email)
-
-                                if access_token:
-                                    headers["Authorization"] = f"Bearer {access_token}"
-                                else:
-                                    if span:
-                                        set_span_attribute(span, "health.status", "unhealthy")
-                                        set_span_error(span, "No valid OAuth token for user")
-                                    await self._handle_gateway_failure(gateway)
-                                    return
+                                    # Get user-specific OAuth token (if available)
+                                    if user_email:
+                                        access_token = await token_storage.get_user_token(gateway_id, user_email)
+                                        if access_token:
+                                            headers["Authorization"] = f"Bearer {access_token}"
+                                            logger.debug("Using stored OAuth token for health check of gateway %s", gateway_name)
+                                        else:
+                                            logger.debug("No OAuth token available for user %s on gateway %s, proceeding with unauthenticated health check", user_email, gateway_name)
+                                    else:
+                                        logger.debug("No user email provided for authorization_code gateway %s, proceeding with unauthenticated health check", gateway_name)
                             except Exception as e:
-                                logger.error("Failed to obtain stored OAuth token for gateway %s: %s", gateway_name, e)
-                                if span:
-                                    set_span_attribute(span, "health.status", "unhealthy")
-                                    set_span_error(span, "Failed to obtain stored OAuth token")
-                                await self._handle_gateway_failure(gateway)
-                                return
+                                logger.warning("Failed to obtain stored OAuth token for gateway %s, proceeding with unauthenticated health check: %s", gateway_name, e)
                         elif grant_type == "token-exchange":
                             # Token-exchange (RFC 8693) requires an inbound end-user JWT as the
                             # subject token. A periodic health check has no associated user
@@ -4702,21 +4721,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                             async with ClientSession(read_stream, write_stream) as session:
                                 response = await session.initialize()
 
-                    # Reactivate gateway if it was previously inactive and health check passed now
-                    if gateway_enabled and not gateway_reachable:
-                        logger.info("Reactivating gateway: %s, as it is healthy now", gateway_name)
-                        with cast(Any, SessionLocal)() as status_db:
-                            await self.set_gateway_state(status_db, gateway_id, activate=True, reachable=True, only_update_reachable=True)
-
-                    # Update last_seen with fresh session (gateway object is detached)
-                    try:
-                        with fresh_db_session() as update_db:
-                            db_gateway = update_db.execute(select(DbGateway).where(DbGateway.id == gateway_id)).scalar_one_or_none()
-                            if db_gateway:
-                                db_gateway.last_seen = datetime.now(timezone.utc)
-                                update_db.commit()
-                    except Exception as update_error:
-                        logger.warning("Failed to update last_seen for gateway %s: %s", gateway_name, update_error)
+                    # Reactivate / update last_seen (success path)
+                    await self._mark_gateway_reachable(gateway_id, gateway_name, gateway_enabled, gateway_reachable)
 
                     # Auto-refresh tools/resources/prompts if enabled
                     should_auto_refresh = False
@@ -4780,13 +4786,63 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         set_span_attribute(span, "success", True)
 
                 except Exception as e:
-                    if span:
-                        set_span_attribute(span, "health.status", "unhealthy")
-                        set_span_error(span, e)
+                    # Distinguish between auth failures (gateway reachable but unauthorized)
+                    # and genuine connectivity failures (gateway unreachable).
+                    #
+                    # For SSE transport, httpx raises httpx.HTTPStatusError directly and
+                    # e.response.status_code is accessible.
+                    #
+                    # For streamablehttp transport, the MCP SDK spawns the POST inside an
+                    # anyio TaskGroup, so Python 3.11+ wraps the original exception in a
+                    # BaseExceptionGroup before it surfaces here. Unwrap one level to
+                    # recover the original httpx.HTTPStatusError before inspecting it.
+                    is_auth_failure = False
+                    is_authorization_code = gateway_oauth_config is not None and gateway_oauth_config.get("grant_type") == "authorization_code"
 
-                    # Set the logger as debug as this check happens for each interval
-                    logger.debug("Health check failed for gateway %s: %s", gateway_name, e)
-                    await self._handle_gateway_failure(gateway)
+                    # Unwrap BaseExceptionGroup to find the root httpx error
+                    exc_to_inspect: BaseException = e
+                    if isinstance(e, BaseExceptionGroup) and e.exceptions:  # pylint: disable=no-member
+                        exc_to_inspect = e.exceptions[0]  # pylint: disable=no-member
+
+                    if is_authorization_code and hasattr(exc_to_inspect, "response") and hasattr(exc_to_inspect.response, "status_code"):  # pylint: disable=no-member
+                        status_code = exc_to_inspect.response.status_code  # pylint: disable=no-member
+                        if status_code in (401, 403):
+                            is_auth_failure = True
+                            logger.debug(
+                                "Health check received %s for gateway %s - gateway is reachable but lacks valid credentials (expected for authorization_code without user tokens)",
+                                status_code,
+                                gateway_name,
+                            )
+                            if span:
+                                set_span_attribute(span, "health.status", "healthy")
+                                set_span_attribute(span, "http.status_code", status_code)
+                                set_span_attribute(span, "auth.status", "unauthorized")
+                                set_span_attribute(span, "success", True)
+
+                            # Reactivate / update last_seen (auth-challenge path)
+                            await self._mark_gateway_reachable(
+                                gateway_id,
+                                gateway_name,
+                                gateway_enabled,
+                                gateway_reachable,
+                                reactivation_reason=f"reachable (received {status_code} auth challenge)",
+                            )
+
+                            # Auth-failure handling complete — return without marking the
+                            # gateway unhealthy.  Explicit return here prevents any future
+                            # code added below this block from running against an
+                            # unauthenticated / token-less session.
+                            return
+
+                    if not is_auth_failure:
+                        # Genuine connectivity failure - mark gateway unhealthy
+                        if span:
+                            set_span_attribute(span, "health.status", "unhealthy")
+                            set_span_error(span, e)
+
+                        # Set the logger as debug as this check happens for each interval
+                        logger.debug("Health check failed for gateway %s: %s", gateway_name, e)
+                        await self._handle_gateway_failure(gateway)
 
     async def aggregate_capabilities(self, db: Session) -> Dict[str, Any]:
         """

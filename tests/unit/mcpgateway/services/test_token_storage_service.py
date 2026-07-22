@@ -540,34 +540,62 @@ async def test_refresh_derived_gateway_url_normalizes_to_empty_logs_warning(serv
 
 
 @pytest.mark.asyncio
-async def test_refresh_client_secret_decrypt_fails_uses_plaintext(service, mock_db):
-    gw = MagicMock(oauth_config={"token_url": "https://token", "client_id": "cid", "client_secret": "maybe_plain"}, url="https://gw.com")  # pragma: allowlist secret
+async def test_refresh_client_secret_decrypt_fails_preserves_token_and_returns_none(service, mock_db):
+    """Decryption failure is fail-closed; token is preserved for retry.
+
+    decrypt_secret_async() is the idempotent wrapper — on wrong-key or corrupted-ciphertext
+    it returns None (never raises). The fix checks for None and raises OAuthError, which is
+    caught by the OAuthError handler: token preserved, None returned.  The IdP never receives
+    a None or raw ciphertext as a client credential.
+    """
+    gw = MagicMock(
+        oauth_config={"token_url": "https://token", "client_id": "cid", "client_secret": "v2:encrypted_data"},  # pragma: allowlist secret
+        url="https://gw.com",
+        ca_certificate=None,
+        client_cert=None,
+        client_key=None,
+        visibility="public",
+        owner_email=None,
+    )
     mock_db.query.return_value.filter.return_value.first.return_value = gw
 
-    call_count = 0
-    original_decrypt = service.encryption.decrypt_secret_async
+    # Mimic real behaviour: refresh token decrypts OK; client_secret decryption returns None
+    # (wrong AUTH_ENCRYPTION_SECRET — the real method never raises, it returns None).
+    service.encryption.decrypt_secret_async = AsyncMock(
+        side_effect=["decrypted_refresh_token", None]
+    )
 
-    async def selective_decrypt(value):
-        nonlocal call_count
-        call_count += 1
-        if call_count == 1:
-            return "decrypted_refresh"
-        raise Exception("decrypt failed for client_secret")
+    record = _make_token_record()
 
-    service.encryption.decrypt_secret_async = AsyncMock(side_effect=selective_decrypt)
-    mock_oauth_manager = MagicMock()
-    mock_oauth_manager.refresh_token = AsyncMock(return_value={"access_token": "new_access", "expires_in": 3600})
-    with patch("mcpgateway.services.oauth_manager.OAuthManager", return_value=mock_oauth_manager):
-        result = await service._refresh_access_token(_make_token_record())
-    assert result == "new_access"
+    result = await service._refresh_access_token(record)
+
+    # OAuthError raised on None → caught by OAuthError handler → token kept, None returned.
+    mock_db.delete.assert_not_called()
+    assert result is None
 
 
 @pytest.mark.asyncio
-async def test_refresh_exception_invalid_clears_tokens(service, mock_db):
-    gw = MagicMock(oauth_config={"token_url": "https://token", "client_id": "cid"}, url="https://gw.com")
+async def test_refresh_exception_invalid_grant_clears_tokens(service, mock_db):
+    """Fix #1: Only OAuthInvalidGrantError deletes tokens, not generic OAuthError messages.
+
+    OAuthManager now raises the typed OAuthInvalidGrantError subclass when the provider
+    explicitly returns {"error": "invalid_grant"}.  Substring-matching on the error
+    message string is no longer used — the exception type is the discriminator.
+    """
+    gw = MagicMock(
+        oauth_config={"token_url": "https://token", "client_id": "cid"},
+        url="https://gw.com",
+        ca_certificate=None,
+        client_cert=None,
+        client_key=None,
+        visibility="public",
+        owner_email=None,
+    )
     mock_db.query.return_value.filter.return_value.first.return_value = gw
     mock_oauth_manager = MagicMock()
-    mock_oauth_manager.refresh_token = AsyncMock(side_effect=Exception("Token is invalid"))
+    # OAuthInvalidGrantError is the typed exception raised by OAuthManager on invalid_grant
+    from mcpgateway.services.oauth_manager import OAuthInvalidGrantError
+    mock_oauth_manager.refresh_token = AsyncMock(side_effect=OAuthInvalidGrantError("Refresh token permanently invalid (invalid_grant): {'error': 'invalid_grant'}"))
     record = _make_token_record()
     with patch("mcpgateway.services.oauth_manager.OAuthManager", return_value=mock_oauth_manager):
         result = await service._refresh_access_token(record)
@@ -576,16 +604,19 @@ async def test_refresh_exception_invalid_clears_tokens(service, mock_db):
 
 
 @pytest.mark.asyncio
-async def test_refresh_exception_expired_clears_tokens(service, mock_db):
+async def test_refresh_exception_expired_preserves_tokens(service, mock_db):
+    """Bug fix #5237.2c: Generic 'expired' errors no longer delete tokens."""
     gw = MagicMock(oauth_config={"token_url": "https://token", "client_id": "cid"}, url="https://gw.com")
     mock_db.query.return_value.filter.return_value.first.return_value = gw
     mock_oauth_manager = MagicMock()
+    # Non-OAuthError or OAuthError without "invalid_grant" should preserve token
     mock_oauth_manager.refresh_token = AsyncMock(side_effect=Exception("Token has expired"))
     record = _make_token_record()
     with patch("mcpgateway.services.oauth_manager.OAuthManager", return_value=mock_oauth_manager):
         result = await service._refresh_access_token(record)
     assert result is None
-    mock_db.delete.assert_called_once()
+    # Token should NOT be deleted
+    mock_db.delete.assert_not_called()
 
 
 @pytest.mark.asyncio
