@@ -7469,6 +7469,8 @@ detect-secrets-scan: uv                      ## 🔍  detect-secrets scan for se
 		--update .secrets.baseline \
 		--use-all-plugins \
 		--exclude-files $(DETECT_SECRETS_FILES_EXCLUDE)
+	@echo "📌 Pinning generated_at to avoid spurious merge conflicts..."
+	@python3 -c "import json; p='.secrets.baseline'; d=json.load(open(p)); d['generated_at']='1970-01-01T00:00:00Z'; json.dump(d, open(p, 'w'), indent=2); open(p, 'a').write('\n')"
 	@echo "📊 detect-secrets findings report:"
 	@$(UV_BIN) tool run --from '$(DETECT_SECRETS_SPEC)' detect-secrets audit --report .secrets.baseline
 
