@@ -107,6 +107,34 @@ See [Configuration Reference](manage/configuration.md) for details.
 See [Architecture Overview](architecture/index.md).
 ```
 
+## Architecture Decision Records (ADRs)
+
+ADRs live in `docs/architecture/adr/` and follow the [adr.github.io](https://adr.github.io/) format (`# ADR-NNN: Title`, Status/Date/Deciders front material, then Context / Decision / Consequences). Each ADR captures a decision as it stood at a point in time — treat them as a historical record, not living documentation.
+
+### Authoring a New ADR
+
+1. Create `docs/architecture/adr/NNN-short-title.md` with the next sequential number (check `adr/index.md` for the current maximum).
+2. Add a row to the table in `docs/architecture/adr/index.md` (chronological order, per the footer note there).
+3. Add a nav entry in `mkdocs.yml` (see *Navigation* below).
+4. Statuses in use: `Draft`, `Proposed`, `Accepted`, `Implemented`, `Deprecated`, `Superseded`.
+
+### Immutability of Accepted ADRs
+
+An **Accepted** (or Implemented) ADR is frozen. Do not rewrite its Context, Decision, or Consequences to reflect later changes — doing so erases the record of why the decision was made. The only permitted edits to an accepted ADR are:
+
+- **Front material updates** — most commonly the Status line (e.g. `Accepted` → `Superseded by ADR-NNN`).
+- **Footnotes or pointer notes** — a short note (typically a `!!! warning` admonition at the top, as in ADR-038) recording where the ADR has been referenced, altered, or superseded. Keep these additive; never edit the original body text.
+
+### Changing or Reversing a Decision
+
+When a decision recorded in an ADR no longer holds:
+
+1. **Write a new ADR** capturing the new decision, its context, and why the old one no longer applies. Reference the superseded ADR by number.
+2. **Update the old ADR's status** to `Superseded by ADR-NNN` and add a pointer note at the top directing readers to the new ADR.
+3. **Update the status in `adr/index.md`** for both records.
+
+Never silently modify or delete an ADR whose decision has been abandoned — the trail from old decision to new is part of the project's institutional memory.
+
 ## Navigation
 
 Navigation is configured in `mkdocs.yml`. When adding new pages:
