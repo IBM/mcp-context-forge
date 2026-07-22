@@ -27,11 +27,11 @@ tests:
           path: spec.replicas
           value: 3
 
-  - it: uses default image repository and tag
+  - it: uses correct image repository and semver tag
     asserts:
-      - equal:
+      - matchRegex:
           path: spec.template.spec.containers[0].image
-          value: "ghcr.io/ibm/mcp-context-forge:latest"
+          pattern: "ghcr\\.io/ibm/mcp-context-forge:v?\\d+\\.\\d+\\.\\d+"
 
   - it: container port matches containerPort value
     asserts:

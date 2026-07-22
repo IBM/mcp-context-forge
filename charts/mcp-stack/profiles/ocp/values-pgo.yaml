@@ -27,6 +27,21 @@ global:
 mcpContextForge:
   replicaCount: 3                          # 3 replicas × 8 CPU = 24 CPU (matches benchmark)
 
+  # OpenShift SCC compatibility — let OCP assign UIDs from its allowed range
+  # instead of using the image default (10001) which is outside OCP's range
+  podSecurityContext:
+    runAsUser: null
+    runAsGroup: null
+    fsGroup: null
+    runAsNonRoot: true
+  containerSecurityContext:
+    runAsUser: null
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+    seccompProfile: null
+
   hpa:
     enabled: false                           # disabled — manual scaling for benchmarking
     minReplicas: 3
@@ -224,6 +239,8 @@ mcpContextForge:
     # For tighter control, use SSRF_ALLOWED_NETWORKS to restrict to the cluster CIDR.
     SSRF_ALLOW_PRIVATE_NETWORKS: "true"
     LOG_LEVEL: INFO
+    # Raise validation rate limit to avoid 429s during load test setup and registration jobs
+    VALIDATION_MAX_REQUESTS_PER_MINUTE: "10000"
     # --- Gunicorn tuning (match VM benchmark) ---
     GUNICORN_WORKERS: "8"                  # 8 workers per pod × 3 pods = 24 total (matches VM)
     GUNICORN_MAX_REQUESTS: "1000000"       # recycle after 1M requests (VM: 1M)
@@ -276,6 +293,9 @@ migration:
   hookPhase: "pre-install,pre-upgrade"
   hostKey: "host"
   portKey: "port"
+  # OpenShift SCC: let OCP assign UID from its allowed range (1000740000-1000749999)
+  podSecurityContext:
+    runAsNonRoot: true
 
 # --- Postgres ---
 # Using CrunchyData PGO operator — internal Postgres and PgBouncer disabled
