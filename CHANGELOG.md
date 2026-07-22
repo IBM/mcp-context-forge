@@ -8,15 +8,158 @@
 
 ## [Unreleased]
 
-### Fixed
 
-- **Missing Server and Gateway Deletes** - `DELETE /servers/{id}` and `DELETE /gateways/{id}` now return `404 Not Found` when the target no longer exists, instead of incorrectly returning `403 Forbidden`.
-- **Custom Auth Headers on Tools** ([#5314](https://github.com/IBM/mcp-context-forge/pull/5314), [#5201](https://github.com/IBM/mcp-context-forge/issues/5201)) - `POST /tools` and `PUT /tools/{tool_id}` now persist the `auth_headers` array instead of silently storing `auth_value: null`. Invalid header keys/values are rejected with a 422 rather than an unhandled 500.
+## [1.0.6] - 2026-07-22 - OAuth Token Exchange, Vault Credentials, MCP Apps, Dataplane Publishing, and Security Hardening
+
+### Overview
+
+Release 1.0.6 consolidates **61 PRs** focused on **OAuth RFC 8693 token exchange**, **HashiCorp Vault per-user credential resolution**, **MCP Apps support**, **dataplane resource and tool publishing**, **SSRF/TLS security hardening**, **plugin observability**, and **CI/DevOps improvements**:
+
+- **Security** - SSRF/TLS validation in gRPC endpoint, SSRF validation for all OAuth config URLs, CSP modernisation, output neutralisation (CWE-117), global SSRF flag respected in gateway test endpoint, output-length guard resource bypass fix, and stricter auth-header key validation.
+- **OAuth & Auth** - RFC 8693 On-Behalf-Of token exchange for OAuth gateways, unified email extraction across all resource operations, and Keycloak test-user collision fix.
+- **Vault** - Per-user credential resolution from HashiCorp Vault for all auth types.
+- **MCP Apps** - New MCP Apps support added to the platform.
+- **Dataplane** - Publish original tool names, streamable-HTTP-only backends, resource URIs and capabilities, per-worker lock IDs with safer key TTL.
+- **Plugins** - CPEX plugin trace context and metrics (G0+G1), metrics from 5 remaining bundled cpex-* plugins, single-worker initialisation across instances, fork-poisoned FileLock rebuild.
+- **API & Fixes** - Bootstrap race condition fix, resource proxy templated reads, savepoint for personal-team cascade delete, 404 for missing server/gateway deletes, team invitation duplicate membership check.
+- **CI / DevOps** - PR-scoped pyright workflow, s390x build flag, remove Slack direct-merge notification, remove Renovate in favour of Dependabot, Redis maxclients increase.
+
+### Breaking Changes
+
+- **Stricter `auth_headers` Key Validation (Gateways, Tools, A2A Agents)** ([#5314](https://github.com/IBM/mcp-context-forge/pull/5314)) - Header-key validation is now shared across all create/update schemas and the admin form. Keys with embedded whitespace (e.g. `X Api Key`) were previously accepted and stored as invalid HTTP header names that failed at invocation time; they are now rejected with a 422 at config time, and surrounding whitespace is trimmed before storage. Gateway or A2A configs relying on the old behaviour will need their header keys corrected on the next update.
+
+  | | Before 1.0.6 | From 1.0.6 |
+  |---|---|---|
+  | Header key `X Api Key` | Accepted, stored, failed at invocation | Rejected with HTTP 422 at config time |
+  | Header key ` Authorization ` | Accepted with leading/trailing spaces | Stored as `Authorization` (trimmed) |
+
+### Added
+
+#### **API & Platform**
+
+- **POST /v1/mcp-servers/test Endpoint** ([#5443](https://github.com/IBM/mcp-context-forge/pull/5443)) - Added POST endpoint for connection testing.
+- **GET /v1/resources/test/{resource_uri} Endpoint** ([#5455](https://github.com/IBM/mcp-context-forge/pull/5455)) - Added public resource test endpoint.
+- **MCP Apps Support** ([#5079](https://github.com/IBM/mcp-context-forge/pull/5079)) - Added MCP Apps support to the platform.
+
+#### **OAuth & Auth**
+
+- **RFC 8693 Token Exchange** ([#5224](https://github.com/IBM/mcp-context-forge/pull/5224)) - Added On-Behalf-Of token exchange for OAuth gateways per RFC 8693.
+
+#### **Vault**
+
+- **Per-User Vault Credential Resolution** ([#5651](https://github.com/IBM/mcp-context-forge/pull/5651)) - Resolve per-user credentials from HashiCorp Vault for all auth types.
+
+#### **Plugins & Observability**
+
+- **CPEX Plugin Trace Context and Metrics** ([#5470](https://github.com/IBM/mcp-context-forge/pull/5470)) - Build and consume CPEX plugin trace context and metrics (G0+G1).
+- **Remaining CPEX Plugin Metrics** ([#5611](https://github.com/IBM/mcp-context-forge/pull/5611)) - Consume metrics from 5 remaining bundled cpex-* plugins.
+
+#### **Dataplane**
+
+- **Publish Resource URIs and Capabilities** ([#5588](https://github.com/IBM/mcp-context-forge/pull/5588)) - Publish dataplane resource URIs and capabilities.
 
 ### Changed
 
 - **MCP Tool Names and Virtual-Server Aliases** ([#5553](https://github.com/IBM/mcp-context-forge/pull/5553)) - Virtual servers now expose custom tool names and resolve them to upstream names. Tool names follow the MCP 2025-11-25 character set and 128-character limit, with full-string validation that also rejects trailing newlines. **Breaking:** slash-delimited tool names are no longer accepted; rename them to use letters, numbers, periods, underscores, or hyphens.
-- **Stricter `authheaders` Key Validation (Gateways, Tools, A2A Agents)** ([#5314](https://github.com/IBM/mcp-context-forge/pull/5314)) - Header-key validation is now shared across all create/update schemas and the admin form. Keys with embedded whitespace (e.g. `X Api Key`) were previously accepted and stored as invalid HTTP header names that failed at invocation time; they are now rejected with a 422 at config time, and surrounding whitespace is trimmed before storage. Gateway or A2A configs relying on the old behavior will need their header keys corrected on the next update.
+
+#### **API**
+
+- **Custom Auth Headers on Tools** ([#5314](https://github.com/IBM/mcp-context-forge/pull/5314)) - `POST /tools` and `PUT /tools/{tool_id}` now correctly persist the `auth_headers` array instead of silently storing `auth_value: null`. Invalid header keys/values are rejected with a 422 rather than an unhandled 500.
+
+#### **Build & Packaging**
+
+- **JS Libraries Packaged** ([#5481](https://github.com/IBM/mcp-context-forge/pull/5481)) - All JS libraries are now packaged into the bundle.
+- **Move Rust and Go MCP Servers** ([#5425](https://github.com/IBM/mcp-context-forge/pull/5425)) - Moved Rust and Go MCP servers to the `contextforge-examples` repository.
+- **Python Dependencies Update** ([#5605](https://github.com/IBM/mcp-context-forge/pull/5605)) - Updated Python dependencies.
+- **Secrets Detection Version Bump** ([#5635](https://github.com/IBM/mcp-context-forge/pull/5635)) - Bumped SecretsDetection and updated field filter config.
+
+### Fixed
+
+#### **Security**
+
+- **gRPC SSRF/TLS Validation** ([#5410](https://github.com/IBM/mcp-context-forge/pull/5410)) - Enforced SSRF and TLS validation in `GrpcEndpoint.start()`.
+- **OAuth Config URL SSRF Validation** ([#5601](https://github.com/IBM/mcp-context-forge/pull/5601)) - Validated all `oauth_config` URLs to prevent SSRF during gateway registration.
+- **Global SSRF Flag in Gateway Test** ([#5023](https://github.com/IBM/mcp-context-forge/pull/5023)) - Respected `ssrf_protection_enabled` global flag in the gateway test endpoint.
+- **Output Length Guard Resource Bypass** ([#5619](https://github.com/IBM/mcp-context-forge/pull/5619)) - Fixed output length guard bypass via resource path.
+- **CWE-117 Log Output Neutralisation** ([#5441](https://github.com/IBM/mcp-context-forge/pull/5441)) - Fixed improper output neutralisation in log statements.
+- **CSP Modernisation** ([#5111](https://github.com/IBM/mcp-context-forge/pull/5111)) - Modernised Content Security Policy configuration.
+
+#### **Auth**
+
+- **Unified Email Extraction** ([#4821](https://github.com/IBM/mcp-context-forge/pull/4821)) - Unified email extraction across all resource operations.
+- **Keycloak Test User Collision** ([#5647](https://github.com/IBM/mcp-context-forge/pull/5647)) - Renamed Keycloak test user to avoid email collision with default admin.
+
+#### **API & Database**
+
+- **Missing Server and Gateway Deletes** ([#5672](https://github.com/IBM/mcp-context-forge/pull/5672)) - `DELETE /servers/{id}` and `DELETE /gateways/{id}` now return `404 Not Found` instead of `403 Forbidden` when the target does not exist.
+- **Personal Team Cascade Delete** ([#5659](https://github.com/IBM/mcp-context-forge/pull/5659)) - Used savepoint for personal team cascade delete and reordered FK deletes.
+- **Team Invitation Duplicate Membership** ([#5543](https://github.com/IBM/mcp-context-forge/pull/5543)) - Check for existing team membership before accepting an invitation.
+- **Bootstrap Resource Assignments Race** ([#5003](https://github.com/IBM/mcp-context-forge/pull/5003)) - Fixed race condition in `bootstrap_resource_assignments` on concurrent pod restart.
+- **Resource Name Conflict Message** ([#5158](https://github.com/IBM/mcp-context-forge/pull/5158)) - Show meaningful conflict message for duplicate resource names.
+- **Resource Name Uniqueness Constraint Revert** ([#5664](https://github.com/IBM/mcp-context-forge/pull/5664)) - Reverted resource name uniqueness constraint introduced in #5158.
+
+#### **Dataplane & Transport**
+
+- **Publish Original Tool Names** ([#5510](https://github.com/IBM/mcp-context-forge/pull/5510)) - Published `original_name` in `allowed_tool_names` from the dataplane publisher.
+- **Streamable-HTTP Only Backends** ([#5519](https://github.com/IBM/mcp-context-forge/pull/5519)) - Dataplane publisher now publishes streamable-HTTP backends only.
+- **Per-Worker Lock ID and Key TTL** ([#5517](https://github.com/IBM/mcp-context-forge/pull/5517)) - Fixed per-worker lock ID and made key TTL safer.
+- **Templated Resource Proxy Reads** ([#5569](https://github.com/IBM/mcp-context-forge/pull/5569)) - Fixed templated resource proxy reads.
+- **Content-Length Headers Causing Compression Errors** ([#5663](https://github.com/IBM/mcp-context-forge/pull/5663)) - Removed manual Content-Length headers that caused compression errors.
+
+#### **A2A**
+
+- **Safe Headers to Tool Pre-Invoke Hooks** ([#4925](https://github.com/IBM/mcp-context-forge/pull/4925)) - Pass safe headers to tool pre-invoke hooks in A2A.
+
+#### **Plugins**
+
+- **Single-Worker Plugin Initialisation** ([#5406](https://github.com/IBM/mcp-context-forge/pull/5406), [#5430](https://github.com/IBM/mcp-context-forge/pull/5430)) - Restricted non-hook plugin initialisation to a single worker across instances.
+- **Fork-Poisoned FileLock Rebuild** ([#5654](https://github.com/IBM/mcp-context-forge/pull/5654)) - Rebuilt fork-poisoned FileLock and added back-off on health-check errors.
+
+#### **Build & Infrastructure**
+
+- **Redis maxclients Increase** ([#4724](https://github.com/IBM/mcp-context-forge/pull/4724)) - Raised Redis `maxclients` from 10000 to 15000 and reduced max connections.
+- **Containerfile Premature Exit** ([#5596](https://github.com/IBM/mcp-context-forge/pull/5596)) - Removed premature exit in Containerfile and restored Go linting targets.
+- **CI a2a-echo-agent Docker Scan** ([#5590](https://github.com/IBM/mcp-context-forge/pull/5590)) - Removed deleted a2a-echo-agent from docker-scan workflow and fixed Makefile actionlint quote.
+- **ppc64le and s390x CSS Builds** ([#5620](https://github.com/IBM/mcp-context-forge/pull/5620)) - Fixed ppc64le and s390x CSS builds.
+
+### Documentation
+
+- **Generic MCP Extension Framework ADR** ([#5007](https://github.com/IBM/mcp-context-forge/pull/5007)) - Added ADR for the generic MCP extension framework.
+
+### Known Issues
+
+- **🔒 CSRF Validation Failure Saving LLM Provider/Model** ([#5739](https://github.com/IBM/mcp-context-forge/issues/5739)) – Saving an LLM Provider or Model in the Admin UI fails with `403 CSRF validation failed`. Recurrence of the class of failure documented in [#5151](https://github.com/IBM/mcp-context-forge/issues/5151).
+  - **Workaround:** Copy the `CSRF_EXEMPT_PATHS` value from `.env.example` into your `.env` and restart the application.
+- **💬 LLM Chat Sessions Are In-Memory Only** ([#5740](https://github.com/IBM/mcp-context-forge/issues/5740)) – `redis_client` is hardcoded to `None`, so chat sessions are not shared across workers and are lost on process restart. Under multi-worker gunicorn (the default for `make serve`), sessions will drop intermittently with no diagnostic message.
+  - **Workaround:** Run a single worker (`--workers 1`) if session continuity is required.
+- **🔗 LLM Chat Cannot Connect to a Same-Gateway Virtual Server** ([#5215](https://github.com/IBM/mcp-context-forge/issues/5215)) – The forwarded session token is rejected with a 401 by `/servers/{id}/mcp` when LLM Chat targets a Virtual Server on the same gateway instance.
+- **🧪 Tools Table Row Action Button Not Found** ([#5526](https://github.com/IBM/mcp-context-forge/issues/5526)) – Row action button is not found for the JSON-schema test tool in the Tools table.
+
+### Chores
+
+| PR | Description | Author |
+|----|-------------|--------|
+| [#5545](https://github.com/IBM/mcp-context-forge/pull/5545) | ci: temporarily disable s390x builds on push to main | madhu-mohan-jaishankar |
+| [#5513](https://github.com/IBM/mcp-context-forge/pull/5513) | ci(plugins): replace fast-time-server source build with pre-built Docker image | madhu-mohan-jaishankar |
+| [#5503](https://github.com/IBM/mcp-context-forge/pull/5503) | ci: remove direct-merge Slack notification | madhu-mohan-jaishankar |
+| [#4518](https://github.com/IBM/mcp-context-forge/pull/4518) | Improve test coverage on rbac admin delete tool | cafalchio |
+| [#5515](https://github.com/IBM/mcp-context-forge/pull/5515) | test: wait for per-server route before compliance gateway_virtual runs | lucarlig |
+| [#5523](https://github.com/IBM/mcp-context-forge/pull/5523) | test: align admin private-server listing test with owner matching | lucarlig |
+| [#5482](https://github.com/IBM/mcp-context-forge/pull/5482) | test: retry live RBAC per-server access | lucarlig |
+| [#5603](https://github.com/IBM/mcp-context-forge/pull/5603) | test(protocol): remove xfail for GAP-001/GAP-002 — log and progress notifications now relayed | jonpspri |
+| [#5622](https://github.com/IBM/mcp-context-forge/pull/5622) | Update secrets and reset .secrets.baseline | brian-hussey |
+| [#5623](https://github.com/IBM/mcp-context-forge/pull/5623) | FIX(CHORE): Remove renovate json file and update security.md to include dependabot | claudia-gray |
+| [#5625](https://github.com/IBM/mcp-context-forge/pull/5625) | Fix playwright tests | gcgoncalves |
+| [#5653](https://github.com/IBM/mcp-context-forge/pull/5653) | test: Fix pw test | gcgoncalves |
+| [#5646](https://github.com/IBM/mcp-context-forge/pull/5646) | chore(templates): remove CSP-violating airgapped Tailwind JS branch | prakhar-singh1928 |
+| [#5576](https://github.com/IBM/mcp-context-forge/pull/5576) | chore: update-release documentation | prakhar-singh1928 |
+| [#5634](https://github.com/IBM/mcp-context-forge/pull/5634) | ci(pyright): add PR-scoped type check workflow and pyright-pr make target | madhu-mohan-jaishankar |
+| [#5637](https://github.com/IBM/mcp-context-forge/pull/5637) | Update fix_file_headers to have generic default AUTHOR and defined COPYRIGHT | brian-hussey |
+| [#5669](https://github.com/IBM/mcp-context-forge/pull/5669) | Update python call in fix_file_headers pre-commit to use uv run | brian-hussey |
+| [#5703](https://github.com/IBM/mcp-context-forge/pull/5703) | Disable pyright (unintended consequence requiring full compliance) | brian-hussey |
+| [#5605](https://github.com/IBM/mcp-context-forge/pull/5605) | chore: updated python dependencies | prakhar-singh1928 |
+| [#5635](https://github.com/IBM/mcp-context-forge/pull/5635) | Version bump SecretsDetection and update field filter config | gandhipratik203 |
+| [#5710](https://github.com/IBM/mcp-context-forge/pull/5710) | Update roadmap for 1.0.6 | jonpspri |
 
 ## [1.0.5] - 2026-07-07 - API Versioning, Auth Hardening, A2A Compatibility, and Build Consolidation
 

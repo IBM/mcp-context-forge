@@ -67,7 +67,7 @@ compliance-reference-server = { path = "mcp-servers/python/compliance_reference_
 # ----------------------------------------------------------------
 [project]
 name = "mcp-contextforge-gateway"
-version = "1.0.5"
+version = "1.0.6"
 description = "ContextForge AI Gateway — an AI gateway, registry, and proxy for MCP, A2A, and REST/gRPC APIs. Exposes a unified control plane with centralized governance, discovery, and observability. Optimizes agent and tool calling, and supports plugins."
 keywords = ["MCP","API","gateway","proxy","tools",
   "agents","agentic ai","model context protocol","multi-agent","fastapi",
@@ -327,11 +327,11 @@ grpc = [
 
 # Convenience meta-extras
 all = [
-    "mcp-contextforge-gateway[redis]>=1.0.5",
+    "mcp-contextforge-gateway[redis]>=1.0.6",
 ]
 
 dev-all = [
-    "mcp-contextforge-gateway[redis,dev,plugins]>=1.0.5",
+    "mcp-contextforge-gateway[redis,dev,plugins]>=1.0.6",
 ]
 
 # --------------------------------------------------------------------
@@ -412,6 +412,9 @@ ignore = [
     ".github/**",
     "Makefile",
     "mcpgateway/admin_ui/**",
+    "mcpgateway/static/assets/**",
+    "mcpgateway/static/css/**",
+    "mcpgateway/static/chunk-*.js",
     "mcpgateway/static/bundle-*.js",
 ]
 
