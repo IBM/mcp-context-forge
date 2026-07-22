@@ -878,7 +878,7 @@ async def oauth_callback(
                         try {{
                             const response = await fetch('{safe_root_path}/oauth/fetch-tools/{escape(str(gateway_id), quote=True)}', {{
                                 method: 'POST',
-                                credentials: 'include',  # pragma: allowlist secret
+                                credentials: 'include',
                                 headers: {{
                                     'Accept': 'application/json',
                                     'X-CSRF-Token': {json.dumps(csrf_token)}
