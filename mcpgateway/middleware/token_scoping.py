@@ -747,6 +747,15 @@ class TokenScopingMiddleware:
         if not permissions or "*" in permissions:
             return True  # No restrictions or full access
 
+        # Unified search (/v1/search, normalized to /search) is authenticated-only
+        # at this layer: it spans many entity types, each guarded by its own
+        # @require_permission, and per-entity denials are suppressed downstream by
+        # _safe_entity_search. Requiring a single permission here would wrongly 403
+        # a validly-scoped token (e.g. tools.read-only), so let it through and rely
+        # on the handler's per-entity RBAC + token/team scoping to filter results.
+        if request_path == "/search" or request_path.startswith("/search/"):
+            return True
+
         # Handle admin routes with granular route-group mapping.
         # Unmapped /admin/* paths are denied by default (fail-secure).
         if request_path.startswith("/admin"):

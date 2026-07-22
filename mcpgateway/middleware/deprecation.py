@@ -70,6 +70,7 @@ _LEGACY_PREFIXES: frozenset[str] = frozenset(
         "/tags",
         "/export",
         "/import",
+        "/search",  # unified search router (always mounted)
         # Feature-flagged routers (conditionally mounted)
         "/a2a",  # MCPGATEWAY_A2A_ENABLED
         "/observability",  # OBSERVABILITY_ENABLED
