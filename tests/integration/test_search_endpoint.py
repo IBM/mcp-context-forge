@@ -485,3 +485,21 @@ class TestUnifiedSearchRealDataScoping:
         returned = {team["id"] for team in resp.json()["results"]["teams"]}
         assert ids["team_b"] in returned
         assert ids["team_a"] in returned  # visible via membership -> confirms the token caused the deny
+
+    def test_public_only_token_sees_only_public_tools(self, _real_data_env):
+        """A public-only token (token_teams=[], i.e. no teams claim) sees public entities but not team-private ones.
+
+        This is the degenerate scope not covered by the explicit-team-list tests:
+        an empty team scope must degrade to public/owned visibility only.
+        """
+        app, TestSessionLocal, ids = _real_data_env
+        _inject_identity(app, TestSessionLocal, ids["user_b"], token_teams=[])
+
+        client = TestClient(app, raise_server_exceptions=False)
+        resp = client.get(f"/v1/search?q={SEARCH_TERM}&entity_types=tools", headers={"Authorization": "Bearer x"})
+
+        assert resp.status_code == 200
+        returned = {tool["id"] for tool in resp.json()["results"]["tools"]}
+        assert ids["public"] in returned  # public tool visible
+        assert ids["teama"] not in returned  # team-private hidden under public-only scope
+        assert ids["teamb"] not in returned  # team-private hidden under public-only scope

@@ -18,7 +18,6 @@ Security model:
 """
 
 # Standard
-import logging
 from typing import Any, Optional
 
 # Third-Party
@@ -31,8 +30,6 @@ from mcpgateway.common.query_params import QueryEntityTypes, QueryGatewayIdList,
 from mcpgateway.config import settings
 from mcpgateway.db import get_db
 from mcpgateway.middleware.rbac import get_current_user_with_permissions
-
-logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["Search"])
 
