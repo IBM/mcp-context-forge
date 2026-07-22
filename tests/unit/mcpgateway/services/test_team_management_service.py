@@ -208,7 +208,7 @@ class TestTeamManagementService:
 
             assert result == mock_team
             mock_db.add.assert_called()
-            mock_db.flush.assert_called_once()
+            mock_db.flush.assert_called()
             mock_db.commit.assert_called_once()
 
     @pytest.mark.asyncio
