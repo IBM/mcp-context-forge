@@ -5,18 +5,20 @@
 # This workflow builds container images for multiple architectures:
 #   - linux/amd64  (native on ubuntu-24.04)        - PR (build only), merge queue (build only), push
 #   - linux/arm64  (native on ubuntu-24.04-arm)     - merge queue (build only), push
-#   - linux/s390x  (native on ubuntu-24.04-s390x)   - push and workflow_dispatch only (NOT merge queue)
-#   - linux/ppc64le (native on ubuntu-24.04-ppc64le) - push and workflow_dispatch only (NOT merge queue)
+#   - linux/s390x  (native on ubuntu-24.04-s390x)   - workflow_dispatch only (runner capacity)
+#   - linux/ppc64le (native on ubuntu-24.04-ppc64le) - workflow_dispatch only (runner capacity)
 #
-# s390x and ppc64le are excluded from the merge queue to avoid stalling it while
-# waiting for scarce native runner pools. A per-entry gate step skips their build
-# steps when the event is merge_group. They still build and push on every push to
-# main and on workflow_dispatch, so the multiplatform manifest is always complete.
+# s390x and ppc64le are excluded from the merge queue and from normal push-to-main
+# due to runner capacity constraints. A per-entry gate step skips their build steps
+# on push events. They build and push only on workflow_dispatch (manual trigger).
+#
+# Push-to-main and release tag builds produce a 2-arch manifest (amd64 + arm64).
+# Trigger workflow_dispatch from main or a tag ref to produce the full 4-arch manifest.
 #
 # Pipeline:
-#   1. Build platform images in parallel (amd64+arm64 on merge queue; all arches on push)
-#   2. Create multiplatform manifest (push and tags only)
-#   3. Sign and attest with Cosign (keyless OIDC, push and tags only)
+#   1. Build platform images in parallel (amd64+arm64 on push; all arches on workflow_dispatch)
+#   2. Create multiplatform manifest (push and workflow_dispatch only)
+#   3. Sign and attest with Cosign (keyless OIDC, push and workflow_dispatch only)
 #
 # Linting and security scanning are handled by docker-scan.yml
 #
@@ -172,6 +174,7 @@ jobs:
       - name: Evaluate wheels gate
         id: gate
         run: |
+          set -euo pipefail
           build="true"
           if [[ "${{ github.event_name }}" == "push" && "${{ matrix.build_on_push }}" == "false" ]]; then
             echo "Skipping wheels for ${{ matrix.suffix }}: build_on_push=false"
@@ -266,6 +269,7 @@ jobs:
             qemu: false
             build_on_pr: true
             build_on_merge_group: true
+            build_on_push: true
           - platform: linux/arm64
             runner: ubuntu-24.04-arm
             suffix: arm64
@@ -273,6 +277,7 @@ jobs:
             qemu: false
             build_on_pr: false
             build_on_merge_group: true
+            build_on_push: true
           - platform: linux/s390x
             runner: ubuntu-24.04-s390x
             suffix: s390x
@@ -280,7 +285,7 @@ jobs:
             qemu: false
             build_on_pr: false
             build_on_merge_group: false   # not merge queue
-            build_on_push: false          # temporarily disabled — s390x runner capacity issues
+            build_on_push: false          # runner capacity — workflow_dispatch only
           - platform: linux/ppc64le
             runner: ubuntu-24.04-ppc64le
             suffix: ppc64le
