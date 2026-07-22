@@ -567,13 +567,24 @@ class TestGatewayEditModal:
 
         gateways_page.close_edit_modal()
 
-    def test_edit_modal_auth_type_oauth_fields(self, gateways_page: GatewaysPage):
+    def test_edit_modal_auth_type_oauth_fields(self, gateways_page: GatewaysPage, admin_api):
         """Test that selecting OAuth in edit modal shows OAuth fields."""
+        # Open a gateway whose auth type is NOT oauth: row 0 can be an
+        # OAuth-configured leftover from other suites, which legitimately
+        # renders OAuth fields on open and breaks the initial assertion.
+        resp = admin_api.get("/gateways")
+        assert resp.status == 200, f"Failed to list gateways: {resp.status}"
+        non_oauth = [g for g in resp.json() if g.get("authType") != "oauth"]
+        if not non_oauth:
+            pytest.skip("No non-OAuth gateway available")
+        gw_name = non_oauth[0]["name"]
+
         gateways_page.navigate_to_gateways_tab()
         gateways_page.wait_for_gateways_table_loaded()
         _skip_if_no_gateways(gateways_page)
 
-        _open_edit_or_skip(gateways_page, 0)
+        gateways_page.search_gateways(gw_name)
+        gateways_page.open_edit_modal_by_name(gw_name)
 
         expect(gateways_page.edit_oauth_fields).to_be_hidden()
 

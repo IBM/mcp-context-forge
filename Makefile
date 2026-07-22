@@ -7166,6 +7166,10 @@ PLAYWRIGHT_SCREENSHOTS := $(PLAYWRIGHT_DIR)/screenshots
 PLAYWRIGHT_VIDEOS := $(PLAYWRIGHT_DIR)/videos
 PLAYWRIGHT_SLOWMO ?= 750
 TEST_BASE_URL ?= http://localhost:8080
+# Auth env for Playwright runs against the docker-compose stack: must match
+# the gateway's signing secret and bootstrap admin password (docker-compose.yml).
+JWT_SECRET_KEY ?= my-test-key-but-now-longer-than-32-bytes
+PLATFORM_ADMIN_PASSWORD ?= changeme
 ZAP_BASE_URL   ?= http://localhost:8090
 ZAP_API_KEY    ?= changeme
 # URL ZAP uses internally to spider the app. nginx exposes port 80 on mcpnet
@@ -7241,6 +7245,7 @@ define run_playwright_test
 	@$(MAKE) --no-print-directory playwright-preflight
 	$(if $(strip $(2)),@mkdir -p $(2),)
 	@$(if $(strip $(3)),$(3),) TEST_BASE_URL='$(TEST_BASE_URL)' \
+	 JWT_SECRET_KEY='$(JWT_SECRET_KEY)' PLATFORM_ADMIN_PASSWORD='$(PLATFORM_ADMIN_PASSWORD)' \
 	 $(UV_BIN) run --extra runtime pytest -p playwright $(4) \
 		--browser chromium \
 		$(if $(filter fail,$(5)),|| { echo '❌ UI tests failed!'; exit 1; },|| true)
