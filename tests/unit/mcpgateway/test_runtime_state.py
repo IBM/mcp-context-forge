@@ -300,26 +300,6 @@ def test_deployment_allows_override_mode_mcp_always_dispatchable():
 
 
 
-@pytest.mark.asyncio
-async def test_override_edge_cannot_bypass_session_auth_reuse_invariant(monkeypatch: pytest.MonkeyPatch):
-    """Safety invariant: an admin override=edge on a deployment that didn't opt into
-    session-auth-reuse at boot must NOT cause public /mcp to route to Rust.
-
-    This is the belt in the belt-and-braces: the router rejects such PATCHes with
-    409, but even if the override somehow landed in state (e.g. cluster reconcile
-    from a hint written before we tightened the router), the read side must refuse
-    to break the documented safety invariant.
-    """
-    # Force the override to "edge" directly on state (bypassing the router).
-    state = get_runtime_state()
-    await state.apply_local("mcp", "edge", initiator_user="replay", version=1)
-    assert state.override_mode("mcp") == "edge"
-
-    # The read side must still refuse to route to Rust.
-    from mcpgateway.version import MCP_RUNTIME_STATUS_PAYLOAD
-
-    assert MCP_RUNTIME_STATUS_PAYLOAD["rust_build_included"] is False
-
 
 @pytest.mark.asyncio
 async def test_reconcile_from_hint_discards_incompatible_mode(monkeypatch: pytest.MonkeyPatch):

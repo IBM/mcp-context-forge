@@ -6228,7 +6228,7 @@ class TestRpcHandling:
                         "is_admin": False,
                         "permission_is_admin": False,
                         "scoped_server_id": "srv-1",
-                        "_rust_session_validated": True,
+                        "_internal_session_validated": True,
                     }
                 ).encode()
             )

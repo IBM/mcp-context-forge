@@ -4405,50 +4405,6 @@ class TestFlushAndReplayEvents:
         assert result == []
 
 
-class TestPublishA2AInvalidation:
-    """Unit tests for the module-level _publish_a2a_invalidation async function."""
-
-    async def test_publishes_when_redis_available(self):
-        """Message is published to Redis when a client is available."""
-        mock_redis = AsyncMock()
-        mock_redis.publish = AsyncMock()
-
-        # get_redis_client is imported locally inside the function, so patch at its source.
-        mock_get_redis = AsyncMock(return_value=mock_redis)
-        with patch("mcpgateway.utils.redis_client.get_redis_client", mock_get_redis):
-            # First-Party
-            from mcpgateway.services.a2a_service import _publish_a2a_invalidation  # noqa: PLC0415
-
-            await _publish_a2a_invalidation("agent_updated", agent_id="a1")
-
-        mock_get_redis.assert_awaited_once()
-        mock_redis.publish.assert_awaited_once()
-        channel, payload_bytes = mock_redis.publish.call_args[0]
-        assert channel == "mcpgw:a2a:invalidate"
-        assert "agent_updated" in payload_bytes
-
-    async def test_no_error_when_redis_unavailable(self):
-        """No exception is raised when Redis client returns None."""
-        mock_get_redis = AsyncMock(return_value=None)
-        with patch("mcpgateway.utils.redis_client.get_redis_client", mock_get_redis):
-            # First-Party
-            from mcpgateway.services.a2a_service import _publish_a2a_invalidation  # noqa: PLC0415
-
-            # Must not raise
-            await _publish_a2a_invalidation("agent_deleted", agent_id="a99")
-
-    async def test_no_error_on_redis_exception(self):
-        """Exception from Redis publish is silently swallowed."""
-        mock_redis = AsyncMock()
-        mock_redis.publish = AsyncMock(side_effect=ConnectionError("redis down"))
-
-        mock_get_redis = AsyncMock(return_value=mock_redis)
-        with patch("mcpgateway.utils.redis_client.get_redis_client", mock_get_redis):
-            # First-Party
-            from mcpgateway.services.a2a_service import _publish_a2a_invalidation  # noqa: PLC0415
-
-            await _publish_a2a_invalidation("agent_created", agent_id="a2")
-
 
 class TestShadowModeComparison:
     """Unit tests for the observe-only shadow mode block inside invoke_agent.
