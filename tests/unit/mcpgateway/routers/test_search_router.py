@@ -263,7 +263,7 @@ async def test_invalid_entity_types_returns_400(mock_db, patched_search):
 @pytest.mark.asyncio
 async def test_team_id_forwarded_to_entity_searches(mock_db, patched_search):
     """A validated team_id is forwarded to per-entity searches for server-side scoping."""
-    valid_team_id = "0123456789abcdef0123456789abcdef"  # valid 32-char hex UUID
+    valid_team_id = "0123456789abcdef0123456789abcdef"  # valid 32-char hex UUID  # pragma: allowlist secret
     await unified_search(
         q="core",
         tags=None,
