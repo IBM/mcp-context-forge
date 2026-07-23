@@ -103,6 +103,10 @@ from mcpgateway.deprecations import RUST_MCP_RUNTIME_DEPRECATION_MESSAGE, VALIDA
 from mcpgateway.handlers.sampling import SamplingError, SamplingHandler
 from mcpgateway.middleware.client_disconnect import ClientDisconnectMiddleware
 from mcpgateway.middleware.compression import SSEAwareCompressMiddleware
+try:
+    from plugins.sbom_generator.storage.models import SBOMComponentDB, SBOMDocumentDB  # noqa: F401
+except ImportError:
+    pass
 from mcpgateway.middleware.correlation_id import CorrelationIDMiddleware
 from mcpgateway.middleware.forwarded_host import ForwardedHostMiddleware
 from mcpgateway.middleware.header_size_middleware import HeaderSizeMiddleware
