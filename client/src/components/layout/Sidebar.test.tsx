@@ -127,7 +127,7 @@ describe("AppSidebar", () => {
     expect(screen.getByRole("button", { name: "Settings" })).toHaveAttribute("data-active", "true");
   });
 
-  it("shows Administration section for platform admin users", () => {
+  it("does not render the Administration section for platform admin users", () => {
     mockUseRouter.mockReturnValue({
       path: "/app/",
       params: {},
@@ -136,9 +136,9 @@ describe("AppSidebar", () => {
 
     renderSidebar();
 
-    expect(screen.getByText("Administration")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Users" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Teams" })).toBeInTheDocument();
+    expect(screen.queryByText("Administration")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Users" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Teams" })).not.toBeInTheDocument();
   });
 
   it("hides Administration section for non-admin users", () => {
