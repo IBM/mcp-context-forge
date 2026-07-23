@@ -767,6 +767,22 @@ export const handleEditGatewayFormSubmit = async function (e) {
   e.preventDefault();
   const form = e.target;
   const formData = new FormData(form);
+  const teamRadio = form.querySelector("#edit-gateway-visibility-team");
+  const teamSelect = form.querySelector("#edit-gateway-team-id");
+  const teamMessage = form.querySelector("#edit-gateway-team-message");
+
+  if (teamRadio?.checked && !formData.get("team_id")) {
+    if (teamMessage) {
+      teamMessage.textContent = "Please select a team";
+    }
+    teamSelect?.focus();
+    return;
+  }
+
+  if (teamMessage) {
+    teamMessage.textContent = "";
+  }
+
   try {
     // Validate form inputs
     const name = formData.get("name");

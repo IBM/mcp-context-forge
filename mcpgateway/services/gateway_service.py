@@ -2610,6 +2610,11 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             if not gateway:
                 raise GatewayNotFoundError(f"Gateway not found: {gateway_id}")
 
+            old_team_id = gateway.team_id
+            effective_team_id = gateway_update.team_id if gateway_update.team_id is not None else old_team_id
+            effective_visibility = gateway_update.visibility if gateway_update.visibility is not None else gateway.visibility
+            team_assignment_changed = gateway_update.team_id is not None and effective_team_id != old_team_id
+
             # Check ownership if user_email provided
             if user_email:
                 # First-Party
@@ -2620,11 +2625,14 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     raise PermissionError("Only the owner can update this gateway")
 
             if gateway.enabled or include_inactive:
+                if team_assignment_changed or gateway_update.visibility == "team":
+                    _validate_gateway_team_assignment(db, user_email, effective_team_id)
+
                 if getattr(settings, "gateway_async_lifecycle_enabled", False) is True and getattr(gateway, "status", None) == "pending":
                     return self.convert_gateway_to_read(gateway)
 
-                # Check for name conflicts if name is being changed
-                if gateway_update.name is not None and gateway_update.name != gateway.name:
+                # Check for name conflicts if the name or team scope is changing
+                if (gateway_update.name is not None and gateway_update.name != gateway.name) or (effective_visibility == "team" and team_assignment_changed):
                     # existing_gateway = db.execute(select(DbGateway).where(DbGateway.name == gateway_update.name).where(DbGateway.id != gateway_id)).scalar_one_or_none()
 
                     # if existing_gateway:
@@ -2634,7 +2642,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     #         gateway_id=existing_gateway.id,
                     #     )
                     # Check for existing gateway with the same slug and visibility
-                    new_slug = slugify(gateway_update.name)
+                    target_name = gateway_update.name if gateway_update.name is not None else gateway.name
+                    new_slug = slugify(target_name)
                     if gateway_update.visibility is not None:
                         vis = gateway_update.visibility
                     else:
@@ -2653,12 +2662,12 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                                 gateway_id=existing_gateway.id,
                                 visibility=existing_gateway.visibility,
                             )
-                    elif vis == "team" and gateway.team_id:
+                    elif vis == "team" and effective_team_id:
                         # Check for existing team gateway with the same slug (row-locked)
                         existing_gateway = get_for_update(
                             db,
                             DbGateway,
-                            where=and_(DbGateway.slug == new_slug, DbGateway.visibility == "team", DbGateway.team_id == gateway.team_id, DbGateway.id != gateway_id),
+                            where=and_(DbGateway.slug == new_slug, DbGateway.visibility == "team", DbGateway.team_id == effective_team_id, DbGateway.id != gateway_id),
                         )
                         if existing_gateway:
                             raise GatewayNameConflictError(
@@ -2671,6 +2680,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 normalized_url = ""
                 if gateway_update.url is not None:
                     normalized_url = self.normalize_url(str(gateway_update.url))
+                elif team_assignment_changed:
+                    normalized_url = gateway.url
                 else:
                     normalized_url = None
 
@@ -2697,7 +2708,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         url=normalized_url,
                         auth_value=final_auth_value,
                         oauth_config=final_oauth_config,
-                        team_id=gateway.team_id,
+                        team_id=effective_team_id,
                         visibility=final_visibility,
                         gateway_id=gateway_id,  # Exclude current gateway from check
                         owner_email=user_email,
@@ -2771,10 +2782,6 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     gateway.tags = gateway_update.tags
                 if gateway_update.visibility is not None:
                     old_visibility = gateway.visibility
-                    # Validate visibility transitions
-                    if gateway_update.visibility == "team":
-                        target_team_id = gateway_update.team_id if gateway_update.team_id is not None else gateway.team_id
-                        _validate_gateway_team_assignment(db, user_email, target_team_id)
                     gateway.visibility = gateway_update.visibility
                     # Propagate visibility to all linked items immediately so it
                     # takes effect even when the upstream server is unreachable
@@ -2805,9 +2812,17 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
                 # Update team assignment if provided, validating ownership
                 if gateway_update.team_id is not None:
-                    if gateway_update.team_id != gateway.team_id:
-                        _validate_gateway_team_assignment(db, user_email, gateway_update.team_id)
                     gateway.team_id = gateway_update.team_id
+                    if gateway.team_id != old_team_id:
+                        for tool in gateway.tools:
+                            if tool.team_id == old_team_id:
+                                tool.team_id = gateway.team_id
+                        for resource in gateway.resources:
+                            if resource.team_id == old_team_id:
+                                resource.team_id = gateway.team_id
+                        for prompt in gateway.prompts:
+                            if prompt.team_id == old_team_id:
+                                prompt.team_id = gateway.team_id
 
                 # Update CA certificate fields if provided
                 if getattr(gateway_update, "ca_certificate", None) is not None:
