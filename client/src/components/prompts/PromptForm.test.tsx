@@ -9,6 +9,7 @@ import { PromptForm } from "./PromptForm";
 
 vi.mock("@/api/client", () => ({
   api: {
+    get: vi.fn().mockResolvedValue([]),
     post: vi.fn(),
     put: vi.fn(),
   },
@@ -126,7 +127,7 @@ describe("PromptForm", () => {
     fireEvent.change(screen.getByLabelText("Description"), {
       target: { value: "Greets a person" },
     });
-    await user.type(screen.getByLabelText(/tags/i), "greeting, example");
+    await user.type(screen.getByLabelText(/tags/i), "greeting{Enter}example{Enter}");
     await user.click(screen.getByRole("button", { name: "Add prompt" }));
 
     await waitFor(() => {

@@ -682,7 +682,7 @@ describe("useToolForm", () => {
       expect(capturedBody?.auth_password).toBeUndefined();
     });
 
-    it("processes tags with commas and removes empty tags", async () => {
+    it("passes tags through to the submit payload", async () => {
       let capturedBody: Record<string, unknown> | undefined;
       server.use(
         http.post("*/tools", async ({ request }) => {
@@ -696,7 +696,7 @@ describe("useToolForm", () => {
       act(() => {
         result.current.setName("my-tool");
         result.current.setUrl("https://api.example.com");
-        result.current.setTags(" tag1 , , tag2 ");
+        result.current.setTags(["tag1", "tag2"]);
       });
 
       await act(async () => {

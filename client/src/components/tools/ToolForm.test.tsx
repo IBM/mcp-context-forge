@@ -550,8 +550,8 @@ describe("ToolForm", () => {
       });
       renderForm({ tool: toolWithHeadersAndTags });
 
-      // The tags should be joined by ", "
-      expect(screen.getByDisplayValue("obj-tag")).toBeInTheDocument();
+      // The object-shaped tag's label renders as a TagInput chip
+      expect(screen.getByText("obj-tag")).toBeInTheDocument();
     });
 
     it("handles backward compatible authHeaderKey and authHeaderValue", () => {

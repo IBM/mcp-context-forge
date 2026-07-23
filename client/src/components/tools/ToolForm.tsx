@@ -35,7 +35,7 @@ function toolToInitialValues(tool: Tool) {
     inputSchema: tool.inputSchema ? JSON.stringify(tool.inputSchema, null, 2) : "",
     outputSchema: tool.outputSchema ? JSON.stringify(tool.outputSchema, null, 2) : "",
     schemaMode: (tool.inputSchema || tool.outputSchema ? "manual" : "none") as SchemaMode,
-    tags: (tool.tags || []).map((t) => (typeof t === "string" ? t : t.label)).join(", "),
+    tags: (tool.tags || []).map((t) => (typeof t === "string" ? t : t.label)),
     visibility: (tool.visibility || "public") as Visibility,
     teamId: tool.teamId ?? "",
     authType,
