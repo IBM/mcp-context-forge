@@ -32,15 +32,15 @@ Revises: b6c7d8e9f0a1
 Create Date: 2026-05-06 12:35:58.142694
 
 """
+
 from typing import Sequence, Union
 
 from alembic import op
 from sqlalchemy import text, inspect
 
-
 # revision identifiers, used by Alembic.
-revision: str = 'd21698ae4a19'  # pragma: allowlist secret
-down_revision: Union[str, Sequence[str], None] = 'b6c7d8e9f0a1'  # pragma: allowlist secret
+revision: str = "d21698ae4a19"  # pragma: allowlist secret
+down_revision: Union[str, Sequence[str], None] = "b6c7d8e9f0a1"  # pragma: allowlist secret
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
@@ -69,7 +69,7 @@ def upgrade() -> None:
 
     # Use row_number() for deterministic deduplication (handles timestamp ties via id ordering)
     # Keep the row with row_number = 1 (oldest created_at, lowest id on ties)
-    if dialect == 'postgresql':
+    if dialect == "postgresql":
         # Step 1a: Remap user_roles.role_id from duplicate roles to the kept role
         remap_user_roles_sql = text("""
             UPDATE user_roles
@@ -174,7 +174,7 @@ def upgrade() -> None:
     # an already-expired assignment while discarding a still-valid duplicate.
 
     # Handle scope_id IS NULL case
-    if dialect == 'postgresql':
+    if dialect == "postgresql":
         dedupe_user_roles_null_scope_sql = text("""
             UPDATE user_roles
             SET is_active = false
@@ -221,7 +221,7 @@ def upgrade() -> None:
     deduped_user_roles_null = result.rowcount
 
     # Handle scope_id IS NOT NULL case
-    if dialect == 'postgresql':
+    if dialect == "postgresql":
         dedupe_user_roles_with_scope_sql = text("""
             UPDATE user_roles
             SET is_active = false
@@ -276,80 +276,49 @@ def upgrade() -> None:
     # =============================================================================
 
     # Check if indexes already exist (idempotency)
-    existing_indexes = [idx['name'] for idx in inspector.get_indexes('roles')]
+    existing_indexes = [idx["name"] for idx in inspector.get_indexes("roles")]
 
     # Partial unique index on roles(name, scope) WHERE is_active = true
     # This prevents duplicate active roles with same name+scope
-    if 'uq_roles_name_scope_active' not in existing_indexes:
-        if dialect == 'postgresql':
-            bind.execute(text(
-                "CREATE UNIQUE INDEX uq_roles_name_scope_active "
-                "ON roles (name, scope) "
-                "WHERE is_active = true"
-            ))
-        elif dialect == 'sqlite':
-            bind.execute(text(
-                "CREATE UNIQUE INDEX uq_roles_name_scope_active "
-                "ON roles (name, scope) "
-                "WHERE is_active = 1"
-            ))
+    if "uq_roles_name_scope_active" not in existing_indexes:
+        if dialect == "postgresql":
+            bind.execute(text("CREATE UNIQUE INDEX uq_roles_name_scope_active " "ON roles (name, scope) " "WHERE is_active = true"))
+        elif dialect == "sqlite":
+            bind.execute(text("CREATE UNIQUE INDEX uq_roles_name_scope_active " "ON roles (name, scope) " "WHERE is_active = 1"))
         else:
             # For other databases, create without WHERE clause (less optimal but works)
             # Note: This will only allow one row per (name, scope) total, not just active ones
             print(f"WARNING: Dialect '{dialect}' may not support partial indexes. Creating full unique index.")
-            bind.execute(text(
-                "CREATE UNIQUE INDEX uq_roles_name_scope_active "
-                "ON roles (name, scope)"
-            ))
+            bind.execute(text("CREATE UNIQUE INDEX uq_roles_name_scope_active " "ON roles (name, scope)"))
         print("Created unique index: uq_roles_name_scope_active")
 
     # Check user_roles indexes
-    existing_user_roles_indexes = [idx['name'] for idx in inspector.get_indexes('user_roles')]
+    existing_user_roles_indexes = [idx["name"] for idx in inspector.get_indexes("user_roles")]
 
     # Partial unique index on user_roles(user_email, role_id, scope) WHERE scope_id IS NULL AND is_active = true
-    if 'uq_user_roles_email_role_scope_null_active' not in existing_user_roles_indexes:
-        if dialect == 'postgresql':
-            bind.execute(text(
-                "CREATE UNIQUE INDEX uq_user_roles_email_role_scope_null_active "
-                "ON user_roles (user_email, role_id, scope) "
-                "WHERE scope_id IS NULL AND is_active = true"
-            ))
-        elif dialect == 'sqlite':
-            bind.execute(text(
-                "CREATE UNIQUE INDEX uq_user_roles_email_role_scope_null_active "
-                "ON user_roles (user_email, role_id, scope) "
-                "WHERE scope_id IS NULL AND is_active = 1"
-            ))
+    if "uq_user_roles_email_role_scope_null_active" not in existing_user_roles_indexes:
+        if dialect == "postgresql":
+            bind.execute(text("CREATE UNIQUE INDEX uq_user_roles_email_role_scope_null_active " "ON user_roles (user_email, role_id, scope) " "WHERE scope_id IS NULL AND is_active = true"))
+        elif dialect == "sqlite":
+            bind.execute(text("CREATE UNIQUE INDEX uq_user_roles_email_role_scope_null_active " "ON user_roles (user_email, role_id, scope) " "WHERE scope_id IS NULL AND is_active = 1"))
         else:
             # Fallback: unique on (user_email, role_id, scope) without WHERE
             print(f"WARNING: Dialect '{dialect}' may not support partial indexes. Creating full unique index.")
-            bind.execute(text(
-                "CREATE UNIQUE INDEX uq_user_roles_email_role_scope_null_active "
-                "ON user_roles (user_email, role_id, scope)"
-            ))
+            bind.execute(text("CREATE UNIQUE INDEX uq_user_roles_email_role_scope_null_active " "ON user_roles (user_email, role_id, scope)"))
         print("Created unique index: uq_user_roles_email_role_scope_null_active")
 
     # Partial unique index on user_roles(user_email, role_id, scope, scope_id) WHERE scope_id IS NOT NULL AND is_active = true
-    if 'uq_user_roles_email_role_scope_id_active' not in existing_user_roles_indexes:
-        if dialect == 'postgresql':
-            bind.execute(text(
-                "CREATE UNIQUE INDEX uq_user_roles_email_role_scope_id_active "
-                "ON user_roles (user_email, role_id, scope, scope_id) "
-                "WHERE scope_id IS NOT NULL AND is_active = true"
-            ))
-        elif dialect == 'sqlite':
-            bind.execute(text(
-                "CREATE UNIQUE INDEX uq_user_roles_email_role_scope_id_active "
-                "ON user_roles (user_email, role_id, scope, scope_id) "
-                "WHERE scope_id IS NOT NULL AND is_active = 1"
-            ))
+    if "uq_user_roles_email_role_scope_id_active" not in existing_user_roles_indexes:
+        if dialect == "postgresql":
+            bind.execute(
+                text("CREATE UNIQUE INDEX uq_user_roles_email_role_scope_id_active " "ON user_roles (user_email, role_id, scope, scope_id) " "WHERE scope_id IS NOT NULL AND is_active = true")
+            )
+        elif dialect == "sqlite":
+            bind.execute(text("CREATE UNIQUE INDEX uq_user_roles_email_role_scope_id_active " "ON user_roles (user_email, role_id, scope, scope_id) " "WHERE scope_id IS NOT NULL AND is_active = 1"))
         else:
             # Fallback: unique on all four columns without WHERE
             print(f"WARNING: Dialect '{dialect}' may not support partial indexes. Creating full unique index.")
-            bind.execute(text(
-                "CREATE UNIQUE INDEX uq_user_roles_email_role_scope_id_active "
-                "ON user_roles (user_email, role_id, scope, scope_id)"
-            ))
+            bind.execute(text("CREATE UNIQUE INDEX uq_user_roles_email_role_scope_id_active " "ON user_roles (user_email, role_id, scope, scope_id)"))
         print("Created unique index: uq_user_roles_email_role_scope_id_active")
 
 
@@ -364,18 +333,18 @@ def downgrade() -> None:
         return
 
     # Drop the unique indexes if they exist
-    existing_indexes = [idx['name'] for idx in inspector.get_indexes('roles')]
-    if 'uq_roles_name_scope_active' in existing_indexes:
-        op.drop_index('uq_roles_name_scope_active', table_name='roles')
+    existing_indexes = [idx["name"] for idx in inspector.get_indexes("roles")]
+    if "uq_roles_name_scope_active" in existing_indexes:
+        op.drop_index("uq_roles_name_scope_active", table_name="roles")
         print("Dropped unique index: uq_roles_name_scope_active")
 
-    existing_user_roles_indexes = [idx['name'] for idx in inspector.get_indexes('user_roles')]
-    if 'uq_user_roles_email_role_scope_null_active' in existing_user_roles_indexes:
-        op.drop_index('uq_user_roles_email_role_scope_null_active', table_name='user_roles')
+    existing_user_roles_indexes = [idx["name"] for idx in inspector.get_indexes("user_roles")]
+    if "uq_user_roles_email_role_scope_null_active" in existing_user_roles_indexes:
+        op.drop_index("uq_user_roles_email_role_scope_null_active", table_name="user_roles")
         print("Dropped unique index: uq_user_roles_email_role_scope_null_active")
 
-    if 'uq_user_roles_email_role_scope_id_active' in existing_user_roles_indexes:
-        op.drop_index('uq_user_roles_email_role_scope_id_active', table_name='user_roles')
+    if "uq_user_roles_email_role_scope_id_active" in existing_user_roles_indexes:
+        op.drop_index("uq_user_roles_email_role_scope_id_active", table_name="user_roles")
         print("Dropped unique index: uq_user_roles_email_role_scope_id_active")
 
     # Note: We do NOT reactivate the deduped rows on downgrade
