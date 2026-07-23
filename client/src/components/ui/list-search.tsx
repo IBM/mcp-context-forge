@@ -13,12 +13,7 @@ interface ListSearchProps {
   className?: string;
 }
 
-/**
- * Expandable search box for entity list tables. Collapses to an icon until
- * focused or non-empty, mirroring the search affordance used in the details
- * drawers. Filtering is owned by the caller; this component only manages the
- * expand/collapse presentation.
- */
+/** Expandable list-table search box; collapses to an icon, filtering owned by the caller. */
 export function ListSearch({
   value,
   onChange,

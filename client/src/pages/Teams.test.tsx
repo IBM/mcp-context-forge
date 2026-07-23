@@ -241,12 +241,16 @@ describe("Teams", () => {
     const search = screen.getByRole("searchbox", { name: "Search Teams" });
     await user.type(search, "Team 0");
 
+    await waitFor(() => {
+      expect(screen.queryByText("Team 1")).not.toBeInTheDocument();
+    });
     expect(screen.getByText("Team 0")).toBeInTheDocument();
-    expect(screen.queryByText("Team 1")).not.toBeInTheDocument();
 
     await user.clear(search);
     await user.type(search, "zzz-none");
-    expect(screen.getByText("No matching results.")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText("No matching results.")).toBeInTheDocument();
+    });
   });
 
   it("displays correct team count message", async () => {
