@@ -1103,7 +1103,7 @@ async def test_list_tools_with_server_id(monkeypatch):
     result = await list_tools()
 
     assert isinstance(result, list)
-    assert result[0].name == "Custom.Tool"
+    assert result[0].name == "gateway-t"
     assert getattr(result[0], "title", None) == "Tool Title"
     assert result[0].description == "desc"
 
