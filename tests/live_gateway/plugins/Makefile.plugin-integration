@@ -17,7 +17,7 @@
 #    ENFORCEMENT     static | binding | both.           Default: both
 #    GATEWAY_PORT    Port for the test gateway.         Default: 4444
 #    GATEWAY_HOST    Host for the test gateway.         Default: 127.0.0.1
-#    JWT_SECRET_KEY  Must be >32 bytes.                 Default: dev test key
+#    JWT_SECRET_KEY  Must be >32 bytes, strong.         Default: random per run
 #    REDIS_HOST      Redis host (redis-requiring plugins). Default: 127.0.0.1
 #    REDIS_PORT      Redis port.                        Default: 6379
 #    VENV_DIR        Path to project virtualenv.        Default: .venv
@@ -33,7 +33,9 @@ GATEWAY_PORT ?= 4444
 GATEWAY_HOST ?= 127.0.0.1
 REDIS_HOST   ?= 127.0.0.1
 REDIS_PORT   ?= 6379
-JWT_SECRET_KEY ?= my-test-key-but-now-longer-than-32-bytes
+# No default: when unset/empty the runner generates a strong per-run secret
+# (the config validator rejects known-weak/default values in every environment).
+JWT_SECRET_KEY ?=
 
 _PLUGIN_RUNNER := tests/live_gateway/plugins/run_plugin_tests.sh
 
