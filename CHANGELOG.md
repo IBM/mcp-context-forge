@@ -8,6 +8,9 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed RBAC seeder race condition that produced HTTP 500 under concurrent bootstrap: added partial unique indexes on `roles(name, scope) WHERE is_active` and `user_roles` equivalent columns, plus savepoint/retry in `RoleService.create_role()` and `assign_role_to_user()`. The migration (`d21698ae4a19`) now also remaps `user_roles.role_id` from duplicate roles to the kept role before deactivating the duplicates (so `list_user_roles()` joins remain intact), and prefers unexpired / most-recently-granted assignments when deduplicating user-role rows (#4636)
 
 ## [1.0.6] - 2026-07-22 - OAuth Token Exchange, Vault Credentials, MCP Apps, Dataplane Publishing, and Security Hardening
 
@@ -57,6 +60,16 @@ Release 1.0.6 consolidates **61 PRs** focused on **OAuth RFC 8693 token exchange
 #### **Dataplane**
 
 - **Publish Resource URIs and Capabilities** ([#5588](https://github.com/IBM/mcp-context-forge/pull/5588)) - Publish dataplane resource URIs and capabilities.
+
+### Security
+
+- Fixed cross-environment JWT acceptance (GHSA-vgf8-3685-66j9, CVE pending). Gateway-issued tokens
+  now carry an `env` claim and reject environment mismatches by default (`EMBED_ENVIRONMENT_IN_TOKENS=true`,
+  `VALIDATE_TOKEN_ENVIRONMENT=true`). Added optional `DERIVE_KEY_PER_ENVIRONMENT` to bind the HS*
+  signing key (including explicit-secret mints) to the deployment environment, which also closes legacy
+  tokens lacking an `env` claim. **Upgrade:** use a distinct `JWT_SECRET_KEY` per environment and
+  rotate long-lived tokens; enabling `DERIVE_KEY_PER_ENVIRONMENT` invalidates tokens issued before it
+  was turned on. RS*/ES* deployments must use distinct key pairs per environment.
 
 ### Changed
 
