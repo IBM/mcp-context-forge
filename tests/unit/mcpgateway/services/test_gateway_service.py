@@ -6475,6 +6475,59 @@ class TestCheckSingleGatewayHealth:
         call_kw = mock_ssl.call_args
         assert call_kw[1]["client_key"] == "raw-unencrypted-key"
 
+    @pytest.mark.asyncio
+    async def test_successful_health_check_resets_failure_counter(self, gateway_service, monkeypatch):
+        """Successful health check resets the failure counter even when gateway is reachable."""
+        gw = _make_gateway(
+            id="gw-reset",
+            name="reset-gw",
+            url="http://example.com/sse",
+            enabled=True,
+            reachable=True,
+            transport="sse",
+            auth_type=None,
+            auth_value=None,
+            auth_query_params=None,
+            ca_certificate=None,
+            ca_certificate_sig=None,
+            oauth_config=None,
+            last_refresh_at=None,
+            refresh_interval_seconds=None,
+        )
+
+        mock_response = AsyncMock()
+        mock_response.status_code = 200
+        mock_response.raise_for_status = MagicMock()
+        mock_stream_response = AsyncMock()
+        mock_stream_response.__aenter__ = AsyncMock(return_value=mock_response)
+        mock_stream_response.__aexit__ = AsyncMock(return_value=False)
+        mock_client = MagicMock()
+        mock_client.stream = MagicMock(return_value=mock_stream_response)
+        mock_ctx = AsyncMock()
+        mock_ctx.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_ctx.__aexit__ = AsyncMock(return_value=False)
+        monkeypatch.setattr("mcpgateway.services.gateway_service.get_isolated_http_client", lambda **kw: mock_ctx)
+        monkeypatch.setattr("mcpgateway.services.gateway_service.fresh_db_session", MagicMock())
+        monkeypatch.setattr(
+            "mcpgateway.services.gateway_service.settings",
+            MagicMock(
+                enable_ed25519_signing=False,
+                health_check_timeout=5,
+                auto_refresh_servers=False,
+                httpx_admin_read_timeout=5,
+                mcp_session_pool_enabled=False,
+            ),
+        )
+        monkeypatch.setattr("mcpgateway.services.gateway_service.create_span", MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False))))
+
+        # Pre-populate failure counter
+        gateway_service._gateway_failure_counts = {"gw-reset": 2}
+
+        await gateway_service._check_single_gateway_health(gw)
+
+        # Counter must be reset after successful health check
+        assert gateway_service._gateway_failure_counts["gw-reset"] == 0
+
 
 # ---------------------------------------------------------------------------
 # list_gateways_for_user tests
