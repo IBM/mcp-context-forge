@@ -39,6 +39,8 @@ jobs:
     env:
       CI: "true"
       PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.playwright-browsers
+      JWT_SECRET_KEY: "ci-client-e2e-jwt-secret-not-for-production-use" # pragma: allowlist secret
+      AUTH_ENCRYPTION_SECRET: "ci-client-e2e-auth-enc-secret-not-for-production" # pragma: allowlist secret
 
     steps:
       - name: ⬇️ Checkout source
