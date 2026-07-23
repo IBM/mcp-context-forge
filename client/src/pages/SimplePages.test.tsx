@@ -33,7 +33,11 @@ describe("Simple Page Components", () => {
   });
 
   it("renders Dashboard page", () => {
-    renderWithProviders(<Dashboard />);
+    renderWithProviders(
+      <RouterProvider>
+        <Dashboard />
+      </RouterProvider>,
+    );
     expect(document.body).toBeTruthy();
   });
 
