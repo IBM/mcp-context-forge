@@ -362,9 +362,9 @@ class Settings(BaseSettings):
         return cleaned
 
     basic_auth_user: str = "admin"
-    basic_auth_password: SecretStr = Field(default=SecretStr("changeme"))
+    basic_auth_password: SecretStr = Field(default=SecretStr("__REPLACE_ME__run_init-secrets_before_starting"))
     jwt_algorithm: str = "HS256"
-    jwt_secret_key: SecretStr = Field(default=SecretStr("changeme"))
+    jwt_secret_key: SecretStr = Field(default=SecretStr("__REPLACE_ME__run_init-secrets_before_starting"))
     jwt_public_key_path: str = ""
     jwt_private_key_path: str = ""
     jwt_audience: str = "mcpgateway-api"
@@ -635,7 +635,7 @@ class Settings(BaseSettings):
     proxy_user_header: str = Field(default="X-Authenticated-User", description="Header containing authenticated username from proxy")
 
     #  Encryption key phrase for auth storage
-    auth_encryption_secret: SecretStr = Field(default=SecretStr("changeme"))
+    auth_encryption_secret: SecretStr = Field(default=SecretStr("__REPLACE_ME__run_init-secrets_before_starting"))
 
     # Query Parameter Authentication (INSECURE - disabled by default)
     insecure_allow_queryparam_auth: bool = Field(
@@ -976,8 +976,8 @@ class Settings(BaseSettings):
         description="When true (default), prevent any admin from being demoted, deactivated, or locked out via API/UI. When false, only the last active admin is protected.",
     )
     platform_admin_email: str = Field(default="admin@example.com", description="Platform administrator email address")
-    platform_admin_password: SecretStr = Field(default=SecretStr("changeme"), description="Platform administrator password")
-    default_user_password: SecretStr = Field(default=SecretStr("changeme"), description="Default password for new users")  # nosec B105
+    platform_admin_password: SecretStr = Field(default=SecretStr("__REPLACE_ME__run_init-secrets_before_starting"), description="Platform administrator password")
+    default_user_password: SecretStr = Field(default=SecretStr("__REPLACE_ME__run_init-secrets_before_starting"), description="Default password for new users")  # nosec B105
     platform_admin_full_name: str = Field(default="Platform Administrator", description="Platform administrator full name")
 
     # Argon2id Password Hashing Configuration
