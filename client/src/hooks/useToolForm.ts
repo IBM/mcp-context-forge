@@ -66,10 +66,7 @@ const createToolFormObjectSchema = (intl: ReturnType<typeof useIntl>) =>
       .string()
       .transform((val) => sanitizeString(val, 500))
       .optional(),
-    tags: z
-      .string()
-      .transform((val) => sanitizeString(val, 500))
-      .optional(),
+    tags: z.array(z.string().transform((t) => sanitizeString(t, 200))).optional(),
     inputSchema: z.record(z.unknown()).optional(),
     outputSchema: z.record(z.unknown()).optional(),
     authType: z.string().optional(),
@@ -190,7 +187,7 @@ export interface UseToolFormReturn {
   bearerToken: string;
   customHeaders: CustomHeader[];
   responseFilter: string;
-  tags: string;
+  tags: string[];
   inputSchema: string;
   outputSchema: string;
   isGeneratingSchema: boolean;
@@ -217,7 +214,7 @@ export interface UseToolFormReturn {
   setBearerToken: (value: string) => void;
   setCustomHeaders: (headers: CustomHeader[]) => void;
   setResponseFilter: (value: string) => void;
-  setTags: (value: string) => void;
+  setTags: (value: string[]) => void;
   setInputSchema: (value: string) => void;
   setOutputSchema: (value: string) => void;
   setSchemaMode: (mode: SchemaMode) => void;
@@ -248,7 +245,7 @@ const initialState = {
   bearerToken: "",
   customHeaders: [] as CustomHeader[],
   responseFilter: "",
-  tags: "",
+  tags: [] as string[],
   inputSchema: "",
   outputSchema: "",
 };
@@ -262,7 +259,7 @@ export interface ToolFormInitialValues {
   schemaMode?: SchemaMode;
   inputSchema?: string;
   outputSchema?: string;
-  tags?: string;
+  tags?: string[];
   visibility?: Visibility;
   teamId?: string;
   advancedOpen?: boolean;
@@ -316,7 +313,7 @@ export function useToolForm({
     initialValues?.customHeaders ?? initialState.customHeaders,
   );
   const [responseFilter, setResponseFilter] = useState(initialState.responseFilter);
-  const [tags, setTags] = useState(initialValues?.tags ?? initialState.tags);
+  const [tags, setTags] = useState<string[]>(initialValues?.tags ?? initialState.tags);
   const [inputSchema, setInputSchema] = useState(
     initialValues?.inputSchema ?? initialState.inputSchema,
   );
@@ -406,12 +403,7 @@ export function useToolForm({
       inputSchema: parseSchemaJson(inputSchema),
       outputSchema: parseSchemaJson(outputSchema),
       jsonpath_filter: responseFilter ? sanitizeString(responseFilter, 500) : undefined,
-      tags: tags
-        ? tags
-            .split(",")
-            .map((t) => sanitizeString(t.trim(), 200))
-            .filter(Boolean)
-        : undefined,
+      tags: tags.length > 0 ? tags : undefined,
       visibility: visibility || undefined,
     };
 
@@ -497,7 +489,7 @@ export function useToolForm({
         requestType,
         integrationType,
         responseFilter: responseFilter || undefined,
-        tags: tags || undefined,
+        tags: tags.length > 0 ? tags : undefined,
         visibility: visibility || undefined,
         teamId: visibility === "team" ? teamId || undefined : undefined,
       });
@@ -705,7 +697,7 @@ export function useToolForm({
       requestType,
       integrationType,
       responseFilter: responseFilter || undefined,
-      tags: tags || undefined,
+      tags: tags.length > 0 ? tags : undefined,
       visibility: visibility || undefined,
       teamId: visibility === "team" ? teamId || undefined : undefined,
     }).success;

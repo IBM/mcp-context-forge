@@ -5,6 +5,7 @@ import { BackButton } from "@/components/ui/back-button";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { TagInput } from "@/components/ui/tag-input";
 import {
   Select,
   SelectContent,
@@ -19,6 +20,7 @@ import {
   type ResourceFormOptions,
   type ResourceFormInitialValues,
 } from "@/hooks/useResourceForm";
+import { useTagSuggestions } from "@/hooks/useTagSuggestions";
 import type { Visibility } from "@/types/server";
 import type { ResourceRead } from "@/generated/types";
 
@@ -39,7 +41,7 @@ function resourceToInitialValues(
     content: (resource as { content?: string }).content ?? "",
     description: resource.description ?? "",
     mimeType: (resource.mimeType as MimeType | null) ?? "",
-    tags: (resource.tags ?? []).join(", "),
+    tags: resource.tags ?? [],
     visibility: (resource.visibility as Visibility) ?? "public",
   };
 }
@@ -53,6 +55,7 @@ export function ResourceForm({
   resource,
 }: ResourceFormProps) {
   const intl = useIntl();
+  const tagSuggestions = useTagSuggestions();
   const isEditMode = Boolean(resource);
   const headingRef = useRef<HTMLHeadingElement>(null);
   const {
@@ -284,13 +287,12 @@ export function ResourceForm({
               >
                 {intl.formatMessage({ id: "resources.form.tags.label" })}
               </label>
-              <Input
+              <TagInput
                 id="resource-tags"
-                type="text"
                 value={tags}
-                onChange={(e) => setTags(e.target.value)}
+                onChange={setTags}
+                suggestions={tagSuggestions}
                 placeholder="tag1, tag2, tag3"
-                className="rounded-md border-neutral-300 px-4 text-sm text-neutral-900 shadow-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-0 placeholder:text-neutral-400 dark:border-neutral-700 dark:text-neutral-100 dark:placeholder:text-neutral-500"
               />
             </div>
 

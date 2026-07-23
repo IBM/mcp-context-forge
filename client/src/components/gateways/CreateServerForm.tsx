@@ -3,12 +3,14 @@ import { useIntl } from "react-intl";
 import { ChevronRight, CircleAlert, Server } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { TagInput } from "@/components/ui/tag-input";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import {
   useCreateServerForm,
   type CreateServerFormInitialValues,
 } from "@/hooks/useCreateServerForm";
+import { useTagSuggestions } from "@/hooks/useTagSuggestions";
 import type { CreateServerDetails } from "@/components/gateways/types";
 import type { Visibility } from "@/types/server";
 
@@ -70,6 +72,7 @@ export function CreateServerForm({
     validateField,
     handleSubmit,
   } = useCreateServerForm(initialValues);
+  const tagSuggestions = useTagSuggestions();
   const resolvedTitle = title ?? intl.formatMessage({ id: "gateways.createServer.title" });
   const resolvedDescription =
     formDescription ?? intl.formatMessage({ id: "gateways.createServer.description" });
@@ -224,20 +227,19 @@ export function CreateServerForm({
               <label htmlFor="server-tags" className="text-sm font-medium text-foreground">
                 {intl.formatMessage({ id: "gateways.createServer.tags" })}
               </label>
-              <Input
+              <TagInput
                 id="server-tags"
                 value={tags}
-                onChange={(event) => {
-                  setTags(event.target.value);
-                  if (errors.tags) validateField("tags", event.target.value);
+                onChange={(next) => {
+                  setTags(next);
+                  if (errors.tags) validateField("tags", next);
                 }}
-                onBlur={(event) => validateField("tags", event.target.value)}
+                suggestions={tagSuggestions}
                 placeholder={intl.formatMessage({
                   id: "gateways.createServer.tagsPlaceholder",
                 })}
                 aria-invalid={Boolean(errors.tags)}
                 aria-describedby={errors.tags ? "server-tags-error" : undefined}
-                className="h-12 rounded-md border-border bg-background px-3 text-sm shadow-none placeholder:text-muted-foreground/70 dark:border-[#55555c] dark:bg-[#141414]"
               />
               {errors.tags && (
                 <p id="server-tags-error" className="text-sm text-destructive">

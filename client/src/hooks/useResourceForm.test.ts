@@ -30,7 +30,7 @@ describe("useResourceForm", () => {
       expect(result.current.content).toBe("");
       expect(result.current.description).toBe("");
       expect(result.current.mimeType).toBe("");
-      expect(result.current.tags).toBe("");
+      expect(result.current.tags).toEqual([]);
       expect(result.current.errors).toEqual({});
       expect(result.current.isSubmitting).toBe(false);
     });
@@ -88,14 +88,14 @@ describe("useResourceForm", () => {
   });
 
   describe("getFormData", () => {
-    it("splits tags string into array, trims whitespace", () => {
+    it("keeps tags array as-is in getFormData", () => {
       const { result } = renderHook(() => useResourceForm());
 
       act(() => {
         result.current.setUri("resource://example/path");
         result.current.setName("My Resource");
         result.current.setContent("content");
-        result.current.setTags("  tag1 , tag2,  tag3  ");
+        result.current.setTags(["tag1", "tag2", "tag3"]);
       });
 
       const data = result.current.getFormData();
@@ -113,17 +113,6 @@ describe("useResourceForm", () => {
 
       const data = result.current.getFormData();
       expect(data.resource.tags).toBeUndefined();
-    });
-
-    it("filters empty tag entries after split", () => {
-      const { result } = renderHook(() => useResourceForm());
-
-      act(() => {
-        result.current.setTags("tag1,,tag2");
-      });
-
-      const data = result.current.getFormData();
-      expect(data.resource.tags).toEqual(["tag1", "tag2"]);
     });
 
     it("sanitizes control characters from string fields", () => {
@@ -206,7 +195,7 @@ describe("useResourceForm", () => {
         result.current.setName("My Resource");
         result.current.setContent("some content");
         result.current.setMimeType("text/plain");
-        result.current.setTags("a, b");
+        result.current.setTags(["a", "b"]);
       });
 
       await act(async () => {
@@ -367,7 +356,7 @@ describe("useResourceForm", () => {
             content: "existing content",
             description: "existing description",
             mimeType: "text/plain",
-            tags: "a, b",
+            tags: ["a", "b"],
             visibility: "private",
           },
         }),
@@ -378,7 +367,7 @@ describe("useResourceForm", () => {
       expect(result.current.content).toBe("existing content");
       expect(result.current.description).toBe("existing description");
       expect(result.current.mimeType).toBe("text/plain");
-      expect(result.current.tags).toBe("a, b");
+      expect(result.current.tags).toEqual(["a", "b"]);
       expect(result.current.visibility).toBe("private");
     });
 

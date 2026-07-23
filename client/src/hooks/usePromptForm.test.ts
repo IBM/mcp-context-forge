@@ -64,7 +64,7 @@ describe("usePromptForm", () => {
     expect(result.current.template).toBe("");
     expect(result.current.arguments).toBe("");
     expect(result.current.description).toBe("");
-    expect(result.current.tags).toBe("");
+    expect(result.current.tags).toEqual([]);
     expect(result.current.errors).toEqual({});
     expect(result.current.isSubmitting).toBe(false);
     expect(result.current.isValid).toBe(false);
@@ -135,7 +135,7 @@ describe("usePromptForm", () => {
       result.current.setName(" Greeting\x0B prompt ");
       result.current.setTemplate("Hello {{ name }}");
       result.current.setDescription("desc\x1Fription");
-      result.current.setTags(" greeting , ex\x00ample ");
+      result.current.setTags([" greeting ", " ex\x00ample "]);
     });
 
     const data = result.current.getFormData();
@@ -213,7 +213,7 @@ describe("usePromptForm", () => {
       result.current.setVisibility("team");
       result.current.setTemplate("Hello {{ name }}");
       result.current.setDescription("Greets a person");
-      result.current.setTags("greeting, example");
+      result.current.setTags(["greeting", "example"]);
     });
 
     await act(async () => {
@@ -242,7 +242,7 @@ describe("usePromptForm", () => {
     expect(result.current.visibility).toBe("public");
     expect(result.current.template).toBe("");
     expect(result.current.description).toBe("");
-    expect(result.current.tags).toBe("");
+    expect(result.current.tags).toEqual([]);
   });
 
   it("does not include a selected team in the API payload for public prompts", async () => {
@@ -360,7 +360,7 @@ describe("usePromptForm", () => {
           template: "Hello {{ name }}",
           arguments: "[]",
           description: "An existing prompt",
-          tags: "greeting, example",
+          tags: ["greeting", "example"],
         },
       }),
     );
@@ -369,7 +369,7 @@ describe("usePromptForm", () => {
     expect(result.current.visibility).toBe("private");
     expect(result.current.template).toBe("Hello {{ name }}");
     expect(result.current.description).toBe("An existing prompt");
-    expect(result.current.tags).toBe("greeting, example");
+    expect(result.current.tags).toEqual(["greeting", "example"]);
     expect(result.current.isValid).toBe(true);
   });
 
@@ -420,7 +420,7 @@ describe("usePromptForm", () => {
           template: "Upstream template",
           description: "Upstream description",
           arguments: '[{"name":"topic"}]',
-          tags: "a, b",
+          tags: ["a", "b"],
         },
       }),
     );
@@ -471,7 +471,7 @@ describe("usePromptForm", () => {
       description: "",
       template: "Hello {{ name }}, welcome",
       arguments: [],
-      tags: null,
+      tags: [],
       teamId: null,
       visibility: "public",
     });

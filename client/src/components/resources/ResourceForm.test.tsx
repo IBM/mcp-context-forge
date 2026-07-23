@@ -160,6 +160,14 @@ describe("ResourceForm", () => {
     });
 
     it("fills out optional fields correctly", async () => {
+      let capturedBody: { resource?: { tags?: string[] } } | undefined;
+      server.use(
+        http.post("*/resources", async ({ request }) => {
+          capturedBody = await request.json();
+          return HttpResponse.json({ id: "resource-1", name: "My Resource" }, { status: 201 });
+        }),
+      );
+
       const onSuccess = vi.fn();
       const user = userEvent.setup({ delay: null });
       renderForm({ onSuccess });
@@ -168,7 +176,7 @@ describe("ResourceForm", () => {
       await user.type(screen.getByLabelText(/Name/), "My Resource");
       await user.type(screen.getByLabelText(/Content/), "content");
       await user.type(screen.getByPlaceholderText(/optional description/i), "Some description");
-      await user.type(screen.getByLabelText(/Tags/), "tag1, tag2");
+      await user.type(screen.getByLabelText(/Tags/), "tag1{Enter}tag2{Enter}");
 
       // Select MIME Type
       const mimeTypeSelect = screen.getByRole("combobox", { name: /MIME Type/i });
@@ -187,6 +195,7 @@ describe("ResourceForm", () => {
 
       await user.click(screen.getByRole("button", { name: /Add resources/i }));
       await waitFor(() => expect(onSuccess).toHaveBeenCalledOnce());
+      expect(capturedBody?.resource?.tags).toEqual(["tag1", "tag2"]);
     });
 
     it("shows submitError above submit button on API failure", async () => {
@@ -243,7 +252,8 @@ describe("ResourceForm", () => {
         "existing description",
       );
       expect(screen.getByLabelText(/Content/)).toHaveValue("existing content");
-      expect(screen.getByLabelText(/Tags/)).toHaveValue("a, b");
+      expect(screen.getByText("a")).toBeInTheDocument();
+      expect(screen.getByText("b")).toBeInTheDocument();
     });
 
     it("calls onSuccess after a successful resource update", async () => {
