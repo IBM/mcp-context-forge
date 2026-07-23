@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { UserForm } from "@/components/users/UserForm";
 import { UsersTable } from "@/components/users/UsersTable";
-import { DeleteUserDialog } from "@/components/users/DeleteUserDialog";
+import { ConfirmDialog } from "@/components/servers/ConfirmDialog";
 import { useUsersList } from "@/hooks/useUsersList";
 import { useQuery } from "@/hooks/useQuery";
 import { usersApi } from "@/api/users";
@@ -299,12 +299,21 @@ export function Users() {
         </div>
       )}
       {userToDelete && (
-        <DeleteUserDialog
-          isOpen={deleteDialogOpen}
-          userEmail={userToDelete.email}
-          userName={userToDelete.full_name || userToDelete.email}
+        <ConfirmDialog
+          open={deleteDialogOpen}
+          onOpenChange={(open) => {
+            if (!open) handleDeleteCancel();
+          }}
+          title={intl.formatMessage({ id: "users.delete.dialog.title" })}
+          description={intl.formatMessage(
+            { id: "users.delete.dialog.description" },
+            { name: userToDelete.full_name || userToDelete.email, email: userToDelete.email },
+          )}
+          confirmLabel={intl.formatMessage({ id: "users.delete.dialog.confirm" })}
+          cancelLabel={intl.formatMessage({ id: "users.delete.dialog.cancel" })}
+          variant="destructive"
+          role="alertdialog"
           onConfirm={handleDeleteConfirm}
-          onCancel={handleDeleteCancel}
         />
       )}
     </main>

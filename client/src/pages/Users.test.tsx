@@ -4,7 +4,6 @@ import userEvent from "@testing-library/user-event";
 import { render } from "@testing-library/react";
 import { toast } from "sonner";
 import { Users } from "./Users";
-import { DeleteUserDialog } from "@/components/users/DeleteUserDialog";
 import { RouterProvider } from "@/router";
 import { I18nProvider } from "@/i18n";
 import type { ReactElement } from "react";
@@ -959,23 +958,5 @@ describe("Users", () => {
 
     // Check that api.get was called exactly twice (once for initial load, once for first load more)
     expect(api.get).toHaveBeenCalledTimes(2);
-  });
-});
-
-describe("DeleteUserDialog", () => {
-  it("renders Deleting... text when isDeleting is true", () => {
-    render(
-      <I18nProvider>
-        <DeleteUserDialog
-          isOpen={true}
-          isDeleting={true}
-          userName="testuser"
-          userEmail="testuser@example.com"
-          onCancel={vi.fn()}
-          onConfirm={vi.fn()}
-        />
-      </I18nProvider>,
-    );
-    expect(screen.getByText("Deleting...")).toBeInTheDocument();
   });
 });

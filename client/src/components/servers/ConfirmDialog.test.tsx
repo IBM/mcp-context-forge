@@ -123,6 +123,16 @@ describe("ConfirmDialog", () => {
     expect(screen.getByText("Confirm")).toBeTruthy();
   });
 
+  it("renders with role=dialog by default", () => {
+    renderWithProviders(<ConfirmDialog {...defaultProps} />);
+    expect(screen.getByRole("dialog")).toBeTruthy();
+  });
+
+  it("renders with role=alertdialog when provided", () => {
+    renderWithProviders(<ConfirmDialog {...defaultProps} role="alertdialog" />);
+    expect(screen.getByRole("alertdialog")).toBeTruthy();
+  });
+
   it("does not render dialog content when open is false", () => {
     renderWithProviders(<ConfirmDialog {...defaultProps} open={false} />);
     expect(screen.queryByText("Delete Server")).toBeNull();
