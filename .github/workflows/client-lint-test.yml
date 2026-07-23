@@ -36,6 +36,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
+    env:
+      JWT_SECRET_KEY: "ci-client-lint-test-jwt-secret-not-for-production-use" # pragma: allowlist secret
+      AUTH_ENCRYPTION_SECRET: "ci-client-lint-test-auth-enc-secret-not-for-production" # pragma: allowlist secret
+
     steps:
       # -----------------------------------------------------------
       # 0️⃣  Checkout
