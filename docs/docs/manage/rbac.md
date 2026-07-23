@@ -322,6 +322,9 @@ Resources in ContextForge have three visibility levels:
 | `team` | Accessible to team members only | Team members + admins (with bypass) |
 | `private` | Accessible to owner only | Resource owner only — **never** admin bypass |
 
+!!! note "UI label: public is shown as Internal"
+    The React admin UI (ui-rewrite) displays the `public` visibility level as **Internal** to make clear it means "visible to everyone signed into this platform", not "on the public internet". The wire value, DB enum, API payloads, and all access-control logic still use the literal `"public"` — only the display label changed.
+
 ### Access Matrix by Token Type
 
 | Token Type | Public Resources | Team Resources | Private Resources |

@@ -255,7 +255,7 @@ describe("VirtualServerDetailsPanel render variants", () => {
     );
   });
 
-  it("shows the public visibility label", async () => {
+  it("shows the internal visibility label", async () => {
     render(
       <VirtualServerDetailsPanel
         server={makeServer({ visibility: "public" })}
@@ -265,7 +265,7 @@ describe("VirtualServerDetailsPanel render variants", () => {
         onAddSources={vi.fn()}
       />,
     );
-    expect(await screen.findByText("Public")).toBeInTheDocument();
+    expect(await screen.findByText("Internal")).toBeInTheDocument();
   });
 
   it("shows the private visibility label", async () => {

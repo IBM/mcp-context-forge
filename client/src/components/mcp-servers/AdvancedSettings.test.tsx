@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { renderWithProviders as render, screen } from "@/test/test-utils";
 import userEvent from "@testing-library/user-event";
 import * as AuthContextModule from "@/auth/AuthContext";
 import { AdvancedSettings } from "./AdvancedSettings";
