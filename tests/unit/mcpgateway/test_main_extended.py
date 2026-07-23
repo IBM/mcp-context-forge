@@ -6590,7 +6590,7 @@ class TestRpcHandling:
         ):
             result = await handle_rpc(request, db=mock_db, user={"email": "user@example.com"})
             assert len(result["result"]["tools"]) == 1
-            assert result["result"]["tools"][0]["name"] == "gateway-tool"
+            assert result["result"]["tools"][0]["name"] == "Custom.Tool"
             assert mock_list_server_tools.await_args.args[1] == "srv"
 
     async def test_handle_rpc_tools_list_uses_internal_rust_server_header(self):

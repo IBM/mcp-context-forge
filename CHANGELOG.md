@@ -60,7 +60,7 @@ Release 1.0.6 consolidates **61 PRs** focused on **OAuth RFC 8693 token exchange
 
 ### Changed
 
-- **MCP Tool Names and Dataplane Aliases** ([#5553](https://github.com/IBM/mcp-context-forge/pull/5553)) - Dataplane virtual servers expose custom tool names and resolve them to upstream names without changing control-plane tool listings. Tool names follow the MCP 2025-11-25 character set and 128-character limit, with full-string validation that also rejects trailing newlines. **Breaking:** slash-delimited tool names are no longer accepted; rename them to use letters, numbers, periods, underscores, or hyphens.
+- **MCP Tool Names and Virtual-Server Aliases** ([#5553](https://github.com/IBM/mcp-context-forge/pull/5553)) - Virtual servers now expose custom tool names and resolve them to upstream names. Tool names follow the MCP 2025-11-25 character set and 128-character limit, with full-string validation that also rejects trailing newlines. **Breaking:** slash-delimited tool names are no longer accepted; rename them to use letters, numbers, periods, underscores, or hyphens.
 
 #### **API**
 

@@ -2360,7 +2360,7 @@ async def list_tools() -> List[types.Tool]:
 
                 # Default cache mode: use database
                 tools = await tool_service.list_server_tools(db, server_id, user_email=user_email, token_teams=token_teams, _request_headers=request_headers)
-                return _tools_for_client(tools)
+                return [_to_mcp_tool(tool, name=_safe_str_attr(tool, "custom_name") or tool.name) for tool in filter_model_visible_tools(tools)]
         except Exception as e:
             logger.error("Error listing tools:%s", e)
             return []

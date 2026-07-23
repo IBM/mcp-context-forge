@@ -2734,8 +2734,8 @@ class TestRPCEndpoints:
         mock_list_tools.assert_called_once()
 
     @patch("mcpgateway.main.tool_service.list_server_tools", new_callable=AsyncMock)
-    def test_rpc_list_tools_with_server_id_preserves_control_plane_names_after_apps_filtering(self, mock_list_tools, test_client, auth_headers):
-        """Server-scoped control-plane listings must keep their stored names."""
+    def test_rpc_list_tools_with_server_id_aligns_custom_names_after_apps_filtering(self, mock_list_tools, test_client, auth_headers):
+        """App-only filtering must not shift custom names onto later visible tools."""
         extension_key = "io.modelcontextprotocol/ui"
 
         def _tool(name: str, custom_name: str, visibility: str) -> SimpleNamespace:
@@ -2761,7 +2761,7 @@ class TestRPCEndpoints:
             response = test_client.post("/rpc/", json=req, headers=auth_headers)
 
         assert response.status_code == 200
-        assert [tool["name"] for tool in response.json()["result"]["tools"]] == ["internal-first", "internal-last"]
+        assert [tool["name"] for tool in response.json()["result"]["tools"]] == ["First.Tool", "Last.Tool"]
         mock_list_tools.assert_called_once()
 
     @patch("mcpgateway.main.tool_service.list_tools")
