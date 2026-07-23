@@ -182,7 +182,11 @@ jobs:
             - name: Generate JWT secret
               run: |
                   SECRET=$(openssl rand -base64 32)
+                  echo "::add-mask::$SECRET"
                   echo "DYNAMIC_JWT_SECRET=$SECRET" >> "${GITHUB_ENV}"
+                  ENC_SECRET=$(openssl rand -base64 32)
+                  echo "::add-mask::$ENC_SECRET"
+                  echo "DYNAMIC_ENC_SECRET=$ENC_SECRET" >> "${GITHUB_ENV}"
 
             - name: Start fast-time-server
               run: |
@@ -254,6 +258,7 @@ jobs:
                   # Disabled: localhost-only test, fast-time-server is local.
                   SSRF_PROTECTION_ENABLED: false
                   JWT_SECRET_KEY: ${{ env.DYNAMIC_JWT_SECRET }}
+                  AUTH_ENCRYPTION_SECRET: ${{ env.DYNAMIC_ENC_SECRET }}
                   ADMIN_REQUIRE_PASSWORD_CHANGE_ON_BOOTSTRAP: false
                   PASSWORD_CHANGE_ENFORCEMENT_ENABLED: false
                   LOG_LEVEL: INFO
