@@ -288,6 +288,19 @@ describe("getCatalogUrl", () => {
     expect(result).toContain("/servers/srv-123");
     expect(result).toMatch(/^https?:\/\//);
   });
+
+  test("includes ROOT_PATH in catalog URL", () => {
+    window.ROOT_PATH = "/api/v1";
+    const result = getCatalogUrl({ id: "srv-456" });
+    expect(result).toContain("/api/v1/servers/srv-456");
+  });
+
+  test("handles empty ROOT_PATH in catalog URL", () => {
+    window.ROOT_PATH = "";
+    const result = getCatalogUrl({ id: "srv-789" });
+    expect(result).toContain("/servers/srv-789");
+    expect(result).not.toContain("//servers");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -330,6 +343,47 @@ describe("generateConfig", () => {
     expect(() => generateConfig({ id: "s1", name: "x" }, "unknown")).toThrow(
       /Unknown config type/
     );
+  });
+
+  test("includes ROOT_PATH in stdio config URLs", () => {
+    window.ROOT_PATH = "/api/v1";
+    const result = generateConfig({ id: "s1", name: "My Server" }, "stdio");
+    expect(
+      result.mcpServers["mcpgateway-wrapper"].env.MCP_SERVER_URL
+    ).toContain("/api/v1/servers/s1");
+  });
+
+  test("includes ROOT_PATH in sse config URLs", () => {
+    window.ROOT_PATH = "/gateway";
+    const result = generateConfig({ id: "s1", name: "My Server" }, "sse");
+    const key = Object.keys(result.servers)[0];
+    expect(result.servers[key].url).toContain("/gateway/servers/s1/sse");
+  });
+
+  test("includes ROOT_PATH in http config URLs", () => {
+    window.ROOT_PATH = "/mcp-proxy";
+    const result = generateConfig({ id: "s1", name: "My Server" }, "http");
+    const key = Object.keys(result.servers)[0];
+    expect(result.servers[key].url).toContain("/mcp-proxy/servers/s1/mcp");
+  });
+
+  test("handles empty ROOT_PATH gracefully", () => {
+    window.ROOT_PATH = "";
+    const result = generateConfig({ id: "s1", name: "My Server" }, "sse");
+    const key = Object.keys(result.servers)[0];
+    expect(result.servers[key].url).toContain("/servers/s1/sse");
+    expect(result.servers[key].url).not.toContain("//servers");
+  });
+
+  test("handles undefined ROOT_PATH gracefully", () => {
+    delete window.ROOT_PATH;
+    const result = generateConfig({ id: "s1", name: "My Server" }, "stdio");
+    expect(
+      result.mcpServers["mcpgateway-wrapper"].env.MCP_SERVER_URL
+    ).toContain("/servers/s1");
+    expect(
+      result.mcpServers["mcpgateway-wrapper"].env.MCP_SERVER_URL
+    ).not.toContain("//servers");
   });
 });
 
