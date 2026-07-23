@@ -743,12 +743,10 @@ class TestGatewayService:
             description="OAuth gateway",
             auth_type="oauth",
             oauth_config={
-                "grant_type": "password",
+                "grant_type": "client_credentials",
                 "client_id": "cid",
                 "client_secret": "super-secret",  # pragma: allowlist secret
-                "password": "p@ssw0rd",  # pragma: allowlist secret
                 "token_url": "https://auth.example.com/token",
-                "username": "svc-user",
             },
         )
 
@@ -758,8 +756,7 @@ class TestGatewayService:
         assert stored_gateway is not None
         encryption = get_encryption_service(settings.auth_encryption_secret)
         assert encryption.is_encrypted(stored_gateway.oauth_config["client_secret"])
-        assert encryption.is_encrypted(stored_gateway.oauth_config["password"])
-        assert stored_gateway.oauth_config["grant_type"] == "password"
+        assert stored_gateway.oauth_config["grant_type"] == "client_credentials"
         assert stored_gateway.oauth_config["client_id"] == "cid"
 
     @pytest.mark.asyncio

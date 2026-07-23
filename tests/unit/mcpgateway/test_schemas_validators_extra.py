@@ -367,6 +367,36 @@ def test_gateway_create_query_param_allowlist(monkeypatch):
     assert gateway.auth_query_param_key == "api_key"
 
 
+def test_gateway_create_rejects_password_grant():
+    """New MCP servers cannot use the deprecated OAuth password grant (issue #5721)."""
+    with pytest.raises(ValidationError, match="password grant"):
+        GatewayCreate(
+            name="gw",
+            url="https://example.com",
+            auth_type="oauth",
+            oauth_config={"grant_type": "password", "username": "u", "password": "p"},
+        )
+
+    # Non-deprecated grants remain accepted.
+    for grant in ("authorization_code", "client_credentials"):
+        gateway = GatewayCreate(
+            name="gw",
+            url="https://example.com",
+            auth_type="oauth",
+            oauth_config={"grant_type": grant, "client_id": "cid"},
+        )
+        assert gateway.oauth_config["grant_type"] == grant
+
+
+def test_gateway_update_allows_legacy_password_grant():
+    """Existing password-grant MCP servers keep working via update (backwards compat)."""
+    updated = GatewayUpdate(
+        auth_type="oauth",
+        oauth_config={"grant_type": "password", "username": "u", "password": "p"},
+    )
+    assert updated.oauth_config["grant_type"] == "password"
+
+
 def test_gateway_create_query_param_disabled(monkeypatch):
     monkeypatch.setattr(settings, "insecure_allow_queryparam_auth", False)
     with pytest.raises(ValidationError):
