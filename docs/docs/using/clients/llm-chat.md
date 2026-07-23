@@ -35,6 +35,7 @@ All LLM providers are configured via the Admin UI's LLM Settings. Navigate to **
 | `ollama` | Local Ollama | Base URL (default: http://localhost:11434) |
 | `watsonx` | IBM watsonx.ai | API Key, project_id in additional_config |
 | `openai_compatible` | OpenAI-compatible APIs (vLLM, LocalAI, etc.) | Base URL, optional API Key |
+| `minimax` | MiniMax AI models (MiniMax-M2.7, etc.) | API Key |
 
 ### 🗄️ Redis Configurations for Multi Worker Environment
 
