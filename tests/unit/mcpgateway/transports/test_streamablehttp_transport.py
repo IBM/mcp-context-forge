@@ -13278,6 +13278,239 @@ async def test_normalize_jwt_payload_session_admin_no_email_no_bypass():
 
 
 # ---------------------------------------------------------------------------
+# _resolve_subject_email tests (issue #5215)
+#
+# Session tokens carry sub = EmailUser.id (a UUID); legacy/API tokens carry the
+# email. The MCP transport used to treat sub as an email unconditionally, so
+# session tokens produced a 401 "User not found in database" on
+# /servers/{id}/mcp and empty-team public-only visibility on /mcp.
+# ---------------------------------------------------------------------------
+
+SESSION_SUB_UUID = "387e3345-7996-4496-aa2d-09729ec8b3be"
+
+
+@pytest.mark.asyncio
+async def test_resolve_subject_email_uuid_sub_resolves_to_email():
+    """A session token's UUID sub is resolved to the user's email via the DB."""
+    lookup = Mock(return_value="user@example.com")
+    with patch("mcpgateway.auth._get_email_by_id_sync", lookup):
+        result = await tr._resolve_subject_email({"sub": SESSION_SUB_UUID, "token_use": "session"})
+
+    assert result == "user@example.com"
+    lookup.assert_called_once_with(SESSION_SUB_UUID)
+
+
+@pytest.mark.asyncio
+async def test_resolve_subject_email_legacy_sub_skips_db_lookup():
+    """An email sub short-circuits before any DB round-trip (hot-path guard)."""
+    lookup = Mock(return_value="should-not-be-used@example.com")
+    with patch("mcpgateway.auth._get_email_by_id_sync", lookup):
+        result = await tr._resolve_subject_email({"sub": "legacy@example.com", "token_use": "api"})
+
+    assert result == "legacy@example.com"
+    lookup.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_resolve_subject_email_session_token_with_email_sub():
+    """Session tokens issued without a user row carry an email sub (admin.py:4273)."""
+    lookup = Mock(return_value="should-not-be-used@example.com")
+    with patch("mcpgateway.auth._get_email_by_id_sync", lookup):
+        result = await tr._resolve_subject_email({"sub": "admin@example.com", "token_use": "session"})
+
+    assert result == "admin@example.com"
+    lookup.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_resolve_subject_email_unresolvable_uuid_returns_raw_subject():
+    """An unresolvable UUID keeps the raw subject so require_user_in_db still denies.
+
+    SECURITY: the request must fail closed on the caller's existing
+    "User not found in database" branch, never silently downgrade to anonymous.
+    """
+    with patch("mcpgateway.auth._get_email_by_id_sync", Mock(return_value=None)):
+        result = await tr._resolve_subject_email({"sub": SESSION_SUB_UUID, "token_use": "session"})
+
+    assert result == SESSION_SUB_UUID
+
+
+@pytest.mark.asyncio
+async def test_resolve_subject_email_falls_back_to_email_claim():
+    """Falls back to the 'email' claim when 'sub' is absent."""
+    result = await tr._resolve_subject_email({"email": "fallback@example.com"})
+    assert result == "fallback@example.com"
+
+
+@pytest.mark.asyncio
+async def test_resolve_subject_email_no_subject_returns_none():
+    """A payload with no subject yields None rather than raising."""
+    assert await tr._resolve_subject_email({}) is None
+
+
+@pytest.mark.asyncio
+async def test_resolve_subject_email_db_error_propagates():
+    """A DB failure propagates so _auth_jwt's SQLAlchemyError handler returns 503.
+
+    SECURITY: identity resolution must fail closed. This deliberately differs
+    from the fail-open revocation/user lookups later in _auth_jwt — an
+    unresolvable subject means we do not know who the caller is.
+    """
+    # Third-Party
+    from sqlalchemy.exc import SQLAlchemyError
+
+    with patch("mcpgateway.auth._get_email_by_id_sync", Mock(side_effect=SQLAlchemyError("db down"))):
+        with pytest.raises(SQLAlchemyError):
+            await tr._resolve_subject_email({"sub": SESSION_SUB_UUID, "token_use": "session"})
+
+
+@pytest.mark.asyncio
+async def test_normalize_jwt_payload_resolves_uuid_sub(monkeypatch):
+    """The stateful-session fallback path resolves a UUID sub to the email too."""
+    monkeypatch.setattr("mcpgateway.auth._get_email_by_id_sync", lambda user_id: "dev@example.com")
+
+    raw = {"sub": SESSION_SUB_UUID, "token_use": "session"}
+    with patch("mcpgateway.auth.resolve_session_teams", new_callable=AsyncMock, return_value=["team-x"]):
+        result = await _normalize_jwt_payload_ref()(raw)
+
+    assert result["email"] == "dev@example.com"
+    assert result["teams"] == ["team-x"]
+
+
+def _normalize_jwt_payload_ref():
+    """Return the module's _normalize_jwt_payload (kept out of the test body for import hygiene).
+
+    Returns:
+        The _normalize_jwt_payload coroutine function under test.
+    """
+    return tr._normalize_jwt_payload
+
+
+# ---------------------------------------------------------------------------
+# _auth_jwt: session-token identity resolution (issue #5215 / #5750)
+# ---------------------------------------------------------------------------
+
+
+def _auth_handler():
+    """Build a _StreamableHttpAuthHandler over a minimal ASGI triple.
+
+    Returns:
+        A handler instance whose scope/receive/send are test doubles.
+    """
+    return tr._StreamableHttpAuthHandler({"type": "http", "headers": []}, AsyncMock(), AsyncMock())
+
+
+@pytest.mark.asyncio
+async def test_auth_jwt_session_token_keys_cache_and_lookups_by_email(monkeypatch):
+    """A session token's UUID sub must never reach the auth cache or the user lookup.
+
+    Regression guard for the sticky 401: before the fix the transport missed on a
+    UUID cache key, fell through to a UUID-keyed DB lookup, then wrote the empty
+    result back under that same UUID key.
+    """
+    handler = _auth_handler()
+
+    monkeypatch.setattr(tr, "verify_credentials", AsyncMock(return_value={"sub": SESSION_SUB_UUID, "token_use": "session", "jti": "jti-1"}))
+    monkeypatch.setattr(tr._StreamableHttpAuthHandler, "_route_idp_issued_token", AsyncMock(return_value=None))
+    monkeypatch.setattr("mcpgateway.auth._get_email_by_id_sync", lambda user_id: "dev@example.com")
+
+    auth_cache = MagicMock()
+    auth_cache.get_auth_context = AsyncMock(return_value=None)
+    auth_cache.get_user_teams = AsyncMock(return_value=None)
+    auth_cache.set_auth_context = AsyncMock()
+    auth_cache.set_user_teams = AsyncMock()
+    monkeypatch.setattr("mcpgateway.cache.auth_cache.get_auth_cache", lambda: auth_cache)
+    monkeypatch.setattr(tr.settings, "auth_cache_enabled", True)
+    monkeypatch.setattr(tr.settings, "auth_cache_batch_queries", True)
+
+    monkeypatch.setattr(
+        "mcpgateway.auth._get_auth_context_batched_sync",
+        lambda email, jti: {"user": {"email": email, "is_admin": False, "is_active": True}, "team_ids": ["team-x"], "is_token_revoked": False, "personal_team_id": None},
+    )
+    monkeypatch.setattr("mcpgateway.auth.resolve_session_teams", AsyncMock(return_value=["team-x"]))
+    monkeypatch.setattr("mcpgateway.auth.resolve_trace_team_name", AsyncMock(return_value=None))
+
+    assert await handler._auth_jwt(token="tok") is True
+
+    # Every identity-keyed call must use the email, never the UUID.
+    assert auth_cache.get_auth_context.await_args.args[0] == "dev@example.com"
+    assert auth_cache.set_auth_context.await_args.args[0] == "dev@example.com"
+    assert auth_cache.set_user_teams.await_args.args[0] == "dev@example.com:True"
+
+    ctx = tr.user_context_var.get()
+    assert ctx["email"] == "dev@example.com"
+    assert ctx["teams"] == ["team-x"]
+
+
+@pytest.mark.asyncio
+async def test_auth_jwt_session_token_unknown_user_still_denied(monkeypatch):
+    """Deny path preserved: an unresolvable UUID sub still 401s under require_user_in_db."""
+    handler = _auth_handler()
+    sent = []
+    monkeypatch.setattr(tr._StreamableHttpAuthHandler, "_send_error", AsyncMock(side_effect=lambda **kw: (sent.append(kw), False)[1]))
+
+    monkeypatch.setattr(tr, "verify_credentials", AsyncMock(return_value={"sub": SESSION_SUB_UUID, "token_use": "session", "jti": "jti-2"}))
+    monkeypatch.setattr(tr._StreamableHttpAuthHandler, "_route_idp_issued_token", AsyncMock(return_value=None))
+    monkeypatch.setattr("mcpgateway.auth._get_email_by_id_sync", lambda user_id: None)
+    monkeypatch.setattr(tr.settings, "auth_cache_enabled", False)
+    monkeypatch.setattr(tr.settings, "auth_cache_batch_queries", False)
+    monkeypatch.setattr(tr.settings, "require_user_in_db", True)
+    monkeypatch.setattr("mcpgateway.auth._check_token_revoked_sync", lambda jti: False)
+    monkeypatch.setattr("mcpgateway.auth._get_user_by_email_sync", lambda email: None)
+
+    assert await handler._auth_jwt(token="tok") is False
+    assert sent and sent[0]["detail"] == "User not found in database"
+
+
+@pytest.mark.asyncio
+async def test_auth_jwt_session_token_platform_admin_escape_hatch(monkeypatch):
+    """Resolving sub lets the platform-admin escape hatch apply to session tokens.
+
+    SECURITY: this is the one place the fix widens access. Before the fix a
+    platform-admin session token carried a UUID that never equalled
+    platform_admin_email, so the hatch could not apply.
+    """
+    handler = _auth_handler()
+
+    monkeypatch.setattr(tr, "verify_credentials", AsyncMock(return_value={"sub": SESSION_SUB_UUID, "token_use": "session", "is_admin": True, "jti": "jti-3"}))
+    monkeypatch.setattr(tr._StreamableHttpAuthHandler, "_route_idp_issued_token", AsyncMock(return_value=None))
+    monkeypatch.setattr("mcpgateway.auth._get_email_by_id_sync", lambda user_id: "admin@example.com")
+    monkeypatch.setattr(tr.settings, "auth_cache_enabled", False)
+    monkeypatch.setattr(tr.settings, "auth_cache_batch_queries", False)
+    monkeypatch.setattr(tr.settings, "require_user_in_db", True)
+    monkeypatch.setattr(tr.settings, "platform_admin_email", "admin@example.com")
+    monkeypatch.setattr("mcpgateway.auth._check_token_revoked_sync", lambda jti: False)
+    monkeypatch.setattr("mcpgateway.auth._get_user_by_email_sync", lambda email: None)
+    monkeypatch.setattr("mcpgateway.auth.resolve_session_teams", AsyncMock(return_value=None))
+    monkeypatch.setattr("mcpgateway.auth.resolve_trace_team_name", AsyncMock(return_value=None))
+
+    assert await handler._auth_jwt(token="tok") is True
+    assert tr.user_context_var.get()["email"] == "admin@example.com"
+
+
+@pytest.mark.asyncio
+async def test_auth_jwt_legacy_token_performs_no_subject_lookup(monkeypatch):
+    """Legacy/API tokens must not incur an extra DB read on the auth hot path."""
+    handler = _auth_handler()
+    lookup = Mock(return_value="should-not-be-used@example.com")
+
+    monkeypatch.setattr(tr, "verify_credentials", AsyncMock(return_value={"sub": "legacy@example.com", "token_use": "api", "jti": "jti-4"}))
+    monkeypatch.setattr(tr._StreamableHttpAuthHandler, "_route_idp_issued_token", AsyncMock(return_value=None))
+    monkeypatch.setattr("mcpgateway.auth._get_email_by_id_sync", lookup)
+    monkeypatch.setattr(tr.settings, "auth_cache_enabled", False)
+    monkeypatch.setattr(tr.settings, "auth_cache_batch_queries", False)
+    monkeypatch.setattr(tr.settings, "require_user_in_db", False)
+    monkeypatch.setattr("mcpgateway.auth._check_token_revoked_sync", lambda jti: False)
+    monkeypatch.setattr("mcpgateway.auth._get_user_by_email_sync", lambda email: None)
+    monkeypatch.setattr("mcpgateway.auth.normalize_token_teams", lambda payload: [])
+    monkeypatch.setattr("mcpgateway.auth.resolve_trace_team_name", AsyncMock(return_value=None))
+
+    assert await handler._auth_jwt(token="tok") is True
+    lookup.assert_not_called()
+    assert tr.user_context_var.get()["email"] == "legacy@example.com"
+
+
+# ---------------------------------------------------------------------------
 # call_tool: recovered context propagation regression test
 # ---------------------------------------------------------------------------
 
