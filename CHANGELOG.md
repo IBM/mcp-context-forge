@@ -11,6 +11,22 @@
 ### Fixed
 
 - Fixed RBAC seeder race condition that produced HTTP 500 under concurrent bootstrap: added partial unique indexes on `roles(name, scope) WHERE is_active` and `user_roles` equivalent columns, plus savepoint/retry in `RoleService.create_role()` and `assign_role_to_user()`. The migration (`d21698ae4a19`) now also remaps `user_roles.role_id` from duplicate roles to the kept role before deactivating the duplicates (so `list_user_roles()` joins remain intact), and prefers unexpired / most-recently-granted assignments when deduplicating user-role rows (#4636)
+### Security
+
+- **[CRITICAL] Unconditional weak-secret rejection** (GHSA-8pcq-mx48-hjvj) - `JWT_SECRET_KEY` and `AUTH_ENCRYPTION_SECRET` placeholder and known-weak values now cause `SecurityConfigurationError` at startup in **every** environment, including development. The previous `env != "development"` carve-out and `changeme` → `__REPLACE_ME__` default are both closed. `BASIC_AUTH_PASSWORD` is also patched to a strong value by `make setup` / `make init-secrets-patch-env`. Run `make setup` (fresh checkout) or `make init-secrets-patch-env` (existing `.env`) to provision real secrets.
+
+### Fixed
+
+- **Startup secret validation** - `JWT_SECRET_KEY`, `AUTH_ENCRYPTION_SECRET`, and `BASIC_AUTH_PASSWORD` are validated at startup with a minimum 32-byte length requirement and a comprehensive blocklist of known-weak values. Weak secrets previously only rejected in non-development environments now fail unconditionally across all environments.
+- **Hardened Helm chart defaults** - `JWT_SECRET_KEY` in `charts/mcp-stack/values.yaml` now defaults to an empty string with deployment guidance, rather than shipping a sample weak key.
+- **Docker Compose and entrypoint hardening** - Compose `:?` variable guards and entrypoint secret checks updated to match the new enforcement policy.
+
+### Added
+
+- **`make init-secrets-patch-env`** - Generates cryptographically strong values for `JWT_SECRET_KEY`, `AUTH_ENCRYPTION_SECRET`, and `BASIC_AUTH_PASSWORD` and patches them into an existing `.env` file in-place.
+- **`make setup`** - For fresh checkouts: copies `.env.example` → `.env` and runs `init-secrets-patch-env` to provision real secrets before first use.
+- **`mcpgateway/scripts/init_secrets.py`** - Script backing both Makefile targets; generates secrets using `secrets.token_hex(32)` and rewrites the relevant lines in `.env` without touching unrelated configuration.
+- **`mcpgateway/scripts/validate_env.py`** - Startup validation script invoked by the container entrypoint and `make check-env` that enforces the secret strength policy and surfaces clear remediation guidance.
 
 ## [1.0.6] - 2026-07-22 - OAuth Token Exchange, Vault Credentials, MCP Apps, Dataplane Publishing, and Security Hardening
 

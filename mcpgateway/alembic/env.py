@@ -53,12 +53,13 @@ from alembic import context
 from alembic.config import Config
 from sqlalchemy import engine_from_config, pool
 
-# First-Party
-from mcpgateway.config import settings
-from mcpgateway.db import Base
-
-# from mcpgateway.db import get_metadata
-# target_metadata = get_metadata()
+# NOTE: mcpgateway.config (Settings) and mcpgateway.db (Base) are imported
+# lazily inside the functions below.  Importing them at module level would
+# trigger Settings() construction — and therefore validate_security_combinations
+# — every time alembic loads env.py, including `alembic current`, `alembic
+# heads`, and `alembic upgrade head --sql`, even on a fresh checkout that has
+# not yet had secrets configured.  Deferred imports confine that side-effect to
+# the moment migrations actually run.
 
 
 # Create config object - this is the standard way in Alembic
@@ -119,23 +120,34 @@ if config.config_file_name is not None and not logging.getLogger().handlers:
         disable_existing_loggers=False,
     )
 
-# add your model's MetaData object here
-# for 'autogenerate' support
-# from myapp import mymodel
 
-target_metadata = Base.metadata
+def _get_metadata():
+    """Return the SQLAlchemy metadata, importing mcpgateway.db lazily.
 
-# other values from the config, defined by the needs of env.py,
-# can be acquired:
-# my_important_option = config.get_main_option("my_important_option")
-# ... etc.
+    Deferred so that importing this module does not trigger Settings()
+    construction (and its unconditional secret-strength validator) unless
+    a migration is actually about to run.
+    """
+    # First-Party
+    from mcpgateway.db import Base as _Base  # pylint: disable=import-outside-toplevel
 
-# Escape '%' characters in URL to avoid configparser interpolation errors
-# (e.g., URL-encoded passwords like %40 for '@')
-config.set_main_option(
-    "sqlalchemy.url",
-    settings.database_url.replace("%", "%%"),
-)
+    return _Base.metadata
+
+
+def _configure_url() -> None:
+    """Inject the database URL from settings into the Alembic config.
+
+    Also deferred to avoid constructing Settings() at import time.
+    """
+    # First-Party
+    from mcpgateway.config import settings as _settings  # pylint: disable=import-outside-toplevel
+
+    # Escape '%' characters to avoid configparser interpolation errors
+    # (e.g., URL-encoded passwords like %40 for '@')
+    config.set_main_option(
+        "sqlalchemy.url",
+        _settings.database_url.replace("%", "%%"),
+    )
 
 
 def run_migrations_offline() -> None:
@@ -150,6 +162,8 @@ def run_migrations_offline() -> None:
     script output.
 
     """
+    _configure_url()
+    target_metadata = _get_metadata()
     url = config.get_main_option("sqlalchemy.url")
     context.configure(
         url=url,
@@ -164,6 +178,8 @@ def run_migrations_offline() -> None:
 
 def run_migrations_online() -> None:
     """Run migrations in 'online' mode."""
+    _configure_url()
+    target_metadata = _get_metadata()
 
     connection = config.attributes.get("connection")
 

@@ -328,7 +328,7 @@ services:
       # JWT Configuration - Choose ONE approach:
       # Option 1: HMAC (Default - Simple deployments)
       - JWT_ALGORITHM=HS256
-      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-my-test-key-but-now-longer-than-32-bytes}
+      - "JWT_SECRET_KEY=${JWT_SECRET_KEY:?JWT_SECRET_KEY is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"
       # Option 2: RSA (Production - Asymmetric, uncomment and generate certs)
       # - JWT_ALGORITHM=RS256
       # - JWT_PUBLIC_KEY_PATH=/app/certs/jwt/public.pem
@@ -341,7 +341,7 @@ services:
       # - BASIC_AUTH_USER=${BASIC_AUTH_USER:-admin}
       # - BASIC_AUTH_PASSWORD=${BASIC_AUTH_PASSWORD:-changeme}
       # Auth encryption secret + default user password
-      - AUTH_ENCRYPTION_SECRET=${AUTH_ENCRYPTION_SECRET:-my-test-salt}
+      - "AUTH_ENCRYPTION_SECRET=${AUTH_ENCRYPTION_SECRET:?AUTH_ENCRYPTION_SECRET is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"
       - DEFAULT_USER_PASSWORD=${DEFAULT_USER_PASSWORD:-changeme}
       # Admin UI uses email/password authentication
       - EMAIL_AUTH_ENABLED=true
@@ -408,8 +408,7 @@ services:
       # Admin-specific UI hide lists (empty = admins see all; embedded defaults skip admins)
       - MCPGATEWAY_UI_HIDE_SECTIONS_ADMIN=
       - MCPGATEWAY_UI_HIDE_HEADER_ITEMS_ADMIN=
-      # Security configuration (using defaults)
-      - ENVIRONMENT=development
+      - ENVIRONMENT=${ENVIRONMENT:-development}
       - SECURITY_HEADERS_ENABLED=true
       - CORS_ALLOW_CREDENTIALS=true
       - SECURE_COOKIES=false
@@ -1048,12 +1047,12 @@ services:
       dockerfile: Containerfile
     environment:
       - DATABASE_URL=postgresql+psycopg://postgres:${POSTGRES_PASSWORD:-mysecretpassword}@postgres:5432/mcp
-      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-your-secret-jwt-key-here}
+      - "JWT_SECRET_KEY=${JWT_SECRET_KEY:?JWT_SECRET_KEY is not set. Run: make setup (first time) or make init-secrets-patch-env (if .env exists)}"
       - BASIC_AUTH_USER=${BASIC_AUTH_USER:-admin}
       - BASIC_AUTH_PASSWORD=${BASIC_AUTH_PASSWORD:-changeme}
       - PLATFORM_ADMIN_EMAIL=${PLATFORM_ADMIN_EMAIL:-admin@example.com}
       - AUTH_REQUIRED=${AUTH_REQUIRED:-true}
-      - AUTH_ENCRYPTION_SECRET=${AUTH_ENCRYPTION_SECRET:-my-test-salt}
+      - "AUTH_ENCRYPTION_SECRET=${AUTH_ENCRYPTION_SECRET:?AUTH_ENCRYPTION_SECRET is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
     command: ["python", "-m", "mcpgateway.bootstrap_db"]
     depends_on:
@@ -1254,7 +1253,8 @@ services:
     volumes:
       - prometheus_token:/tokens
     environment:
-      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-my-test-key-but-now-longer-than-32-bytes}
+      - "JWT_SECRET_KEY=${JWT_SECRET_KEY:?JWT_SECRET_KEY is not set. Run: make setup (first time) or make init-secrets-patch-env (if .env exists)}"
+      - "AUTH_ENCRYPTION_SECRET=${AUTH_ENCRYPTION_SECRET:?AUTH_ENCRYPTION_SECRET is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
@@ -1493,7 +1493,8 @@ services:
       fast_time_server:
         condition: service_started
     environment:
-      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-my-test-key-but-now-longer-than-32-bytes}
+      - "JWT_SECRET_KEY=${JWT_SECRET_KEY:?JWT_SECRET_KEY is not set. Run: make setup (first time) or make init-secrets-patch-env (if .env exists)}"
+      - "AUTH_ENCRYPTION_SECRET=${AUTH_ENCRYPTION_SECRET:?AUTH_ENCRYPTION_SECRET is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"
 
     # This is a one-shot container that exits after registration
     restart: "no"
@@ -1548,8 +1549,8 @@ services:
         "
 
         echo "Generating JWT token..."
-        echo "Environment: JWT_SECRET_KEY=$$JWT_SECRET_KEY"
-        echo "Running: python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --admin --exp 10080 --secret $$JWT_SECRET_KEY --algo HS256"
+        echo "Environment: JWT_SECRET_KEY=[redacted]"
+        echo "Running: python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --admin --exp 10080 --secret [redacted] --algo HS256"
         # Only capture stdout (the token), let warnings go to stderr
         export MCPGATEWAY_BEARER_TOKEN=$$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --admin --exp 10080 --secret $$JWT_SECRET_KEY --algo HS256 2>/dev/null)
         echo "Generated token: $$MCPGATEWAY_BEARER_TOKEN"
@@ -1799,7 +1800,7 @@ services:
       slow_time_server:
         condition: service_healthy
     environment:
-      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-my-test-key-but-now-longer-than-32-bytes}
+      - "JWT_SECRET_KEY=${JWT_SECRET_KEY:?JWT_SECRET_KEY is not set. Run: make setup (first time) or make init-secrets-patch-env (if .env exists)}"
     restart: "no"
     entrypoint: ["/bin/sh", "-c"]
     command:
@@ -1908,7 +1909,7 @@ services:
       fast_test_server:
         condition: service_healthy
     environment:
-      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-my-test-key-but-now-longer-than-32-bytes}
+      - "JWT_SECRET_KEY=${JWT_SECRET_KEY:?JWT_SECRET_KEY is not set. Run: make setup (first time) or make init-secrets-patch-env (if .env exists)}"
     restart: "no"
     entrypoint: ["/bin/sh", "-c"]
     command:
@@ -2115,7 +2116,7 @@ services:
       a2a_echo_agent:
         condition: service_healthy
     environment:
-      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-my-test-key-but-now-longer-than-32-bytes}
+      - "JWT_SECRET_KEY=${JWT_SECRET_KEY:?JWT_SECRET_KEY is not set. Run: make setup (first time) or make init-secrets-patch-env (if .env exists)}"
     restart: "no"
     entrypoint: ["/bin/sh", "-c"]
     command:
@@ -2186,7 +2187,8 @@ services:
     volumes:
       - locust_token:/tokens
     environment:
-      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-my-test-key-but-now-longer-than-32-bytes}
+      - "JWT_SECRET_KEY=${JWT_SECRET_KEY:?JWT_SECRET_KEY is not set. Run: make setup (first time) or make init-secrets-patch-env (if .env exists)}"
+      - "AUTH_ENCRYPTION_SECRET=${AUTH_ENCRYPTION_SECRET:?AUTH_ENCRYPTION_SECRET is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
@@ -2356,7 +2358,8 @@ services:
       benchmark_server:
         condition: service_started
     environment:
-      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-my-test-key-but-now-longer-than-32-bytes}
+      - "JWT_SECRET_KEY=${JWT_SECRET_KEY:?JWT_SECRET_KEY is not set. Run: make setup (first time) or make init-secrets-patch-env (if .env exists)}"
+      - "AUTH_ENCRYPTION_SECRET=${AUTH_ENCRYPTION_SECRET:?AUTH_ENCRYPTION_SECRET is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"
       - BENCHMARK_SERVER_COUNT=${BENCHMARK_SERVER_COUNT:-10}
       - BENCHMARK_START_PORT=${BENCHMARK_START_PORT:-9000}
     restart: "no"
@@ -2580,10 +2583,10 @@ services:
 #    2. URL: http://nginx:80/servers/9779b6698cbd4b4995ee04a4fab38737/mcp
 #    3. Add header:  Authorization: Bearer <your-jwt-token>
 #
-#  Generate a JWT token:
+#  Generate a JWT token (JWT_SECRET_KEY must be set in .env — see make install-dev):
 #    python -m mcpgateway.utils.create_jwt_token \
 #      --username admin@example.com --exp 10080 \
-#      --secret my-test-key-but-now-longer-than-32-bytes --algo HS256
+#      --secret ${JWT_SECRET_KEY} --algo HS256
 ###############################################################################
 
   mcp_inspector:

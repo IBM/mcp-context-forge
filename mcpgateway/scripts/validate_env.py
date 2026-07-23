@@ -26,7 +26,7 @@ from typing import Optional
 from pydantic import SecretStr, ValidationError
 
 # First-Party
-from mcpgateway.config import Settings
+from mcpgateway.config import SecurityConfigurationError, Settings
 
 
 def get_security_warnings(settings: Settings) -> list[str]:
@@ -231,6 +231,10 @@ def main(env_file: Optional[str] = None, exit_on_warnings: bool = True) -> int:
 
     try:
         settings = Settings(_env_file=env_file)
+    except SecurityConfigurationError as e:
+        print(f"❌ Security configuration error: {e}", file=sys.stderr)
+        print("   Run 'python3 -m mcpgateway.scripts.init_secrets --patch .env' to generate strong secrets.", file=sys.stderr)
+        return 1
     except ValidationError as e:
         print("❌ Invalid configuration:", e, file=sys.stderr)
         return 1

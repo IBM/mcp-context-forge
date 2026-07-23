@@ -37,23 +37,26 @@ class TestValidateSecretsRaisesInNonDev:
     def test_raises_in_production_with_weak_jwt_key(self):
         with pytest.raises(SecurityConfigurationError) as exc_info:
             _make_settings(environment="production", jwt_secret_key=WEAK_JWT_KEY)
-        assert "Weak/default secret rejected" in str(exc_info.value)
+        assert "known-weak/default value" in str(exc_info.value)
 
     def test_raises_in_staging_with_weak_jwt_key(self):
         with pytest.raises(SecurityConfigurationError) as exc_info:
             _make_settings(environment="staging", jwt_secret_key=WEAK_JWT_KEY)
-        assert "Weak/default secret rejected" in str(exc_info.value)
+        assert "known-weak/default value" in str(exc_info.value)
 
     def test_raises_in_production_with_weak_enc_key(self):
+        # WEAK_ENC_KEY ("my-test-salt") is 12 chars — shorter than min_secret_length (32),
+        # so the length-floor check fires before the weak-value check.
         with pytest.raises(SecurityConfigurationError) as exc_info:
             _make_settings(environment="production", auth_encryption_secret=WEAK_ENC_KEY)
-        assert "Weak/default secret rejected" in str(exc_info.value)
+        msg = str(exc_info.value)
+        assert "too short" in msg or "known-weak/default value" in msg
 
-    def test_warns_but_passes_in_development_with_weak_key(self, caplog):
-        with caplog.at_level(logging.WARNING, logger="mcpgateway.config"):
-            settings = _make_settings(environment="development", jwt_secret_key=WEAK_JWT_KEY)
-        assert settings.jwt_secret_key.get_secret_value() == WEAK_JWT_KEY
-        assert "SECURITY WARNING" in caplog.text
+    def test_raises_in_development_with_weak_key(self):
+        """Weak key is now rejected unconditionally in development too (GHSA-8pcq-mx48-hjvj)."""
+        with pytest.raises(SecurityConfigurationError) as exc_info:
+            _make_settings(environment="development", jwt_secret_key=WEAK_JWT_KEY)
+        assert "known-weak/default value" in str(exc_info.value)
 
     def test_strong_key_passes_in_production(self):
         settings = _make_settings(environment="production")
@@ -62,7 +65,7 @@ class TestValidateSecretsRaisesInNonDev:
     def test_client_mode_does_not_bypass_weak_key_check_in_production(self):
         with pytest.raises(SecurityConfigurationError) as exc_info:
             _make_settings(environment="production", jwt_secret_key=WEAK_JWT_KEY, client_mode=True)
-        assert "Weak/default secret rejected" in str(exc_info.value)
+        assert "known-weak/default value" in str(exc_info.value)
 
 
 REPO_ROOT = Path(__file__).parent.parent.parent
@@ -154,29 +157,23 @@ class TestRemainingGaps:
             )
         assert "placeholder" in str(exc_info.value).lower() or "replace_me" in str(exc_info.value).lower()
 
-    def test_placeholder_value_warns_in_development(self, caplog):
-        """__REPLACE_ME__ in development emits a warning but does not block startup."""
-        import logging
-
-        with caplog.at_level(logging.WARNING, logger="mcpgateway.config"):
-            settings = _make_settings(
+    def test_placeholder_value_raises_in_development(self):
+        """__REPLACE_ME__ placeholder is now rejected in development too (GHSA-8pcq-mx48-hjvj)."""
+        with pytest.raises(SecurityConfigurationError) as exc_info:
+            _make_settings(
                 environment="development",
                 jwt_secret_key="__REPLACE_ME__run_init-secrets_before_starting",
             )
-        assert settings is not None
-        assert "replace_me" in caplog.text.lower() or "placeholder" in caplog.text.lower()
+        assert "unset placeholder" in str(exc_info.value).lower() or "replace_me" in str(exc_info.value).lower()
 
-    def test_placeholder_value_warns_in_staging(self, caplog):
-        """__REPLACE_ME__ in staging emits a warning but does not block startup."""
-        import logging
-
-        with caplog.at_level(logging.WARNING, logger="mcpgateway.config"):
-            settings = _make_settings(
+    def test_placeholder_value_raises_in_staging(self):
+        """__REPLACE_ME__ placeholder is rejected in staging (GHSA-8pcq-mx48-hjvj)."""
+        with pytest.raises(SecurityConfigurationError) as exc_info:
+            _make_settings(
                 environment="staging",
                 jwt_secret_key="__REPLACE_ME__run_init-secrets_before_starting",
             )
-        assert settings is not None
-        assert "replace_me" in caplog.text.lower() or "placeholder" in caplog.text.lower()
+        assert "unset placeholder" in str(exc_info.value).lower() or "replace_me" in str(exc_info.value).lower()
 
     def test_placeholder_prefix_variations_blocked(self):
         """Case-insensitive prefix match."""

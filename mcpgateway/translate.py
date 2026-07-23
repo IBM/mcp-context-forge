@@ -158,7 +158,7 @@ logging_service = LoggingService()
 LOGGER = logging_service.get_logger("mcpgateway.translate")
 CONTENT_TYPE = os.getenv("FORGE_CONTENT_TYPE", "application/json")
 # headers = {"Content-Type": CONTENT_TYPE}
-# Import settings for default keepalive interval
+# Import settings for default keepalive interval.
 try:
     # First-Party
     from mcpgateway.config import settings
@@ -167,7 +167,6 @@ try:
     DEFAULT_KEEPALIVE_ENABLED = settings.sse_keepalive_enabled
     DEFAULT_SSL_VERIFY = not settings.skip_ssl_verify
 except ImportError:
-    # Fallback if config not available
     DEFAULT_KEEP_ALIVE_INTERVAL = 30
     DEFAULT_KEEPALIVE_ENABLED = True
     DEFAULT_SSL_VERIFY = True  # Verify SSL by default when config unavailable

@@ -73,13 +73,19 @@ def test_fail_closed_basic_auth_password_when_api_basic_auth_enabled():
 
 
 def test_proceed_development_mode():
-    """Ensure development environment allows startup with warnings for local testing."""
-    # Development mode should return settings object instead of exiting.
-    cfg = get_settings(environment="development", jwt_secret_key="my-test-key", auth_encryption_secret="UNCONFIGURED")  # pragma: allowlist secret  # pragma: allowlist secret
+    """Development environment now rejects weak secrets unconditionally (GHSA-8pcq-mx48-hjvj).
 
-    # Validation status should be SUCCESS to allow development flow.
-    status = cfg.get_security_status()
-    assert status["status"] == "SUCCESS"
+    The old behaviour (warn-and-pass in development) was the root cause of the advisory.
+    This test is updated to assert the correct fail-closed behaviour.
+
+    Note: ``"my-test-key"`` is only 11 chars, so the length-floor check fires first
+    (``"too short"``), before the weak-value check (``"known-weak/default value"``).
+    Both are correct SecurityConfigurationError reasons — the test asserts the class.
+    """
+    from mcpgateway.config import SecurityConfigurationError
+
+    with pytest.raises(SecurityConfigurationError):
+        get_settings(environment="development", jwt_secret_key="my-test-key", auth_encryption_secret="UNCONFIGURED")  # nosec B106  # pragma: allowlist secret
 
 
 def test_environment_aware_default_production(monkeypatch):
@@ -99,21 +105,32 @@ def test_environment_aware_default_production_kwargs():
 
 
 def test_environment_aware_default_development(monkeypatch):
-    """Verify that REQUIRE_STRONG_SECRETS defaults to False in development."""
-    # Simulate development environment
+    """Verify that REQUIRE_STRONG_SECRETS defaults to False in development.
+
+    The entropy gate is unconditional so a real secret is required even in
+    development; the test verifies the field value only.
+    """
+    from mcpgateway.config import SecurityConfigurationError
+
     monkeypatch.setenv("ENVIRONMENT", "development")
 
-    # In development, it should proceed despite the weak key
-    cfg = get_settings(jwt_secret_key="weak-key")
+    # Weak-key still rejected by the unconditional entropy gate
+    with pytest.raises(SecurityConfigurationError):
+        get_settings(jwt_secret_key="weak-key")
+
+    # With a real secret, require_strong_secrets should be False in development
+    strong = "t3stJwt-S3cr3t!xK9pQmRvN2wLsA5dYfB7cEjGhTuIoP"  # pragma: allowlist secret
+    cfg = get_settings(jwt_secret_key=strong)
     assert cfg.require_strong_secrets is False
 
 
 def test_client_mode_skips_fail_closed_secret_enforcement():
-    """Verify client mode bypasses server secret enforcement."""
-    cfg = get_settings(client_mode=True, environment="production", jwt_secret_key="weak", auth_encryption_secret="UNCONFIGURED", require_strong_secrets=True)  # pragma: allowlist secret
-    status = cfg.get_security_status()
-    assert status["status"] == "SUCCESS"
-    assert status["message"] == "Security validation skipped in client mode."
+    """Verify client mode get_security_status() returns SUCCESS but entropy gate still enforced."""
+    from mcpgateway.config import SecurityConfigurationError
+
+    # Weak secrets are rejected unconditionally regardless of client_mode
+    with pytest.raises(SecurityConfigurationError):
+        get_settings(client_mode=True, environment="production", jwt_secret_key="weak", auth_encryption_secret="UNCONFIGURED", require_strong_secrets=True)  # pragma: allowlist secret
 
 
 def test_apply_environment_aware_defaults_non_dict_passthrough():
@@ -122,3 +139,64 @@ def test_apply_environment_aware_defaults_non_dict_passthrough():
 
     apply_defaults = getattr(Settings, "apply_environment_aware_defaults")
     assert apply_defaults(sentinel) is sentinel
+
+
+def test_secret_below_min_length_raises():
+    """Secret shorter than min_secret_length (32 chars) is rejected unconditionally.
+
+    This covers the length-floor branch added in validate_security_combinations()
+    (config.py:1525-1530) which the entropy/weak-value checks do not exercise —
+    a 31-char string can have high entropy and not appear in WEAK_VALUES yet still
+    fail the length floor.
+    """
+    from mcpgateway.config import SecurityConfigurationError
+
+    # 31 chars: high entropy, not in WEAK_VALUES, but one char too short.
+    just_under = "aB3#eF6!hI9$kL2%nO5^qR8&tU1*wX4"  # pragma: allowlist secret
+    assert len(just_under) == 31
+
+    with pytest.raises(SecurityConfigurationError, match="too short"):
+        get_settings(
+            environment="development",
+            jwt_secret_key=just_under,
+            auth_encryption_secret="a-strong-enc-secret-that-is-long-enough-and-unique-xxxx",  # nosec B105  # pragma: allowlist secret
+        )
+
+
+def test_startup_rejects_placeholder_compose_secret():
+    """Gateway refuses to start when secrets match Docker Compose placeholder patterns.
+
+    This is the CVSS 9.8 regression guard.  A deployment that ships the default
+    compose file without running ``make init-secrets`` would have placeholder
+    JWT_SECRET_KEY / AUTH_ENCRYPTION_SECRET values.  The gateway must fail closed
+    at Settings() construction time — before any network socket is bound — and
+    must never reach a running state.
+
+    Covered patterns:
+    - ``__REPLACE_ME__run_init-secrets_before_starting`` (init_secrets placeholder)
+    - Shell-expansion fallback that was present before the fix
+      (``my-test-key-but-now-longer-than-32-bytes``)
+    """
+    from mcpgateway.config import SecurityConfigurationError
+
+    placeholder_cases = [
+        "__REPLACE_ME__run_init-secrets_before_starting",
+        "my-test-key-but-now-longer-than-32-bytes",  # nosec B105  # pragma: allowlist secret
+    ]
+    strong_enc = "a-strong-enc-secret-that-is-long-enough-and-unique-xxxx"  # nosec B105  # pragma: allowlist secret
+
+    for placeholder in placeholder_cases:
+        with pytest.raises(SecurityConfigurationError):
+            get_settings(
+                environment="production",
+                jwt_secret_key=placeholder,
+                auth_encryption_secret=strong_enc,
+            )
+
+        # Also fails in development — no environment exemption.
+        with pytest.raises(SecurityConfigurationError):
+            get_settings(
+                environment="development",
+                jwt_secret_key=placeholder,
+                auth_encryption_secret=strong_enc,
+            )
