@@ -7450,7 +7450,7 @@ pip-audit:                          ## 🔒 Audit Python dependencies for CVEs
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		$(UV_BIN) pip install -q pip-audit && \
-		pip-audit --strict || true"
+		pip-audit --skip-editable || true"
 
 
 
