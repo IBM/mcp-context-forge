@@ -1,0 +1,10 @@
+{"id":"db25e825-ef0e-44dd-8748-220e64708e4f","ts":"2026-04-07T10:26:23.176Z","path":"/Users/jonpspri/cf/pr-3704/mcpgateway/alembic/versions/a7f3c9e1b2d4_add_title_to_tools_resources_prompts.py","version":"1.0.0","taskID":"c5d254bc-c74d-4daa-a0e3-b67f15886389"}
+
+{"id":"ea073f6b-6c98-4b32-98d4-385a7640a68e","ts":"2026-04-07T09:59:23.292Z","path":"/Users/jonpspri/cf/pr-3704/mcpgateway/alembic/versions/a7f3c9e1b2d4_add_title_to_tools_resources_prompts.py","version":"1.0.0","taskID":"a92433f1-3545-4567-bf9d-8338a71d5d7c"}
+{"id":"5bbc4c23-41ef-423e-8916-ddcdf430b519","ts":"2026-04-07T10:02:48.326Z","path":"/Users/jonpspri/cf/pr-3704/tests/integration/test_sso_adfs_integration.py","version":"1.0.0","taskID":"a92433f1-3545-4567-bf9d-8338a71d5d7c"}
+{"id":"d99eaea8-bb66-4790-85ee-1a0fa9f8b352","ts":"2026-04-07T10:03:05.946Z","path":"/Users/jonpspri/cf/pr-3704/tests/unit/mcpgateway/routers/test_sso_router.py","version":"1.0.0","taskID":"a92433f1-3545-4567-bf9d-8338a71d5d7c"}
+{"id":"ed8a7d15-1ba7-442d-bab1-8a3f6ba103ca","ts":"2026-04-07T10:03:15.405Z","path":"/Users/jonpspri/cf/pr-3704/tests/unit/scripts/test_demo_a2a_agent.py","version":"1.0.0","taskID":"a92433f1-3545-4567-bf9d-8338a71d5d7c"}
+{"id":"6856914f-63c4-4ef7-a12b-edbd989b4426","ts":"2026-04-07T10:04:40.932Z","path":"/Users/jonpspri/cf/pr-3704/tests/integration/test_sso_adfs_integration.py","version":"1.0.0","taskID":"a92433f1-3545-4567-bf9d-8338a71d5d7c"}
+{"id":"edac938c-8a52-41d1-ae9c-d101addf8f2f","ts":"2026-04-07T10:16:40.811Z","path":"/Users/jonpspri/cf/pr-3704/tests/integration/test_sso_adfs_integration.py","version":"1.0.0","taskID":"c5d254bc-c74d-4daa-a0e3-b67f15886389"}
+{"id":"51e841b8-148c-4471-bf2e-af32fbba4f65","ts":"2026-04-07T10:16:48.957Z","path":"/Users/jonpspri/cf/pr-3704/tests/integration/test_sso_adfs_integration.py","version":"1.0.0","taskID":"c5d254bc-c74d-4daa-a0e3-b67f15886389"}
+{"id":"af74afbe-68f0-45e4-aab1-1abde09f84c1","ts":"2026-04-07T10:17:51.343Z","path":"/Users/jonpspri/cf/pr-3704/tests/integration/test_sso_adfs_integration.py","version":"1.0.0","taskID":"c5d254bc-c74d-4daa-a0e3-b67f15886389"}
