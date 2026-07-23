@@ -888,6 +888,3 @@ async def test_get_user_token_no_warning_for_bearer(service, mock_db, caplog):
 
     assert result == "decrypted_value"
     assert not any("token_type" in msg.lower() for msg in caplog.messages)
-=======
-            # Should fall back to None for shared path
-            assert team_id is None
