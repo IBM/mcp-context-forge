@@ -757,7 +757,7 @@ class TestTeamManagementService:
         mock_owner_role.id = "owner-role-id"
 
         mock_role_service = MagicMock()
-        mock_role_service.get_role_by_name = AsyncMock(side_effect=[mock_member_role, mock_owner_role])
+        mock_role_service.get_role_by_name = AsyncMock(side_effect=[mock_owner_role, mock_member_role])  # First call for old (owner), second for new (member)
         mock_role_service.revoke_role_from_user = AsyncMock(return_value=True)
         mock_role_service.assign_role_to_user = AsyncMock(return_value=MagicMock())
         service._role_service = mock_role_service
