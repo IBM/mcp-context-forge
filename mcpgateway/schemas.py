@@ -8907,7 +8907,9 @@ class PydanticA2AAgent(BaseModelWithConfigDict):
         team_id: Team the agent belongs to (None for public agents).
         visibility: Agent visibility scope (public, private, etc.).
         enabled: Whether the agent is currently enabled.
-        tags: List of string tags for agent classification (Note: differs from Gateway.tags which is List[Dict[str,str]]).
+        tags: Agent classification tags. Accepts both plain strings and the normalized
+            ``{"id","label"}`` dict form that ``validate_tags_field`` persists to the DB
+            (A2A agent tags are stored as ``List[Dict[str,str]]``, same as Gateway.tags).
         oauth_config: OAuth configuration for the agent (if any).
         passthrough_headers: List of HTTP header names that should be passed through to upstream agent.
         auth_type: Authentication type (basic, bearer, api_key, etc.).
@@ -8918,7 +8920,7 @@ class PydanticA2AAgent(BaseModelWithConfigDict):
     team_id: Optional[str] = Field(None, description="Team ID the agent belongs to")
     visibility: str = Field(..., description="Agent visibility scope")
     enabled: bool = Field(..., description="Whether the agent is enabled")
-    tags: List[str] = Field(default_factory=list, description="String tags for agent classification")
+    tags: List[Union[str, Dict[str, str]]] = Field(default_factory=list, description="Agent classification tags (plain strings or normalized {id,label} dicts)")
     oauth_config: Optional[Dict[str, Any]] = Field(None, description="OAuth configuration")
     passthrough_headers: Optional[List[str]] = Field(None, description="Headers to pass through to upstream agent")
     auth_type: Optional[str] = Field(None, description="Authentication type")

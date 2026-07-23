@@ -2319,6 +2319,21 @@ class A2AAgentService(BaseService):
                             agent=agent,
                             feature_flag_enabled=settings.enable_sensitive_header_passthrough,
                         )
+
+                        # Honor header REMOVALS as well as additions. ``prepared.headers`` was
+                        # built from the passthrough set, so a plugin that drops a header (e.g.
+                        # the Vault plugin stripping ``X-Vault-Tokens``) would otherwise leak it
+                        # upstream, since ``.update()`` cannot delete keys. Reconcile removals
+                        # against the sanitized set the plugin was actually given
+                        # (``plugin_headers``) so a plugin can only remove headers it saw.
+                        plugin_returned_lower = {k.lower() for k in plugin_returned}
+                        for received_key in plugin_headers:
+                            rk = received_key.lower()
+                            if rk not in plugin_returned_lower:
+                                # Plugin removed this header — drop it from the outbound set.
+                                for existing_key in [k for k in prepared.headers if k.lower() == rk]:
+                                    del prepared.headers[existing_key]
+
                         prepared.headers.update(safe_headers)
 
                         # Log security-blocked headers for forensic awareness
