@@ -74,7 +74,6 @@ _RL: dict = {
     "backend": "memory",
     "redis_url": None,
     "redis_key_prefix": "rl",
-    "redis_fallback": True,
 }
 
 

@@ -11,7 +11,7 @@ actually affect rate limiting behavior on tool calls.
 The rate limiter is configured in plugins/config.yaml with:
     mode: "disabled"
     by_user: "30/m"
-    backend: "redis" (with redis_fallback: true)
+    backend: "redis"
 
 Tests toggle the mode at runtime and verify tool calls are rate-limited
 (or not) accordingly.
