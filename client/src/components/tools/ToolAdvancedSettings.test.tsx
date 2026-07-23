@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { renderWithProviders } from "@/test/test-utils";
 import { ToolAdvancedSettings } from "./ToolAdvancedSettings";
 import { ToolBearerTokenAuth } from "./ToolBearerTokenAuth";
@@ -30,7 +31,7 @@ const defaultProps = {
   onCustomHeadersChange: vi.fn(),
   responseFilter: "",
   onResponseFilterChange: vi.fn(),
-  tags: "",
+  tags: [] as string[],
   onTagsChange: vi.fn(),
   description: "",
   onDescriptionChange: vi.fn(),
@@ -176,12 +177,13 @@ describe("ToolAdvancedSettings", () => {
     expect(onResponseFilterChange).toHaveBeenCalledWith(".results");
   });
 
-  it("calls onTagsChange when tags input changes", () => {
+  it("calls onTagsChange when a tag is committed", async () => {
     const onTagsChange = vi.fn();
+    const user = userEvent.setup();
     renderWithProviders(<ToolAdvancedSettings {...defaultProps} onTagsChange={onTagsChange} />);
     const input = screen.getByLabelText(/Tags/i);
-    fireEvent.change(input, { target: { value: "api,v2" } });
-    expect(onTagsChange).toHaveBeenCalledWith("api,v2");
+    await user.type(input, "api{Enter}");
+    expect(onTagsChange).toHaveBeenCalledWith(["api"]);
   });
 
   it("calls onDescriptionChange when description changes", () => {

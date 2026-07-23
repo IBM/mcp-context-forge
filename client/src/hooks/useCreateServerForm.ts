@@ -18,15 +18,7 @@ function createServerFormSchema(messages: {
       .pipe(z.string().min(1, messages.nameRequired).max(100, messages.nameMax)),
     visibility: z.enum(["team", "public", "private"]),
     oauthEnabled: z.boolean(),
-    tags: z
-      .string()
-      .transform((value) =>
-        value
-          .split(",")
-          .map((tag) => sanitizeString(tag, 50))
-          .filter(Boolean),
-      )
-      .pipe(z.array(z.string()).max(20, messages.tagsMax)),
+    tags: z.array(z.string().transform((tag) => sanitizeString(tag, 50))).max(20, messages.tagsMax),
     description: z
       .string()
       .transform((value) => sanitizeString(value, 500))
@@ -40,7 +32,7 @@ interface CreateServerFormValues {
   name: string;
   visibility: Visibility;
   oauthEnabled: boolean;
-  tags: string;
+  tags: string[];
   description: string;
 }
 
@@ -65,16 +57,16 @@ export interface UseCreateServerFormReturn {
   name: string;
   visibility: Visibility;
   oauthEnabled: boolean;
-  tags: string;
+  tags: string[];
   description: string;
   errors: CreateServerFormErrors;
   isValid: boolean;
   setName: (value: string) => void;
   setVisibility: (value: Visibility) => void;
   setOAuthEnabled: (value: boolean) => void;
-  setTags: (value: string) => void;
+  setTags: (value: string[]) => void;
   setDescription: (value: string) => void;
-  validateField: (field: keyof CreateServerFormErrors, value: string | boolean) => void;
+  validateField: (field: keyof CreateServerFormErrors, value: string | boolean | string[]) => void;
   validateForm: () => boolean;
   getFormData: () => CreateServerDetails;
   resetForm: () => void;
@@ -88,7 +80,7 @@ const initialState: CreateServerFormValues = {
   name: "",
   visibility: "public",
   oauthEnabled: false,
-  tags: "",
+  tags: [],
   description: "",
 };
 
@@ -106,7 +98,7 @@ function getInitialState(initialValues?: CreateServerFormInitialValues): CreateS
     name: initialValues?.name ?? initialState.name,
     visibility: initialValues?.visibility ?? initialState.visibility,
     oauthEnabled: initialValues?.oauthEnabled ?? initialState.oauthEnabled,
-    tags: initialValues?.tags?.join(", ") ?? initialState.tags,
+    tags: initialValues?.tags ?? initialState.tags,
     description: initialValues?.description ?? initialState.description,
   };
 }
@@ -136,7 +128,7 @@ export function useCreateServerForm(
   const [name, setName] = useState(resolvedInitialState.name);
   const [visibility, setVisibility] = useState<Visibility>(resolvedInitialState.visibility);
   const [oauthEnabled, setOAuthEnabled] = useState(resolvedInitialState.oauthEnabled);
-  const [tags, setTags] = useState(resolvedInitialState.tags);
+  const [tags, setTags] = useState<string[]>(resolvedInitialState.tags);
   const [description, setDescription] = useState(resolvedInitialState.description);
   const [errors, setErrors] = useState<CreateServerFormErrors>({});
 
@@ -163,7 +155,7 @@ export function useCreateServerForm(
   }, [getFormValues, schema]);
 
   const validateField = useCallback(
-    (field: keyof CreateServerFormErrors, value: string | boolean) => {
+    (field: keyof CreateServerFormErrors, value: string | boolean | string[]) => {
       if (field === "submit") return;
 
       try {

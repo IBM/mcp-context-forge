@@ -17,7 +17,7 @@ describe("useCreateServerForm", () => {
     expect(result.current.name).toBe("");
     expect(result.current.visibility).toBe("public");
     expect(result.current.oauthEnabled).toBe(false);
-    expect(result.current.tags).toBe("");
+    expect(result.current.tags).toEqual([]);
     expect(result.current.description).toBe("");
     expect(result.current.errors).toEqual({});
   });
@@ -37,7 +37,7 @@ describe("useCreateServerForm", () => {
     expect(result.current.name).toBe("My Server");
     expect(result.current.visibility).toBe("public");
     expect(result.current.oauthEnabled).toBe(true);
-    expect(result.current.tags).toBe("api, v2");
+    expect(result.current.tags).toEqual(["api", "v2"]);
     expect(result.current.description).toBe("A great server");
   });
 
@@ -65,12 +65,12 @@ describe("useCreateServerForm", () => {
     expect(result.current.oauthEnabled).toBe(true);
   });
 
-  it("setTags updates tags string", () => {
+  it("setTags updates tags array", () => {
     const { result } = renderHook(() => useCreateServerForm(), { wrapper });
     act(() => {
-      result.current.setTags("api, rest");
+      result.current.setTags(["api", "rest"]);
     });
-    expect(result.current.tags).toBe("api, rest");
+    expect(result.current.tags).toEqual(["api", "rest"]);
   });
 
   it("setDescription updates description", () => {
@@ -176,7 +176,7 @@ describe("useCreateServerForm", () => {
     act(() => {
       result.current.setName("My Server");
       result.current.setDescription("Desc");
-      result.current.setTags("tag1, tag2");
+      result.current.setTags(["tag1", "tag2"]);
     });
     let data: ReturnType<typeof result.current.getFormData> | null = null;
     act(() => {

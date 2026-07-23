@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { renderWithProviders } from "@/test/test-utils";
 import { screen, fireEvent } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { ToolBearerTokenAuth } from "./ToolBearerTokenAuth";
 import { ToolAdvancedSettings } from "./ToolAdvancedSettings";
 import type { CustomHeader } from "./ToolAdvancedSettings";
@@ -72,7 +73,7 @@ const defaultAdvancedProps = {
   onCustomHeadersChange: vi.fn(),
   responseFilter: "",
   onResponseFilterChange: vi.fn(),
-  tags: "",
+  tags: [] as string[],
   onTagsChange: vi.fn(),
   description: "",
   onDescriptionChange: vi.fn(),
@@ -151,14 +152,15 @@ describe("ToolAdvancedSettings", () => {
     expect(onResponseFilterChange).toHaveBeenCalledWith(".data");
   });
 
-  it("fires onTagsChange when tags input changes", () => {
+  it("fires onTagsChange when a tag is committed", async () => {
     const onTagsChange = vi.fn();
+    const user = userEvent.setup();
     renderWithProviders(
       <ToolAdvancedSettings {...defaultAdvancedProps} onTagsChange={onTagsChange} />,
     );
     const input = screen.getByLabelText("Tags");
-    fireEvent.change(input, { target: { value: "api, rest" } });
-    expect(onTagsChange).toHaveBeenCalledWith("api, rest");
+    await user.type(input, "api{Enter}");
+    expect(onTagsChange).toHaveBeenCalledWith(["api"]);
   });
 
   it("fires onDescriptionChange when description textarea changes", () => {
