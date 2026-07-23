@@ -1812,20 +1812,24 @@ class TestGatewayService:
     @pytest.mark.asyncio
     async def test_update_gateway_team_id_rejects_non_owner(self, gateway_service, mock_gateway, test_db):
         """Reassigning a gateway to a team where user is not owner must raise GatewayError."""
-        # First-Party
-        from mcpgateway.services.gateway_service import _validate_gateway_team_assignment
-
+        mock_gateway.team_id = "old-team"
+        test_db.execute = Mock(return_value=_make_execute_result(scalar=mock_gateway))
         mock_team = MagicMock()
         mock_query = Mock()
         mock_query.filter.return_value = mock_query
         # Team exists but membership check returns None (not owner)
         mock_query.first.side_effect = [mock_team, None]
+        test_db.query = Mock(return_value=mock_query)
+        test_db.rollback = Mock()
 
-        mock_db = MagicMock()
-        mock_db.query.return_value = mock_query
+        gateway_update = GatewayUpdate(team_id="other-team")
 
-        with pytest.raises(ValueError, match="membership"):
-            _validate_gateway_team_assignment(mock_db, "user@example.com", "other-team")
+        with patch("mcpgateway.services.permission_service.PermissionService.check_resource_ownership", new=AsyncMock(return_value=True)):
+            with pytest.raises(GatewayError, match="membership"):
+                await gateway_service.update_gateway(test_db, 1, gateway_update, user_email="user@example.com")
+
+        assert mock_gateway.team_id == "old-team"
+        test_db.rollback.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_update_gateway_team_id_skips_ownership_check_without_user_email(self, gateway_service, mock_gateway, test_db):
@@ -1835,7 +1839,12 @@ class TestGatewayService:
         mock_gateway.oauth_config = None
         mock_gateway.auth_query_params = None
         mock_gateway.slug = "test_gateway"
-        test_db.execute = Mock(return_value=_make_execute_result(scalar=mock_gateway))
+        test_db.execute = Mock(
+            side_effect=[
+                _make_execute_result(scalar=mock_gateway),
+                _make_execute_result(scalar=None),
+            ]
+        )
         test_db.commit = Mock()
         test_db.refresh = Mock()
         mock_query = Mock()
@@ -1856,6 +1865,152 @@ class TestGatewayService:
             await gateway_service.update_gateway(test_db, 1, gateway_update, user_email=None)
 
         assert mock_gateway.team_id == "new-team"
+
+    @pytest.mark.asyncio
+    async def test_update_gateway_team_id_propagates_inherited_children_and_preserves_overrides(self, gateway_service, mock_gateway, test_db):
+        """Team reassignment propagates only to children that inherited the old team."""
+        inherited_tool = MagicMock(spec=DbTool)
+        inherited_tool.team_id = "team-a"
+        overridden_tool = MagicMock(spec=DbTool)
+        overridden_tool.team_id = "team-override"
+        inherited_resource = MagicMock(spec=DbResource)
+        inherited_resource.team_id = "team-a"
+        overridden_resource = MagicMock(spec=DbResource)
+        overridden_resource.team_id = "team-override"
+        inherited_prompt = MagicMock(spec=DbPrompt)
+        inherited_prompt.team_id = "team-a"
+        overridden_prompt = MagicMock(spec=DbPrompt)
+        overridden_prompt.team_id = "team-override"
+
+        mock_gateway.team_id = "team-a"
+        mock_gateway.visibility = "team"
+        mock_gateway.slug = "test-gateway"
+        mock_gateway.auth_type = None
+        mock_gateway.auth_value = {}
+        mock_gateway.auth_query_params = None
+        mock_gateway.oauth_config = None
+        mock_gateway.ca_certificate = None
+        mock_gateway.ca_certificate_sig = None
+        mock_gateway.signing_algorithm = None
+        mock_gateway.client_cert = None
+        mock_gateway.client_key = None
+        mock_gateway.tools = [inherited_tool, overridden_tool]
+        mock_gateway.resources = [inherited_resource, overridden_resource]
+        mock_gateway.prompts = [inherited_prompt, overridden_prompt]
+
+        test_db.execute = Mock(
+            side_effect=[
+                _make_execute_result(scalar=mock_gateway),
+                _make_execute_result(scalar=None),
+            ]
+        )
+        test_db.commit = Mock()
+        test_db.refresh = Mock()
+        mock_query = Mock()
+        mock_query.filter.return_value = mock_query
+        mock_query.first.side_effect = [MagicMock(), MagicMock()]
+        mock_query.all.return_value = []
+        test_db.query = Mock(return_value=mock_query)
+
+        gateway_service._initialize_gateway = AsyncMock(side_effect=GatewayConnectionError("unreachable"))
+        gateway_service._notify_gateway_updated = AsyncMock()
+
+        with patch("mcpgateway.services.permission_service.PermissionService.check_resource_ownership", new=AsyncMock(return_value=True)):
+            await gateway_service.update_gateway(
+                test_db,
+                1,
+                GatewayUpdate(team_id="team-b"),
+                user_email="owner@example.com",
+            )
+
+        assert mock_gateway.team_id == "team-b"
+        assert inherited_tool.team_id == "team-b"
+        assert inherited_resource.team_id == "team-b"
+        assert inherited_prompt.team_id == "team-b"
+        assert overridden_tool.team_id == "team-override"
+        assert overridden_resource.team_id == "team-override"
+        assert overridden_prompt.team_id == "team-override"
+        test_db.commit.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_update_gateway_team_move_checks_destination_team_for_slug_conflicts(self, gateway_service, mock_gateway, test_db):
+        """A team-only move rejects a slug already present in the destination team."""
+        mock_gateway.team_id = "team-a"
+        mock_gateway.visibility = "team"
+        mock_gateway.slug = "test-gateway"
+
+        conflicting = MagicMock(spec=DbGateway)
+        conflicting.id = 2
+        conflicting.enabled = True
+        conflicting.visibility = "team"
+        test_db.execute = Mock(
+            side_effect=[
+                _make_execute_result(scalar=mock_gateway),
+                _make_execute_result(scalar=conflicting),
+            ]
+        )
+        test_db.rollback = Mock()
+        mock_query = Mock()
+        mock_query.filter.return_value = mock_query
+        mock_query.first.side_effect = [MagicMock(), MagicMock()]
+        test_db.query = Mock(return_value=mock_query)
+
+        with patch("mcpgateway.services.permission_service.PermissionService.check_resource_ownership", new=AsyncMock(return_value=True)):
+            with pytest.raises(GatewayNameConflictError):
+                await gateway_service.update_gateway(
+                    test_db,
+                    1,
+                    GatewayUpdate(team_id="team-b"),
+                    user_email="owner@example.com",
+                )
+
+        assert mock_gateway.team_id == "team-a"
+        test_db.rollback.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_update_gateway_team_move_checks_destination_team_for_url_conflicts(self, gateway_service, mock_gateway, test_db):
+        """A team-only move checks the current URL in the destination team scope."""
+        mock_gateway.team_id = "team-a"
+        mock_gateway.visibility = "team"
+        mock_gateway.slug = "test-gateway"
+        mock_gateway.auth_value = {}
+        mock_gateway.oauth_config = None
+
+        conflicting = MagicMock(spec=DbGateway)
+        conflicting.id = 2
+        conflicting.url = mock_gateway.url
+        conflicting.enabled = True
+        conflicting.visibility = "team"
+        conflicting.name = "existing-gateway"
+        conflicting.team_id = "team-b"
+        test_db.execute = Mock(
+            side_effect=[
+                _make_execute_result(scalar=mock_gateway),
+                _make_execute_result(scalar=None),
+            ]
+        )
+        test_db.rollback = Mock()
+        mock_query = Mock()
+        mock_query.filter.return_value = mock_query
+        mock_query.first.side_effect = [MagicMock(), MagicMock()]
+        test_db.query = Mock(return_value=mock_query)
+        gateway_service._check_gateway_uniqueness = Mock(return_value=conflicting)
+
+        with patch("mcpgateway.services.permission_service.PermissionService.check_resource_ownership", new=AsyncMock(return_value=True)):
+            with pytest.raises(GatewayError, match="already exists"):
+                await gateway_service.update_gateway(
+                    test_db,
+                    1,
+                    GatewayUpdate(team_id="team-b"),
+                    user_email="owner@example.com",
+                )
+
+        uniqueness_call = gateway_service._check_gateway_uniqueness.call_args.kwargs
+        assert uniqueness_call["url"] == mock_gateway.url
+        assert uniqueness_call["team_id"] == "team-b"
+        assert uniqueness_call["visibility"] == "team"
+        assert mock_gateway.team_id == "team-a"
+        test_db.rollback.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_update_gateway_visibility_preserves_per_resource_overrides(self, gateway_service, mock_gateway, test_db):

@@ -514,6 +514,32 @@ describe("handleEditToolFormSubmit", () => {
 // handleEditGatewayFormSubmit
 // ---------------------------------------------------------------------------
 describe("handleEditGatewayFormSubmit", () => {
+  test("blocks team visibility submission until a team is selected", async () => {
+    const event = createFormEvent(`
+      <form action="/admin/gateways/1/edit">
+        <input name="name" value="GW" />
+        <input name="url" value="http://example.com" />
+        <input id="edit-gateway-visibility-team" type="radio" name="visibility" value="team" checked />
+        <select id="edit-gateway-team-id" name="team_id">
+          <option value="" selected>— Select a team —</option>
+        </select>
+        <p id="edit-gateway-team-message"></p>
+        <input name="auth_type" value="none" />
+      </form>
+    `);
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+
+    await handleEditGatewayFormSubmit(event);
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(
+      document.getElementById("edit-gateway-team-message").textContent
+    ).toBe("Please select a team");
+    expect(document.activeElement).toBe(
+      document.getElementById("edit-gateway-team-id")
+    );
+  });
+
   test("validates gateway name and URL on edit", async () => {
     const event = createFormEvent(`
       <form action="/admin/gateways/1/edit">
