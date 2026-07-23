@@ -347,7 +347,7 @@ describe("MCPServerDetailsPanel", () => {
     });
 
     expect(screen.getByText("Active")).toBeInTheDocument();
-    expect(screen.getByText("Public")).toBeInTheDocument();
+    expect(screen.getByText("Internal")).toBeInTheDocument();
     expect(screen.getByText("Server-Sent Events (SSE)")).toBeInTheDocument();
     expect(screen.getByText("Engineering")).toBeInTheDocument();
     expect(screen.getByText("test@example.com")).toBeInTheDocument();

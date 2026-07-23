@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import {
   Copy,
-  Globe,
+  Building2,
   Lock,
   Shield,
   TriangleAlert,
@@ -60,7 +60,7 @@ function getVisibilityConfig(visibility: MCPServer["visibility"]) {
     case "team":
       return { label: "Team", Icon: Shield };
     default:
-      return { label: "Public", Icon: Globe };
+      return { label: "Internal", Icon: Building2 };
   }
 }
 

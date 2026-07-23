@@ -31,7 +31,7 @@
   "resources.form.content.label": "Conteúdo",
   "resources.form.content.placeholder": "Cole ou digite o conteúdo aqui...",
   "resources.form.visibility.label": "Visibilidade",
-  "resources.form.visibility.public": "Público",
+  "resources.form.visibility.public": "Interno",
   "resources.form.visibility.private": "Privado",
   "resources.form.visibility.team": "Equipe",
   "resources.form.tags.label": "Tags",
@@ -78,7 +78,7 @@
   "resources.details.status.active": "Ativo",
   "resources.details.status.inactive": "Inativo",
   "resources.details.visibility.team": "Equipe",
-  "resources.details.visibility.public": "Público",
+  "resources.details.visibility.public": "Interno",
   "resources.details.visibility.private": "Privado",
   "resources.details.addTag": "adicionar",
   "resources.tags.addError": "Falha ao adicionar a tag. Tente novamente."

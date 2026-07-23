@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { useIntl } from "react-intl";
-import { Activity, FileText, Globe, PanelRightClose } from "lucide-react";
+import { Activity, Building2, FileText, PanelRightClose } from "lucide-react";
+import { VisibilityInfoTooltip } from "@/components/common/VisibilityInfoTooltip";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { CopyValue } from "@/components/ui/copy-value";
@@ -208,8 +209,9 @@ export function ResourceDetailsPanel({
                         label={intl.formatMessage({ id: "resources.details.label.visibility" })}
                       >
                         <span className="flex items-center gap-2">
-                          <Globe className="size-3.5 text-muted-foreground" />
+                          <Building2 className="size-3.5 text-muted-foreground" />
                           {getVisibilityLabel(selectedResource.visibility)}
+                          <VisibilityInfoTooltip side="left" />
                         </span>
                       </DetailRow>
                       {selectedResource.mimeType && (

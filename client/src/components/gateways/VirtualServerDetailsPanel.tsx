@@ -14,6 +14,7 @@ import {
   Users,
   Wrench,
 } from "lucide-react";
+import { VisibilityInfoTooltip } from "@/components/common/VisibilityInfoTooltip";
 import { MCPIcon } from "@/components/icons/MCPIcon";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -665,6 +666,7 @@ export function VirtualServerDetailsPanel({
                     <span className="flex items-center gap-2">
                       <Users className="size-3.5 text-muted-foreground" />
                       {getVisibilityLabel(server.visibility)}
+                      <VisibilityInfoTooltip side="left" />
                     </span>
                   </DetailRow>
                   <DetailRow label={intl.formatMessage({ id: "gateways.details.version" })}>

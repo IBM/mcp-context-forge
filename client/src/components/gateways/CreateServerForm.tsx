@@ -11,6 +11,7 @@ import {
 } from "@/hooks/useCreateServerForm";
 import type { CreateServerDetails } from "@/components/gateways/types";
 import type { Visibility } from "@/types/server";
+import { VisibilityInfoTooltip } from "@/components/common/VisibilityInfoTooltip";
 
 const visibilityOptions: Array<{
   value: Visibility;
@@ -113,8 +114,9 @@ export function CreateServerForm({
 
       <div className="mt-12 grid gap-7">
         <fieldset className="space-y-3">
-          <legend className="text-sm font-medium text-foreground">
+          <legend className="flex items-center gap-1.5 text-sm font-medium text-foreground">
             {intl.formatMessage({ id: "gateways.createServer.visibility" })}
+            <VisibilityInfoTooltip />
           </legend>
           <div
             className="grid h-10 grid-cols-3 rounded-md bg-muted p-1"

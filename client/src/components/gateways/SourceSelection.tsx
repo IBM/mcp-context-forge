@@ -4,10 +4,10 @@ import {
   Activity,
   ArrowLeft,
   Box,
+  Building2,
   ChevronDown,
   ChevronRight,
   CircleSlash,
-  Globe,
   Lock,
   MessageSquareCode,
   Plus,
@@ -108,7 +108,7 @@ function getVisibilityConfig(visibility: ListedMCPServer["visibility"]) {
     case "team":
       return { Icon: Shield, labelId: "gateways.createServer.visibility.team" };
     default:
-      return { Icon: Globe, labelId: "gateways.createServer.visibility.public" };
+      return { Icon: Building2, labelId: "gateways.createServer.visibility.public" };
   }
 }
 
