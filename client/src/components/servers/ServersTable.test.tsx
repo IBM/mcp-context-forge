@@ -282,7 +282,7 @@ describe("ServersTable", () => {
   // ── Visibility cell ─────────────────────────────────────────────────────────
 
   it.each([
-    ["public" as const, "Public"],
+    ["public" as const, "Internal"],
     ["team" as const, "Team"],
     ["private" as const, "Private"],
   ])("shows '%s' visibility label for visibility='%s'", (visibility, label) => {

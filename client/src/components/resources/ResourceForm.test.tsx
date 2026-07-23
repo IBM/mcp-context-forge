@@ -57,7 +57,7 @@ describe("ResourceForm", () => {
       expect(screen.getByPlaceholderText(/optional description/i)).toBeInTheDocument();
       expect(screen.getByLabelText(/MIME Type/)).toBeInTheDocument();
       expect(screen.getByLabelText(/Content/)).toBeInTheDocument();
-      expect(screen.getByLabelText(/Visibility/)).toBeInTheDocument();
+      expect(screen.getByRole("combobox", { name: /Visibility/i })).toBeInTheDocument();
       expect(screen.getByLabelText(/Tags/)).toBeInTheDocument();
     });
 
@@ -179,7 +179,7 @@ describe("ResourceForm", () => {
       // Select Visibility
       const visibilitySelect = screen.getByRole("combobox", { name: /Visibility/i });
       await user.click(visibilitySelect);
-      const visibilityOption = await screen.findByRole("option", { name: /Public/i });
+      const visibilityOption = await screen.findByRole("option", { name: /Internal/i });
       await user.click(visibilityOption);
 
       // Wait for select portal to close so it doesn't block clicks

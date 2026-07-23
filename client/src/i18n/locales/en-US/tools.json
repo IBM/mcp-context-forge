@@ -51,7 +51,7 @@
   "tools.details.status.unreachable": "Unreachable",
   "tools.details.status.inactive": "Inactive",
   "tools.details.visibility.team": "Team",
-  "tools.details.visibility.public": "Public",
+  "tools.details.visibility.public": "Internal",
   "tools.details.visibility.private": "Private",
   "tools.details.integrationType.mcp": "MCP Server",
   "tools.details.integrationType.rest": "REST API tools",

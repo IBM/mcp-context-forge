@@ -31,7 +31,7 @@
   "resources.form.content.label": "Contenido",
   "resources.form.content.placeholder": "Pega o escribe el contenido aquí...",
   "resources.form.visibility.label": "Visibilidad",
-  "resources.form.visibility.public": "Público",
+  "resources.form.visibility.public": "Interno",
   "resources.form.visibility.private": "Privado",
   "resources.form.visibility.team": "Equipo",
   "resources.form.tags.label": "Etiquetas",
@@ -78,7 +78,7 @@
   "resources.details.status.active": "Activo",
   "resources.details.status.inactive": "Inactivo",
   "resources.details.visibility.team": "Equipo",
-  "resources.details.visibility.public": "Público",
+  "resources.details.visibility.public": "Interno",
   "resources.details.visibility.private": "Privado",
   "resources.details.addTag": "añadir",
   "resources.tags.addError": "No se pudo añadir la etiqueta. Inténtelo de nuevo."

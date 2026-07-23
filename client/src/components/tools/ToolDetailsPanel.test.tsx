@@ -245,7 +245,7 @@ describe("ToolDetailsPanel", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("Public")).toBeInTheDocument();
+      expect(screen.getByText("Internal")).toBeInTheDocument();
     });
   });
 

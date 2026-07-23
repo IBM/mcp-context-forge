@@ -112,7 +112,7 @@ describe("CreateServer", () => {
     expect(screen.getByRole("heading", { name: "Create server" })).toBeInTheDocument();
     expect(screen.getByLabelText(/Name/)).toBeInTheDocument();
     expect(screen.getByPlaceholderText("Server Name")).toHaveValue("");
-    expect(screen.getByRole("radio", { name: /Public/ })).toBeChecked();
+    expect(screen.getByRole("radio", { name: /Internal/ })).toBeChecked();
     expect(screen.getByRole("switch", { name: /Require OAuth/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Optional configuration" })).toBeInTheDocument();
     expect(screen.queryByLabelText("Tags")).not.toBeInTheDocument();
@@ -618,7 +618,7 @@ describe("CreateServer", () => {
     // Visibility labels exercise team / private / public.
     expect(screen.getByText("Team")).toBeInTheDocument();
     expect(screen.getByText("Private")).toBeInTheDocument();
-    expect(screen.getAllByText("Public").length).toBeGreaterThanOrEqual(2);
+    expect(screen.getAllByText("Internal").length).toBeGreaterThanOrEqual(2);
 
     // Selecting a source switches the footer button to Submit.
     await user.click(screen.getByRole("checkbox", { name: "Select Active Server" }));
@@ -843,7 +843,7 @@ describe("CreateServer", () => {
       // Visibility labels cover team / private / public.
       expect(screen.getByText("Team")).toBeInTheDocument();
       expect(screen.getByText("Private")).toBeInTheDocument();
-      expect(screen.getByText("Public")).toBeInTheDocument();
+      expect(screen.getByText("Internal")).toBeInTheDocument();
     });
 
     it("renders warning alert when mcpServers fails to load", async () => {
