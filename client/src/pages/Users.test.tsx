@@ -838,16 +838,17 @@ describe("Users", () => {
     expect(screen.getByText("user0@example.com")).toBeInTheDocument();
   });
 
-  it("renders main element with correct structure", async () => {
+  it("renders without page-level padding (owned by the Settings shell)", async () => {
     vi.mocked(api.get).mockResolvedValueOnce({ users: [], nextCursor: null });
 
     const { container } = renderWithRouter(<Users />);
 
     await waitFor(() => {
-      const main = container.querySelector("main");
-      expect(main).toBeInTheDocument();
-      expect(main).toHaveClass("p-6");
+      expect(screen.getByRole("heading", { name: "Users" })).toBeInTheDocument();
     });
+    expect(container.querySelector("main")).not.toBeInTheDocument();
+    expect((container.firstElementChild as HTMLElement).tagName).toBe("DIV");
+    expect(container.firstElementChild).not.toHaveClass("p-6");
   });
 
   it("renders header with flex layout", async () => {

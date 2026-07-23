@@ -18,7 +18,6 @@ import { ResetPassword } from "./ResetPassword";
 import { Resources } from "./Resources";
 import { RestApi } from "./RestApi";
 import { ServerCatalog } from "./ServerCatalog";
-import { Settings } from "./Settings";
 import { Teams } from "./Teams";
 import { Tokens } from "./Tokens";
 describe("Simple Page Components", () => {
@@ -108,11 +107,6 @@ describe("Simple Page Components", () => {
 
   it("renders ServerCatalog page", () => {
     renderWithProviders(<ServerCatalog />);
-    expect(document.body).toBeTruthy();
-  });
-
-  it("renders Settings page", () => {
-    renderWithProviders(<Settings />);
     expect(document.body).toBeTruthy();
   });
 
