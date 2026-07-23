@@ -38,8 +38,8 @@ describe("App", () => {
     await user.type(passwordInput, "password123");
     await user.click(submitButton);
 
-    // Wait for dashboard to load after successful login
-    await screen.findByRole("heading", { name: /dashboard/i });
+    // Empty dashboard shows source onboarding after successful login
+    await screen.findByRole("heading", { name: /connect a source/i });
 
     // Click on Virtual Servers in the sidebar
     const gatewaysLink = screen.getByRole("button", { name: /virtual servers/i });
