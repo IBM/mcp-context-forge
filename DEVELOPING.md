@@ -859,3 +859,20 @@ redis-cli FLUSHDB
 - [Pydantic Documentation](https://docs.pydantic.dev/)
 - [HTMX Documentation](https://htmx.org/)
 - [Alpine.js Documentation](https://alpinejs.dev/)
+
+
+# Running Help Database Generator
+## Overview
+This project includes a script to automatically generate the contextual HelpDatabase by scanning UI fields and merging automatic and manual help entries.
+## Prerequisites
+- Ensure your `package.json` contains the following setting to enable ES module support:
+```json
+{
+  "type": "module"
+}
+```
+
+## Running the Generator
+```bash
+npm run generate-helpdb
+```
