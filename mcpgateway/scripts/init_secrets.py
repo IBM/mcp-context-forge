@@ -9,8 +9,20 @@ encryption, and administrative passwords. It supports writing to a file,
 overwriting existing configurations, or piping to stdout.
 
 Usage:
-    python -m mcpgateway.scripts.init_secrets --output .env.secrets
-    python -m mcpgateway.scripts.init_secrets --stdout --force
+    # Default: write to .env.secrets (prompts if file already exists)
+    python -m mcpgateway.scripts.init_secrets
+
+    # Write to .env.secrets unconditionally (no prompt)
+    python -m mcpgateway.scripts.init_secrets --force
+
+    # Patch weak/placeholder secrets directly into .env (in-place, preserves all other values)
+    python -m mcpgateway.scripts.init_secrets --patch-env .env
+
+    # Print secrets to stdout only
+    python -m mcpgateway.scripts.init_secrets --stdout
+
+    # Custom output file
+    python -m mcpgateway.scripts.init_secrets --output /path/to/file.secrets
 """
 
 # Standard
@@ -67,6 +79,7 @@ _WEAK_VALUES: frozenset[str] = frozenset(v.lower() for v in _CANONICAL_WEAK_VALU
 _SECRET_FIELDS: dict[str, int] = {
     "JWT_SECRET_KEY": 32,  # nosec B105 — value is minimum byte length, not a password
     "AUTH_ENCRYPTION_SECRET": 32,  # nosec B105 — value is minimum byte length, not a password
+    "BASIC_AUTH_PASSWORD": 18,  # nosec B105 — patched when "changeme" or placeholder; 18 bytes → 24 chars
 }
 
 
@@ -151,7 +164,7 @@ def ensure_env_file_secrets(
     env_file: str = ".env",
     weak_values: frozenset[str] | None = None,
 ) -> dict[str, str]:
-    """Check JWT_SECRET_KEY and AUTH_ENCRYPTION_SECRET for weak or placeholder values.
+    """Check JWT_SECRET_KEY, AUTH_ENCRYPTION_SECRET, and BASIC_AUTH_PASSWORD for weak or placeholder values.
 
     If weak values are detected, generates cryptographically strong replacements,
     merges them into *env_file* (creating the file if it does not exist), and
@@ -217,6 +230,20 @@ def generate_token(nbytes: int) -> str:
     return secrets.token_urlsafe(nbytes)
 
 
+def _prompt_overwrite(path: str) -> bool:
+    """Interactively ask the user whether to overwrite an existing file.
+
+    Returns True if the user confirms, False otherwise.
+    Defaults to NO on empty input so that accidental Enter presses are safe.
+    """
+    try:
+        answer = input(f"⚠️  {path} already exists. Overwrite? [y/N] ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return False
+    return answer in ("y", "yes")
+
+
 def main() -> None:
     """
     Main entry point for the secrets generation CLI.
@@ -224,15 +251,60 @@ def main() -> None:
     Parses arguments, generates required secrets for the Gateway,
     and handles file I/O operations or stdout printing.
     """
-    parser = argparse.ArgumentParser(description="Generate secure secrets for MCP Gateway deployment.")
-    parser.add_argument("--output", type=str, default=".env.secrets", help="Output file path")
-    parser.add_argument("--force", action="store_true", help="Overwrite existing file if it exists")
-    parser.add_argument("--stdout", action="store_true", help="Print secrets to stdout instead of a file")
-
+    parser = argparse.ArgumentParser(
+        description="Generate secure secrets for MCP Gateway deployment.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Examples:\n"
+            "  %(prog)s                      # write to .env.secrets (prompt if exists)\n"
+            "  %(prog)s --force              # overwrite .env.secrets without prompting\n"
+            "  %(prog)s --patch-env .env     # patch weak secrets directly into .env\n"
+            "  %(prog)s --output my.secrets  # write to a custom file\n"
+            "  %(prog)s --stdout             # print to stdout only\n"
+        ),
+    )
+    parser.add_argument(
+        "--output",
+        type=str,
+        default=".env.secrets",
+        help="Output file path (default: .env.secrets)",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite output file if it exists without prompting",
+    )
+    parser.add_argument(
+        "--stdout",
+        action="store_true",
+        help="Print secrets to stdout instead of writing a file",
+    )
+    parser.add_argument(
+        "--patch-env",
+        type=str,
+        metavar="ENV_FILE",
+        default=None,
+        help=(
+            "Patch an existing env file in-place: replace only the JWT_SECRET_KEY and "
+            "AUTH_ENCRYPTION_SECRET lines that still hold placeholder or weak values; "
+            "all other lines are preserved unchanged. No-ops if those keys are already strong."
+        ),
+    )
     args = parser.parse_args()
 
-    # Define the required secrets and their byte lengths
-    # 32 bytes -> 43 chars (Keys), 18 bytes -> 24 chars (Passwords)
+    # --patch-env: in-place update of an existing env file
+    patch_target = args.patch_env
+    if patch_target is not None:
+        generated = ensure_env_file_secrets(env_file=patch_target)
+        if generated:
+            patched_keys = ", ".join(generated.keys())
+            print(f"✅  Patched {patch_target}: generated strong values for {patched_keys}")
+        else:
+            print(f"ℹ️   {patch_target}: secrets are already strong — no changes made")
+        return
+
+    # Build the secrets payload
+    # 32 bytes → 43 chars (keys), 18 bytes → 24 chars (passwords)
     secrets_map = {
         "JWT_SECRET_KEY": generate_token(32),
         "AUTH_ENCRYPTION_SECRET": generate_token(32),
@@ -243,26 +315,41 @@ def main() -> None:
     output_lines = [f"{key}={val}" for key, val in secrets_map.items()]
     output_content = "\n".join(output_lines) + "\n"
 
-    # Handle Standard Output
+    # --stdout: print only, no file I/O
     if args.stdout:
         print(output_content, end="")
         return
 
-    try:
-        _write_secrets_file(args.output, output_content, args.force)
+    output_path = args.output
 
-        print(f"Secrets written to {args.output}")
-        print("\nHow to use this file:")
-        print(f"1. Review the generated secrets in {args.output}")
-        print("2. Merge these into your production environment or .env file.")
-        print("3. IMPORTANT: Keep this file secure and never commit it to Git.")
+    # If the file already exists and --force was not given, prompt interactively.
+    if os.path.exists(output_path) and not args.force:
+        if not _prompt_overwrite(output_path):
+            print("Aborted — existing file kept unchanged.")
+            print("  Use --force to overwrite without prompting.")
+            print("  Use --patch-env .env to write secrets directly into .env instead.")
+            sys.exit(0)
+        # User confirmed: treat as forced overwrite
+        args.force = True
+
+    try:
+        _write_secrets_file(output_path, output_content, args.force)
+
+        print(f"✅  Secrets written to {output_path}")
+        print()
+        print("Next steps:")
+        print(f"  1. Review the generated secrets in {output_path}")
+        print("  2. Copy JWT_SECRET_KEY and AUTH_ENCRYPTION_SECRET into your .env file.")
+        print("     Or run: python -m mcpgateway.scripts.init_secrets --patch-env .env")
+        print(f"  3. IMPORTANT: never commit {output_path} to Git.")
 
     except FileExistsError:
-        print("Error: File already exists")
-        print("Suggest using --force to overwrite")
+        # Should not reach here after the prompt guard, but kept as a safety net.
+        print(f"Error: {output_path} already exists.")
+        print("Use --force to overwrite, or --patch-env .env to update .env directly.")
         sys.exit(1)
     except OSError as e:
-        print(f"Error: Could not write to file {args.output}: {e}")
+        print(f"Error: Could not write to {output_path}: {e}")
         sys.exit(1)
 
 

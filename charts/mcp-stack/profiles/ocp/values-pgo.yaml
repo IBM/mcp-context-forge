@@ -279,10 +279,10 @@ mcpContextForge:
     DB_POOL_TIMEOUT: "60"
 
   secret:
-    JWT_SECRET_KEY: "my-test-key-but-now-longer-than-32-bytes"  # pragma: allowlist secret
-    AUTH_ENCRYPTION_SECRET: "my-test-salt"  # pragma: allowlist secret
-    BASIC_AUTH_PASSWORD: "changeme"  # pragma: allowlist secret
-    PLATFORM_ADMIN_PASSWORD: "changeme"  # pragma: allowlist secret
+    JWT_SECRET_KEY: ""  # must be set to a strong value before deploy (run make init-secrets-patch-env)
+    AUTH_ENCRYPTION_SECRET: ""  # must be set to a strong value before deploy (run make init-secrets-patch-env)
+    BASIC_AUTH_PASSWORD: "changeme"  # CHANGE THIS before deploy  # pragma: allowlist secret
+    PLATFORM_ADMIN_PASSWORD: "changeme"  # CHANGE THIS before deploy  # pragma: allowlist secret
     REQUIRE_STRONG_SECRETS: "true"         # gateway refuses to start with weak/default secrets
 
 # --- Migration ---
@@ -404,7 +404,7 @@ testing:
     jwt:
       username: admin@example.com
       expirationMinutes: 10080
-      secret: "my-test-key-but-now-longer-than-32-bytes"  # pragma: allowlist secret
+      secret: ""  # must be set to a strong value before deploy (run make init-secrets-patch-env)
   fastTime:
     register:
       enabled: true

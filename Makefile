@@ -181,11 +181,13 @@ endef
 # 🌱 VIRTUAL ENVIRONMENT & INSTALLATION
 # =============================================================================
 # help: 🌱 VIRTUAL ENVIRONMENT & INSTALLATION
+# help: setup                - First-time setup: copy .env.example → .env and generate secrets (works for make dev AND make compose-up)
 # help: uv                   - Ensure uv is installed or install it if needed
 # help: venv                 - Create virtual environment if it doesn't exist
 # help: activate             - Activate the virtual environment in the current shell
 # help: install              - Install project into the venv
 # help: install-dev          - Install project (incl. dev deps) into the venv
+# help: ensure-secrets       - Seed .env from .env.example if absent, then patch placeholder secrets (GHSA-8pcq-mx48-hjvj)
 # help: install-db           - Install project (incl. postgres and redis) into venv
 # help: update               - Update all installed deps inside the venv
 .PHONY: uv
@@ -299,6 +301,22 @@ install: venv
 install-db: venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && $(UV_BIN) pip install .[redis,postgres]"
 
+.PHONY: ensure-secrets
+ensure-secrets:
+	@# Internal automation target — silently self-heals .env on fresh checkouts.
+	@# Not interactive: does not prompt, does not print advisory options.
+	@# For interactive first-time setup use 'make setup'.
+	@# If .env is absent, seed it from .env.example first.
+	@if [ ! -f .env ] && [ -f .env.example ]; then \
+		echo "📋  .env not found — copying .env.example → .env"; \
+		cp .env.example .env; \
+	fi
+	@# Replace any __REPLACE_ME__ placeholders with strong generated values.
+	@# No-ops if the secrets already hold real values (idempotent, safe to re-run).
+	@if [ -f .env ]; then \
+		$(UV_BIN) run python3 -m mcpgateway.scripts.init_secrets --patch-env .env; \
+	fi
+
 .PHONY: install-dev
 install-dev: venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && $(UV_BIN) pip install --group dev '.[plugins]'"
@@ -309,6 +327,11 @@ install-dev: venv
 		echo "⏭️  Rust builds disabled (set ENABLE_RUST_BUILD=1 to enable)"; \
 	fi
 	@$(MAKE) build-ui
+	@echo ""
+	@echo "🔑  Next step — choose one:"
+	@echo "    make setup           # recommended: auto-creates .env and patches secrets in-place"
+	@echo "    make init-secrets    # writes secrets to .env.secrets so you can review before copying"
+	@echo "    The gateway will not start until JWT_SECRET_KEY and AUTH_ENCRYPTION_SECRET are set."
 
 # help: build-ui              - Build Admin UI CSS and JS bundles (requires npm; set SKIP_UI_BUILD=1 to bypass)
 .PHONY: build-ui
@@ -350,9 +373,41 @@ check-env-dev:
 	@echo "🔎  Validating .env (dev, warnings do not fail)..."
 	@python -c "import sys; from mcpgateway.scripts import validate_env as ve; sys.exit(ve.main(env_file='.env', exit_on_warnings=False))"
 
-.PHONY: init-secrets
-init-secrets: ## Generate secure secrets for the gateway (US-3)
-	python3 -m mcpgateway.scripts.init_secrets
+# help: init-secrets          - Generate secrets → .env.secrets for manual review; copy values into .env when ready
+# help: init-secrets-force    - Regenerate .env.secrets unconditionally (no prompt)
+# help: init-secrets-patch-env - Write generated secrets directly into .env (in-place, preserves other values)
+.PHONY: init-secrets init-secrets-force init-secrets-patch-env
+init-secrets:                   ## 🔑 Generate secrets → .env.secrets (prompts if file exists)
+	$(UV_BIN) run python3 -m mcpgateway.scripts.init_secrets
+
+init-secrets-force:             ## 🔑 Regenerate .env.secrets unconditionally (--force)
+	$(UV_BIN) run python3 -m mcpgateway.scripts.init_secrets --force
+
+init-secrets-patch-env:         ## 🔑 Patch weak/placeholder secrets directly into .env (--patch-env)
+	$(UV_BIN) run python3 -m mcpgateway.scripts.init_secrets --patch-env .env
+
+# First-time setup: works before make dev, make serve, and make compose-up.
+# Copies .env.example → .env (skipped if .env already exists), then generates
+# strong secrets for any placeholder values. Safe to re-run — idempotent.
+.PHONY: setup
+setup:                          ## 🚀 First-time setup: copy .env.example → .env and generate secrets
+	@echo "🔧 ContextForge first-time setup..."
+	@echo ""
+	@echo "    This target auto-patches secrets into .env."
+	@echo "    If you prefer to review secrets before use, run instead:"
+	@echo "      make init-secrets    # writes to .env.secrets — review, then copy into .env"
+	@echo ""
+	@if [ ! -f .env ]; then \
+		echo "📋  Copying .env.example → .env"; \
+		cp .env.example .env; \
+	else \
+		echo "ℹ️   .env already exists — skipping copy"; \
+	fi
+	@$(MAKE) --no-print-directory ensure-secrets
+	@echo ""
+	@echo "✅  Setup complete."
+	@echo "    For local dev:    make install-dev && make dev"
+	@echo "    For Docker stack: make compose-up"
 
 # =============================================================================
 # ▶️ SERVE
@@ -1043,12 +1098,14 @@ test-curl:
 ## --- Doctest targets ---------------------------------------------------------
 doctest: uv
 	@echo "🧪 Running doctest on all modules..."
-	@JWT_SECRET_KEY=secret \
+	@JWT_SECRET_KEY=doctest-jwt-secret-DO-NOT-USE-IN-PRODUCTION-32plus \
+	 AUTH_ENCRYPTION_SECRET=doctest-enc-secret-DO-NOT-USE-IN-PRODUCTION-32plus \
 	 $(UV_BIN) run pytest --doctest-modules mcpgateway/ --ignore=mcpgateway/utils/pagination.py --tb=short --no-cov --disable-warnings -n 4
 
 doctest-verbose: uv
 	@echo "🧪 Running doctest with verbose output..."
-	@JWT_SECRET_KEY=secret \
+	@JWT_SECRET_KEY=doctest-jwt-secret-DO-NOT-USE-IN-PRODUCTION-32plus \
+	 AUTH_ENCRYPTION_SECRET=doctest-enc-secret-DO-NOT-USE-IN-PRODUCTION-32plus \
 	 $(UV_BIN) run pytest --doctest-modules mcpgateway/ --ignore=mcpgateway/utils/pagination.py -v --tb=short --no-cov --disable-warnings -n 4
 
 doctest-coverage: uv
@@ -5495,11 +5552,16 @@ compose-siem-up compose-siem-down compose-siem-logs \
 	embedded-up embedded-down embedded-clean embedded-status embedded-logs
 
 # Validate compose file
+# To auto-fix before validating, run: make setup && make compose-validate
 .PHONY: compose-validate
 compose-validate:
 	@echo "🔍 Validating compose file..."
 	@if [ ! -f "$(COMPOSE_FILE)" ]; then \
 		echo "❌ Compose file not found: $(COMPOSE_FILE)"; \
+		exit 1; \
+	fi
+	@if [ ! -f .env ]; then \
+		echo "❌ .env not found. Run: make setup"; \
 		exit 1; \
 	fi
 	$(COMPOSE) config --quiet
@@ -6920,36 +6982,46 @@ alembic-install:
 	@echo "➜ Installing Alembic ..."
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && $(UV_BIN) pip install -q alembic sqlalchemy"
 
+# Alembic commands require Settings() to be constructable (GHSA-8pcq-mx48-hjvj).
+# Load secrets from .env if present; otherwise fall back to recognisable
+# test-only values so 'make db-*' works on a fresh checkout without secrets.
+define db_env
+	$(eval _JWT  := $(shell grep -s '^JWT_SECRET_KEY=' .env | cut -d= -f2-))
+	$(eval _ENC  := $(shell grep -s '^AUTH_ENCRYPTION_SECRET=' .env | cut -d= -f2-))
+	$(eval _JWT  := $(if $(_JWT),$(_JWT),alembic-jwt-secret-DO-NOT-USE-IN-PRODUCTION-xx))
+	$(eval _ENC  := $(if $(_ENC),$(_ENC),alembic-enc-secret-DO-NOT-USE-IN-PRODUCTION-xx))
+endef
+
 .PHONY: db-init
 db-init: ## Initialize alembic migrations
 	@echo "🗄️ Initializing database migrations..."
-	alembic -c $(ALEMBIC_CONFIG) init alembic
+	$(call db_env)JWT_SECRET_KEY="$(_JWT)" AUTH_ENCRYPTION_SECRET="$(_ENC)" alembic -c $(ALEMBIC_CONFIG) init alembic
 
 .PHONY: db-migrate
 db-migrate: ## Create a new migration
-	@echo "�️ Creating new migration..."
-	@read -p "Enter migration message: " msg; \
-	alembic -c $(ALEMBIC_CONFIG) revision --autogenerate -m "$$msg"
+	@echo "🗄️ Creating new migration..."
+	$(call db_env)@read -p "Enter migration message: " msg; \
+	JWT_SECRET_KEY="$(_JWT)" AUTH_ENCRYPTION_SECRET="$(_ENC)" alembic -c $(ALEMBIC_CONFIG) revision --autogenerate -m "$$msg"
 
 .PHONY: db-upgrade
 db-upgrade: ## Upgrade database to latest migration
 	@echo "🗄️ Upgrading database..."
-	alembic -c $(ALEMBIC_CONFIG) upgrade head
+	$(call db_env)JWT_SECRET_KEY="$(_JWT)" AUTH_ENCRYPTION_SECRET="$(_ENC)" alembic -c $(ALEMBIC_CONFIG) upgrade head
 
 .PHONY: db-downgrade
 db-downgrade: ## Downgrade database by one revision
-	@echo "�️ Downgrading database..."
-	alembic -c $(ALEMBIC_CONFIG) downgrade -1
+	@echo "🗄️ Downgrading database..."
+	$(call db_env)JWT_SECRET_KEY="$(_JWT)" AUTH_ENCRYPTION_SECRET="$(_ENC)" alembic -c $(ALEMBIC_CONFIG) downgrade -1
 
 .PHONY: db-current
 db-current: ## Show current database revision
 	@echo "🗄️ Current database revision:"
-	@alembic -c $(ALEMBIC_CONFIG) current
+	$(call db_env)@JWT_SECRET_KEY="$(_JWT)" AUTH_ENCRYPTION_SECRET="$(_ENC)" alembic -c $(ALEMBIC_CONFIG) current
 
 .PHONY: db-history
 db-history: ## Show migration history
 	@echo "🗄️ Migration history:"
-	@alembic -c $(ALEMBIC_CONFIG) history
+	$(call db_env)@JWT_SECRET_KEY="$(_JWT)" AUTH_ENCRYPTION_SECRET="$(_ENC)" alembic -c $(ALEMBIC_CONFIG) history
 
 .PHONY: db-heads
 db-heads: ## Show available heads

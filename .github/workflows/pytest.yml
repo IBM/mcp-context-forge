@@ -75,6 +75,11 @@ jobs:
     env:
       PYTHONUNBUFFERED: "1"
       PIP_DISABLE_PIP_VERSION_CHECK: "1"
+      # Strong test-only secrets so Settings() validates in all environments.
+      # config.py now rejects placeholder/weak secrets unconditionally (GHSA-8pcq-mx48-hjvj).
+      # These values are CI-only and are never used outside the test suite.
+      JWT_SECRET_KEY: "ci-test-jwt-secret-DO-NOT-USE-IN-PRODUCTION-this-is-only-for-ci-pytest"  # pragma: allowlist secret
+      AUTH_ENCRYPTION_SECRET: "ci-test-enc-secret-DO-NOT-USE-IN-PRODUCTION-this-is-only-for-ci-pytest"  # pragma: allowlist secret
 
     steps:
       # -----------------------------------------------------------
