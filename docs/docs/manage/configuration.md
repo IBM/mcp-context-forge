@@ -946,8 +946,8 @@ The gateway includes built-in observability features for tracking HTTP requests,
 | Setting                 | Description                               | Default | Options |
 | ----------------------- | ----------------------------------------- | ------- | ------- |
 | `HEALTH_CHECK_INTERVAL` | Health poll interval (secs)               | `60`    | int > 0 |
-| `HEALTH_CHECK_TIMEOUT`  | Health request timeout (secs)             | `5`     | int > 0 |
-| `GATEWAY_HEALTH_CHECK_TIMEOUT` | Per-check timeout for gateway health check (secs) | `5.0` | float > 0 |
+| `HEALTH_CHECK_TIMEOUT`  | Health request timeout (secs)             | `30`    | int > 0 |
+| `GATEWAY_HEALTH_CHECK_TIMEOUT` | Per-check timeout for gateway health check (secs) | `30.0` | float > 0 |
 | `UNHEALTHY_THRESHOLD`   | Fail-count before peer deactivation (-1 to disable) | `3`     | int     |
 | `GATEWAY_VALIDATION_TIMEOUT` | Gateway URL validation timeout (secs) | `5`     | int > 0 |
 | `MAX_CONCURRENT_HEALTH_CHECKS` | Max concurrent health checks        | `20`    | int > 0 |
