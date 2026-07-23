@@ -443,8 +443,9 @@ The LLM Chat system follows a **three-tier architecture** with clear separation 
 
 - `active_sessions`: Dict storing active MCPChatService instances per user
 - `user_configs`: Dict storing user configurations
-- **Redis Integration** (optional): Distributed session storage with TTL and worker affinity
-- **Sticky Sessions**: Workers use locks to prevent race conditions during session initialization
+- **Redis Integration** (optional): Distributed storage for user config and session ownership, with TTLs
+- **Cross-Worker Takeover**: Any worker may materialize a user's session locally from the Redis-backed config, rather than requiring the request to stay pinned to the worker that created it. Locks coordinate initialization so concurrent requests don't build duplicate sessions, and an idle reaper shuts down a session once its previous worker's copy is no longer in use
+- Without `CACHE_TYPE=redis` + `REDIS_URL`, session and config state is per-process only, so LLM Chat only works reliably with a single worker
 
 ![LLM Chat Session Management](llm-chat-session-management.png)
 
@@ -607,11 +608,12 @@ MCPClientConfig
 - TTL-based expiration reduces memory footprint
 - Redis caching for distributed deployments
 
-**Sticky Sessions** (Multi-worker):
+**Session Takeover** (Multi-worker):
 
-- Worker affinity via Redis ownership keys
-- Reduces session recreation overhead
-- Lock-based coordination prevents race conditions
+- Any worker can resume a user's session by rebuilding it locally from the Redis-backed config -- requests are not required to stay pinned to the worker that created the session
+- Lock-based coordination prevents concurrent requests from building duplicate sessions for the same user
+- An idle reaper shuts down a worker's local copy once it is no longer the session's owner and has been unused past the session TTL
+- Requires `CACHE_TYPE=redis` + `REDIS_URL`; without Redis, session and config state is per-process only, so LLM Chat only works reliably with a single worker
 
 
 ### 🧪 Error Handling

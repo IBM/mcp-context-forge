@@ -7,6 +7,7 @@ Tests for LLM chat router helpers and endpoints.
 """
 
 # Standard
+import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -65,10 +66,12 @@ class FailingStreamChatService(DummyChatService):
 @pytest.fixture(autouse=True)
 def reset_state(monkeypatch: pytest.MonkeyPatch):
     llmchat_router.active_sessions.clear()
+    llmchat_router.active_sessions_last_used.clear()
     llmchat_router.user_configs.clear()
     monkeypatch.setattr(llmchat_router, "redis_client", None)
     yield
     llmchat_router.active_sessions.clear()
+    llmchat_router.active_sessions_last_used.clear()
     llmchat_router.user_configs.clear()
 
 
@@ -318,23 +321,116 @@ async def test_get_active_session_owner_missing_recreate(monkeypatch: pytest.Mon
 
 @pytest.mark.asyncio
 async def test_get_active_session_no_owner_other_worker(monkeypatch: pytest.MonkeyPatch):
+    """Regression (#5740): a foreign worker appearing to own the session
+    mid-wait must not block this worker from materializing its own local
+    copy once the lock clears. Worker affinity is no longer the intended
+    behaviour -- any worker may take over from Redis-backed config."""
     redis_mock = AsyncMock()
-    redis_mock.get.side_effect = [None, "other-worker"]
+    # First .get() is the owner check (None); the second is the lock-key
+    # poll inside _acquire_and_create_session, which clears.
+    redis_mock.get.side_effect = [None, None]
     monkeypatch.setattr(llmchat_router, "redis_client", redis_mock)
-    monkeypatch.setattr(llmchat_router, "_try_acquire_lock", AsyncMock(return_value=False))
+
+    session = DummyChatService(config=None, user_id="u1")
+    monkeypatch.setattr(llmchat_router, "_try_acquire_lock", AsyncMock(side_effect=[False, True]))
+    monkeypatch.setattr(llmchat_router, "_create_local_session_from_config", AsyncMock(return_value=session))
+    monkeypatch.setattr(llmchat_router, "_release_lock_safe", AsyncMock())
     monkeypatch.setattr(llmchat_router, "LOCK_RETRIES", 1)
     monkeypatch.setattr(llmchat_router.asyncio, "sleep", AsyncMock())
 
-    assert await llmchat_router.get_active_session("u1") is None
+    result = await llmchat_router.get_active_session("u1")
+    assert result is session
+
+
+@pytest.mark.asyncio
+async def test_get_active_session_lock_contention_then_clears(monkeypatch: pytest.MonkeyPatch):
+    """Lock is held by another process; the poll checks the lock key itself
+    (never the local active_sessions dict, which another worker's process
+    can never fill) and a single retry after it clears succeeds."""
+    redis_mock = AsyncMock()
+    redis_mock.get.side_effect = [None, "still-held", None]
+    monkeypatch.setattr(llmchat_router, "redis_client", redis_mock)
+
+    session = DummyChatService(config=None, user_id="u1")
+    monkeypatch.setattr(llmchat_router, "_try_acquire_lock", AsyncMock(side_effect=[False, True]))
+    monkeypatch.setattr(llmchat_router, "_create_local_session_from_config", AsyncMock(return_value=session))
+    monkeypatch.setattr(llmchat_router, "_release_lock_safe", AsyncMock())
+    monkeypatch.setattr(llmchat_router, "LOCK_RETRIES", 2)
+    monkeypatch.setattr(llmchat_router.asyncio, "sleep", AsyncMock())
+
+    result = await llmchat_router.get_active_session("u1")
+    assert result is session
 
 
 @pytest.mark.asyncio
 async def test_get_active_session_owned_by_other_worker(monkeypatch: pytest.MonkeyPatch):
+    """Regression (#5740): a session owned by another worker must be taken
+    over (rebuilt locally from the Redis-backed config), not rejected.
+    Worker affinity is no longer the intended behaviour."""
     redis_mock = AsyncMock()
-    redis_mock.get.return_value = "other-worker"
+    redis_mock.get.return_value = "other-worker-pid"
     monkeypatch.setattr(llmchat_router, "redis_client", redis_mock)
 
-    assert await llmchat_router.get_active_session("u1") is None
+    session = DummyChatService(config=None, user_id="u1")
+    monkeypatch.setattr(llmchat_router, "_try_acquire_lock", AsyncMock(return_value=True))
+    monkeypatch.setattr(llmchat_router, "_create_local_session_from_config", AsyncMock(return_value=session))
+    monkeypatch.setattr(llmchat_router, "_release_lock_safe", AsyncMock())
+
+    result = await llmchat_router.get_active_session("u1")
+    assert result is session
+
+
+@pytest.mark.asyncio
+async def test_get_active_session_other_worker_no_config_returns_none(monkeypatch: pytest.MonkeyPatch):
+    """Owner is another worker, but the stored config is absent/expired --
+    takeover correctly returns None (the 400 the caller raises is right:
+    the user never connected, or the config TTL lapsed)."""
+    redis_mock = AsyncMock()
+    redis_mock.get.return_value = "other-worker-pid"
+    monkeypatch.setattr(llmchat_router, "redis_client", redis_mock)
+    monkeypatch.setattr(llmchat_router, "_try_acquire_lock", AsyncMock(return_value=True))
+    monkeypatch.setattr(llmchat_router, "get_user_config", AsyncMock(return_value=None))
+    monkeypatch.setattr(llmchat_router, "_release_lock_safe", AsyncMock())
+
+    result = await llmchat_router.get_active_session("u1")
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_get_active_session_takeover_repoints_owner(monkeypatch: pytest.MonkeyPatch):
+    """Takeover must re-point the Redis owner key to this worker's WORKER_ID
+    so a subsequent request lands here directly instead of re-triggering
+    takeover every time."""
+    config = llmchat_router.build_config(ConnectInput(user_id="u1", llm=LLMInput(model="gpt")))
+    redis_mock = AsyncMock()
+    redis_mock.get.return_value = "other-worker-pid"
+    monkeypatch.setattr(llmchat_router, "redis_client", redis_mock)
+    monkeypatch.setattr(llmchat_router, "MCPChatService", DummyChatService)
+    monkeypatch.setattr(llmchat_router, "get_user_config", AsyncMock(return_value=config))
+    monkeypatch.setattr(llmchat_router, "_try_acquire_lock", AsyncMock(return_value=True))
+    monkeypatch.setattr(llmchat_router, "_release_lock_safe", AsyncMock())
+
+    result = await llmchat_router.get_active_session("u1")
+
+    assert isinstance(result, DummyChatService)
+    redis_mock.set.assert_any_await(llmchat_router._active_key("u1"), llmchat_router.WORKER_ID, ex=llmchat_router.SESSION_TTL)
+
+
+@pytest.mark.asyncio
+async def test_get_active_session_owner_bytes_matches_worker_id(monkeypatch: pytest.MonkeyPatch):
+    """REDIS_DECODE_RESPONSES=false would return owner as bytes; it must
+    still be normalized and compared correctly against WORKER_ID (a str)."""
+    redis_mock = AsyncMock()
+    redis_mock.get.return_value = llmchat_router.WORKER_ID.encode()
+    monkeypatch.setattr(llmchat_router, "redis_client", redis_mock)
+
+    session = DummyChatService(config=None, user_id="u1")
+    llmchat_router.active_sessions["u1"] = session
+
+    result = await llmchat_router.get_active_session("u1")
+
+    assert result is session
+    redis_mock.expire.assert_awaited()
 
 
 @pytest.mark.asyncio
@@ -1150,16 +1246,21 @@ async def test_get_active_session_no_owner_claim_success(monkeypatch: pytest.Mon
 
 @pytest.mark.asyncio
 async def test_get_active_session_no_owner_retry_our_worker(monkeypatch: pytest.MonkeyPatch):
+    """Dead-loop fix: the retry poll must check the lock key clearing, not
+    this worker's own active_sessions dict (which another worker's process
+    can never fill). Lock clears after the poll and the retried acquire
+    succeeds, materializing a session locally."""
     redis_mock = AsyncMock()
-    redis_mock.get.side_effect = [None, llmchat_router.WORKER_ID]
+    redis_mock.get.side_effect = [None, None]
     monkeypatch.setattr(llmchat_router, "redis_client", redis_mock)
 
     session = DummyChatService(config=None, user_id="u1")
-    # First lock fails, then gets session during retry
-    monkeypatch.setattr(llmchat_router, "_try_acquire_lock", AsyncMock(return_value=False))
+    # First lock attempt fails; poll observes the lock clear; retry succeeds.
+    monkeypatch.setattr(llmchat_router, "_try_acquire_lock", AsyncMock(side_effect=[False, True]))
+    monkeypatch.setattr(llmchat_router, "_create_local_session_from_config", AsyncMock(return_value=session))
+    monkeypatch.setattr(llmchat_router, "_release_lock_safe", AsyncMock())
     monkeypatch.setattr(llmchat_router, "LOCK_RETRIES", 1)
     monkeypatch.setattr(llmchat_router.asyncio, "sleep", AsyncMock())
-    llmchat_router.active_sessions["u1"] = session
 
     result = await llmchat_router.get_active_session("u1")
     assert result is session
@@ -1236,6 +1337,263 @@ async def test_get_user_config_redis_no_data(monkeypatch: pytest.MonkeyPatch):
 
     result = await llmchat_router.get_user_config("u1")
     assert result is None
+
+
+# ---------------------------------------------------------------------------
+# #5740 regression: multi-worker session takeover
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_get_active_session_refreshes_config_ttl(monkeypatch: pytest.MonkeyPatch):
+    """§3b: a local hit must refresh both the ownership and config key TTLs,
+    not just ownership -- otherwise a long conversation's config silently
+    expires out from under a takeover on another worker."""
+    redis_mock = AsyncMock()
+    redis_mock.get.return_value = llmchat_router.WORKER_ID
+    monkeypatch.setattr(llmchat_router, "redis_client", redis_mock)
+
+    session = DummyChatService(config=None, user_id="u1")
+    llmchat_router.active_sessions["u1"] = session
+
+    await llmchat_router.get_active_session("u1")
+
+    redis_mock.expire.assert_any_await(llmchat_router._active_key("u1"), llmchat_router.SESSION_TTL)
+    redis_mock.expire.assert_any_await(llmchat_router._cfg_key("u1"), llmchat_router.USER_CONFIG_TTL)
+
+
+@pytest.mark.asyncio
+async def test_reap_idle_sessions_evicts_foreign_owned(monkeypatch: pytest.MonkeyPatch):
+    """§4: an idle (last_used older than SESSION_TTL) entry owned by another
+    worker is evicted locally and shut down."""
+    redis_mock = AsyncMock()
+    redis_mock.get.return_value = "other-worker-pid"
+    monkeypatch.setattr(llmchat_router, "redis_client", redis_mock)
+
+    session = DummyChatService(config=None, user_id="u1")
+    llmchat_router.active_sessions["u1"] = session
+    llmchat_router.active_sessions_last_used["u1"] = llmchat_router.time.monotonic() - llmchat_router.SESSION_TTL - 1
+
+    await llmchat_router._reap_idle_sessions()
+
+    assert "u1" not in llmchat_router.active_sessions
+    assert "u1" not in llmchat_router.active_sessions_last_used
+    assert session.shutdown_called is True
+
+
+@pytest.mark.asyncio
+async def test_reap_idle_sessions_keeps_still_owned(monkeypatch: pytest.MonkeyPatch):
+    """An idle entry that is still owned by this worker in Redis is left
+    alone -- the conversation may simply be paused, not orphaned."""
+    redis_mock = AsyncMock()
+    redis_mock.get.return_value = llmchat_router.WORKER_ID
+    monkeypatch.setattr(llmchat_router, "redis_client", redis_mock)
+
+    session = DummyChatService(config=None, user_id="u1")
+    llmchat_router.active_sessions["u1"] = session
+    llmchat_router.active_sessions_last_used["u1"] = llmchat_router.time.monotonic() - llmchat_router.SESSION_TTL - 1
+
+    await llmchat_router._reap_idle_sessions()
+
+    assert "u1" in llmchat_router.active_sessions
+    assert session.shutdown_called is False
+
+
+@pytest.mark.asyncio
+async def test_reap_idle_sessions_skips_untracked_entries(monkeypatch: pytest.MonkeyPatch):
+    """An entry with no recorded last_used (never touched via
+    get_active_session) must not be treated as maximally idle."""
+    redis_mock = AsyncMock()
+    redis_mock.get.return_value = "other-worker-pid"
+    monkeypatch.setattr(llmchat_router, "redis_client", redis_mock)
+
+    session = DummyChatService(config=None, user_id="u1")
+    llmchat_router.active_sessions["u1"] = session
+
+    await llmchat_router._reap_idle_sessions()
+
+    assert "u1" in llmchat_router.active_sessions
+    redis_mock.get.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_reaper_does_not_evict_in_flight_stream(monkeypatch: pytest.MonkeyPatch):
+    """§4: token_streamer re-stamps last_used per emitted chunk, so a stream
+    that (in wall-clock terms) outlives SESSION_TTL is never reaped
+    mid-response even if the reaper fires concurrently between chunks."""
+    redis_mock = AsyncMock()
+    redis_mock.get.return_value = "other-worker-pid"  # foreign owner throughout
+    monkeypatch.setattr(llmchat_router, "redis_client", redis_mock)
+
+    fake_time = [0.0]
+    monkeypatch.setattr(llmchat_router.time, "monotonic", lambda: fake_time[0])
+
+    class SlowStreamChatService(DummyChatService):
+        async def chat_events(self, message):
+            for i in range(3):
+                fake_time[0] += llmchat_router.SESSION_TTL + 1  # each chunk arrives "late"
+                yield {"type": "token", "content": str(i)}
+            yield {"type": "final", "text": f"done:{message}", "metadata": {}}
+
+    svc = SlowStreamChatService(config=None, user_id="user1")
+    llmchat_router.active_sessions["user1"] = svc
+    llmchat_router.active_sessions_last_used["user1"] = 0.0
+
+    async for _part in llmchat_router.token_streamer(svc, "hi", "user1"):
+        # After each chunk, last_used must already have been re-stamped to
+        # "now" -- the reaper firing concurrently must not evict this entry.
+        assert llmchat_router.active_sessions_last_used["user1"] == fake_time[0]
+        await llmchat_router._reap_idle_sessions()
+        assert "user1" in llmchat_router.active_sessions
+
+    assert svc.shutdown_called is False
+
+
+@pytest.mark.asyncio
+async def test_create_local_session_from_config_times_out(monkeypatch: pytest.MonkeyPatch):
+    """§3c: initialize() exceeding LOCK_TTL must fail cleanly instead of
+    letting two workers end up with duplicate live sessions."""
+    config = llmchat_router.build_config(ConnectInput(user_id="u1", llm=LLMInput(model="gpt")))
+
+    class SlowChatService(DummyChatService):
+        async def initialize(self):
+            await asyncio.sleep(10)
+
+    monkeypatch.setattr(llmchat_router, "get_user_config", AsyncMock(return_value=config))
+    monkeypatch.setattr(llmchat_router, "MCPChatService", SlowChatService)
+    monkeypatch.setattr(llmchat_router, "LOCK_TTL", 0.01)
+    delete_active = AsyncMock()
+    monkeypatch.setattr(llmchat_router, "delete_active_session", delete_active)
+
+    result = await llmchat_router._create_local_session_from_config("u1")
+
+    assert result is None
+    assert delete_active.await_count == 1
+    assert "u1" not in llmchat_router.active_sessions
+
+
+@pytest.mark.asyncio
+async def test_init_redis_warns_when_not_configured(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture):
+    """§5: llmchat_enabled=True but Redis not configured must log a warning
+    (not silent/info), naming the required settings."""
+    monkeypatch.setattr(llmchat_router.settings, "cache_type", "database")
+    monkeypatch.setattr(llmchat_router.settings, "redis_url", None)
+    monkeypatch.setattr(llmchat_router.settings, "llmchat_enabled", True)
+    caplog.set_level("WARNING")
+
+    await llmchat_router.init_redis()
+
+    assert llmchat_router.redis_client is None
+    assert "Redis is not configured" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_init_redis_assigns_distinct_worker_id(monkeypatch: pytest.MonkeyPatch):
+    """§2a: init_redis() must assign a WORKER_ID distinct from the
+    module-level import-time default, and repeated calls (simulating
+    per-process (re)initialization) must never collide."""
+    monkeypatch.setattr(llmchat_router.settings, "cache_type", "database")
+    monkeypatch.setattr(llmchat_router.settings, "redis_url", None)
+    original_worker_id = f"pid-only-{llmchat_router.os.getpid()}"
+    monkeypatch.setattr(llmchat_router, "WORKER_ID", original_worker_id)
+
+    await llmchat_router.init_redis()
+    first = llmchat_router.WORKER_ID
+    assert first != original_worker_id
+
+    await llmchat_router.init_redis()
+    second = llmchat_router.WORKER_ID
+    assert second != first
+
+
+@pytest.mark.asyncio
+async def test_init_redis_worker_id_has_host_component(monkeypatch: pytest.MonkeyPatch):
+    """§2a: the assigned WORKER_ID must contain a host component, so two
+    processes sharing a PID on different hosts (e.g. separate replicas
+    behind one Redis) do not collide."""
+    monkeypatch.setattr(llmchat_router.settings, "cache_type", "database")
+    monkeypatch.setattr(llmchat_router.settings, "redis_url", None)
+
+    await llmchat_router.init_redis()
+
+    hostname = llmchat_router.socket.gethostname()
+    assert llmchat_router.WORKER_ID.startswith(f"{hostname}:{llmchat_router.os.getpid()}:")
+
+
+@pytest.mark.asyncio
+async def test_connect_non_owning_worker_no_foreign_rebuild(monkeypatch: pytest.MonkeyPatch):
+    """§3a: /connect must look at active_sessions directly (recreate=False)
+    -- it must not rebuild a foreign worker's session over the network just
+    to immediately shut it down. Only the new session's initialize() runs."""
+    init_calls = []
+
+    class TrackedChatService(DummyChatService):
+        async def initialize(self):
+            init_calls.append(1)
+            return await super().initialize()
+
+    monkeypatch.setattr(llmchat_router, "MCPChatService", TrackedChatService)
+    redis_mock = AsyncMock()
+    redis_mock.get.return_value = "other-worker-pid"  # foreign owner, no local session
+    monkeypatch.setattr(llmchat_router, "redis_client", redis_mock)
+
+    request = MagicMock()
+    request.cookies = {"jwt_token": "token"}
+    request.headers = {}
+
+    input_data = ConnectInput(user_id="user1", llm=LLMInput(model="gpt"), server=ServerInput(auth_token=""))
+    result = await llmchat_router.connect(input_data, request, user={"id": "user1", "email": "user1@test.com", "db": MagicMock()})
+
+    assert result["status"] == "connected"
+    assert len(init_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_disconnect_non_owning_worker_no_rebuild(monkeypatch: pytest.MonkeyPatch):
+    """§3a: /disconnect must look at active_sessions directly (recreate=False)
+    and never call initialize() to rebuild a foreign worker's session."""
+    monkeypatch.setattr(llmchat_router, "MCPChatService", DummyChatService)
+    redis_mock = AsyncMock()
+    redis_mock.get.return_value = "other-worker-pid"
+    monkeypatch.setattr(llmchat_router, "redis_client", redis_mock)
+
+    result = await llmchat_router.disconnect(DisconnectInput(user_id="user1"), user={"id": "user1", "email": "user1@test.com"})
+
+    assert result["status"] == "no_active_session"
+    redis_mock.delete.assert_awaited()  # delete_user_config removes the cfg key
+
+
+@pytest.mark.asyncio
+async def test_status_non_owning_worker_no_rebuild(monkeypatch: pytest.MonkeyPatch):
+    """§3a: /status must never call get_active_session() -- a read-only poll
+    must not trigger a cross-worker takeover as a side effect of a GET."""
+    redis_mock = AsyncMock()
+    redis_mock.exists.return_value = 1
+    monkeypatch.setattr(llmchat_router, "redis_client", redis_mock)
+    get_active_session_spy = AsyncMock()
+    monkeypatch.setattr(llmchat_router, "get_active_session", get_active_session_spy)
+
+    result = await llmchat_router.status("user1", user={"id": "user1", "email": "user1@test.com"})
+
+    assert result["connected"] is True
+    get_active_session_spy.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_status_local_session_no_redis():
+    """/status reports connected via the local dict when Redis is disabled."""
+    llmchat_router.active_sessions["user1"] = DummyChatService(config=None, user_id="user1")
+
+    result = await llmchat_router.status("user1", user={"id": "user1", "email": "user1@test.com"})
+
+    assert result["connected"] is True
+
+
+@pytest.mark.asyncio
+async def test_status_not_connected_no_redis():
+    result = await llmchat_router.status("user1", user={"id": "user1", "email": "user1@test.com"})
+
+    assert result["connected"] is False
 
 
 # ---------------------------------------------------------------------------

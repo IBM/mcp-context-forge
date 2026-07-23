@@ -18,8 +18,10 @@ history management via ChatHistoryManager from mcp_client_chat_service.
 # Standard
 import asyncio
 import os
+import socket
 import time
 from typing import Any, Dict, Optional
+from uuid import uuid4
 
 # Third-Party
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -60,20 +62,45 @@ redis_client = None
 
 
 async def init_redis() -> None:
-    """Initialize Redis client using the shared factory.
+    """Initialize Redis client using the shared factory and rebind WORKER_ID.
 
-    Should be called during application startup from main.py lifespan.
+    Should be called during application startup from main.py lifespan, which
+    runs post-fork under gunicorn/UvicornWorker (and once under plain
+    uvicorn/``make dev``). This is where ``WORKER_ID`` must be (re)computed:
+    the module-level default is captured at *import* time, and because
+    ``run-gunicorn.sh`` enables ``--preload`` by default on Linux, gunicorn
+    imports this module once in the master process before forking — every
+    worker would otherwise inherit the master's PID as its ``WORKER_ID`` and
+    the ownership/lock compare-and-delete Lua scripts would compare a value
+    against itself, letting any worker delete or release another's lock.
+    Rebinding here, after fork, gives each process a distinct, host-qualified
+    identifier that also survives PID reuse across worker recycling.
+
+    Returns:
+        None.
     """
-    global redis_client
+    global redis_client, WORKER_ID  # pylint: disable=global-statement
+    WORKER_ID = f"{socket.gethostname()}:{os.getpid()}:{uuid4().hex[:8]}"
     if getattr(settings, "cache_type", None) == "redis" and getattr(settings, "redis_url", None):
         redis_client = await get_redis_client()
         if redis_client:
             logger.info("LLMChat router connected to shared Redis client")
+    if redis_client is None and getattr(settings, "llmchat_enabled", False):
+        logger.warning(
+            "LLM Chat is enabled but Redis is not configured (CACHE_TYPE=redis + REDIS_URL). "
+            "Chat sessions and config are per-process only; with more than one worker, requests "
+            "routed to a different worker may not find the session."
+        )
 
 
 # Fallback in-memory stores (used when Redis unavailable)
 # Store active chat sessions per user
 active_sessions: Dict[str, MCPChatService] = {}
+
+# Monotonic timestamp of last use per user_id, keyed the same as active_sessions.
+# Used by the idle reaper (see _reap_idle_sessions) to bound local session
+# lifetime once any worker may materialize a session via takeover.
+active_sessions_last_used: Dict[str, float] = {}
 
 # Store configuration per user
 user_configs: Dict[str, tuple[bytes, float]] = {}
@@ -551,6 +578,7 @@ async def delete_active_session(user_id: str):
         user_id: User identifier.
     """
     active_sessions.pop(user_id, None)
+    active_sessions_last_used.pop(user_id, None)
     if redis_client:
         try:
             # Lua script for atomic check-and-delete (only delete if we own the key)
@@ -609,6 +637,16 @@ async def _release_lock_safe(user_id: str):
 async def _create_local_session_from_config(user_id: str) -> Optional[MCPChatService]:
     """Create MCPChatService locally from stored config.
 
+    The build is bounded by ``LOCK_TTL``: this call only ever runs while the
+    caller holds the per-user init lock, and that lock expires after
+    ``LOCK_TTL`` seconds. ``MCPChatService.initialize()`` performs real
+    network I/O (MCP transport connect plus tool discovery) that can exceed
+    the default 30s on a slow or large server; without a bound, the lock
+    could expire mid-build and let a second worker start building a
+    duplicate session for the same user. Timing out is treated the same as
+    any other initialization failure: partial state is cleaned up and the
+    caller sees a clean ``None``.
+
     Args:
         user_id: User identifier.
 
@@ -622,106 +660,239 @@ async def _create_local_session_from_config(user_id: str) -> Optional[MCPChatSer
     # create and initialize with unified history manager
     try:
         chat_service = MCPChatService(config, user_id=user_id, redis_client=redis_client)
-        await chat_service.initialize()
+        await asyncio.wait_for(chat_service.initialize(), timeout=LOCK_TTL)
         await set_active_session(user_id, chat_service)
         return chat_service
     except Exception as e:
-        # If initialization fails, ensure nothing partial remains
+        # If initialization fails (including a LOCK_TTL timeout), ensure nothing partial remains
         logger.error(f"Failed to initialize MCPChatService for {SecurityValidator.sanitize_log_message(user_id)}: {e}", exc_info=True)
         # cleanup local state and redis ownership (if we set it)
         await delete_active_session(user_id)
         return None
 
 
-async def get_active_session(user_id: str) -> Optional[MCPChatService]:
-    """
-    Retrieve or (if possible) create the active session for user_id.
+def _touch_last_used(user_id: str) -> None:
+    """Stamp the idle clock for a user's active session.
 
-    Behavior:
-    - If Redis is disabled: return local session or None.
-    - If Redis enabled:
-      * If owner == WORKER_ID and local session exists -> return it (and refresh TTL)
-      * If owner == WORKER_ID but local missing -> try to acquire lock and recreate
-      * If no owner -> try to acquire lock and create session here
-      * If owner != WORKER_ID -> wait a short time for owner to appear or return None
+    Called whenever a session is served or created so the idle reaper
+    (`_reap_idle_sessions`) does not treat it as eligible for eviction.
+
+    Args:
+        user_id: User identifier whose session was just used.
+
+    Returns:
+        None.
+    """
+    active_sessions_last_used[user_id] = time.monotonic()
+
+
+async def _refresh_session_ttls(user_id: str) -> None:
+    """Refresh both the ownership and config Redis keys' TTLs for a user.
+
+    The ownership key (`_active_key`) has always had its TTL renewed on
+    every `get_active_session` hit; the config key (`_cfg_key`) previously
+    was not, so a long conversation's stored config could silently expire
+    after `USER_CONFIG_TTL` seconds even though the conversation was still
+    active. That gap was masked as long as the owning worker always served
+    from its never-expiring local `active_sessions` dict; takeover makes the
+    gap reachable from any worker, so both keys must be kept alive together
+    (§3b of the multi-worker session fix). No-op when Redis is disabled.
+
+    Args:
+        user_id: User identifier whose Redis-backed keys should be renewed.
+
+    Returns:
+        None.
+    """
+    if not redis_client:
+        return
+    try:
+        await redis_client.expire(_active_key(user_id), SESSION_TTL)
+        await redis_client.expire(_cfg_key(user_id), USER_CONFIG_TTL)
+    except Exception as e:  # nosec B110
+        logger.debug(f"Failed to refresh session TTLs for {SecurityValidator.sanitize_log_message(user_id)}: {e}")
+
+
+async def _reap_idle_sessions() -> None:
+    """Evict and shut down local sessions that are idle and foreign-owned.
+
+    Once any worker may take over a session from Redis-backed config, an
+    old owner's local `MCPChatService` becomes orphaned after takeover and
+    would otherwise never be cleaned up (a connection/fd leak). This scans
+    `active_sessions` for entries whose `active_sessions_last_used` stamp is
+    older than `SESSION_TTL` seconds *and* whose Redis ownership key no
+    longer names this worker, and shuts those down.
+
+    An entry with no recorded `last_used` (never touched via
+    `get_active_session`/`_touch_last_used`) is left alone rather than
+    treated as maximally idle. An entry that is idle but still owned by this
+    worker in Redis is also left alone -- the conversation may simply be
+    paused. Long-running streamed responses re-stamp `last_used` per chunk
+    (see `token_streamer`), so an in-flight stream can never look idle
+    mid-response.
+
+    Only runs when Redis is configured; without Redis there is no concept
+    of cross-worker ownership to reap against.
+
+    Returns:
+        None.
+    """
+    if not redis_client:
+        return
+    now = time.monotonic()
+    for uid in list(active_sessions.keys()):
+        last_used = active_sessions_last_used.get(uid)
+        if last_used is None or (now - last_used) <= SESSION_TTL:
+            continue
+        try:
+            owner = await redis_client.get(_active_key(uid))
+            if isinstance(owner, bytes):
+                owner = owner.decode()
+        except Exception as e:  # nosec B110
+            logger.debug(f"Reaper failed to check ownership for {SecurityValidator.sanitize_log_message(uid)}: {e}")
+            continue
+        if owner == WORKER_ID:
+            continue
+        session = active_sessions.pop(uid, None)
+        active_sessions_last_used.pop(uid, None)
+        if session is not None:
+            try:
+                await session.shutdown()
+            except Exception as e:
+                logger.warning(f"Reaper failed to shut down idle session for {SecurityValidator.sanitize_log_message(uid)}: {e}")
+
+
+async def _acquire_and_create_session(user_id: str) -> Optional[MCPChatService]:
+    """Acquire the per-user init lock and materialize a session from config.
+
+    On failure to acquire the lock, polls for the *lock key itself* to
+    clear (not the local `active_sessions` dict -- another worker's process
+    can never fill this worker's own dict, so waiting on it is a guaranteed
+    timeout) and retries acquisition exactly once before giving up.
 
     Args:
         user_id: User identifier.
 
     Returns:
+        Optional[MCPChatService]: Newly created local session, or None if
+        the lock could not be acquired (even after the retry) or the build
+        itself failed (see `_create_local_session_from_config`).
+    """
+    acquired = await _try_acquire_lock(user_id)
+    if acquired:
+        try:
+            return await _create_local_session_from_config(user_id)
+        finally:
+            await _release_lock_safe(user_id)
+
+    # Someone else (another worker, or a concurrent request on this one) is
+    # already (re)building the session. Wait for the lock to clear.
+    for _ in range(LOCK_RETRIES):
+        await asyncio.sleep(LOCK_WAIT)
+        if redis_client and not await redis_client.get(_lock_key(user_id)):
+            break
+    else:
+        return None
+
+    acquired = await _try_acquire_lock(user_id)
+    if acquired:
+        try:
+            return await _create_local_session_from_config(user_id)
+        finally:
+            await _release_lock_safe(user_id)
+    return None
+
+
+async def get_active_session(user_id: str, recreate: bool = True) -> Optional[MCPChatService]:
+    """Retrieve, and optionally take over or (re)create, the active session for user_id.
+
+    Behavior:
+    - If Redis is disabled, or `recreate` is False: return the locally-held
+      session, or None. `recreate=False` is for callers that are about to
+      replace or tear down the session (`/connect`, `/disconnect`) -- they
+      must not pay the cost of rebuilding a foreign worker's session (a full
+      MCP handshake) just to immediately discard it.
+    - If Redis is enabled and `recreate` is True (the default, used by
+      `/chat`):
+      * If owner == WORKER_ID and a local session exists -> return it,
+        refreshing both the ownership and config key TTLs.
+      * If owner == WORKER_ID but the local session is missing (process
+        restart) -> acquire the lock and recreate it.
+      * If there is no owner -> acquire the lock and create the session here.
+      * If another worker owns it -> take over: return a local session if
+        this worker happens to already have one (reclaiming ownership),
+        otherwise acquire the lock and materialize a new local session from
+        the Redis-backed config. This is a deliberate takeover, not a shared
+        session -- the previous owner's local copy becomes orphaned and is
+        reclaimed by the idle reaper (`_reap_idle_sessions`).
+      In all cases, if the stored config is absent or expired, this
+      returns None (the correct outcome: the user never connected, or the
+      config TTL lapsed).
+
+    Args:
+        user_id: User identifier.
+        recreate: Whether to allow rebuilding the session from Redis-backed
+            config when it is not already held locally. Defaults to True.
+
+    Returns:
         Optional[MCPChatService]: Active session if available, None otherwise.
     """
-    # Fast path: no redis => purely local
-    if not redis_client:
-        return active_sessions.get(user_id)
+    # Local-only fast path: no Redis backing, or the caller explicitly wants
+    # the local session without triggering a cross-worker takeover/rebuild.
+    if not redis_client or not recreate:
+        local = active_sessions.get(user_id)
+        if local:
+            _touch_last_used(user_id)
+        return local
+
+    await _reap_idle_sessions()
 
     active_key = _active_key(user_id)
-    # _lock_key = _lock_key(user_id)
     owner = await redis_client.get(active_key)
+    if isinstance(owner, bytes):
+        owner = owner.decode()
 
     # 1) Owned by this worker
     if owner == WORKER_ID:
         local = active_sessions.get(user_id)
         if local:
-            # refresh TTL so ownership persists while active
+            # refresh both TTLs so ownership and config persist while active
             try:
                 await redis_client.expire(active_key, SESSION_TTL)
+                await redis_client.expire(_cfg_key(user_id), USER_CONFIG_TTL)
             except Exception as e:  # nosec B110
                 # non-fatal if expire fails, just log the error
                 logger.debug(f"Failed to refresh session TTL for {SecurityValidator.sanitize_log_message(user_id)}: {e}")
+            _touch_last_used(user_id)
             return local
 
         # Owner in Redis points to this worker but local session missing (process restart or lost).
-        # Try to recreate it (acquire lock).
-        acquired = await _try_acquire_lock(user_id)
-        if acquired:
-            try:
-                # create new local session
-                session = await _create_local_session_from_config(user_id)
-                return session
-            finally:
-                await _release_lock_safe(user_id)
-        else:
-            # someone else is (re)creating; wait a bit for them to finish
-            for _ in range(LOCK_RETRIES):
-                await asyncio.sleep(LOCK_WAIT)
-                if active_sessions.get(user_id):
-                    return active_sessions.get(user_id)
-            return None
+        session = await _acquire_and_create_session(user_id)
+        if session:
+            _touch_last_used(user_id)
+        return session
 
     # 2) No owner -> try to claim & create session locally
     if owner is None:
-        acquired = await _try_acquire_lock(user_id)
-        if acquired:
-            try:
-                session = await _create_local_session_from_config(user_id)
-                return session
-            finally:
-                await _release_lock_safe(user_id)
+        session = await _acquire_and_create_session(user_id)
+        if session:
+            _touch_last_used(user_id)
+        return session
 
-        # if we couldn't acquire lock, someone else is creating; wait a short time
-        for _ in range(LOCK_RETRIES):
-            await asyncio.sleep(LOCK_WAIT)
-            owner2 = await redis_client.get(active_key)
-            if owner2 == WORKER_ID and active_sessions.get(user_id):
-                return active_sessions.get(user_id)
-            if owner2 is not None and owner2 != WORKER_ID:
-                # some other worker now owns it
-                return None
+    # 3) Owned by another worker -> take over rather than reject.
+    local = active_sessions.get(user_id)
+    if local:
+        # Ownership drifted away from us (e.g. a TTL/reaper race) while we
+        # still hold a live session locally; reclaim ownership instead of
+        # paying to rebuild.
+        await set_active_session(user_id, local)
+        _touch_last_used(user_id)
+        return local
 
-        # final attempt to acquire lock (last resort)
-        acquired = await _try_acquire_lock(user_id)
-        if acquired:
-            try:
-                session = await _create_local_session_from_config(user_id)
-                return session
-            finally:
-                await _release_lock_safe(user_id)
-        return None
-
-    # 3) Owned by another worker -> we don't have it locally
-    # Optionally we could attempt to "steal" if owner is stale, but TTL expiry handles that.
-    return None
+    session = await _acquire_and_create_session(user_id)
+    if session:
+        _touch_last_used(user_id)
+    return session
 
 
 # ---------- ROUTES ----------
@@ -813,8 +984,13 @@ async def connect(input_data: ConnectInput, request: Request, user=Depends(get_c
                 raise HTTPException(status_code=401, detail="Authentication required. Please ensure you are logged in.")
             input_data.server.auth_token = jwt_token
 
-        # Close old session if it exists
-        existing = await get_active_session(user_id)
+        # Close old session if it exists. Local-only lookup (recreate=False):
+        # a session owned by another worker is about to be superseded anyway,
+        # so there is no reason to pay for a full takeover rebuild (network +
+        # tool discovery) just to immediately shut it back down. The Redis
+        # ownership key for a foreign copy is left to expire naturally / be
+        # cleaned up by the idle reaper.
+        existing = await get_active_session(user_id, recreate=False)
         if existing:
             try:
                 logger.debug(f"Disconnecting existing session for {SecurityValidator.sanitize_log_message(user_id)} before reconnecting")
@@ -932,6 +1108,9 @@ async def token_streamer(chat_service: MCPChatService, message: str, user_id: st
     Note:
         SSE format requires 'event: <type>\\ndata: <json>\\n\\n' structure.
         All exceptions are caught and converted to error events for client handling.
+        Each emitted event re-stamps the session's idle clock (see
+        `_touch_last_used`), so a long-running stream can never be reaped as
+        idle mid-response even if the stream as a whole outlives `SESSION_TTL`.
     """
 
     async def sse(event_type: str, data: Dict[str, Any]):
@@ -949,6 +1128,10 @@ async def token_streamer(chat_service: MCPChatService, message: str, user_id: st
 
     try:
         async for ev in chat_service.chat_events(message):
+            # Re-stamp idle clock per chunk so the reaper never evicts a
+            # session that is still actively streaming (§4 of the
+            # multi-worker session fix).
+            _touch_last_used(user_id)
             et = ev.get("type")
             if et == "token":
                 content = ev.get("content", "")
@@ -1061,10 +1244,16 @@ async def chat(input_data: ChatInput, user=Depends(get_current_user_with_permiss
     if not input_data.message or not input_data.message.strip():
         raise HTTPException(status_code=400, detail="Message cannot be empty")
 
-    # Check for active session
+    # Check for active session (recreate=True default: any worker may take
+    # over the session from Redis-backed config)
     chat_service = await get_active_session(user_id)
     if not chat_service:
         raise HTTPException(status_code=400, detail="No active session found. Please connect to a server first.")
+
+    # Successful hit -- refresh the config TTL alongside the ownership TTL
+    # (§3b): a freshly-recreated session's config was just read, not
+    # re-written, so without this it keeps counting down from /connect time.
+    await _refresh_session_ttls(user_id)
 
     # Verify session is initialized
     if not chat_service.is_initialized:
@@ -1163,8 +1352,11 @@ async def disconnect(input_data: DisconnectInput, user=Depends(get_current_user_
     if not user_id:
         raise HTTPException(status_code=400, detail="User ID is required")
 
-    # Remove and shut down chat service
-    chat_service = await get_active_session(user_id)
+    # Remove and shut down chat service. Local-only lookup (recreate=False):
+    # this call is about to tear the session down, so there is no reason to
+    # rebuild a foreign worker's copy first just to immediately shut it back
+    # down; the reaper and Redis key deletion below handle that copy.
+    chat_service = await get_active_session(user_id, recreate=False)
     await delete_active_session(user_id)
 
     # Remove user config
@@ -1186,13 +1378,45 @@ async def disconnect(input_data: DisconnectInput, user=Depends(get_current_user_
         return {"status": "disconnected_with_errors", "user_id": user_id, "message": "Disconnected but cleanup encountered errors", "warning": str(e)}
 
 
+async def _has_active_session_state(user_id: str) -> bool:
+    """Check whether active session state exists for a user without building one.
+
+    A pure existence check -- a local dict lookup, plus a Redis `EXISTS` on
+    the ownership/config keys when Redis is configured -- so a read-only
+    status poll never triggers a cross-worker takeover or the cost of
+    deserializing and decrypting the stored config
+    (`_deserialize_user_config_from_storage`) just to produce a boolean.
+
+    Args:
+        user_id: User identifier to check.
+
+    Returns:
+        bool: True when an active session (local, or Redis-backed on any
+        worker) exists for the user.
+    """
+    if user_id in active_sessions:
+        return True
+    if not redis_client:
+        return False
+    try:
+        exists = await redis_client.exists(_active_key(user_id), _cfg_key(user_id))
+        return bool(exists)
+    except Exception as e:  # nosec B110
+        logger.debug(f"Failed to check active session state for {SecurityValidator.sanitize_log_message(user_id)}: {e}")
+        return False
+
+
 @llmchat_router.get("/status/{user_id}")
 @require_permission("llm.read")
 async def status(user_id: str, user=Depends(get_current_user_with_permissions)):
     """Check if an active chat session exists for the specified user.
 
     Lightweight endpoint for verifying session state without modifying data.
-    Useful for health checks and UI state management.
+    Useful for health checks and UI state management. This performs a pure
+    existence check -- it never calls `get_active_session()` -- so a
+    read-only status poll cannot trigger a cross-worker takeover or pay the
+    network/tool-discovery cost of rebuilding a session as a side effect of
+    a GET (see `_has_active_session_state`).
 
     Args:
         user_id: User identifier to check session status for.
@@ -1224,11 +1448,12 @@ async def status(user_id: str, user=Depends(get_current_user_with_permissions)):
         }
 
     Note:
-        This endpoint does not validate that the session is properly initialized,
-        only that it exists in the active_sessions dictionary.
+        This endpoint does not validate that the session is properly
+        initialized, only that active state (local or Redis-backed) exists
+        for the user.
     """
     resolved_user_id = _resolve_user_id(user_id, user)
-    connected = bool(await get_active_session(resolved_user_id))
+    connected = await _has_active_session_state(resolved_user_id)
     return {"user_id": resolved_user_id, "connected": connected}
 
 
