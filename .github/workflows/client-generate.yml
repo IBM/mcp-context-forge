@@ -21,6 +21,10 @@ jobs:
         runs-on: ubuntu-latest
         timeout-minutes: 20
 
+        env:
+            JWT_SECRET_KEY: "ci-client-generate-jwt-secret-not-for-production-use" # pragma: allowlist secret
+            AUTH_ENCRYPTION_SECRET: "ci-client-generate-auth-enc-secret-not-for-production" # pragma: allowlist secret
+
         steps:
             - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v4
               with:
