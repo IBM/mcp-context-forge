@@ -22,6 +22,8 @@ interface ConfirmDialogProps {
   isLoading?: boolean;
   loadingLabel?: string;
   closeOnConfirm?: boolean;
+  /** ARIA role for the dialog content. Destructive confirmations may use "alertdialog". */
+  role?: "dialog" | "alertdialog";
   /** Redirect focus when the dialog closes, e.g. if the trigger element was removed. */
   onCloseAutoFocus?: (event: Event) => void;
 }
@@ -38,6 +40,7 @@ export function ConfirmDialog({
   isLoading = false,
   loadingLabel,
   closeOnConfirm = true,
+  role = "dialog",
   onCloseAutoFocus,
 }: ConfirmDialogProps) {
   const handleOpenChange = useCallback(
@@ -62,7 +65,7 @@ export function ConfirmDialog({
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent onCloseAutoFocus={onCloseAutoFocus}>
+      <DialogContent role={role} onCloseAutoFocus={onCloseAutoFocus}>
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>{description}</DialogDescription>
