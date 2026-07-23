@@ -175,6 +175,31 @@ describe("Users", () => {
     });
   });
 
+  it("filters the loaded users with the search box", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.get).mockResolvedValueOnce({
+      users: createMockUsers(0, 2),
+      nextCursor: null,
+    });
+
+    renderWithRouter(<Users />);
+
+    await waitFor(() => {
+      expect(screen.getByText("user0@example.com")).toBeInTheDocument();
+    });
+    expect(screen.getByText("user1@example.com")).toBeInTheDocument();
+
+    const search = screen.getByRole("searchbox", { name: "Search Users" });
+    await user.type(search, "user0");
+
+    expect(screen.getByText("user0@example.com")).toBeInTheDocument();
+    expect(screen.queryByText("user1@example.com")).not.toBeInTheDocument();
+
+    await user.clear(search);
+    await user.type(search, "zzz-none");
+    expect(screen.getByText("No matching results.")).toBeInTheDocument();
+  });
+
   it("renders users title/header", async () => {
     vi.mocked(api.get).mockResolvedValueOnce({ users: createMockUsers(0, 1), nextCursor: null });
 

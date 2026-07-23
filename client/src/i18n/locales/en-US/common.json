@@ -22,6 +22,7 @@
   "common.search.results": "Search results",
   "common.search.searching": "Searching...",
   "common.search.startTyping": "Type at least {count} characters to search.",
+  "common.searchLabel": "Search {entity}",
   "common.filter": "Filter",
   "common.export": "Export",
   "common.import": "Import",
