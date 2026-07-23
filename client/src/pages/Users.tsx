@@ -175,7 +175,7 @@ export function Users() {
   const { query, setQuery, results } = useLocalSearch(allUsers, getUserText);
 
   return (
-    <main className="p-6">
+    <div>
       {isFormOpen ? (
         <UserForm
           key={userToEdit?.email ?? "create"}
@@ -206,28 +206,17 @@ export function Users() {
       ) : (
         <div className="space-y-6">
           <header className="flex items-center justify-between">
-            <h1 className="text-xl font-semibold text-foreground">
+            <h2 className="text-xl font-semibold text-foreground">
               {intl.formatMessage({ id: "users.title" })}
-            </h1>
-            <div className="flex items-center gap-3">
-              <ListSearch
-                value={query}
-                onChange={setQuery}
-                ariaLabel={intl.formatMessage(
-                  { id: "common.searchLabel" },
-                  { entity: intl.formatMessage({ id: "navigation.users" }) },
-                )}
-                placeholder={intl.formatMessage({ id: "common.search" })}
-              />
-              <Button
-                onClick={() => setIsFormOpen(true)}
-                className="gap-2"
-                aria-label={intl.formatMessage({ id: "users.createUser" })}
-              >
-                <Plus className="h-4 w-4" aria-hidden="true" />
-                {intl.formatMessage({ id: "users.createUser" })}
-              </Button>
-            </div>
+            </h2>
+            <Button
+              onClick={() => setIsFormOpen(true)}
+              className="gap-2"
+              aria-label={intl.formatMessage({ id: "users.createUser" })}
+            >
+              <Plus className="h-4 w-4" aria-hidden="true" />
+              {intl.formatMessage({ id: "users.createUser" })}
+            </Button>
           </header>
           {isLoading ? (
             <div
@@ -328,6 +317,6 @@ export function Users() {
           onCancel={handleDeleteCancel}
         />
       )}
-    </main>
+    </div>
   );
 }
