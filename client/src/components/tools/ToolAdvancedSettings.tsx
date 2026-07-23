@@ -8,6 +8,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { TagInput } from "@/components/ui/tag-input";
+import { useTagSuggestions } from "@/hooks/useTagSuggestions";
+import { MAX_TAGS } from "@/utils/tags";
 import { BasicAuth } from "@/components/mcp-servers/BasicAuth";
 import { ToolBearerTokenAuth } from "@/components/tools/ToolBearerTokenAuth";
 import { CustomHeadersAuth, type CustomHeader } from "@/components/mcp-servers/CustomHeadersAuth";
@@ -35,8 +38,8 @@ interface ToolAdvancedSettingsProps {
   onCustomHeadersChange: (headers: CustomHeader[]) => void;
   responseFilter: string;
   onResponseFilterChange: (value: string) => void;
-  tags: string;
-  onTagsChange: (value: string) => void;
+  tags: string[];
+  onTagsChange: (value: string[]) => void;
   description: string;
   onDescriptionChange: (value: string) => void;
 }
@@ -64,6 +67,7 @@ export function ToolAdvancedSettings({
   onDescriptionChange,
 }: ToolAdvancedSettingsProps) {
   const { selectedTeamId } = useAuthContext();
+  const tagSuggestions = useTagSuggestions();
 
   useEffect(() => {
     if (visibility === "team") {
@@ -205,12 +209,13 @@ export function ToolAdvancedSettings({
         <label htmlFor="tags" className="text-sm font-medium text-neutral-950 dark:text-white">
           Tags
         </label>
-        <Input
+        <TagInput
           id="tags"
           value={tags}
-          onChange={(e) => onTagsChange(e.target.value)}
+          onChange={onTagsChange}
+          suggestions={tagSuggestions}
+          maxTags={MAX_TAGS}
           placeholder="Add optional tags separated with commas"
-          className="rounded-md border-neutral-300 px-4 text-sm text-neutral-900 shadow-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-0 placeholder:text-neutral-400 dark:border-neutral-700 dark:text-neutral-100 dark:placeholder:text-neutral-500"
         />
       </div>
 
