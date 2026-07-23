@@ -21,6 +21,7 @@ import {
   type ResourceFormInitialValues,
 } from "@/hooks/useResourceForm";
 import { useTagSuggestions } from "@/hooks/useTagSuggestions";
+import { MAX_TAGS } from "@/utils/tags";
 import type { Visibility } from "@/types/server";
 import type { ResourceRead } from "@/generated/types";
 
@@ -292,6 +293,7 @@ export function ResourceForm({
                 value={tags}
                 onChange={setTags}
                 suggestions={tagSuggestions}
+                maxTags={MAX_TAGS}
                 placeholder="tag1, tag2, tag3"
               />
             </div>
