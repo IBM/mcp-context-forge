@@ -1,5 +1,7 @@
 {
   "gateways.title": "Virtual servers",
+  "gateways.titleTooltip": "MCP endpoint bundling capabilities from MCP servers, REST APIs, gRPC services, or A2A agents.",
+  "gateways.titleTooltip.trigger": "About virtual servers",
   "gateways.notifications": "Notifications",
   "gateways.loadingVirtualServers": "Loading virtual servers, please wait...",
   "gateways.errorLoadingVirtualServers": "Error loading virtual servers",
