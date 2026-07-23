@@ -3809,7 +3809,18 @@ RUFF_MODE   ?= check
 .PHONY: install-pre-commit-hooks
 install-pre-commit-hooks: uv          ## 🪝  Install pre-commit hooks
 	@echo "🪝  Installing pre-commit hooks..."
-	$(UV_BIN) run pre-commit install
+	@# pre-commit refuses to install when core.hooksPath is set (e.g. an
+	@# MDM-managed global hook such as vault-radar in ~/.gitconfig). Shadow
+	@# the global git config for this invocation only — nothing is modified —
+	@# so the shim lands in <git-common-dir>/hooks, where the hooksPath hook's
+	@# own chain probe (vault-radar's probe_chain) detects and executes it.
+	@# Only the global scope is shadowed; a repo-local hooksPath still refuses.
+	@if git config --global core.hooksPath >/dev/null 2>&1; then \
+		echo "⚠️  Global core.hooksPath detected ($$(git config --global core.hooksPath)); installing shim into default hooks dir for chaining"; \
+		GIT_CONFIG_GLOBAL=/dev/null $(UV_BIN) run pre-commit install; \
+	else \
+		$(UV_BIN) run pre-commit install; \
+	fi
 	@echo "✅  Pre-commit hooks installed"
 
 .PHONY: configure-secrets-merge-driver
@@ -3819,8 +3830,26 @@ configure-secrets-merge-driver:    ## 🔀  Configure git merge driver for .secr
 		echo "❌  Not in a git repository"; \
 		exit 1; \
 	fi
-	@git config merge.secrets-baseline.name "Auto-resolve .secrets.baseline conflicts with --ours"
-	@git config merge.secrets-baseline.driver "scripts/gitops/resolve-secrets-baseline-conflict.sh %O %A %B %P"
+	@git config merge.secrets-baseline.name "Regenerate .secrets.baseline via detect-secrets-scan"
+	@# Install the driver outside the worktree so it stays resolvable while
+	@# rebasing history that predates the script itself.
+	@common_dir=$$(cd "$$(git rev-parse --git-common-dir)" && pwd) && \
+	mkdir -p "$$common_dir/git-drivers" && \
+	cp scripts/git/resolve-secrets-baseline-conflict.sh "$$common_dir/git-drivers/" && \
+	chmod +x "$$common_dir/git-drivers/resolve-secrets-baseline-conflict.sh" && \
+	git config merge.secrets-baseline.driver "$$common_dir/git-drivers/resolve-secrets-baseline-conflict.sh %O %A %B %P" && \
+	echo "✅  Installed driver to $$common_dir/git-drivers/"
+	@# Bind the attribute repo-locally too: the versioned .gitattributes entry
+	@# only exists in later history, so early rebase picks would otherwise fall
+	@# back to the default text merge.
+	@info_attrs=$$(cd "$$(git rev-parse --git-common-dir)" && pwd)/info/attributes && \
+	mkdir -p "$$(dirname "$$info_attrs")" && \
+	if ! grep -qF ".secrets.baseline merge=secrets-baseline" "$$info_attrs" 2>/dev/null; then \
+		echo ".secrets.baseline merge=secrets-baseline" >> "$$info_attrs"; \
+		echo "✅  Added merge driver binding to $$info_attrs"; \
+	else \
+		echo "✅  $$info_attrs already contains merge driver binding"; \
+	fi
 	@if [ ! -f .gitattributes ]; then \
 		echo ".secrets.baseline merge=secrets-baseline" > .gitattributes; \
 		echo "✅  Created .gitattributes with merge driver entry"; \
@@ -3832,9 +3861,35 @@ configure-secrets-merge-driver:    ## 🔀  Configure git merge driver for .secr
 	fi
 	@echo "✅  Git merge driver configured for .secrets.baseline"
 
+.PHONY: install-post-rewrite-hook
+install-post-rewrite-hook:     ## 🪝  Install post-rewrite hook that refreshes .secrets.baseline after rebase
+	@echo "🪝  Installing post-rewrite secrets refresh hook..."
+	@if ! git rev-parse --git-dir > /dev/null 2>&1; then \
+		echo "❌  Not in a git repository"; \
+		exit 1; \
+	fi
+	@# Idempotent + non-destructive install:
+	@#  - hook missing or already ours (marker comment) -> (over)write ours
+	@#  - foreign hook, no chain yet -> move it to post-rewrite.chain; our
+	@#    hook executes the chain after itself, so both still run
+	@#  - foreign hook AND chain present -> ambiguous; never clobber
+	@hooks_dir=$$(git rev-parse --git-common-dir)/hooks && \
+	target="$$hooks_dir/post-rewrite" && \
+	chain="$$hooks_dir/post-rewrite.chain" && \
+	if [ -f "$$target" ] && ! grep -q '^# contextforge: post-rewrite-secrets-refresh$$' "$$target"; then \
+		if [ -e "$$chain" ]; then \
+			echo "❌  Foreign post-rewrite hook and existing post-rewrite.chain both present; merge manually" >&2; \
+			exit 1; \
+		fi; \
+		mv "$$target" "$$chain" && chmod +x "$$chain" && \
+		echo "🔀  Moved existing post-rewrite hook to post-rewrite.chain (chained by our hook)"; \
+	fi && \
+	cp scripts/git/post-rewrite-secrets-refresh.sh "$$target" && \
+	chmod +x "$$target" && \
+	echo "✅  Installed $$target"
 
 .PHONY: configure-git
-configure-git: install-pre-commit-hooks configure-secrets-merge-driver  ## 🔧  Configure git hooks and merge drivers
+configure-git: install-pre-commit-hooks configure-secrets-merge-driver install-post-rewrite-hook  ## 🔧  Configure git hooks and merge drivers
 	@echo "✅  Git configuration complete"
 
 
@@ -7496,16 +7551,44 @@ DETECT_SECRETS_FILES_EXCLUDE := '(?x)( \
   |uv\.lock$$                  \
   |go\.sum$$                   \
   |mcpgateway/sri_hashes\.json$$ \
-  |.secrets.baseline$$ \
-)'
+  )|^.secrets.baseline$$'
+
+# The commit to use as the baseline for determining changes files for the
+# detect secrets scan
+GIT_DIFF_TARGET ?= main
 
 # --diff-filter=d EXCLUDES delete files
-DETECT_SECRETS_PATH ?= $(shell git diff main --name-only --diff-filter=d)
+DETECT_SECRETS_PATH ?= $(shell git diff $(GIT_DIFF_TARGET) --name-only --diff-filter=d)
 
+# Where the merged baseline is written. The git merge driver overrides this
+# to write directly into git's %A result file; manual use keeps the default.
+OUTPUT_TARGET ?= .secrets.baseline
+
+
+#
+#  There's some serious jq magic going on below, so we will dig through it line-by-line.
+#
+#  Note first that 'jq -s' slurps the three inputs into a single array:
+#  .[0]  The original .secrets.baseline
+#  .[1]  Our new .secrets.baseline (containing only the branch-altered files)
+#  .[2]  An array of all the files in the repository.
+#
+#  (.[0].results | to_entries | [ .[]|select( ([.key] | inside($$gitfiles))) ] | from_entries) \
+#  ^ filters the original file to only include entries that are still in the repository,
+#    essentially removing any files that have been deleted over time
+#
+#  + .[1].results
+#  ^ merges in the results of the current baseline, overwriting changed line numbers, etc.
+#
+#  <(git ls-files | jq -R -s 'split("\n")[:-1]') \
+#  ^ gets the current git files and transforms them into an array (the [:-1] drops the
+#    empty element produced by the trailing newline). <() allows the output to be
+#    passed like a file reference into jq
+#
 .PHONY: detect-secrets-scan
 detect-secrets-scan: uv                      ## 🔍  detect-secrets scan for secrets in repository
 	@echo "🔍 Running detect-secrets scan..."
-	tmpfile=$$(mktemp) && \
+	@tmpfile=$$(mktemp) && \
 	outfile=$$(mktemp) && \
 	trap "rm -f $${tmpfile} $${outfile}" EXIT && \
 	cp .secrets.baseline $${tmpfile} && \
@@ -7514,21 +7597,42 @@ detect-secrets-scan: uv                      ## 🔍  detect-secrets scan for se
 		--use-all-plugins \
 		--exclude-files $(DETECT_SECRETS_FILES_EXCLUDE) \
 		$(DETECT_SECRETS_PATH) && \
-	jq -s '{ \
-		exclude: .[0].exclude, \
+	jq --arg exclude $(DETECT_SECRETS_FILES_EXCLUDE) -s '\
+		.[2] as $$gitfiles | \
+		{ \
+		exclude: { files: $$exclude, lines: null }, \
 		generated_at: .[1].generated_at, \
 		plugins_used: .[1].plugins_used, \
-		results: (.[0].results + .[1].results), \
+		results: ( \
+			(.[0].results | to_entries | [ .[]|select( ([.key] | inside($$gitfiles))) ] | from_entries) \
+			+ .[1].results), \
 		version: .[1].version, \
 		word_list: .[1].word_list \
-	}' \
+		}' \
 		.secrets.baseline $${tmpfile} \
+		<(git ls-files | jq -R -s 'split("\n")[:-1]') \
 		> $${outfile} && \
-	cp $${outfile} .secrets.baseline
+	cp $${outfile} $(OUTPUT_TARGET)
+	@echo "📊 detect-secrets findings report:"
+	@$(UV_BIN) tool run --from '$(DETECT_SECRETS_SPEC)' detect-secrets audit --report $(OUTPUT_TARGET)
+	@# Capture the count in THIS shell: `| read count` runs read in a subshell,
+	@# leaving count unset in the parent (unbound-variable failure under -u).
+	@count=$$($(UV_BIN) tool run --from '$(DETECT_SECRETS_SPEC)' detect-secrets audit --report --json $(OUTPUT_TARGET) \
+		| jq -r '.stats | .live + .unaudited + .audited_real') && exit $${count}
+
+# Verbatim copy of main's detect-secrets-scan (whole-repo scan, updates
+# .secrets.baseline in place, report-only). This branch rescopes
+# detect-secrets-scan to files changed vs $(GIT_DIFF_TARGET); keep the -all
+# variant for whole-tree baseline regeneration.
+.PHONY: detect-secrets-scan-all
+detect-secrets-scan-all: uv                  ## 🔍  detect-secrets scan of the full repository (main's original detect-secrets-scan)
+	@echo "🔍 Running detect-secrets scan..."
+	@$(UV_BIN) tool run --from '$(DETECT_SECRETS_SPEC)' detect-secrets scan \
+		--update .secrets.baseline \
+		--use-all-plugins \
+		--exclude-files $(DETECT_SECRETS_FILES_EXCLUDE)
 	@echo "📊 detect-secrets findings report:"
 	@$(UV_BIN) tool run --from '$(DETECT_SECRETS_SPEC)' detect-secrets audit --report .secrets.baseline
-	@$(UV_BIN) tool run --from '$(DETECT_SECRETS_SPEC)' detect-secrets audit --report --json .secrets.baseline \
-		| jq -r '.stats | .live + .unaudited + .audited_real' | read count && exit $${count}
 
 .PHONY: detect-secrets-audit
 detect-secrets-audit: uv                     ## 🔎  detect-secrets audit for reviewing findings
