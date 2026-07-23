@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { Login } from "./Login";
 import { useAuth } from "../auth/useAuth";
-import { useRouter } from "../router";
+import { useRouter, resolveNextParam } from "../router";
 import { ApiError } from "../api/client";
 import { I18nProvider } from "@/i18n";
 import type { ReactElement } from "react";
@@ -14,6 +14,7 @@ vi.mock("../auth/useAuth", () => ({
 
 vi.mock("../router", () => ({
   useRouter: vi.fn(),
+  resolveNextParam: vi.fn(),
 }));
 
 function renderWithI18n(ui: ReactElement) {
@@ -26,6 +27,7 @@ describe("Login", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(resolveNextParam).mockReturnValue("/app/");
     vi.mocked(useRouter).mockReturnValue({
       navigate: mockNavigate,
     } as unknown as ReturnType<typeof useRouter>);
@@ -142,5 +144,23 @@ describe("Login", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /Forgot password\?/i }));
     expect(mockNavigate).toHaveBeenCalledWith("/app/forgot-password");
+  });
+
+  it("returns the user to the next destination after login", async () => {
+    vi.mocked(resolveNextParam).mockReturnValue("/app/tools");
+    vi.mocked(useAuth).mockReturnValue({
+      isAuthenticated: false,
+      login: mockLogin.mockResolvedValue(undefined),
+    } as unknown as ReturnType<typeof useAuth>);
+
+    renderWithI18n(<Login />);
+
+    fireEvent.change(screen.getByLabelText(/Email/i), { target: { value: "test@example.com" } });
+    fireEvent.change(screen.getByLabelText(/Password/i), { target: { value: "password123" } });
+    fireEvent.submit(screen.getByRole("button", { name: /Sign in/i }));
+
+    await waitFor(() => {
+      expect(mockNavigate).toHaveBeenCalledWith("/app/tools");
+    });
   });
 });
