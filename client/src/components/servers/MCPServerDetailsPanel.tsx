@@ -243,7 +243,8 @@ export function MCPServerDetailsPanel({
 
   const getVisibilityLabel = useCallback((value?: string) => {
     if (value === "team") return "Team";
-    if (value === "public") return "Public";
+    // Wire value stays "public"; only the display label is "Internal" (see #5732).
+    if (value === "public") return "Internal";
     if (value === "private") return "Private";
     return "Not available";
   }, []);

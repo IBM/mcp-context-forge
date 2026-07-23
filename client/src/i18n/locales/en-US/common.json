@@ -38,5 +38,12 @@
   "common.theme.dark": "Dark mode",
   "common.theme.system": "System theme",
   "common.theme.toggle": "Toggle theme",
-  "common.button.remove": "Remove"
+  "common.button.remove": "Remove",
+  "common.visibility.label.private": "Private",
+  "common.visibility.label.team": "Team",
+  "common.visibility.label.internal": "Internal",
+  "common.visibility.help.private": "Only you can see this. Team members and other platform users cannot.",
+  "common.visibility.help.team": "Scoped to a team you belong to.",
+  "common.visibility.help.internal": "Visible to everyone signed into this platform. Not on the public internet.",
+  "common.visibility.help.aria": "Visibility levels"
 }

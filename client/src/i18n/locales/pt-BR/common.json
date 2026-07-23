@@ -38,5 +38,12 @@
   "common.theme.dark": "Modo escuro",
   "common.theme.system": "Tema do sistema",
   "common.theme.toggle": "Alternar tema",
-  "common.button.remove": "Remover"
+  "common.button.remove": "Remover",
+  "common.visibility.label.private": "Privado",
+  "common.visibility.label.team": "Equipe",
+  "common.visibility.label.internal": "Interno",
+  "common.visibility.help.private": "Somente você pode ver isto. Membros da equipe e outros usuários da plataforma não podem.",
+  "common.visibility.help.team": "Restrito a uma equipe à qual você pertence.",
+  "common.visibility.help.internal": "Visível para todos que entraram nesta plataforma. Não na internet pública.",
+  "common.visibility.help.aria": "Níveis de visibilidade"
 }
