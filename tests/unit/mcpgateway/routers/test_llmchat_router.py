@@ -1719,3 +1719,149 @@ class TestLLMChatRBACDecorators:
                 user=None,
             )
         assert exc.value.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_refresh_session_ttls_refreshes_both_keys(monkeypatch: pytest.MonkeyPatch):
+    """§3b happy path: a successful refresh renews both the ownership and
+    config key TTLs -- exercised directly here since /chat is the only
+    route that calls this helper, and only after a full session build."""
+    redis_mock = AsyncMock()
+    monkeypatch.setattr(llmchat_router, "redis_client", redis_mock)
+
+    await llmchat_router._refresh_session_ttls("u1")
+
+    redis_mock.expire.assert_any_await(llmchat_router._active_key("u1"), llmchat_router.SESSION_TTL)
+    redis_mock.expire.assert_any_await(llmchat_router._cfg_key("u1"), llmchat_router.USER_CONFIG_TTL)
+
+
+@pytest.mark.asyncio
+async def test_refresh_session_ttls_swallows_redis_error(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture):
+    """§3b: a transient Redis error while refreshing TTLs must be logged and
+    swallowed, not raised -- a failed TTL refresh is not fatal to the caller
+    (e.g. a successful /chat response)."""
+    redis_mock = AsyncMock()
+    redis_mock.expire.side_effect = ConnectionError("redis unreachable")
+    monkeypatch.setattr(llmchat_router, "redis_client", redis_mock)
+    caplog.set_level("DEBUG")
+
+    await llmchat_router._refresh_session_ttls("u1")
+
+    assert "Failed to refresh session TTLs" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_reap_idle_sessions_noop_without_redis():
+    """The reaper has no concept of cross-worker ownership without Redis, so
+    it must be a no-op (and must not touch active_sessions) when disabled."""
+    session = DummyChatService(config=None, user_id="u1")
+    llmchat_router.active_sessions["u1"] = session
+    llmchat_router.active_sessions_last_used["u1"] = 0.0
+
+    await llmchat_router._reap_idle_sessions()
+
+    assert "u1" in llmchat_router.active_sessions
+    assert session.shutdown_called is False
+
+
+@pytest.mark.asyncio
+async def test_reap_idle_sessions_decodes_bytes_owner(monkeypatch: pytest.MonkeyPatch):
+    """The reaper must decode a bytes-typed owner value (e.g.
+    REDIS_DECODE_RESPONSES=false) before comparing it to WORKER_ID, exactly
+    like get_active_session does -- an un-decoded bytes owner would never
+    equal WORKER_ID and the entry would be wrongly evicted."""
+    redis_mock = AsyncMock()
+    redis_mock.get.return_value = llmchat_router.WORKER_ID.encode()
+    monkeypatch.setattr(llmchat_router, "redis_client", redis_mock)
+
+    session = DummyChatService(config=None, user_id="u1")
+    llmchat_router.active_sessions["u1"] = session
+    llmchat_router.active_sessions_last_used["u1"] = llmchat_router.time.monotonic() - llmchat_router.SESSION_TTL - 1
+
+    await llmchat_router._reap_idle_sessions()
+
+    assert "u1" in llmchat_router.active_sessions
+    assert session.shutdown_called is False
+
+
+@pytest.mark.asyncio
+async def test_reap_idle_sessions_skips_on_ownership_check_error(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture):
+    """A transient Redis error while checking ownership must not evict the
+    entry -- an unreachable Redis should fail safe (leave the session alone),
+    not fail open (tear down a possibly still-owned session)."""
+    redis_mock = AsyncMock()
+    redis_mock.get.side_effect = ConnectionError("redis unreachable")
+    monkeypatch.setattr(llmchat_router, "redis_client", redis_mock)
+    caplog.set_level("DEBUG")
+
+    session = DummyChatService(config=None, user_id="u1")
+    llmchat_router.active_sessions["u1"] = session
+    llmchat_router.active_sessions_last_used["u1"] = llmchat_router.time.monotonic() - llmchat_router.SESSION_TTL - 1
+
+    await llmchat_router._reap_idle_sessions()
+
+    assert "u1" in llmchat_router.active_sessions
+    assert session.shutdown_called is False
+    assert "Reaper failed to check ownership" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_reap_idle_sessions_logs_shutdown_error(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture):
+    """A session whose shutdown() itself raises must still be removed from
+    active_sessions -- the reaper's job is to stop tracking an orphaned
+    session, and a failed shutdown must not leave it tracked forever."""
+    redis_mock = AsyncMock()
+    redis_mock.get.return_value = "other-worker-pid"
+    monkeypatch.setattr(llmchat_router, "redis_client", redis_mock)
+    caplog.set_level("WARNING")
+
+    class FailingShutdownChatService(DummyChatService):
+        async def shutdown(self):
+            raise RuntimeError("shutdown boom")
+
+    session = FailingShutdownChatService(config=None, user_id="u1")
+    llmchat_router.active_sessions["u1"] = session
+    llmchat_router.active_sessions_last_used["u1"] = llmchat_router.time.monotonic() - llmchat_router.SESSION_TTL - 1
+
+    await llmchat_router._reap_idle_sessions()
+
+    assert "u1" not in llmchat_router.active_sessions
+    assert "Reaper failed to shut down idle session" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_get_active_session_reclaims_drifted_ownership(monkeypatch: pytest.MonkeyPatch):
+    """Branch 3 of get_active_session: ownership drifted to another worker
+    (e.g. a TTL/reaper race) while this worker still holds a live local
+    session. It must reclaim ownership in Redis and return the local
+    session directly, without paying to rebuild via
+    _acquire_and_create_session."""
+    redis_mock = AsyncMock()
+    redis_mock.get.return_value = "other-worker-pid"
+    monkeypatch.setattr(llmchat_router, "redis_client", redis_mock)
+
+    session = DummyChatService(config=None, user_id="u1")
+    llmchat_router.active_sessions["u1"] = session
+    acquire_and_create = AsyncMock()
+    monkeypatch.setattr(llmchat_router, "_acquire_and_create_session", acquire_and_create)
+
+    result = await llmchat_router.get_active_session("u1")
+
+    assert result is session
+    acquire_and_create.assert_not_awaited()
+    redis_mock.set.assert_any_await(llmchat_router._active_key("u1"), llmchat_router.WORKER_ID, ex=llmchat_router.SESSION_TTL)
+
+
+@pytest.mark.asyncio
+async def test_has_active_session_state_swallows_redis_error(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture):
+    """§3a: /status's pure existence check must fail safe (report
+    not-connected) rather than raise, if Redis is unreachable."""
+    redis_mock = AsyncMock()
+    redis_mock.exists.side_effect = ConnectionError("redis unreachable")
+    monkeypatch.setattr(llmchat_router, "redis_client", redis_mock)
+    caplog.set_level("DEBUG")
+
+    result = await llmchat_router._has_active_session_state("u1")
+
+    assert result is False
+    assert "Failed to check active session state" in caplog.text
