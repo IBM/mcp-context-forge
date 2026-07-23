@@ -793,111 +793,16 @@ describe("MCPServerForm", () => {
     });
   });
 
-  describe("OAuth Password Grant Validation", () => {
-    // Helper: open advanced settings, switch to OAuth auth, select password grant
-    const renderWithOAuthPassword = // pragma: allowlist secret
-      async () => {
-        const user = userEvent.setup();
-        renderWithRouter(<MCPServerForm {...defaultProps} />);
-        await user.click(screen.getByRole("button", { name: /Advanced settings/i }));
-        await user.click(screen.getByRole("radio", { name: /OAuth 2\.0/i }));
-        // Grant type defaults to client_credentials; switch to password
-        await user.click(screen.getByRole("combobox", { name: /Grant type/i }));
-        await user.click(screen.getByRole("option", { name: /Resource owner password/i }));
-        return user;
-      };
-
-    it("shows username and password fields when password grant is selected", async () => {
-      await renderWithOAuthPassword();
-      expect(screen.getByLabelText(/Username/i)).toBeInTheDocument();
-      expect(screen.getByLabelText(/^Password/i)).toBeInTheDocument();
-    });
-
-    it("disables the submit button when username is empty", async () => {
-      await renderWithOAuthPassword();
-      fireEvent.change(screen.getByLabelText(/^Name/i), { target: { value: "Test Server" } });
-      fireEvent.change(screen.getByLabelText(/^URL/i), {
-        target: { value: "http://localhost:3000" },
-      });
-      // Leave username empty, fill password
-      fireEvent.change(screen.getByLabelText(/^Password/i), { target: { value: "secret" } });
-      expect(screen.getByRole("button", { name: /Connect server/i })).toBeDisabled();
-    });
-
-    it("disables the submit button when password is empty", async () => {
-      await renderWithOAuthPassword();
-      fireEvent.change(screen.getByLabelText(/^Name/i), { target: { value: "Test Server" } });
-      fireEvent.change(screen.getByLabelText(/^URL/i), {
-        target: { value: "http://localhost:3000" },
-      });
-      fireEvent.change(screen.getByLabelText(/^Username/i), {
-        target: { value: "service-account" },
-      });
-      // Leave password empty
-      expect(screen.getByRole("button", { name: /Connect server/i })).toBeDisabled();
-    });
-
-    it("enables the submit button when both username and password are provided", async () => {
-      await renderWithOAuthPassword();
-      fireEvent.change(screen.getByLabelText(/^Name/i), { target: { value: "Test Server" } });
-      fireEvent.change(screen.getByLabelText(/^URL/i), {
-        target: { value: "http://localhost:3000" },
-      });
-      fireEvent.change(screen.getByLabelText(/^Username/i), {
-        target: { value: "service-account" },
-      });
-      fireEvent.change(screen.getByLabelText(/^Password/i), { target: { value: "secret" } });
-      expect(screen.getByRole("button", { name: /Connect server/i })).not.toBeDisabled();
-    });
-
-    it("marks username input as aria-invalid when username error is present", async () => {
-      await renderWithOAuthPassword();
-      fireEvent.change(screen.getByLabelText(/^Name/i), { target: { value: "Test Server" } });
-      fireEvent.change(screen.getByLabelText(/^URL/i), {
-        target: { value: "http://localhost:3000" },
-      });
-      // Only fill password, leave username empty
-      fireEvent.change(screen.getByLabelText(/^Password/i), { target: { value: "secret" } });
-
-      // Expose the field without a value and attempt form submission
-      const form = document.querySelector("form")!;
-      fireEvent.submit(form);
-
-      await waitFor(() => {
-        expect(screen.getByLabelText(/^Username/i)).toHaveAttribute("aria-invalid", "true");
-      });
-    });
-
-    it("marks password input as aria-invalid when password error is present", async () => {
-      await renderWithOAuthPassword();
-      fireEvent.change(screen.getByLabelText(/^Name/i), { target: { value: "Test Server" } });
-      fireEvent.change(screen.getByLabelText(/^URL/i), {
-        target: { value: "http://localhost:3000" },
-      });
-      fireEvent.change(screen.getByLabelText(/^Username/i), {
-        target: { value: "service-account" },
-      });
-      // Leave password empty, submit the form
-      const form = document.querySelector("form")!;
-      fireEvent.submit(form);
-
-      await waitFor(() => {
-        expect(screen.getByLabelText(/^Password/i)).toHaveAttribute("aria-invalid", "true");
-      });
-    });
-
-    it("shows inline error messages for both fields when both are empty", async () => {
-      await renderWithOAuthPassword();
-      fireEvent.change(screen.getByLabelText(/^Name/i), { target: { value: "Test Server" } });
-      fireEvent.change(screen.getByLabelText(/^URL/i), {
-        target: { value: "http://localhost:3000" },
-      });
-      fireEvent.submit(document.querySelector("form")!);
-
-      await waitFor(() => {
-        expect(screen.getByText("Username is required for password grant")).toBeInTheDocument();
-        expect(screen.getByText("Password is required for password grant")).toBeInTheDocument();
-      });
+  describe("OAuth Password Grant", () => {
+    it("does not offer the deprecated password grant for new servers", async () => {
+      const user = userEvent.setup();
+      renderWithRouter(<MCPServerForm {...defaultProps} />);
+      await user.click(screen.getByRole("button", { name: /Advanced settings/i }));
+      await user.click(screen.getByRole("radio", { name: /OAuth 2\.0/i }));
+      await user.click(screen.getByRole("combobox", { name: /Grant type/i }));
+      expect(
+        screen.queryByRole("option", { name: /Resource owner password/i }),
+      ).not.toBeInTheDocument();
     });
 
     it("does not show password-grant errors when a different OAuth grant type is selected", async () => {

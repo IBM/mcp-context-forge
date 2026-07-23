@@ -1,6 +1,9 @@
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
+import { useState } from "react";
+import { Check, Copy } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import {
   Select,
   SelectContent,
@@ -40,7 +43,6 @@ interface OAuth2AuthProps {
 export function OAuth2Auth({
   grantType,
   issuerUrl,
-  redirectUri,
   clientId,
   clientSecret,
   tokenUrl,
@@ -52,7 +54,6 @@ export function OAuth2Auth({
   password,
   onGrantTypeChange,
   onIssuerUrlChange,
-  onRedirectUriChange,
   onClientIdChange,
   onClientSecretChange,
   onTokenUrlChange,
@@ -64,6 +65,16 @@ export function OAuth2Auth({
   onPasswordChange,
   errors,
 }: OAuth2AuthProps) {
+  const derivedRedirectUri = `${window.location.origin}/oauth/callback`;
+  const isLocalRedirect = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:|\/|$)/i.test(
+    window.location.origin,
+  );
+  const [copied, setCopied] = useState(false);
+  const handleCopyRedirect = () => {
+    void navigator.clipboard?.writeText(derivedRedirectUri);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 2000);
+  };
   return (
     <div className="space-y-4">
       <div className="space-y-1">
@@ -86,10 +97,19 @@ export function OAuth2Auth({
             <SelectItem value="client_credentials">
               Client credentials (machine to machine)
             </SelectItem>
-            <SelectItem value="password">Resource owner password (legacy)</SelectItem>
+            {grantType === "password" && (
+              <SelectItem value="password">Resource owner password (deprecated)</SelectItem>
+            )}
           </SelectContent>
         </Select>
       </div>
+
+      {grantType === "password" && (
+        <p className="text-xs text-amber-600 dark:text-amber-500">
+          Password grant is deprecated by OAuth 2.1. Migrate this MCP server to authorization_code
+          or client_credentials.
+        </p>
+      )}
 
       <div className="space-y-1">
         <label
@@ -118,22 +138,37 @@ export function OAuth2Auth({
         <div className="space-y-1">
           <label
             htmlFor="oauth-redirect-uri"
-            className="inline-flex items-center gap-0.5 text-sm font-medium text-neutral-900 dark:text-neutral-100"
+            className="text-sm font-medium text-neutral-900 dark:text-neutral-100"
           >
-            Redirect URI<span className="text-red-500">*</span>
-            <span className="sr-only">(required)</span>
+            Redirect URI
           </label>
-          <Input
-            id="oauth-redirect-uri"
-            type="text"
-            value={redirectUri}
-            onChange={(e) => onRedirectUriChange(e.target.value)}
-            placeholder="e.g. https://gateway.example.com/oauth/callback"
-            className="rounded-md border-neutral-300 px-4 text-sm text-neutral-900 shadow-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-0 placeholder:text-neutral-400 dark:border-neutral-700 dark:text-neutral-100 dark:placeholder:text-neutral-500"
-          />
+          <div className="flex items-center gap-2">
+            <Input
+              id="oauth-redirect-uri"
+              type="text"
+              readOnly
+              value={derivedRedirectUri}
+              className="rounded-md border-neutral-300 px-4 text-sm text-neutral-900 shadow-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-0 dark:border-neutral-700 dark:text-neutral-100"
+            />
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              aria-label="Copy to clipboard"
+              onClick={handleCopyRedirect}
+            >
+              {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+            </Button>
+          </div>
           <p className="text-xs text-neutral-600 dark:text-neutral-500">
-            {"Copy URI into the OAuth application's allowed redirect URI"}
+            Configure your OAuth app to use this redirect URI.
           </p>
+          {isLocalRedirect && (
+            <p className="text-xs text-amber-600 dark:text-amber-500">
+              The server&apos;s public URL is not configured. Redirect URIs derived from localhost
+              will not work for external OAuth providers.
+            </p>
+          )}
         </div>
       )}
 
