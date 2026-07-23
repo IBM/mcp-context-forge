@@ -5581,20 +5581,28 @@ async def admin_search_teams(
     # The CALLER (admin.py) distinguishes.
 
     if current_user.is_admin:
-        # Admin sees all non-personal teams plus their own personal team (single query)
-        result = await team_service.list_teams(
-            page=1, per_page=limit, include_inactive=include_inactive, visibility_filter=visibility, include_personal=False, search_query=search_query, personal_owner_email=user_email
-        )
-        # Result is dict {data, pagination...} (since page provided)
-        teams = result["data"]
         # Honor explicit token narrowing even for admins (Layer 1 constrains
         # visibility independently of RBAC/admin status). token_teams is None for
         # full admin bypass (unrestricted); an explicit list (including []) scopes
-        # the result. The caller's own personal team stays visible.
+        # the result. The scope is pushed into the query so it applies before
+        # pagination (an allowed team must not be dropped for sorting past the
+        # first page) and so an explicit scope no longer surfaces the personal team.
         raw_token_teams = user.get("token_teams")
+        scoped_team_ids: Optional[list[str]] = None
         if raw_token_teams is not None:
-            scoped_team_ids = {team["id"] if isinstance(team, dict) else team for team in raw_token_teams}
-            teams = [t for t in teams if getattr(t, "is_personal", False) or t.id in scoped_team_ids]
+            scoped_team_ids = [team["id"] if isinstance(team, dict) else team for team in raw_token_teams]
+        result = await team_service.list_teams(
+            page=1,
+            per_page=limit,
+            include_inactive=include_inactive,
+            visibility_filter=visibility,
+            include_personal=False,
+            search_query=search_query,
+            personal_owner_email=user_email,
+            team_ids=scoped_team_ids,
+        )
+        # Result is dict {data, pagination...} (since page provided)
+        teams = result["data"]
     else:
         # Non-admin search
         # Reuse user team fetching
