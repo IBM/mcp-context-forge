@@ -223,6 +223,11 @@ export function TagInput({
           </ul>
         )}
       </div>
+      {atMax && (
+        <p role="status" className="basis-full text-xs text-muted-foreground">
+          Maximum {maxTags} tags reached.
+        </p>
+      )}
     </div>
   );
 }

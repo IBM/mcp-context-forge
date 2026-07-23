@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/select";
 import { usePromptForm, type PromptFormInitialValues } from "@/hooks/usePromptForm";
 import { useTagSuggestions } from "@/hooks/useTagSuggestions";
+import { MAX_TAGS } from "@/utils/tags";
 import { getTagDisplay } from "@/components/gateways/utils";
 import type { PromptRead } from "@/generated/types";
 import type { Visibility } from "@/types/server";
@@ -276,6 +277,7 @@ export function PromptForm({ isOpen, onToggle, onSuccess, prompt }: PromptFormPr
                 value={form.tags}
                 onChange={form.setTags}
                 suggestions={tagSuggestions}
+                maxTags={MAX_TAGS}
                 placeholder={intl.formatMessage({ id: "prompts.add.placeholder.tags" })}
               />
             </div>
