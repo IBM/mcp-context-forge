@@ -107,7 +107,7 @@ client/playwright-report/
 client/test-results/
 client/.playwright/
 client/openapi.json
-client/src/generated/types/
+client/src/generated/
 tests/jmeter/results/
 tests/async/reports/
 tests/async/profiles/
