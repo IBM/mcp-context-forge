@@ -12,7 +12,7 @@
 #  Environment variables (all optional — defaults shown below):
 #    GATEWAY_PORT        Test gateway port              (default: 4444)
 #    GATEWAY_HOST        Test gateway host              (default: 127.0.0.1)
-#    JWT_SECRET_KEY      Must be >32 bytes              (default: see below)
+#    JWT_SECRET_KEY      Must be >32 bytes, strong      (default: random per run)
 #    REDIS_HOST          Redis host for redis-requiring plugins  (default: 127.0.0.1)
 #    REDIS_PORT          Redis port                     (default: 6379)
 #    VENV_DIR              Path to project virtualenv     (default: .venv)
@@ -35,7 +35,10 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 GATEWAY_PORT="${GATEWAY_PORT:-4444}"
 GATEWAY_HOST="${GATEWAY_HOST:-127.0.0.1}"
 GATEWAY_URL="http://${GATEWAY_HOST}:${GATEWAY_PORT}"
-JWT_SECRET="${JWT_SECRET_KEY:-my-test-key-but-now-longer-than-32-bytes}"
+# A strong random secret is generated per run when none is supplied: the config
+# validator rejects known-weak/default values in every environment, and both the
+# gateway and pytest legs inherit the same value so tokens stay consistent.
+JWT_SECRET="${JWT_SECRET_KEY:-$(openssl rand -base64 48 | tr -d '\n')}"
 REDIS_HOST="${REDIS_HOST:-127.0.0.1}"
 REDIS_PORT="${REDIS_PORT:-6379}"
 VENV_DIR="${VENV_DIR:-${PROJECT_ROOT}/.venv}"
@@ -157,8 +160,10 @@ ensure_redis() {
 # ---------------------------------------------------------------------------
 boot_gateway() {
     local config_file="$1"
-    # Kill any stale gateway
+    # Kill any stale gateway — including uvicorn-launched dev servers, which
+    # otherwise keep the port and fool wait_for_health into a false "up".
     pkill -9 -f "python -m mcpgateway" 2>/dev/null || true
+    pkill -9 -f "uvicorn mcpgateway.main:app" 2>/dev/null || true
     sleep 1
 
     # Stamp the Alembic migration cursor to the current codebase head.
