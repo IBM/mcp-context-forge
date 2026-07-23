@@ -121,7 +121,7 @@ Run from the worktree root, in order. Each must pass (or have a documented waive
 | 3 | `make coverage diff-cover` | Coverage of changed lines vs. base |
 | 4 | `make docker-nuke docker-prod-rust testing-up RUST_MCP_MODE=` | Rebuilds and launches the production-style gateway stack |
 | 5 | `make test-mcp-protocol-e2e test-mcp-rbac test-protocol-compliance` | MCP protocol E2E, RBAC, and compliance against the live gateway |
-| 6 | `make detect-secrets-scan` | No new secrets leaked |
+| 6 | `make detect-secrets-scan` | No new secrets in files changed vs `main`; exits non-zero on live/unaudited findings (jq merge preserves out-of-scope audited entries; remediate with `make detect-secrets-audit`) |
 
 Distinct from the per-edit hygiene chain in *Essential Commands → Code Quality* (`make autoflake isort black pre-commit`, then `make ruff bandit interrogate pylint verify`): hygiene runs continuously; this gate runs once before declaring a PR ready.
 

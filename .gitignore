@@ -288,6 +288,7 @@ cookies*
 
 # LLM output
 llms-full.txt
+llms/NOTES.md
 
 # Task tracking
 todo/*

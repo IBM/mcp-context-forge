@@ -805,7 +805,8 @@ clean:
 # help: test-protocol-compliance-gateway - Protocol compliance harness, gateway-proxy + gateway-virtual targets (requires working gateway boot)
 # help: test-protocol-compliance-matrix - Protocol compliance matrix across every runnable engine; summary table (pass MATRIX_ARGS='--format markdown --out X' to override)
 # help: test-mcp-protocol-e2e - MCP protocol E2E via FastMCP client against live gateway (K=<filter> to pick one; MCP_E2E_CLIENT_TIMEOUT env to extend the 5s client timeout)
-# help: test-mcp-cli         - Alias for test-mcp-protocol-e2e (accepts same K=<filter>)
+# help: test-mcp-cli         - [DEPRECATED] Alias for test-mcp-protocol-e2e (accepts same K=<filter>)
+# help: test-bats            - Run bats tests for git tooling (tests/bash; requires bats)
 # help: test-mcp-rbac        - RBAC + multi-transport MCP protocol tests (needs live gateway + SSE)
 # help: test-mcp-access-matrix - MCP role/access matrix (Rust transport, edge/full mode)
 # help: test-mcp-plugin-parity - MCP plugin parity E2E for current Python or Rust stack
@@ -887,7 +888,22 @@ test-mcp-protocol-e2e: uv  ## MCP protocol E2E via FastMCP client (K=<filter> to
 		|| { echo "❌ MCP protocol E2E tests failed!"; exit 1; }
 	@echo "✅ MCP protocol E2E tests passed!"
 
-test-mcp-cli: test-mcp-protocol-e2e
+# deprecated: test-mcp-cli       - Use "make test-mcp-protocol-e2e" instead (v1.2.0)
+test-mcp-cli:
+	$(call deprecated_target,test-mcp-cli,make test-mcp-protocol-e2e,1.2.0)
+	@$(MAKE) --no-print-directory test-mcp-protocol-e2e K="$(K)"
+
+.PHONY: test-bats
+test-bats:                     ## 🧪  Run bats tests for git tooling (tests/bash)
+	@command -v bats >/dev/null 2>&1 || { \
+		echo "❌  bats not found - install it to run tests/bash:"; \
+		echo "    macOS:          brew install bats-core"; \
+		echo "    Debian/Ubuntu:  sudo apt-get install bats"; \
+		echo "    npm:            npm install -g bats"; \
+		exit 1; \
+	}
+	@echo "🧪  Running bats tests for git tooling (tests/bash)..."
+	@bats tests/bash/ && echo "✅  bats tests passed!" || { echo "❌  bats tests failed!"; exit 1; }
 
 test-protocol-compliance: uv  ## MCP protocol compliance harness — full (target, transport) matrix (K=<filter> to pick one)
 	@echo "📜 Running MCP protocol compliance harness (tests/live_gateway/protocol_compliance)..."
@@ -3861,8 +3877,8 @@ configure-secrets-merge-driver:    ## 🔀  Configure git merge driver for .secr
 	fi
 	@echo "✅  Git merge driver configured for .secrets.baseline"
 
-.PHONY: install-post-rewrite-hook
-install-post-rewrite-hook:     ## 🪝  Install post-rewrite hook that refreshes .secrets.baseline after rebase
+.PHONY: install-post-rewrite-detect-secrets-hook
+install-post-rewrite-detect-secrets-hook:     ## 🪝  Install post-rewrite hook that refreshes .secrets.baseline after rebase
 	@echo "🪝  Installing post-rewrite secrets refresh hook..."
 	@if ! git rev-parse --git-dir > /dev/null 2>&1; then \
 		echo "❌  Not in a git repository"; \
@@ -3889,7 +3905,7 @@ install-post-rewrite-hook:     ## 🪝  Install post-rewrite hook that refreshes
 	echo "✅  Installed $$target"
 
 .PHONY: configure-git
-configure-git: install-pre-commit-hooks configure-secrets-merge-driver install-post-rewrite-hook  ## 🔧  Configure git hooks and merge drivers
+configure-git: install-pre-commit-hooks configure-secrets-merge-driver install-post-rewrite-detect-secrets-hook  ## 🔧  Configure git hooks and merge drivers
 	@echo "✅  Git configuration complete"
 
 
@@ -7551,7 +7567,7 @@ DETECT_SECRETS_FILES_EXCLUDE := '(?x)( \
   |uv\.lock$$                  \
   |go\.sum$$                   \
   |mcpgateway/sri_hashes\.json$$ \
-  )|^.secrets.baseline$$'
+  )|^\.secrets\.baseline$$'
 
 # The commit to use as the baseline for determining changes files for the
 # detect secrets scan
@@ -7560,65 +7576,15 @@ GIT_DIFF_TARGET ?= main
 # --diff-filter=d EXCLUDES delete files
 DETECT_SECRETS_PATH ?= $(shell git diff $(GIT_DIFF_TARGET) --name-only --diff-filter=d)
 
-# Where the merged baseline is written. The git merge driver overrides this
-# to write directly into git's %A result file; manual use keeps the default.
-OUTPUT_TARGET ?= .secrets.baseline
-
-
-#
-#  There's some serious jq magic going on below, so we will dig through it line-by-line.
-#
-#  Note first that 'jq -s' slurps the three inputs into a single array:
-#  .[0]  The original .secrets.baseline
-#  .[1]  Our new .secrets.baseline (containing only the branch-altered files)
-#  .[2]  An array of all the files in the repository.
-#
-#  (.[0].results | to_entries | [ .[]|select( ([.key] | inside($$gitfiles))) ] | from_entries) \
-#  ^ filters the original file to only include entries that are still in the repository,
-#    essentially removing any files that have been deleted over time
-#
-#  + .[1].results
-#  ^ merges in the results of the current baseline, overwriting changed line numbers, etc.
-#
-#  <(git ls-files | jq -R -s 'split("\n")[:-1]') \
-#  ^ gets the current git files and transforms them into an array (the [:-1] drops the
-#    empty element produced by the trailing newline). <() allows the output to be
-#    passed like a file reference into jq
-#
+# The scan/merge/gate pipeline lives in ONE place: the .secrets.baseline git
+# merge driver (scripts/git/resolve-secrets-baseline-conflict.sh), documented
+# there including the line-by-line jq merge walkthrough. This target is a thin
+# wrapper: it execs the driver with placeholder %O/%B (`-`), .secrets.baseline
+# as both %A (output) and %P, and passes the knobs through explicitly.
 .PHONY: detect-secrets-scan
 detect-secrets-scan: uv                      ## 🔍  detect-secrets scan for secrets in repository
 	@echo "🔍 Running detect-secrets scan..."
-	@tmpfile=$$(mktemp) && \
-	outfile=$$(mktemp) && \
-	trap "rm -f $${tmpfile} $${outfile}" EXIT && \
-	cp .secrets.baseline $${tmpfile} && \
-	$(UV_BIN) tool run --from '$(DETECT_SECRETS_SPEC)' detect-secrets scan \
-		--update $${tmpfile} \
-		--use-all-plugins \
-		--exclude-files $(DETECT_SECRETS_FILES_EXCLUDE) \
-		$(DETECT_SECRETS_PATH) && \
-	jq --arg exclude $(DETECT_SECRETS_FILES_EXCLUDE) -s '\
-		.[2] as $$gitfiles | \
-		{ \
-		exclude: { files: $$exclude, lines: null }, \
-		generated_at: .[1].generated_at, \
-		plugins_used: .[1].plugins_used, \
-		results: ( \
-			(.[0].results | to_entries | [ .[]|select( ([.key] | inside($$gitfiles))) ] | from_entries) \
-			+ .[1].results), \
-		version: .[1].version, \
-		word_list: .[1].word_list \
-		}' \
-		.secrets.baseline $${tmpfile} \
-		<(git ls-files | jq -R -s 'split("\n")[:-1]') \
-		> $${outfile} && \
-	cp $${outfile} $(OUTPUT_TARGET)
-	@echo "📊 detect-secrets findings report:"
-	@$(UV_BIN) tool run --from '$(DETECT_SECRETS_SPEC)' detect-secrets audit --report $(OUTPUT_TARGET)
-	@# Capture the count in THIS shell: `| read count` runs read in a subshell,
-	@# leaving count unset in the parent (unbound-variable failure under -u).
-	@count=$$($(UV_BIN) tool run --from '$(DETECT_SECRETS_SPEC)' detect-secrets audit --report --json $(OUTPUT_TARGET) \
-		| jq -r '.stats | .live + .unaudited + .audited_real') && exit $${count}
+	GIT_DIFF_TARGET="$(GIT_DIFF_TARGET)" DETECT_SECRETS_PATH="$(DETECT_SECRETS_PATH)" scripts/git/resolve-secrets-baseline-conflict.sh - .secrets.baseline - .secrets.baseline
 
 # Verbatim copy of main's detect-secrets-scan (whole-repo scan, updates
 # .secrets.baseline in place, report-only). This branch rescopes

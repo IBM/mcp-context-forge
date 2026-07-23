@@ -115,7 +115,7 @@ ADRs live in `docs/architecture/adr/` and follow the [adr.github.io](https://adr
 
 1. Create `docs/architecture/adr/NNN-short-title.md` with the next sequential number (check `adr/index.md` for the current maximum).
 2. Add a row to the table in `docs/architecture/adr/index.md` (chronological order, per the footer note there).
-3. Add a nav entry in `mkdocs.yml` (see *Navigation* below).
+3. Add a nav entry in `docs/docs/architecture/adr/.pages` (see *Navigation* below).
 4. Statuses in use: `Draft`, `Proposed`, `Accepted`, `Implemented`, `Deprecated`, `Superseded`.
 
 ### Immutability of Accepted ADRs

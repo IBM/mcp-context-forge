@@ -5,6 +5,11 @@
 - *Superseded:* 2026-07-22
 - *Deciders:* Core Engineering Team
 
+!!! warning
+    This ADR has been superseded by the decision to remove Granian.
+    See [ADR-054](054-remove-granian-http-server.md) for the current
+    decision.
+
 ## Context
 
 ContextForge uses Gunicorn with Uvicorn workers as its production HTTP server stack. This provides good performance with the `uvicorn[standard]` extras (ADR-0024) and is battle-tested. However, a Rust-based alternative called Granian offers potential benefits:

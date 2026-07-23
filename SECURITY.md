@@ -138,7 +138,7 @@ We believe that security should enhance rather than hinder the development proce
 - `make semgrep` - Advanced semantic code analysis for security patterns
 - `make dodgy` - Detect hardcoded passwords, API keys, and secrets
 - `make devskim` - DevSkim security anti-pattern detection (Microsoft)
-- `make detect-secrets-scan` - Scan tracked files for accidentally committed secrets against `.secrets.baseline` allowlist
+- `make detect-secrets-scan` - Regenerate `.secrets.baseline` by scanning files changed vs `main` (override with `GIT_DIFF_TARGET` or `DETECT_SECRETS_PATH`); a jq merge preserves audited entries for out-of-scope tracked files, and the target exits non-zero if the audit report shows any live, unaudited, or audited-as-real findings
 - `make detect-secrets-audit` - Manually attest to detected secrets being or not being actual secrets
 - `make detect-secrets-hook` - Locally execute the equivalent command that the pre-commit hook will run
 - `make interrogate` - Ensure comprehensive docstring coverage

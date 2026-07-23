@@ -12,7 +12,7 @@
 #
 # Chaining: if <git-common-dir>/hooks/post-rewrite.chain exists, it is run
 # after this hook with the same arguments and a copy of stdin. The install
-# target (make install-post-rewrite-hook) moves any pre-existing foreign
+# target (make install-post-rewrite-detect-secrets-hook) moves any pre-existing foreign
 # post-rewrite hook there instead of overwriting it; the marker comment on
 # line 2 is how the target recognizes this hook as ours on reinstall.
 #
@@ -22,7 +22,7 @@
 # the DETECT_SECRETS_* defaults in sync with the Makefile and with
 # scripts/git/resolve-secrets-baseline-conflict.sh.
 #
-# Install: make install-post-rewrite-hook  (or make configure-git)
+# Install: make install-post-rewrite-detect-secrets-hook  (or make configure-git)
 
 set -euo pipefail
 
@@ -39,15 +39,23 @@ chain_hook=$(git rev-parse --git-common-dir)/hooks/post-rewrite.chain
 do_scan() {
     UV_BIN=${UV_BIN:-$(type -p uv 2>/dev/null || echo "$HOME/.local/bin/uv")}
     DETECT_SECRETS_SPEC=${DETECT_SECRETS_SPEC:-git+https://github.com/ibm/detect-secrets.git@076672a9a01abdfc7ecee2e7d14f08cdccb73976}
-    DETECT_SECRETS_FILES_EXCLUDE=${DETECT_SECRETS_FILES_EXCLUDE:-'(?x)( package-lock\.json$ |Cargo\.lock$ |uv\.lock$ |go\.sum$ |mcpgateway/sri_hashes\.json$ )|^.secrets.baseline$'}
+    DETECT_SECRETS_FILES_EXCLUDE=${DETECT_SECRETS_FILES_EXCLUDE:-'(?x)( package-lock\.json$ |Cargo\.lock$ |uv\.lock$ |go\.sum$ |mcpgateway/sri_hashes\.json$ )|^\.secrets\.baseline$'}
     # Scan scope: files the branch changes relative to its upstream, mirroring
     # the Makefile's `git diff $(GIT_DIFF_TARGET)`. Unlike the merge driver,
     # this hook cannot read the rebase state dir: git removes it before
     # post-rewrite runs, and by then the working tree IS the final tree, so
     # the plain upstream diff the Makefile uses is both available and exact.
+    # Fresh clones may lack a local main; fall back to origin/main.
     # --diff-filter=d excludes deleted files.
     # Word-splitting of $DETECT_SECRETS_PATH is intentional (mirrors the Makefile).
-    DETECT_SECRETS_PATH=${DETECT_SECRETS_PATH:-$(git diff "${GIT_DIFF_TARGET:-main}" --name-only --diff-filter=d)}
+    if [ -z "${GIT_DIFF_TARGET:-}" ]; then
+        if git rev-parse --verify -q main >/dev/null 2>&1; then
+            GIT_DIFF_TARGET=main
+        else
+            GIT_DIFF_TARGET=origin/main
+        fi
+    fi
+    DETECT_SECRETS_PATH=${DETECT_SECRETS_PATH:-$(git diff "$GIT_DIFF_TARGET" --name-only --diff-filter=d)} || return
 
     cp .secrets.baseline "$tmpfile" || return
     # shellcheck disable=SC2086
@@ -58,15 +66,17 @@ do_scan() {
         $DETECT_SECRETS_PATH || return
 
     # Merge: keep worktree-baseline entries for files git no longer tracks,
-    # take freshly scanned results for everything else.
+    # take freshly scanned results for everything else. INDEX(.) builds an
+    # exact-membership set of tracked filenames (the old inside() used
+    # substring semantics); see the driver for the line-by-line walkthrough.
     jq --arg exclude "$DETECT_SECRETS_FILES_EXCLUDE" -s '
-        .[2] as $gitfiles |
+        (.[2] | INDEX(.)) as $gitfileset |
         {
         exclude: { files: $exclude, lines: null },
         generated_at: .[1].generated_at,
         plugins_used: .[1].plugins_used,
         results: (
-            (.[0].results | to_entries | [ .[]|select( ([.key] | inside($gitfiles))) ] | from_entries)
+            (.[0].results | to_entries | [ .[]|select($gitfileset[.key]) ] | from_entries)
             + .[1].results),
         version: .[1].version,
         word_list: .[1].word_list
@@ -76,11 +86,17 @@ do_scan() {
         > "$outfile" || return
     cp "$outfile" .secrets.baseline || return
 
-    echo "📊 detect-secrets findings report:"
+    echo "📊 detect-secrets findings report:" >&2
     "$UV_BIN" tool run --from "$DETECT_SECRETS_SPEC" detect-secrets audit --report .secrets.baseline || return
     count=$("$UV_BIN" tool run --from "$DETECT_SECRETS_SPEC" detect-secrets audit --report --json .secrets.baseline \
-        | jq -r '.stats | .live + .unaudited + .audited_real') || return
-    [ "${count:-1}" -eq 0 ]
+        | jq -r '.stats | .live + .unaudited + .audited_real') || count=""
+    case "$count" in
+        ''|*[!0-9]*)
+            echo "⚠️  could not read audit stats from refreshed baseline (got '${count}')" >&2
+            return 1
+            ;;
+    esac
+    [ "$count" -eq 0 ]
 }
 
 refresh_secrets_baseline() {
@@ -90,7 +106,12 @@ refresh_secrets_baseline() {
 
     [ -f .secrets.baseline ] || return 0
 
-    echo "🔄 post-rebase: refreshing .secrets.baseline..."
+    if ! command -v jq >/dev/null 2>&1; then
+        echo "⚠️  jq not found; install jq (e.g. 'brew install jq' or 'apt-get install jq') — skipping .secrets.baseline refresh" >&2
+        return 0
+    fi
+
+    echo "🔄 post-rebase: refreshing .secrets.baseline..." >&2
 
     local tmpfile outfile
     tmpfile=$(mktemp) || return 0
@@ -106,7 +127,7 @@ refresh_secrets_baseline() {
     rm -f "$tmpfile" "$outfile"
 
     if git diff --quiet -- .secrets.baseline; then
-        echo "✅ .secrets.baseline already up to date"
+        echo "✅ .secrets.baseline already up to date" >&2
         return 0
     fi
 
@@ -115,12 +136,12 @@ refresh_secrets_baseline() {
        diff <(git show HEAD:.secrets.baseline | jq -S 'del(.generated_at)') \
             <(jq -S 'del(.generated_at)' .secrets.baseline) > /dev/null; then
         git checkout -- .secrets.baseline
-        echo "✅ .secrets.baseline already up to date (timestamp only)"
+        echo "✅ .secrets.baseline already up to date (timestamp only)" >&2
         return 0
     fi
 
     git add .secrets.baseline
-    echo "✅ .secrets.baseline refreshed"
+    echo "✅ .secrets.baseline refreshed" >&2
 }
 
 # A post-rewrite hook must never fail the rebase; downgrade all failures
@@ -128,7 +149,7 @@ refresh_secrets_baseline() {
 refresh_secrets_baseline "$@" || echo "⚠️  post-rewrite secrets refresh errored; review .secrets.baseline manually" >&2
 
 if [ -x "$chain_hook" ]; then
-    echo "➡️  Handing off to chained post-rewrite hook: $chain_hook"
+    echo "➡️  Handing off to chained post-rewrite hook: $chain_hook" >&2
     "$chain_hook" "$@" < "$stdin_copy" || echo "⚠️  chained post-rewrite hook exited $?" >&2
 fi
 
