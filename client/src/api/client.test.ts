@@ -306,6 +306,30 @@ describe("api client", () => {
       window.location = originalLocation as any;
     });
 
+    it("preserves the current app page as a next param on 401", async () => {
+      const originalLocation = window.location;
+      const mockReplace = vi.fn();
+      const fakeLocation: Location = {
+        ...originalLocation,
+        pathname: "/app/tools",
+        search: "",
+        replace: mockReplace,
+      };
+      Object.defineProperty(window, "location", { value: fakeLocation, configurable: true });
+
+      server.use(http.get("*/api/protected", () => new HttpResponse(null, { status: 401 })));
+
+      try {
+        await api.get("/api/protected");
+      } catch {
+        // expected
+      }
+
+      expect(mockReplace).toHaveBeenCalledWith("/app/login?next=%2Fapp%2Ftools");
+
+      Object.defineProperty(window, "location", { value: originalLocation, configurable: true });
+    });
+
     it("does not redirect to login on 401 for /app/auth/me", async () => {
       const originalLocation = window.location;
       const mockReplace = vi.fn();

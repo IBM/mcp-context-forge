@@ -78,6 +78,28 @@ function safeDecodeParam(value: string): string | null {
 }
 
 // ---------------------------------------------------------------------------
+// Login redirect return-path
+// Preserves where the user was so they return there after re-authenticating.
+// The return path is re-validated on read to prevent open-redirect.
+// ---------------------------------------------------------------------------
+
+const LOGIN_PATH = APP_PREFIX + "/login";
+
+export function buildLoginPath(from: string): string {
+  const safe = validateDestination(from);
+  if (safe === null || safe.split("?")[0] === LOGIN_PATH) {
+    return LOGIN_PATH;
+  }
+  return `${LOGIN_PATH}?next=${encodeURIComponent(safe)}`;
+}
+
+export function resolveNextParam(search: string): string {
+  const next = new URLSearchParams(search).get("next");
+  if (next === null) return APP_PREFIX + "/";
+  return validateDestination(next) ?? APP_PREFIX + "/";
+}
+
+// ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
@@ -236,9 +258,9 @@ export function AuthGuard({
 
   useEffect(() => {
     if (!isLoading && !isAuthenticated && !isPublic) {
-      navigate("/app/login");
+      navigate(buildLoginPath(path));
     }
-  }, [isAuthenticated, isLoading, isPublic, navigate]);
+  }, [isAuthenticated, isLoading, isPublic, navigate, path]);
 
   // Public routes: don't render protected content — public pages are in PublicRoutes
   if (isPublic) return null;

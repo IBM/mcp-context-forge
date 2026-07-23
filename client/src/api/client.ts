@@ -135,7 +135,14 @@ async function requestWithMeta<T>(
     if (authenticated && path !== "/app/auth/me") {
       // replace() rather than href= so the failed page is not added to history
       // (the user can't hit Back into an unauthenticated state).
-      window.location.replace(LOGIN_PATH);
+      // Preserve the current page so login can return the user to it; built
+      // inline to keep the API layer free of router imports.
+      const current = window.location.pathname + window.location.search;
+      const target =
+        current.startsWith("/app/") && !current.startsWith(LOGIN_PATH)
+          ? `${LOGIN_PATH}?next=${encodeURIComponent(current)}`
+          : LOGIN_PATH;
+      window.location.replace(target);
     }
     throw new ApiError(401, null, "Session expired — redirecting to login");
   }
