@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useIntl } from "react-intl";
+import { Info } from "lucide-react";
 import { toast } from "sonner";
 import { ConnectSourceCard } from "@/components/gateways/ConnectSourceCard";
 import { VirtualServerCard } from "@/components/gateways/VirtualServerCard";
@@ -7,6 +8,7 @@ import { VirtualServerDetailsPanel } from "@/components/gateways/VirtualServerDe
 import { hasVirtualServerComponents } from "@/components/gateways/utils";
 import { ConfirmDialog } from "@/components/servers/ConfirmDialog";
 import { Loading } from "@/components/ui/loading";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { deleteVirtualServer, updateVirtualServerTags } from "@/api/virtualServers";
 import { ApiError } from "@/api/client";
 import { useQuery } from "@/hooks/useQuery";
@@ -172,9 +174,24 @@ export function Gateways() {
 
   return (
     <div className="space-y-9 p-6">
-      <h1 ref={headingRef} tabIndex={-1} className="text-base font-semibold text-foreground">
-        {intl.formatMessage({ id: "gateways.title" })}
-      </h1>
+      <div className="flex items-center gap-2">
+        <h1 ref={headingRef} tabIndex={-1} className="text-base font-semibold text-foreground">
+          {intl.formatMessage({ id: "gateways.title" })}
+        </h1>
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger
+              aria-label={intl.formatMessage({ id: "gateways.titleTooltip.trigger" })}
+              className="rounded text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <Info className="size-4" aria-hidden="true" />
+            </TooltipTrigger>
+            <TooltipContent side="right">
+              {intl.formatMessage({ id: "gateways.titleTooltip" })}
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+      </div>
 
       {error && (
         <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-4" role="alert">
