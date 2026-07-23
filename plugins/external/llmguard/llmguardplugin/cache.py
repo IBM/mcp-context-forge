@@ -14,6 +14,7 @@ import os
 
 # Third-Party
 import orjson
+from prometheus_client import Counter
 import redis.asyncio as aioredis
 
 # First-Party
@@ -22,6 +23,13 @@ from mcpgateway.services.logging_service import LoggingService
 # Initialize logging service first
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
+
+# Prometheus metrics for error tracking
+llm_guard_cache_errors_total = Counter(
+    "llm_guard_cache_errors_total",
+    "Total number of cache errors by type",
+    labelnames=["error_type", "operation"],
+)
 
 # Initialize redis host and client values
 redis_host = os.getenv("REDIS_HOST", "redis")
@@ -44,7 +52,7 @@ class CacheTTLDict(dict):
         """
         self.cache_ttl = ttl
         self.cache = aioredis.from_url(f"redis://{redis_host}:{redis_port}")
-        logger.info(f"Cache Initialization: {self.cache}")
+        logger.info("Cache Initialization: %s", self.cache)
 
     async def update_cache(self, key: int = None, value: list = None) -> tuple[bool, bool]:
         """Takes in key and value for caching in redis. It sets expiry time for the key.
@@ -61,21 +69,22 @@ class CacheTTLDict(dict):
             serialized_obj = orjson.dumps(value)
         except TypeError as e:
             # Non-JSON types in vault will break deanonymization later
-            logger.error(f"Cache serialization failed for key {key} - vault sharing disabled: {e}")
+            logger.error("Cache serialization failed for key %s - vault sharing disabled: %s", key, e)
+            llm_guard_cache_errors_total.labels(error_type="serialization_error", operation="update").inc()
             return False, False
         # Log key and size only - serialized_obj may contain PII
-        logger.debug(f"Updating cache for key: {key}, size: {len(serialized_obj)} bytes")
+        logger.debug("Updating cache for key: %s, size: %d bytes", key, len(serialized_obj))
         async with self.cache.pipeline() as pipe:
-            pipe.set(key, serialized_obj)
-            pipe.expire(key, self.cache_ttl)
+            await pipe.set(key, serialized_obj)
+            await pipe.expire(key, self.cache_ttl)
             results = await pipe.execute()
             success_set, success_expiry = results[0], results[1]
             if success_set:
-                logger.debug(f"Cache set successful for key: {key}")
+                logger.debug("Cache set successful for key: %s", key)
             else:
-                logger.error(f"Cache set failed for key: {key}")
+                logger.error("Cache set failed for key: %s", key)
             if success_expiry:
-                logger.debug(f"Cache expiry set successfully for key: {key}")
+                logger.debug("Cache expiry set successfully for key: %s", key)
             else:
                 logger.error("Failed to set cache expiration")
             return success_set, success_expiry
@@ -96,19 +105,21 @@ class CacheTTLDict(dict):
                 # Vault data must be List[List] -> convert to List[Tuple]
                 if not isinstance(retrieved_obj, list):
                     # Unexpected shape - treat as cache miss to avoid downstream crash
-                    logger.warning(f"Cache data for key {key} has unexpected type {type(retrieved_obj).__name__}, treating as miss")
+                    logger.warning("Cache data for key %s has unexpected type %s, treating as miss", key, type(retrieved_obj).__name__)
+                    llm_guard_cache_errors_total.labels(error_type="invalid_type", operation="retrieve").inc()
                     await self.cache.delete(key)
                     return None
                 retrieved_obj = self._convert_to_list_of_tuples(retrieved_obj)
-                logger.debug(f"Cache hit for key: {key}, items: {len(retrieved_obj)}")
+                logger.debug("Cache hit for key: %s, items: %d", key, len(retrieved_obj))
                 return retrieved_obj
             except orjson.JSONDecodeError as e:
-                logger.error(f"Cache retrieval failed - invalid JSON for id: {key}: {e}")
+                logger.error("Cache retrieval failed - invalid JSON for id: %s: %s", key, e)
+                llm_guard_cache_errors_total.labels(error_type="json_decode_error", operation="retrieve").inc()
                 # Delete corrupted entry to avoid repeated error logs
                 await self.cache.delete(key)
                 return None
         else:
-            logger.debug(f"Cache miss for id: {key}")
+            logger.debug("Cache miss for id: %s", key)
             return None
 
     def _convert_to_list_of_tuples(self, obj: list) -> list:
@@ -127,10 +138,10 @@ class CacheTTLDict(dict):
         Args:
             key: The id of vault in string
         """
-        logger.info(f"Deleting cache for key : {key}")
+        logger.info("Deleting cache for key : %s", key)
         deleted_count = await self.cache.delete(key)
         exists_count = await self.cache.exists(key)
         if deleted_count == 1 and exists_count == 0:
-            logger.info(f"Cache deleted successfully for key: {key}")
+            logger.info("Cache deleted successfully for key: %s", key)
         else:
-            logger.info(f"Unsuccessful cache deletion: {key}")
+            logger.info("Unsuccessful cache deletion: %s", key)
