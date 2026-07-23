@@ -9,6 +9,7 @@ import { UsersTable } from "@/components/users/UsersTable";
 import { DeleteUserDialog } from "@/components/users/DeleteUserDialog";
 import { useUsersList } from "@/hooks/useUsersList";
 import { useQuery } from "@/hooks/useQuery";
+import { useLocalSearch } from "@/hooks/useLocalSearch";
 import { usersApi } from "@/api/users";
 import { ApiError } from "@/api/client";
 import { createOptimisticUser } from "@/hooks/useUserForm";
@@ -36,7 +37,6 @@ export function Users() {
   const [userToEdit, setUserToEdit] = useState<User | null>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [userToDelete, setUserToDelete] = useState<User | null>(null);
-  const [searchQuery, setSearchQuery] = useState("");
   const selectedSearchUserId = useMemo(() => {
     const queryString = path.split("?")[1] ?? "";
     return new URLSearchParams(queryString).get("selected")?.trim() || null;
@@ -171,15 +171,8 @@ export function Users() {
 
   const error = queryError ? queryError.message : null;
 
-  const filteredUsers = useMemo(() => {
-    const query = searchQuery.trim().toLowerCase();
-    if (!query) return allUsers;
-    return allUsers.filter(
-      (user) =>
-        (user.full_name ?? "").toLowerCase().includes(query) ||
-        user.email.toLowerCase().includes(query),
-    );
-  }, [allUsers, searchQuery]);
+  const getUserText = useCallback((user: User) => `${user.full_name ?? ""} ${user.email}`, []);
+  const { query, setQuery, results } = useLocalSearch(allUsers, getUserText);
 
   return (
     <main className="p-6">
@@ -218,8 +211,8 @@ export function Users() {
             </h1>
             <div className="flex items-center gap-3">
               <ListSearch
-                value={searchQuery}
-                onChange={setSearchQuery}
+                value={query}
+                onChange={setQuery}
                 ariaLabel={intl.formatMessage(
                   { id: "common.searchLabel" },
                   { entity: intl.formatMessage({ id: "navigation.users" }) },
@@ -265,11 +258,11 @@ export function Users() {
               {allUsers.length > 0 ? (
                 <>
                   <UsersTable
-                    users={filteredUsers}
+                    users={results}
                     onDeleteClick={handleDeleteClick}
                     onEditClick={handleEditClick}
                   />
-                  {searchQuery.trim() && filteredUsers.length === 0 && (
+                  {query.trim() && results.length === 0 && (
                     <p className="mt-6 text-sm text-muted-foreground">
                       {intl.formatMessage({ id: "common.search.noResults" })}
                     </p>
@@ -278,10 +271,7 @@ export function Users() {
                   <div className="mt-6 flex items-center justify-between">
                     <div className="flex items-center gap-4">
                       <div className="text-sm text-muted-foreground">
-                        {intl.formatMessage(
-                          { id: "users.showing" },
-                          { count: filteredUsers.length },
-                        )}
+                        {intl.formatMessage({ id: "users.showing" }, { count: results.length })}
                       </div>
                       <div className="flex items-center gap-2">
                         <label
@@ -303,7 +293,7 @@ export function Users() {
                         </select>
                       </div>
                     </div>
-                    {!searchQuery.trim() && nextCursor && (
+                    {!query.trim() && nextCursor && (
                       <Button
                         variant="outline"
                         size="sm"

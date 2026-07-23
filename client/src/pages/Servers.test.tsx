@@ -173,12 +173,16 @@ describe("Servers", () => {
     const search = screen.getByRole("searchbox", { name: "Search MCP Servers" });
     await user.type(search, "Server 0");
 
+    await waitFor(() => {
+      expect(screen.queryByText("Test Server 1")).not.toBeInTheDocument();
+    });
     expect(screen.getByText("Test Server 0")).toBeInTheDocument();
-    expect(screen.queryByText("Test Server 1")).not.toBeInTheDocument();
 
     await user.clear(search);
     await user.type(search, "zzz-none");
-    expect(screen.getByText("No matching results.")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText("No matching results.")).toBeInTheDocument();
+    });
   });
 
   it("renders the empty state Connect MCP server panel when no servers exist", async () => {
