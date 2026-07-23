@@ -154,7 +154,8 @@ class TestTokenRefreshClientSecret:
 
         with patch("mcpgateway.services.token_storage_service.get_settings") as mock_get_settings:
             mock_settings = MagicMock()
-            mock_settings.AUTH_ENCRYPTION_SECRET = "test-secret"  # pragma: allowlist secret
+            mock_settings.oauth_token_backend = "database"
+            mock_settings.auth_encryption_secret = "test-secret"  # pragma: allowlist secret
             mock_get_settings.return_value = mock_settings
 
             service = TokenStorageService(mock_db)
@@ -208,7 +209,10 @@ class TestTokenRefreshOmitResource:
         mock_db.query.return_value.filter.return_value.first.return_value = gateway
 
         with patch("mcpgateway.services.token_storage_service.get_settings") as mock_get_settings:
-            mock_get_settings.side_effect = ImportError("No encryption")
+            mock_settings = MagicMock()
+            mock_settings.oauth_token_backend = "database"
+            mock_settings.auth_encryption_secret = "test-secret"  # pragma: allowlist secret
+            mock_get_settings.return_value = mock_settings
 
             service = TokenStorageService(mock_db)
 
@@ -266,7 +270,10 @@ class TestTokenRefreshOmitResource:
         mock_db.query.return_value.filter.return_value.first.return_value = gateway
 
         with patch("mcpgateway.services.token_storage_service.get_settings") as mock_get_settings:
-            mock_get_settings.side_effect = ImportError("No encryption")
+            mock_settings = MagicMock()
+            mock_settings.oauth_token_backend = "database"
+            mock_settings.auth_encryption_secret = "test-secret"  # pragma: allowlist secret
+            mock_get_settings.return_value = mock_settings
 
             service = TokenStorageService(mock_db)
 
@@ -319,7 +326,10 @@ class TestTokenDeletionLogic:
         mock_db.query.return_value.filter.return_value.first.return_value = gateway
 
         with patch("mcpgateway.services.token_storage_service.get_settings") as mock_get_settings:
-            mock_get_settings.side_effect = ImportError("No encryption")
+            mock_settings = MagicMock()
+            mock_settings.oauth_token_backend = "database"
+            mock_settings.auth_encryption_secret = "test-secret"  # pragma: allowlist secret
+            mock_get_settings.return_value = mock_settings
 
             service = TokenStorageService(mock_db)
 
@@ -364,7 +374,10 @@ class TestTokenDeletionLogic:
         mock_db.query.return_value.filter.return_value.first.return_value = gateway
 
         with patch("mcpgateway.services.token_storage_service.get_settings") as mock_get_settings:
-            mock_get_settings.side_effect = ImportError("No encryption")
+            mock_settings = MagicMock()
+            mock_settings.oauth_token_backend = "database"
+            mock_settings.auth_encryption_secret = "test-secret"  # pragma: allowlist secret
+            mock_get_settings.return_value = mock_settings
 
             service = TokenStorageService(mock_db)
 
@@ -406,7 +419,10 @@ class TestTokenDeletionLogic:
         mock_db.query.return_value.filter.return_value.first.return_value = gateway
 
         with patch("mcpgateway.services.token_storage_service.get_settings") as mock_get_settings:
-            mock_get_settings.side_effect = ImportError("No encryption")
+            mock_settings = MagicMock()
+            mock_settings.oauth_token_backend = "database"
+            mock_settings.auth_encryption_secret = "test-secret"  # pragma: allowlist secret
+            mock_get_settings.return_value = mock_settings
 
             service = TokenStorageService(mock_db)
 
