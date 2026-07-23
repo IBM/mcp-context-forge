@@ -172,7 +172,7 @@ export function Teams() {
   }, [intl, refetch]);
 
   return (
-    <div className="p-6">
+    <div>
       {createFormOpen || teamToEdit ? (
         <TeamForm
           isOpen={createFormOpen || teamToEdit != null}
@@ -212,28 +212,17 @@ export function Teams() {
           {allTeams.length > 0 ? (
             <>
               <div className="flex justify-between items-center mb-6">
-                <h1 className="text-base font-semibold text-foreground">
+                <h2 className="text-base font-semibold text-foreground">
                   {intl.formatMessage({ id: "teams.all.title" })}
-                </h1>
-                <div className="flex items-center gap-3">
-                  <ListSearch
-                    value={query}
-                    onChange={setQuery}
-                    ariaLabel={intl.formatMessage(
-                      { id: "common.searchLabel" },
-                      { entity: intl.formatMessage({ id: "navigation.teams" }) },
-                    )}
-                    placeholder={intl.formatMessage({ id: "common.search" })}
-                  />
-                  <Button
-                    variant="default"
-                    className="h-7 rounded-sm px-4"
-                    onClick={() => setCreateFormOpen(true)}
-                  >
-                    <Plus className="h-4 w-4" />
-                    {intl.formatMessage({ id: "teams.createTeam" })}
-                  </Button>
-                </div>
+                </h2>
+                <Button
+                  variant="default"
+                  className="h-7 rounded-sm px-4"
+                  onClick={() => setCreateFormOpen(true)}
+                >
+                  <Plus className="h-4 w-4" />
+                  {intl.formatMessage({ id: "teams.createTeam" })}
+                </Button>
               </div>
 
               <TeamsTable
