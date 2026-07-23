@@ -3,6 +3,7 @@ import { Plus } from "lucide-react";
 import { useIntl } from "react-intl";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { ListSearch } from "@/components/ui/list-search";
 import { UserForm } from "@/components/users/UserForm";
 import { UsersTable } from "@/components/users/UsersTable";
 import { DeleteUserDialog } from "@/components/users/DeleteUserDialog";
@@ -35,6 +36,7 @@ export function Users() {
   const [userToEdit, setUserToEdit] = useState<User | null>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [userToDelete, setUserToDelete] = useState<User | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
   const selectedSearchUserId = useMemo(() => {
     const queryString = path.split("?")[1] ?? "";
     return new URLSearchParams(queryString).get("selected")?.trim() || null;
@@ -169,6 +171,16 @@ export function Users() {
 
   const error = queryError ? queryError.message : null;
 
+  const filteredUsers = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase();
+    if (!query) return allUsers;
+    return allUsers.filter(
+      (user) =>
+        (user.full_name ?? "").toLowerCase().includes(query) ||
+        user.email.toLowerCase().includes(query),
+    );
+  }, [allUsers, searchQuery]);
+
   return (
     <main className="p-6">
       {isFormOpen ? (
@@ -204,14 +216,25 @@ export function Users() {
             <h1 className="text-xl font-semibold text-foreground">
               {intl.formatMessage({ id: "users.title" })}
             </h1>
-            <Button
-              onClick={() => setIsFormOpen(true)}
-              className="gap-2"
-              aria-label={intl.formatMessage({ id: "users.createUser" })}
-            >
-              <Plus className="h-4 w-4" aria-hidden="true" />
-              {intl.formatMessage({ id: "users.createUser" })}
-            </Button>
+            <div className="flex items-center gap-3">
+              <ListSearch
+                value={searchQuery}
+                onChange={setSearchQuery}
+                ariaLabel={intl.formatMessage(
+                  { id: "common.searchLabel" },
+                  { entity: intl.formatMessage({ id: "navigation.users" }) },
+                )}
+                placeholder={intl.formatMessage({ id: "common.search" })}
+              />
+              <Button
+                onClick={() => setIsFormOpen(true)}
+                className="gap-2"
+                aria-label={intl.formatMessage({ id: "users.createUser" })}
+              >
+                <Plus className="h-4 w-4" aria-hidden="true" />
+                {intl.formatMessage({ id: "users.createUser" })}
+              </Button>
+            </div>
           </header>
           {isLoading ? (
             <div
@@ -242,15 +265,23 @@ export function Users() {
               {allUsers.length > 0 ? (
                 <>
                   <UsersTable
-                    users={allUsers}
+                    users={filteredUsers}
                     onDeleteClick={handleDeleteClick}
                     onEditClick={handleEditClick}
                   />
+                  {searchQuery.trim() && filteredUsers.length === 0 && (
+                    <p className="mt-6 text-sm text-muted-foreground">
+                      {intl.formatMessage({ id: "common.search.noResults" })}
+                    </p>
+                  )}
 
                   <div className="mt-6 flex items-center justify-between">
                     <div className="flex items-center gap-4">
                       <div className="text-sm text-muted-foreground">
-                        {intl.formatMessage({ id: "users.showing" }, { count: allUsers.length })}
+                        {intl.formatMessage(
+                          { id: "users.showing" },
+                          { count: filteredUsers.length },
+                        )}
                       </div>
                       <div className="flex items-center gap-2">
                         <label
@@ -272,7 +303,7 @@ export function Users() {
                         </select>
                       </div>
                     </div>
-                    {nextCursor && (
+                    {!searchQuery.trim() && nextCursor && (
                       <Button
                         variant="outline"
                         size="sm"

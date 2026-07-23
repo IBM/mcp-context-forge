@@ -224,6 +224,31 @@ describe("Teams", () => {
     expect(screen.getByText("Team 9")).toBeInTheDocument();
   });
 
+  it("filters the loaded teams with the search box", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.get).mockResolvedValueOnce({
+      teams: createMockTeams(0, 3),
+      nextCursor: null,
+    });
+
+    renderWithRouter(<Teams />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Team 0")).toBeInTheDocument();
+    });
+    expect(screen.getByText("Team 1")).toBeInTheDocument();
+
+    const search = screen.getByRole("searchbox", { name: "Search Teams" });
+    await user.type(search, "Team 0");
+
+    expect(screen.getByText("Team 0")).toBeInTheDocument();
+    expect(screen.queryByText("Team 1")).not.toBeInTheDocument();
+
+    await user.clear(search);
+    await user.type(search, "zzz-none");
+    expect(screen.getByText("No matching results.")).toBeInTheDocument();
+  });
+
   it("displays correct team count message", async () => {
     vi.mocked(api.get).mockResolvedValueOnce({
       teams: createMockTeams(0, 5),
