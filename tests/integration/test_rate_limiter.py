@@ -1206,15 +1206,20 @@ class TestRedisBackendIntegration:
         assert result.violation is None, "After the rate window expires, Redis TTL must reset counters and allow fresh requests"
 
     @pytest.mark.asyncio
-    async def test_redis_fallback_to_memory_on_unavailable_redis(self):
-        """Plugin with an unreachable Redis URL falls back to memory backend without crashing."""
+    async def test_unavailable_redis_fails_open_by_default(self):
+        """An unavailable Redis URL fails open by default: the request is allowed, not blocked, and nothing crashes.
+
+        There is no memory fallback. When Redis is unavailable, the plugin's
+        behaviour is governed by fail_mode, which defaults to "open" (allow the
+        request). This test pins that default; fail_mode "closed" would block instead.
+        """
         plugin = _make_redis_plugin("redis://127.0.0.1:19999/0", limit="3/s")
         ctx = PluginContext(global_context=GlobalContext(request_id="r1", user="alice"))
         payload = ToolPreInvokePayload(name="tool", arguments={})
 
-        # Must not raise — fallback to memory backend should handle the request
+        # Default fail_mode is "open", so an unavailable Redis allows the request rather than raising.
         result = await plugin.tool_pre_invoke(payload, ctx)
-        assert result.violation is None, "Plugin must fall back to memory backend when Redis is unavailable — must not crash"
+        assert result.violation is None, "With the default fail_mode 'open', an unavailable Redis backend must allow the request, not crash"
 
     # ------------------------------------------------------------------
     # sliding_window on real Redis
