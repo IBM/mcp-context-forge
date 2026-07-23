@@ -1,7 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { AuthGuard, RouterProvider, Route, Redirect, useRouter } from ".";
+import {
+  AuthGuard,
+  RouterProvider,
+  Route,
+  Redirect,
+  useRouter,
+  buildLoginPath,
+  resolveNextParam,
+} from ".";
 import { I18nProvider } from "../i18n";
 import type { ReactNode } from "react";
 
@@ -442,5 +450,42 @@ describe("Destination validation", () => {
     renderWithRouter(<TestComponent />, "/app");
 
     expect(window.location.pathname).toBe("/app");
+  });
+});
+
+describe("buildLoginPath", () => {
+  it("appends the originating path as an encoded next param", () => {
+    expect(buildLoginPath("/app/tools")).toBe("/app/login?next=%2Fapp%2Ftools");
+  });
+
+  it("preserves the query string of the originating path", () => {
+    expect(buildLoginPath("/app/tools?page=2")).toBe("/app/login?next=%2Fapp%2Ftools%3Fpage%3D2");
+  });
+
+  it("returns the bare login path for a rejected destination", () => {
+    expect(buildLoginPath("https://evil.com")).toBe("/app/login");
+    expect(buildLoginPath("/admin")).toBe("/app/login");
+  });
+
+  it("does not nest the login path into its own next param", () => {
+    expect(buildLoginPath("/app/login")).toBe("/app/login");
+    expect(buildLoginPath("/app/login?next=%2Fapp%2Ftools")).toBe("/app/login");
+  });
+});
+
+describe("resolveNextParam", () => {
+  it("returns the validated next path", () => {
+    expect(resolveNextParam("?next=%2Fapp%2Ftools")).toBe("/app/tools");
+  });
+
+  it("falls back to /app/ when next is absent", () => {
+    expect(resolveNextParam("")).toBe("/app/");
+    expect(resolveNextParam("?foo=bar")).toBe("/app/");
+  });
+
+  it("rejects an open-redirect next value", () => {
+    expect(resolveNextParam("?next=https%3A%2F%2Fevil.com")).toBe("/app/");
+    expect(resolveNextParam("?next=%2F%2Fevil.com")).toBe("/app/");
+    expect(resolveNextParam("?next=%2Fadmin")).toBe("/app/");
   });
 });
