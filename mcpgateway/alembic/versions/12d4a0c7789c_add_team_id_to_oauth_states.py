@@ -6,7 +6,7 @@ SPDX-License-Identifier: Apache-2.0
 add_team_id_to_oauth_states
 
 Revision ID: 12d4a0c7789c
-Revises: b6c7d8e9f0a1
+Revises: d21698ae4a19
 Create Date: 2026-07-10 17:57:41.233008
 """
 from typing import Sequence, Union
@@ -17,7 +17,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = '12d4a0c7789c'  # pragma: allowlist secret
-down_revision: Union[str, Sequence[str], None] = 'b6c7d8e9f0a1'  # pragma: allowlist secret
+down_revision: Union[str, Sequence[str], None] = 'd21698ae4a19'  # pragma: allowlist secret
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
