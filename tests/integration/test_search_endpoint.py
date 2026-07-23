@@ -543,3 +543,35 @@ class TestUnifiedSearchRealDataScoping:
         assert ids["team_b"] in returned  # in-scope team visible (positive control)
         assert ids["team_a"] not in returned  # narrowed out
         assert ids["team_c"] not in returned  # narrowed out
+
+    def test_admin_public_only_token_sees_no_teams(self, _real_data_env):
+        """A public-only admin token (token_teams=[]) sees no teams, not a full-bypass all-teams view.
+
+        [] is public-only per the token model (normalize_token_teams), and there is no
+        personal-team fallback, so an admin scoped to [] must see zero teams.
+        """
+        app, TestSessionLocal, ids = _real_data_env
+        _inject_identity(app, TestSessionLocal, ids["admin_user"], token_teams=[], is_admin=True)
+
+        client = TestClient(app, raise_server_exceptions=False)
+        resp = client.get(f"/v1/search?q={SEARCH_TERM}&entity_types=teams", headers={"Authorization": "Bearer x"})
+
+        assert resp.status_code == 200
+        assert resp.json()["results"]["teams"] == []  # empty scope -> no teams (not bypass)
+
+    def test_admin_scoped_team_returned_even_when_it_sorts_past_the_limit(self, _real_data_env):
+        """Scope is applied in the query before pagination, so a scoped team that sorts past the page limit is still returned.
+
+        Teams are ordered by name (Team A < B < C). With limit_per_type=1 the admin
+        page holds only Team A; a filter-after-pagination approach would drop the
+        scoped Team C entirely.
+        """
+        app, TestSessionLocal, ids = _real_data_env
+        _inject_identity(app, TestSessionLocal, ids["admin_user"], token_teams=[ids["team_c"]], is_admin=True)
+
+        client = TestClient(app, raise_server_exceptions=False)
+        resp = client.get(f"/v1/search?q={SEARCH_TERM}&entity_types=teams&limit_per_type=1", headers={"Authorization": "Bearer x"})
+
+        assert resp.status_code == 200
+        returned = {team["id"] for team in resp.json()["results"]["teams"]}
+        assert ids["team_c"] in returned  # returned despite sorting past the 1-item page

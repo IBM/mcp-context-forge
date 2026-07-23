@@ -5611,12 +5611,14 @@ async def admin_search_teams(
         # returns every membership and ignores token scope, so a token narrowed to
         # a team subset would otherwise leak sibling teams the caller belongs to but
         # is scoped out of. _get_user_team_ids honors token_teams/_cached_team_ids;
-        # the caller's own personal team stays visible (owner is always visible).
+        # an unscoped caller's own memberships (including their personal team) are in
+        # this set, while an explicit scope (including [] = public-only) does not add
+        # a personal-team fallback, matching normalize_token_teams()/get_team_from_token().
         scoped_team_ids = set(await _get_user_team_ids(user, db))
         # Filter in memory
         filtered = []
         for t in all_teams:
-            if not getattr(t, "is_personal", False) and t.id not in scoped_team_ids:
+            if t.id not in scoped_team_ids:
                 continue
             if not include_inactive and not t.is_active:
                 continue
