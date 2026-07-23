@@ -192,12 +192,16 @@ describe("Users", () => {
     const search = screen.getByRole("searchbox", { name: "Search Users" });
     await user.type(search, "user0");
 
+    await waitFor(() => {
+      expect(screen.queryByText("user1@example.com")).not.toBeInTheDocument();
+    });
     expect(screen.getByText("user0@example.com")).toBeInTheDocument();
-    expect(screen.queryByText("user1@example.com")).not.toBeInTheDocument();
 
     await user.clear(search);
     await user.type(search, "zzz-none");
-    expect(screen.getByText("No matching results.")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText("No matching results.")).toBeInTheDocument();
+    });
   });
 
   it("renders users title/header", async () => {

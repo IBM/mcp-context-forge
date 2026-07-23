@@ -10,6 +10,7 @@ import { ConfirmDialog } from "@/components/servers/ConfirmDialog";
 import { TestConnectionDialog } from "@/components/servers/TestConnectionDialog";
 import { MCPServerDetailsPanel } from "@/components/servers/MCPServerDetailsPanel";
 import { useQuery } from "@/hooks/useQuery";
+import { useLocalSearch } from "@/hooks/useLocalSearch";
 import { ApiError, api } from "@/api/client";
 import { serversApi } from "@/api/servers";
 import { useRouter } from "@/router";
@@ -37,7 +38,6 @@ export function Servers() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [selectedServerIdForDetails, setSelectedServerIdForDetails] = useState<string | null>(null);
   const [isDetailsDrawerOpen, setIsDetailsDrawerOpen] = useState(false);
-  const [searchQuery, setSearchQuery] = useState("");
   const selectedSearchServerId = useMemo(() => {
     const queryString = path.split("?")[1] ?? "";
     return new URLSearchParams(queryString).get("selected")?.trim() || null;
@@ -98,15 +98,11 @@ export function Servers() {
   // Derive servers from accumulated list
   const servers = allServers;
 
-  const filteredServers = useMemo(() => {
-    const query = searchQuery.trim().toLowerCase();
-    if (!query) return servers;
-    return servers.filter(
-      (server) =>
-        server.name.toLowerCase().includes(query) ||
-        (server.description ?? "").toLowerCase().includes(query),
-    );
-  }, [servers, searchQuery]);
+  const getServerText = useCallback(
+    (server: MCPServer) => `${server.name} ${server.description ?? ""} ${server.id}`,
+    [],
+  );
+  const { query, setQuery, results: filteredServers } = useLocalSearch(servers, getServerText);
 
   // Convert query error to string for display
   const error = queryError ? queryError.message : null;
@@ -315,8 +311,8 @@ export function Servers() {
                 </h1>
                 <div className="flex items-center gap-3">
                   <ListSearch
-                    value={searchQuery}
-                    onChange={setSearchQuery}
+                    value={query}
+                    onChange={setQuery}
                     ariaLabel={intl.formatMessage(
                       { id: "common.searchLabel" },
                       { entity: intl.formatMessage({ id: "mcpServer.title" }) },
@@ -343,7 +339,7 @@ export function Servers() {
                 onViewDetails={handleViewDetails}
                 onToggleEnabled={handleToggleEnabled}
               />
-              {searchQuery.trim() && filteredServers.length === 0 && (
+              {query.trim() && filteredServers.length === 0 && (
                 <p className="mt-6 text-sm text-muted-foreground">
                   {intl.formatMessage({ id: "common.search.noResults" })}
                 </p>
@@ -374,7 +370,7 @@ export function Servers() {
                     </select>
                   </div>
                 </div>
-                {!searchQuery.trim() && nextCursor && (
+                {!query.trim() && nextCursor && (
                   <Button
                     variant="outline"
                     size="sm"

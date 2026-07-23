@@ -9,6 +9,7 @@ import { TeamForm } from "@/components/teams/TeamForm";
 import { ConfirmDialog } from "@/components/servers/ConfirmDialog";
 import { ManageTeamMembersDialog } from "@/components/teams/ManageTeamMembersDialog";
 import { useQuery } from "@/hooks/useQuery";
+import { useLocalSearch } from "@/hooks/useLocalSearch";
 import { api } from "@/api/client";
 import { deleteTeam } from "@/api/teams";
 import type { Team, TeamsResponse } from "@/types/team";
@@ -28,7 +29,6 @@ export function Teams() {
   const [membersDialogOpen, setMembersDialogOpen] = useState(false);
   const [teamForMembers, setTeamForMembers] = useState<Team | null>(null);
   const [teamToEdit, setTeamToEdit] = useState<Team | null>(null);
-  const [searchQuery, setSearchQuery] = useState("");
 
   const queryPath = useMemo(() => {
     const params = new URLSearchParams();
@@ -50,15 +50,11 @@ export function Teams() {
     }
   }, [response]);
 
-  const filteredTeams = useMemo(() => {
-    const query = searchQuery.trim().toLowerCase();
-    if (!query) return allTeams;
-    return allTeams.filter(
-      (team) =>
-        team.name.toLowerCase().includes(query) ||
-        (team.description ?? "").toLowerCase().includes(query),
-    );
-  }, [allTeams, searchQuery]);
+  const getTeamText = useCallback(
+    (team: Team) => `${team.name} ${team.description ?? ""} ${team.id}`,
+    [],
+  );
+  const { query, setQuery, results } = useLocalSearch(allTeams, getTeamText);
 
   const error = queryError ? queryError.message : null;
 
@@ -221,8 +217,8 @@ export function Teams() {
                 </h1>
                 <div className="flex items-center gap-3">
                   <ListSearch
-                    value={searchQuery}
-                    onChange={setSearchQuery}
+                    value={query}
+                    onChange={setQuery}
                     ariaLabel={intl.formatMessage(
                       { id: "common.searchLabel" },
                       { entity: intl.formatMessage({ id: "navigation.teams" }) },
@@ -241,13 +237,13 @@ export function Teams() {
               </div>
 
               <TeamsTable
-                teams={filteredTeams}
+                teams={results}
                 isLoading={false}
                 onEdit={handleEdit}
                 onManageMembers={handleManageMembers}
                 onDelete={handleDelete}
               />
-              {searchQuery.trim() && filteredTeams.length === 0 && (
+              {query.trim() && results.length === 0 && (
                 <p className="mt-6 text-sm text-muted-foreground">
                   {intl.formatMessage({ id: "common.search.noResults" })}
                 </p>
@@ -256,7 +252,7 @@ export function Teams() {
               <div className="flex items-center justify-between mt-6">
                 <div className="flex items-center gap-4">
                   <div className="text-sm text-gray-600 dark:text-gray-400">
-                    {intl.formatMessage({ id: "teams.showing" }, { count: filteredTeams.length })}
+                    {intl.formatMessage({ id: "teams.showing" }, { count: results.length })}
                   </div>
                   <div className="flex items-center gap-2">
                     <label
@@ -278,7 +274,7 @@ export function Teams() {
                     </select>
                   </div>
                 </div>
-                {!searchQuery.trim() && nextCursor && (
+                {!query.trim() && nextCursor && (
                   <Button
                     variant="outline"
                     size="sm"
