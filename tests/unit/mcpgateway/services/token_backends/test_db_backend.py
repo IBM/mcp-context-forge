@@ -491,7 +491,7 @@ async def test_get_token_info_exception(backend_with_encryption, mock_db):
 
 @pytest.mark.asyncio
 async def test_refresh_token_with_client_secret_decrypt_failure(backend_with_encryption, mock_db):
-    """Test refresh handles client_secret decryption failure gracefully."""
+    """Test refresh fails closed when client_secret decryption returns None (PR #5244 behavior)."""
     token_record = _make_token_record(
         refresh_token="encrypted_refresh",
         gateway_id="gw-1"
@@ -510,11 +510,11 @@ async def test_refresh_token_with_client_secret_decrypt_failure(backend_with_enc
     mock_gateway.client_key = None
     mock_db.query.return_value.filter.return_value.first.return_value = mock_gateway
 
-    # Mock refresh token decryption success but client_secret fails
+    # Mock refresh token decryption success but client_secret returns None (wrong key)
     async def decrypt_side_effect(value):
         if value == "encrypted_refresh":
             return "decrypted_refresh"
-        raise Exception("Decrypt failed")
+        return None  # Decryption failure returns None, not raises
 
     backend_with_encryption.encryption.decrypt_secret_async.side_effect = decrypt_side_effect
 
@@ -528,8 +528,10 @@ async def test_refresh_token_with_client_secret_decrypt_failure(backend_with_enc
 
         result = await backend_with_encryption._refresh_access_token(token_record)
 
-        # Should still succeed with encrypted client_secret (assumed plain text)
-        assert result == "new_token"
+        # PR #5244: Fail closed on decryption failure - returns None, preserves token
+        assert result is None
+        # Token should NOT be deleted (OAuthError, not OAuthInvalidGrantError)
+        mock_db.delete.assert_not_called()
 
 
 # ---------- revoke_user_tokens ----------
@@ -781,7 +783,9 @@ async def test_refresh_access_token_no_expires_in_preserves_ttl(backend_with_enc
 
 @pytest.mark.asyncio
 async def test_refresh_access_token_invalid_error_clears_tokens(backend_with_encryption, mock_db):
-    """Test that invalid/expired refresh token errors are logged."""
+    """Test that OAuthInvalidGrantError deletes tokens (PR #5244 behavior)."""
+    from mcpgateway.services.oauth_manager import OAuthInvalidGrantError
+
     token_record = _make_token_record(
         refresh_token="encrypted_refresh",
         gateway_id="gw-1"
@@ -798,17 +802,21 @@ async def test_refresh_access_token_invalid_error_clears_tokens(backend_with_enc
 
     with patch("mcpgateway.services.token_backends.db_backend.OAuthManager") as mock_oauth_class:
         mock_oauth = AsyncMock()
-        mock_oauth.refresh_token.side_effect = Exception("invalid_grant: refresh token expired")
+        # PR #5244: Only OAuthInvalidGrantError deletes tokens, not generic exceptions
+        mock_oauth.refresh_token.side_effect = OAuthInvalidGrantError("invalid_grant: refresh token expired")
         mock_oauth_class.return_value = mock_oauth
 
         with patch("mcpgateway.services.token_backends.db_backend.logger") as mock_logger:
             result = await backend_with_encryption._refresh_access_token(token_record)
 
             assert result is None
-            # Should log warning about invalid/expired token
+            # Should log warning about invalid_grant and delete token
             warning_calls = [call for call in mock_logger.warning.call_args_list
-                           if "invalid/expired" in str(call)]
+                           if "permanently invalid" in str(call) or "invalid_grant" in str(call)]
             assert len(warning_calls) > 0
+            # Token should be deleted for invalid_grant
+            mock_db.delete.assert_called_once_with(token_record)
+            mock_db.commit.assert_called_once()
 
 
 # ---------- cleanup_expired_tokens ----------
