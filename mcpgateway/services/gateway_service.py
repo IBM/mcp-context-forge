@@ -4733,32 +4733,24 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                                 # First-Party
                                 from mcpgateway.services.token_storage_service import TokenStorageService, build_token_user_context  # pylint: disable=import-outside-toplevel
 
-                                # Get user-specific OAuth token
-                                if not user_email:
-                                    if span:
-                                        set_span_attribute(span, "health.status", "unhealthy")
-                                        set_span_error(span, "User email required for OAuth token")
-                                    await self._handle_gateway_failure(gateway)
-                                    return
+                                # Get user-specific OAuth token only if user_email is provided
+                                if user_email:
+                                    # SECURITY: Health checks run in background without a request-scoped
+                                    # token. Use None (shared path) as the team scope — this is the
+                                    # correct fallback for background processes per AGENTS.md Layer 1
+                                    # invariant. Do NOT query EmailTeamMember here.
+                                    with fresh_db_session() as token_db:
+                                        user_context = build_token_user_context(token_db, user_email, None)
+                                        token_storage = TokenStorageService(token_db, user_context=user_context)
+                                        access_token = await token_storage.get_user_token(gateway_id, user_email)
 
-                                # SECURITY: Health checks run in background without a request-scoped
-                                # token. Use None (shared path) as the team scope — this is the
-                                # correct fallback for background processes per AGENTS.md Layer 1
-                                # invariant. Do NOT query EmailTeamMember here.
-                                with fresh_db_session() as token_db:
-                                    user_context = build_token_user_context(token_db, user_email, None)
-                                    token_storage = TokenStorageService(token_db, user_context=user_context)
-                                    access_token = await token_storage.get_user_token(gateway_id, user_email)
-
-                                if access_token:
-                                    headers["Authorization"] = f"Bearer {access_token}"
-                                    logger.debug("Using stored OAuth token for health check of gateway %s", gateway_name)
+                                    if access_token:
+                                        headers["Authorization"] = f"Bearer {access_token}"
+                                        logger.debug("Using stored OAuth token for health check of gateway %s", gateway_name)
+                                    else:
+                                        logger.debug("No stored OAuth token for user %s on gateway %s, proceeding with unauthenticated health check", user_email, gateway_name)
                                 else:
-                                    if span:
-                                        set_span_attribute(span, "health.status", "unhealthy")
-                                        set_span_error(span, "No valid OAuth token for user")
-                                    await self._handle_gateway_failure(gateway)
-                                    return
+                                    logger.debug("No user_email provided for authorization_code gateway %s, proceeding with unauthenticated health check", gateway_name)
                             except Exception as e:
                                 logger.warning("Failed to obtain stored OAuth token for gateway %s, proceeding with unauthenticated health check: %s", gateway_name, e)
                         elif grant_type == "token-exchange":
