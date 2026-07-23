@@ -532,8 +532,8 @@ async def _plugin_invalidation_listener() -> None:
             if pubsub is not None:
                 try:
                     await asyncio.wait_for(pubsub.aclose(), timeout=2.0)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    _logger.error("Plugin invalidation listener: pubsub aclose failed (%s)", exc)
 
 
 async def start_plugin_invalidation_listener() -> None:

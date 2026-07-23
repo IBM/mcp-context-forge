@@ -1705,6 +1705,7 @@ class TestListenerLoopBranches:
 
         pubsub = MagicMock()
         pubsub.subscribe = AsyncMock()
+        pubsub.aclose = AsyncMock()
 
         class _Listen:
             def __aiter__(self):
@@ -1723,6 +1724,97 @@ class TestListenerLoopBranches:
 
         pubsub.subscribe.assert_awaited_once()
         assert len(seen) == 1
+
+    @pytest.mark.asyncio
+    async def test_pubsub_aclose_called_on_cancellation(self, monkeypatch):
+        """``pubsub.aclose()`` must be called when CancelledError propagates out of the listen loop.
+
+        Regression guard: if the ``finally: await pubsub.aclose()`` block is ever
+        removed, the pubsub connection would be leaked on every cancellation.
+        """
+        import mcpgateway.plugins as framework
+
+        async def _fake_handle(msg):
+            raise asyncio.CancelledError()
+
+        monkeypatch.setattr(framework, "_handle_invalidation_message", _fake_handle)
+
+        pubsub = MagicMock()
+        pubsub.subscribe = AsyncMock()
+        pubsub.aclose = AsyncMock()
+
+        class _Listen:
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self):
+                return {"type": "message", "data": "{}"}
+
+        pubsub.listen = MagicMock(return_value=_Listen())
+
+        client = MagicMock()
+        client.pubsub = MagicMock(return_value=pubsub)
+        monkeypatch.setattr(framework, "_redis", AsyncMock(return_value=client))
+
+        await framework._plugin_invalidation_listener()
+
+        # aclose() must have been awaited exactly once — proving the connection
+        # was released via the finally block before the listener returned.
+        pubsub.aclose.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_pubsub_aclose_called_on_reconnect_after_exception(self, monkeypatch):
+        """``pubsub.aclose()`` must be called when a non-cancellation exception escapes the listen loop.
+
+        A transient Redis error must not leak the pubsub handle — the finally
+        block must close it before the backoff sleep and reconnection attempt.
+        """
+        import mcpgateway.plugins as framework
+
+        iterations: list[int] = []
+
+        async def _fake_handle(msg):
+            iterations.append(1)
+            raise RuntimeError("transient broker error")
+
+        monkeypatch.setattr(framework, "_handle_invalidation_message", _fake_handle)
+
+        pubsub = MagicMock()
+        pubsub.subscribe = AsyncMock()
+        pubsub.aclose = AsyncMock()
+
+        class _Listen:
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self):
+                return {"type": "message", "data": "{}"}
+
+        pubsub.listen = MagicMock(return_value=_Listen())
+
+        client = MagicMock()
+        client.pubsub = MagicMock(return_value=pubsub)
+        monkeypatch.setattr(framework, "_redis", AsyncMock(return_value=client))
+
+        # Stop the reconnection loop after the first backoff sleep.
+        async def _fake_sleep(_delay):
+            raise asyncio.CancelledError()
+
+        monkeypatch.setattr(framework.asyncio, "sleep", _fake_sleep)
+
+        # CancelledError raised inside _fake_sleep propagates out of the
+        # except-Exception handler, through the finally block, and escapes the
+        # coroutine — that is the intended termination path when cancellation
+        # races with the backoff sleep.
+        try:
+            await framework._plugin_invalidation_listener()
+        except asyncio.CancelledError:
+            pass
+
+        # One dispatch happened, then an exception fired.
+        assert len(iterations) == 1
+        # aclose() must have been awaited once before the backoff sleep.
+        pubsub.aclose.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------
