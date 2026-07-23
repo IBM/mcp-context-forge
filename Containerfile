@@ -191,6 +191,15 @@ COPY --chown=10001:10001 package.json package-lock.json ./
 # Install frontend dependencies
 RUN npm ci
 
+# Vite 8's bundler (rolldown) ships a native NAPI addon per arch; on s390x
+# that addon segfaults on load (rolldown/napi-rs issue on this niche,
+# big-endian target). npm skips @rolldown/binding-wasm32-wasi by default
+# since its cpu field is "wasm32", not "s390x", so install it explicitly and
+# force rolldown to use the WASI binding instead of the crashing native one.
+RUN if [ "$(uname -m)" = "s390x" ]; then \
+        npm install --no-save @rolldown/binding-wasm32-wasi@1.1.5; \
+    fi
+
 # Create directory structure with correct ownership before Vite build
 USER root
 RUN mkdir -p mcpgateway/static && chown -R 10001:10001 mcpgateway
@@ -201,7 +210,11 @@ COPY --chown=10001:10001 mcpgateway/admin_ui/ mcpgateway/admin_ui/
 COPY --chown=10001:10001 vite.config.js ./
 
 # Run Vite build
-RUN npm run vite:build
+RUN if [ "$(uname -m)" = "s390x" ]; then \
+        NAPI_RS_FORCE_WASI=true npm run vite:build; \
+    else \
+        npm run vite:build; \
+    fi
 
 
 ###########################
