@@ -3020,8 +3020,16 @@ class GatewayCreate(BaseModelWithConfigDict):
     @field_validator("oauth_config", mode="before")
     @classmethod
     def validate_oauth_config(cls, v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-        """Validate URL-bearing OAuth configuration entries."""
-        return _validate_oauth_config_urls(v)
+        """Validate URL-bearing OAuth configuration entries and reject deprecated grants.
+
+        The OAuth 2.1 resource owner password credentials grant is rejected for
+        new MCP server registrations. Existing records keep working via
+        ``GatewayUpdate`` (backwards compatibility).
+        """
+        v = _validate_oauth_config_urls(v)
+        if isinstance(v, dict) and v.get("grant_type") == "password":
+            raise ValueError("The OAuth 2.1 resource owner password grant is not supported for new MCP servers. Use authorization_code or client_credentials instead.")
+        return v
 
     @field_validator("description")
     @classmethod
