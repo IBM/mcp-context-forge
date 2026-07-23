@@ -393,17 +393,33 @@ class TokenStorageService:
     async def _refresh_access_token(self, token_record):
         """Refresh an expired access token using refresh token.
 
-        Delegates to the backend's _refresh_access_token method.
-        This method is exposed for backward compatibility with tests.
+        Delegates to DatabaseTokenBackend's _refresh_access_token method.
+        This method is exposed for backward compatibility with tests written
+        before the pluggable backend refactoring.
+
+        IMPORTANT: This façade only supports DatabaseTokenBackend.
+        VaultTokenBackend has a different signature (5 params vs 1) and is
+        called internally, never through this façade.
 
         Args:
-            token_record: OAuth token record to refresh
+            token_record: OAuth token record to refresh (OAuthToken ORM object)
 
         Returns:
             New access token or None if refresh failed
+
+        Raises:
+            TypeError: If backend is not DatabaseTokenBackend
         """
-        backend_refresh = getattr(self._backend, "_refresh_access_token", None)
-        if backend_refresh is None:
-            logger.warning("Backend %s does not support _refresh_access_token", type(self._backend).__name__)
-            return None
-        return await backend_refresh(token_record)
+        # Type check: Only DatabaseTokenBackend uses this signature
+        if not isinstance(self._backend, DatabaseTokenBackend):
+            raise TypeError(
+                f"_refresh_access_token façade only supports DatabaseTokenBackend, "
+                f"but backend is {type(self._backend).__name__}. "
+                f"VaultTokenBackend has a different signature and should not use this façade."
+            )
+
+        # pylint: disable=protected-access,no-value-for-parameter
+        # protected-access: Calling backend's private method for test compatibility
+        # no-value-for-parameter: Pylint checks against VaultTokenBackend signature (5 params),
+        #                        but isinstance check above ensures only DatabaseTokenBackend (1 param) is used
+        return await self._backend._refresh_access_token(token_record)
