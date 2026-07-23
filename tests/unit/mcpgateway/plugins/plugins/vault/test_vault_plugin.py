@@ -537,7 +537,8 @@ class TestVaultPluginA2AAgent:
     @pytest.fixture
     def agent_context(self) -> PluginContext:
         """Create a plugin context with A2A agent metadata using plain-string tags."""
-        # A2A agent tags are plain strings (PydanticA2AAgent.tags: List[str]).
+        # A2A agent tags may be plain strings or the normalized {id,label} dict form;
+        # PydanticA2AAgent.tags accepts both. This fixture exercises the plain-string shape.
         agent_metadata = type("obj", (object,), {"tags": ["system:github.com", "AUTH_HEADER:X-GitHub-Token"]})()
         global_context = GlobalContext(request_id="a2a-1", metadata={"a2a_agent": agent_metadata})
         return PluginContext(global_context=global_context)
