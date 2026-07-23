@@ -389,3 +389,21 @@ class TokenStorageService:
             OAuth config dict or None if not found / not supported
         """
         return await self._backend.get_oauth_credentials(team_id, mcp_url)
+
+    async def _refresh_access_token(self, token_record):
+        """Refresh an expired access token using refresh token.
+
+        Delegates to the backend's _refresh_access_token method.
+        This method is exposed for backward compatibility with tests.
+
+        Args:
+            token_record: OAuth token record to refresh
+
+        Returns:
+            New access token or None if refresh failed
+        """
+        backend_refresh = getattr(self._backend, "_refresh_access_token", None)
+        if backend_refresh is None:
+            logger.warning("Backend %s does not support _refresh_access_token", type(self._backend).__name__)
+            return None
+        return await backend_refresh(token_record)
