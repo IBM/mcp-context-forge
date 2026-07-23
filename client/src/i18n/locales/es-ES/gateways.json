@@ -12,7 +12,7 @@
   "gateways.action.grpc.title": "gRPC",
   "gateways.action.grpc.description": "Traduzca un endpoint gRPC como una herramienta MCP.",
   "gateways.action.connectPlain": "Conectar",
-  "gateways.action.connect": "+ Conectar",
+  "gateways.action.connect": "Conectar",
   "gateways.action.comingSoon": "Próximamente",
   "gateways.source.heading": "Conectar una fuente",
   "gateways.source.disabledActionLabel": "{buttonText} {title} ({reason})",
