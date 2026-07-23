@@ -3,5 +3,6 @@
   "dashboard.welcome": "Bem-vindo ao ContextForge",
   "dashboard.overview": "Visão Geral",
   "dashboard.stats": "Estatísticas",
-  "dashboard.recentActivity": "Atividade Recente"
+  "dashboard.recentActivity": "Atividade Recente",
+  "dashboard.errorLoadingSources": "Erro ao carregar as fontes do painel"
 }
