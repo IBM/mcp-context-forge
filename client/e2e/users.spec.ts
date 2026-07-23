@@ -66,6 +66,21 @@ test.describe("Users page", () => {
     await expect(main.getByText("Active")).toBeVisible();
   });
 
+  test("redirects the legacy /app/users route to the settings tab", async ({ page }) => {
+    await page.route("**/auth/email/admin/users?*", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ users: [MOCK_USER] }),
+      });
+    });
+
+    await page.goto("/app/users");
+
+    await expect(page).toHaveURL(/\/app\/settings\/users/);
+    await expect(page.getByRole("heading", { name: "Users" })).toBeVisible();
+  });
+
   test("loads more users when pagination cursor is present", async ({ page }) => {
     await page.route("**/auth/email/admin/users?*", async (route) => {
       const url = new URL(route.request().url());

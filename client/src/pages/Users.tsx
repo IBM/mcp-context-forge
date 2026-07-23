@@ -170,7 +170,7 @@ export function Users() {
   const error = queryError ? queryError.message : null;
 
   return (
-    <main className="p-6">
+    <div>
       {isFormOpen ? (
         <UserForm
           key={userToEdit?.email ?? "create"}
@@ -201,9 +201,9 @@ export function Users() {
       ) : (
         <div className="space-y-6">
           <header className="flex items-center justify-between">
-            <h1 className="text-xl font-semibold text-foreground">
+            <h2 className="text-xl font-semibold text-foreground">
               {intl.formatMessage({ id: "users.title" })}
-            </h1>
+            </h2>
             <Button
               onClick={() => setIsFormOpen(true)}
               className="gap-2"
@@ -307,6 +307,6 @@ export function Users() {
           onCancel={handleDeleteCancel}
         />
       )}
-    </main>
+    </div>
   );
 }
