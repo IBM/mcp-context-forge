@@ -3,6 +3,7 @@ import { useIntl } from "react-intl";
 import { toast } from "sonner";
 import { Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { ListSearch } from "@/components/ui/list-search";
 import { TeamsTable } from "@/components/teams/TeamsTable";
 import { TeamForm } from "@/components/teams/TeamForm";
 import { ConfirmDialog } from "@/components/servers/ConfirmDialog";
@@ -27,6 +28,7 @@ export function Teams() {
   const [membersDialogOpen, setMembersDialogOpen] = useState(false);
   const [teamForMembers, setTeamForMembers] = useState<Team | null>(null);
   const [teamToEdit, setTeamToEdit] = useState<Team | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
 
   const queryPath = useMemo(() => {
     const params = new URLSearchParams();
@@ -47,6 +49,16 @@ export function Teams() {
       setNextCursor(response.nextCursor ?? null);
     }
   }, [response]);
+
+  const filteredTeams = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase();
+    if (!query) return allTeams;
+    return allTeams.filter(
+      (team) =>
+        team.name.toLowerCase().includes(query) ||
+        (team.description ?? "").toLowerCase().includes(query),
+    );
+  }, [allTeams, searchQuery]);
 
   const error = queryError ? queryError.message : null;
 
@@ -207,28 +219,44 @@ export function Teams() {
                 <h1 className="text-base font-semibold text-foreground">
                   {intl.formatMessage({ id: "teams.all.title" })}
                 </h1>
-                <Button
-                  variant="default"
-                  className="h-7 rounded-sm px-4"
-                  onClick={() => setCreateFormOpen(true)}
-                >
-                  <Plus className="h-4 w-4" />
-                  {intl.formatMessage({ id: "teams.createTeam" })}
-                </Button>
+                <div className="flex items-center gap-3">
+                  <ListSearch
+                    value={searchQuery}
+                    onChange={setSearchQuery}
+                    ariaLabel={intl.formatMessage(
+                      { id: "common.searchLabel" },
+                      { entity: intl.formatMessage({ id: "navigation.teams" }) },
+                    )}
+                    placeholder={intl.formatMessage({ id: "common.search" })}
+                  />
+                  <Button
+                    variant="default"
+                    className="h-7 rounded-sm px-4"
+                    onClick={() => setCreateFormOpen(true)}
+                  >
+                    <Plus className="h-4 w-4" />
+                    {intl.formatMessage({ id: "teams.createTeam" })}
+                  </Button>
+                </div>
               </div>
 
               <TeamsTable
-                teams={allTeams}
+                teams={filteredTeams}
                 isLoading={false}
                 onEdit={handleEdit}
                 onManageMembers={handleManageMembers}
                 onDelete={handleDelete}
               />
+              {searchQuery.trim() && filteredTeams.length === 0 && (
+                <p className="mt-6 text-sm text-muted-foreground">
+                  {intl.formatMessage({ id: "common.search.noResults" })}
+                </p>
+              )}
 
               <div className="flex items-center justify-between mt-6">
                 <div className="flex items-center gap-4">
                   <div className="text-sm text-gray-600 dark:text-gray-400">
-                    {intl.formatMessage({ id: "teams.showing" }, { count: allTeams.length })}
+                    {intl.formatMessage({ id: "teams.showing" }, { count: filteredTeams.length })}
                   </div>
                   <div className="flex items-center gap-2">
                     <label
@@ -250,7 +278,7 @@ export function Teams() {
                     </select>
                   </div>
                 </div>
-                {nextCursor && (
+                {!searchQuery.trim() && nextCursor && (
                   <Button
                     variant="outline"
                     size="sm"
