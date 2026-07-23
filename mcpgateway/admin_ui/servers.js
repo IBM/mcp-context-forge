@@ -1,5 +1,6 @@
 import { AppState } from "./appState.js";
 import { getCatalogUrl } from "./configExport.js";
+import { MASKED_AUTH_VALUE } from "./constants.js";
 import { toggleViewPublic } from "./filters.js";
 import { initGatewaySelect } from "./gateways.js";
 import { openModal } from "./modals.js";
@@ -854,6 +855,16 @@ export const editServer = async function (serverId) {
       // Extract token endpoint
       if (oauthTokenEndpointField) {
         oauthTokenEndpointField.value = server.oauthConfig.token_endpoint || "";
+      }
+
+      // Extract client_id for DCR bypass (pre-registered client)
+      const oauthClientIdField = safeGetElement("edit-server-oauth-client-id");
+      if (oauthClientIdField) {
+        oauthClientIdField.value = server.oauthConfig.client_id || "";
+      }
+      const oauthClientSecretField = safeGetElement("edit-server-oauth-client-secret");
+      if (oauthClientSecretField) {
+        oauthClientSecretField.value = server.oauthConfig.client_secret ? MASKED_AUTH_VALUE : "";
       }
     } else {
       // Clear OAuth config fields when no config exists
