@@ -2653,6 +2653,12 @@ class MCPChatService:
                     chunk = event.get("data", {}).get("chunk")
                     if chunk and hasattr(chunk, "content"):
                         content = chunk.content
+                        # Anthropic returns content blocks as a list
+                        if isinstance(content, list):
+                            content = "".join(
+                                block.get("text", "") if isinstance(block, dict) else str(block)
+                                for block in content
+                            )
                         if content:
                             full_response += content
                             yield content
@@ -2903,6 +2909,12 @@ class MCPChatService:
                             chunk = event.get("data", {}).get("chunk")
                             if chunk and hasattr(chunk, "content"):
                                 content = chunk.content
+                                # Anthropic returns content blocks as a list
+                                if isinstance(content, list):
+                                    content = "".join(
+                                        block.get("text", "") if isinstance(block, dict) else str(block)
+                                        for block in content
+                                    )
                                 if content:
                                     full_response += content
                                     yield {"type": "token", "content": content}
