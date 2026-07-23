@@ -13,6 +13,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { VisibilityHelp } from "@/components/ui/visibility-help";
 import { usePromptForm, type PromptFormInitialValues } from "@/hooks/usePromptForm";
 import { getTagDisplay } from "@/components/gateways/utils";
 import type { PromptRead } from "@/generated/types";
@@ -142,15 +143,15 @@ export function PromptForm({ isOpen, onToggle, onSuccess, prompt }: PromptFormPr
             </div>
 
             <div className="space-y-2.5">
-              <Label
-                htmlFor="visibility"
-                className="mb-2.5 block text-sm font-medium text-foreground"
-              >
-                {intl.formatMessage({ id: "prompts.add.field.visibility" })}{" "}
-                <span className="text-destructive" aria-hidden="true">
-                  {intl.formatMessage({ id: "prompts.add.required" })}
-                </span>
-              </Label>
+              <div className="mb-2.5 flex items-center gap-1.5">
+                <Label htmlFor="visibility" className="block text-sm font-medium text-foreground">
+                  {intl.formatMessage({ id: "prompts.add.field.visibility" })}{" "}
+                  <span className="text-destructive" aria-hidden="true">
+                    {intl.formatMessage({ id: "prompts.add.required" })}
+                  </span>
+                </Label>
+                <VisibilityHelp />
+              </div>
               <Select
                 value={form.visibility}
                 onValueChange={(value) => form.setVisibility(value as Visibility)}

@@ -3,10 +3,21 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import * as AuthContextModule from "@/auth/AuthContext";
 import { AdvancedSettings } from "./AdvancedSettings";
+import type * as ReactIntl from "react-intl";
 
 vi.mock("@/auth/AuthContext", () => ({
   useAuthContext: vi.fn(),
 }));
+
+vi.mock("react-intl", async (importOriginal) => {
+  const actual = await importOriginal<typeof ReactIntl>();
+  return {
+    ...actual,
+    useIntl: () => ({
+      formatMessage: ({ id }: { id: string }) => id,
+    }),
+  };
+});
 
 const mockUseAuthContext = vi.mocked(AuthContextModule.useAuthContext);
 

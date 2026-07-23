@@ -31,7 +31,7 @@
   "resources.form.content.label": "Content",
   "resources.form.content.placeholder": "Paste or type content here...",
   "resources.form.visibility.label": "Visibility",
-  "resources.form.visibility.public": "Public",
+  "resources.form.visibility.public": "Internal",
   "resources.form.visibility.private": "Private",
   "resources.form.visibility.team": "Team",
   "resources.form.tags.label": "Tags",
@@ -78,7 +78,7 @@
   "resources.details.status.active": "Active",
   "resources.details.status.inactive": "Inactive",
   "resources.details.visibility.team": "Team",
-  "resources.details.visibility.public": "Public",
+  "resources.details.visibility.public": "Internal",
   "resources.details.visibility.private": "Private",
   "resources.details.addTag": "add",
   "resources.tags.addError": "Failed to add tag. Please try again."

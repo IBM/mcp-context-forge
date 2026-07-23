@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import {
   Copy,
-  Globe,
+  Building2,
   Lock,
   Shield,
   TriangleAlert,
@@ -59,8 +59,9 @@ function getVisibilityConfig(visibility: MCPServer["visibility"]) {
       return { label: "Private", Icon: Lock };
     case "team":
       return { label: "Team", Icon: Shield };
+    // Wire value stays "public"; only the display label is "Internal" (see #5732).
     default:
-      return { label: "Public", Icon: Globe };
+      return { label: "Internal", Icon: Building2 };
   }
 }
 

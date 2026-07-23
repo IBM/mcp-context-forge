@@ -265,7 +265,7 @@ describe("VirtualServerDetailsPanel render variants", () => {
         onAddSources={vi.fn()}
       />,
     );
-    expect(await screen.findByText("Public")).toBeInTheDocument();
+    expect(await screen.findByText("Internal")).toBeInTheDocument();
   });
 
   it("shows the private visibility label", async () => {

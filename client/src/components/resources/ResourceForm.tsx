@@ -12,6 +12,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { VisibilityHelp } from "@/components/ui/visibility-help";
 import {
   useResourceForm,
   MIME_TYPES,
@@ -248,13 +249,16 @@ export function ResourceForm({
 
             {/* Visibility — required select */}
             <div className="space-y-1">
-              <label
-                htmlFor="resource-visibility"
-                className="inline-flex items-center gap-0.5 text-sm font-medium text-neutral-900 dark:text-neutral-100"
-              >
-                {intl.formatMessage({ id: "resources.form.visibility.label" })}
-                <span className="text-red-500">*</span>
-              </label>
+              <div className="flex items-center gap-1.5">
+                <label
+                  htmlFor="resource-visibility"
+                  className="inline-flex items-center gap-0.5 text-sm font-medium text-neutral-900 dark:text-neutral-100"
+                >
+                  {intl.formatMessage({ id: "resources.form.visibility.label" })}
+                  <span className="text-red-500">*</span>
+                </label>
+                <VisibilityHelp />
+              </div>
               <Select value={visibility} onValueChange={(v) => setVisibility(v as Visibility)}>
                 <SelectTrigger
                   id="resource-visibility"

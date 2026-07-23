@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
+import { VisibilityHelp } from "@/components/ui/visibility-help";
 import {
   useCreateServerForm,
   type CreateServerFormInitialValues,
@@ -113,8 +114,9 @@ export function CreateServerForm({
 
       <div className="mt-12 grid gap-7">
         <fieldset className="space-y-3">
-          <legend className="text-sm font-medium text-foreground">
+          <legend className="flex items-center gap-1.5 text-sm font-medium text-foreground">
             {intl.formatMessage({ id: "gateways.createServer.visibility" })}
+            <VisibilityHelp />
           </legend>
           <div
             className="grid h-10 grid-cols-3 rounded-md bg-muted p-1"

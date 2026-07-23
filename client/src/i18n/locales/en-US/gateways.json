@@ -35,7 +35,7 @@
   "gateways.createServer.description": "Compose a single endpoint that exposes capabilities from any connected MCP server, REST API, gRPC service, or A2A agent.",
   "gateways.createServer.visibility": "Visibility",
   "gateways.createServer.visibility.team": "Team",
-  "gateways.createServer.visibility.public": "Public",
+  "gateways.createServer.visibility.public": "Internal",
   "gateways.createServer.visibility.private": "Private",
   "gateways.createServer.name": "Name",
   "gateways.createServer.required": "(required)",
