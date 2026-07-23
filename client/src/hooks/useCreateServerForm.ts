@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { CreateServerDetails } from "@/components/gateways/types";
 import type { Visibility } from "@/types/server";
 import { sanitizeString } from "@/lib/sanitize";
+import { MAX_TAGS } from "@/utils/tags";
 
 function createServerFormSchema(messages: {
   nameRequired: string;
@@ -18,7 +19,9 @@ function createServerFormSchema(messages: {
       .pipe(z.string().min(1, messages.nameRequired).max(100, messages.nameMax)),
     visibility: z.enum(["team", "public", "private"]),
     oauthEnabled: z.boolean(),
-    tags: z.array(z.string().transform((tag) => sanitizeString(tag, 50))).max(20, messages.tagsMax),
+    tags: z
+      .array(z.string().transform((tag) => sanitizeString(tag, 50)))
+      .max(MAX_TAGS, messages.tagsMax),
     description: z
       .string()
       .transform((value) => sanitizeString(value, 500))

@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/select";
 import { TagInput } from "@/components/ui/tag-input";
 import { useTagSuggestions } from "@/hooks/useTagSuggestions";
+import { MAX_TAGS } from "@/utils/tags";
 import { BasicAuth } from "@/components/mcp-servers/BasicAuth";
 import { ToolBearerTokenAuth } from "@/components/tools/ToolBearerTokenAuth";
 import { CustomHeadersAuth, type CustomHeader } from "@/components/mcp-servers/CustomHeadersAuth";
@@ -213,6 +214,7 @@ export function ToolAdvancedSettings({
           value={tags}
           onChange={onTagsChange}
           suggestions={tagSuggestions}
+          maxTags={MAX_TAGS}
           placeholder="Add optional tags separated with commas"
         />
       </div>

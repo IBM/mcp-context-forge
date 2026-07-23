@@ -101,9 +101,10 @@ describe("TagInput", () => {
     expect(await screen.findByText('Create "brandnew"')).toBeInTheDocument();
   });
 
-  it("stops accepting tags once maxTags is reached", () => {
+  it("stops accepting tags and shows a message once maxTags is reached", () => {
     render(<Harness initial={["a", "b"]} maxTags={2} />);
     expect(screen.getByRole("combobox")).toBeDisabled();
+    expect(screen.getByText("Maximum 2 tags reached.")).toBeInTheDocument();
   });
 
   it("disables interaction when disabled", () => {
