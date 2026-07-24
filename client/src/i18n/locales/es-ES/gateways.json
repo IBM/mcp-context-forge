@@ -87,7 +87,6 @@
   "gateways.details.sheetDescription": "Detalles y actividad del servidor virtual.",
   "gateways.details.addSource": "Agregar fuente",
   "gateways.details.addSources": "Agregar fuentes",
-  "gateways.details.noDescription": "No se proporcionó descripción.",
   "gateways.details.components": "Componentes",
   "gateways.details.addComponents": "Agregar componentes",
   "gateways.details.filter.all": "Todos",
