@@ -4318,7 +4318,11 @@ async def admin_ui(
 
         # Set HTTP-only cookie using centralized security cookie utility
         set_auth_cookie(response, token, remember_me=False)
-        csrf_user_id = str(payload["sub"])
+        # CSRF tokens are HMAC-bound to the identity CSRFMiddleware derives from
+        # request.state.user, which is EmailUser.email — not EmailUser.id (the PK
+        # used for the JWT `sub` claim). Matches routers/auth.py and
+        # routers/email_auth.py, which already bind to the email.
+        csrf_user_id = admin_email
         csrf_session_id = str(payload["jti"])
         LOGGER.debug(f"Set session JWT token cookie for user: {admin_email}")
     except Exception as e:
