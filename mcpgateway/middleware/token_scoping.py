@@ -10,6 +10,7 @@ and time-based restrictions.
 """
 
 # Standard
+import asyncio
 from datetime import datetime, timedelta, timezone
 from enum import auto, Enum
 from functools import lru_cache
@@ -23,6 +24,7 @@ from sqlalchemy import and_, func, select
 
 # First-Party
 from mcpgateway.auth import normalize_token_teams, resolve_session_teams
+from mcpgateway.auth_context import get_jwt_user_email_from_payload, resolve_jwt_user_email_from_payload
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import Permissions
@@ -788,6 +790,23 @@ class TokenScopingMiddleware:
         # Default deny for unmatched paths (requires explicit permission mapping)
         return False
 
+    @staticmethod
+    def _get_user_email_from_payload(payload: dict) -> str | None:
+        """Extract the email identity from a signed JWT payload."""
+        return get_jwt_user_email_from_payload(payload)
+
+    @staticmethod
+    async def _resolve_user_email_from_payload(payload: dict) -> str | None:
+        """Resolve the email identity from a signed JWT payload, including UUID-sub fallback."""
+        # First-Party
+        from mcpgateway.auth import _get_email_by_id_sync  # pylint: disable=import-outside-toplevel
+
+        async def resolve_uuid_subject(user_id: str) -> str | None:
+            """Resolve a UUID subject to the owning user's email."""
+            return await asyncio.to_thread(_get_email_by_id_sync, user_id)
+
+        return await resolve_jwt_user_email_from_payload(payload, uuid_email_resolver=resolve_uuid_subject)
+
     def _check_team_membership(self, payload: dict, db=None) -> bool:
         """
         Check if user still belongs to teams in the token.
@@ -809,7 +828,7 @@ class TokenScopingMiddleware:
             bool: True if team membership is valid, False otherwise
         """
         teams = payload.get("teams", [])
-        user_email = payload.get("sub")
+        user_email = self._get_user_email_from_payload(payload)
 
         # PUBLIC-ONLY TOKEN: No team validation needed
         if not teams or len(teams) == 0:
@@ -1310,19 +1329,19 @@ class TokenScopingMiddleware:
             if not payload:
                 return await call_next(request)
 
-            # TEAM VALIDATION: Use single DB session for both team checks
-            # This reduces connection pool overhead from 2 sessions to 1 for resource endpoints
-            user_email = payload.get("sub") or payload.get("email")  # Extract user email for ownership check
-
             # Resolve teams based on token_use claim
             token_use = payload.get("token_use")
             if token_use == "session":  # nosec B105 - Not a password; token_use is a JWT claim type
+                user_email = await self._resolve_user_email_from_payload(payload)
                 # Session token: resolve teams from DB/cache directly
                 # Cannot rely on request.state.token_teams — AuthContextMiddleware
                 # is gated by security_logging_enabled (defaults to False)
                 user_info = {}  # is_admin resolved from DB inside _resolve_teams_from_db
                 token_teams = await resolve_session_teams(payload, user_email, user_info)
             else:
+                # API and legacy tokens carry signed email metadata or legacy
+                # email subjects, so keep this path free of DB lookups.
+                user_email = self._get_user_email_from_payload(payload)
                 # API token or legacy: use embedded teams with normalize_token_teams
                 token_teams = normalize_token_teams(payload)
 

@@ -7,13 +7,14 @@ Unit tests for token usage logging middleware.
 """
 
 # Standard
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
 import pytest
 
 # First-Party
-from mcpgateway.middleware.token_usage_middleware import TokenUsageMiddleware
+from mcpgateway.middleware.token_usage_middleware import TokenUsageMiddleware, _get_api_token_owner_email_by_jti
 
 
 async def _make_asgi_call(middleware, scope, receive=None, send=None):
@@ -216,6 +217,132 @@ async def test_logs_api_token_usage_fallback_to_token_decode():
     call_args = mock_token_service.log_token_usage.call_args
     assert call_args.kwargs["jti"] == "jti-decoded-456"
     assert call_args.kwargs["user_email"] == "decoded@example.com"
+
+
+@pytest.mark.asyncio
+async def test_logs_api_token_usage_fallback_uses_signed_email_for_uuid_sub():
+    """Verified UUID-sub API token usage should be attributed to signed user.email."""
+    app = AsyncMock()
+
+    async def app_impl(scope, receive, send):
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"ok"})
+
+    app.side_effect = app_impl
+    middleware = TokenUsageMiddleware(app=app)
+
+    scope = {
+        "type": "http",
+        "path": "/api/resources",
+        "method": "POST",
+        "state": {
+            "auth_method": "api_token",
+            "jti": None,
+            "user": None,
+        },
+        "client": ("10.0.0.1", 12345),
+        "headers": [(b"authorization", b"Bearer uuid_sub_token"), (b"user-agent", b"TestClient/2.0")],
+    }
+
+    user_id = "11111111-1111-1111-1111-111111111111"
+    mock_payload = {
+        "jti": "jti-uuid-sub-789",
+        "sub": user_id,
+        "user": {"email": "owner@example.com", "auth_provider": "api_token"},
+    }
+    mock_db = MagicMock()
+    mock_token_service = MagicMock()
+    mock_token_service.log_token_usage = AsyncMock()
+
+    with (
+        patch("mcpgateway.middleware.token_usage_middleware.fresh_db_session") as mock_fresh_session,
+        patch("mcpgateway.middleware.token_usage_middleware.TokenCatalogService", return_value=mock_token_service),
+        patch("mcpgateway.middleware.token_usage_middleware.verify_jwt_token_cached", AsyncMock(return_value=mock_payload)),
+    ):
+        mock_fresh_session.return_value.__enter__.return_value = mock_db
+        await _make_asgi_call(middleware, scope)
+
+    mock_token_service.log_token_usage.assert_awaited_once()
+    call_args = mock_token_service.log_token_usage.call_args
+    assert call_args.kwargs["jti"] == "jti-uuid-sub-789"
+    assert call_args.kwargs["user_email"] == "owner@example.com"
+    assert call_args.kwargs["user_email"] != user_id
+    mock_fresh_session.assert_called_once()
+
+
+def test_get_api_token_owner_email_by_jti_returns_owner_email():
+    """JTI fallback reads the API token owner email from the database."""
+    mock_db = MagicMock()
+    mock_db.execute.return_value.first.return_value = SimpleNamespace(user_email="owner@example.com")
+
+    with patch("mcpgateway.middleware.token_usage_middleware.fresh_db_session") as mock_fresh_session:
+        mock_fresh_session.return_value.__enter__.return_value = mock_db
+
+        assert _get_api_token_owner_email_by_jti("jti-owner") == "owner@example.com"
+
+    mock_db.execute.assert_called_once()
+
+
+def test_get_api_token_owner_email_by_jti_returns_none_when_missing():
+    """JTI fallback leaves usage unattributed when the token row is gone."""
+    mock_db = MagicMock()
+    mock_db.execute.return_value.first.return_value = None
+
+    with patch("mcpgateway.middleware.token_usage_middleware.fresh_db_session") as mock_fresh_session:
+        mock_fresh_session.return_value.__enter__.return_value = mock_db
+
+        assert _get_api_token_owner_email_by_jti("jti-missing") is None
+
+    mock_db.execute.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_logs_api_token_usage_fallback_uses_jti_owner_for_uuid_only_sub():
+    """UUID-only API token usage falls back to the DB-owned token email."""
+    app = AsyncMock()
+
+    async def app_impl(scope, receive, send):
+        """Send a successful ASGI response for usage logging."""
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"ok"})
+
+    app.side_effect = app_impl
+    middleware = TokenUsageMiddleware(app=app)
+
+    scope = {
+        "type": "http",
+        "path": "/api/resources",
+        "method": "POST",
+        "state": {
+            "auth_method": "api_token",
+            "jti": None,
+            "user": None,
+        },
+        "client": ("10.0.0.1", 12345),
+        "headers": [(b"authorization", b"Bearer uuid_only_sub_token")],
+    }
+
+    user_id = "11111111-1111-1111-1111-111111111111"
+    mock_payload = {"jti": "jti-uuid-only-sub", "sub": user_id}
+    mock_db = MagicMock()
+    mock_token_service = MagicMock()
+    mock_token_service.log_token_usage = AsyncMock()
+
+    with (
+        patch("mcpgateway.middleware.token_usage_middleware.fresh_db_session") as mock_fresh_session,
+        patch("mcpgateway.middleware.token_usage_middleware.TokenCatalogService", return_value=mock_token_service),
+        patch("mcpgateway.middleware.token_usage_middleware.verify_jwt_token_cached", AsyncMock(return_value=mock_payload)),
+        patch("mcpgateway.middleware.token_usage_middleware._get_api_token_owner_email_by_jti", return_value="owner@example.com") as mock_owner_lookup,
+    ):
+        mock_fresh_session.return_value.__enter__.return_value = mock_db
+        await _make_asgi_call(middleware, scope)
+
+    mock_owner_lookup.assert_called_once_with("jti-uuid-only-sub")
+    mock_token_service.log_token_usage.assert_awaited_once()
+    call_args = mock_token_service.log_token_usage.call_args
+    assert call_args.kwargs["jti"] == "jti-uuid-only-sub"
+    assert call_args.kwargs["user_email"] == "owner@example.com"
+    assert call_args.kwargs["user_email"] != user_id
 
 
 @pytest.mark.asyncio

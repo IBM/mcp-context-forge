@@ -54,6 +54,80 @@ class TestVerifyCredentialsUuidCoverage:
         assert result is not None
 
     @pytest.mark.asyncio
+    async def test_require_auth_uuid_sub_api_token_uses_signed_email_for_active_user(self, monkeypatch):
+        """UUID-sub API tokens should pass shared require_auth active-user checks."""
+        from fastapi import Request
+        from fastapi.security import HTTPAuthorizationCredentials
+        from mcpgateway.utils import verify_credentials as vc
+
+        uuid_sub = "550e8400-e29b-41d4-a716-446655440000"
+        token = make_test_jwt(
+            email=uuid_sub,
+            expires_in_minutes=10,
+            extra_payload={"token_use": "api"},
+            user_data={"email": "api-user@example.com", "is_admin": False, "auth_provider": "api_token"},
+        )
+
+        active_user = MagicMock(spec=EmailUser)
+        active_user.email = "api-user@example.com"
+        active_user.is_active = True
+        get_user_by_email = MagicMock(return_value=active_user)
+        get_email_by_id = MagicMock(return_value="api-user@example.com")
+
+        monkeypatch.setattr(vc.settings, "mcp_client_auth_enabled", True, raising=False)
+        monkeypatch.setattr(vc.settings, "auth_required", True, raising=False)
+        monkeypatch.setattr(vc.settings, "require_user_in_db", True, raising=False)
+        monkeypatch.setattr("mcpgateway.auth._get_user_by_email_sync", get_user_by_email)
+        monkeypatch.setattr("mcpgateway.auth._get_email_by_id_sync", get_email_by_id)
+        monkeypatch.setattr("mcpgateway.auth._check_token_revoked_sync", MagicMock(return_value=False))
+
+        request = MagicMock(spec=Request)
+        request.headers = {}
+        request.cookies = {}
+        request.state = MagicMock()
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
+
+        result = await vc.require_auth(request=request, credentials=credentials, jwt_token=None)
+
+        assert result["sub"] == uuid_sub
+        assert result["user"]["email"] == "api-user@example.com"
+        get_user_by_email.assert_called_once_with("api-user@example.com")
+        get_email_by_id.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_require_auth_unknown_uuid_sub_api_token_rejected_when_user_required(self, monkeypatch):
+        """Unknown UUID-sub API tokens still fail closed in strict DB mode."""
+        from fastapi import Request, HTTPException
+        from fastapi.security import HTTPAuthorizationCredentials
+        from mcpgateway.utils import verify_credentials as vc
+
+        uuid_sub = "550e8400-e29b-41d4-a716-446655440000"
+        token = make_test_jwt(email=uuid_sub, expires_in_minutes=10, extra_payload={"token_use": "api"})
+        get_user_by_email = MagicMock(return_value=None)
+        get_email_by_id = MagicMock(return_value=None)
+
+        monkeypatch.setattr(vc.settings, "mcp_client_auth_enabled", True, raising=False)
+        monkeypatch.setattr(vc.settings, "auth_required", True, raising=False)
+        monkeypatch.setattr(vc.settings, "require_user_in_db", True, raising=False)
+        monkeypatch.setattr("mcpgateway.auth._get_user_by_email_sync", get_user_by_email)
+        monkeypatch.setattr("mcpgateway.auth._get_email_by_id_sync", get_email_by_id)
+        monkeypatch.setattr("mcpgateway.auth._check_token_revoked_sync", MagicMock(return_value=False))
+
+        request = MagicMock(spec=Request)
+        request.headers = {}
+        request.cookies = {}
+        request.state = MagicMock()
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
+
+        with pytest.raises(HTTPException) as exc_info:
+            await vc.require_auth(request=request, credentials=credentials, jwt_token=None)
+
+        assert exc_info.value.status_code == 401
+        assert exc_info.value.detail == "User not found in database"
+        get_email_by_id.assert_called_once_with(uuid_sub)
+        get_user_by_email.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_uuid_resolution_valueerror_lines_526_527(self):
         """Cover lines 526-527: ValueError exception when username is not a valid UUID."""
         # Use a non-UUID username (regular email) with token_use=session
@@ -74,7 +148,7 @@ class TestVerifyCredentialsUuidCoverage:
     @pytest.mark.asyncio
     async def test_uuid_resolution_in_require_admin_auth_lines_1409_1414(self):
         """Cover lines 1409-1414: UUID resolution in require_admin_auth."""
-        from fastapi import Request, HTTPException
+        from fastapi import Request
         from mcpgateway.utils.verify_credentials import require_admin_auth
         from mcpgateway.db import EmailUser
         from unittest.mock import AsyncMock
@@ -149,25 +223,19 @@ async def test_enforce_revocation_uuid_resolution_success(monkeypatch):
     active_user = MagicMock()
     active_user.is_active = True
 
-    # First call returns None (triggers UUID resolution), second call returns user
-    call_count = [0]
+    get_user_by_email = MagicMock(return_value=active_user)
+    get_email_by_id = MagicMock(return_value="user@example.com")
 
-    def mock_get_user(email):
-        call_count[0] += 1
-        if call_count[0] == 1:
-            return None  # First call with UUID
-        return active_user  # Second call with resolved email
-
-    monkeypatch.setattr("mcpgateway.auth._get_user_by_email_sync", mock_get_user)
-    monkeypatch.setattr("mcpgateway.auth._get_email_by_id_sync", lambda _uuid: "user@example.com")
+    monkeypatch.setattr("mcpgateway.auth._get_user_by_email_sync", get_user_by_email)
+    monkeypatch.setattr("mcpgateway.auth._get_email_by_id_sync", get_email_by_id)
     monkeypatch.setattr("mcpgateway.auth._check_token_revoked_sync", lambda _jti: False)
 
     payload = {"sub": uuid_sub, "jti": "test-jti", "token_use": "session"}
 
-    # Should resolve UUID and return None (success)
     result = await vc._enforce_revocation_and_active_user(payload)
     assert result is None
-    assert call_count[0] == 2  # Verify UUID resolution was attempted
+    get_email_by_id.assert_called_once_with(uuid_sub)
+    get_user_by_email.assert_called_once_with("user@example.com")
 
 
 @pytest.mark.asyncio

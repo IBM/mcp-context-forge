@@ -15339,6 +15339,27 @@ async def test_normalize_jwt_payload_with_scoped_permissions(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_normalize_jwt_payload_uuid_sub_resolves_to_email(monkeypatch):
+    """Stateful-session JWT normalization resolves UUID sub before setting email."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import _normalize_jwt_payload
+
+    user_id = "11111111-1111-1111-1111-111111111111"
+    is_user_admin = MagicMock(return_value=False)
+
+    monkeypatch.setattr("mcpgateway.auth._get_email_by_id_sync", MagicMock(return_value="resolved@example.com"))
+    monkeypatch.setattr("mcpgateway.auth.normalize_token_teams", lambda payload: [])
+
+    with patch("mcpgateway.utils.admin_check.is_user_admin", is_user_admin):
+        result = await _normalize_jwt_payload({"sub": user_id, "token_use": "api", "teams": []})
+
+    assert result["email"] == "resolved@example.com"
+    assert result["is_authenticated"] is True
+    is_user_admin.assert_called_once()
+    assert is_user_admin.call_args.args[1] == "resolved@example.com"
+
+
+@pytest.mark.asyncio
 async def test_set_logging_level_denied_by_token_scope(monkeypatch):
     """Token without servers.use should be denied set_logging_level."""
     # First-Party
@@ -15383,6 +15404,98 @@ async def test_auth_jwt_scoped_permissions_in_user_context(monkeypatch):
     assert ctx["scoped_permissions"] == ["tools.read", "tools.execute", "servers.use"]
     assert ctx["email"] == "user@example.com"
     assert ctx["auth_method"] == "jwt"
+
+
+@pytest.mark.asyncio
+async def test_auth_jwt_uuid_sub_uses_signed_user_email_without_uuid_lookup(monkeypatch):
+    """UUID-sub API tokens should use signed user.email and avoid UUID DB fallback."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import _StreamableHttpAuthHandler, user_context_var
+
+    user_id = "11111111-1111-1111-1111-111111111111"
+    jwt_payload = {
+        "sub": user_id,
+        "user": {"email": "owner@example.com", "is_admin": False},
+        "is_admin": False,
+        "token_use": "api",
+        "teams": [],
+    }
+    user_record = MagicMock()
+    user_record.is_active = True
+    user_record.is_admin = False
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.verify_credentials", AsyncMock(return_value=jwt_payload))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.auth_cache_enabled", False)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.auth_cache_batch_queries", False)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.require_user_in_db", True)
+    monkeypatch.setattr("mcpgateway.auth._get_email_by_id_sync", MagicMock(side_effect=AssertionError("UUID resolver should not be called")))
+    get_user_by_email = MagicMock(return_value=user_record)
+    monkeypatch.setattr("mcpgateway.auth._get_user_by_email_sync", get_user_by_email)
+    monkeypatch.setattr("mcpgateway.auth._check_token_revoked_sync", MagicMock(return_value=False))
+    monkeypatch.setattr("mcpgateway.auth.resolve_trace_team_name", AsyncMock(return_value=None))
+
+    handler = _StreamableHttpAuthHandler(scope={"type": "http", "headers": []}, receive=AsyncMock(), send=AsyncMock())
+
+    assert await handler._auth_jwt(token="fake-token") is True
+    ctx = user_context_var.get()
+    assert ctx["email"] == "owner@example.com"
+    get_user_by_email.assert_called_once_with("owner@example.com")
+
+
+@pytest.mark.asyncio
+async def test_auth_jwt_uuid_sub_resolves_to_email_when_metadata_missing(monkeypatch):
+    """UUID-sub API tokens without email metadata resolve UUID to email before DB checks."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import _StreamableHttpAuthHandler, user_context_var
+
+    user_id = "11111111-1111-1111-1111-111111111111"
+    jwt_payload = {"sub": user_id, "is_admin": False, "token_use": "api", "teams": []}
+    user_record = MagicMock()
+    user_record.is_active = True
+    user_record.is_admin = False
+
+    get_email_by_id = MagicMock(return_value="resolved@example.com")
+    get_user_by_email = MagicMock(return_value=user_record)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.verify_credentials", AsyncMock(return_value=jwt_payload))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.auth_cache_enabled", False)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.auth_cache_batch_queries", False)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.require_user_in_db", True)
+    monkeypatch.setattr("mcpgateway.auth._get_email_by_id_sync", get_email_by_id)
+    monkeypatch.setattr("mcpgateway.auth._get_user_by_email_sync", get_user_by_email)
+    monkeypatch.setattr("mcpgateway.auth._check_token_revoked_sync", MagicMock(return_value=False))
+    monkeypatch.setattr("mcpgateway.auth.resolve_trace_team_name", AsyncMock(return_value=None))
+
+    handler = _StreamableHttpAuthHandler(scope={"type": "http", "headers": []}, receive=AsyncMock(), send=AsyncMock())
+
+    assert await handler._auth_jwt(token="fake-token") is True
+    assert user_context_var.get()["email"] == "resolved@example.com"
+    get_email_by_id.assert_called_once_with(user_id)
+    get_user_by_email.assert_called_once_with("resolved@example.com")
+
+
+@pytest.mark.asyncio
+async def test_auth_jwt_unknown_uuid_sub_rejected_when_user_required(monkeypatch):
+    """Unknown UUID subjects are rejected in strict DB mode instead of becoming user_email."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import _StreamableHttpAuthHandler
+
+    user_id = "11111111-1111-1111-1111-111111111111"
+    jwt_payload = {"sub": user_id, "is_admin": False, "token_use": "api", "teams": []}
+    send_error = AsyncMock(return_value=False)
+    get_user_by_email = MagicMock()
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.verify_credentials", AsyncMock(return_value=jwt_payload))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.require_user_in_db", True)
+    monkeypatch.setattr("mcpgateway.auth._get_email_by_id_sync", MagicMock(return_value=None))
+    monkeypatch.setattr("mcpgateway.auth._get_user_by_email_sync", get_user_by_email)
+    monkeypatch.setattr(_StreamableHttpAuthHandler, "_send_error", send_error)
+
+    handler = _StreamableHttpAuthHandler(scope={"type": "http", "headers": []}, receive=AsyncMock(), send=AsyncMock())
+
+    assert await handler._auth_jwt(token="fake-token") is False
+    send_error.assert_awaited_once()
+    assert send_error.call_args.kwargs["detail"] == "User not found in database"
+    get_user_by_email.assert_not_called()
 
 
 @pytest.mark.asyncio

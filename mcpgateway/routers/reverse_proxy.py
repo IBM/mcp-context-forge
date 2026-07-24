@@ -24,6 +24,7 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.auth import get_current_user
+from mcpgateway.auth_context import get_jwt_user_email_from_payload
 from mcpgateway.config import settings
 from mcpgateway.db import get_db
 from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG, PermissionChecker
@@ -144,7 +145,7 @@ class ReverseProxyManager:
                 "last_activity": session.last_activity.isoformat(),
                 "message_count": session.message_count,
                 "bytes_transferred": session.bytes_transferred,
-                "user": session.user if isinstance(session.user, str) else session.user.get("sub") if isinstance(session.user, dict) else None,
+                "user": _get_session_owner(session.user),
             }
             for session in self.sessions.values()
         ]
@@ -437,7 +438,7 @@ async def send_request_to_session(
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to send request")
 
 
-def _get_user_from_credentials(credentials: str | dict) -> tuple[str | None, bool]:
+def _get_user_from_credentials(credentials: str | dict[str, Any] | None) -> tuple[str | None, bool]:
     """Extract user and admin status from credentials.
 
     Args:
@@ -447,16 +448,27 @@ def _get_user_from_credentials(credentials: str | dict) -> tuple[str | None, boo
         Tuple of (username, is_admin)
     """
     if isinstance(credentials, dict):
-        user = credentials.get("sub") or credentials.get("email")
+        user = get_jwt_user_email_from_payload(credentials)
         # Check both top-level is_admin and nested user.is_admin (JWT tokens may nest it)
-        is_admin = credentials.get("is_admin", False) or credentials.get("user", {}).get("is_admin", False)
+        user_claim = credentials.get("user")
+        nested_is_admin = user_claim.get("is_admin", False) if isinstance(user_claim, dict) else False
+        is_admin = bool(credentials.get("is_admin", False) or nested_is_admin)
         return user, is_admin
     elif credentials and credentials != "anonymous":
         return credentials, False
     return None, False
 
 
-def _validate_session_ownership(session: ReverseProxySession, credentials: str | dict, action: str) -> None:
+def _get_session_owner(session_user: str | dict[str, Any] | None) -> str | None:
+    """Extract a comparable owner email from stored reverse-proxy session user data."""
+    if isinstance(session_user, str):
+        return session_user
+    if isinstance(session_user, dict):
+        return get_jwt_user_email_from_payload(session_user)
+    return None
+
+
+def _validate_session_ownership(session: ReverseProxySession, credentials: str | dict[str, Any] | None, action: str) -> None:
     """Validate that the requesting user owns the session or is admin.
 
     Args:
@@ -478,7 +490,7 @@ def _validate_session_ownership(session: ReverseProxySession, credentials: str |
         return
 
     # Session owner can access their own session
-    session_owner = session.user if isinstance(session.user, str) else session.user.get("sub") if isinstance(session.user, dict) else None
+    session_owner = _get_session_owner(session.user)
     if requesting_user and session_owner and requesting_user == session_owner:
         return
 

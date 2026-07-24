@@ -235,6 +235,17 @@ class TestReverseProxyManager:
         assert len(result) == 1
         assert result[0]["user"] == "user123"
 
+    def test_list_sessions_with_uuid_dict_user_uses_signed_email(self, reverse_proxy_manager, mock_websocket):
+        """Dict-shaped session users should expose the signed email, not UUID subject."""
+        user_dict = {"sub": "11111111-1111-1111-1111-111111111111", "user": {"email": "owner@test.com"}}
+        session = ReverseProxySession("test-id", mock_websocket, user_dict)
+        reverse_proxy_manager.sessions["test-id"] = session
+
+        result = reverse_proxy_manager.list_sessions()
+
+        assert len(result) == 1
+        assert result[0]["user"] == "owner@test.com"
+
     def test_list_sessions_with_none_user(self, reverse_proxy_manager, mock_websocket):
         """Test listing sessions with None user."""
         session = ReverseProxySession("test-id", mock_websocket, None)
@@ -661,6 +672,32 @@ class TestHTTPEndpoints:
             # Clean up
             manager.sessions.clear()
 
+    def test_list_sessions_uuid_sub_with_nested_email_sees_email_owned_session(self, mock_websocket):
+        """UUID-sub API-token payloads should match sessions owned by signed email."""
+        # Third-Party
+        from fastapi import FastAPI
+
+        uuid_credentials = {"sub": "11111111-1111-1111-1111-111111111111", "user": {"email": "owner@test.com"}}
+        app = FastAPI()
+        app.dependency_overrides[require_auth] = lambda: uuid_credentials
+        app.include_router(router)
+        client = TestClient(app)
+
+        session = ReverseProxySession("test-session", mock_websocket, "owner@test.com")
+        session.server_info = {"name": "test-server"}
+        manager.sessions["test-session"] = session
+
+        try:
+            response = client.get("/reverse-proxy/sessions")
+
+            assert response.status_code == 200
+            data = response.json()
+            assert len(data["sessions"]) == 1
+            assert data["total"] == 1
+            assert data["sessions"][0]["session_id"] == "test-session"
+        finally:
+            manager.sessions.clear()
+
     def test_disconnect_session_success(self, client, mock_auth, mock_websocket):
         """Test disconnecting an existing session."""
         # Add a test session
@@ -763,10 +800,10 @@ class TestHTTPEndpoints:
             async def _run():
                 response = await sse_endpoint("test-session", dummy_request, credentials="test-user")  # pragma: allowlist secret
                 agen = response.body_iterator
-                first = await agen.__anext__()
-                second = await agen.__anext__()
+                first = await anext(agen)
+                second = await anext(agen)
                 with pytest.raises(StopAsyncIteration):
-                    await agen.__anext__()
+                    await anext(agen)
                 return first, second
 
             with patch("mcpgateway.routers.reverse_proxy.asyncio.sleep", new=AsyncMock()):
@@ -794,9 +831,9 @@ class TestHTTPEndpoints:
             async def _run():
                 response = await sse_endpoint("test-session", DummyRequest(), credentials="test-user")  # pragma: allowlist secret
                 agen = response.body_iterator
-                first = await agen.__anext__()
+                first = await anext(agen)
                 with pytest.raises(asyncio.CancelledError):
-                    await agen.__anext__()
+                    await anext(agen)
                 return first
 
             with patch("mcpgateway.routers.reverse_proxy.asyncio.sleep", new=AsyncMock(side_effect=asyncio.CancelledError())):
@@ -954,6 +991,20 @@ class TestGetUserFromCredentials:
         assert user == "user@test.com"
         assert is_admin is False
 
+    def test_dict_with_uuid_sub_prefers_nested_email(self):
+        from mcpgateway.routers.reverse_proxy import _get_user_from_credentials
+
+        user, is_admin = _get_user_from_credentials({"sub": "11111111-1111-1111-1111-111111111111", "user": {"email": "user@test.com"}})
+        assert user == "user@test.com"
+        assert is_admin is False
+
+    def test_dict_with_uuid_sub_without_email_does_not_return_uuid(self):
+        from mcpgateway.routers.reverse_proxy import _get_user_from_credentials
+
+        user, is_admin = _get_user_from_credentials({"sub": "11111111-1111-1111-1111-111111111111"})
+        assert user is None
+        assert is_admin is False
+
     def test_dict_nested_admin(self):
         from mcpgateway.routers.reverse_proxy import _get_user_from_credentials
 
@@ -1019,6 +1070,13 @@ class TestValidateSessionOwnership:
 
         session = ReverseProxySession("test-id", mock_websocket, "owner@test.com")
         _validate_session_ownership(session, {"sub": "owner@test.com"}, "test")
+
+    def test_owner_match_allows_uuid_sub_with_nested_email_credentials(self, mock_websocket):
+        from mcpgateway.routers.reverse_proxy import _validate_session_ownership
+
+        session = ReverseProxySession("test-id", mock_websocket, "owner@test.com")
+        credentials = {"sub": "11111111-1111-1111-1111-111111111111", "user": {"email": "owner@test.com"}}
+        _validate_session_ownership(session, credentials, "test")
 
     def test_owner_match_dict_user(self, mock_websocket):
         from mcpgateway.routers.reverse_proxy import _validate_session_ownership
