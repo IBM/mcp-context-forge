@@ -99,6 +99,74 @@ teardown() {
     [ "$status" -eq 0 ]
 }
 
+@test "scope: fallback prefers a local master branch over the whole-tree scan" {
+    # No main/develop/origin refs, but a local master exists: the scope must
+    # be the commit diff against master, NOT a whole-tree scan. The tracked
+    # modification is inside both scopes; the untracked scratch file is only
+    # visible to a whole-tree scan — so the finding count (2 = app.py only,
+    # not 4) and the absent warning pin the scope precisely.
+    teardown_repo
+    REPO=$(mktemp -d)
+    git init -q -b master "$REPO"
+    cd "$REPO" || return 1
+    git config user.email "bats@example.invalid"
+    git config user.name "bats"
+    printf 'x = 1\n' > app.py
+    write_seed_baseline
+    commit_all "initial"
+    write_fake_secret app.py
+    write_fake_secret scratch.py
+
+    run_driver
+    [ "$status" -eq 1 ]
+    [[ "$output" != *"scanning the whole tree"* ]]
+    [[ "$output" == *"2 unaudited/live finding(s)"* ]]
+}
+
+@test "scope: fallback uses origin/HEAD when no local main/master/develop exists" {
+    # Only a feature branch locally, but the remote's default is recorded:
+    # refs/remotes/origin/HEAD -> origin/master must be the diff base. Same
+    # tracked-vs-untracked trick to pin the scope to the commit diff.
+    teardown_repo
+    REPO=$(mktemp -d)
+    git init -q -b feature "$REPO"
+    cd "$REPO" || return 1
+    git config user.email "bats@example.invalid"
+    git config user.name "bats"
+    printf 'x = 1\n' > app.py
+    write_seed_baseline
+    commit_all "initial"
+    git update-ref refs/remotes/origin/master HEAD
+    git symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/master
+    write_fake_secret app.py
+    write_fake_secret scratch.py
+
+    run_driver
+    [ "$status" -eq 1 ]
+    [[ "$output" != *"scanning the whole tree"* ]]
+    [[ "$output" == *"2 unaudited/live finding(s)"* ]]
+}
+
+@test "scope: fallback with neither main nor origin/main warns and scans the whole tree" {
+    # Checkouts with only a PR ref (e.g. CI) have no usable diff base; the
+    # fallback chain must degrade to a whole-tree scan instead of dying on
+    # `fatal: ambiguous argument`.
+    teardown_repo
+    REPO=$(mktemp -d)
+    git init -q -b feature "$REPO"
+    cd "$REPO" || return 1
+    git config user.email "bats@example.invalid"
+    git config user.name "bats"
+    printf 'x = 1\n' > app.py
+    write_seed_baseline
+    commit_all "initial"
+
+    run_driver
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"no main/master/develop branch or origin HEAD ref; scanning the whole tree"* ]]
+    [[ "$output" == *"regenerated as merge result"* ]]
+}
+
 # --- Exit gate ---------------------------------------------------------------
 
 @test "gate: unaudited finding in scope fails the run" {

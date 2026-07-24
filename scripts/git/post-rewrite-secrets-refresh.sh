@@ -45,17 +45,45 @@ do_scan() {
     # this hook cannot read the rebase state dir: git removes it before
     # post-rewrite runs, and by then the working tree IS the final tree, so
     # the plain upstream diff the Makefile uses is both available and exact.
-    # Fresh clones may lack a local main; fall back to origin/main.
+    # An explicit GIT_DIFF_TARGET is used as-is; otherwise probe for the
+    # repository's root/default branch: local main/master/develop, then the
+    # remote's default (origin/HEAD), then origin/main/master/develop. When
+    # nothing matches (e.g. CI fetching only the PR ref) leave
+    # DETECT_SECRETS_PATH empty: detect-secrets with no path arguments scans
+    # the whole tree.
     # --diff-filter=d excludes deleted files.
     # Word-splitting of $DETECT_SECRETS_PATH is intentional (mirrors the Makefile).
     if [ -z "${GIT_DIFF_TARGET:-}" ]; then
-        if git rev-parse --verify -q main >/dev/null 2>&1; then
-            GIT_DIFF_TARGET=main
-        else
-            GIT_DIFF_TARGET=origin/main
+        GIT_DIFF_TARGET=
+        for b in main master develop; do
+            if git rev-parse --verify -q "$b" >/dev/null 2>&1; then
+                GIT_DIFF_TARGET=$b
+                break
+            fi
+        done
+        if [ -z "$GIT_DIFF_TARGET" ]; then
+            origin_head=$(git symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null) || origin_head=
+            if [ -n "$origin_head" ] && git rev-parse --verify -q "$origin_head" >/dev/null 2>&1; then
+                GIT_DIFF_TARGET=$origin_head
+            fi
+        fi
+        if [ -z "$GIT_DIFF_TARGET" ]; then
+            for b in origin/main origin/master origin/develop; do
+                if git rev-parse --verify -q "$b" >/dev/null 2>&1; then
+                    GIT_DIFF_TARGET=$b
+                    break
+                fi
+            done
+        fi
+        if [ -z "$GIT_DIFF_TARGET" ]; then
+            echo "⚠️  no main/master/develop branch or origin HEAD ref; scanning the whole tree" >&2
         fi
     fi
-    DETECT_SECRETS_PATH=${DETECT_SECRETS_PATH:-$(git diff "$GIT_DIFF_TARGET" --name-only --diff-filter=d)} || return
+    if [ -n "${GIT_DIFF_TARGET:-}" ]; then
+        DETECT_SECRETS_PATH=${DETECT_SECRETS_PATH:-$(git diff "$GIT_DIFF_TARGET" --name-only --diff-filter=d)} || return
+    else
+        DETECT_SECRETS_PATH=${DETECT_SECRETS_PATH:-}
+    fi
 
     cp .secrets.baseline "$tmpfile" || return
     # shellcheck disable=SC2086

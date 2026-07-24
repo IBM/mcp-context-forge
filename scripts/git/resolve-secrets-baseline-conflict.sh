@@ -65,27 +65,118 @@ if [ -n "$state_dir" ]; then
 elif [ -f "$git_dir/MERGE_HEAD" ]; then
     DETECT_SECRETS_PATH=$(git diff "$(git merge-base HEAD MERGE_HEAD)" --name-only --diff-filter=d)
 else
-    # Fresh clones may lack a local main; fall back to origin/main. An
-    # explicit DETECT_SECRETS_PATH (e.g. from the Makefile wrapper) wins.
+    # An explicit DETECT_SECRETS_PATH (e.g. from the Makefile wrapper) wins;
+    # an explicit GIT_DIFF_TARGET is used as-is and fails loudly if bogus.
+    # Otherwise probe for the repository's root/default branch: local
+    # main/master/develop, then the remote's default (origin/HEAD), then
+    # origin/main/master/develop. When nothing matches (e.g. CI fetching
+    # only the PR ref) leave DETECT_SECRETS_PATH empty: detect-secrets with
+    # no path arguments scans the whole tree.
     if [ -z "${GIT_DIFF_TARGET:-}" ]; then
-        if git rev-parse --verify -q main >/dev/null 2>&1; then
-            GIT_DIFF_TARGET=main
-        else
-            GIT_DIFF_TARGET=origin/main
+        GIT_DIFF_TARGET=
+        for b in main master develop; do
+            if git rev-parse --verify -q "$b" >/dev/null 2>&1; then
+                GIT_DIFF_TARGET=$b
+                break
+            fi
+        done
+        if [ -z "$GIT_DIFF_TARGET" ]; then
+            origin_head=$(git symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null) || origin_head=
+            if [ -n "$origin_head" ] && git rev-parse --verify -q "$origin_head" >/dev/null 2>&1; then
+                GIT_DIFF_TARGET=$origin_head
+            fi
+        fi
+        if [ -z "$GIT_DIFF_TARGET" ]; then
+            for b in origin/main origin/master origin/develop; do
+                if git rev-parse --verify -q "$b" >/dev/null 2>&1; then
+                    GIT_DIFF_TARGET=$b
+                    break
+                fi
+            done
+        fi
+        if [ -z "$GIT_DIFF_TARGET" ]; then
+            echo "⚠️  no main/master/develop branch or origin HEAD ref; scanning the whole tree" >&2
         fi
     fi
-    DETECT_SECRETS_PATH=${DETECT_SECRETS_PATH:-$(git diff "$GIT_DIFF_TARGET" --name-only --diff-filter=d)}
+    if [ -n "${GIT_DIFF_TARGET:-}" ]; then
+        DETECT_SECRETS_PATH=${DETECT_SECRETS_PATH:-$(git diff "$GIT_DIFF_TARGET" --name-only --diff-filter=d)}
+    else
+        DETECT_SECRETS_PATH=${DETECT_SECRETS_PATH:-}
+    fi
 fi
 
 echo "🔀 Regenerating .secrets.baseline via detect-secrets-scan..." >&2
 
 tmpfile=$(mktemp)
 outfile=$(mktemp)
-trap 'rm -f "$tmpfile" "$outfile"' EXIT
+materialized=()
+trap 'rm -f "$tmpfile" "$outfile" ${materialized[@]+"${materialized[@]}"}' EXIT
+
+# Materialize scan-scope files that are missing from the worktree. During a
+# rebase, git invokes this driver for a conflicting pick BEFORE the pick's
+# added files are checked out (with the ort strategy the index is not
+# updated until the merge finishes either), so a pick that both adds a file
+# and touches .secrets.baseline would otherwise be scanned without the new
+# file: its entries would be missing from the merged output, and verdicts
+# the pick recorded would be reported lost (or silently dropped). Restore
+# each missing file from the index first, then from the commit being picked
+# (REBASE_HEAD where git has written it, else the current pick recorded in
+# the rebase state dir's `done` file), creating parent directories as
+# needed; skip with a warning when neither source has it. The materialized
+# files are removed again by the EXIT trap; now-empty parent directories
+# are harmless.
+pick_ref=
+for p in $DETECT_SECRETS_PATH; do
+    [ -e "$p" ] && continue
+    src=
+    if git cat-file -e ":$p" 2>/dev/null; then
+        src=":$p"
+    else
+        if [ -z "$pick_ref" ]; then
+            pick_ref=$(git rev-parse -q --verify REBASE_HEAD 2>/dev/null) || pick_ref=
+            if [ -z "$pick_ref" ] && [ -n "$state_dir" ] && [ -f "$git_dir/$state_dir/done" ]; then
+                pick_ref=$(awk '$1 == "pick" || $1 == "edit" { sha = $2 } END { print sha }' "$git_dir/$state_dir/done")
+            fi
+        fi
+        if [ -n "$pick_ref" ] && git cat-file -e "$pick_ref:$p" 2>/dev/null; then
+            src="$pick_ref:$p"
+        fi
+    fi
+    if [ -n "$src" ]; then
+        mkdir -p "$(dirname "$p")"
+        git show "$src" > "$p"
+        materialized+=("$p")
+    else
+        echo "⚠️  scan-scope file '$p' not found in worktree, index, or pick commit; scanning without it" >&2
+    fi
+done
 
 # While the driver runs, the worktree .secrets.baseline holds the "ours"
 # (stage 2) content — clean JSON, safe to seed the --update scan from.
+base_file=${3:-}
 cp .secrets.baseline "$tmpfile"
+# Enrich the seed with %B's results (the incoming side). detect-secrets
+# --update carries is_secret/is_verified verdicts across for secrets it
+# re-detects at the same hash, so verdicts recorded on the incoming side —
+# e.g. a pick that adds a file together with its audited baseline entry —
+# survive the rescan instead of resurfacing as unaudited findings (which
+# the gate below would stop on). Entries found only in %B whose secrets are
+# not re-detected are dropped by --update, so the %B fail-closed check
+# further down still fires when a verdict genuinely cannot be carried. On a
+# same-hash collision %B's entry wins: downgrading an incoming verdict must
+# trip the gate, never pass silently.
+if [ -n "$base_file" ] && [ "$base_file" != "-" ] && [ -s "$base_file" ] && jq -e . "$base_file" >/dev/null 2>&1; then
+    jq -s '
+        (.[0].results // {}) as $ours |
+        (.[1].results // {}) as $theirs |
+        .[0] | .results = (
+            (($ours | keys) + ($theirs | keys) | unique) as $keys |
+            reduce $keys[] as $k ({};
+                . + {($k): ((($ours[$k] // []) + ($theirs[$k] // []))
+                    | group_by(.hashed_secret) | map(.[-1]))}))' \
+        "$tmpfile" "$base_file" > "$outfile"
+    mv "$outfile" "$tmpfile"
+fi
 # shellcheck disable=SC2086
 "$UV_BIN" tool run --from "$DETECT_SECRETS_SPEC" detect-secrets scan \
     --update "$tmpfile" \
@@ -150,7 +241,7 @@ echo "📊 baseline entries vs %A: +${added} / -${dropped}" >&2
 # Fail-closed verdict preservation: no entry that %B audited as a real
 # secret may vanish from the merged output. Identity is hashed_secret
 # under the same file key — line numbers shift across rebases.
-base_file=${3:-}
+# (base_file was set above, when seeding the scan.)
 if [ -n "$base_file" ] && [ "$base_file" != "-" ] && [ -s "$base_file" ]; then
     if jq -e . "$base_file" >/dev/null 2>&1; then
         lost=$(jq -r --slurpfile merged "$output" '

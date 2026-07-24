@@ -7574,17 +7574,25 @@ DETECT_SECRETS_FILES_EXCLUDE := '(?x)( \
 GIT_DIFF_TARGET ?= main
 
 # --diff-filter=d EXCLUDES delete files
-DETECT_SECRETS_PATH ?= $(shell git diff $(GIT_DIFF_TARGET) --name-only --diff-filter=d)
+# 2>/dev/null silences the parse-time git error in checkouts with no main
+# ref (e.g. CI fetching only the PR ref); the driver recomputes the file
+# list itself in that case (see the fallback chain in
+# scripts/git/resolve-secrets-baseline-conflict.sh).
+DETECT_SECRETS_PATH ?= $(shell git diff $(GIT_DIFF_TARGET) --name-only --diff-filter=d 2>/dev/null)
 
 # The scan/merge/gate pipeline lives in ONE place: the .secrets.baseline git
 # merge driver (scripts/git/resolve-secrets-baseline-conflict.sh), documented
 # there including the line-by-line jq merge walkthrough. This target is a thin
 # wrapper: it execs the driver with placeholder %O/%B (`-`), .secrets.baseline
-# as both %A (output) and %P, and passes the knobs through explicitly.
+# as both %A (output) and %P. GIT_DIFF_TARGET / DETECT_SECRETS_PATH are
+# forwarded only when the user set them (command line or environment); with
+# the file defaults above ($(origin) is 'file') nothing is forwarded, so the
+# driver's own fallback chain (root-branch probe -> whole-tree scan) can
+# engage.
 .PHONY: detect-secrets-scan
 detect-secrets-scan: uv                      ## 🔍  detect-secrets scan for secrets in repository
 	@echo "🔍 Running detect-secrets scan..."
-	GIT_DIFF_TARGET="$(GIT_DIFF_TARGET)" DETECT_SECRETS_PATH="$(DETECT_SECRETS_PATH)" scripts/git/resolve-secrets-baseline-conflict.sh - .secrets.baseline - .secrets.baseline
+	$(if $(filter file default undefined,$(origin GIT_DIFF_TARGET)),,GIT_DIFF_TARGET="$(GIT_DIFF_TARGET)") $(if $(filter file default undefined,$(origin DETECT_SECRETS_PATH)),,DETECT_SECRETS_PATH="$(DETECT_SECRETS_PATH)") scripts/git/resolve-secrets-baseline-conflict.sh - .secrets.baseline - .secrets.baseline
 
 # Verbatim copy of main's detect-secrets-scan (whole-repo scan, updates
 # .secrets.baseline in place, report-only). This branch rescopes
