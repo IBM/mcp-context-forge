@@ -5588,9 +5588,9 @@ async def admin_search_teams(
         # pagination (an allowed team must not be dropped for sorting past the
         # first page) and so an explicit scope no longer surfaces the personal team.
         raw_token_teams = user.get("token_teams")
-        scoped_team_ids: Optional[list[str]] = None
+        admin_scoped_team_ids: Optional[list[str]] = None
         if raw_token_teams is not None:
-            scoped_team_ids = [team["id"] if isinstance(team, dict) else team for team in raw_token_teams]
+            admin_scoped_team_ids = [team["id"] if isinstance(team, dict) else team for team in raw_token_teams]
         result = await team_service.list_teams(
             page=1,
             per_page=limit,
@@ -5599,7 +5599,7 @@ async def admin_search_teams(
             include_personal=False,
             search_query=search_query,
             personal_owner_email=user_email,
-            team_ids=scoped_team_ids,
+            team_ids=admin_scoped_team_ids,
         )
         # Result is dict {data, pagination...} (since page provided)
         teams = result["data"]
