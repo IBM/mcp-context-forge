@@ -49,7 +49,7 @@ class TestPluginHeaderSecurityRefiltering:
 
         result = a2a_service._refilter_plugin_headers(
             plugin_headers=plugin_returned,
-            agent=mock_agent_with_whitelist,
+            passthrough_headers=mock_agent_with_whitelist.passthrough_headers,
             feature_flag_enabled=False,
         )
 
@@ -66,7 +66,7 @@ class TestPluginHeaderSecurityRefiltering:
 
         result = a2a_service._refilter_plugin_headers(
             plugin_headers=plugin_returned,
-            agent=mock_agent_with_whitelist,
+            passthrough_headers=mock_agent_with_whitelist.passthrough_headers,
             feature_flag_enabled=False,
         )
 
@@ -86,7 +86,7 @@ class TestPluginHeaderSecurityRefiltering:
 
         result = a2a_service._refilter_plugin_headers(
             plugin_headers=plugin_returned,
-            agent=mock_agent_with_whitelist,
+            passthrough_headers=mock_agent_with_whitelist.passthrough_headers,
             feature_flag_enabled=False,
         )
 
@@ -111,7 +111,7 @@ class TestPluginHeaderSecurityRefiltering:
 
         result = a2a_service._refilter_plugin_headers(
             plugin_headers=plugin_returned,
-            agent=mock_agent_with_whitelist,
+            passthrough_headers=mock_agent_with_whitelist.passthrough_headers,
             feature_flag_enabled=False,
         )
 
@@ -132,7 +132,7 @@ class TestPluginHeaderSecurityRefiltering:
 
         result = a2a_service._refilter_plugin_headers(
             plugin_headers=plugin_returned,
-            agent=mock_agent_with_whitelist,
+            passthrough_headers=mock_agent_with_whitelist.passthrough_headers,
             feature_flag_enabled=True,  # Flag ENABLED
         )
 
@@ -151,7 +151,7 @@ class TestPluginHeaderSecurityRefiltering:
 
         result = a2a_service._refilter_plugin_headers(
             plugin_headers=plugin_returned,
-            agent=mock_agent_with_whitelist,
+            passthrough_headers=mock_agent_with_whitelist.passthrough_headers,
             feature_flag_enabled=False,  # Flag DISABLED
         )
 
@@ -172,7 +172,7 @@ class TestPluginHeaderSecurityRefiltering:
 
         result = a2a_service._refilter_plugin_headers(
             plugin_headers=plugin_returned,
-            agent=agent,
+            passthrough_headers=agent.passthrough_headers,
             feature_flag_enabled=False,
         )
 
@@ -190,7 +190,7 @@ class TestPluginHeaderSecurityRefiltering:
 
         result = a2a_service._refilter_plugin_headers(
             plugin_headers=plugin_returned,
-            agent=mock_agent_with_whitelist,
+            passthrough_headers=mock_agent_with_whitelist.passthrough_headers,
             feature_flag_enabled=False,
         )
 
@@ -210,7 +210,7 @@ class TestPluginHeaderSecurityRefiltering:
 
         result = a2a_service._refilter_plugin_headers(
             plugin_headers=plugin_returned,
-            agent=agent,
+            passthrough_headers=agent.passthrough_headers,
             feature_flag_enabled=False,
         )
 
@@ -229,7 +229,7 @@ class TestPluginHeaderSecurityRefiltering:
 
         result = a2a_service._refilter_plugin_headers(
             plugin_headers=plugin_returned,
-            agent=mock_agent_with_whitelist,
+            passthrough_headers=mock_agent_with_whitelist.passthrough_headers,
             feature_flag_enabled=False,  # Flag disabled
         )
 
@@ -249,7 +249,7 @@ class TestPluginHeaderSecurityRefiltering:
 
         result = a2a_service._refilter_plugin_headers(
             plugin_headers=plugin_returned,
-            agent=mock_agent_with_whitelist,
+            passthrough_headers=mock_agent_with_whitelist.passthrough_headers,
             feature_flag_enabled=True,  # Flag enabled
         )
 
@@ -263,7 +263,7 @@ class TestPluginHeaderSecurityRefiltering:
 
         result = a2a_service._refilter_plugin_headers(
             plugin_headers=plugin_returned,
-            agent=mock_agent_with_whitelist,
+            passthrough_headers=mock_agent_with_whitelist.passthrough_headers,
             feature_flag_enabled=False,
         )
 
@@ -281,7 +281,7 @@ class TestPluginHeaderSecurityRefiltering:
 
         result = a2a_service._refilter_plugin_headers(
             plugin_headers=plugin_returned,
-            agent=mock_agent_with_whitelist,
+            passthrough_headers=mock_agent_with_whitelist.passthrough_headers,
             feature_flag_enabled=False,  # Flag disabled
         )
 
@@ -301,7 +301,7 @@ class TestPluginHeaderSecurityRefiltering:
 
         result = a2a_service._refilter_plugin_headers(
             plugin_headers=plugin_returned,
-            agent=mock_agent_with_whitelist,
+            passthrough_headers=mock_agent_with_whitelist.passthrough_headers,
             feature_flag_enabled=True,  # Flag enabled
         )
 

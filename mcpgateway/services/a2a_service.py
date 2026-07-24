@@ -16,10 +16,18 @@ import base64
 import binascii
 from datetime import datetime, timezone
 import json
-from typing import Any, AsyncGenerator, Dict, List, Optional, Union
+from typing import Any, AsyncGenerator, Dict, List, Optional, TypedDict, Union
 from urllib.parse import urlparse
 
 # Third-Party
+from cpex.framework import (
+    AgentHookType,
+    AgentPostInvokePayload,
+    AgentPreInvokePayload,
+    GlobalContext,
+    HttpHeaderPayload,
+    PluginViolationError,
+)
 import httpx
 from pydantic import ValidationError
 from sqlalchemy import and_, delete, desc, or_, select, update
@@ -35,16 +43,19 @@ from mcpgateway.db import EmailTeamMember as DbEmailTeamMember
 from mcpgateway.db import fresh_db_session, get_for_update
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.observability import create_span, set_span_attribute, set_span_error
-from mcpgateway.plugins.utils import build_request_extensions, record_plugin_metrics
-from mcpgateway.schemas import A2AAgentAggregateMetrics, A2AAgentCreate, A2AAgentMetrics, A2AAgentRead, A2AAgentUpdate
+from mcpgateway.plugins.gateway_plugin_manager import make_context_id
+from mcpgateway.schemas import A2A_AGENT_METADATA, A2AAgentAggregateMetrics, A2AAgentCreate, A2AAgentMetrics, A2AAgentRead, A2AAgentUpdate, PydanticA2AAgent
 from mcpgateway.services.a2a_protocol import prepare_a2a_invocation
 from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.encryption_service import protect_oauth_config_for_storage
+from mcpgateway.services.http_client_service import get_http_client
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.services.metrics_buffer_service import get_metrics_buffer_service
 from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batches, pause_rollup_during_purge
-from mcpgateway.services.observability_service import current_trace_id, ObservabilityService
+from mcpgateway.services.observability_service import ObservabilityService
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
+from mcpgateway.utils import uaid as uaid_utils
 from mcpgateway.utils.admin_check import is_user_admin
 from mcpgateway.utils.correlation_id import get_correlation_id
 from mcpgateway.utils.create_slug import slugify
@@ -53,6 +64,8 @@ from mcpgateway.utils.pagination import unified_paginate
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
 from mcpgateway.utils.trace_redaction import is_input_capture_enabled, is_output_capture_enabled, serialize_trace_payload
+from mcpgateway.utils.uaid import is_uaid
+from mcpgateway.utils.url_auth import sanitize_exception_message
 
 # Cache import (lazy to avoid circular dependencies)
 _REGISTRY_CACHE = None
@@ -290,6 +303,34 @@ async def _publish_a2a_invalidation(message_type: str, **kwargs: Any) -> None:
         await redis.publish("mcpgw:a2a:invalidate", payload)
     except Exception as e:
         logger.warning("Failed to publish A2A cache invalidation: %s", e)
+
+
+class AgentData(TypedDict):
+    """Type-safe contract for agent data passed between _acquire_and_validate_agent,
+    invoke_agent, and stream_agent_response.
+
+    This TypedDict ensures all three methods agree on the expected keys and types,
+    catching missing-key errors at type-check time rather than runtime.
+    """
+
+    agent_id: str
+    agent_name: str
+    agent_endpoint_url: str
+    agent_type: str
+    agent_protocol_version: str
+    agent_auth_type: Optional[str]
+    agent_auth_value: Optional[str]
+    agent_auth_query_params: Optional[Dict[str, str]]
+    agent_uaid: Optional[str]
+    agent_uaid_native_id: Optional[str]
+    agent_team_id: Optional[str]
+    agent_visibility: str
+    agent_enabled: bool
+    agent_tags: List[str]
+    agent_oauth_config: Optional[Dict[str, Any]]
+    agent_passthrough_headers: Optional[List[str]]
+    plugin_headers: Dict[str, str]
+    downstream_headers: Dict[str, str]
 
 
 class A2AAgentError(Exception):
@@ -1955,7 +1996,7 @@ class A2AAgentService(BaseService):
     def _refilter_plugin_headers(
         self,
         plugin_headers: Dict[str, str],
-        agent: DbA2AAgent,
+        passthrough_headers: Optional[List[str]],
         feature_flag_enabled: bool,
     ) -> Dict[str, str]:
         """Re-apply header filtering to plugin-returned headers.
@@ -1969,18 +2010,18 @@ class A2AAgentService(BaseService):
 
         Args:
             plugin_headers: Headers returned by plugin in modified_payload.headers
-            agent: Target A2A agent with passthrough_headers whitelist
+            passthrough_headers: Agent's passthrough_headers whitelist (None or empty list means block all)
             feature_flag_enabled: Value of ENABLE_SENSITIVE_HEADER_PASSTHROUGH flag
 
         Returns:
             Filtered and whitelisted headers safe for downstream forwarding
         """
         # If no whitelist configured, block all headers (matches _prepare_header_flows)
-        if not agent.passthrough_headers:
+        if not passthrough_headers:
             return {}
 
         # Layer 1: Apply agent's passthrough whitelist
-        whitelist_lower = {h.lower() for h in agent.passthrough_headers}
+        whitelist_lower = {h.lower() for h in passthrough_headers}
         whitelisted = {k: v for k, v in plugin_headers.items() if k.lower() in whitelist_lower}
 
         # Layer 2: Strip sensitive headers if feature flag is disabled
@@ -1988,6 +2029,402 @@ class A2AAgentService(BaseService):
         if not feature_flag_enabled:
             return _filter_sensitive_headers(whitelisted)
         return whitelisted
+
+    async def _prepare_invocation_context(
+        self,
+        agent_data: Dict[str, Any],
+        parameters: Dict[str, Any],
+        interaction_type: str,
+        user_id: Optional[str],  # pylint: disable=unused-argument
+        user_email: Optional[str],
+        content_type: Optional[str],
+        correlation_id: str,
+        streaming: bool = False,
+    ) -> Dict[str, Any]:
+        """Prepare A2A invocation context with plugin hooks and header filtering.
+
+        This helper consolidates Phase 2 logic shared between invoke_agent() and
+        stream_agent_response():
+        - Call prepare_a2a_invocation()
+        - Plugin manager setup
+        - GlobalContext building
+        - PRE_INVOKE hook execution
+        - Parameter and header modification from plugins
+        - Header refiltering for security
+
+        Args:
+            agent_data: Dictionary from _acquire_and_validate_agent()
+            parameters: Agent invocation parameters (may be modified by plugin)
+            interaction_type: Type of interaction
+            user_id: User identifier
+            user_email: User email
+            content_type: Request content type
+            correlation_id: Request correlation ID
+            streaming: Whether this is a streaming request (affects Accept header)
+
+        Returns:
+            Dictionary containing:
+            {
+                'prepared': PreparedA2AInvocation,
+                'parameters': Dict[str, Any],  # Possibly modified by plugin
+                'plugin_manager': Optional[PluginManager],
+                'global_context': GlobalContext,
+                'context_table': Dict[str, Any],
+            }
+
+        Raises:
+            A2AAgentError: If invocation preparation fails
+            PluginViolationError: If plugin RBAC check fails
+        """
+        agent_id = agent_data["agent_id"]
+        agent_name = agent_data["agent_name"]
+        agent_endpoint_url = agent_data["agent_endpoint_url"]
+        agent_type = agent_data["agent_type"]
+        agent_protocol_version = agent_data["agent_protocol_version"]
+        agent_auth_type = agent_data["agent_auth_type"]
+        agent_auth_value = agent_data["agent_auth_value"]
+        agent_auth_query_params = agent_data["agent_auth_query_params"]
+        agent_team_id = agent_data["agent_team_id"]
+        agent_visibility = agent_data["agent_visibility"]
+        agent_enabled = agent_data["agent_enabled"]
+        agent_tags = agent_data["agent_tags"]
+        agent_oauth_config = agent_data["agent_oauth_config"]
+        agent_passthrough_headers = agent_data["agent_passthrough_headers"]
+        downstream_headers = agent_data["downstream_headers"]
+        plugin_headers = agent_data["plugin_headers"]
+
+        # ═══════════════════════════════════════════════════════════════════════════
+        # PHASE 2a: Prepare A2A invocation (authentication, headers, request body)
+        # ═══════════════════════════════════════════════════════════════════════════
+        try:
+            prepared = prepare_a2a_invocation(
+                agent_type=agent_type,
+                endpoint_url=agent_endpoint_url,
+                protocol_version=agent_protocol_version,
+                parameters=parameters,
+                interaction_type=interaction_type,
+                auth_type=agent_auth_type,
+                auth_value=agent_auth_value,
+                auth_query_params=agent_auth_query_params,
+                base_headers=downstream_headers,
+                correlation_id=correlation_id,
+                streaming=streaming,
+            )
+        except Exception as e:
+            if agent_auth_type in ("basic", "bearer", "authheaders") and agent_auth_value:
+                raise A2AAgentError(f"Failed to decrypt authentication for agent '{agent_name}': {e}") from e
+            if agent_auth_type == "query_param" and agent_auth_query_params:
+                raise A2AAgentError(f"Failed to decrypt query_param authentication for agent '{agent_name}': {e}") from e
+            raise A2AAgentError(f"Failed to prepare A2A invocation for agent '{agent_name}': {e}") from e
+
+        # ═══════════════════════════════════════════════════════════════════════════
+        # PHASE 2b: Plugin context setup and PRE_INVOKE hook
+        # ═══════════════════════════════════════════════════════════════════════════
+        agent_context_id = make_context_id(str(agent_team_id), agent_name) if agent_team_id else agent_id
+        plugin_manager = await self._get_plugin_manager(agent_context_id)
+        context_table: Dict[str, Any] = {}
+
+        # Build GlobalContext for plugin hooks
+        global_context = GlobalContext(
+            request_id=correlation_id or "",
+            server_id=agent_context_id if agent_team_id else agent_id,
+            tenant_id=agent_team_id if agent_team_id and isinstance(agent_team_id, str) else None,
+            user=user_email,
+        )
+
+        if plugin_manager:
+            try:
+                agent_metadata = PydanticA2AAgent(
+                    id=agent_id,
+                    name=agent_name,
+                    team_id=agent_team_id,
+                    visibility=agent_visibility,
+                    enabled=agent_enabled,
+                    tags=agent_tags or [],
+                    oauth_config=agent_oauth_config,
+                    passthrough_headers=agent_passthrough_headers,
+                    auth_type=agent_auth_type,
+                )
+                if content_type:  # pragma: no cover
+                    agent_metadata.content_type = content_type  # pragma: no cover
+                global_context.metadata[A2A_AGENT_METADATA] = agent_metadata  # pragma: no cover
+            except Exception as e:
+                logger.warning("Failed to build A2A agent metadata for plugins: %s", e)
+
+        # Fire pre-invoke hook — can modify parameters, headers, and agent metadata
+        if plugin_manager and plugin_manager.has_hooks_for(AgentHookType.AGENT_PRE_INVOKE):
+            try:
+                pre_result, context_table = await plugin_manager.invoke_hook(
+                    AgentHookType.AGENT_PRE_INVOKE,
+                    payload=AgentPreInvokePayload(
+                        agent_id=agent_id,
+                        messages=[{"role": "user", "content": parameters}] if parameters else [],
+                        headers=HttpHeaderPayload(root=plugin_headers),
+                        parameters=parameters if isinstance(parameters, dict) else {},
+                    ),
+                    global_context=global_context,
+                    local_contexts=context_table,
+                    violations_as_exceptions=True,
+                )
+                if pre_result.modified_payload:
+                    if pre_result.modified_payload.parameters is not None:
+                        parameters = pre_result.modified_payload.parameters
+                    if pre_result.modified_payload.headers is not None:
+                        # Security: Re-filter plugin-returned headers to prevent malicious
+                        # plugins from injecting sensitive headers into downstream requests
+                        # (PR #5183 review fix)
+                        plugin_returned = pre_result.modified_payload.headers.model_dump()
+                        safe_headers = self._refilter_plugin_headers(
+                            plugin_headers=plugin_returned,
+                            passthrough_headers=agent_passthrough_headers,
+                            feature_flag_enabled=settings.enable_sensitive_header_passthrough,
+                        )
+                        prepared.headers.update(safe_headers)
+
+                        # Log security-blocked headers for forensic awareness
+                        if plugin_returned.keys() - safe_headers.keys():
+                            removed = sorted(plugin_returned.keys() - safe_headers.keys())
+                            logger.warning(
+                                "Plugin attempted to set headers blocked by security policy: %s (agent=%s, flag=%s)",
+                                removed,
+                                agent_id,
+                                settings.enable_sensitive_header_passthrough,
+                            )
+            except PluginViolationError as e:
+                # Plugin RBAC violations must be wrapped in A2AAgentError for consistent error handling
+                logger.error("Plugin RBAC violation for A2A agent %s: %s", agent_id, e)
+                raise A2AAgentError(f"Plugin RBAC violation: {e}") from e
+            except Exception as e:
+                logger.error("Pre-invoke plugin error for A2A agent %s: %s", agent_id, e)
+                raise A2AAgentError(f"Pre-invoke plugin error: {e}") from e
+
+        return {
+            "prepared": prepared,
+            "parameters": parameters,
+            "plugin_manager": plugin_manager,
+            "global_context": global_context,
+            "context_table": context_table,
+        }
+
+    async def _finalize_invocation(
+        self,
+        agent_id: str,
+        agent_name: str,
+        interaction_type: str,
+        start_time: datetime,
+        success: bool,
+        error_message: Optional[str],
+        response: Optional[Any],
+        plugin_manager: Optional[Any],
+        global_context: Any,
+        context_table: Dict[str, Any],
+        span: Optional[Any],
+        chunks_streamed: Optional[int] = None,
+    ) -> None:
+        """Finalize A2A invocation: plugins, metrics, timestamps, spans.
+
+        This helper consolidates Phase 4 finalization logic shared between
+        invoke_agent() and stream_agent_response():
+        - POST_INVOKE plugin hook execution
+        - Metrics recording via buffered service
+        - Last interaction timestamp update
+        - Span attribute finalization
+
+        Args:
+            agent_id: Agent UUID
+            agent_name: Agent name (for logging)
+            interaction_type: Type of interaction
+            start_time: Request start time (for duration calculation)
+            success: Whether invocation succeeded
+            error_message: Error message if failed
+            response: Response content (string or dict)
+            plugin_manager: Plugin manager instance
+            global_context: GlobalContext for plugin hooks
+            context_table: Plugin context table
+            span: Observability span (optional)
+            chunks_streamed: Number of chunks streamed (streaming only)
+
+        Note:
+            This method does not raise exceptions - all errors are logged
+            and swallowed to ensure finalization failures don't break the
+            request after a successful invocation.
+        """
+        # ═══════════════════════════════════════════════════════════════════════════
+        # POST_INVOKE plugin hook (non-blocking, errors do not fail request)
+        # ═══════════════════════════════════════════════════════════════════════════
+        if plugin_manager and plugin_manager.has_hooks_for(AgentHookType.AGENT_POST_INVOKE):
+            try:
+                post_result, _ = await plugin_manager.invoke_hook(
+                    AgentHookType.AGENT_POST_INVOKE,
+                    payload=AgentPostInvokePayload(
+                        agent_id=agent_id,
+                        messages=[{"role": "assistant", "content": response}] if response and success else [],
+                        tool_calls=None,
+                    ),
+                    global_context=global_context,
+                    local_contexts=context_table,
+                    violations_as_exceptions=False,
+                )
+                if post_result and post_result.retry_delay_ms > 0:
+                    logger.info("Plugin requested retry for A2A agent %s after %sms", agent_id, post_result.retry_delay_ms)
+            except Exception as e:
+                logger.warning("Post-invoke plugin error for A2A agent %s: %s", agent_id, e)
+
+        # ═══════════════════════════════════════════════════════════════════════════
+        # Record metrics via buffered service (batches writes for performance)
+        # ═══════════════════════════════════════════════════════════════════════════
+        end_time = datetime.now(timezone.utc)
+        response_time = (end_time - start_time).total_seconds()
+
+        try:
+            metrics_buffer = get_metrics_buffer_service()
+            metrics_buffer.record_a2a_agent_metric_with_duration(
+                a2a_agent_id=agent_id,
+                response_time=response_time,
+                success=success,
+                interaction_type=interaction_type,
+                error_message=error_message,
+            )
+        except Exception as metrics_error:
+            logger.warning("Failed to record A2A metrics for '%s': %s", agent_name, metrics_error)
+
+        # ═══════════════════════════════════════════════════════════════════════════
+        # Update last interaction timestamp (quick separate write)
+        # ═══════════════════════════════════════════════════════════════════════════
+        try:
+            with fresh_db_session() as ts_db:
+                db_agent = get_for_update(ts_db, DbA2AAgent, agent_id)
+                if db_agent and getattr(db_agent, "enabled", False):
+                    db_agent.last_interaction = end_time
+                    ts_db.commit()
+        except Exception as ts_error:
+            logger.warning("Failed to update last_interaction for '%s': %s", agent_name, ts_error)
+
+        # ═══════════════════════════════════════════════════════════════════════════
+        # Span finalization (set success, duration, and optional streaming metadata)
+        # ═══════════════════════════════════════════════════════════════════════════
+        if span:
+            set_span_attribute(span, "success", success)
+            set_span_attribute(span, "duration.ms", response_time * 1000)
+            if chunks_streamed is not None:
+                set_span_attribute(span, "chunks_streamed", chunks_streamed)
+
+    async def _acquire_and_validate_agent(
+        self,
+        db: Session,
+        identifier: str,
+        is_name_lookup: bool,
+        user_email: Optional[str],
+        token_teams: Optional[List[str]],
+        request_headers: Optional[Dict[str, str]],
+    ) -> AgentData:
+        """Acquire agent lock, validate access, and extract all agent data.
+
+        This helper consolidates Phase 1 logic shared between invoke_agent() and
+        stream_agent_response():
+        - Agent lookup (by name or ID)
+        - Row locking via get_for_update()
+        - Access/visibility checks (returns 404 on denial to avoid leaking existence)
+        - Enabled check
+        - Field extraction to local dict
+        - Header flow preparation
+        - DB connection release
+
+        Args:
+            db: Database session (will be closed by this method)
+            identifier: Agent name or ID (UUID/UAID)
+            is_name_lookup: True if identifier is a name, False if ID
+            user_email: Email of requesting user
+            token_teams: Team scoping from JWT
+            request_headers: Inbound request headers for plugin context
+
+        Returns:
+            Dictionary containing all extracted agent fields and prepared headers:
+            {
+                'agent_id': str,
+                'agent_name': str,
+                'agent_endpoint_url': str,
+                'agent_type': str,
+                'agent_protocol_version': str,
+                'agent_auth_type': str,
+                'agent_auth_value': Optional[str],
+                'agent_auth_query_params': Optional[Dict],
+                'agent_uaid': Optional[str],
+                'agent_uaid_native_id': Optional[str],
+                'agent_team_id': Optional[str],
+                'agent_visibility': str,
+                'agent_enabled': bool,
+                'agent_tags': List[str],
+                'agent_oauth_config': Optional[Dict],
+                'agent_passthrough_headers': Optional[List[str]],
+                'plugin_headers': Dict[str, str],
+                'downstream_headers': Dict[str, str],
+            }
+
+        Raises:
+            A2AAgentNotFoundError: Agent not found or access denied (404-style)
+            A2AAgentError: Agent disabled
+        """
+        # Lookup the agent id, then lock the row by id using get_for_update
+        if is_name_lookup:
+            agent_row = db.execute(select(DbA2AAgent.id).where(DbA2AAgent.name == identifier)).scalar_one_or_none()  # pylint: disable=comparison-with-callable
+            if not agent_row:
+                raise A2AAgentNotFoundError(f"A2A Agent not found with name: {identifier}")
+
+            agent = get_for_update(db, DbA2AAgent, agent_row)
+            if not agent:
+                raise A2AAgentNotFoundError(f"A2A Agent not found with name: {identifier}")
+        else:
+            agent_row = identifier
+            agent = get_for_update(db, DbA2AAgent, agent_row)
+            if not agent:
+                raise A2AAgentNotFoundError(f"A2A Agent not found: {identifier}")
+
+        agent_name = agent.name
+
+        # SECURITY: Check visibility/team access WHILE ROW IS LOCKED
+        # Return 404 (not 403) to avoid leaking existence of private agents
+        if not await self._check_agent_access(db, agent, user_email, token_teams):
+            if is_name_lookup:
+                raise A2AAgentNotFoundError(f"A2A Agent not found with name: {identifier}")
+            raise A2AAgentNotFoundError(f"A2A Agent not found: {identifier}")
+
+        if not agent.enabled:
+            raise A2AAgentError(f"A2A Agent '{agent_name}' is disabled")
+
+        # Extract all needed data to local variables before releasing DB connection
+        agent_data: AgentData = {
+            "agent_id": agent.id,
+            "agent_name": agent.name,
+            "agent_endpoint_url": agent.endpoint_url,
+            "agent_type": agent.agent_type,
+            "agent_protocol_version": agent.protocol_version,
+            "agent_auth_type": agent.auth_type,
+            "agent_auth_value": agent.auth_value,
+            "agent_auth_query_params": agent.auth_query_params,
+            "agent_uaid": getattr(agent, "uaid", None),
+            "agent_uaid_native_id": getattr(agent, "uaid_native_id", None),
+            "agent_team_id": agent.team_id,
+            "agent_visibility": agent.visibility,
+            "agent_enabled": agent.enabled,
+            "agent_tags": getattr(agent, "tags", []),
+            "agent_oauth_config": getattr(agent, "oauth_config", None),
+            "agent_passthrough_headers": getattr(agent, "passthrough_headers", None),
+            "plugin_headers": {},  # Populated after header flow split
+            "downstream_headers": {},  # Populated after header flow split
+        }
+
+        # CRITICAL: Release DB connection BEFORE validation/HTTP calls
+        db.commit()
+        db.close()
+
+        # SECURITY: Split header flows for plugin hooks vs downstream agent
+        # Plugin hooks ALWAYS receive sanitized headers (prevents credential leaks)
+        # Downstream headers respect the ENABLE_SENSITIVE_HEADER_PASSTHROUGH flag
+        # Populate header flows (modifies agent_data in-place)
+        agent_data["plugin_headers"], agent_data["downstream_headers"] = self._prepare_header_flows(request_headers, agent_data["agent_passthrough_headers"])
+
+        return agent_data
 
     async def invoke_agent(
         self,
@@ -2065,9 +2502,6 @@ class A2AAgentService(BaseService):
         # ═══════════════════════════════════════════════════════════════════════════
         # UAID HANDLING: Check if identifier is UAID format
         # ═══════════════════════════════════════════════════════════════════════════
-        # First-Party
-        from mcpgateway.utils.uaid import is_uaid  # pylint: disable=import-outside-toplevel
-
         if is_uaid(identifier):
             # Try local lookup first (by id or uaid column)
             agent_row = db.execute(select(DbA2AAgent.id).where((DbA2AAgent.id == identifier) | (DbA2AAgent.uaid == identifier))).scalar_one_or_none()
@@ -2093,66 +2527,19 @@ class A2AAgentService(BaseService):
             is_name_lookup = False
 
         # ═══════════════════════════════════════════════════════════════════════════
-        # PHASE 1: Acquire a short row lock to read `enabled` + `auth_value`,
-        # then release the lock before performing the external HTTP call.
-        # This avoids TOCTOU for the critical checks while not holding DB
-        # connections during the potentially slow HTTP request.
+        # PHASE 1: Acquire agent, validate access, extract data, release DB
         # ═══════════════════════════════════════════════════════════════════════════
+        agent_data = await self._acquire_and_validate_agent(db, identifier, is_name_lookup, user_email, token_teams, request_headers)
 
-        # Lookup the agent id, then lock the row by id using get_for_update
-        if is_name_lookup:
-            agent_row = db.execute(select(DbA2AAgent.id).where(DbA2AAgent.name == identifier)).scalar_one_or_none()  # pylint: disable=comparison-with-callable
-            if not agent_row:
-                raise A2AAgentNotFoundError(f"A2A Agent not found with name: {identifier}")
-
-            # DB transaction lifecycle: get_for_update() acquires row lock within
-            # request-scoped session (Depends(get_db)). Lock released on commit/rollback
-            # at request completion. No explicit commit needed (read-only).
-            agent = get_for_update(db, DbA2AAgent, agent_row)
-            if not agent:
-                raise A2AAgentNotFoundError(f"A2A Agent not found with name: {identifier}")
-        else:
-            agent_row = identifier
-            agent = get_for_update(db, DbA2AAgent, agent_row)
-            if not agent:
-                raise A2AAgentNotFoundError(f"A2A Agent not found: {identifier}")
-
-        # Use agent name for logging throughout
-        agent_name = agent.name
-
-        # ═══════════════════════════════════════════════════════════════════════════
-        # SECURITY: Check visibility/team access WHILE ROW IS LOCKED
-        # Return 404 (not 403) to avoid leaking existence of private agents
-        # ═══════════════════════════════════════════════════════════════════════════
-        if not await self._check_agent_access(db, agent, user_email, token_teams):
-            if is_name_lookup:
-                raise A2AAgentNotFoundError(f"A2A Agent not found with name: {identifier}")
-            raise A2AAgentNotFoundError(f"A2A Agent not found: {identifier}")
-
-        if not agent.enabled:
-            raise A2AAgentError(f"A2A Agent '{agent_name}' is disabled")
-
-        # Extract all needed data to local variables before releasing DB connection
-        agent_id = agent.id
-        agent_endpoint_url = agent.endpoint_url
-        agent_type = agent.agent_type
-        agent_protocol_version = agent.protocol_version
-        agent_auth_type = agent.auth_type
-        agent_auth_value = agent.auth_value
-        agent_auth_query_params = agent.auth_query_params
-        agent_uaid = getattr(agent, "uaid", None)
-        agent_uaid_native_id = getattr(agent, "uaid_native_id", None)
-        agent_team_id = agent.team_id
-        agent_visibility = agent.visibility
-        agent_enabled = agent.enabled
-        agent_tags = getattr(agent, "tags", [])
-        agent_oauth_config = getattr(agent, "oauth_config", None)
-        agent_passthrough_headers = getattr(agent, "passthrough_headers", None)
-
-        # SECURITY: Split header flows for plugin hooks vs downstream agent
-        # Plugin hooks ALWAYS receive sanitized headers (prevents credential leaks)
-        # Downstream headers respect the ENABLE_SENSITIVE_HEADER_PASSTHROUGH flag
-        plugin_headers, downstream_headers = self._prepare_header_flows(request_headers, agent_passthrough_headers)
+        # Unpack agent data for use in this method
+        agent_id = agent_data["agent_id"]
+        agent_name = agent_data["agent_name"]
+        agent_endpoint_url = agent_data["agent_endpoint_url"]
+        agent_type = agent_data["agent_type"]
+        agent_protocol_version = agent_data["agent_protocol_version"]
+        agent_uaid = agent_data["agent_uaid"]
+        agent_uaid_native_id = agent_data["agent_uaid_native_id"]
+        downstream_headers = agent_data["downstream_headers"]
 
         # SECURITY AUDIT: Record metrics for downstream header forwarding (Issue #3621 Phase 1)
         # Counter metric enables alerting/aggregation without log volume explosion.
@@ -2195,7 +2582,11 @@ class A2AAgentService(BaseService):
                 if agent_uaid_native_id:
                     _validate_uaid_endpoint_domain(agent_uaid_native_id, operation_context="invocation")
                 # Always validate the actual HTTP target (endpoint_url) for UAID agents
-                # to prevent endpoint_url divergence attacks
+                # to prevent endpoint_url divergence attacks.
+                # IMPORTANT: We validate agent_endpoint_url (from DB) instead of prepared.endpoint_url
+                # because auth injection happens later in prepare_a2a_invocation (line 2624).
+                # Validating before auth injection ensures we check the actual target domain,
+                # not a domain with auth credentials already embedded.
                 if agent_endpoint_url:
                     _validate_uaid_endpoint_domain(agent_endpoint_url, operation_context="invocation")
             except ValueError as e:
@@ -2203,11 +2594,9 @@ class A2AAgentService(BaseService):
                 raise A2AAgentError(f"Agent '{agent_name}' invocation blocked: {e}") from e
 
         # ═══════════════════════════════════════════════════════════════════════════
-        # CRITICAL: Release DB connection back to pool BEFORE making HTTP calls
-        # This prevents connection pool exhaustion during slow upstream requests.
+        # DB connection already released by _acquire_and_validate_agent
+        # (it calls db.commit() and db.close() before returning agent_data)
         # ═══════════════════════════════════════════════════════════════════════════
-        db.commit()  # End read-only transaction cleanly (commit not rollback to avoid inflating rollback stats)
-        db.close()
 
         start_time = datetime.now(timezone.utc)
         success = False
@@ -2215,127 +2604,26 @@ class A2AAgentService(BaseService):
         response = None
 
         # ═══════════════════════════════════════════════════════════════════════════
-        # PHASE 2: Make HTTP call (no DB connection held)
+        # PHASE 2: Prepare invocation context (plugins, headers, auth)
         # ═══════════════════════════════════════════════════════════════════════════
-
-        # First-Party
-        from mcpgateway.utils.url_auth import sanitize_exception_message  # pylint: disable=import-outside-toplevel
-
         correlation_id = get_correlation_id()
-        try:
-            prepared = prepare_a2a_invocation(
-                agent_type=agent_type,
-                endpoint_url=agent_endpoint_url,
-                protocol_version=agent_protocol_version,
-                parameters=parameters,
-                interaction_type=interaction_type,
-                auth_type=agent_auth_type,
-                auth_value=agent_auth_value,
-                auth_query_params=agent_auth_query_params,
-                base_headers=downstream_headers,
-                correlation_id=correlation_id,
-            )
-        except Exception as e:
-            if agent_auth_type in ("basic", "bearer", "authheaders") and agent_auth_value:
-                raise A2AAgentError(f"Failed to decrypt authentication for agent '{agent_name}': {e}") from e
-            if agent_auth_type == "query_param" and agent_auth_query_params:
-                raise A2AAgentError(f"Failed to decrypt query_param authentication for agent '{agent_name}': {e}") from e
-            raise A2AAgentError(f"Failed to prepare A2A invocation for agent '{agent_name}': {e}") from e
-
-        # ═══════════════════════════════════════════════════════════════════════════
-        # PHASE 2b: Plugin context setup and PRE_INVOKE hook
-        # ═══════════════════════════════════════════════════════════════════════════
-        # Third-Party
-        from cpex.framework import (
-            AgentHookType,
-            AgentPreInvokePayload,
-            GlobalContext,
-            HttpHeaderPayload,
-            PluginViolationError,
+        invocation_ctx = await self._prepare_invocation_context(
+            agent_data=agent_data,
+            parameters=parameters,
+            interaction_type=interaction_type,
+            user_id=user_id,
+            user_email=user_email,
+            content_type=content_type,
+            correlation_id=correlation_id,
+            streaming=False,
         )
 
-        # First-Party
-        from mcpgateway.plugins.gateway_plugin_manager import make_context_id  # pylint: disable=import-outside-toplevel
-        from mcpgateway.schemas import A2A_AGENT_METADATA, PydanticA2AAgent  # pylint: disable=import-outside-toplevel
-
-        agent_context_id = make_context_id(str(agent_team_id), agent_name) if agent_team_id else agent_id
-        plugin_manager = await self._get_plugin_manager(agent_context_id)
-        context_table: Dict[str, Any] = {}
-
-        # Build GlobalContext for plugin hooks
-        global_context = GlobalContext(
-            request_id=correlation_id or "",
-            server_id=agent_context_id if agent_team_id else agent_id,
-            tenant_id=agent_team_id if agent_team_id and isinstance(agent_team_id, str) else None,
-            user=user_email,
-        )
-
-        if plugin_manager:
-            try:
-                agent_metadata = PydanticA2AAgent(
-                    id=agent_id,
-                    name=agent_name,
-                    team_id=agent_team_id,
-                    visibility=agent_visibility,
-                    enabled=agent_enabled,
-                    tags=agent_tags or [],
-                    oauth_config=agent_oauth_config,
-                    passthrough_headers=agent_passthrough_headers,
-                    auth_type=agent_auth_type,
-                )
-                if content_type:
-                    agent_metadata.content_type = content_type
-                global_context.metadata[A2A_AGENT_METADATA] = agent_metadata
-            except Exception as e:
-                logger.warning("Failed to build A2A agent metadata for plugins: %s", e)
-
-        # Fire pre-invoke hook — can modify parameters, headers, and agent metadata
-        if plugin_manager and plugin_manager.has_hooks_for(AgentHookType.AGENT_PRE_INVOKE):
-            try:
-                pre_result, context_table = await plugin_manager.invoke_hook(
-                    AgentHookType.AGENT_PRE_INVOKE,
-                    payload=AgentPreInvokePayload(
-                        agent_id=agent_id,
-                        messages=[{"role": "user", "content": parameters}] if parameters else [],
-                        headers=HttpHeaderPayload(root=plugin_headers),
-                        parameters=parameters if isinstance(parameters, dict) else {},
-                    ),
-                    global_context=global_context,
-                    local_contexts=context_table,
-                    violations_as_exceptions=True,
-                    extensions=build_request_extensions(),
-                )
-                record_plugin_metrics(current_trace_id.get(), pre_result.metadata)
-                if pre_result.modified_payload:
-                    if pre_result.modified_payload.parameters is not None:
-                        parameters = pre_result.modified_payload.parameters
-                    if pre_result.modified_payload.headers is not None:
-                        # Security: Re-filter plugin-returned headers to prevent malicious
-                        # plugins from injecting sensitive headers into downstream requests
-                        # (PR #5183 review fix)
-                        plugin_returned = pre_result.modified_payload.headers.model_dump()
-                        safe_headers = self._refilter_plugin_headers(
-                            plugin_headers=plugin_returned,
-                            agent=agent,
-                            feature_flag_enabled=settings.enable_sensitive_header_passthrough,
-                        )
-                        prepared.headers.update(safe_headers)
-
-                        # Log security-blocked headers for forensic awareness
-                        if plugin_returned.keys() - safe_headers.keys():
-                            removed = sorted(plugin_returned.keys() - safe_headers.keys())
-                            logger.warning(
-                                "Plugin attempted to set headers blocked by security policy: %s (agent=%s, flag=%s)",
-                                removed,
-                                agent.name,
-                                settings.enable_sensitive_header_passthrough,
-                            )
-            except PluginViolationError as e:
-                logger.error("Plugin RBAC violation for A2A agent %s: %s", agent_id, e)
-                raise A2AAgentError(f"Plugin RBAC violation: {e}") from e
-            except Exception as e:
-                logger.error("Pre-invoke plugin error for A2A agent %s: %s", agent_id, e)
-                raise A2AAgentError(f"Pre-invoke plugin error: {e}") from e
+        # Unpack invocation context
+        prepared = invocation_ctx["prepared"]
+        parameters = invocation_ctx["parameters"]  # May have been modified by plugin
+        plugin_manager = invocation_ctx["plugin_manager"]
+        global_context = invocation_ctx["global_context"]
+        context_table = invocation_ctx["context_table"]
 
         span_attributes = {
             "a2a.agent.name": agent_name,
@@ -2368,9 +2656,6 @@ class A2AAgentService(BaseService):
         #     allowlist, and that path self-loops without bound.  The
         #     header is a ContextForge-internal marker and is safe for
         #     third-party agents to receive (they ignore it).
-        # First-Party
-        from mcpgateway.utils import uaid as uaid_utils  # pylint: disable=import-outside-toplevel
-
         uaid_utils.stamp_hop(prepared.headers, hop_count)
 
         with create_span("a2a.invoke", span_attributes) as span:
@@ -2397,7 +2682,7 @@ class A2AAgentService(BaseService):
 
                 # Make HTTP request to the agent endpoint using shared HTTP client
                 # First-Party
-                from mcpgateway.services.http_client_service import get_http_client  # pylint: disable=import-outside-toplevel
+                from mcpgateway.services.http_client_service import get_http_client  # pylint: disable=import-outside-toplevel,reimported,redefined-outer-name
 
                 client = await get_http_client()
                 http_response = await client.post(prepared.endpoint_url, json=prepared.request_data, headers=prepared.headers)
@@ -2505,71 +2790,513 @@ class A2AAgentService(BaseService):
 
             finally:
                 # ═══════════════════════════════════════════════════════════════════════════
-                # PHASE 3: Post-invoke plugin hook (non-blocking, errors do not fail request)
+                # PHASE 4: Finalization (plugins, metrics, timestamps, spans)
                 # ═══════════════════════════════════════════════════════════════════════════
-                if plugin_manager and plugin_manager.has_hooks_for(AgentHookType.AGENT_POST_INVOKE):
-                    try:
-                        # Third-Party
-                        from cpex.framework import AgentPostInvokePayload  # pylint: disable=import-outside-toplevel
-
-                        post_result, _ = await plugin_manager.invoke_hook(
-                            AgentHookType.AGENT_POST_INVOKE,
-                            payload=AgentPostInvokePayload(
-                                agent_id=agent_id,
-                                messages=[{"role": "assistant", "content": response}] if response and success else [],
-                                tool_calls=None,
-                            ),
-                            global_context=global_context,
-                            local_contexts=context_table,
-                            violations_as_exceptions=False,
-                            extensions=build_request_extensions(),
-                        )
-                        record_plugin_metrics(current_trace_id.get(), post_result.metadata if post_result else None)
-                        if post_result and post_result.retry_delay_ms > 0:
-                            logger.info(
-                                "Plugin requested retry for A2A agent %s after %sms",
-                                agent_id,
-                                post_result.retry_delay_ms,
-                            )
-                    except Exception as e:
-                        logger.warning("Post-invoke plugin error for A2A agent %s: %s", agent_id, e)
-
-                # ═══════════════════════════════════════════════════════════════════════════
-                # PHASE 4: Record metrics via buffered service (batches writes for performance)
-                # ═══════════════════════════════════════════════════════════════════════════
-                end_time = datetime.now(timezone.utc)
-                response_time = (end_time - start_time).total_seconds()
-
-                try:
-                    # First-Party
-                    from mcpgateway.services.metrics_buffer_service import get_metrics_buffer_service  # pylint: disable=import-outside-toplevel
-
-                    metrics_buffer = get_metrics_buffer_service()
-                    metrics_buffer.record_a2a_agent_metric_with_duration(
-                        a2a_agent_id=agent_id,
-                        response_time=response_time,
-                        success=success,
-                        interaction_type=interaction_type,
-                        error_message=error_message,
-                    )
-                except Exception as metrics_error:
-                    logger.warning("Failed to record A2A metrics for '%s': %s", agent_name, metrics_error)
-
-                # Update last interaction timestamp (quick separate write)
-                try:
-                    with fresh_db_session() as ts_db:
-                        # Reacquire short lock and re-check enabled before writing
-                        db_agent = get_for_update(ts_db, DbA2AAgent, agent_id)
-                        if db_agent and getattr(db_agent, "enabled", False):
-                            db_agent.last_interaction = end_time
-                            ts_db.commit()
-                except Exception as ts_error:
-                    logger.warning("Failed to update last_interaction for '%s': %s", agent_name, ts_error)
-                if span:
-                    set_span_attribute(span, "success", success)
-                    set_span_attribute(span, "duration.ms", response_time * 1000)
+                await self._finalize_invocation(
+                    agent_id=agent_id,
+                    agent_name=agent_name,
+                    interaction_type=interaction_type,
+                    start_time=start_time,
+                    success=success,
+                    error_message=error_message,
+                    response=response,
+                    plugin_manager=plugin_manager,
+                    global_context=global_context,
+                    context_table=context_table,
+                    span=span,
+                )
 
         return response or {"error": error_message}
+
+    @staticmethod
+    def _format_sse_error(message: str) -> str:
+        """Format an error message as an SSE event.
+
+        SSE Stream Termination Convention:
+        -----------------------------------
+        ContextForge uses the ERROR-ONLY termination pattern for SSE streams:
+
+        1. Success path: Stream ends naturally when the generator completes (no sentinel)
+           - Client detects end-of-stream when the HTTP connection closes
+           - Final event is the last data chunk from the downstream agent
+
+        2. Error path: Stream yields an error event then returns (explicit termination)
+           - Format: data: {"error": "message"}\\n\\n
+           - Generator returns immediately after yielding error
+           - HTTP connection closes after error event
+
+        No [DONE] sentinel is used. Clients should:
+        - Parse each SSE event as JSON
+        - Check for "error" key to detect errors
+        - Treat connection close as stream completion
+
+        This pattern follows the Server-Sent Events specification (W3C):
+        streams terminate when the connection closes, not via in-band signals.
+
+        Args:
+            message: Error message to format
+
+        Returns:
+            SSE-formatted error event string: "data: {\"error\": \"message\"}\\n\\n"
+        """
+        error_data = json.dumps({"error": message})
+        return f"data: {error_data}\n\n"
+
+    async def stream_agent_response(
+        self,
+        db: Session,
+        agent_name: str,
+        parameters: Dict[str, Any],
+        interaction_type: str = "query",
+        *,
+        agent_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        user_email: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,
+        hop_count: int = 0,
+        bearer_token: Optional[str] = None,  # pylint: disable=unused-argument
+        content_type: Optional[str] = None,
+        request_headers: Optional[Dict[str, str]] = None,
+    ) -> AsyncGenerator[str, None]:
+        """Stream A2A agent responses via SSE.
+
+        This method is a streaming version of invoke_agent that yields SSE events
+        as chunks arrive from the downstream agent. It follows the same security,
+        RBAC, and governance patterns as invoke_agent but streams the response
+        instead of buffering it.
+
+        Args:
+            db: Database session.
+            agent_name: Name of the agent to invoke.
+            parameters: Parameters for the interaction.
+            interaction_type: Type of interaction (default: "query").
+            agent_id: Optional agent ID (UUID or UAID format). If provided, takes precedence over agent_name.
+            user_id: Identifier of the user initiating the call.
+            user_email: Email of the user initiating the call.
+            token_teams: Teams from JWT token. None with user_email=None = anonymous admin bypass (public+team only);
+                         None with user_email set = DB admin check (public+team+own-private);
+                         [] = public-only; [...] = team-scoped access.
+            hop_count: Federation hop counter from the inbound `X-Contextforge-UAID-Hop` header.
+            bearer_token: Bearer token to forward for RBAC enforcement in cross-gateway calls.
+            content_type: Content-Type of the inbound request (for plugin context).
+            request_headers: Inbound request headers (for plugin context in PRE_INVOKE hook).
+
+        Yields:
+            SSE-formatted strings containing response chunks in the format: "data: <content>\\n\\n"
+
+            On error, yields an error event in the format: "data: {\"error\": \"message\"}\\n\\n"
+            and terminates the stream. Errors are communicated as SSE events rather than
+            raised exceptions (this is the correct pattern for streaming responses, as HTTP
+            status codes cannot be changed once the StreamingResponse starts).
+
+        Examples:
+            >>> # Basic streaming example (conceptual - requires async context)
+            >>> import asyncio
+            >>> from mcpgateway.services.a2a_service import A2AAgentService
+            >>>
+            >>> async def example_basic_stream():
+            ...     service = A2AAgentService()
+            ...     db = get_db_session()  # Your DB session
+            ...
+            ...     # Stream responses from an A2A agent
+            ...     async for chunk in service.stream_agent_response(
+            ...         db=db,
+            ...         agent_name="calculator-agent",
+            ...         parameters={"query": "5 + 10"},
+            ...         interaction_type="query",
+            ...         user_email="user@example.com",
+            ...         token_teams=None
+            ...     ):
+            ...         print(f"Received: {chunk}")
+            ...         # Output format: "data: {...}\\n\\n"
+            >>>
+            >>> # Example with team scoping
+            >>> async def example_team_scoped():
+            ...     service = A2AAgentService()
+            ...     db = get_db_session()
+            ...
+            ...     # Only agents visible to team "data-science" are accessible
+            ...     async for chunk in service.stream_agent_response(
+            ...         db=db,
+            ...         agent_name="private-agent",
+            ...         parameters={"task": "analyze"},
+            ...         user_email="user@example.com",
+            ...         token_teams=["data-science"]  # Team-scoped access
+            ...     ):
+            ...         # Process chunk
+            ...         if chunk.startswith("data: "):
+            ...             data = chunk.replace("data: ", "").replace("\\n\\n", "")
+            ...             print(f"Data: {data}")
+            >>>
+            >>> # Example error handling
+            >>> async def example_error_handling():
+            ...     service = A2AAgentService()
+            ...     db = get_db_session()
+            ...
+            ...     try:
+            ...         async for chunk in service.stream_agent_response(
+            ...             db=db,
+            ...             agent_name="nonexistent-agent",
+            ...             parameters={},
+            ...             user_email="user@example.com",
+            ...             token_teams=[]
+            ...         ):
+            ...             # Error returned as SSE event
+            ...             if "error" in chunk:
+            ...                 print(f"Agent error: {chunk}")
+            ...     except Exception as e:
+            ...         print(f"Exception: {e}")
+            >>>
+            >>> # Verify SSE format
+            >>> def verify_sse_format(chunk: str) -> bool:
+            ...     '''Verify a chunk follows SSE format.
+            ...
+            ...     >>> verify_sse_format("data: test\\n\\n")
+            ...     True
+            ...     >>> verify_sse_format("invalid")
+            ...     False
+            ...     '''
+            ...     return chunk.startswith("data: ") and chunk.endswith("\\n\\n")
+
+        Note:
+            - This method releases the database connection BEFORE streaming to prevent
+              pool exhaustion during long-running streams.
+            - Observability spans are created with name 'a2a.invoke.stream' and include
+              the attribute 'a2a.streaming: true' for filtering.
+            - Plugin PRE_INVOKE hooks fire before streaming starts, POST_INVOKE hooks
+              fire after completion with the accumulated response.
+            - Rust runtime delegation is not supported - returns explicit error if enabled.
+            - UAID cross-gateway streaming is not supported in Phase 1.
+        """
+        # Use agent_id if provided, otherwise use agent_name
+        identifier = agent_id if agent_id else agent_name
+        is_name_lookup = bool(not agent_id and agent_name)
+
+        # ═══════════════════════════════════════════════════════════════════════════
+        # FEDERATION LOOP GUARD (same as invoke_agent)
+        # ═══════════════════════════════════════════════════════════════════════════
+        max_hops = settings.uaid_max_federation_hops
+        if hop_count >= max_hops:
+            logger.warning(
+                "UAID federation hop limit reached: hop_count=%d >= max=%d for identifier %r",
+                hop_count,
+                max_hops,
+                identifier,
+            )
+            yield self._format_sse_error(f"A2A Agent not found (federation hop limit reached): {identifier}")
+            return
+
+        # ═══════════════════════════════════════════════════════════════════════════
+        # UAID HANDLING: Check if identifier is UAID format
+        # ═══════════════════════════════════════════════════════════════════════════
+        if is_uaid(identifier):
+            # Try local lookup first (by id or uaid column)
+            agent_row = db.execute(select(DbA2AAgent.id).where((DbA2AAgent.id == identifier) | (DbA2AAgent.uaid == identifier))).scalar_one_or_none()
+
+            if not agent_row:
+                # UAID cross-gateway routing not supported for streaming yet
+                # (would require streaming through remote gateway)
+                yield self._format_sse_error(f"Streaming not supported for cross-gateway UAID agents: {identifier}")
+                return
+
+            # Found locally - continue with normal invocation
+            identifier = agent_row  # Use the actual ID for lookup
+            is_name_lookup = False
+
+        # ═══════════════════════════════════════════════════════════════════════════
+        # PHASE 1: Acquire agent, validate access, extract data, release DB
+        # Convert exceptions to SSE error events for streaming response
+        # ═══════════════════════════════════════════════════════════════════════════
+        try:
+            agent_data = await self._acquire_and_validate_agent(db, identifier, is_name_lookup, user_email, token_teams, request_headers)
+        except (A2AAgentNotFoundError, A2AAgentError) as e:
+            yield self._format_sse_error(str(e))
+            return
+
+        # Unpack agent data for use in this method
+        agent_id = agent_data["agent_id"]
+        agent_name = agent_data["agent_name"]
+        agent_endpoint_url = agent_data["agent_endpoint_url"]
+        agent_type = agent_data["agent_type"]
+        agent_protocol_version = agent_data["agent_protocol_version"]
+        agent_uaid = agent_data["agent_uaid"]
+        agent_uaid_native_id = agent_data["agent_uaid_native_id"]
+        downstream_headers = agent_data["downstream_headers"]
+
+        # ═══════════════════════════════════════════════════════════════════════════
+        # SECURITY: Validate UAID endpoint domain before invocation
+        # ═══════════════════════════════════════════════════════════════════════════
+        if agent_uaid:
+            try:
+                if agent_uaid_native_id:
+                    _validate_uaid_endpoint_domain(agent_uaid_native_id, operation_context="invocation")
+                # IMPORTANT: We validate agent_endpoint_url (from DB) instead of prepared.endpoint_url
+                # because auth injection happens later in prepare_a2a_invocation.
+                # Validating before auth injection ensures we check the actual target domain,
+                # not a domain with auth credentials already embedded.
+                if agent_endpoint_url:
+                    _validate_uaid_endpoint_domain(agent_endpoint_url, operation_context="invocation")
+            except ValueError as e:
+                yield self._format_sse_error(f"Agent '{agent_name}' invocation blocked: {e}")
+                return
+
+        start_time = datetime.now(timezone.utc)
+        success = False
+        error_message = None
+
+        # Note: Accumulation tracking for streaming responses
+        accumulated_response = None
+        accumulated_bytes = 0
+        chunks_streamed = 0
+        max_accumulated_bytes = getattr(settings, "a2a_max_accumulated_response_bytes", 10 * 1024 * 1024)
+
+        # ═══════════════════════════════════════════════════════════════════════════
+        # PHASE 2: Prepare invocation context (plugins, headers, auth)
+        # ═══════════════════════════════════════════════════════════════════════════
+        correlation_id = get_correlation_id()
+        try:
+            invocation_ctx = await self._prepare_invocation_context(
+                agent_data=agent_data,
+                parameters=parameters,
+                interaction_type=interaction_type,
+                user_id=user_id,
+                user_email=user_email,
+                content_type=content_type,
+                correlation_id=correlation_id,
+                streaming=True,
+            )
+        except PluginViolationError as e:
+            logger.error("Plugin RBAC violation for A2A agent %s: %s", agent_id, e)
+            yield self._format_sse_error(f"Plugin RBAC violation: {e}")
+            return
+        except A2AAgentError as e:
+            yield self._format_sse_error(str(e))
+            return
+        except Exception as e:
+            logger.error("Failed to prepare invocation context for A2A agent %s: %s", agent_id, e)
+            yield self._format_sse_error(f"Pre-invoke plugin error: {e}")
+            return
+
+        # Unpack invocation context
+        prepared = invocation_ctx["prepared"]
+        parameters = invocation_ctx["parameters"]  # May have been modified by plugin
+        plugin_manager = invocation_ctx["plugin_manager"]
+        global_context = invocation_ctx["global_context"]
+        context_table = invocation_ctx["context_table"]
+
+        # Determine if response accumulation is needed (after pre-invoke hook succeeds)
+        should_accumulate = (plugin_manager and plugin_manager.has_hooks_for(AgentHookType.AGENT_POST_INVOKE)) or is_output_capture_enabled("a2a.invoke")
+        if should_accumulate:
+            accumulated_response = []
+
+        # Record downstream headers metric after pre-invoke hook succeeds
+        # (deferred to avoid counting requests blocked by plugins)
+        if downstream_headers and settings.observability_enabled:
+            try:
+                obs_service = ObservabilityService()
+                # Record counter metric with attributes for aggregation/filtering
+                obs_service.record_metric(
+                    name="a2a.downstream_headers.forwarded",
+                    value=len(downstream_headers),
+                    metric_type="counter",
+                    unit="count",
+                    resource_type="a2a_agent",
+                    resource_id=agent_id,
+                    attributes={
+                        "agent_name": agent_name,
+                        "agent_id": agent_id,
+                        "user_email": user_email or "anonymous",
+                        "sensitive_passthrough_enabled": settings.enable_sensitive_header_passthrough,
+                    },
+                )
+            except Exception as metric_error:  # pragma: no cover
+                # Best-effort metric recording - don't fail request on metric errors
+                logger.debug("Failed to record downstream headers metric: %s", metric_error)  # pragma: no cover
+
+        span_attributes = {
+            "a2a.agent.name": agent_name,
+            "a2a.agent.id": str(agent_id),
+            "a2a.agent.url": prepared.sanitized_endpoint_url,
+            "a2a.agent.type": agent_type,
+            "a2a.interaction_type": interaction_type,
+            "a2a.streaming": True,
+        }
+        if is_input_capture_enabled("a2a.invoke"):
+            span_attributes["langfuse.observation.input"] = serialize_trace_payload(parameters or {})
+
+        # Stamp hop counter (same logic as invoke_agent)
+        uaid_utils.stamp_hop(prepared.headers, hop_count)
+
+        # ═══════════════════════════════════════════════════════════════════════════
+        # PHASE 3: Stream HTTP response
+        # ═══════════════════════════════════════════════════════════════════════════
+        with create_span("a2a.invoke.stream", span_attributes) as span:
+            try:
+                # Log A2A external call start
+                call_start_time = datetime.now(timezone.utc)
+                structured_logger.log(
+                    level="INFO",
+                    message=f"A2A streaming call started: {agent_name}",
+                    component="a2a_service",
+                    user_id=user_id,
+                    user_email=user_email,
+                    correlation_id=correlation_id,
+                    metadata={
+                        "event": "a2a_streaming_call_started",
+                        "agent_name": agent_name,
+                        "agent_id": agent_id,
+                        "endpoint_url": prepared.sanitized_endpoint_url,
+                        "interaction_type": interaction_type,
+                        "protocol_version": agent_protocol_version,
+                        "streaming": True,
+                    },
+                )
+
+                # Note: Rust runtime check moved to before DB commit for fail-fast behavior
+
+                # Make streaming HTTP request using shared HTTP client
+                client = await get_http_client()
+
+                # Stream response chunks
+                async with client.stream("POST", prepared.endpoint_url, json=prepared.request_data, headers=prepared.headers, timeout=settings.mcpgateway_a2a_default_timeout) as http_response:
+                    status_code = http_response.status_code
+
+                    if status_code == 200:
+                        success = True
+                        # Stream chunks as they arrive
+                        async for chunk in http_response.aiter_bytes():
+                            if chunk:
+                                chunks_streamed += 1
+                                try:
+                                    # Decode and forward chunk as SSE event
+                                    chunk_text = chunk.decode("utf-8")
+
+                                    # Accumulate only if needed and under size limit
+                                    if accumulated_response is not None and accumulated_bytes < max_accumulated_bytes:
+                                        # Use encoded byte length to match what's actually stored in memory
+                                        chunk_bytes = len(chunk_text.encode("utf-8"))
+                                        if accumulated_bytes + chunk_bytes <= max_accumulated_bytes:
+                                            accumulated_response.append(chunk_text)
+                                            accumulated_bytes += chunk_bytes
+                                        else:  # pragma: no cover
+                                            # Hit size limit - stop accumulating but continue streaming
+                                            logger.debug(  # pragma: no cover
+                                                "A2A streaming response accumulation stopped at %d bytes (limit: %d) for agent '%s'",
+                                                accumulated_bytes,
+                                                max_accumulated_bytes,
+                                                agent_name,
+                                            )
+                                            accumulated_response = None  # Stop accumulating  # pragma: no cover
+
+                                    # SSE format: "data: <content>\n\n"
+                                    yield f"data: {chunk_text}\n\n"
+                                except UnicodeDecodeError:
+                                    # If chunk is binary, encode as base64
+                                    chunk_b64 = base64.b64encode(chunk).decode("ascii")
+
+                                    # Accumulate binary chunks (as base64)
+                                    if accumulated_response is not None and accumulated_bytes < max_accumulated_bytes:  # pragma: no cover
+                                        chunk_bytes = len(chunk)  # pragma: no cover
+                                        if accumulated_bytes + chunk_bytes <= max_accumulated_bytes:  # pragma: no cover
+                                            accumulated_response.append(f"[binary:{chunk_b64}]")  # pragma: no cover
+                                            accumulated_bytes += chunk_bytes  # pragma: no cover
+                                        else:  # pragma: no cover
+                                            accumulated_response = None  # Stop accumulating  # pragma: no cover
+
+                                    yield f"data: {chunk_b64}\n\n"
+
+                        call_duration_ms = (datetime.now(timezone.utc) - call_start_time).total_seconds() * 1000
+
+                        # Log successful A2A streaming call
+                        structured_logger.log(
+                            level="INFO",
+                            message=f"A2A streaming call completed: {agent_name}",
+                            component="a2a_service",
+                            user_id=user_id,
+                            user_email=user_email,
+                            correlation_id=correlation_id,
+                            duration_ms=call_duration_ms,
+                            metadata={
+                                "event": "a2a_streaming_call_completed",
+                                "agent_name": agent_name,
+                                "agent_id": agent_id,
+                                "status_code": status_code,
+                                "success": True,
+                                "chunks_streamed": chunks_streamed,
+                            },
+                        )
+
+                        if span and is_output_capture_enabled("a2a.invoke"):  # pragma: no cover
+                            # Capture accumulated response for observability (if available)
+                            if accumulated_response and len(accumulated_response) > 0:  # pragma: no cover
+                                set_span_attribute(  # pragma: no cover
+                                    span,
+                                    "langfuse.observation.output",
+                                    serialize_trace_payload(
+                                        {
+                                            "chunks": chunks_streamed,
+                                            "sample": accumulated_response[0],
+                                            "accumulated": len(accumulated_response),
+                                            "truncated": accumulated_bytes >= max_accumulated_bytes,
+                                        }
+                                    ),
+                                )
+                            else:  # pragma: no cover
+                                set_span_attribute(span, "langfuse.observation.output", serialize_trace_payload({"chunks": chunks_streamed, "sample": "not accumulated"}))  # pragma: no cover
+
+                    else:
+                        # Non-200 status code - read full error response
+                        error_text = await http_response.aread()
+                        error_message = sanitize_exception_message(f"HTTP {status_code}: {error_text.decode('utf-8', errors='replace')}", prepared.sensitive_query_param_names)
+
+                        call_duration_ms = (datetime.now(timezone.utc) - call_start_time).total_seconds() * 1000
+
+                        # Log failed A2A streaming call
+                        structured_logger.log(
+                            level="ERROR",
+                            message=f"A2A streaming call failed: {agent_name}",
+                            component="a2a_service",
+                            user_id=user_id,
+                            user_email=user_email,
+                            correlation_id=correlation_id,
+                            duration_ms=call_duration_ms,
+                            error_details={"error_type": "A2AHTTPError", "error_message": error_message},
+                            metadata={"event": "a2a_streaming_call_failed", "agent_name": agent_name, "agent_id": agent_id, "status_code": status_code},
+                        )
+
+                        yield self._format_sse_error(error_message)
+                        return
+
+            except Exception as e:
+                # Sanitize error message to prevent URL secrets from leaking
+                error_message = sanitize_exception_message(str(e), prepared.sensitive_query_param_names)
+                logger.error("Failed to stream A2A agent '%s': %s", agent_name, error_message)
+                if span:  # pragma: no cover
+                    set_span_error(span, error_message)  # pragma: no cover
+
+                yield self._format_sse_error(f"Failed to stream A2A agent: {error_message}")
+                return
+
+            finally:
+                # ═══════════════════════════════════════════════════════════════════════════
+                # Finalization (plugins, metrics, timestamps, spans)
+                # ═══════════════════════════════════════════════════════════════════════════
+                # Prepare response for plugin hook (join streamed chunks if accumulated)
+                response_for_hook = "".join(accumulated_response) if accumulated_response else None
+                await self._finalize_invocation(
+                    agent_id=agent_id,
+                    agent_name=agent_name,
+                    interaction_type=interaction_type,
+                    start_time=start_time,
+                    success=success,
+                    error_message=error_message,
+                    response=response_for_hook,
+                    plugin_manager=plugin_manager,
+                    global_context=global_context,
+                    context_table=context_table,
+                    span=span,
+                    chunks_streamed=chunks_streamed,
+                )
 
     async def _invoke_remote_agent(
         self,
@@ -2711,7 +3438,7 @@ class A2AAgentService(BaseService):
 
             # Make HTTP request using shared client
             # First-Party
-            from mcpgateway.services.http_client_service import get_http_client  # pylint: disable=import-outside-toplevel
+            from mcpgateway.services.http_client_service import get_http_client  # pylint: disable=import-outside-toplevel,reimported,redefined-outer-name
 
             client = await get_http_client()
             # Stamp the outbound hop count so the receiving gateway can
@@ -2720,9 +3447,6 @@ class A2AAgentService(BaseService):
             # `endpoint_url` loops.  Uses the shared `stamp_hop` helper
             # so Python and Rust agree on header name and overflow
             # semantics.
-            # First-Party
-            from mcpgateway.utils import uaid as uaid_utils  # pylint: disable=import-outside-toplevel
-
             headers = {"Content-Type": "application/json"}
             uaid_utils.stamp_hop(headers, hop_count)
 

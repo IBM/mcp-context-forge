@@ -557,7 +557,7 @@ class TestA2AAgentService:
         with pytest.raises(A2AAgentNotFoundError):
             await service.delete_agent(mock_db, "non-existent-id")
 
-    @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
+    @patch("mcpgateway.services.a2a_service.get_metrics_buffer_service")
     @patch("mcpgateway.services.a2a_service.fresh_db_session")
     @patch("mcpgateway.services.http_client_service.get_http_client")
     @patch("mcpgateway.services.a2a_service.get_for_update")
@@ -632,7 +632,7 @@ class TestA2AAgentService:
             with pytest.raises(A2AAgentError, match="disabled"):
                 await service.invoke_agent(mock_db, sample_db_agent.name, {"test": "data"})
 
-    @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
+    @patch("mcpgateway.services.a2a_service.get_metrics_buffer_service")
     @patch("mcpgateway.services.a2a_service.fresh_db_session")
     @patch("mcpgateway.services.http_client_service.get_http_client")
     @patch("mcpgateway.services.a2a_service.get_for_update")
