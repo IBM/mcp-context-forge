@@ -231,6 +231,66 @@ describe("eventDelegation", () => {
 
       expect(mockAdminFunction).toHaveBeenCalledWith("option1", expect.any(Event));
     });
+    it("handles change event on file input without passing file path (bug #5038 regression test)", () => {
+      // Mock validateCACertFiles function
+      const mockValidateCACertFiles = vi.fn();
+      window.Admin.validateCACertFiles = mockValidateCACertFiles;
+
+      const fileInput = document.createElement("input");
+      fileInput.type = "file";
+      fileInput.id = "upload-ca-certificate";
+      fileInput.setAttribute("data-action-change", "validateCACertFiles");
+      container.appendChild(fileInput);
+
+      // Mock the files property
+      const mockFile = new File(["cert content"], "test.pem", { type: "application/x-pem-file" });
+      Object.defineProperty(fileInput, "files", {
+        value: [mockFile],
+        writable: false,
+        configurable: true,
+      });
+
+      // Trigger change event
+      fileInput.dispatchEvent(new Event("change", { bubbles: true }));
+
+      // CRITICAL: The function should receive the event as the first parameter, NOT the file path
+      expect(mockValidateCACertFiles).toHaveBeenCalledTimes(1);
+      expect(mockValidateCACertFiles).toHaveBeenCalledWith(expect.any(Event));
+
+      // Verify the event has the files property accessible
+      const receivedEvent = mockValidateCACertFiles.mock.calls[0][0];
+      expect(receivedEvent.target.files).toBeDefined();
+      expect(receivedEvent.target.files.length).toBe(1);
+      expect(receivedEvent.target.files[0].name).toBe("test.pem");
+    });
+
+    it("handles change event on file input with multiple files", () => {
+      const mockValidateCACertFiles = vi.fn();
+      window.Admin.validateCACertFiles = mockValidateCACertFiles;
+
+      const fileInput = document.createElement("input");
+      fileInput.type = "file";
+      fileInput.multiple = true;
+      fileInput.setAttribute("data-action-change", "validateCACertFiles");
+      container.appendChild(fileInput);
+
+      // Mock multiple files
+      const mockFile1 = new File(["cert1"], "root.pem", { type: "application/x-pem-file" });
+      const mockFile2 = new File(["cert2"], "intermediate.pem", { type: "application/x-pem-file" });
+      Object.defineProperty(fileInput, "files", {
+        value: [mockFile1, mockFile2],
+        writable: false,
+        configurable: true,
+      });
+
+      fileInput.dispatchEvent(new Event("change", { bubbles: true }));
+
+      expect(mockValidateCACertFiles).toHaveBeenCalledTimes(1);
+      const receivedEvent = mockValidateCACertFiles.mock.calls[0][0];
+      expect(receivedEvent.target.files.length).toBe(2);
+      expect(receivedEvent.target.files[0].name).toBe("root.pem");
+      expect(receivedEvent.target.files[1].name).toBe("intermediate.pem");
+    });
   });
 
   describe("submit events", () => {
