@@ -207,8 +207,8 @@ def _popup_notification_script(nonce: str, payload: dict) -> str:
         .replace("<", "\\u003c")
         .replace(">", "\\u003e")
         .replace("&", "\\u0026")
-        .replace("\u2028", "\\u2028")  # U+2028 LINE SEPARATOR
-        .replace("\u2029", "\\u2029")  # U+2029 PARAGRAPH SEPARATOR
+        .replace("\u2028", "\\\\u2028")  # U+2028 LINE SEPARATOR
+        .replace("\u2029", "\\\\u2029")  # U+2029 PARAGRAPH SEPARATOR
     )
     safe_nonce = escape(nonce, quote=True)
     # targetOrigin is "*" rather than window.location.origin because in production

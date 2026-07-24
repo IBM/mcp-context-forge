@@ -22,7 +22,7 @@ This document describes how the Admin UI initiates OAuth 2.0 Authorization Code 
 ### Implemented today
 
 - Admin UI exposes OAuth configuration fields for gateways and an "Authorize" action.
-- Authorization Code flow uses PKCE (S256) and an HMAC-signed state value with a 300-second TTL.
+- Authorization Code flow uses PKCE (S256) and an opaque random state token with server-side 300-second TTL and single-use enforcement.
 - OAuth state is stored in Redis when `CACHE_TYPE=redis`, in the database when `CACHE_TYPE=database`, and in memory otherwise.
 - Tokens are stored per gateway and app user (email) in `oauth_tokens`, encrypted with `AUTH_ENCRYPTION_SECRET`.
 - Refresh tokens are used when access tokens are near expiry; invalid refresh tokens are cleared.
@@ -212,7 +212,7 @@ Error payload:
 **Security Model**:
 - Callback uses `postMessage(..., '*')` for cross-origin compatibility (API and React app may be on different origins)
 - Parent window MUST validate `event.source === authWindow` (exact popup reference) before processing
-- State token signature (HMAC-SHA256) prevents tampering
+- State token is opaque random value with server-side 300-second TTL and single-use enforcement to prevent replay attacks
 - CSP nonce is embedded in the inline script for strict CSP compliance
 
 **Implementation Notes**:
