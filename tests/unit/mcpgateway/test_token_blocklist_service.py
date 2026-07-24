@@ -17,6 +17,7 @@ Tests cover:
 # Standard
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
+import logging
 import sys
 from unittest.mock import AsyncMock, MagicMock, patch
 import uuid
@@ -428,6 +429,46 @@ class TestTokenRevocation:
         assert revocation_check.reason == "idle_timeout"  # Original reason preserved
 
     @pytest.mark.asyncio
+    async def test_revoke_token_duplicate_already_inactive_does_not_commit(self, blocklist_service, test_db):
+        """Test duplicate revocation only commits when it repairs active token state."""
+        # First-Party
+        from mcpgateway.db import EmailApiToken, EmailTeam
+
+        team = EmailTeam(
+            id=str(uuid.uuid4()),
+            name="Test Team Already Inactive",
+            slug="test-team-already-inactive",
+            created_by="test@example.com",
+            is_active=True,
+        )
+        test_db.add(team)
+        test_db.commit()
+
+        jti = str(uuid.uuid4())
+        api_token = EmailApiToken(
+            id=str(uuid.uuid4()),
+            user_email="test@example.com",
+            team_id=team.id,
+            name="Test Token Already Inactive",
+            jti=jti,
+            token_hash="test_hash",
+            is_active=False,
+        )
+        revocation = TokenRevocation(jti=jti, revoked_by="system@example.com", reason="logout")
+        test_db.add_all([api_token, revocation])
+        test_db.commit()
+
+        with (
+            patch.object(test_db, "commit", wraps=test_db.commit) as mock_commit,
+            patch("mcpgateway.cache.auth_cache.auth_cache.invalidate_revocation", new_callable=AsyncMock) as mock_invalidate,
+        ):
+            result = await blocklist_service.revoke_token(jti=jti, revoked_by="test@example.com", reason="logout")
+
+        assert result is True
+        mock_commit.assert_not_called()
+        mock_invalidate.assert_awaited_once_with(jti)
+
+    @pytest.mark.asyncio
     async def test_revoke_token_repairs_inconsistent_state_without_db_session(self, test_db):
         """Test that revoking an already-revoked token repairs EmailApiToken.is_active using fresh_db_session."""
         # First-Party
@@ -540,7 +581,7 @@ class TestTokenRevocation:
             mock_invalidate.assert_awaited_once_with(jti)
 
     @pytest.mark.asyncio
-    async def test_revoke_token_cache_invalidation_exception_handling(self, blocklist_service, test_db):
+    async def test_revoke_token_cache_invalidation_exception_handling(self, blocklist_service, test_db, caplog):
         """Test that cache invalidation exceptions are handled gracefully."""
         # First-Party
         from mcpgateway.db import EmailApiToken, EmailTeam
@@ -571,7 +612,10 @@ class TestTokenRevocation:
         test_db.commit()
 
         # Mock auth_cache.invalidate_revocation to raise an exception
-        with patch("mcpgateway.cache.auth_cache.auth_cache.invalidate_revocation", new_callable=AsyncMock, side_effect=Exception("Cache error")):
+        with (
+            caplog.at_level(logging.WARNING, logger="mcpgateway.services.token_blocklist_service"),
+            patch("mcpgateway.cache.auth_cache.auth_cache.invalidate_revocation", new_callable=AsyncMock, side_effect=Exception("Cache error")),
+        ):
             # Should still succeed even if cache invalidation fails
             result = await blocklist_service.revoke_token(
                 jti=jti,
@@ -587,6 +631,7 @@ class TestTokenRevocation:
             ).scalar_one_or_none()
 
             assert revocation is not None
+            assert "token may be accepted until cache TTL expiry" in caplog.text
 
 
 class TestRevocationCheck:
@@ -954,6 +999,7 @@ class TestErrorHandling:
 
             # Should fail closed (treat as revoked on error)
             result = service.is_token_revoked(str(uuid.uuid4()))
+            assert result is True
 
     @pytest.mark.asyncio
     @patch("mcpgateway.services.token_blocklist_service.TokenBlocklistService._get_redis_client")

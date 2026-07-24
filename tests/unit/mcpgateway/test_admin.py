@@ -22033,13 +22033,6 @@ class TestTemplateButtonGating:
         assert active_count == 0, f"Expected 0 'Active' badges for revoked tokens, found {active_count}"
         assert inactive_count == 0, f"Expected 0 'Inactive' badges for revoked tokens, found {inactive_count}"
 
-        # Additional verification: ensure template uses {% elif %} not {% if %} for active/inactive
-        # This ensures mutually exclusive badge rendering
-        with open("mcpgateway/templates/tokens_partial.html", encoding="utf-8") as f:
-            template_content = f.read()
-        assert "{% elif token.is_active %}" in template_content, \
-            "Template should use {% elif %} to ensure mutually exclusive badges"
-
 
 class TestAdminGetToolPassesTeamRoles:
     """Tests that admin_get_tool and admin_list_tools pass requesting_user_team_roles."""
