@@ -7447,6 +7447,15 @@ prospector:                         ## 🔬 Comprehensive code analysis
 
 pip-audit:                          ## 🔒 Audit Python dependencies for CVEs
 	@echo "🔒  pip-audit vulnerability scan..."
+	@echo ""
+	@echo "  ⚠️  NOTE: --skip-editable is active. Two editable installs are expected to be skipped:"
+	@echo "       • compliance-reference-server   (mcp-servers/ dev install)"
+	@echo "       • mcp-contextforge-gateway      (main gateway dev install)"
+	@echo ""
+	@echo "  🚨 If ANY OTHER package appears in the skip table → STOP and investigate."
+	@echo "     It may have active CVEs that are being silently suppressed."
+	@echo "     To audit it manually: pip-audit --path <pkg-path> --no-deps"
+	@echo ""
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		$(UV_BIN) pip install -q pip-audit && \
