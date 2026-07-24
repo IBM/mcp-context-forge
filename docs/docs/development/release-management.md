@@ -324,10 +324,10 @@ Validates the wheel and sdist with twine, check-manifest, and pyroma. This is no
 ### 4.2 Secrets scanning
 
 ```bash
-make detect-secrets-scan
+make detect-secrets-scan-all
 ```
 
-Re-runs the full baseline scan across all tracked files against `.secrets.baseline`. `detect-secrets` also runs as a pre-commit hook on every commit, but a fresh full-tree scan immediately before tagging is the last line of defence.
+Re-runs the full baseline scan across all tracked files against `.secrets.baseline`. (`make detect-secrets-scan` is the developer-facing variant: it scans only files changed vs `main`, merges results into the baseline while preserving audited entries for out-of-scope tracked files, and exits non-zero on any live, unaudited, or audited-as-real findings.) Whole-tree coverage is also enforced in CI by `make detect-secrets-hook` over `git ls-files` with `--fail-on-unaudited`, but a fresh full-tree scan immediately before tagging is the last line of defence.
 
 **Acceptance criteria:** No unaudited secrets detected. Any false positives are triaged via `make detect-secrets-audit` and recorded in `.secrets.baseline`.
 
@@ -1397,7 +1397,7 @@ make test
 
 # 4. Quality gates (pre-commit/CI handle formatting and linting)
 make verify
-make detect-secrets-scan
+make detect-secrets-scan-all   # whole-tree scan before tagging; detect-secrets-scan is scoped to changed files
 make check-headers
 
 # 5. Unit tests

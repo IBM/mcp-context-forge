@@ -28,6 +28,10 @@
 - **`mcpgateway/scripts/init_secrets.py`** - Script backing both Makefile targets; generates secrets using `secrets.token_hex(32)` and rewrites the relevant lines in `.env` without touching unrelated configuration.
 - **`mcpgateway/scripts/validate_env.py`** - Startup validation script invoked by the container entrypoint and `make check-env` that enforces the secret strength policy and surfaces clear remediation guidance.
 
+### Removed
+
+- **`lint-install-hooks`, `lint-pre-commit`, `lint-pre-push` Make targets** - Removed along with the legacy `lint-staged`-based hook scripts they installed. Hook files previously installed on developer machines still call `make lint-pre-commit` / `make lint-pre-push` and now fail with `No rule to make target`. Remediation: `rm .git/hooks/pre-commit .git/hooks/pre-push && make configure-git`. Note that the old hook ran `lint-staged`, while the replacement installs the pre-commit framework shim, which runs a different set of checks.
+
 ## [1.0.6] - 2026-07-22 - OAuth Token Exchange, Vault Credentials, MCP Apps, Dataplane Publishing, and Security Hardening
 
 ### Overview
