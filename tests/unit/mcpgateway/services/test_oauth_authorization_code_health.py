@@ -154,7 +154,8 @@ class TestTokenRefreshClientSecret:
 
         with patch("mcpgateway.services.token_storage_service.get_settings") as mock_get_settings:
             mock_settings = MagicMock()
-            mock_settings.AUTH_ENCRYPTION_SECRET = "test-secret"  # pragma: allowlist secret
+            mock_settings.oauth_token_backend = "database"
+            mock_settings.auth_encryption_secret = "test-secret"  # pragma: allowlist secret
             mock_get_settings.return_value = mock_settings
 
             service = TokenStorageService(mock_db)
@@ -166,7 +167,7 @@ class TestTokenRefreshClientSecret:
             mock_encryption.decrypt_secret_async = AsyncMock(
                 side_effect=["decrypted_refresh_token", None]
             )
-            service.encryption = mock_encryption
+            service._backend.encryption = mock_encryption
 
             token_record = MagicMock(spec=OAuthToken)
             token_record.gateway_id = "gw-test"
@@ -208,18 +209,21 @@ class TestTokenRefreshOmitResource:
         mock_db.query.return_value.filter.return_value.first.return_value = gateway
 
         with patch("mcpgateway.services.token_storage_service.get_settings") as mock_get_settings:
-            mock_get_settings.side_effect = ImportError("No encryption")
+            mock_settings = MagicMock()
+            mock_settings.oauth_token_backend = "database"
+            mock_settings.auth_encryption_secret = "test-secret"  # pragma: allowlist secret
+            mock_get_settings.return_value = mock_settings
 
             service = TokenStorageService(mock_db)
 
             token_record = MagicMock(spec=OAuthToken)
             token_record.gateway_id = "gw-test"
             token_record.app_user_email = "user@example.com"
-            token_record.refresh_token_encrypted = "plain_refresh_token"
+            token_record.refresh_token = "plain_refresh_token"
             token_record.expires_at = datetime.now(timezone.utc) + timedelta(minutes=1)
 
             # Mock OAuth manager to capture the config passed to it
-            with patch("mcpgateway.services.oauth_manager.OAuthManager") as mock_oauth_class:
+            with patch("mcpgateway.services.token_backends.db_backend.OAuthManager") as mock_oauth_class:
                 mock_oauth = MagicMock()
                 mock_oauth.refresh_token = AsyncMock(side_effect=OAuthError("Test error"))
                 mock_oauth_class.return_value = mock_oauth
@@ -259,17 +263,20 @@ class TestTokenRefreshOmitResource:
         mock_db.query.return_value.filter.return_value.first.return_value = gateway
 
         with patch("mcpgateway.services.token_storage_service.get_settings") as mock_get_settings:
-            mock_get_settings.side_effect = ImportError("No encryption")
+            mock_settings = MagicMock()
+            mock_settings.oauth_token_backend = "database"
+            mock_settings.auth_encryption_secret = "test-secret"  # pragma: allowlist secret
+            mock_get_settings.return_value = mock_settings
 
             service = TokenStorageService(mock_db)
 
             token_record = MagicMock(spec=OAuthToken)
             token_record.gateway_id = "gw-test"
             token_record.app_user_email = "user@example.com"
-            token_record.refresh_token_encrypted = "plain_refresh_token"
+            token_record.refresh_token = "plain_refresh_token"
             token_record.expires_at = datetime.now(timezone.utc) + timedelta(minutes=1)
 
-            with patch("mcpgateway.services.oauth_manager.OAuthManager") as mock_oauth_class:
+            with patch("mcpgateway.services.token_backends.db_backend.OAuthManager") as mock_oauth_class:
                 mock_oauth = MagicMock()
                 mock_oauth.refresh_token = AsyncMock(side_effect=OAuthError("Test error"))
                 mock_oauth_class.return_value = mock_oauth
@@ -312,18 +319,21 @@ class TestTokenDeletionLogic:
         mock_db.query.return_value.filter.return_value.first.return_value = gateway
 
         with patch("mcpgateway.services.token_storage_service.get_settings") as mock_get_settings:
-            mock_get_settings.side_effect = ImportError("No encryption")
+            mock_settings = MagicMock()
+            mock_settings.oauth_token_backend = "database"
+            mock_settings.auth_encryption_secret = "test-secret"  # pragma: allowlist secret
+            mock_get_settings.return_value = mock_settings
 
             service = TokenStorageService(mock_db)
 
             token_record = MagicMock(spec=OAuthToken)
             token_record.gateway_id = "gw-test"
             token_record.app_user_email = "user@example.com"
-            token_record.refresh_token_encrypted = "plain_token"
+            token_record.refresh_token = "plain_token"
 
             # Mock OAuth manager to raise OAuthInvalidGrantError — the typed exception
             # raised by OAuthManager when the provider returns {"error": "invalid_grant"}.
-            with patch("mcpgateway.services.oauth_manager.OAuthManager") as mock_oauth_class:
+            with patch("mcpgateway.services.token_backends.db_backend.OAuthManager") as mock_oauth_class:
                 mock_oauth = MagicMock()
                 mock_oauth.refresh_token = AsyncMock(side_effect=OAuthInvalidGrantError("Refresh token permanently invalid (invalid_grant): {'error': 'invalid_grant'}"))  # pragma: allowlist secret
                 mock_oauth_class.return_value = mock_oauth
@@ -357,16 +367,19 @@ class TestTokenDeletionLogic:
         mock_db.query.return_value.filter.return_value.first.return_value = gateway
 
         with patch("mcpgateway.services.token_storage_service.get_settings") as mock_get_settings:
-            mock_get_settings.side_effect = ImportError("No encryption")
+            mock_settings = MagicMock()
+            mock_settings.oauth_token_backend = "database"
+            mock_settings.auth_encryption_secret = "test-secret"  # pragma: allowlist secret
+            mock_get_settings.return_value = mock_settings
 
             service = TokenStorageService(mock_db)
 
             token_record = MagicMock(spec=OAuthToken)
             token_record.gateway_id = "gw-test"
             token_record.app_user_email = "user@example.com"
-            token_record.refresh_token_encrypted = "plain_token"
+            token_record.refresh_token = "plain_token"
 
-            with patch("mcpgateway.services.oauth_manager.OAuthManager") as mock_oauth_class:
+            with patch("mcpgateway.services.token_backends.db_backend.OAuthManager") as mock_oauth_class:
                 mock_oauth = MagicMock()
                 mock_oauth.refresh_token = AsyncMock(side_effect=OAuthError("invalid_client: wrong client_secret"))
                 mock_oauth_class.return_value = mock_oauth
@@ -399,16 +412,19 @@ class TestTokenDeletionLogic:
         mock_db.query.return_value.filter.return_value.first.return_value = gateway
 
         with patch("mcpgateway.services.token_storage_service.get_settings") as mock_get_settings:
-            mock_get_settings.side_effect = ImportError("No encryption")
+            mock_settings = MagicMock()
+            mock_settings.oauth_token_backend = "database"
+            mock_settings.auth_encryption_secret = "test-secret"  # pragma: allowlist secret
+            mock_get_settings.return_value = mock_settings
 
             service = TokenStorageService(mock_db)
 
             token_record = MagicMock(spec=OAuthToken)
             token_record.gateway_id = "gw-test"
             token_record.app_user_email = "user@example.com"
-            token_record.refresh_token_encrypted = "plain_token"
+            token_record.refresh_token = "plain_token"
 
-            with patch("mcpgateway.services.oauth_manager.OAuthManager") as mock_oauth_class:
+            with patch("mcpgateway.services.token_backends.db_backend.OAuthManager") as mock_oauth_class:
                 mock_oauth = MagicMock()
                 # Network error, not OAuth error
                 mock_oauth.refresh_token = AsyncMock(side_effect=httpx.ConnectTimeout("Connection timeout"))
