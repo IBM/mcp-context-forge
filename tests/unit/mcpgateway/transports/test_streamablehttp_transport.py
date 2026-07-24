@@ -2573,10 +2573,10 @@ async def test_session_manager_wrapper_initialization_stateful(monkeypatch):
         async def handle_request(self, scope, receive, send):
             self.called = True
 
-    captured_config = {}
+    captured_configs = []
 
     def capture_manager(**kwargs):
-        captured_config.update(kwargs)
+        captured_configs.append(dict(kwargs))
         return DummySessionManager(**kwargs)
 
     # Mock settings to enable stateful sessions with InMemoryEventStore
@@ -2589,10 +2589,17 @@ async def test_session_manager_wrapper_initialization_stateful(monkeypatch):
 
     wrapper = SessionManagerWrapper()
 
-    # Verify that stateful configuration was used
-    assert captured_config["stateless"] is False
-    assert captured_config["event_store"] is not None
-    assert isinstance(captured_config["event_store"], tr.InMemoryEventStore)
+    # Verify that the stateful manager (first call) was configured correctly.
+    # Task 1 added session_manager_stateless (second call, stateless=True).
+    assert len(captured_configs) >= 2, "Expected two StreamableHTTPSessionManager instantiations"
+    stateful_config = captured_configs[0]
+    assert stateful_config["stateless"] is False
+    assert stateful_config["event_store"] is not None
+    assert isinstance(stateful_config["event_store"], tr.InMemoryEventStore)
+    # Verify the stateless companion manager (second call)
+    stateless_config = captured_configs[1]
+    assert stateless_config["stateless"] is True
+    assert stateless_config["event_store"] is None
 
     await wrapper.initialize()
     await wrapper.shutdown()
@@ -6751,7 +6758,8 @@ async def test_session_manager_wrapper_redis_event_store(monkeypatch):
     captured_config = {}
 
     def capture_manager(**kwargs):
-        captured_config.update(kwargs)
+        if not captured_config:  # capture first (stateful) manager only
+            captured_config.update(kwargs)
         dummy = MagicMock()
         dummy.run = MagicMock(return_value=asynccontextmanager(lambda: (yield dummy))())
         return dummy
@@ -6781,7 +6789,8 @@ async def test_session_manager_wrapper_rust_event_store(monkeypatch):
     captured_config = {}
 
     def capture_manager(**kwargs):
-        captured_config.update(kwargs)
+        if not captured_config:  # capture first (stateful) manager only
+            captured_config.update(kwargs)
         dummy = MagicMock()
         dummy.run = MagicMock(return_value=asynccontextmanager(lambda: (yield dummy))())
         return dummy
@@ -6810,7 +6819,8 @@ async def test_session_manager_wrapper_redis_event_store_when_rust_event_store_d
     captured_config = {}
 
     def capture_manager(**kwargs):
-        captured_config.update(kwargs)
+        if not captured_config:  # capture first (stateful) manager only
+            captured_config.update(kwargs)
         dummy = MagicMock()
         dummy.run = MagicMock(return_value=asynccontextmanager(lambda: (yield dummy))())
         return dummy
@@ -6838,7 +6848,8 @@ async def test_session_manager_wrapper_falls_back_to_python_event_store_when_ses
     captured_config = {}
 
     def capture_manager(**kwargs):
-        captured_config.update(kwargs)
+        if not captured_config:  # capture first (stateful) manager only
+            captured_config.update(kwargs)
         dummy = MagicMock()
         dummy.run = MagicMock(return_value=asynccontextmanager(lambda: (yield dummy))())
         return dummy
@@ -10053,7 +10064,7 @@ async def test_send_with_capture_registers_session(monkeypatch):
         patch("mcpgateway.services.session_affinity.get_session_affinity", return_value=mock_pool),
         patch("mcpgateway.services.session_affinity.WORKER_ID", "worker-1"),
     ):
-        await wrapper.handle_streamable_http(scope, _make_receive(b""), send)
+        await wrapper.handle_streamable_http(scope, _make_receive(b'{"jsonrpc":"2.0","method":"initialize","id":1}'), send)
 
     await wrapper.shutdown()
     mock_pool.register_session_owner.assert_called_once_with("new-session-id")
@@ -10096,7 +10107,7 @@ async def test_send_with_capture_str_headers_and_non_matching_header(monkeypatch
         patch("mcpgateway.services.session_affinity.get_session_affinity", return_value=mock_pool),
         patch("mcpgateway.services.session_affinity.WORKER_ID", "worker-1"),
     ):
-        await wrapper.handle_streamable_http(scope, _make_receive(b""), send)
+        await wrapper.handle_streamable_http(scope, _make_receive(b'{"jsonrpc":"2.0","method":"initialize","id":1}'), send)
 
     await wrapper.shutdown()
     mock_pool.register_session_owner.assert_called_once_with("new-session-id")
@@ -10139,7 +10150,7 @@ async def test_send_with_capture_registration_failure_logged(monkeypatch, caplog
         patch("mcpgateway.services.session_affinity.WORKER_ID", "worker-1"),
         caplog.at_level("WARNING", logger="mcpgateway.transports.streamablehttp_transport"),
     ):
-        await wrapper.handle_streamable_http(scope, _make_receive(b""), send)
+        await wrapper.handle_streamable_http(scope, _make_receive(b'{"jsonrpc":"2.0","method":"initialize","id":1}'), send)
 
     await wrapper.shutdown()
     assert "Failed to register session ownership" in caplog.text
@@ -10226,7 +10237,7 @@ async def test_send_with_capture_claims_owner_for_new_session(monkeypatch):
                 }
             )
             try:
-                await wrapper.handle_streamable_http(scope, _make_receive(b""), send)
+                await wrapper.handle_streamable_http(scope, _make_receive(b'{"jsonrpc":"2.0","method":"initialize","id":1}'), send)
             finally:
                 tr.user_context_var.reset(token)
 
@@ -10273,7 +10284,7 @@ async def test_send_with_capture_claims_owner_when_affinity_disabled(monkeypatch
         }
     )
     try:
-        await wrapper.handle_streamable_http(scope, _make_receive(b""), send)
+        await wrapper.handle_streamable_http(scope, _make_receive(b'{"jsonrpc":"2.0","method":"initialize","id":1}'), send)
     finally:
         tr.user_context_var.reset(token)
         await wrapper.shutdown()
@@ -14709,7 +14720,7 @@ async def test_session_owner_mismatch_logs_warning(monkeypatch, caplog):
             )
             try:
                 with caplog.at_level(logging.WARNING, logger="mcpgateway.transports.streamablehttp_transport"):
-                    await wrapper.handle_streamable_http(scope, _make_receive(b""), send)
+                    await wrapper.handle_streamable_http(scope, _make_receive(b'{"jsonrpc":"2.0","method":"initialize","id":1}'), send)
             finally:
                 tr.user_context_var.reset(token)
 
@@ -17595,3 +17606,206 @@ async def test_list_tools_sso_admin_gets_admin_bypass_at_service_layer(monkeypat
     await list_tools()
 
     assert called["args"] == (None, None)
+
+
+# ---------------------------------------------------------------------------
+# Transparent stateful/stateless session routing regressions (#5484)
+# ---------------------------------------------------------------------------
+
+
+class _SessionRoutingManager:
+    """Small SDK manager double that records dispatch and emits an optional ID."""
+
+    def __init__(self, *, stateless: bool, response_session_id: str | None = None):
+        self.stateless = stateless
+        self.response_session_id = response_session_id
+        self.calls = 0
+
+    @asynccontextmanager
+    async def run(self):
+        yield self
+
+    async def handle_request(self, scope, receive, send):
+        self.calls += 1
+        headers = []
+        if self.response_session_id is not None:
+            headers.append((b"mcp-session-id", self.response_session_id.encode()))
+        await send({"type": "http.response.start", "status": 200, "headers": headers})
+        await send({"type": "http.response.body", "body": b'{"jsonrpc":"2.0","result":{}}'})
+
+
+def _install_session_routing_managers(monkeypatch, response_session_id=None):
+    """Install manager doubles and return them in construction order."""
+    managers = []
+
+    def manager_factory(**kwargs):
+        manager = _SessionRoutingManager(stateless=kwargs["stateless"], response_session_id=response_session_id)
+        managers.append(manager)
+        return manager
+
+    monkeypatch.setattr(tr, "StreamableHTTPSessionManager", manager_factory)
+    return managers
+
+
+def _manager_with_stateless_flag(managers, stateless):
+    return next(manager for manager in managers if manager.stateless is stateless)
+
+
+@pytest.mark.asyncio
+async def test_streamable_sessionless_non_initialize_uses_stateless_manager(monkeypatch):
+    """A sessionless tools/list POST uses the stateless SDK manager."""
+    monkeypatch.setattr(tr.settings, "use_stateful_sessions", True)
+    monkeypatch.setattr(tr.settings, "mcpgateway_session_affinity_enabled", False)
+    managers = _install_session_routing_managers(monkeypatch)
+    wrapper = SessionManagerWrapper()
+    await wrapper.initialize()
+    send, messages = _make_send_collector()
+
+    try:
+        body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}}).encode()
+        await wrapper.handle_streamable_http(_make_scope("/mcp"), _make_receive(body), send)
+    finally:
+        await wrapper.shutdown()
+
+    stateful = _manager_with_stateless_flag(managers, False)
+    stateless = _manager_with_stateless_flag(managers, True)
+    assert stateless.calls == 1
+    assert stateful.calls == 0
+    assert next(message for message in messages if message["type"] == "http.response.start")["status"] == 200
+
+
+@pytest.mark.asyncio
+async def test_streamable_sessionless_initialize_uses_stateful_manager_and_registers_session(monkeypatch):
+    """Initialize stays stateful so the newly minted session can be registered."""
+    monkeypatch.setattr(tr.settings, "use_stateful_sessions", True)
+    monkeypatch.setattr(tr.settings, "mcpgateway_session_affinity_enabled", False)
+    managers = _install_session_routing_managers(monkeypatch, response_session_id="new-session")
+    claim_owner = AsyncMock(return_value="user@example.com")
+    monkeypatch.setattr(tr, "_claim_streamable_session_owner", claim_owner)
+    context_token = tr.user_context_var.set({"email": "user@example.com"})
+    wrapper = SessionManagerWrapper()
+    await wrapper.initialize()
+    send, messages = _make_send_collector()
+
+    try:
+        body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}).encode()
+        await wrapper.handle_streamable_http(_make_scope("/mcp"), _make_receive(body), send)
+    finally:
+        await wrapper.shutdown()
+        tr.user_context_var.reset(context_token)
+
+    stateful = _manager_with_stateless_flag(managers, False)
+    stateless = _manager_with_stateless_flag(managers, True)
+    assert stateful.calls == 1
+    assert stateless.calls == 0
+    start = next(message for message in messages if message["type"] == "http.response.start")
+    assert (b"mcp-session-id", b"new-session") in start["headers"]
+    claim_owner.assert_awaited_once_with("new-session", "user@example.com")
+
+
+@pytest.mark.asyncio
+async def test_streamable_session_id_uses_stateful_manager(monkeypatch):
+    """A POST carrying an existing Mcp-Session-Id uses the stateful manager."""
+    monkeypatch.setattr(tr.settings, "use_stateful_sessions", True)
+    monkeypatch.setattr(tr.settings, "mcpgateway_session_affinity_enabled", False)
+    managers = _install_session_routing_managers(monkeypatch)
+    wrapper = SessionManagerWrapper()
+    await wrapper.initialize()
+    send, messages = _make_send_collector()
+
+    try:
+        body = json.dumps({"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {}}).encode()
+        scope = _make_scope("/mcp", headers=[(b"mcp-session-id", b"existing-session")])
+        await wrapper.handle_streamable_http(scope, _make_receive(body), send)
+    finally:
+        await wrapper.shutdown()
+
+    stateful = _manager_with_stateless_flag(managers, False)
+    stateless = _manager_with_stateless_flag(managers, True)
+    assert stateful.calls == 1
+    assert stateless.calls == 0
+    assert next(message for message in messages if message["type"] == "http.response.start")["status"] == 200
+
+
+@pytest.mark.asyncio
+async def test_streamable_stateless_path_skips_session_registration(monkeypatch):
+    """Stateless dispatch must not claim an ID returned by the upstream."""
+    monkeypatch.setattr(tr.settings, "use_stateful_sessions", True)
+    monkeypatch.setattr(tr.settings, "mcpgateway_session_affinity_enabled", False)
+    managers = _install_session_routing_managers(monkeypatch, response_session_id="upstream-session")
+    claim_owner = AsyncMock()
+    monkeypatch.setattr(tr, "_claim_streamable_session_owner", claim_owner)
+    context_token = tr.user_context_var.set({"email": "user@example.com"})
+    wrapper = SessionManagerWrapper()
+    await wrapper.initialize()
+    send, messages = _make_send_collector()
+
+    try:
+        body = json.dumps({"jsonrpc": "2.0", "id": 3, "method": "tools/list", "params": {}}).encode()
+        await wrapper.handle_streamable_http(_make_scope("/mcp"), _make_receive(body), send)
+    finally:
+        await wrapper.shutdown()
+        tr.user_context_var.reset(context_token)
+
+    stateless = _manager_with_stateless_flag(managers, True)
+    assert stateless.calls == 1
+    assert (b"mcp-session-id", b"upstream-session") in next(message for message in messages if message["type"] == "http.response.start")["headers"]
+    claim_owner.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("use_stateful_sessions", "expected_capture"),
+    [(True, True), (False, False)],
+)
+async def test_streamable_send_with_capture_respects_stateful_flag(monkeypatch, use_stateful_sessions, expected_capture):
+    """Session ID capture follows use_stateful_sessions, not affinity config."""
+    monkeypatch.setattr(tr.settings, "use_stateful_sessions", use_stateful_sessions)
+    monkeypatch.setattr(tr.settings, "mcpgateway_session_affinity_enabled", False)
+    managers = _install_session_routing_managers(monkeypatch, response_session_id="captured-session")
+    claim_owner = AsyncMock(return_value="user@example.com")
+    monkeypatch.setattr(tr, "_claim_streamable_session_owner", claim_owner)
+    context_token = tr.user_context_var.set({"email": "user@example.com"})
+    wrapper = SessionManagerWrapper()
+    await wrapper.initialize()
+    send, messages = _make_send_collector()
+
+    try:
+        body = json.dumps({"jsonrpc": "2.0", "id": 4, "method": "initialize", "params": {}}).encode()
+        await wrapper.handle_streamable_http(_make_scope("/mcp"), _make_receive(body), send)
+    finally:
+        await wrapper.shutdown()
+        tr.user_context_var.reset(context_token)
+
+    assert managers[0].calls == 1
+    assert (b"mcp-session-id", b"captured-session") in next(message for message in messages if message["type"] == "http.response.start")["headers"]
+    if expected_capture:
+        claim_owner.assert_awaited_once_with("captured-session", "user@example.com")
+    else:
+        claim_owner.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_streamable_stateful_affinity_configuration_registers_captured_session(monkeypatch):
+    """Stateful sessions plus affinity register the captured session on the worker."""
+    monkeypatch.setattr(tr.settings, "use_stateful_sessions", True)
+    monkeypatch.setattr(tr.settings, "mcpgateway_session_affinity_enabled", True)
+    _install_session_routing_managers(monkeypatch, response_session_id="affinity-session")
+    monkeypatch.setattr(tr, "_claim_streamable_session_owner", AsyncMock(return_value="user@example.com"))
+    pool = MagicMock()
+    pool.register_session_owner = AsyncMock()
+    context_token = tr.user_context_var.set({"email": "user@example.com"})
+    wrapper = SessionManagerWrapper()
+    await wrapper.initialize()
+    send, messages = _make_send_collector()
+
+    try:
+        body = json.dumps({"jsonrpc": "2.0", "id": 5, "method": "initialize", "params": {}}).encode()
+        with patch("mcpgateway.services.session_affinity.get_session_affinity", return_value=pool):
+            await wrapper.handle_streamable_http(_make_scope("/mcp"), _make_receive(body), send)
+    finally:
+        await wrapper.shutdown()
+        tr.user_context_var.reset(context_token)
+
+    assert (b"mcp-session-id", b"affinity-session") in next(message for message in messages if message["type"] == "http.response.start")["headers"]
+    pool.register_session_owner.assert_awaited_once_with("affinity-session")
