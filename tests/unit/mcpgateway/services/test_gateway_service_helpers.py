@@ -277,10 +277,6 @@ async def test_list_gateways_for_user_populates_capability_counts(monkeypatch):
     assert captured["resource_count"] == 3
 
 
-def test_gateway_service_validate_tools_valueerror(monkeypatch):
-    pass
-
-
 @pytest.mark.asyncio
 async def test_list_gateways_populates_capability_counts(monkeypatch):
     """list_gateways eager-loads relationships so capability counts are non-zero."""
@@ -318,9 +314,127 @@ async def test_list_gateways_populates_capability_counts(monkeypatch):
     gateways, _ = await service.list_gateways(db)
 
     assert captured["tool_count"] == 3
+
+
+@pytest.mark.asyncio
+async def test_list_gateways_populates_capability_counts_with_cursor(monkeypatch):
+    """list_gateways with cursor pagination maintains eager-loaded capability counts."""
+    service = GatewayService()
+
+    fake_gateway = SimpleNamespace(
+        auth_value=None,
+        tags=[],
+        created_by=None,
+        modified_by=None,
+        created_at=None,
+        updated_at=None,
+        version=None,
+        team=None,
+        team_id=None,
+        tools=["t1", "t2"],
+        prompts=["p1"],
+        resources=["r1", "r2", "r3"],
+    )
+
+    db = MagicMock()
+    db.execute.return_value.scalars.return_value.all.return_value = [fake_gateway]
+
+    captured: dict = {}
+
+    class MockGatewayRead:
+        def __init__(self, data):
+            captured.update(data)
+
+        def masked(self):
+            return self
+
+    monkeypatch.setattr(GatewayRead, "model_validate", staticmethod(lambda x: MockGatewayRead(x)))
+
+    gateways, _ = await service.list_gateways(db, cursor="some-cursor", limit=10)
+
+
+
+@pytest.mark.asyncio
+async def test_list_gateways_for_user_filters_by_team_and_populates_counts(monkeypatch):
+    """list_gateways_for_user filters by team and populates capability counts from eager-loaded relationships."""
+    service = GatewayService()
+
+    fake_gateway = SimpleNamespace(
+        auth_value=None,
+        tags=[],
+        created_by=None,
+        modified_by=None,
+        created_at=None,
+        updated_at=None,
+        version=None,
+        team="team-alpha",
+        team_id="team-alpha",
+        tools=["t1", "t2", "t3", "t4"],
+        prompts=["p1", "p2"],
+        resources=["r1"],
+    )
+
+    db = MagicMock()
+    db.execute.return_value.scalars.return_value.all.return_value = [fake_gateway]
+
+    captured: dict = {}
+
+    class MockGatewayRead:
+        def __init__(self, data):
+            captured.update(data)
+
+        def masked(self):
+            return self
+
+    monkeypatch.setattr(GatewayRead, "model_validate", staticmethod(lambda x: MockGatewayRead(x)))
+
+    user_email = "user@example.com"
+
+    # Mock TeamManagementService.get_user_teams (instance method needs self)
+    mock_team = SimpleNamespace(id="team-alpha")
+    async def mock_get_user_teams(self, email):
+        return [mock_team]
+
+    monkeypatch.setattr("mcpgateway.services.gateway_service.TeamManagementService.get_user_teams", mock_get_user_teams)
+
+    gateways = await service.list_gateways_for_user(db, user_email)
+
+    assert captured["tool_count"] == 4
     assert captured["prompt_count"] == 2
     assert captured["resource_count"] == 1
 
+
+def test_convert_gateway_to_read_capabilities_partial_load():
+    """convert_gateway_to_read handles partial eager-loading (some relationships loaded, others missing)."""
+    from datetime import datetime, timezone
+    service = GatewayService()
+
+    # Simulate partial eager-loading: tools loaded, prompts/resources not in __dict__
+    fake_gateway = SimpleNamespace(
+        name="test-gateway",
+        url="http://test.local",
+        auth_value=None,
+        tags=[],
+        created_by=None,
+        modified_by=None,
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+        version=None,
+        team=None,
+        team_id=None,
+    )
+    fake_gateway.__dict__["tools"] = ["t1", "t2"]
+    # prompts and resources intentionally not in __dict__ to simulate partial load
+
+    result = service.convert_gateway_to_read(fake_gateway)
+
+    assert result.tool_count == 2
+    assert result.prompt_count == 0
+    assert result.resource_count == 0
+
+
+@pytest.mark.asyncio
+async def test_gateway_service_validate_tools_valueerror(monkeypatch):
     service = GatewayService()
 
     monkeypatch.setattr("mcpgateway.services.gateway_service.ToolCreate.model_validate", lambda _data: (_ for _ in ()).throw(ValueError("JSON structure exceeds maximum depth")))

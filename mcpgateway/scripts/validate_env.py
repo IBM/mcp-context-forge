@@ -117,7 +117,7 @@ def get_security_warnings(settings: Settings) -> list[str]:
     warnings: list[str] = []
 
     # --- Port check ---
-    if not 1 <= settings.port <= 65535:
+    if not (1 <= settings.port <= 65535):
         warnings.append(f"PORT: Out of allowed range (1-65535). Got: {settings.port}")
 
     # --- PLATFORM_ADMIN_PASSWORD ---
@@ -248,6 +248,7 @@ def main(env_file: Optional[str] = None, exit_on_warnings: bool = True) -> int:
 
         if is_prod or exit_on_warnings:
             return 1
+
         print("⚠️ Warnings detected, but continuing in non-production environment.")
     else:
         print("✅ .env validated successfully with no warnings.")
