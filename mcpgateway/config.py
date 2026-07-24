@@ -979,7 +979,7 @@ class Settings(BaseSettings):
     )
     protect_all_admins: bool = Field(
         default=True,
-        description="When true (default), prevent any admin from being demoted, deactivated, or locked out via API/UI. When false, only the last active admin is protected.",
+        description="When true (default), allow active admin accounts to bypass login lockout. Admin self-demotion and last-active-admin protection are always enforced independently.",
     )
     platform_admin_email: str = Field(default="admin@example.com", description="Platform administrator email address")
     platform_admin_password: SecretStr = Field(default=SecretStr("changeme"), description="Platform administrator password")

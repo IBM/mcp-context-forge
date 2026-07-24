@@ -9,13 +9,18 @@ Tests the full revoke → re-assign flow that triggers the bug in #3505.
 Uses real database sessions, not mocks.
 """
 
-import pytest
 from datetime import datetime, timezone
 import uuid
-from sqlalchemy.orm import Session
+from unittest.mock import AsyncMock
+
+# Third-Party
+import pytest
+from sqlalchemy.orm import Session, sessionmaker
 
 # First-Party
+from mcpgateway.config import settings
 from mcpgateway.db import EmailUser, Role, UserRole
+from mcpgateway.services.email_auth_service import EmailAuthService
 from mcpgateway.services.role_service import RoleService
 
 
@@ -100,6 +105,65 @@ async def test_revoke_and_reassign_no_duplicate_error(test_db: Session, test_rol
     inactive_count = sum(1 for a in all_assignments if not a.is_active)
     assert active_count == 1
     assert inactive_count == 1
+
+
+@pytest.mark.asyncio
+async def test_admin_demotion_rolls_back_role_changes_on_failure(test_db: Session):
+    """Demotion rollback restores both admin flag and role assignment."""
+    suffix = uuid.uuid4().hex[:8]
+    target_email = f"demotion-target-{suffix}@example.com"
+    requester_email = f"demotion-requester-{suffix}@example.com"
+    target = EmailUser(email=target_email, password_hash="dummy_hash", is_admin=True, is_active=True)
+    requester = EmailUser(email=requester_email, password_hash="dummy_hash", is_admin=True, is_active=True)
+    test_db.add_all([target, requester])
+    test_db.flush()
+
+    admin_role = test_db.query(Role).filter(Role.name == settings.default_admin_role, Role.scope == "global").first()
+    if admin_role is None:
+        admin_role = Role(
+            name=settings.default_admin_role,
+            description="Default administrator role",
+            scope="global",
+            permissions=["*"],
+            created_by=requester_email,
+            is_system_role=True,
+            is_active=True,
+        )
+        test_db.add(admin_role)
+
+    user_role = test_db.query(Role).filter(Role.name == settings.default_user_role, Role.scope == "global").first()
+    if user_role is None:
+        user_role = Role(
+            name=settings.default_user_role,
+            description="Default user role",
+            scope="global",
+            permissions=["tools.read"],
+            created_by=requester_email,
+            is_system_role=True,
+            is_active=True,
+        )
+        test_db.add(user_role)
+
+    test_db.flush()
+    assignment = UserRole(user_email=target_email, role_id=admin_role.id, scope="global", scope_id=None, granted_by=requester_email, is_active=True)
+    test_db.add(assignment)
+    test_db.commit()
+    assignment_id = assignment.id
+
+    role_service = RoleService(test_db)
+    role_service.assign_role_to_user = AsyncMock(side_effect=RuntimeError("simulated viewer-role assignment failure"))
+    auth_service = EmailAuthService(test_db)
+    auth_service._role_service = role_service
+
+    with pytest.raises(ValueError, match="role synchronization did not complete"):
+        await auth_service.update_user(email=target_email, is_admin=False, requesting_user_email=requester_email)
+
+    VerificationSession = sessionmaker(bind=test_db.get_bind())
+    with VerificationSession() as verification_db:
+        persisted_user = verification_db.query(EmailUser).filter(EmailUser.email == target_email).one()
+        persisted_assignment = verification_db.query(UserRole).filter(UserRole.id == assignment_id).one()
+        assert persisted_user.is_admin is True
+        assert persisted_assignment.is_active is True
 
 
 @pytest.mark.asyncio

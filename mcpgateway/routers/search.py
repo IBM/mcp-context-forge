@@ -79,7 +79,10 @@ async def unified_search(
     # (and its module-level service instances) at startup. The search router is
     # always mounted, but the admin core is only needed once a search runs.
     # First-Party
-    from mcpgateway.admin import _validated_team_id_param, perform_unified_search  # noqa: PLC2701 — reuse admin core, deferred to keep admin off the startup import path  # pylint: disable=import-outside-toplevel
+    from mcpgateway.admin import (
+        _validated_team_id_param,
+        perform_unified_search,
+    )  # noqa: PLC2701 — reuse admin core, deferred to keep admin off the startup import path  # pylint: disable=import-outside-toplevel
 
     team_id = _validated_team_id_param(team_id)
     return await perform_unified_search(
