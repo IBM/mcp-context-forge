@@ -110,10 +110,10 @@ REDIS_PARSER=python
 
 ```bash
 # Default: includes hiredis for performance
-pip install "mcp-contextforge-gateway[redis]"
+pip install "mcp-contextforge-gateway[redis,runtime]"
 
 # Pure-Python only (no C dependencies)
-pip install "mcp-contextforge-gateway[redis-pure]"
+pip install "mcp-contextforge-gateway[redis-pure,runtime]"
 ```
 
 ## When to Use Each Parser

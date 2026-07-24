@@ -110,7 +110,7 @@ def create_mock_resource(visibility="public", owner_email=None, team_id=None, en
     resource.owner_email = owner_email
     resource.team_id = team_id
     resource.enabled = enabled
-    resource.mimeType = "text/plain"
+    resource.mime_type = "text/plain"
     resource.integration_type = "STATIC"
     resource.static_content = "Test content"
     resource.gateway_id = None

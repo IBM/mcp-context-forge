@@ -365,18 +365,16 @@ class TestCheckSingleGatewayHealthReal:
             ),
             patch("mcpgateway.services.gateway_service.create_span", return_value=_SpanCM()),
             patch("mcpgateway.services.gateway_service.get_isolated_http_client", return_value=_IsoClientCM()),
-            patch("mcpgateway.services.gateway_service.streamablehttp_client") as mock_http,
-            patch("mcpgateway.services.gateway_service.ClientSession") as MockCS,
+            patch("mcpgateway.services.gateway_service.mcp_proxy_client") as mock_proxy,
             patch("mcpgateway.services.gateway_service.fresh_db_session", return_value=_DBCM()),
         ):
-            mock_http.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock(), MagicMock(return_value="sid")))
-            mock_http.return_value.__aexit__ = AsyncMock(return_value=False)
-            MockCS.return_value.__aenter__ = AsyncMock(return_value=session)
-            MockCS.return_value.__aexit__ = AsyncMock(return_value=False)
+            mock_proxy.return_value.__aenter__ = AsyncMock(return_value=session)
+            mock_proxy.return_value.__aexit__ = AsyncMock(return_value=False)
 
             await service._check_single_gateway_health(gateway)
 
-        session.initialize.assert_awaited_once()
+        # MCP v2 Client auto-initializes inside mcp_proxy_client context — no explicit initialize() call
+        mock_proxy.assert_called_once()
         service._handle_gateway_failure.assert_not_called()
         update_db.commit.assert_called_once()
 

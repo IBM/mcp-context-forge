@@ -95,7 +95,7 @@ jobs:
 
       - name: 🧪  Run pytest
         run: |
-          uv run --extra plugins pytest -n 0 \
+          uv run --extra plugins --extra runtime pytest -n 0 \
             --durations=5 \
             --ignore=tests/fuzz \
             --cov=mcpgateway \
@@ -114,7 +114,7 @@ jobs:
 
       - name: 📊  Doctest coverage with threshold
         run: |
-          uv run --extra plugins pytest -n 0 \
+          uv run --extra plugins --extra runtime pytest -n 0 \
             --doctest-modules mcpgateway/ \
             --cov=mcpgateway \
             --cov-report=term \

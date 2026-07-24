@@ -428,9 +428,24 @@ When `SMTP_ENABLED=false`, reset requests are accepted but no email is delivered
 | `MCP_REQUIRE_AUTH`            | Require authentication for /mcp endpoints. If false, unauthenticated requests can access public items only (except servers with `oauth_enabled=True`, which always require authentication) | `false` | bool |
 | `TRUST_PROXY_AUTH`            | Trust proxy authentication headers               | `false`               | bool    |
 | `PROXY_USER_HEADER`           | Header containing authenticated username from proxy | `X-Authenticated-User` | string |
+| `MCP_CLIENT_CONNECT_MODE`     | Upstream MCP connect mode (see below)            | `auto`                | `auto`, `legacy` |
 
 !!! warning "MCP Access Control Dependencies"
     Full MCP access control (visibility + team scoping + membership validation) requires `MCP_CLIENT_AUTH_ENABLED=true` with valid JWT tokens containing team claims. When `MCP_CLIENT_AUTH_ENABLED=false`, access control relies on `MCP_REQUIRE_AUTH` plus tool/resource visibility only—team membership validation is skipped since there's no JWT to extract teams from.
+
+#### Upstream MCP Connect Mode
+
+`MCP_CLIENT_CONNECT_MODE` controls how the gateway, acting as an MCP **client**, opens connections to upstream MCP servers. It was added for MCP 2026-07-28 support and applies to both upstream connection paths: the pooled session registry and the per-call (ad-hoc) proxy connections.
+
+| Value    | Behavior |
+| -------- | -------- |
+| `auto` (default) | Upstream connections probe `server/discover` and negotiate modern protocol revisions (currently 2026-07-28, with stateless per-request `_meta`). Servers that answer with `-32022` are re-probed at a mutual protocol version, and legacy servers fall back to the classic `initialize` handshake transparently. |
+| `legacy` | Forces the pre-2026 `initialize` handshake only (the pre-2.0 behavior). Use this as the rollback for upstreams that misbehave under modern negotiation. |
+
+This setting covers the client/federation side only. It does not change the protocol spoken by the gateway's own `/mcp` server endpoints.
+
+!!! note "Upgrading the MCP SDK"
+    The upstream transport health check reads SDK-internal dispatcher flags. The compatibility spike tests in `tests/unit/mcpgateway/utils/test_sdk_client_compat.py` fail loudly if a future SDK release changes those internals, so run them before adopting a new SDK pin.
 
 ### SSO (Single Sign-On) Configuration
 
@@ -902,6 +917,8 @@ The gateway includes built-in observability features for tracking HTTP requests,
 | Setting                    | Description            | Default | Options    |
 | -------------------------- | ---------------------- | ------- | ---------- |
 | `FEDERATION_TIMEOUT`       | Gateway timeout (secs) | `30`    | int > 0    |
+
+Federated (upstream) MCP connections also honor `MCP_CLIENT_CONNECT_MODE`, which selects modern protocol negotiation (2026-07-28 via `server/discover`) or the legacy `initialize` handshake. See [Upstream MCP Connect Mode](#upstream-mcp-connect-mode).
 
 ### Resources
 

@@ -21,7 +21,7 @@ import uuid
 
 # Third-Party
 from mcp.server.streamable_http import EventCallback, EventStore
-from mcp.types import JSONRPCMessage
+from mcp_types import JSONRPCMessage, jsonrpc_message_adapter
 import orjson
 
 # First-Party
@@ -444,7 +444,7 @@ class RedisEventStore(EventStore):
                 if raw is None:
                     continue
                 try:
-                    msg = JSONRPCMessage.model_validate(orjson.loads(raw))
+                    msg = jsonrpc_message_adapter.validate_python(orjson.loads(raw))
                 except Exception as exc:
                     logger.warning("Discarding malformed event %s for %s: %s", ev_id, stream_id, exc)
                     continue
@@ -507,7 +507,7 @@ class RedisEventStore(EventStore):
             if raw is None:
                 continue
             try:
-                msg = JSONRPCMessage.model_validate(orjson.loads(raw))
+                msg = jsonrpc_message_adapter.validate_python(orjson.loads(raw))
             except Exception as exc:
                 logger.warning("Discarding malformed event %s for %s: %s", ev_id, stream_id, exc)
                 continue
@@ -577,7 +577,7 @@ class RedisEventStore(EventStore):
         if raw is None:
             return None
         try:
-            return JSONRPCMessage.model_validate(orjson.loads(raw))
+            return jsonrpc_message_adapter.validate_python(orjson.loads(raw))
         except Exception as exc:
             logger.warning("Discarding malformed event %s for %s: %s", event_id, stream_id, exc)
             return None

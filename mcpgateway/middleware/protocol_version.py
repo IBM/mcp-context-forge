@@ -12,8 +12,7 @@ from typing import Callable
 
 # Third-Party
 from fastapi import Request, Response
-from mcp.shared.version import SUPPORTED_PROTOCOL_VERSIONS as MCP_SUPPORTED_PROTOCOL_VERSIONS
-from mcp.types import LATEST_PROTOCOL_VERSION
+from mcp_types.version import LATEST_PROTOCOL_VERSION, SUPPORTED_PROTOCOL_VERSIONS as MCP_SUPPORTED_PROTOCOL_VERSIONS
 from starlette.middleware.base import BaseHTTPMiddleware
 
 # First-Party

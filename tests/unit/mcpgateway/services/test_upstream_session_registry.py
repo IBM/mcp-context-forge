@@ -27,10 +27,12 @@ import asyncio
 import pytest
 
 # First-Party
+from mcpgateway.config import settings
 from mcpgateway.services.upstream_session_registry import (
     get_upstream_session_registry,
     init_upstream_session_registry,
     SessionCreateRequest,
+    SessionLifecycle,
     shutdown_upstream_session_registry,
     TransportType,
     UpstreamSessionRegistry,
@@ -79,12 +81,11 @@ def _make_fake_factory():
             await shutdown_event.wait()
 
         task = asyncio.create_task(owner(), name="fake-owner")
-        # Match the real factory's smuggling convention so the registry can
-        # find the owner task + shutdown event without a return-value contract.
-        session._cf_owner_task = task  # type: ignore[attr-defined]
-        session._cf_shutdown_event = shutdown_event  # type: ignore[attr-defined]
+        # Match the real factory's contract: the second tuple slot carries a
+        # typed SessionLifecycle handle (owner task + shutdown event + the SDK
+        # Client), never attributes smuggled onto the session object.
         created.append((req, session, shutdown_event, task))
-        return session, object()  # transport_ctx is opaque to the registry
+        return session, SessionLifecycle(owner_task=task, shutdown_event=shutdown_event, client=None)
 
     return factory, created
 
@@ -589,10 +590,10 @@ class _ProbeChainSession:
             return
         if b == "method_not_found":
             # Third-Party
-            from mcp import McpError
-            from mcp.types import ErrorData
+            from mcp import MCPError
+            from mcp_types import ErrorData
 
-            raise McpError(ErrorData(code=-32601, message="method not found"))
+            raise MCPError.from_error_data(ErrorData(code=-32601, message="method not found"))
         if b == "timeout":
             raise TimeoutError("probe timed out")
         if b == "oserror":
@@ -726,9 +727,7 @@ async def test_close_all_drains_in_parallel_not_series():
             await asyncio.sleep(0.3)
 
         task = asyncio.create_task(owner(), name="slow-owner")
-        session._cf_owner_task = task  # type: ignore[attr-defined]
-        session._cf_shutdown_event = shutdown_event  # type: ignore[attr-defined]
-        return session, object()
+        return session, SessionLifecycle(owner_task=task, shutdown_event=shutdown_event, client=None)
 
     reg = UpstreamSessionRegistry(
         session_factory=slow_drain_factory,
@@ -957,6 +956,124 @@ def test_mcp_transport_is_broken_first_drift_logs_warning_then_degrades_to_debug
     assert any(rec.levelname == "DEBUG" and "MCP transport-broken probe raised" in rec.getMessage() for rec in caplog.records)
 
 
+def test_mcp_transport_is_broken_detects_closed_dispatcher():
+    """ClientSession built by ``mcp.client.Client`` carries a ``_dispatcher``
+    whose ``_closed`` is the definitive dead flag (checked by ``send_raw_request``).
+    When ``_dispatcher._closed is True`` the transport is broken."""
+    # First-Party
+    from mcpgateway.services.upstream_session_registry import _mcp_transport_is_broken
+
+    class _Dispatcher:
+        _closed = True
+        _running = False  # also False at teardown; _closed alone is sufficient
+
+    class _Session:
+        _dispatcher = _Dispatcher()
+        # No _write_stream — Client-built sessions don't have that attribute
+
+    assert _mcp_transport_is_broken(_Session()) is True  # type: ignore[arg-type]
+
+
+def test_mcp_transport_is_broken_detects_stopped_dispatcher():
+    """A dispatcher that has been running and is now stopped (but not yet closed)
+    also indicates a broken transport — ``_running`` flips to ``False`` at teardown
+    before ``_closed`` is set, so both flags are meaningful dead signals."""
+    # First-Party
+    from mcpgateway.services.upstream_session_registry import _mcp_transport_is_broken
+
+    class _Dispatcher:
+        _closed = False  # teardown sequence: _running=False first, then _closed=True
+        _running = False
+
+    class _Session:
+        _dispatcher = _Dispatcher()
+        # No _write_stream
+
+    assert _mcp_transport_is_broken(_Session()) is True  # type: ignore[arg-type]
+
+
+def test_mcp_transport_is_broken_prefers_dispatcher_over_write_stream():
+    """When BOTH ``_dispatcher`` and ``_write_stream`` are present, the dispatcher
+    path takes priority — ``_write_stream`` must never be consulted for a
+    Client-built session.  Dead dispatcher + healthy write_stream → broken."""
+    # First-Party
+    from mcpgateway.services.upstream_session_registry import _mcp_transport_is_broken
+
+    class _HealthyStream:
+        _closed = False
+
+        class _State:
+            open_receive_channels = 1  # healthy
+
+        _state = _State()
+
+    class _DeadDispatcher:
+        _closed = True
+        _running = False
+
+    class _Session:
+        _dispatcher = _DeadDispatcher()
+        _write_stream = _HealthyStream()  # would return False if consulted
+
+    # The dispatcher is dead, so the transport is broken — write_stream is irrelevant
+    assert _mcp_transport_is_broken(_Session()) is True  # type: ignore[arg-type]
+
+
+def test_mcp_transport_is_broken_healthy_dispatcher_ignores_write_stream():
+    """When dispatcher is present and healthy, the write_stream probe is skipped.
+    This verifies that a healthy dispatcher + dead write_stream does NOT report broken."""
+    # First-Party
+    from mcpgateway.services.upstream_session_registry import _mcp_transport_is_broken
+
+    class _DeadStream:
+        _closed = True  # would be broken if consulted
+
+        class _State:
+            open_receive_channels = 0
+
+        _state = _State()
+
+    class _HealthyDispatcher:
+        _closed = False
+        _running = True
+
+    class _Session:
+        _dispatcher = _HealthyDispatcher()
+        _write_stream = _DeadStream()  # dead, but dispatcher is healthy so skip it
+
+    # Dispatcher is healthy → transport is NOT broken, despite dead write_stream
+    assert _mcp_transport_is_broken(_Session()) is False  # type: ignore[arg-type]
+
+
+def test_mcp_transport_is_broken_raw_session_without_dispatcher_uses_write_stream():
+    """Raw-constructed sessions (built with read/write streams, no ``_dispatcher``)
+    must still work with the legacy ``_write_stream`` probe exactly as before."""
+    # First-Party
+    from mcpgateway.services.upstream_session_registry import _mcp_transport_is_broken
+
+    class _Stream:
+        _closed = True  # legacy broken signal
+
+    class _Session:
+        _write_stream = _Stream()
+        # No _dispatcher
+
+    assert _mcp_transport_is_broken(_Session()) is True  # type: ignore[arg-type]
+
+
+def test_mcp_transport_is_broken_neither_attribute_returns_false():
+    """When neither ``_dispatcher`` nor ``_write_stream`` is present, the probe
+    cannot determine brokenness → returns ``False`` (graceful degradation)."""
+    # First-Party
+    from mcpgateway.services.upstream_session_registry import _mcp_transport_is_broken
+
+    class _Bare:
+        pass  # no _dispatcher, no _write_stream
+
+    # The bare session: getattr("_write_stream") returns None → early return False
+    assert _mcp_transport_is_broken(_Bare()) is False  # type: ignore[arg-type]
+
+
 # ---------------------------------------------------------------------------
 # SessionCreateRequest validation
 # ---------------------------------------------------------------------------
@@ -1089,44 +1206,73 @@ def test_upstream_session_bookkeeping_fields_remain_mutable():
 
 
 class _FakeTransportCtx:
-    """Async-CM stand-in for sse_client()/streamablehttp_client()."""
+    """Async-CM stand-in for sse_client()/streamable_http_client()."""
 
     def __init__(self, streams=(None, None), enter_exc: BaseException | None = None):
         self._streams = streams
         self._enter_exc = enter_exc
-        self.entered = False
-        self.exited = False
+        self.enter_count = 0
+        self.exit_count = 0
 
     async def __aenter__(self):
-        self.entered = True
+        self.enter_count += 1
         if self._enter_exc is not None:
             raise self._enter_exc
         return self._streams
 
     async def __aexit__(self, exc_type, exc, tb):
-        self.exited = True
+        self.exit_count += 1
         return False
 
 
-class _FakeClientSessionCM:
-    """Async-CM stand-in for mcp.ClientSession(...)."""
+class _FakeClientSession:
+    """Stand-in for the ClientSession a real ``mcp.client.Client`` publishes post-handshake.
 
-    last_message_handler = None
+    Deliberately has NO ``initialize`` method: the SDK Client performs the
+    handshake itself inside ``__aenter__`` (legacy → initialize, auto →
+    server/discover negotiation), so a factory regression that calls
+    ``session.initialize()`` directly fails here with AttributeError.
+    """
 
-    def __init__(self, read_stream, write_stream, message_handler=None):
-        self._read = read_stream
-        self._write = write_stream
-        _FakeClientSessionCM.last_message_handler = message_handler
-        self.initialized = False
+
+class _FakeClient:
+    """Async-CM stand-in for ``mcp.client.Client``.
+
+    Mirrors the real contract: constructed with ``(transport, *, mode,
+    message_handler, cache)``; ``__aenter__`` enters the transport ACM (the
+    real Client does this via its exit stack), performs the mode-driven
+    handshake, then publishes ``.session``; ``__aexit__`` unwinds the
+    transport exactly once.
+    """
+
+    instances: list["_FakeClient"] = []
+
+    def __init__(self, server, *, mode="auto", message_handler=None, cache=None):
+        self.server = server
+        self.mode = mode
+        self.message_handler = message_handler
+        self.cache = cache
+        self.session: _FakeClientSession | None = None
+        self.handshake_done = False
+        _FakeClient.instances.append(self)
 
     async def __aenter__(self):
+        await self.server.__aenter__()
+        self.handshake_done = True
+        self.session = _FakeClientSession()
         return self
 
     async def __aexit__(self, exc_type, exc, tb):
+        await self.server.__aexit__(exc_type, exc, tb)
         return False
 
-    async def initialize(self):
-        self.initialized = True
+
+@pytest.fixture(autouse=True)
+def _reset_fake_client_instances():
+    """Keep the _FakeClient instance log from leaking across tests."""
+    _FakeClient.instances.clear()
+    yield
+    _FakeClient.instances.clear()
 
 
 def _make_request(**overrides):
@@ -1147,7 +1293,7 @@ def _make_request(**overrides):
 
 @pytest.mark.asyncio
 async def test_default_session_factory_streamablehttp_path(monkeypatch):
-    """STREAMABLEHTTP transport routes through streamablehttp_client and returns an initialized session."""
+    """STREAMABLEHTTP transport routes through streamable_http_client; the SDK Client performs the handshake."""
     # First-Party
     from mcpgateway.services import upstream_session_registry as usr
 
@@ -1156,29 +1302,35 @@ async def test_default_session_factory_streamablehttp_path(monkeypatch):
     def fake_stream(**kwargs):
         captured.update(kwargs)
         captured["which"] = "streamable"
-        return _FakeTransportCtx(streams=("r", "w", object()))
+        ctx = _FakeTransportCtx(streams=("r", "w"))
+        captured["ctx"] = ctx
+        return ctx
 
     def fake_sse(**_kwargs):
         raise AssertionError("sse_client must not be called for STREAMABLEHTTP transport")
 
-    monkeypatch.setattr(usr, "streamablehttp_client", fake_stream)
+    monkeypatch.setattr(usr, "streamable_http_client", fake_stream)
     monkeypatch.setattr(usr, "sse_client", fake_sse)
-    monkeypatch.setattr(usr, "ClientSession", _FakeClientSessionCM)
+    monkeypatch.setattr(usr, "Client", _FakeClient)
 
     req = _make_request()
-    session, transport_ctx = await usr._default_session_factory(req)  # pylint: disable=protected-access
+    session, lifecycle = await usr._default_session_factory(req)  # pylint: disable=protected-access
 
-    assert isinstance(session, _FakeClientSessionCM)
-    assert session.initialized is True
+    client = _FakeClient.instances[-1]
+    assert session is client.session
+    assert client.handshake_done is True
     assert captured["which"] == "streamable"
     assert captured["url"] == req.url
     assert captured["headers"] == req.headers
-    assert transport_ctx.entered is True
+    assert captured["ctx"].enter_count == 1
+
+    lifecycle.shutdown_event.set()
+    await lifecycle.owner_task
 
 
 @pytest.mark.asyncio
 async def test_default_session_factory_sse_path(monkeypatch):
-    """SSE transport routes through sse_client."""
+    """SSE transport routes through sse_client; the SDK Client performs the handshake."""
     # First-Party
     from mcpgateway.services import upstream_session_registry as usr
 
@@ -1190,17 +1342,20 @@ async def test_default_session_factory_sse_path(monkeypatch):
         return _FakeTransportCtx(streams=("r", "w"))
 
     def fake_stream(**_kwargs):
-        raise AssertionError("streamablehttp_client must not be called for SSE transport")
+        raise AssertionError("streamable_http_client must not be called for SSE transport")
 
     monkeypatch.setattr(usr, "sse_client", fake_sse)
-    monkeypatch.setattr(usr, "streamablehttp_client", fake_stream)
-    monkeypatch.setattr(usr, "ClientSession", _FakeClientSessionCM)
+    monkeypatch.setattr(usr, "streamable_http_client", fake_stream)
+    monkeypatch.setattr(usr, "Client", _FakeClient)
 
     req = _make_request(transport_type=TransportType.SSE)
-    session, _ctx = await usr._default_session_factory(req)  # pylint: disable=protected-access
+    _session, lifecycle = await usr._default_session_factory(req)  # pylint: disable=protected-access
 
-    assert session.initialized is True
+    assert _FakeClient.instances[-1].handshake_done is True
     assert captured["which"] == "sse"
+
+    lifecycle.shutdown_event.set()
+    await lifecycle.owner_task
 
 
 @pytest.mark.asyncio
@@ -1214,20 +1369,28 @@ async def test_default_session_factory_passes_httpx_factory(monkeypatch):
 
     def fake_stream(**kwargs):
         captured.update(kwargs)
-        return _FakeTransportCtx(streams=("r", "w", object()))
+        return _FakeTransportCtx(streams=("r", "w"))
 
-    monkeypatch.setattr(usr, "streamablehttp_client", fake_stream)
-    monkeypatch.setattr(usr, "ClientSession", _FakeClientSessionCM)
+    monkeypatch.setattr(usr, "streamable_http_client", fake_stream)
+    monkeypatch.setattr(usr, "Client", _FakeClient)
 
     req = _make_request(httpx_client_factory=sentinel_factory)
-    await usr._default_session_factory(req)  # pylint: disable=protected-access
+    _session, lifecycle = await usr._default_session_factory(req)  # pylint: disable=protected-access
 
     assert captured.get("httpx_client_factory") is sentinel_factory
+
+    lifecycle.shutdown_event.set()
+    await lifecycle.owner_task
 
 
 @pytest.mark.asyncio
 async def test_default_session_factory_message_handler_factory_success(monkeypatch):
-    """A provided message_handler_factory is called with (url, gateway_id, downstream_session_id) and its result flows into ClientSession."""
+    """The handler from message_handler_factory reaches the Client unwrapped, and cache=False is passed.
+
+    cache=False is load-bearing: the SDK default (cache=None) builds a
+    ClientResponseCache that WRAPS message_handler in an evicting layer,
+    which would change ADR-052 notification/RequestResponder behaviour.
+    """
     # First-Party
     from mcpgateway.services import upstream_session_registry as usr
 
@@ -1238,49 +1401,58 @@ async def test_default_session_factory_message_handler_factory_success(monkeypat
         factory_calls.append((url, gateway_id, downstream_session_id))
         return sentinel_handler
 
-    monkeypatch.setattr(usr, "streamablehttp_client", lambda **_kw: _FakeTransportCtx(streams=("r", "w", object())))
-    monkeypatch.setattr(usr, "ClientSession", _FakeClientSessionCM)
+    monkeypatch.setattr(usr, "streamable_http_client", lambda **_kw: _FakeTransportCtx(streams=("r", "w")))
+    monkeypatch.setattr(usr, "Client", _FakeClient)
 
     req = _make_request(message_handler_factory=handler_factory)
-    await usr._default_session_factory(req)  # pylint: disable=protected-access
+    _session, lifecycle = await usr._default_session_factory(req)  # pylint: disable=protected-access
 
     assert factory_calls == [(req.url, req.gateway_id, req.downstream_session_id)]
-    assert _FakeClientSessionCM.last_message_handler is sentinel_handler
+    client = _FakeClient.instances[-1]
+    assert client.message_handler is sentinel_handler
+    assert client.cache is False, "factory must pass cache=False so the message handler is not wrapped by the response cache"
+
+    lifecycle.shutdown_event.set()
+    await lifecycle.owner_task
 
 
 @pytest.mark.asyncio
 async def test_default_session_factory_message_handler_factory_failure_is_logged_not_fatal(monkeypatch, caplog):
-    """If the handler factory raises, the session still opens and the error is logged."""
+    """If the handler factory raises, the Client is built with message_handler=None and the error is logged."""
     # First-Party
     from mcpgateway.services import upstream_session_registry as usr
 
     def bad_factory(_url, _gw, *, downstream_session_id):  # pylint: disable=unused-argument
         raise ValueError("handler factory boom")
 
-    monkeypatch.setattr(usr, "streamablehttp_client", lambda **_kw: _FakeTransportCtx(streams=("r", "w", object())))
-    monkeypatch.setattr(usr, "ClientSession", _FakeClientSessionCM)
-    _FakeClientSessionCM.last_message_handler = "leftover"
+    monkeypatch.setattr(usr, "streamable_http_client", lambda **_kw: _FakeTransportCtx(streams=("r", "w")))
+    monkeypatch.setattr(usr, "Client", _FakeClient)
 
     req = _make_request(message_handler_factory=bad_factory)
     with caplog.at_level("WARNING", logger=usr.logger.name):
-        session, _ctx = await usr._default_session_factory(req)  # pylint: disable=protected-access
+        _session, lifecycle = await usr._default_session_factory(req)  # pylint: disable=protected-access
 
-    assert session.initialized is True
-    assert _FakeClientSessionCM.last_message_handler is None
+    client = _FakeClient.instances[-1]
+    assert client.handshake_done is True
+    assert client.message_handler is None
+    assert client.cache is False
     assert any("Failed to build message handler" in rec.getMessage() for rec in caplog.records)
+
+    lifecycle.shutdown_event.set()
+    await lifecycle.owner_task
 
 
 @pytest.mark.asyncio
 async def test_default_session_factory_transport_failure_raises_with_context(monkeypatch):
-    """If the transport CM setup blows up, the factory caller sees a wrapped RuntimeError."""
+    """If the transport CM setup blows up (inside Client.__aenter__), the factory caller sees a wrapped RuntimeError."""
     # First-Party
     from mcpgateway.services import upstream_session_registry as usr
 
     def fake_stream(**_kw):
         return _FakeTransportCtx(enter_exc=OSError("connect refused"))
 
-    monkeypatch.setattr(usr, "streamablehttp_client", fake_stream)
-    monkeypatch.setattr(usr, "ClientSession", _FakeClientSessionCM)
+    monkeypatch.setattr(usr, "streamable_http_client", fake_stream)
+    monkeypatch.setattr(usr, "Client", _FakeClient)
 
     req = _make_request()
     with pytest.raises(RuntimeError, match="Failed to create upstream MCP session"):
@@ -1303,38 +1475,41 @@ async def test_default_session_factory_owner_task_exit_is_logged(monkeypatch, ca
     class _CustomBaseException(BaseException):
         """A BaseException that `except Exception` does NOT catch — the owner's broad catch must let it through."""
 
-    class _BoomClientSession:
-        """ClientSession that initialises fine but raises _CustomBaseException from __aexit__."""
+    class _BoomClient:
+        """Client that handshakes fine but raises _CustomBaseException from __aexit__."""
 
-        def __init__(self, *_args, **_kwargs):
-            pass
+        def __init__(self, server, **_kwargs):
+            self.server = server
+            self.session = None
 
         async def __aenter__(self):
+            await self.server.__aenter__()
+            self.session = _FakeClientSession()
             return self
 
         async def __aexit__(self, *_exc_info):
             raise _CustomBaseException("BaseException escaping owner")
 
-        async def initialize(self):
-            return None
-
-    monkeypatch.setattr(usr, "streamablehttp_client", lambda **_kw: _FakeTransportCtx(streams=("r", "w", object())))
-    monkeypatch.setattr(usr, "ClientSession", _BoomClientSession)
+    monkeypatch.setattr(usr, "streamable_http_client", lambda **_kw: _FakeTransportCtx(streams=("r", "w")))
+    monkeypatch.setattr(usr, "Client", _BoomClient)
 
     req = _make_request()
-    session, _ctx = await usr._default_session_factory(req)  # pylint: disable=protected-access
-    assert isinstance(session, _BoomClientSession)
+    session, lifecycle = await usr._default_session_factory(req)  # pylint: disable=protected-access
+    assert isinstance(session, _FakeClientSession)
+
+    # Lifecycle comes from the typed handle — never attributes smuggled onto
+    # the session object.
+    assert not hasattr(session, "_cf_owner_task")
+    assert not hasattr(session, "_cf_shutdown_event")
 
     # Drive the owner task to completion by firing its shutdown event.
     # The BaseException escapes `except Exception`, so task.exception() returns
     # it and the done-callback hits its warning branch.
-    shutdown_event = getattr(session, "_cf_shutdown_event")  # smuggled by the factory
-    owner_task = getattr(session, "_cf_owner_task")
-    shutdown_event.set()
+    lifecycle.shutdown_event.set()
 
     with caplog.at_level("WARNING", logger=usr.logger.name):
         with pytest.raises(_CustomBaseException):
-            await owner_task
+            await lifecycle.owner_task
 
     warnings = [rec for rec in caplog.records if rec.levelname == "WARNING" and "owner task" in rec.getMessage()]
     assert len(warnings) == 1, f"expected 1 WARNING; got {[(r.levelname, r.getMessage()) for r in caplog.records]}"
@@ -1389,7 +1564,7 @@ def test_upstream_session_age_seconds_exposes_wallclock_age():
 async def test_default_session_factory_sse_with_httpx_client_factory(monkeypatch):
     """SSE transport + httpx_client_factory routes through sse_client with the factory threaded in.
 
-    Covers upstream_session_registry.py:295 — the SSE + httpx_client_factory branch.
+    Covers the SSE + httpx_client_factory branch of _default_session_factory.
     """
     # First-Party
     from mcpgateway.services import upstream_session_registry as usr
@@ -1402,20 +1577,23 @@ async def test_default_session_factory_sse_with_httpx_client_factory(monkeypatch
         return _FakeTransportCtx(streams=("r", "w"))
 
     monkeypatch.setattr(usr, "sse_client", fake_sse)
-    monkeypatch.setattr(usr, "ClientSession", _FakeClientSessionCM)
+    monkeypatch.setattr(usr, "Client", _FakeClient)
 
     req = _make_request(transport_type=TransportType.SSE, httpx_client_factory=sentinel_factory)
-    await usr._default_session_factory(req)  # pylint: disable=protected-access
+    _session, lifecycle = await usr._default_session_factory(req)  # pylint: disable=protected-access
 
     assert captured.get("httpx_client_factory") is sentinel_factory
+
+    lifecycle.shutdown_event.set()
+    await lifecycle.owner_task
 
 
 @pytest.mark.asyncio
 async def test_default_session_factory_cancelled_path_runs_on_ready_timeout(monkeypatch):
     """When ready times out, the finally clause cancels the owner task and `await task` sees CancelledError.
 
-    Covers upstream_session_registry.py:385-387. The sibling `except Exception`
-    branch (388-393) is defensive — the owner's own `except Exception` catches
+    Covers the factory's cancelled-cleanup branch. The sibling `except Exception`
+    branch is defensive — the owner's own `except Exception` catches
     all Exception subclasses, so a regular Exception cannot escape `await task`.
     """
     # First-Party
@@ -1425,13 +1603,13 @@ async def test_default_session_factory_cancelled_path_runs_on_ready_timeout(monk
     class _HangingCtx:
         async def __aenter__(self):
             await asyncio.sleep(10.0)  # far longer than the factory timeout
-            return ("r", "w", object())
+            return ("r", "w")
 
         async def __aexit__(self, *_exc):
             return False
 
-    monkeypatch.setattr(usr, "streamablehttp_client", lambda **_kw: _HangingCtx())
-    monkeypatch.setattr(usr, "ClientSession", _FakeClientSessionCM)
+    monkeypatch.setattr(usr, "streamable_http_client", lambda **_kw: _HangingCtx())
+    monkeypatch.setattr(usr, "Client", _FakeClient)
 
     req = _make_request(timeout_seconds=0.05)
     with pytest.raises((asyncio.TimeoutError, TimeoutError)):
@@ -1440,6 +1618,177 @@ async def test_default_session_factory_cancelled_path_runs_on_ready_timeout(monk
     # The important property: the factory surfaced the TimeoutError cleanly —
     # meaning the finally-clause cleanup completed, which requires the
     # CancelledError branch to have swallowed the cancellation of the hung owner.
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["auto", "legacy"])
+async def test_default_session_factory_constructs_client_with_configured_connect_mode(monkeypatch, mode):
+    """The factory must build the SDK Client with mode == settings.mcp_client_connect_mode.
+
+    "auto" enables MCP 2026-07-28 server/discover negotiation on pooled
+    upstream sessions; "legacy" is the rollback switch forcing the pre-2026
+    initialize handshake. Either way the configured value must reach the
+    Client constructor verbatim.
+    """
+    # First-Party
+    from mcpgateway.services import upstream_session_registry as usr
+
+    monkeypatch.setattr(settings, "mcp_client_connect_mode", mode)
+    monkeypatch.setattr(usr, "streamable_http_client", lambda **_kw: _FakeTransportCtx(streams=("r", "w")))
+    monkeypatch.setattr(usr, "Client", _FakeClient)
+
+    _session, lifecycle = await usr._default_session_factory(_make_request())  # pylint: disable=protected-access
+
+    client = _FakeClient.instances[-1]
+    assert client.mode == mode
+    assert client.cache is False
+
+    lifecycle.shutdown_event.set()
+    await lifecycle.owner_task
+
+
+@pytest.mark.asyncio
+async def test_default_session_factory_owner_parks_inside_client_context_and_closes_transport_once(monkeypatch):
+    """The owner task parks inside ``async with Client(...)`` and unwinds the transport exactly once on shutdown."""
+    # First-Party
+    from mcpgateway.services import upstream_session_registry as usr
+
+    ctx = _FakeTransportCtx(streams=("r", "w"))
+    monkeypatch.setattr(usr, "streamable_http_client", lambda **_kw: ctx)
+    monkeypatch.setattr(usr, "Client", _FakeClient)
+
+    _session, lifecycle = await usr._default_session_factory(_make_request())  # pylint: disable=protected-access
+
+    # Parked: the transport is entered exactly once, not yet exited, and the
+    # owner task is still alive inside the Client context.
+    assert ctx.enter_count == 1
+    assert ctx.exit_count == 0
+    assert not lifecycle.owner_task.done()
+
+    lifecycle.shutdown_event.set()
+    await lifecycle.owner_task
+
+    assert _FakeClient.instances[-1].handshake_done is True
+    assert ctx.exit_count == 1, "transport must be unwound exactly once on shutdown"
+
+
+@pytest.mark.asyncio
+async def test_default_session_factory_force_cancel_still_closes_transport_exactly_once(monkeypatch):
+    """Force-cancelling a parked owner (the _close_session timeout path) must still unwind the transport once."""
+    # First-Party
+    from mcpgateway.services import upstream_session_registry as usr
+
+    ctx = _FakeTransportCtx(streams=("r", "w"))
+    monkeypatch.setattr(usr, "streamable_http_client", lambda **_kw: ctx)
+    monkeypatch.setattr(usr, "Client", _FakeClient)
+
+    _session, lifecycle = await usr._default_session_factory(_make_request())  # pylint: disable=protected-access
+
+    # Emulate _close_session's force path: cancel the owner without setting shutdown.
+    lifecycle.owner_task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await lifecycle.owner_task
+
+    assert ctx.enter_count == 1
+    assert ctx.exit_count == 1, "CancelledError unwinds `async with client:` — the transport closes exactly once"
+
+
+@pytest.mark.asyncio
+async def test_default_session_factory_client_handshake_failure_raises_contextual_error_without_leaking_task(monkeypatch):
+    """A failure inside ``Client.__aenter__`` (server/discover or initialize refused) must surface as the
+    existing contextual RuntimeError and leave no owner task running."""
+    # First-Party
+    from mcpgateway.services import upstream_session_registry as usr
+
+    created_tasks: list[asyncio.Task] = []
+    real_create_task = asyncio.create_task
+
+    def spy_create_task(coro, *, name=None):
+        task = real_create_task(coro, name=name)
+        created_tasks.append(task)
+        return task
+
+    class _HandshakeBoomClient:
+        """Client whose __aenter__ raises after the transport connects (handshake refused)."""
+
+        def __init__(self, server, **_kwargs):
+            self.server = server
+
+        async def __aenter__(self):
+            await self.server.__aenter__()
+            raise OSError("handshake refused")
+
+        async def __aexit__(self, *_exc_info):
+            return False
+
+    monkeypatch.setattr(usr, "streamable_http_client", lambda **_kw: _FakeTransportCtx(streams=("r", "w")))
+    monkeypatch.setattr(usr, "Client", _HandshakeBoomClient)
+    monkeypatch.setattr(asyncio, "create_task", spy_create_task)
+
+    with pytest.raises(RuntimeError, match=r"Failed to create upstream MCP session.*handshake refused"):
+        await usr._default_session_factory(_make_request())  # pylint: disable=protected-access
+
+    assert len(created_tasks) == 1
+    assert created_tasks[0].done(), "a failed create must not leak a parked owner task"
+
+
+@pytest.mark.asyncio
+async def test_acquire_populates_session_and_client_from_factory_lifecycle():
+    """UpstreamSession.session is the factory-built ClientSession and UpstreamSession.client carries the SDK Client.
+
+    Lifecycle (owner task + shutdown event) flows through the typed
+    SessionLifecycle handle into the UpstreamSession dataclass fields — no
+    ``_cf_owner_task`` / ``_cf_shutdown_event`` attributes are ever attached
+    to the session object.
+    """
+    sentinel_session = FakeClientSession()
+    sentinel_client = object()
+    shutdown_event = asyncio.Event()
+
+    async def owner() -> None:
+        await shutdown_event.wait()
+
+    async def factory(req: SessionCreateRequest):  # pylint: disable=unused-argument
+        task = asyncio.create_task(owner(), name="client-carrying-owner")
+        return sentinel_session, SessionLifecycle(owner_task=task, shutdown_event=shutdown_event, client=sentinel_client)
+
+    reg = UpstreamSessionRegistry(session_factory=factory, idle_validation_seconds=1_000)
+    async with reg.acquire(
+        downstream_session_id="s1",
+        gateway_id="g1",
+        url="http://upstream/mcp",
+        headers=None,
+        transport_type=TransportType.STREAMABLE_HTTP,
+    ) as upstream:
+        assert upstream.session is sentinel_session
+        assert upstream.client is sentinel_client
+        assert upstream._owner_task is not None  # pylint: disable=protected-access
+        assert upstream._shutdown_event is shutdown_event  # pylint: disable=protected-access
+        assert not hasattr(sentinel_session, "_cf_owner_task")
+        assert not hasattr(sentinel_session, "_cf_shutdown_event")
+    await reg.close_all()
+
+
+@pytest.mark.asyncio
+async def test_default_session_factory_returns_lifecycle_handle_without_session_smuggling(monkeypatch):
+    """The real factory's return carries a SessionLifecycle; the session object stays free of _cf_* attributes."""
+    # First-Party
+    from mcpgateway.services import upstream_session_registry as usr
+
+    monkeypatch.setattr(usr, "streamable_http_client", lambda **_kw: _FakeTransportCtx(streams=("r", "w")))
+    monkeypatch.setattr(usr, "Client", _FakeClient)
+
+    session, lifecycle = await usr._default_session_factory(_make_request())  # pylint: disable=protected-access
+
+    assert isinstance(lifecycle, SessionLifecycle)
+    assert lifecycle.client is _FakeClient.instances[-1]
+    assert isinstance(lifecycle.owner_task, asyncio.Task)
+    assert isinstance(lifecycle.shutdown_event, asyncio.Event)
+    assert not hasattr(session, "_cf_owner_task")
+    assert not hasattr(session, "_cf_shutdown_event")
+
+    lifecycle.shutdown_event.set()
+    await lifecycle.owner_task
 
 
 @pytest.mark.asyncio
@@ -1462,12 +1811,12 @@ async def test_probe_health_mcp_error_other_than_method_not_found_fails_fast(fac
     reg = UpstreamSessionRegistry(session_factory=factory, idle_validation_seconds=1.0)
 
     # Third-Party
-    from mcp import McpError
-    from mcp.types import ErrorData
+    from mcp import MCPError
+    from mcp_types import ErrorData
 
     class _DeniedSession:
         async def send_ping(self):
-            raise McpError(ErrorData(code=-32000, message="permission denied — token rotated"))
+            raise MCPError.from_error_data(ErrorData(code=-32000, message="permission denied — token rotated"))
 
     upstream = _make_upstream_for_probe(_DeniedSession())
     assert await reg._probe_health(upstream) is False  # pylint: disable=protected-access

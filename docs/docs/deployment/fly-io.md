@@ -70,7 +70,7 @@ If you're building a custom image, ensure your install command includes the
 ```dockerfile
 RUN python3 -m venv /app/.venv && \
     /app/.venv/bin/python3 -m pip install --upgrade pip setuptools pdm uv && \
-    /app/.venv/bin/uv pip install ".[redis,postgres]"
+    /app/.venv/bin/uv pip install ".[redis,postgres,runtime]"
 ```
 
 ---

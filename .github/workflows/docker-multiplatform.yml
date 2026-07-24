@@ -524,6 +524,27 @@ jobs:
             docker buildx imagetools inspect "${IMAGE}:${{ github.sha }}"
           fi
 
+      # ----------------------------------------------------------------
+      # Smoke test: verify the image actually boots and the gateway
+      # imports cleanly. Catches missing-extras regressions (notably
+      # the `runtime` extra — without it, `import mcpgateway` fails
+      # with `ModuleNotFoundError: No module named 'mcp'`).
+      # Runs against the linux/amd64 variant (the host arch).
+      # ----------------------------------------------------------------
+      - name: 🧪  Smoke test — mcpgateway imports
+        run: |
+          REF_NAME=${{ github.ref_name }}
+          IMAGE=${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LC }}
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            TAG="${REF_NAME}"
+          else
+            TAG="${{ github.sha }}"
+          fi
+          echo "Smoke testing ${IMAGE}:${TAG} (linux/amd64)"
+          docker pull --platform linux/amd64 "${IMAGE}:${TAG}"
+          docker run --rm --platform linux/amd64 "${IMAGE}:${TAG}" \
+            python -c "import mcpgateway, mcp; print(f'OK: mcpgateway loaded, mcp {mcp.__version__}')"
+
   # ---------------------------------------------------------------
   # Sign images with Cosign (keyless OIDC)
   # ---------------------------------------------------------------

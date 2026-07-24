@@ -961,12 +961,31 @@ class TestEditServerSelectionBugs:
 
     @pytest.mark.ui
     @pytest.mark.e2e
-    def test_select_all_prompts_survives_search(self, servers_page: ServersPage):
+    def test_select_all_prompts_survives_search(self, servers_page: ServersPage, admin_api):
         """Regression test for #3257: Select All prompts + search + clear preserves selections.
 
         Clicks Select All prompts, captures store size, searches, clears,
         then asserts the in-memory store size is unchanged.
         """
+        # Guarantee at least one prompt is visible in the modal: a DB holding
+        # only team-scoped prompts from other suites leaves the prompt list
+        # empty and the wait below times out instead of reaching the skip.
+        prompt_name = f"sel-all-prompts-{uuid.uuid4().hex[:8]}"
+        resp = admin_api.post(
+            "/prompts/",
+            data={
+                "prompt": {
+                    "name": prompt_name,
+                    "description": "select-all regression prompt",
+                    "template": "Hello {{name}}",
+                    "arguments": [{"name": "name", "description": "Name", "required": True}],
+                },
+                "team_id": None,
+            },
+        )
+        assert resp.status in (200, 201), f"Failed to create prompt: {resp.status} {resp.text()}"
+        prompt_id = resp.json()["id"]
+
         servers_page.navigate_to_servers_tab()
         servers_page.wait_for_visible(servers_page.add_server_form)
         server_name = self._create_server_with_tools(servers_page)
@@ -1031,3 +1050,4 @@ class TestEditServerSelectionBugs:
             expect(servers_page.edit_server_modal).to_be_hidden(timeout=5000)
         finally:
             cleanup_server(servers_page.page, server_name)
+            admin_api.delete(f"/prompts/{prompt_id}")

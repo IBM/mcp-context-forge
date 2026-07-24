@@ -496,7 +496,7 @@ class TestGatewayServiceOAuthComprehensive:
             mock_tool = MagicMock(spec=ToolCreate)
             mock_tool.name = "oauth_tool"
             mock_tool.description = "OAuth Tool"
-            mock_tool.inputSchema = {}
+            mock_tool.input_schema = {}
 
             # Mock the new _connect_to_sse_server_without_validation method (used for OAuth servers)
             gateway_service._connect_to_sse_server_without_validation = AsyncMock(
@@ -627,7 +627,7 @@ class TestGatewayServiceOAuthComprehensive:
         gateway_service.oauth_manager.get_access_token.return_value = "token_without_scopes"
 
         # This should still work
-        with patch("mcpgateway.services.gateway_service.sse_client"), patch("mcpgateway.services.gateway_service.ClientSession"):
+        with patch("mcpgateway.services.gateway_service.mcp_proxy_client"):
             # Should not raise an error
             try:
                 await gateway_service._initialize_gateway("http://test.example.com", None, "SSE", "oauth", oauth_config)
@@ -648,7 +648,7 @@ class TestGatewayServiceOAuthComprehensive:
         # Mock OAuth manager
         gateway_service.oauth_manager.get_access_token.return_value = "custom_token"
 
-        with patch("mcpgateway.services.gateway_service.sse_client"), patch("mcpgateway.services.gateway_service.ClientSession"):
+        with patch("mcpgateway.services.gateway_service.mcp_proxy_client"):
             try:
                 await gateway_service._initialize_gateway("http://test.example.com", None, "SSE", "oauth", oauth_config)
 
@@ -778,7 +778,7 @@ class TestFetchToolsAfterOauthTokenValidation:
         """_connect_to_sse_server_without_validation produces diagnostic message on 401-like errors."""
         validation_warnings = ["Token audience mismatch: token aud does not match expected resource or gateway URL"]
 
-        with patch("mcpgateway.services.gateway_service.sse_client", side_effect=Exception("HTTP 401 Unauthorized")):
+        with patch("mcpgateway.services.gateway_service.mcp_proxy_client", side_effect=Exception("HTTP 401 Unauthorized")):
             with pytest.raises(GatewayConnectionError, match="Possible causes.*audience mismatch"):
                 await gateway_service._connect_to_sse_server_without_validation(
                     "https://mcp.example.com/sse",
@@ -791,7 +791,7 @@ class TestFetchToolsAfterOauthTokenValidation:
         """_connect_to_sse_server_without_validation uses generic message for non-auth errors."""
         validation_warnings = ["Token audience mismatch"]
 
-        with patch("mcpgateway.services.gateway_service.sse_client", side_effect=Exception("Connection timeout")):
+        with patch("mcpgateway.services.gateway_service.mcp_proxy_client", side_effect=Exception("Connection timeout")):
             with pytest.raises(GatewayConnectionError, match="Failed to connect to SSE server"):
                 await gateway_service._connect_to_sse_server_without_validation(
                     "https://mcp.example.com/sse",

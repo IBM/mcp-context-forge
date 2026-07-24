@@ -361,3 +361,4 @@ tools_rust/mcp_runtime/perf.data*
 
 # Git worktrees
 .worktrees/
+.slim/deepwork/

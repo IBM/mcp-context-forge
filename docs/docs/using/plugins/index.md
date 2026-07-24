@@ -221,10 +221,10 @@ plugin_settings:
 Use the packaged native plugins after installing the optional plugin extra:
 
 ```bash
-uv sync --extra plugins
+uv sync --extra plugins --extra runtime
 ```
 
-Or install the published plugin wheels with `pip install 'mcp-contextforge-gateway[plugins]'`.
+Or install the published plugin wheels with `pip install 'mcp-contextforge-gateway[plugins,runtime]'`.
 
 1. Copy and adapt the example config (enable any subset):
 

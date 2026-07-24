@@ -1255,6 +1255,20 @@ class GatewaysPage(BasePage):
             edit_btn = gateway_row.locator('button[role="menuitem"]:has-text("Edit")')
             self._click_and_wait_for_gateway_fetch(edit_btn, "gateway-edit-modal")
 
+    def open_edit_modal_by_name(self, name: str) -> None:
+        """Click Edit on the row for a named gateway (search-filter-safe).
+
+        Client-side search filters hide non-matching rows but leave them in the
+        table body, so index-based selection can land on a hidden row. This
+        locates the row by its visible gateway name instead.
+        """
+        self.page.wait_for_selector('#gateways-table-body tr[id*="gateway-row"]', state="attached", timeout=15000)
+        self.page.wait_for_function("typeof window.Admin?.viewGateway === 'function'", timeout=10000)
+        gateway_row = self.gateways_table_body.locator("tr", has_text=name).first
+        self._open_action_dropdown(gateway_row)
+        edit_btn = gateway_row.locator('button[role="menuitem"]:has-text("Edit")')
+        self._click_and_wait_for_gateway_fetch(edit_btn, "gateway-edit-modal")
+
     def close_edit_modal(self) -> None:
         """Close the edit modal via Cancel."""
         self.edit_modal_cancel_btn.click()

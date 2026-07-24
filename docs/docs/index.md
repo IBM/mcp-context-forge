@@ -138,7 +138,7 @@ uvx --from mcp-contextforge-gateway mcpgateway --host 0.0.0.0 --port 4444
 mkdir mcpgateway && cd mcpgateway
 python3 -m venv .venv && source .venv/bin/activate
 pip install --upgrade pip
-pip install mcp-contextforge-gateway
+pip install 'mcp-contextforge-gateway[runtime]'
 
 # 2️⃣  Copy and customize the configuration
 # Download the example environment file
@@ -171,7 +171,7 @@ curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
     mkdir mcpgateway ; cd mcpgateway
     python3 -m venv .venv ; .\.venv\Scripts\Activate.ps1
     pip install --upgrade pip
-    pip install mcp-contextforge-gateway
+    pip install 'mcp-contextforge-gateway[runtime]'
 
     # 2️⃣  Copy and customize the configuration
     Invoke-WebRequest -Uri "https://raw.githubusercontent.com/IBM/mcp-context-forge/main/.env.example" -OutFile ".env.example"
@@ -419,11 +419,11 @@ make serve                 # gunicorn on :4444
     ```bash
     # UV (faster)
     uv venv && source .venv/bin/activate
-    uv pip install -e '.[dev]'
+    uv pip install -e '.[dev-all,runtime]'
 
     # pip
     python3 -m venv .venv && source .venv/bin/activate
-    pip install -e ".[dev]"
+    pip install -e ".[dev-all,runtime]"
     ```
 
 ??? example "PostgreSQL adapter setup"

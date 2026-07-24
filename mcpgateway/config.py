@@ -636,6 +636,14 @@ class Settings(BaseSettings):
         description="Acknowledge and allow trusted proxy headers when MCP_CLIENT_AUTH_ENABLED=false (dangerous; only for strictly trusted proxy deployments).",
     )
     proxy_user_header: str = Field(default="X-Authenticated-User", description="Header containing authenticated username from proxy")
+    mcp_client_connect_mode: Literal["auto", "legacy"] = Field(
+        default="auto",
+        description=(
+            "Upstream MCP connect mode: 'auto' negotiates modern protocol revisions (e.g. 2026-07-28) "
+            "via server/discover with legacy initialize fallback; 'legacy' forces the pre-2026 "
+            "initialize handshake (rollback for misbehaving upstreams)."
+        ),
+    )
 
     #  Encryption key phrase for auth storage
     auth_encryption_secret: SecretStr = Field(

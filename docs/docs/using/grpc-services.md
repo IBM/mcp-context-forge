@@ -13,13 +13,13 @@ gRPC support requires additional dependencies that are not installed by default.
 
 ```bash
 # Using pip
-pip install mcp-contextforge-gateway[grpc]
+pip install mcp-contextforge-gateway[grpc,runtime]
 
 # Using uv
-uv pip install mcp-contextforge-gateway[grpc]
+uv pip install mcp-contextforge-gateway[grpc,runtime]
 
 # In requirements.txt
-mcp-contextforge-gateway[grpc]>=0.9.0
+mcp-contextforge-gateway[grpc,runtime]>=0.9.0
 ```
 
 This installs the following packages:

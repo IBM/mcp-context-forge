@@ -35,10 +35,10 @@ import uuid
 
 # Third-Party
 import httpx
-from mcp import ClientSession, types
-from mcp.client.sse import sse_client
-from mcp.client.streamable_http import streamablehttp_client
-from mcp.types import ReadResourceRequest, ReadResourceRequestParams
+from mcp import ClientSession
+import mcp_types as types
+from mcpgateway.utils.mcp_proxy_client import mcp_proxy_client
+from mcp_types import ReadResourceRequest, ReadResourceRequestParams
 import parse
 from pydantic import ValidationError
 from sqlalchemy import and_, delete, desc, not_, or_, select
@@ -128,11 +128,11 @@ audit_trail = get_audit_trail_service()
 metrics_buffer = get_metrics_buffer_service()
 
 
-def _build_read_resource_request(uri: Any, meta_data: Dict[str, Any]) -> "types.ClientRequest":
-    """Build a ReadResource ClientRequest that carries _meta."""
+def _build_read_resource_request(uri: Any, meta_data: Dict[str, Any]) -> "ReadResourceRequest":
+    """Build a ReadResourceRequest that carries _meta."""
     _rp_dict = ReadResourceRequestParams(uri=uri).model_dump(by_alias=True)
     _rp_dict["_meta"] = meta_data
-    return types.ClientRequest(ReadResourceRequest(params=ReadResourceRequestParams.model_validate(_rp_dict)))
+    return ReadResourceRequest(params=ReadResourceRequestParams.model_validate(_rp_dict))
 
 
 async def _read_resource_with_meta(session: "ClientSession", uri: Any, meta_data: Optional[Dict[str, Any]]) -> Any:
@@ -2098,14 +2098,15 @@ class ResourceService(BaseService):
                                         resource_received = True
                                 else:
                                     # Fallback: per-call session when no downstream session id is in scope.
-                                    async with sse_client(url=server_url, headers=authentication, timeout=settings.health_check_timeout, httpx_client_factory=_get_httpx_client_factory) as (
-                                        read_stream,
-                                        write_stream,
-                                    ):
-                                        async with ClientSession(read_stream, write_stream) as session:
-                                            _ = await session.initialize()
-                                            resource_text = await _read_resource_text_with_retry(session, uri, "SSE")
-                                            resource_received = True
+                                    async with mcp_proxy_client(
+                                        url=server_url,
+                                        headers=authentication,
+                                        timeout=settings.health_check_timeout,
+                                        httpx_client_factory=_get_httpx_client_factory,
+                                        transport="sse",
+                                    ) as client:
+                                        resource_text = await _read_resource_text_with_retry(client.session, uri, "SSE")
+                                        resource_received = True
                             except Exception as e:
                                 # Sanitize error message to prevent URL secrets from leaking in logs
                                 sanitized_error = sanitize_exception_message(str(e), auth_query_params_decrypted)
@@ -2148,7 +2149,7 @@ class ResourceService(BaseService):
                                     if the connection fails or the response format is invalid.
 
                             Notes:
-                                - The `streamablehttp_client` context manager must yield a tuple:
+                                - The `streamable_http_client` context manager must yield a tuple:
                                 ``(read_stream, write_stream, get_session_id)``.
                                 - The expected `resource_response` returned by ``session.read_resource()``
                                 must contain a `contents` list, whose first element exposes a `text`
@@ -2182,15 +2183,14 @@ class ResourceService(BaseService):
                                         resource_received = True
                                 else:
                                     # Fallback: per-call session when no downstream session id is in scope.
-                                    async with streamablehttp_client(url=server_url, headers=authentication, timeout=settings.health_check_timeout, httpx_client_factory=_get_httpx_client_factory) as (
-                                        read_stream,
-                                        write_stream,
-                                        _get_session_id,
-                                    ):
-                                        async with ClientSession(read_stream, write_stream) as session:
-                                            _ = await session.initialize()
-                                            resource_text = await _read_resource_text_with_retry(session, uri, "StreamableHTTP")
-                                            resource_received = True
+                                    async with mcp_proxy_client(
+                                        url=server_url,
+                                        headers=authentication,
+                                        timeout=settings.health_check_timeout,
+                                        httpx_client_factory=_get_httpx_client_factory,
+                                    ) as client:
+                                        resource_response = await _read_resource_with_meta(client.session, uri, meta_data)
+                                        return getattr(getattr(resource_response, "contents")[0], "text")
                             except Exception as e:
                                 # Sanitize error message to prevent URL secrets from leaking in logs
                                 sanitized_error = sanitize_exception_message(str(e), auth_query_params_decrypted)
@@ -2503,34 +2503,38 @@ class ResourceService(BaseService):
                             if plugin_global_context and plugin_global_context.user_context:
                                 headers.update(build_identity_headers(plugin_global_context.user_context, gateway))
 
-                            # Use MCP SDK to connect and read resource
-                            async with streamablehttp_client(url=gateway.url, headers=headers, timeout=settings.mcpgateway_direct_proxy_timeout) as (read_stream, write_stream, _get_session_id):
-                                async with ClientSession(read_stream, write_stream) as session:
-                                    await session.initialize()
-                                    result = await _read_resource_with_meta(session, uri, meta_data)
+                            # Use MCP v2 Client to connect and read resource (auto-initializes)
+                            async with mcp_proxy_client(
+                                url=gateway.url,
+                                headers=headers,
+                                timeout=settings.mcpgateway_direct_proxy_timeout,
+                            ) as client:
+                                result = await _read_resource_with_meta(client.session, uri, meta_data)
 
-                                    # Convert MCP result to MCP-compliant content models
-                                    # result.contents is a list of TextResourceContents or BlobResourceContents
-                                    if result.contents:
-                                        first_content = result.contents[0]
-                                        if hasattr(first_content, "text"):
-                                            content = TextResourceContents(uri=uri, mimeType=first_content.mimeType if hasattr(first_content, "mimeType") else "text/plain", text=first_content.text)
-                                        elif hasattr(first_content, "blob"):
-                                            content = BlobResourceContents(
-                                                uri=uri, mimeType=first_content.mimeType if hasattr(first_content, "mimeType") else "application/octet-stream", blob=first_content.blob
-                                            )
-                                        else:
-                                            content = TextResourceContents(uri=uri, text="")
+                                # Convert MCP result to MCP-compliant content models
+                                # result.contents is a list of TextResourceContents or BlobResourceContents
+                                if result.contents:
+                                    first_content = result.contents[0]
+                                    # mcp 2.x exposes snake_case attributes (`.mime_type`); v1 used camelCase.
+                                    # Read attribute via getattr so the code is resilient to either shape
+                                    # during the v1->v2 transition window.
+                                    _mime = getattr(first_content, "mime_type", None) or getattr(first_content, "mimeType", None)
+                                    if hasattr(first_content, "text"):
+                                        content = TextResourceContents(uri=uri, mime_type=_mime or "text/plain", text=first_content.text)
+                                    elif hasattr(first_content, "blob"):
+                                        content = BlobResourceContents(uri=uri, mime_type=_mime or "application/octet-stream", blob=first_content.blob)
                                     else:
                                         content = TextResourceContents(uri=uri, text="")
+                                else:
+                                    content = TextResourceContents(uri=uri, text="")
 
-                                    success = True
-                                    logger.info(
-                                        "[READ RESOURCE] Using direct_proxy mode for gateway %s (from X-Context-Forge-Gateway-Id header). Meta Attached: %s",
-                                        SecurityValidator.sanitize_log_message(gateway.id),
-                                        meta_data is not None,
-                                    )
-                                    # Skip the rest of the DB lookup logic
+                                success = True
+                                logger.info(
+                                    "[READ RESOURCE] Using direct_proxy mode for gateway %s (from X-Context-Forge-Gateway-Id header). Meta Attached: %s",
+                                    SecurityValidator.sanitize_log_message(gateway.id),
+                                    meta_data is not None,
+                                )
+                                # Skip the rest of the DB lookup logic
 
                         except Exception as e:
                             logger.exception("Error in direct_proxy mode for resource '%s': %s", uri, e)

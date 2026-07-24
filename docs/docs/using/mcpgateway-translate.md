@@ -120,7 +120,7 @@ python3 -m mcpgateway.translate \
 
 ```bash
 # Install from PyPI
-pip install mcp-contextforge-gateway
+pip install 'mcp-contextforge-gateway[runtime]'
 ```
 
 ## Command-Line Reference

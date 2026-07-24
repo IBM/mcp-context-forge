@@ -26,52 +26,45 @@ class TestGatewayResourcesPrompts:
         service = GatewayService()
 
         with (
-            patch("mcpgateway.services.gateway_service.sse_client") as mock_sse_client,
-            patch("mcpgateway.services.gateway_service.ClientSession") as mock_session,
+            patch("mcpgateway.services.gateway_service.mcp_proxy_client") as mock_proxy_client,
             patch("mcpgateway.services.gateway_service.decode_auth") as mock_decode,
         ):
             # Setup mocks
             mock_decode.return_value = {"Authorization": "Bearer token"}
 
-            # Mock SSE client context manager
-            mock_streams = (MagicMock(), MagicMock())
-            mock_sse_context = AsyncMock()
-            mock_sse_context.__aenter__.return_value = mock_streams
-            mock_sse_context.__aexit__.return_value = None
-            mock_sse_client.return_value = mock_sse_context
+            # Mock MCP client (auto-initialized by mcp_proxy_client)
+            mock_client = MagicMock()
+            mock_proxy_context = AsyncMock()
+            mock_proxy_context.__aenter__.return_value = mock_client
+            mock_proxy_context.__aexit__.return_value = None
+            mock_proxy_client.return_value = mock_proxy_context
 
-            # Mock ClientSession
-            mock_session_instance = AsyncMock()
-            mock_session_context = AsyncMock()
-            mock_session_context.__aenter__.return_value = mock_session_instance
-            mock_session_context.__aexit__.return_value = None
-            mock_session.return_value = mock_session_context
-
-            # Mock responses
-            mock_init_response = MagicMock()
-            mock_init_response.capabilities.model_dump.return_value = {"protocolVersion": "0.1.0", "resources": {"listChanged": True}, "prompts": {"listChanged": True}, "tools": {"listChanged": True}}
-            mock_session_instance.initialize.return_value = mock_init_response
+            # Mock negotiated server capabilities
+            mock_client.server_capabilities.model_dump.return_value = {"protocolVersion": "0.1.0", "resources": {"listChanged": True}, "prompts": {"listChanged": True}, "tools": {"listChanged": True}}
 
             # Mock tools response
             mock_tools_response = MagicMock()
             mock_tool = MagicMock()
             mock_tool.model_dump.return_value = {"name": "test_tool", "description": "Test tool", "inputSchema": {}}
             mock_tools_response.tools = [mock_tool]
-            mock_session_instance.list_tools.return_value = mock_tools_response
+            mock_client.list_tools = AsyncMock(return_value=mock_tools_response)
 
             # Mock resources response
             mock_resources_response = MagicMock()
             mock_resource = MagicMock()
             mock_resource.model_dump.return_value = {"uri": "test://resource", "name": "Test Resource", "description": "A test resource", "mime_type": "text/plain"}
             mock_resources_response.resources = [mock_resource]
-            mock_session_instance.list_resources.return_value = mock_resources_response
+            mock_client.list_resources = AsyncMock(return_value=mock_resources_response)
+
+            # Mock resource templates response
+            mock_client.list_resource_templates = AsyncMock(return_value=MagicMock(resource_templates=[]))
 
             # Mock prompts response
             mock_prompts_response = MagicMock()
             mock_prompt = MagicMock()
             mock_prompt.model_dump.return_value = {"name": "test_prompt", "description": "A test prompt", "template": "Test template {{arg}}", "arguments": [{"name": "arg", "type": "string"}]}
             mock_prompts_response.prompts = [mock_prompt]
-            mock_session_instance.list_prompts.return_value = mock_prompts_response
+            mock_client.list_prompts = AsyncMock(return_value=mock_prompts_response)
 
             # Execute
             capabilities, tools, resources, prompts, _ = await service._initialize_gateway("http://test.example.com", {"Authorization": "Bearer token"}, "SSE")
@@ -87,9 +80,9 @@ class TestGatewayResourcesPrompts:
             assert isinstance(prompts[0], PromptCreate)
 
             # Verify the methods were called
-            mock_session_instance.list_tools.assert_called_once()
-            mock_session_instance.list_resources.assert_called_once()
-            mock_session_instance.list_prompts.assert_called_once()
+            mock_client.list_tools.assert_called_once()
+            mock_client.list_resources.assert_called_once()
+            mock_client.list_prompts.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_initialize_gateway_resources_prompts_not_supported(self):
@@ -97,38 +90,30 @@ class TestGatewayResourcesPrompts:
         service = GatewayService()
 
         with (
-            patch("mcpgateway.services.gateway_service.sse_client") as mock_sse_client,
-            patch("mcpgateway.services.gateway_service.ClientSession") as mock_session,
+            patch("mcpgateway.services.gateway_service.mcp_proxy_client") as mock_proxy_client,
             patch("mcpgateway.services.gateway_service.decode_auth") as mock_decode,
         ):
             # Setup mocks
             mock_decode.return_value = {}
 
-            # Mock SSE client context manager
-            mock_streams = (MagicMock(), MagicMock())
-            mock_sse_context = AsyncMock()
-            mock_sse_context.__aenter__.return_value = mock_streams
-            mock_sse_context.__aexit__.return_value = None
-            mock_sse_client.return_value = mock_sse_context
+            # Mock MCP client (auto-initialized by mcp_proxy_client)
+            mock_client = MagicMock()
+            mock_proxy_context = AsyncMock()
+            mock_proxy_context.__aenter__.return_value = mock_client
+            mock_proxy_context.__aexit__.return_value = None
+            mock_proxy_client.return_value = mock_proxy_context
 
-            # Mock ClientSession
-            mock_session_instance = AsyncMock()
-            mock_session_context = AsyncMock()
-            mock_session_context.__aenter__.return_value = mock_session_instance
-            mock_session_context.__aexit__.return_value = None
-            mock_session.return_value = mock_session_context
-
-            # Mock responses - no resources/prompts capabilities
-            mock_init_response = MagicMock()
-            mock_init_response.capabilities.model_dump.return_value = {"protocolVersion": "0.1.0", "tools": {"listChanged": True}}
-            mock_session_instance.initialize.return_value = mock_init_response
+            # Mock negotiated server capabilities - no resources/prompts
+            mock_client.server_capabilities.model_dump.return_value = {"protocolVersion": "0.1.0", "tools": {"listChanged": True}}
 
             # Mock tools response
             mock_tools_response = MagicMock()
             mock_tool = MagicMock()
             mock_tool.model_dump.return_value = {"name": "test_tool", "description": "Test tool", "inputSchema": {}}
             mock_tools_response.tools = [mock_tool]
-            mock_session_instance.list_tools.return_value = mock_tools_response
+            mock_client.list_tools = AsyncMock(return_value=mock_tools_response)
+            mock_client.list_resources = AsyncMock()
+            mock_client.list_prompts = AsyncMock()
 
             # Execute
             capabilities, tools, resources, prompts, _ = await service._initialize_gateway("http://test.example.com", None, "SSE")
@@ -141,8 +126,8 @@ class TestGatewayResourcesPrompts:
             assert prompts == []
 
             # Verify list_resources and list_prompts were NOT called
-            mock_session_instance.list_resources.assert_not_called()
-            mock_session_instance.list_prompts.assert_not_called()
+            mock_client.list_resources.assert_not_called()
+            mock_client.list_prompts.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_initialize_gateway_resources_fetch_failure(self):
@@ -150,44 +135,37 @@ class TestGatewayResourcesPrompts:
         service = GatewayService()
 
         with (
-            patch("mcpgateway.services.gateway_service.sse_client") as mock_sse_client,
-            patch("mcpgateway.services.gateway_service.ClientSession") as mock_session,
+            patch("mcpgateway.services.gateway_service.mcp_proxy_client") as mock_proxy_client,
             patch("mcpgateway.services.gateway_service.decode_auth") as mock_decode,
         ):
             # Setup mocks
             mock_decode.return_value = {}
 
-            # Mock SSE client context manager
-            mock_streams = (MagicMock(), MagicMock())
-            mock_sse_context = AsyncMock()
-            mock_sse_context.__aenter__.return_value = mock_streams
-            mock_sse_context.__aexit__.return_value = None
-            mock_sse_client.return_value = mock_sse_context
+            # Mock MCP client (auto-initialized by mcp_proxy_client)
+            mock_client = MagicMock()
+            mock_proxy_context = AsyncMock()
+            mock_proxy_context.__aenter__.return_value = mock_client
+            mock_proxy_context.__aexit__.return_value = None
+            mock_proxy_client.return_value = mock_proxy_context
 
-            # Mock ClientSession
-            mock_session_instance = AsyncMock()
-            mock_session_context = AsyncMock()
-            mock_session_context.__aenter__.return_value = mock_session_instance
-            mock_session_context.__aexit__.return_value = None
-            mock_session.return_value = mock_session_context
-
-            # Mock responses with resources capability
-            mock_init_response = MagicMock()
-            mock_init_response.capabilities.model_dump.return_value = {"protocolVersion": "0.1.0", "resources": {"listChanged": True}, "prompts": {"listChanged": True}, "tools": {"listChanged": True}}
-            mock_session_instance.initialize.return_value = mock_init_response
+            # Mock negotiated server capabilities with resources/prompts
+            mock_client.server_capabilities.model_dump.return_value = {"protocolVersion": "0.1.0", "resources": {"listChanged": True}, "prompts": {"listChanged": True}, "tools": {"listChanged": True}}
 
             # Mock tools response - success
             mock_tools_response = MagicMock()
             mock_tool = MagicMock()
             mock_tool.model_dump.return_value = {"name": "test_tool", "description": "Test tool", "inputSchema": {}}
             mock_tools_response.tools = [mock_tool]
-            mock_session_instance.list_tools.return_value = mock_tools_response
+            mock_client.list_tools = AsyncMock(return_value=mock_tools_response)
+
+            # Mock resource templates response
+            mock_client.list_resource_templates = AsyncMock(return_value=MagicMock(resource_templates=[]))
 
             # Mock resources response - failure
-            mock_session_instance.list_resources.side_effect = Exception("Failed to fetch resources")
+            mock_client.list_resources = AsyncMock(side_effect=Exception("Failed to fetch resources"))
 
             # Mock prompts response - failure
-            mock_session_instance.list_prompts.side_effect = Exception("Failed to fetch prompts")
+            mock_client.list_prompts = AsyncMock(side_effect=Exception("Failed to fetch prompts"))
 
             # Execute
             capabilities, tools, resources, prompts, _ = await service._initialize_gateway("http://test.example.com", None, "SSE")
@@ -198,8 +176,8 @@ class TestGatewayResourcesPrompts:
             assert prompts == []
 
             # Verify the methods were called despite failure
-            mock_session_instance.list_resources.assert_called_once()
-            mock_session_instance.list_prompts.assert_called_once()
+            mock_client.list_resources.assert_called_once()
+            mock_client.list_prompts.assert_called_once()
 
     def test_update_or_create_prompts_matches_original_name(self):
         """Ensure gateway prompt sync matches by original_name, not prefixed name."""

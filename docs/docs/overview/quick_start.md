@@ -60,7 +60,7 @@ Pick an install method below, generate an auth token, then walk through a real t
     2. **Install the gateway from pypi**
 
         ```bash
-        pip install mcp-contextforge-gateway
+        pip install 'mcp-contextforge-gateway[runtime]'
         mcpgateway --version
         ```
 

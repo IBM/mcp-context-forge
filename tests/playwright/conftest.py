@@ -381,15 +381,12 @@ def admin_api(playwright: Playwright) -> Generator[APIRequestContext, None, None
     if not token and not DISABLE_JWT_FALLBACK:
         # Priority 3: Locally-signed JWT fallback
         try:
-            token = _create_jwt_token(
-                {"sub": ADMIN_EMAIL},
-                user_data={
-                    "email": ADMIN_EMAIL,
-                    "full_name": "Test Admin",
-                    "is_admin": True,
-                    "auth_provider": "test",
-                },
+            token = make_test_jwt(
+                ADMIN_EMAIL,
+                is_admin=True,
                 teams=None,  # Admin bypass: null teams with is_admin=true
+                auth_provider="test",
+                user_data={"email": ADMIN_EMAIL, "is_admin": True, "auth_provider": "test", "full_name": "Test Admin"},
             )
         except Exception:
             pass  # Use empty if generation fails

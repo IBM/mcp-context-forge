@@ -89,7 +89,7 @@
 ???+ example "🏠 How do I run ContextForge locally using PyPI?"
     ```bash
     python3 -m venv .venv && source .venv/bin/activate
-    pip install mcp-contextforge-gateway
+    pip install 'mcp-contextforge-gateway[runtime]'
     mcpgateway
     ```
 

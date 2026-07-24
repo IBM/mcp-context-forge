@@ -47,7 +47,7 @@ Launching it in your terminal (ex: `python3 -m mcpgateway.wrapper`) is useful fo
 === "Local shell (venv)"
 
     ```bash
-    pip install mcp-contextforge-gateway
+    pip install 'mcp-contextforge-gateway[runtime]'
     python3 -m mcpgateway.wrapper
     ```
 
@@ -77,7 +77,7 @@ Launching it in your terminal (ex: `python3 -m mcpgateway.wrapper`) is useful fo
 
     ```bash
     uv venv ~/.venv/mcpgw && source ~/.venv/mcpgw/bin/activate
-    uv pip install mcp-contextforge-gateway
+    uv pip install 'mcp-contextforge-gateway[runtime]'
     uv python3 -m mcpgateway.wrapper
     ```
 

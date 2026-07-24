@@ -2098,3 +2098,38 @@ def test_alembic_env_import_does_not_require_secrets():
             if val is not None:
                 os.environ[key] = val
         sys.modules.pop("mcpgateway.alembic.env", None)
+
+# --------------------------------------------------------------------------- #
+#                    mcp_client_connect_mode                                     #
+# --------------------------------------------------------------------------- #
+def test_mcp_client_connect_mode_defaults_to_auto():
+    """Library default is 'auto'."""
+    s = Settings(_env_file=None)
+    assert s.mcp_client_connect_mode == "auto"
+
+
+@pytest.mark.parametrize("valid_value", ["auto", "legacy"])
+def test_mcp_client_connect_mode_accepts_valid_values(valid_value):
+    """Both 'auto' and 'legacy' must be accepted explicitly."""
+    s = Settings(mcp_client_connect_mode=valid_value, _env_file=None)
+    assert s.mcp_client_connect_mode == valid_value
+
+
+def test_mcp_client_connect_mode_rejects_invalid_value():
+    """An invalid value must raise ValidationError at Settings construction."""
+    with pytest.raises(ValidationError) as exc_info:
+        Settings(mcp_client_connect_mode="bogus", _env_file=None)
+    assert "mcp_client_connect_mode" in str(exc_info.value)
+
+
+def test_mcp_client_connect_mode_env_var_honored(monkeypatch):
+    """MCP_CLIENT_CONNECT_MODE=legacy must be honoured."""
+    dummy_env = {
+        "JWT_SECRET_KEY": "x" * 32,
+        "AUTH_ENCRYPTION_SECRET": "dummy-secret",  # pragma: allowlist secret
+        "MCP_CLIENT_CONNECT_MODE": "legacy",
+    }
+    monkeypatch.delenv("MCP_CLIENT_CONNECT_MODE", raising=False)
+    with patch.dict(os.environ, dummy_env, clear=True):
+        s = Settings(_env_file=None)
+        assert s.mcp_client_connect_mode == "legacy"

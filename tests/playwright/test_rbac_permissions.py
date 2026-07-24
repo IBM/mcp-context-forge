@@ -1194,7 +1194,7 @@ class TestRPCToolExecutionRBAC:
                     "tool": {
                         "name": tool_name,
                         "description": "RPC RBAC regression test tool (#3515)",
-                        "url": "https://httpbin.org/get",
+                        "url": "http://fast_time_server:9080/nonexistent",  # local 404: fast, deterministic, non-retryable (httpbin.org is an external dependency that can degrade into retryable 503s, pushing the call past the client timeout)
                         "integration_type": "REST",
                         "input_schema": {},
                         "visibility": "team",

@@ -120,6 +120,21 @@ Making Rust mandatory in the build affects **new and existing contributors** who
 | Rust-only with no pip package (e.g. standalone binaries) | Would not integrate with existing Python packaging (ADR-0020) and gateway distribution; would require a different distribution story. |
 | Publish wheels only for Linux/macOS, require source elsewhere | Acceptable variant of Option B with a smaller matrix; still need to document and support source build for "elsewhere." |
 
+!!! note "Post-decision update: `pip install` example in Option B"
+    The Option B description states *"`pip install mcp-contextforge-gateway`
+    pulls the appropriate wheel."* After the **`runtime` / `live-tests` SDK
+    partition** (post-`mcp` 2.x migration), the bare install no longer brings
+    the `mcp` SDK. The correct form is now:
+
+    ```bash
+    pip install 'mcp-contextforge-gateway[runtime]'
+    ```
+
+    The wheel-pulling behavior described in this ADR is unchanged — only the
+    extras spec needs the `runtime` marker. See the
+    [Unreleased CHANGELOG entry](../../../CHANGELOG.md) for the partition
+    rationale.
+
 ## Related
 
 - [Open PRs with `rust` label](https://github.com/IBM/mcp-context-forge/pulls?q=is%3Aopen+is%3Apr+label%3Arust) — examples of main Rust components being implemented
