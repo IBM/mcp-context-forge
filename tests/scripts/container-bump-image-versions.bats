@@ -175,6 +175,17 @@ write_tags() {  # write_tags <fixture-name> <tag>...
     cmp "$WHEELS_CONTAINERFILE_PATH" "$TEST_DIR/wheels.Containerfile.orig"
 }
 
+@test "leaves no sed backup files behind after an update" {
+    write_tags ubi10.json        "10.2-1784669000"
+    write_tags nodejs.json       "10.2-1784669001"
+    write_tags ubi-minimal.json  "10.2-1784669047"
+
+    run "$SCRIPT"
+    [ "$status" -eq 0 ]
+    [ ! -e "${CONTAINERFILE_PATH}.bak" ]
+    [ ! -e "${WHEELS_CONTAINERFILE_PATH}.bak" ]
+}
+
 @test "refuses to manage a pin that is not a full build tag" {
     sed -i.bak 's|^ARG UBI_BASE=.*|ARG UBI_BASE=registry.access.redhat.com/ubi10:latest|' "$CONTAINERFILE_PATH"
     rm -f "${CONTAINERFILE_PATH}.bak"

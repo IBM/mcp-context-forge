@@ -116,7 +116,11 @@ main() {
     fi
 
     # ---- Apply phase ----
-    for arg in "${!new_tag[@]}"; do
+    # sed -i.bak leaves the backup behind if it fails mid-write; remove any
+    # stray backups on exit, including the die path, so nothing leaks.
+    trap 'rm -f "${CONTAINERFILE_PATH}.bak" "${WHEELS_CONTAINERFILE_PATH}.bak"' EXIT
+    for arg in "${MANAGED_ARGS[@]}"; do
+        [ -n "${new_tag[$arg]:-}" ] || continue
         local files=("$CONTAINERFILE_PATH")
         # UBI_MINIMAL is pinned in both Containerfiles; keep them identical.
         if [ "$arg" = "UBI_MINIMAL" ]; then
@@ -124,11 +128,8 @@ main() {
         fi
         local f
         for f in "${files[@]}"; do
-            if sed -i.bak "s|^ARG ${arg}=.*|ARG ${arg}=${image_of[$arg]}:${new_tag[$arg]}|" "$f"; then
-                rm -f "${f}.bak"
-            else
-                die "failed to update ${arg} in $f"
-            fi
+            sed -i.bak "s|^ARG ${arg}=.*|ARG ${arg}=${image_of[$arg]}:${new_tag[$arg]}|" "$f" \
+                || die "failed to update ${arg} in $f"
             echo "  updated $f"
         done
     done
