@@ -975,6 +975,23 @@ class OAuthManager:
         # token's issuer.  See _decode_token_claims_unverified for the trust model.
         token_aud, token_iss = self._extract_aud_and_iss(token_response.get("access_token", ""))
 
+        # Issuer pinning: when an issuer is configured, only persist the learned
+        # audience if the token's iss claim matches it (trailing slashes
+        # normalized, matching the convention in token_validation_service).
+        # A stale or misrouted token from a different AS must not inject an
+        # audience for the wrong IdP.  Passing None to store_tokens leaves any
+        # previously-learned value for this user intact (it only overwrites on
+        # non-None).  The check is skipped when no issuer is configured.
+        configured_issuer = credentials.get("issuer")
+        if configured_issuer and token_aud is not None:
+            if not isinstance(token_iss, str) or token_iss.rstrip("/") != str(configured_issuer).rstrip("/"):
+                logger.debug(
+                    "Skipping learned audience persistence for gateway %s: token iss does not match configured issuer",
+                    gateway_id,
+                )
+                token_aud = None
+                token_iss = None
+
         # Store tokens if storage service is available
         if self.token_storage:
             # Handle scope as either string or list (OAuth providers vary)
@@ -1969,30 +1986,6 @@ class OAuthManager:
         """
         claims = OAuthManager._decode_token_claims_unverified(access_token)
         return OAuthManager._coerce_aud_claim(claims.get("aud")), OAuthManager._coerce_iss_claim(claims.get("iss"))
-
-    @staticmethod
-    def _extract_token_audience(access_token: str) -> Optional[Union[str, List[str]]]:
-        """Extract the ``aud`` claim from a JWT access token (best-effort).
-
-        Args:
-            access_token: The raw access token string.
-
-        Returns:
-            The ``aud`` claim as ``str`` or ``list[str]``, otherwise ``None``.
-        """
-        return OAuthManager._extract_aud_and_iss(access_token)[0]
-
-    @staticmethod
-    def _extract_token_issuer(access_token: str) -> Optional[str]:
-        """Extract the ``iss`` claim from a JWT access token (best-effort).
-
-        Args:
-            access_token: The raw access token string.
-
-        Returns:
-            The ``iss`` claim as a non-empty string, otherwise ``None``.
-        """
-        return OAuthManager._extract_aud_and_iss(access_token)[1]
 
 
 class OAuthError(Exception):
