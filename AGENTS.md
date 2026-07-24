@@ -32,10 +32,8 @@ mcpgateway/                 # Core FastAPI application
 
 tests/                      # Test suite (see tests/AGENTS.md)
 plugins/                    # Plugin implementations (see plugins/AGENTS.md)
-plugins_rust/               # Rust plugin implementations for performance-sensitive paths
 charts/                     # Helm charts (see charts/AGENTS.md)
 docs/                       # Architecture and usage documentation (see docs/AGENTS.md)
-a2a-agents/                 # A2A agent implementations (used for testing/examples)
 mcp-servers/                # MCP server templates (see mcp-servers/AGENTS.md)
 
 llms/                       # End-user LLM guidance (not for code agents)

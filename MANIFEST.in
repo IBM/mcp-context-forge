@@ -4,17 +4,17 @@
 
 # Core project files that SDists/Wheels should always carry
 include LICENSE
-include README.md
-include plugins/README.md
-include pyproject.toml
-include gunicorn.config.py
 include Containerfile
 include tox.ini
 
 # Admin UI assets (required for package build)
 recursive-include mcpgateway/admin_ui *.js *.css *.html
-recursive-include mcpgateway/static *.js *.css *.html *.json
+recursive-include mcpgateway/static *.js *.css *.html *.json *.png *.svg *.ico
 recursive-include mcpgateway/templates *.html *.jinja2
+recursive-include mcpgateway *.md
+
+# Vite build manifest is a gitignored build artifact, not a source file
+exclude mcpgateway/static/.vite/manifest.json
 
 # Top-level config
 include *.py
@@ -58,18 +58,13 @@ prune dist
 prune .eggs
 prune *.egg-info
 prune charts
-prune k8s
 prune .devcontainer
 exclude CLAUDE.*
-exclude llms-full.txt
 exclude AGENTS.md
 
-# Exclude deployment, mcp-servers, agent_runtimes, ansible, infra, and llms
+# Exclude deployment, mcp-servers, ansible, infra, and llms
 prune ansible
-prune deployment
 prune mcp-servers
-prune a2a-agents
-prune agent_runtimes
 prune infra
 prune llms
 
@@ -94,9 +89,6 @@ prune venv
 prune .venv
 prune env
 prune node_modules
-prune plugins/external/opa/.venv
-prune plugins/external/llmguard/.venv
-prune plugins/external/cedar/.venv
 global-exclude **/.venv/*
 
 # Environment files (security sensitive!)
@@ -111,7 +103,6 @@ exclude *.sqlite
 exclude *.log
 
 # Lock files (including nested in plugins)
-exclude uv.lock
 global-exclude **/uv.lock
 
 # Coverage data
@@ -119,7 +110,6 @@ exclude .coverage
 exclude .coverage.*
 
 # Additional development config files not needed in package
-exclude .eslintrc.json
 exclude eslint.config.js
 exclude vitest.config.js
 exclude .stylelintrc.json
@@ -127,10 +117,21 @@ exclude .markdownlint-cli2.yaml
 exclude .spellcheck-en.txt
 exclude .prospector.yaml
 exclude .hadolint.yaml
-exclude .ruff.toml
 exclude .pre-commit-config.yaml
 exclude .secrets.baseline
 exclude .npmrc
+exclude .bumpversion.cfg
+exclude .dockerignore
+exclude .htmlhintrc
+exclude .jshintrc
+exclude .pycodestyle
+exclude .snyk
+exclude .whitesource
+exclude sonar-code.properties
+exclude whitesource.config
+
+# Development/CI helper scripts are not shipped in the sdist
+prune scripts
 
 # Backup and temporary files
 global-exclude *~
