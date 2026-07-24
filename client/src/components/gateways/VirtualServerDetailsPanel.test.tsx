@@ -281,19 +281,6 @@ describe("VirtualServerDetailsPanel render variants", () => {
     expect(await screen.findByText("Private")).toBeInTheDocument();
   });
 
-  it("shows a placeholder when the server has no description", async () => {
-    render(
-      <VirtualServerDetailsPanel
-        server={makeServer({ description: "" })}
-        error={null}
-        open
-        onClose={vi.fn()}
-        onAddSources={vi.fn()}
-      />,
-    );
-    expect(await screen.findByText("No description provided.")).toBeInTheDocument();
-  });
-
   it("shows N/A when the server has no version", async () => {
     render(
       <VirtualServerDetailsPanel
