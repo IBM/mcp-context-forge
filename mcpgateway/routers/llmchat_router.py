@@ -399,6 +399,25 @@ def _active_key(user_id: str) -> str:
     return f"active_session:{user_id}"
 
 
+def _cfg_version_key(user_id: str) -> str:
+    """Generate Redis key for the user config's generation marker.
+
+    A fresh random token is written here on every `/connect`, alongside the
+    config itself. A local `MCPChatService` stamps the token it was built
+    from onto itself (`config_version`); comparing that stamp against the
+    current value of this key is how a takeover/reclaim detects that the
+    user reconnected with a different config while the stale local copy was
+    still cached, instead of silently serving it.
+
+    Args:
+        user_id: User identifier.
+
+    Returns:
+        str: Redis key for the config generation marker.
+    """
+    return f"user_config_version:{user_id}"
+
+
 def _lock_key(user_id: str) -> str:
     """Generate Redis key for session initialization lock.
 
@@ -500,18 +519,45 @@ def _mask_sensitive_config_values(value: Any) -> Any:
 # ---------- CONFIG HELPERS ----------
 
 
-async def set_user_config(user_id: str, config: MCPClientConfig):
+async def set_user_config(user_id: str, config: MCPClientConfig, version: Optional[str] = None):
     """Store user configuration in Redis or memory.
 
     Args:
         user_id: User identifier.
         config: Complete MCP client configuration.
+        version: Optional generation marker for this config (Redis-only). Callers
+            that need takeover/reclaim to detect a config change should pass a
+            fresh unique value (e.g. ``uuid4().hex``) here and stamp the same
+            value onto the resulting `MCPChatService.config_version`.
     """
     serialized = _serialize_user_config_for_storage(config)
     if redis_client:
         await redis_client.set(_cfg_key(user_id), serialized, ex=USER_CONFIG_TTL)
+        if version is not None:
+            await redis_client.set(_cfg_version_key(user_id), version, ex=USER_CONFIG_TTL)
     else:
         user_configs[user_id] = (serialized, time.monotonic())
+
+
+async def get_config_version(user_id: str) -> Optional[str]:
+    """Retrieve the current config generation marker for a user (Redis-only).
+
+    Local in-memory fallback (no Redis) never reaches cross-worker takeover
+    logic, so there is nothing to compare against and this always returns
+    None in that mode.
+
+    Args:
+        user_id: User identifier.
+
+    Returns:
+        Optional[str]: Current version token if present, else None.
+    """
+    if not redis_client:
+        return None
+    data = await redis_client.get(_cfg_version_key(user_id))
+    if isinstance(data, bytes):
+        return data.decode()
+    return data
 
 
 async def get_user_config(user_id: str) -> Optional[MCPClientConfig]:
@@ -547,6 +593,7 @@ async def delete_user_config(user_id: str):
     """
     if redis_client:
         await redis_client.delete(_cfg_key(user_id))
+        await redis_client.delete(_cfg_version_key(user_id))
     else:
         user_configs.pop(user_id, None)
 
@@ -660,6 +707,10 @@ async def _create_local_session_from_config(user_id: str) -> Optional[MCPChatSer
     # create and initialize with unified history manager
     try:
         chat_service = MCPChatService(config, user_id=user_id, redis_client=redis_client)
+        # Stamp the config generation this build came from so a later
+        # takeover/reclaim can detect the user reconnected with a different
+        # config in the meantime (see get_active_session).
+        chat_service.config_version = await get_config_version(user_id)
         await asyncio.wait_for(chat_service.initialize(), timeout=LOCK_TTL)
         await set_active_session(user_id, chat_service)
         return chat_service
@@ -709,6 +760,7 @@ async def _refresh_session_ttls(user_id: str) -> None:
     try:
         await redis_client.expire(_active_key(user_id), SESSION_TTL)
         await redis_client.expire(_cfg_key(user_id), USER_CONFIG_TTL)
+        await redis_client.expire(_cfg_version_key(user_id), USER_CONFIG_TTL)
     except Exception as e:  # nosec B110
         logger.debug(f"Failed to refresh session TTLs for {SecurityValidator.sanitize_log_message(user_id)}: {e}")
 
@@ -803,6 +855,50 @@ async def _acquire_and_create_session(user_id: str) -> Optional[MCPChatService]:
     return None
 
 
+async def _discard_stale_session(user_id: str, session: MCPChatService) -> None:
+    """Shut down and remove a locally-held session that no longer matches the current config.
+
+    Args:
+        user_id: User identifier.
+        session: The stale locally-held session to discard.
+
+    Returns:
+        None.
+    """
+    try:
+        await session.shutdown()
+    except Exception as e:
+        logger.warning(f"Failed to cleanly shut down stale session for {SecurityValidator.sanitize_log_message(user_id)}: {e}")
+    await delete_active_session(user_id)
+
+
+async def _local_session_is_stale(user_id: str, session: MCPChatService) -> bool:
+    """Return True when a locally-held session no longer matches the stored config.
+
+    Compares the version stamped on `session` (from whichever config build
+    produced it) against the current `_cfg_version_key` in Redis. A user who
+    reconnects on a different worker overwrites the Redis-backed config and
+    ownership, but cannot reach into another worker's `active_sessions` dict
+    to evict the now-outdated local copy -- without this check, a later
+    request that lands back on the stale worker within `SESSION_TTL` could
+    silently reclaim/serve a session built from a superseded server/model
+    config instead of rebuilding from the current one.
+
+    Args:
+        user_id: User identifier.
+        session: Locally-held session being considered for reuse.
+
+    Returns:
+        bool: True if the session should be discarded and rebuilt.
+    """
+    current_version = await get_config_version(user_id)
+    if current_version is None:
+        # Nothing to compare against (e.g. version key expired/never set) --
+        # do not force a needless rebuild off missing data.
+        return False
+    return getattr(session, "config_version", None) != current_version
+
+
 async def get_active_session(user_id: str, recreate: bool = True) -> Optional[MCPChatService]:
     """Retrieve, and optionally take over or (re)create, the active session for user_id.
 
@@ -855,18 +951,26 @@ async def get_active_session(user_id: str, recreate: bool = True) -> Optional[MC
     # 1) Owned by this worker
     if owner == WORKER_ID:
         local = active_sessions.get(user_id)
-        if local:
+        if local and not await _local_session_is_stale(user_id, local):
             # refresh both TTLs so ownership and config persist while active
             try:
                 await redis_client.expire(active_key, SESSION_TTL)
                 await redis_client.expire(_cfg_key(user_id), USER_CONFIG_TTL)
+                await redis_client.expire(_cfg_version_key(user_id), USER_CONFIG_TTL)
             except Exception as e:  # nosec B110
                 # non-fatal if expire fails, just log the error
                 logger.debug(f"Failed to refresh session TTL for {SecurityValidator.sanitize_log_message(user_id)}: {e}")
             _touch_last_used(user_id)
             return local
 
-        # Owner in Redis points to this worker but local session missing (process restart or lost).
+        if local:
+            # Config changed since this local session was built (or this
+            # worker regained ownership after losing it) -- discard rather
+            # than serve a session built from a superseded config.
+            await _discard_stale_session(user_id, local)
+
+        # Owner in Redis points to this worker but local session is missing
+        # (discarded as stale above, or process restart/lost).
         session = await _acquire_and_create_session(user_id)
         if session:
             _touch_last_used(user_id)
@@ -881,13 +985,19 @@ async def get_active_session(user_id: str, recreate: bool = True) -> Optional[MC
 
     # 3) Owned by another worker -> take over rather than reject.
     local = active_sessions.get(user_id)
-    if local:
+    if local and not await _local_session_is_stale(user_id, local):
         # Ownership drifted away from us (e.g. a TTL/reaper race) while we
-        # still hold a live session locally; reclaim ownership instead of
-        # paying to rebuild.
+        # still hold a live, current session locally; reclaim ownership
+        # instead of paying to rebuild.
         await set_active_session(user_id, local)
         _touch_last_used(user_id)
         return local
+
+    if local:
+        # Stale local copy (user reconnected elsewhere with a different
+        # config while this worker still cached the old session) -- discard
+        # it instead of reclaiming, then rebuild from the current config.
+        await _discard_stale_session(user_id, local)
 
     session = await _acquire_and_create_session(user_id)
     if session:
@@ -1011,12 +1121,17 @@ async def connect(input_data: ConnectInput, request: Request, user=Depends(get_c
             logger.error("Chat configuration error for user %s", SecurityValidator.sanitize_log_message(user_id), exc_info=True)
             raise HTTPException(status_code=400, detail="Configuration error")
 
-        # Store user configuration
-        await set_user_config(user_id, config)
+        # Store user configuration, stamped with a fresh generation marker so
+        # a stale local session cached on another worker can detect this
+        # reconnect and rebuild instead of being silently reclaimed/served
+        # (see get_active_session / _local_session_is_stale).
+        config_version = uuid4().hex
+        await set_user_config(user_id, config, version=config_version)
 
         # Initialize chat service
         try:
             chat_service = MCPChatService(config, user_id=user_id, redis_client=redis_client)
+            chat_service.config_version = config_version
             await chat_service.initialize()
 
             # Clear chat history on new connection
