@@ -219,14 +219,14 @@ dev = [
     "url-normalize>=3.0.0",
     "uv>=0.11.6",
     "websockets>=16.0",
-    "pyasn1>=0.6.3", # a2a-sdk; https://github.com/IBM/mcp-context-forge/security/dependabot/73
+    "pyasn1>=0.6.4", # a2a-sdk; https://github.com/IBM/mcp-context-forge/security/dependabot/73
     "tornado>=6.5.7",  # transitive via jupyter; CVE-2026-31958
     # gRPC plugin framework testing (optional at runtime, required for test coverage)
     "grpcio>=1.81.1",
     "grpcio-reflection>=1.81.1",
     "grpcio-tools>=1.81.1",
     "pipdeptree>=3.1.0",
-    "setuptools>=82.0.1",
+    "setuptools>=83.0.0",
     "debugpy>=1.8.21",
     "maturin>=1.14.1",
     "Pygments>=2.20.0",
