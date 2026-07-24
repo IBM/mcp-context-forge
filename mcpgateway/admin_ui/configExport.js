@@ -56,7 +56,7 @@ export const getCatalogUrl = function (server) {
 
 /**
  * Generate and show configuration for selected type
- * @param {string} configType - Configuration type: 'stdio', 'sse', or 'http'
+ * @param {string} configType - Configuration type: 'sse' or 'http'
  */
 export const generateAndShowConfig = async function (configType) {
   try {
@@ -97,7 +97,7 @@ export const generateAndShowConfig = async function (configType) {
 /**
  * Export server configuration in specified format
  * @param {string} serverId - The server UUID
- * @param {string} configType - Configuration type: 'stdio', 'sse', or 'http'
+ * @param {string} configType - Configuration type: 'sse' or 'http'
  */
 export const exportServerConfig = async function (serverId, configType) {
   try {
@@ -194,15 +194,11 @@ export const generateConfig = function (server, configType) {
  */
 export const showConfigDisplayModal = function (server, configType, config) {
   const descriptions = {
-    stdio:
-      "Configuration for Claude Desktop, CLI tools, and stdio-based MCP clients",
     sse: "Configuration for LangChain, LlamaIndex, and other SSE-based frameworks",
     http: "Configuration for REST clients and HTTP-based MCP integrations",
   };
 
   const usageInstructions = {
-    stdio:
-      "Save as .mcp.json in your user directory or use in Claude Desktop settings",
     sse: "Use with MCP client libraries that support Server-Sent Events transport",
     http: "Use with HTTP clients or REST API wrappers for MCP protocol",
   };

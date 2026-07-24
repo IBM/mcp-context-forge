@@ -67,7 +67,7 @@ describe("generateAndShowConfig", () => {
     const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
   });
 
-  test("fetches server details and generates stdio config", async () => {
+  test("rejects removed stdio config type with an error message", async () => {
     const mockServer = {
       id: "server-123",
       name: "Test Server",
@@ -85,8 +85,9 @@ describe("generateAndShowConfig", () => {
     await generateAndShowConfig("stdio");
 
     expect(fetchWithTimeout).toHaveBeenCalledWith("/admin/servers/server-123");
-    expect(closeModal).toHaveBeenCalledWith("config-selection-modal");
-    expect(openModal).toHaveBeenCalledWith("config-display-modal");
+    expect(showErrorMessage).toHaveBeenCalled();
+    expect(closeModal).not.toHaveBeenCalledWith("config-selection-modal");
+    expect(openModal).not.toHaveBeenCalledWith("config-display-modal");
   });
 
   test("fetches server details and generates sse config", async () => {
@@ -142,7 +143,7 @@ describe("generateAndShowConfig", () => {
     const { showConfigSelectionModal } = await import("../../../mcpgateway/admin_ui/configExport.js");
     showConfigSelectionModal("server-404", "Missing Server");
 
-    await generateAndShowConfig("stdio");
+    await generateAndShowConfig("http");
 
     expect(handleFetchError).toHaveBeenCalled();
     expect(showErrorMessage).toHaveBeenCalled();
@@ -188,7 +189,7 @@ describe("exportServerConfig", () => {
       json: async () => mockServer,
     });
 
-    await exportServerConfig("export-123", "stdio");
+    await exportServerConfig("export-123", "http");
 
     expect(fetchWithTimeout).toHaveBeenCalledWith("/admin/servers/export-123");
     expect(openModal).toHaveBeenCalledWith("config-display-modal");
@@ -247,7 +248,7 @@ describe("exportServerConfig", () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     fetchWithTimeout.mockRejectedValue(new Error("Timeout"));
 
-    await exportServerConfig("timeout-server", "stdio");
+    await exportServerConfig("timeout-server", "http");
 
     expect(handleFetchError).toHaveBeenCalledWith(
       expect.any(Error),
@@ -279,26 +280,6 @@ describe("showConfigDisplayModal", () => {
     const titleEl = document.createElement("h2");
     titleEl.id = "config-display-title";
     document.body.appendChild(titleEl);
-  });
-
-  test("displays stdio configuration with correct description", () => {
-    const server = { id: "s1", name: "Stdio Server" };
-    const config = { mcpServers: { "mcpgateway-wrapper": {} } };
-
-    showConfigDisplayModal(server, "stdio", config);
-
-    const descEl = document.getElementById("config-description");
-    expect(descEl.textContent).toContain("Claude Desktop");
-    expect(descEl.textContent).toContain("Stdio Server");
-
-    const usageEl = document.getElementById("config-usage");
-    expect(usageEl.textContent).toContain(".mcp.json");
-
-    const titleEl = document.getElementById("config-display-title");
-    expect(titleEl.textContent).toContain("STDIO");
-    expect(titleEl.textContent).toContain("Stdio Server");
-
-    expect(openModal).toHaveBeenCalledWith("config-display-modal");
   });
 
   test("displays sse configuration with correct description", () => {
@@ -339,7 +320,7 @@ describe("showConfigDisplayModal", () => {
     const server = { id: "s4", name: "Test" };
     const config = { test: { nested: "value" } };
 
-    showConfigDisplayModal(server, "stdio", config);
+    showConfigDisplayModal(server, "sse", config);
 
     const contentEl = document.getElementById("config-content");
     const parsed = JSON.parse(contentEl.value);
@@ -353,7 +334,7 @@ describe("showConfigDisplayModal", () => {
     const config = { test: "data" };
 
     expect(() => {
-      showConfigDisplayModal(server, "stdio", config);
+      showConfigDisplayModal(server, "sse", config);
     }).not.toThrow();
   });
 });
@@ -488,7 +469,7 @@ describe("downloadConfig", () => {
       json: async () => mockServer,
     });
 
-    await exportServerConfig("error-dl", "stdio");
+    await exportServerConfig("error-dl", "http");
 
     // Force an error during blob creation
     createObjectURLSpy.mockImplementation(() => {
@@ -501,14 +482,14 @@ describe("downloadConfig", () => {
     errorSpy.mockRestore();
   });
 
-  test("generates correct filename for stdio config", async () => {
-    const mockServer = { id: "stdio-dl", name: "My Stdio Server" };
+  test("generates correct filename for http config", async () => {
+    const mockServer = { id: "http-dl", name: "My HTTP Server" };
     fetchWithTimeout.mockResolvedValue({
       ok: true,
       json: async () => mockServer,
     });
 
-    await exportServerConfig("stdio-dl", "stdio");
+    await exportServerConfig("http-dl", "http");
 
     let downloadedFilename = null;
     const appendChildSpy = vi.spyOn(document.body, "appendChild").mockImplementation((el) => {
@@ -520,7 +501,7 @@ describe("downloadConfig", () => {
 
     downloadConfig();
 
-    expect(downloadedFilename).toContain("stdio-config.json");
+    expect(downloadedFilename).toContain("http-config.json");
     appendChildSpy.mockRestore();
   });
 });

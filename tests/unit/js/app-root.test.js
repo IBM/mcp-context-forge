@@ -6,6 +6,31 @@
 import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";
 import { appRoot } from "../../../mcpgateway/admin_ui/components/app-root.js";
 
+// ─── localStorage shim ────────────────────────────────────────────────────────
+// Node >= 22.4 defines its own global `localStorage` accessor that shadows
+// jsdom's and evaluates to undefined unless Node is started with
+// --localstorage-file. Install an in-memory shim so these tests run
+// deterministically regardless of the Node version.
+
+const store = new Map();
+const localStorageShim = {
+  getItem: (key) => (store.has(key) ? store.get(key) : null),
+  setItem: (key, value) => {
+    store.set(key, String(value));
+  },
+  removeItem: (key) => {
+    store.delete(key);
+  },
+  clear: () => {
+    store.clear();
+  },
+};
+Object.defineProperty(globalThis, "localStorage", {
+  value: localStorageShim,
+  configurable: true,
+  writable: true,
+});
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function makeComponent() {
@@ -119,7 +144,7 @@ describe("darkMode $watch callback", () => {
   });
 
   test("calls Admin.logRestrictedContext when localStorage.setItem throws", () => {
-    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+    vi.spyOn(localStorage, "setItem").mockImplementation(() => {
       throw new Error("QuotaExceededError");
     });
     const logRestrictedContext = vi.fn();
@@ -131,7 +156,7 @@ describe("darkMode $watch callback", () => {
   });
 
   test("does not throw on write error when Admin is absent", () => {
-    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+    vi.spyOn(localStorage, "setItem").mockImplementation(() => {
       throw new Error("QuotaExceededError");
     });
     delete window.Admin;
