@@ -23,7 +23,7 @@ import json
 import logging
 import random
 import time
-from typing import TYPE_CHECKING, Any, Callable, Literal, Optional, Union
+from typing import Any, Callable, Literal, Optional, TYPE_CHECKING, Union
 
 # Third-Party
 from cpex.framework import ObservabilityProvider, TenantPluginManager
@@ -102,8 +102,9 @@ _invalidation_adapter: TypeAdapter[_InvalidationMsg] = TypeAdapter(_Invalidation
 
 def _get_invalidation_hmac_key() -> Optional[bytes]:
     """Return the HMAC signing key for pub/sub messages, or None if unconfigured."""
-    from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
     from pydantic import SecretStr  # pylint: disable=import-outside-toplevel
+
+    from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
 
     secret = settings.jwt_secret_key
     if not secret:
@@ -491,6 +492,7 @@ async def _plugin_invalidation_listener() -> None:
     consecutive_failures = 0
 
     while True:
+        pubsub = None
         try:
             client = await _redis()
             if not client:
@@ -524,6 +526,14 @@ async def _plugin_invalidation_listener() -> None:
             )
             await asyncio.sleep(delay)
             backoff = min(max_backoff, backoff * 2)
+        finally:
+            # Always release the pubsub connection back to the pool.
+            # Using wait_for shields aclose() from an in-flight CancelledError:
+            if pubsub is not None:
+                try:
+                    await asyncio.wait_for(pubsub.aclose(), timeout=2.0)
+                except Exception as exc:
+                    _logger.error("Plugin invalidation listener: pubsub aclose failed (%s)", exc)
 
 
 async def start_plugin_invalidation_listener() -> None:
