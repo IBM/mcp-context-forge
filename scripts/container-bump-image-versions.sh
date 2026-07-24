@@ -37,16 +37,10 @@ WHEELS_CONTAINERFILE_PATH="${WHEELS_CONTAINERFILE_PATH:-$REPO_ROOT/infra/wheels/
 
 PYXIS_BASE="https://catalog.redhat.com/api/containers/v1/repositories/registry/registry.access.redhat.com/repository"
 
-# ARG name -> Pyxis repository path
+# The Pyxis repository path is derived from each pin's image reference
+# (${value%:*} minus the registry prefix), so a deliberate image-path change
+# in a Containerfile cannot drift from the queried endpoint.
 MANAGED_ARGS=(UBI_BASE NODEJS_IMAGE UBI_MINIMAL)
-repo_for_arg() {
-    case "$1" in
-        UBI_BASE)     echo "ubi10" ;;
-        NODEJS_IMAGE) echo "ubi10/nodejs-24" ;;
-        UBI_MINIMAL)  echo "ubi10/ubi-minimal" ;;
-        *) return 1 ;;
-    esac
-}
 
 # latest_tag_in_minor <minor> — read candidate tags (one per line) on stdin,
 # print the tag matching ^<minor>-<epoch>$ with the numerically highest epoch.
@@ -76,7 +70,7 @@ main() {
     [ -f "$WHEELS_CONTAINERFILE_PATH" ] || die "not found: $WHEELS_CONTAINERFILE_PATH"
 
     # ---- Plan phase: validate pins and resolve latest tags; no writes ----
-    local arg line value tag minor tags latest
+    local arg line value tag minor image repo tags latest
     declare -A new_tag=()
     declare -A cur_tag=()
     declare -A image_of=()
@@ -90,13 +84,18 @@ main() {
             || die "${arg} pin '${value}' is not a full build tag (<minor>-<epoch>); refusing to manage it"
         minor="${tag%-*}"
 
-        tags=$(fetch_tags "$(repo_for_arg "$arg")") \
-            || die "tag lookup failed for ${arg} ($(repo_for_arg "$arg")); no files modified"
+        image="${value%:*}"
+        [[ "$image" == registry.access.redhat.com/* ]] \
+            || die "${arg} image '${image}' is not on registry.access.redhat.com; Pyxis lookup is only defined for that registry"
+        repo="${image#registry.access.redhat.com/}"
+
+        tags=$(fetch_tags "$repo") \
+            || die "tag lookup failed for ${arg} (${repo}); no files modified"
         latest=$(printf '%s\n' "$tags" | latest_tag_in_minor "$minor") \
             || die "no pinned tag in minor line ${minor} found for ${arg}; no files modified"
 
         cur_tag[$arg]="$tag"
-        image_of[$arg]="${value%:*}"
+        image_of[$arg]="$image"
         if [ "$latest" != "$tag" ]; then
             new_tag[$arg]="$latest"
         fi
