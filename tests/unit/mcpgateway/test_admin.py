@@ -55,7 +55,6 @@ from mcpgateway.admin import (  # admin_get_metrics,
     _normalize_ui_hide_values,
     _owner_access_condition,
     _parse_gateway_data_from_request,
-    _parse_oauth_resource,
     _parse_tag_filter_groups,
     _read_request_json,
     _render_user_card_html,
@@ -286,6 +285,7 @@ from mcpgateway.services.root_service import RootService, RootServiceNotFoundErr
 from mcpgateway.services.server_service import ServerService
 from mcpgateway.services.team_management_service import JoinRequestNotFoundError, UNSET
 from mcpgateway.services.tool_service import ToolError, ToolNotFoundError, ToolService
+from mcpgateway.utils.oauth_resource import parse_oauth_resource_form
 from mcpgateway.utils.passthrough_headers import PassthroughHeadersError
 from mcpgateway.utils.services_auth import decode_auth
 
@@ -25918,47 +25918,47 @@ class TestAdminPersonalTeamFiltering:
 
 
 class TestParseOAuthResource:
-    """Unit tests for the shared _parse_oauth_resource helper (PR #4476 review)."""
+    """Unit tests for the shared parse_oauth_resource_form helper (PR #4476 review)."""
 
     @pytest.mark.parametrize("raw", [None, "", "   ", "\n\t"])
     def test_empty_returns_none(self, raw):
-        assert _parse_oauth_resource(raw) is None
+        assert parse_oauth_resource_form(raw) is None
 
     @pytest.mark.parametrize("raw", [42, 3.14, ["already", "a", "list"], {"k": "v"}])
     def test_non_string_returns_none(self, raw):
-        assert _parse_oauth_resource(raw) is None
+        assert parse_oauth_resource_form(raw) is None
 
     def test_single_uri_passes_through(self):
-        assert _parse_oauth_resource("https://api.example.com") == "https://api.example.com"
+        assert parse_oauth_resource_form("https://api.example.com") == "https://api.example.com"
 
     def test_single_uri_stripped(self):
-        assert _parse_oauth_resource("   https://api.example.com  \n") == "https://api.example.com"
+        assert parse_oauth_resource_form("   https://api.example.com  \n") == "https://api.example.com"
 
     def test_multi_value_comma_separated(self):
-        result = _parse_oauth_resource("https://a.example.com, https://b.example.com")
+        result = parse_oauth_resource_form("https://a.example.com, https://b.example.com")
         assert result == ["https://a.example.com", "https://b.example.com"]
 
     def test_multi_value_whitespace_separated(self):
-        result = _parse_oauth_resource("https://a.example.com https://b.example.com")
+        result = parse_oauth_resource_form("https://a.example.com https://b.example.com")
         assert result == ["https://a.example.com", "https://b.example.com"]
 
     def test_multi_value_newline_separated(self):
-        result = _parse_oauth_resource("https://a.example.com\nhttps://b.example.com")
+        result = parse_oauth_resource_form("https://a.example.com\nhttps://b.example.com")
         assert result == ["https://a.example.com", "https://b.example.com"]
 
     def test_uri_containing_comma_is_preserved_as_single(self):
         """Regression: reviewer finding #3 — comma-in-URI must not be corrupted into two entries."""
         raw = "https://api.example.com/path?filter=a,b"
-        assert _parse_oauth_resource(raw) == raw
+        assert parse_oauth_resource_form(raw) == raw
 
     def test_urns_supported(self):
-        result = _parse_oauth_resource("urn:example:app-a, urn:example:app-b")
+        result = parse_oauth_resource_form("urn:example:app-a, urn:example:app-b")
         assert result == ["urn:example:app-a", "urn:example:app-b"]
 
     def test_mixed_valid_and_relative_falls_back_to_single(self):
         """When splitting produces at least one piece without a URI scheme, treat as single."""
         raw = "https://api.example.com, api.example.com/other"
-        assert _parse_oauth_resource(raw) == raw
+        assert parse_oauth_resource_form(raw) == raw
 
 
 class TestParseGatewayDataOAuthResource:

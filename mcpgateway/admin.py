@@ -187,6 +187,7 @@ from mcpgateway.services.tool_service import ToolError, ToolLockConflictError, T
 from mcpgateway.utils.create_jwt_token import create_jwt_token, get_jwt_token
 from mcpgateway.utils.error_formatter import ErrorFormatter, sanitize_validation_error_for_log
 from mcpgateway.utils.metadata_capture import MetadataCapture
+from mcpgateway.utils.oauth_resource import parse_oauth_resource_form
 from mcpgateway.utils.orjson_response import ORJSONResponse
 from mcpgateway.utils.pagination import paginate_query
 from mcpgateway.utils.passthrough_headers import PassthroughHeadersError
@@ -934,60 +935,82 @@ def _form_team_id(form: Any) -> Optional[str]:
     return str(raw).strip() or None
 
 
-def _parse_oauth_resource(raw: Any) -> Union[str, List[str], None]:
-    """Parse the ``oauth_resource`` form field into a single URI or list of URIs.
+async def _assemble_oauth_config_from_fields(fields: Any, *, encrypt_secret: bool, include_resource: bool = True) -> Optional[Dict[str, Any]]:
+    """Assemble an ``oauth_config`` dict from individual OAuth form/JSON fields.
 
-    Splits on whitespace, newlines, or commas, but only accepts the multi-value
-    interpretation when every resulting piece is a well-formed absolute URI (has
-    a scheme).  This preserves single resource URIs that legitimately contain
-    commas in their path or query component (RFC 3986 pchar) rather than
-    silently corrupting them into two bogus entries.
+    Shared by all four admin OAuth form handlers (gateway create/edit, A2A
+    agent create/edit), which previously carried four near-identical copies of
+    this block — a duplication that already caused one create-form site to be
+    missed in review.  Field semantics:
 
-    Storage convention: single value is stored as ``str``, multiple as
-    ``list[str]``, matching the shapes that IdPs use for the ``aud`` claim
-    (RFC 7519 §4.1.3).
+    * ``oauth_resource`` is parsed via
+      :func:`mcpgateway.utils.oauth_resource.parse_oauth_resource_form`
+      (single URI → ``str``, multiple → ``list[str]``, RFC 7519 §4.1.3 shapes).
+      Pass ``include_resource=False`` for entity types that do not consume
+      ``oauth_config["resource"]`` (A2A agents) so the value is neither
+      assembled nor able to trigger assembly on its own.
+    * ``encrypt_secret=True`` encrypts ``client_secret`` before storage
+      (UI edit/add handlers); ``False`` stores it as submitted (the gateway
+      create path, where encryption happens downstream in the service layer).
 
     Args:
-        raw: Value pulled from a form field (typically ``form.get("oauth_resource")``).
-            Non-string values, empty strings, and whitespace-only strings all
-            yield ``None``.
+        fields: Mapping with ``.get()`` (a form dict or parsed JSON body)
+            containing the ``oauth_*`` keys.
+        encrypt_secret: Whether to encrypt a submitted ``client_secret``.
+        include_resource: Whether to read and emit ``oauth_resource``.
 
     Returns:
-        ``None`` for empty input, a ``str`` for a single resource, or a
-        ``list[str]`` for multiple.
-
-    Examples:
-        >>> _parse_oauth_resource(None) is None
-        True
-        >>> _parse_oauth_resource("") is None
-        True
-        >>> _parse_oauth_resource("   ") is None
-        True
-        >>> _parse_oauth_resource("https://api.example.com")
-        'https://api.example.com'
-        >>> _parse_oauth_resource("https://a.example.com, https://b.example.com")
-        ['https://a.example.com', 'https://b.example.com']
-        >>> _parse_oauth_resource("https://a.example.com\\nhttps://b.example.com")
-        ['https://a.example.com', 'https://b.example.com']
-        >>> _parse_oauth_resource("https://api.example.com/path?x=1,y=2")
-        'https://api.example.com/path?x=1,y=2'
+        Assembled ``oauth_config`` dict, or ``None`` when no meaningful OAuth
+        field was provided.
     """
-    if not isinstance(raw, str):
+    oauth_grant_type = str(fields.get("oauth_grant_type", ""))
+    oauth_issuer = str(fields.get("oauth_issuer", ""))
+    oauth_token_url = str(fields.get("oauth_token_url", ""))
+    oauth_authorization_url = str(fields.get("oauth_authorization_url", ""))
+    oauth_redirect_uri = str(fields.get("oauth_redirect_uri", ""))
+    oauth_client_id = str(fields.get("oauth_client_id", ""))
+    oauth_client_secret = str(fields.get("oauth_client_secret", ""))
+    oauth_username = str(fields.get("oauth_username", ""))
+    oauth_password = str(fields.get("oauth_password", ""))
+    oauth_scopes_str = str(fields.get("oauth_scopes", ""))
+    oauth_audience = str(fields.get("oauth_audience", "")).strip()
+    oauth_resource = parse_oauth_resource_form(fields.get("oauth_resource")) if include_resource else None
+
+    if not any([oauth_grant_type, oauth_issuer, oauth_token_url, oauth_authorization_url, oauth_client_id, oauth_resource]):
         return None
-    stripped = raw.strip()
-    if not stripped:
-        return None
-    pieces = [p.strip() for p in re.split(r"[,\s]+", stripped) if p.strip()]
-    if not pieces:
-        return None
-    if len(pieces) == 1:
-        return pieces[0]
-    # Multi-value only accepted when every piece parses as an absolute URI.
-    # Falling back to single-value protects URIs containing unencoded commas
-    # (RFC 3986 pchar allows ',' in path and query components).
-    if all(urllib.parse.urlparse(p).scheme for p in pieces):
-        return pieces
-    return stripped
+
+    oauth_config: Dict[str, Any] = {}
+    if oauth_grant_type:
+        oauth_config["grant_type"] = oauth_grant_type
+    if oauth_issuer:
+        oauth_config["issuer"] = oauth_issuer
+    if oauth_token_url:
+        oauth_config["token_url"] = oauth_token_url
+    if oauth_authorization_url:
+        oauth_config["authorization_url"] = oauth_authorization_url
+    if oauth_redirect_uri:
+        oauth_config["redirect_uri"] = oauth_redirect_uri
+    if oauth_client_id:
+        oauth_config["client_id"] = oauth_client_id
+    if oauth_client_secret:
+        if encrypt_secret:
+            encryption = get_encryption_service(settings.auth_encryption_secret)
+            oauth_config["client_secret"] = await encryption.encrypt_secret_async(oauth_client_secret)
+        else:
+            oauth_config["client_secret"] = oauth_client_secret
+    if oauth_username:
+        oauth_config["username"] = oauth_username
+    if oauth_password:
+        oauth_config["password"] = oauth_password
+    if oauth_audience:
+        oauth_config["audience"] = oauth_audience
+    if oauth_scopes_str:
+        scopes = [s.strip() for s in oauth_scopes_str.replace(",", " ").split() if s.strip()]
+        if scopes:
+            oauth_config["scopes"] = scopes
+    if oauth_resource:
+        oauth_config["resource"] = oauth_resource
+    return oauth_config
 
 
 async def _parse_gateway_data_from_request(request: Request) -> dict[str, Any]:
@@ -1074,48 +1097,9 @@ async def _parse_gateway_data_from_request(request: Request) -> dict[str, Any]:
 
         # Option 2: Assemble from individual UI form fields
         # Only try this if oauth_config field was NOT provided
+        # (client_secret encryption happens downstream in the service layer)
         if not oauth_config and not oauth_config_field_provided:
-            oauth_grant_type = str(data.get("oauth_grant_type", ""))
-            oauth_issuer = str(data.get("oauth_issuer", ""))
-            oauth_token_url = str(data.get("oauth_token_url", ""))
-            oauth_authorization_url = str(data.get("oauth_authorization_url", ""))
-            oauth_redirect_uri = str(data.get("oauth_redirect_uri", ""))
-            oauth_client_id = str(data.get("oauth_client_id", ""))
-            oauth_client_secret = str(data.get("oauth_client_secret", ""))
-            oauth_username = str(data.get("oauth_username", ""))
-            oauth_password = str(data.get("oauth_password", ""))
-            oauth_scopes_str = str(data.get("oauth_scopes", ""))
-            oauth_audience = str(data.get("oauth_audience", "")).strip()
-            oauth_resource = _parse_oauth_resource(data.get("oauth_resource"))
-
-            if any([oauth_grant_type, oauth_issuer, oauth_token_url, oauth_authorization_url, oauth_client_id, oauth_resource]):
-                oauth_config = {}
-                if oauth_grant_type:
-                    oauth_config["grant_type"] = oauth_grant_type
-                if oauth_issuer:
-                    oauth_config["issuer"] = oauth_issuer
-                if oauth_token_url:
-                    oauth_config["token_url"] = oauth_token_url
-                if oauth_authorization_url:
-                    oauth_config["authorization_url"] = oauth_authorization_url
-                if oauth_redirect_uri:
-                    oauth_config["redirect_uri"] = oauth_redirect_uri
-                if oauth_client_id:
-                    oauth_config["client_id"] = oauth_client_id
-                if oauth_client_secret:
-                    oauth_config["client_secret"] = oauth_client_secret
-                if oauth_username:
-                    oauth_config["username"] = oauth_username
-                if oauth_password:
-                    oauth_config["password"] = oauth_password
-                if oauth_audience:
-                    oauth_config["audience"] = oauth_audience
-                if oauth_resource:
-                    oauth_config["resource"] = oauth_resource
-                if oauth_scopes_str:
-                    scopes = [s.strip() for s in oauth_scopes_str.replace(",", " ").split() if s.strip()]
-                    if scopes:
-                        oauth_config["scopes"] = scopes
+            oauth_config = await _assemble_oauth_config_from_fields(data, encrypt_secret=False)
 
         if oauth_config:
             data["oauth_config"] = oauth_config
@@ -13093,55 +13077,9 @@ async def admin_edit_gateway(
 
         # Option 2: Assemble from individual UI form fields
         if not oauth_config:
-            oauth_grant_type = str(form.get("oauth_grant_type", ""))
-            oauth_issuer = str(form.get("oauth_issuer", ""))
-            oauth_token_url = str(form.get("oauth_token_url", ""))
-            oauth_authorization_url = str(form.get("oauth_authorization_url", ""))
-            oauth_redirect_uri = str(form.get("oauth_redirect_uri", ""))
-            oauth_client_id = str(form.get("oauth_client_id", ""))
-            oauth_client_secret = str(form.get("oauth_client_secret", ""))
-            oauth_username = str(form.get("oauth_username", ""))
-            oauth_password = str(form.get("oauth_password", ""))
-            oauth_scopes_str = str(form.get("oauth_scopes", ""))
-            oauth_audience = str(form.get("oauth_audience", "")).strip()
-            oauth_resource = _parse_oauth_resource(form.get("oauth_resource"))
-
-            if any([oauth_grant_type, oauth_issuer, oauth_token_url, oauth_authorization_url, oauth_client_id, oauth_resource]):
-                oauth_config = {}
-
-                if oauth_grant_type:
-                    oauth_config["grant_type"] = oauth_grant_type
-                if oauth_issuer:
-                    oauth_config["issuer"] = oauth_issuer
-                if oauth_token_url:
-                    oauth_config["token_url"] = oauth_token_url
-                if oauth_authorization_url:
-                    oauth_config["authorization_url"] = oauth_authorization_url
-                if oauth_redirect_uri:
-                    oauth_config["redirect_uri"] = oauth_redirect_uri
-                if oauth_client_id:
-                    oauth_config["client_id"] = oauth_client_id
-                if oauth_client_secret:
-                    encryption = get_encryption_service(settings.auth_encryption_secret)
-                    oauth_config["client_secret"] = await encryption.encrypt_secret_async(oauth_client_secret)
-
-                if oauth_username:
-                    oauth_config["username"] = oauth_username
-                if oauth_password:
-                    oauth_config["password"] = oauth_password
-
-                if oauth_audience:
-                    oauth_config["audience"] = oauth_audience
-
-                if oauth_scopes_str:
-                    scopes = [s.strip() for s in oauth_scopes_str.replace(",", " ").split() if s.strip()]
-                    if scopes:
-                        oauth_config["scopes"] = scopes
-
-                if oauth_resource:
-                    oauth_config["resource"] = oauth_resource
-
-                LOGGER.info(f"✅ Assembled OAuth config from UI form fields (edit): grant_type={oauth_grant_type}, issuer={oauth_issuer}")
+            oauth_config = await _assemble_oauth_config_from_fields(form, encrypt_secret=True)
+            if oauth_config:
+                LOGGER.info(f"✅ Assembled OAuth config from UI form fields (edit): grant_type={oauth_config.get('grant_type')}, issuer={oauth_config.get('issuer')}")
 
         user_email = get_user_email(user)
         # Preserve existing gateway's team_id when no explicit team_id is provided.
@@ -16092,57 +16030,14 @@ async def admin_add_a2a_agent(
                 LOGGER.error(f"Failed to parse OAuth config: {e}")
                 oauth_config = None
 
-        # Option 2: Assemble from individual UI form fields
+        # Option 2: Assemble from individual UI form fields.
+        # include_resource=False: A2A agents do not consume oauth_config["resource"]
+        # (no per-user token storage / audience validation on the A2A path), so the
+        # field is not offered on A2A forms and is not assembled here.
         if not oauth_config:
-            oauth_grant_type = str(form.get("oauth_grant_type", ""))
-            oauth_issuer = str(form.get("oauth_issuer", ""))
-            oauth_token_url = str(form.get("oauth_token_url", ""))
-            oauth_authorization_url = str(form.get("oauth_authorization_url", ""))
-            oauth_redirect_uri = str(form.get("oauth_redirect_uri", ""))
-            oauth_client_id = str(form.get("oauth_client_id", ""))
-            oauth_client_secret = str(form.get("oauth_client_secret", ""))
-            oauth_username = str(form.get("oauth_username", ""))
-            oauth_password = str(form.get("oauth_password", ""))
-            oauth_scopes_str = str(form.get("oauth_scopes", ""))
-            oauth_audience = str(form.get("oauth_audience", "")).strip()
-            oauth_resource = _parse_oauth_resource(form.get("oauth_resource"))
-
-            if any([oauth_grant_type, oauth_issuer, oauth_token_url, oauth_authorization_url, oauth_client_id, oauth_resource]):
-                oauth_config = {}
-
-                if oauth_grant_type:
-                    oauth_config["grant_type"] = oauth_grant_type
-                if oauth_issuer:
-                    oauth_config["issuer"] = oauth_issuer
-                if oauth_token_url:
-                    oauth_config["token_url"] = oauth_token_url
-                if oauth_authorization_url:
-                    oauth_config["authorization_url"] = oauth_authorization_url
-                if oauth_redirect_uri:
-                    oauth_config["redirect_uri"] = oauth_redirect_uri
-                if oauth_client_id:
-                    oauth_config["client_id"] = oauth_client_id
-                if oauth_client_secret:
-                    encryption = get_encryption_service(settings.auth_encryption_secret)
-                    oauth_config["client_secret"] = await encryption.encrypt_secret_async(oauth_client_secret)
-
-                if oauth_username:
-                    oauth_config["username"] = oauth_username
-                if oauth_password:
-                    oauth_config["password"] = oauth_password
-
-                if oauth_audience:
-                    oauth_config["audience"] = oauth_audience
-
-                if oauth_scopes_str:
-                    scopes = [s.strip() for s in oauth_scopes_str.replace(",", " ").split() if s.strip()]
-                    if scopes:
-                        oauth_config["scopes"] = scopes
-
-                if oauth_resource:
-                    oauth_config["resource"] = oauth_resource
-
-                LOGGER.info(f"✅ Assembled OAuth config from UI form fields: grant_type={oauth_grant_type}, issuer={oauth_issuer}")
+            oauth_config = await _assemble_oauth_config_from_fields(form, encrypt_secret=True, include_resource=False)
+            if oauth_config:
+                LOGGER.info(f"✅ Assembled OAuth config from UI form fields: grant_type={oauth_config.get('grant_type')}, issuer={oauth_config.get('issuer')}")
 
         passthrough_headers = str(form.get("passthrough_headers"))
         if passthrough_headers and passthrough_headers.strip():
@@ -16360,57 +16255,14 @@ async def admin_edit_a2a_agent(
                 LOGGER.error(f"Failed to parse OAuth config: {e}")
                 oauth_config = None
 
-        # Option 2: Assemble from individual UI form fields
+        # Option 2: Assemble from individual UI form fields.
+        # include_resource=False: A2A agents do not consume oauth_config["resource"]
+        # (no per-user token storage / audience validation on the A2A path), so the
+        # field is not offered on A2A forms and is not assembled here.
         if not oauth_config:
-            oauth_grant_type = str(form.get("oauth_grant_type", ""))
-            oauth_issuer = str(form.get("oauth_issuer", ""))
-            oauth_token_url = str(form.get("oauth_token_url", ""))
-            oauth_authorization_url = str(form.get("oauth_authorization_url", ""))
-            oauth_redirect_uri = str(form.get("oauth_redirect_uri", ""))
-            oauth_client_id = str(form.get("oauth_client_id", ""))
-            oauth_client_secret = str(form.get("oauth_client_secret", ""))
-            oauth_username = str(form.get("oauth_username", ""))
-            oauth_password = str(form.get("oauth_password", ""))
-            oauth_scopes_str = str(form.get("oauth_scopes", ""))
-            oauth_audience = str(form.get("oauth_audience", "")).strip()
-            oauth_resource = _parse_oauth_resource(form.get("oauth_resource"))
-
-            if any([oauth_grant_type, oauth_issuer, oauth_token_url, oauth_authorization_url, oauth_client_id, oauth_resource]):
-                oauth_config = {}
-
-                if oauth_grant_type:
-                    oauth_config["grant_type"] = oauth_grant_type
-                if oauth_issuer:
-                    oauth_config["issuer"] = oauth_issuer
-                if oauth_token_url:
-                    oauth_config["token_url"] = oauth_token_url
-                if oauth_authorization_url:
-                    oauth_config["authorization_url"] = oauth_authorization_url
-                if oauth_redirect_uri:
-                    oauth_config["redirect_uri"] = oauth_redirect_uri
-                if oauth_client_id:
-                    oauth_config["client_id"] = oauth_client_id
-                if oauth_client_secret:
-                    encryption = get_encryption_service(settings.auth_encryption_secret)
-                    oauth_config["client_secret"] = await encryption.encrypt_secret_async(oauth_client_secret)
-
-                if oauth_username:
-                    oauth_config["username"] = oauth_username
-                if oauth_password:
-                    oauth_config["password"] = oauth_password
-
-                if oauth_audience:
-                    oauth_config["audience"] = oauth_audience
-
-                if oauth_scopes_str:
-                    scopes = [s.strip() for s in oauth_scopes_str.replace(",", " ").split() if s.strip()]
-                    if scopes:
-                        oauth_config["scopes"] = scopes
-
-                if oauth_resource:
-                    oauth_config["resource"] = oauth_resource
-
-                LOGGER.info(f"✅ Assembled OAuth config from UI form fields (edit): grant_type={oauth_grant_type}, issuer={oauth_issuer}")
+            oauth_config = await _assemble_oauth_config_from_fields(form, encrypt_secret=True, include_resource=False)
+            if oauth_config:
+                LOGGER.info(f"✅ Assembled OAuth config from UI form fields (edit): grant_type={oauth_config.get('grant_type')}, issuer={oauth_config.get('issuer')}")
 
         user_email = get_user_email(user)
 

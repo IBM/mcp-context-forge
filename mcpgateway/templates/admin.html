@@ -6985,27 +6985,6 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                     <label
                       class="block text-sm font-medium text-gray-700 dark:text-gray-300"
                     >
-                      Resource (Audience) <span class="text-gray-500">(optional)</span>
-                    </label>
-                    <input
-                      type="text"
-                      name="oauth_resource"
-                      class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
-                      placeholder="https://api.example.com or your-client-id"
-                    />
-                    <p class="mt-1 text-sm text-gray-500">
-                      RFC 8707 resource indicator sent to the IdP and used as the
-                      expected token audience. Leave blank to auto-derive from the
-                      gateway URL origin and auto-learn from the IdP's first token
-                      response. Set explicitly for IdPs (ServiceNow, Authentik) that
-                      use a client_id or other opaque audience identifier.
-                    </p>
-                  </div>
-
-                  <div>
-                    <label
-                      class="block text-sm font-medium text-gray-700 dark:text-gray-300"
-                    >
                       Client ID <span class="text-gray-500">(optional for DCR)</span>
                     </label>
                     <input
@@ -10606,32 +10585,6 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                               >🔍 Discover</button>
                             </div>
                             <div class="oauth-discover-status mt-1 hidden"></div>
-                          </div>
-
-                          <div>
-                          <label
-                            class="block text-sm font-medium text-gray-700 dark:text-gray-300"
-                          >
-                            Resource (Audience) <span class="text-gray-500">(optional)</span>
-                          </label>
-                          <input
-                            type="text"
-                            name="oauth_resource"
-                            id="oauth-resource-a2a-edit"
-                            class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
-                            placeholder="https://api.example.com or your-client-id"
-                          />
-                          <p class="mt-1 text-sm text-gray-500">
-                            RFC 8707 resource indicator sent to the IdP. When admins
-                            leave this blank, the gateway derives it from the gateway URL
-                            origin, and each user's actual token audience is auto-learned
-                            per-user on their own OAuth callback. Set explicitly here to
-                            force a global (all-user) audience — for example, when you
-                            need a specific Application ID URI in multi-tenant Entra ID.
-                            To make a stored value take effect again, users simply
-                            re-authenticate; to clear this admin-configured value,
-                            blank the field and save.
-                          </p>
                           </div>
 
                           <div>
