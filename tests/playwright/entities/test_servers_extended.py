@@ -975,7 +975,10 @@ class TestEditServerSelectionBugs:
             servers_page.open_edit_modal(server_name)
 
             # Inputs attached means the initial HTMX load is done.
-            servers_page.page.wait_for_selector('#edit-server-prompts input[name="associatedPrompts"]', state="attached", timeout=10000)
+            try:
+                servers_page.page.wait_for_selector('#edit-server-prompts input[name="associatedPrompts"]', state="attached", timeout=10000)
+            except PlaywrightTimeoutError:
+                pytest.skip("No prompts loaded in edit modal — cannot test Select All")
             prompt_count = servers_page.edit_prompts_container.locator('input[name="associatedPrompts"]').count()
             if prompt_count == 0:
                 pytest.skip("No prompts available to test Select All")

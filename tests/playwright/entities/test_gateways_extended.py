@@ -575,6 +575,14 @@ class TestGatewayEditModal:
 
         _open_edit_or_skip(gateways_page, 0)
 
+        # Wait for editGateway() to finish populating the form before asserting field
+        # states — the modal becomes visible before the async fetch resolves, so without
+        # this wait the assertions below can race against the JS population.
+        expect(gateways_page.edit_modal_name_input).not_to_be_empty(timeout=10000)
+
+        # Reset auth type to a known-empty state so the test is independent of whichever
+        # auth type the first gateway happens to use.
+        gateways_page.edit_modal_auth_type_select.select_option("")
         expect(gateways_page.edit_oauth_fields).to_be_hidden()
 
         gateways_page.edit_modal_auth_type_select.select_option("oauth")
