@@ -11,7 +11,6 @@ from unittest.mock import patch
 
 # Third-Party
 import jwt
-import pytest
 
 # First-Party
 from mcpgateway.services.token_validation_service import (
@@ -105,6 +104,22 @@ class TestTokenValidationResult:
         errors = r.blocking_errors
         assert len(errors) == 1
         assert "audience" in errors[0].lower()
+
+    def test_blocking_errors_audience_advisory_when_derived(self):
+        """audience_match=False is advisory (not blocking) when audience_source is 'derived'."""
+        r = TokenValidationResult(is_jwt=True)
+        r.audience_match = False
+        r.audience_source = "derived"
+        r.warnings.append("Token audience mismatch: token aud does not match expected resource or gateway URL")
+        assert r.blocking_errors == []
+
+    def test_blocking_errors_audience_blocking_when_configured(self):
+        """audience_match=False is blocking when audience_source is 'configured' (default)."""
+        r = TokenValidationResult(is_jwt=True)
+        r.audience_match = False
+        r.audience_source = "configured"
+        r.warnings.append("Token audience mismatch: token aud does not match expected resource or gateway URL")
+        assert len(r.blocking_errors) == 1
 
 
 # ---------- _derive_issuer_from_token_url ----------
@@ -235,10 +250,24 @@ class TestValidateOauthTokenClaims:
         assert result.audience_match is True
         assert not any("audience" in w.lower() for w in result.warnings)
 
-    def test_audience_falls_back_to_gateway_url(self):
-        token = _make_jwt({"aud": "https://mcp.example.com/sse"})
+    def test_audience_falls_back_to_gateway_url_origin(self):
+        """Fallback derives the ORIGIN (scheme + netloc), matching the value oauth_router
+        sends as the outbound ``resource`` param on initial auth + callback.
+
+        Real IdPs (Salesforce, Azure AD, Okta) mint tokens with origin-level ``aud``,
+        so validating against the full path would silently reject valid tokens.
+        """
+        token = _make_jwt({"aud": "https://mcp.example.com"})
         oauth_config = {}  # No resource configured
-        result = validate_oauth_token_claims(token, oauth_config, "https://mcp.example.com/sse", "test-gw")
+        result = validate_oauth_token_claims(token, oauth_config, "https://mcp.example.com/platform/mcp/v1", "test-gw")
+
+        assert result.audience_match is True
+
+    def test_audience_fallback_uses_urn_verbatim_when_origin_not_derivable(self):
+        """URN-shaped gateway.url has no origin; the raw value is used as the fallback."""
+        token = _make_jwt({"aud": "urn:example:mcp-gateway"})
+        oauth_config = {}
+        result = validate_oauth_token_claims(token, oauth_config, "urn:example:mcp-gateway", "test-gw")
 
         assert result.audience_match is True
 
@@ -275,6 +304,55 @@ class TestValidateOauthTokenClaims:
         result = validate_oauth_token_claims(token, oauth_config, "https://gw.example.com", "test-gw")
 
         assert result.audience_match is False
+
+    def test_audience_match_with_opaque_learned_resource_string(self):
+        """Round-trip: opaque aud (e.g. ServiceNow/Authentik client_id) matches opaque persisted resource."""
+        token = _make_jwt({"aud": "my-servicenow-client-id"})
+        oauth_config = {"resource": "my-servicenow-client-id"}
+        result = validate_oauth_token_claims(token, oauth_config, "https://gw.example.com", "test-gw")
+
+        assert result.audience_match is True
+        assert not any("audience" in w.lower() for w in result.warnings)
+
+    def test_audience_match_with_opaque_learned_resource_list(self):
+        """Round-trip: opaque aud list matches a learned-resource list with overlap."""
+        token = _make_jwt({"aud": ["my-client-id"]})
+        oauth_config = {"resource": ["my-client-id", "another-id"]}
+        result = validate_oauth_token_claims(token, oauth_config, "https://gw.example.com", "test-gw")
+
+        assert result.audience_match is True
+        assert not any("audience" in w.lower() for w in result.warnings)
+
+    def test_audience_mismatch_authoritative_when_resource_configured(self):
+        """A configured resource makes audience mismatch authoritative (blocking)."""
+        token = _make_jwt({"aud": "wrong-aud"})
+        oauth_config = {"resource": "configured-resource"}
+        result = validate_oauth_token_claims(token, oauth_config, "https://gw.example.com", "test-gw")
+
+        assert result.audience_match is False
+        assert result.audience_source == "configured"
+        assert len(result.blocking_errors) == 1
+
+    def test_audience_mismatch_advisory_when_no_resource_configured(self):
+        """Without a configured resource, audience mismatch is advisory (warning, not blocking)."""
+        token = _make_jwt({"aud": "wrong-aud"})
+        oauth_config = {}
+        result = validate_oauth_token_claims(token, oauth_config, "https://gw.example.com", "test-gw")
+
+        assert result.audience_match is False
+        assert result.audience_source == "derived"
+        assert any("audience" in w.lower() for w in result.warnings)
+        assert result.blocking_errors == []
+
+    def test_audience_match_when_no_resource_source_recorded(self):
+        """When audience matches via the derived fallback, the source is recorded as 'derived' but nothing blocks."""
+        token = _make_jwt({"aud": "https://gw.example.com"})
+        oauth_config = {}
+        result = validate_oauth_token_claims(token, oauth_config, "https://gw.example.com", "test-gw")
+
+        assert result.audience_match is True
+        assert result.audience_source == "derived"
+        assert result.blocking_errors == []
 
     # -- Scope mismatch --
 
@@ -453,3 +531,141 @@ class TestValidateOauthTokenClaims:
 
         # Should not crash
         assert result.is_jwt is True
+
+
+class TestOAuthRequireConfiguredResourceSetting:
+    """Reviewer HIGH-severity finding: setting must flip advisory audience mismatch to blocking.
+
+    When OAUTH_REQUIRE_CONFIGURED_RESOURCE=true, even auto-derived audience
+    mismatches (no explicit resource configured, validator falls back to
+    gateway_url) become authoritative — this is the strict deployment mode
+    where the gateway rejects cross-resource tokens itself rather than
+    relying on the upstream MCP server to check ``aud``.
+    """
+
+    def test_default_off_keeps_auto_derived_advisory(self):
+        with patch("mcpgateway.services.token_validation_service.settings") as mock_settings:
+            mock_settings.oauth_require_configured_resource = False
+            token = _make_jwt({"aud": "wrong-aud"})
+            result = validate_oauth_token_claims(token, {}, "https://gw.example.com", "test-gw")
+
+        assert result.audience_match is False
+        assert result.audience_source == "derived"
+        assert result.blocking_errors == []
+
+    def test_enabled_makes_auto_derived_authoritative(self):
+        with patch("mcpgateway.services.token_validation_service.settings") as mock_settings:
+            mock_settings.oauth_require_configured_resource = True
+            token = _make_jwt({"aud": "wrong-aud"})
+            result = validate_oauth_token_claims(token, {}, "https://gw.example.com", "test-gw")
+
+            # blocking_errors evaluates the strict setting at access time,
+            # so assert inside the patch context.
+            assert result.audience_match is False
+            assert result.audience_source == "derived"
+            assert len(result.blocking_errors) == 1
+
+    def test_setting_does_not_downgrade_configured_resource(self):
+        """When resource is explicitly configured, mismatch is always authoritative — setting is a no-op."""
+        with patch("mcpgateway.services.token_validation_service.settings") as mock_settings:
+            mock_settings.oauth_require_configured_resource = False
+            token = _make_jwt({"aud": "wrong-aud"})
+            result = validate_oauth_token_claims(token, {"resource": "configured"}, "https://gw.example.com", "test-gw")
+
+        assert result.audience_match is False
+        assert result.audience_source == "configured"
+        assert len(result.blocking_errors) == 1
+
+    def test_setting_only_affects_mismatches(self):
+        """Enabling the setting with a matching aud has no effect (no false blocking)."""
+        with patch("mcpgateway.services.token_validation_service.settings") as mock_settings:
+            mock_settings.oauth_require_configured_resource = True
+            token = _make_jwt({"aud": "https://gw.example.com"})
+            result = validate_oauth_token_claims(token, {}, "https://gw.example.com", "test-gw")
+
+        assert result.audience_match is True
+        assert result.blocking_errors == []
+
+    def test_strict_mode_accepts_origin_aud_against_path_bearing_gateway_url(self):
+        """Strict mode + path-bearing gateway_url + origin-only aud must MATCH.
+
+        Regression coverage for the validator/oauth_router contract mismatch: the
+        route sends ``resource=<origin>`` on initial auth so the IdP mints an
+        origin-level ``aud``. If the validator falls back to the full gateway URL,
+        a valid origin-aud token gets rejected under strict mode. Origin-level
+        derivation on both sides keeps the contract consistent.
+        """
+        with patch("mcpgateway.services.token_validation_service.settings") as mock_settings:
+            mock_settings.oauth_require_configured_resource = True
+            token = _make_jwt({"aud": "https://api.salesforce.com"})
+            result = validate_oauth_token_claims(token, {}, "https://api.salesforce.com/platform/mcp/v1", "sf-gw")
+
+        assert result.audience_match is True
+        assert result.blocking_errors == []
+
+
+class TestLearnedAudPrecedence:
+    """Per-user learned aud precedence (MEDIUM security fix).
+
+    ``validate_oauth_token_claims`` accepts ``learned_aud`` sourced from the
+    caller's own OAuthToken row. The precedence is
+    ``oauth_config.resource`` > ``learned_aud`` > ``gateway_url``, with the
+    first two authoritative and the last advisory (unless the strict setting
+    is on). These tests lock the ordering + the audience_source behavior
+    for the per-user learned path so a regression cannot silently drop the
+    per-user check to advisory.
+    """
+
+    def test_learned_aud_used_when_no_configured_resource(self):
+        token = _make_jwt({"aud": "opaque-tenant-a-id"})
+        result = validate_oauth_token_claims(token, {}, "https://gw.example.com", "test-gw", learned_aud="opaque-tenant-a-id")
+
+        assert result.audience_match is True
+        assert result.audience_source == "learned"
+        assert result.blocking_errors == []
+
+    def test_learned_aud_mismatch_is_authoritative(self):
+        token = _make_jwt({"aud": "wrong-aud"})
+        result = validate_oauth_token_claims(token, {}, "https://gw.example.com", "test-gw", learned_aud="opaque-tenant-a-id")
+
+        assert result.audience_match is False
+        assert result.audience_source == "learned"
+        assert len(result.blocking_errors) == 1
+
+    def test_configured_resource_beats_learned_aud(self):
+        """Admin config always wins — even a matching learned_aud cannot rescue a config-mismatched token."""
+        token = _make_jwt({"aud": "learned-value"})
+        result = validate_oauth_token_claims(token, {"resource": "configured-value"}, "https://gw.example.com", "test-gw", learned_aud="learned-value")
+
+        assert result.audience_match is False
+        assert result.audience_source == "configured"
+        assert len(result.blocking_errors) == 1
+
+    def test_learned_aud_list_shape_supported(self):
+        """RFC 7519 §4.1.3 aud can be a list; learned_aud list is checked correctly."""
+        token = _make_jwt({"aud": "id-b"})
+        result = validate_oauth_token_claims(token, {}, "https://gw.example.com", "test-gw", learned_aud=["id-a", "id-b"])
+
+        assert result.audience_match is True
+
+    def test_no_learned_aud_falls_back_to_gateway_url_advisory(self):
+        """Explicit None learned_aud → gateway URL fallback → advisory mismatch."""
+        with patch("mcpgateway.services.token_validation_service.settings") as mock_settings:
+            mock_settings.oauth_require_configured_resource = False
+            token = _make_jwt({"aud": "unrelated"})
+            result = validate_oauth_token_claims(token, {}, "https://gw.example.com", "test-gw", learned_aud=None)
+
+        assert result.audience_match is False
+        assert result.audience_source == "derived"
+        assert result.blocking_errors == []
+
+    def test_empty_learned_aud_falls_back_to_gateway_url(self):
+        """Empty string learned_aud (falsy) treated as absent → falls back to gateway URL."""
+        with patch("mcpgateway.services.token_validation_service.settings") as mock_settings:
+            mock_settings.oauth_require_configured_resource = False
+            token = _make_jwt({"aud": "unrelated"})
+            result = validate_oauth_token_claims(token, {}, "https://gw.example.com", "test-gw", learned_aud="")
+
+        assert result.audience_match is False
+        assert result.audience_source == "derived"
+        assert result.blocking_errors == []

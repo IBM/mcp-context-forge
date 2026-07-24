@@ -634,6 +634,63 @@ curl -s http://localhost:4444/oauth/registered-clients | jq
 
 ---
 
+## Token audience mismatch
+
+### Symptom
+
+The gateway logs or returns an error message:
+
+```
+Refusing to forward OAuth token for gateway 'X': Token audience mismatch: token aud does not match expected resource or gateway URL. Fix oauth_config (resource/scopes/issuer) or the IdP token request.
+```
+
+### Diagnosis steps
+
+1.  **Check the affected user's learned audience**: Query the `oauth_tokens` table for `(gateway_id, app_user_email)` and inspect `learned_aud` / `learned_iss`. This is the value the validator uses authoritatively for that user's tokens (precedence 2, below the admin-configured `oauth_config.resource`).
+2.  **Check gateway configuration**: Verify the `oauth_config.resource` field via `GET /admin/gateways/{id}` or the Admin UI. If it is set, it takes precedence over per-user learned values.
+3.  **Inspect the token**: Decode the JWT access token (e.g. via [jwt.io](https://jwt.io)) and check the `aud` (audience) claim. Compare against `learned_aud` or `oauth_config.resource` above.
+4.  **Verify IdP RFC 8707 support**: Providers like Authentik and ServiceNow do not honor the `resource` parameter — they typically return a default audience such as the `client_id`. Per-user auto-learning handles this automatically.
+
+### Common causes and fixes
+
+-   **IdP returns `aud=client_id` (Authentik, ServiceNow)** — expected behavior for non-RFC-8707 providers. Per-user auto-learning captures the actual `aud` on the user's OAuth callback and stores it as `OAuthToken.learned_aud`. If a user is still failing validation, verify they have completed at least one successful OAuth flow (the row must exist and `learned_aud` must be non-null).
+-   **Multi-tenant Entra ID, wrong tenant** — if the token is being issued for the wrong audience in a multi-tenant setup, set `oauth_config.resource` explicitly to your Application ID URI (e.g., `api://{your-app-id}`). See [OAuth Resource Configuration](oauth-resource-configuration.md).
+-   **Stale learned value for one user after IdP migration** — a user's `learned_aud` becomes stale if the IdP configuration changed since their last authentication. Fix: the user re-authenticates. The next OAuth callback overwrites their `OAuthToken.learned_aud` with the current audience — no admin action needed.
+-   **Stale admin-configured `oauth_config.resource`** — if the admin explicitly set the resource and now needs to clear it, edit the gateway in the Admin UI and blank the Resource field (or PUT `{"oauth_config": {"resource": null}}` via API).
+-   **Salesforce with full gateway URL** — Salesforce tokens use origin-level audiences. The gateway's origin-derivation fallback (`_derive_resource_origin`) handles this automatically for the outbound `resource` parameter; inbound validation uses the per-user learned value.
+
+### Advisory vs. authoritative behavior
+
+Precedence for the expected audience (first match wins):
+
+1.  `oauth_config.resource` — admin-configured. Authoritative.
+2.  `OAuthToken.learned_aud` for THIS USER — per-user. Authoritative for this user.
+3.  Gateway URL origin — auto-derived fallback. Advisory by default.
+
+The advisory fallback (#3) only applies to users with no learned value (first authentication) and no admin-configured resource. To make the auto-derived case blocking (strict mode), set:
+
+```bash
+OAUTH_REQUIRE_CONFIGURED_RESOURCE=true
+```
+
+### Useful debug logs
+
+Set `LOG_LEVEL=DEBUG` and grep for:
+
+-   `mcpgateway.services.oauth_manager` — `Unverified JWT decode failed` (indicates the token is opaque or malformed and no `learned_aud` can be extracted).
+-   `mcpgateway.services.gateway_service` — `Refusing to forward OAuth token` (the blocking-error path).
+-   `mcpgateway.services.token_validation_service` — the per-warning lines emitted before the blocking check.
+-   `mcpgateway.services.token_storage_service` — token storage and retrieval events.
+
+### Gateway vs. upstream validation responsibility
+
+ContextForge's local audience check is either advisory (auto-derived fallback) or authoritative (explicit / learned / `OAUTH_REQUIRE_CONFIGURED_RESOURCE=true`). If ContextForge forwards the token but the upstream MCP server still returns `401 Unauthorized`, the MCP server's own audience configuration doesn't match what the IdP provided. Two options:
+
+1.  Configure the MCP server to accept the audience provided by the IdP.
+2.  Configure the IdP (or set `oauth_config.resource` explicitly) so the minted token's `aud` matches what the MCP server expects.
+
+---
+
 ## External IdP Bearer Token Rejected on API/MCP
 
 This section covers requests that present an access token issued by an external SSO provider (e.g. Keycloak, Entra ID) directly as a `Bearer` credential to API/MCP endpoints, per [SSO: Machine-to-machine API auth with external IdP tokens](sso.md#machine-to-machine-api-auth-with-external-idp-tokens). Match the symptom to the exact log line emitted by `mcpgateway/utils/verify_credentials.py`.
@@ -658,6 +715,7 @@ This section covers requests that present an access token issued by an external 
 ## Related Documentation
 
 - [OAuth Integration](oauth.md) - Main OAuth setup guide
+- [OAuth Resource Configuration](oauth-resource-configuration.md) - Configuring the RFC 8707 `resource` / audience field, provider patterns, forcing a re-learn
 - [Configuration Reference](configuration.md) - All environment variables
 - [Scaling Guide](scale.md) - Multi-worker and Redis setup
 - [Securing ContextForge](securing.md) - Security best practices

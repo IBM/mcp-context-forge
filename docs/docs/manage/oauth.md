@@ -80,12 +80,16 @@ AUTH_ENCRYPTION_SECRET=<strong-random-key>
    - Client Secret (stored encrypted at rest)
    - Token URL
    - Scopes (space-separated)
-   - Audience (optional, for Atlassian, Auth0, and other non-RFC-8707 providers)
+   - Audience (optional, for Atlassian, Auth0, and other non-RFC-8707 providers that use an `audience` request parameter)
+   - Resource (optional, RFC 8707 audience indicator — see [OAuth Resource Configuration](oauth-resource-configuration.md))
    - Authorization URL and Redirect URI (required for Authorization Code)
 
 5. Save.
 
 Field mapping follows the architecture proposal and is used by the OAuth Manager service to request tokens.
+
+!!! tip "Resource (Audience) Configuration"
+    The **Resource** field controls the OAuth 2.0 `resource` parameter (RFC 8707) and token audience validation. In most cases you can leave it empty and let ContextForge auto-derive (from the gateway URL origin) and auto-learn (from the first successful token) the correct value. See [OAuth Resource Configuration](oauth-resource-configuration.md) for when to set it explicitly and how to force a re-learn.
 
 ---
 
@@ -155,6 +159,63 @@ The `audience` parameter:
 - Is included in both authorization and token exchange requests
 - Can coexist with `resource` parameter for providers that accept both
 - When set without `resource`, the RFC 8707 `resource` parameter is automatically omitted
+
+### Resource Parameter (RFC 8707) — per-user audience learning, origin fallback, advisory validation
+
+!!! info "See also"
+    For a task-oriented guide (provider patterns, multi-resource configs, forcing a re-learn), see [OAuth Resource Configuration](oauth-resource-configuration.md). This section summarises the behaviour and links back to the implementation details.
+
+The gateway resolves the expected token audience via a three-level precedence, with
+per-user isolation on the learned tier:
+
+1. **Explicit `oauth_config.resource`** — admin sets it (single URI or list) via the Admin
+   UI "Resource (Audience)" field or via the API. Authoritative and blocking. Global to
+   the gateway.
+2. **Per-user `OAuthToken.learned_aud`** — on each user's OAuth callback, the gateway
+   decodes the access token's `aud` and `iss` claims (best-effort, unverified) and stores
+   them on that user's own token row. Subsequent validation for THAT USER checks their
+   token against their own learned value. Authoritative and blocking for that user only.
+3. **Auto-derived gateway URL origin** — if neither of the above applies, the gateway
+   uses `scheme://netloc` from the gateway URL as an advisory fallback. Most providers
+   (Salesforce, Azure AD, Okta) issue origin-level audiences, so this maximises
+   first-authentication success.
+
+**Why per-user (and not per-gateway)?** The earlier design stored learned audience on
+shared `gateway.oauth_config.resource`. That created two problems: (a) a single gateway
+serving multiple IdP tenants with per-tenant `aud` values would have its `resource` pinned
+by whichever user authenticated first, locking out other tenants; and (b) the OAuth
+callback path only enforces gateway access, not `gateways.update`, so callback-driven
+writes to shared config let users without the update permission mutate global state.
+Per-user storage eliminates both.
+
+**Outbound `resource` parameter.** The RFC 8707 `resource` value sent to the IdP is still
+sourced from `oauth_config.resource` (or the origin fallback if unset). It is not derived
+from any user's learned value — outbound requests are the same regardless of who
+initiated them.
+
+**Advisory vs. blocking audience validation.**
+
+| Expected audience source | Mismatch severity | Behavior |
+|---|---|---|
+| Explicitly configured `oauth_config.resource` | Blocking | `GatewayConnectionError` raised, token not forwarded |
+| Per-user `OAuthToken.learned_aud` | Blocking (for this user) | `GatewayConnectionError` raised, token not forwarded |
+| Auto-derived gateway URL origin (fallback) | Advisory (default) | Warning logged, token forwarded — upstream MCP server is the authority |
+
+The advisory fallback only applies to users with no learned value (first authentication)
+and no admin-configured resource. If you cannot rely on the upstream MCP server to
+validate `aud`, enable strict mode to make even the fallback authoritative:
+
+```bash
+# .env
+OAUTH_REQUIRE_CONFIGURED_RESOURCE=true
+```
+
+**Triggering re-learning.**
+
+- *For one user*: they re-authenticate. The next OAuth callback overwrites their
+  `OAuthToken.learned_aud` with the current audience. No admin action needed.
+- *For admin-configured `oauth_config.resource`*: edit the gateway in the Admin UI and
+  blank the Resource field (or PUT `{"oauth_config": {"resource": null}}` via API).
 
 ---
 

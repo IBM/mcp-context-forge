@@ -238,7 +238,14 @@ class TestTokenRefreshOmitResource:
 
     @pytest.mark.asyncio
     async def test_resource_injected_when_omit_resource_false(self):
-        """resource should be injected from gateway.url when omit_resource is false/absent."""
+        """resource should be injected as the gateway.url ORIGIN when omit_resource is false/absent.
+
+        The refresh path derives ``scheme://netloc`` (not the full URL) so the
+        ``resource`` sent on refresh matches what the IdP saw on the initial
+        authorization request — RFC 8707 §2.2 limits refresh-time resources to
+        the original grant or a subset, and real IdPs issue origin-level
+        audiences.
+        """
         mock_db = MagicMock()
 
         gateway = MagicMock(spec=DbGateway)
@@ -282,9 +289,9 @@ class TestTokenRefreshOmitResource:
                 call_args = mock_oauth.refresh_token.call_args
                 oauth_config_passed = call_args[0][1]
 
-                # Resource should be present and normalized (query stripped)
+                # Resource should be present as the derived origin (scheme+netloc only)
                 assert "resource" in oauth_config_passed
-                assert oauth_config_passed["resource"] == "https://example.com/path"
+                assert oauth_config_passed["resource"] == "https://example.com"
 
 
 class TestTokenDeletionLogic:

@@ -24,6 +24,30 @@ from mcpgateway.middleware.token_scoping import ResourceOwnershipResult
 from mcpgateway.routers.oauth_router import ADMIN_CSRF_COOKIE_NAME, enforce_fetch_tools_csrf
 from mcpgateway.schemas import EmailUserResponse
 from mcpgateway.services.oauth_manager import OAuthError
+from mcpgateway.utils.oauth_resource import derive_resource_origin
+
+
+class TestDeriveResourceOrigin:
+    """Tests for derive_resource_origin (origin-extraction fallback for auto-derived resource)."""
+
+    @pytest.mark.parametrize(
+        "url,expected",
+        [
+            ("https://api.salesforce.com/platform/mcp/v1/sobject", "https://api.salesforce.com"),
+            ("https://api.example.com:8443/path?q=1#frag", "https://api.example.com:8443"),
+            ("http://localhost:9000/foo", "http://localhost:9000"),
+            ("https://gw.example.com", "https://gw.example.com"),
+            ("https://gw.example.com/", "https://gw.example.com"),
+        ],
+    )
+    def test_extracts_origin(self, url, expected):
+        """Hierarchical URLs return scheme+netloc only."""
+        assert derive_resource_origin(url) == expected
+
+    @pytest.mark.parametrize("bad_input", [None, "", "   ", "no-scheme.com", "urn:example:resource", "/relative/path"])
+    def test_returns_none_for_non_hierarchical(self, bad_input):
+        """Empty, scheme-less, URN, and relative inputs return None (caller falls back to auto-learn)."""
+        assert derive_resource_origin(bad_input) is None
 
 
 @pytest.fixture
@@ -77,29 +101,6 @@ def mock_current_user():
     user.is_active = True
     user.is_admin = False
     return user
-
-
-class TestNormalizeResourceUrl:
-    """Tests for _normalize_resource_url helper."""
-
-    def test_normalize_resource_url_invalid(self):
-        from mcpgateway.routers.oauth_router import _normalize_resource_url
-
-        assert _normalize_resource_url(None) is None
-        assert _normalize_resource_url("") is None
-        assert _normalize_resource_url("example.com/path") is None
-
-    def test_normalize_resource_url_strips_fragment_and_query(self):
-        from mcpgateway.routers.oauth_router import _normalize_resource_url
-
-        result = _normalize_resource_url("https://example.com/path?x=1#frag")
-        assert result == "https://example.com/path"
-
-    def test_normalize_resource_url_preserves_query_when_requested(self):
-        from mcpgateway.routers.oauth_router import _normalize_resource_url
-
-        result = _normalize_resource_url("https://example.com/path?x=1#frag", preserve_query=True)
-        assert result == "https://example.com/path?x=1"
 
 
 class TestEnforceFetchToolsCsrf:
@@ -235,144 +236,6 @@ class TestEnforceFetchToolsCsrf:
             await enforce_fetch_tools_csrf(csrf_request)
 
         assert exc_info.value.status_code == 403
-
-
-class TestPersistLearnedAudience:
-    """Tests for _persist_learned_audience helper."""
-
-    @pytest.mark.asyncio
-    async def test_persists_string_aud_from_jwt(self):
-        """Persists the aud claim as resource when token_aud is a string."""
-        oauth_result = {"token_aud": "my-client-id", "user_id": "u1"}
-
-        gateway = Mock(spec=Gateway)
-        gateway.name = "Test GW"
-        gateway.oauth_config = {"client_id": "my-client-id", "grant_type": "authorization_code"}
-
-        db = Mock(spec=Session)
-
-        from mcpgateway.routers.oauth_router import _persist_learned_audience
-
-        await _persist_learned_audience(gateway, oauth_result, db)
-
-        assert gateway.oauth_config["resource"] == "my-client-id"
-        db.flush.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_persists_list_aud_from_jwt(self):
-        """Persists the full aud list when token_aud is an array."""
-        aud_list = ["https://api.example.com", "my-client-id"]
-        oauth_result = {"token_aud": aud_list, "user_id": "u1"}
-
-        gateway = Mock(spec=Gateway)
-        gateway.name = "Test GW"
-        gateway.oauth_config = {"client_id": "my-client-id"}
-
-        db = Mock(spec=Session)
-
-        from mcpgateway.routers.oauth_router import _persist_learned_audience
-
-        await _persist_learned_audience(gateway, oauth_result, db)
-
-        assert gateway.oauth_config["resource"] == aud_list
-        db.flush.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_skips_when_resource_already_set_to_same_value(self):
-        """First-write-only: does not flush when resource is already set, even if it matches."""
-        oauth_result = {"token_aud": "my-client-id", "user_id": "u1"}
-
-        gateway = Mock(spec=Gateway)
-        gateway.name = "Test GW"
-        gateway.oauth_config = {"client_id": "my-client-id", "resource": "my-client-id"}
-
-        db = Mock(spec=Session)
-
-        from mcpgateway.routers.oauth_router import _persist_learned_audience
-
-        await _persist_learned_audience(gateway, oauth_result, db)
-
-        db.flush.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_skips_when_resource_already_set_to_different_value(self):
-        """First-write-only: never overwrites a previously learned/configured resource.
-
-        The OAuth callback path only enforces gateway access, not gateways.update.
-        Allowing a non-admin user to overwrite a shared resource value would let
-        any authenticated user mutate global config on behalf of all other users.
-        """
-        oauth_result = {"token_aud": "new-client-id", "user_id": "u1"}
-
-        gateway = Mock(spec=Gateway)
-        gateway.name = "Test GW"
-        gateway.oauth_config = {"client_id": "my-client-id", "resource": "previously-learned-id"}
-
-        db = Mock(spec=Session)
-
-        from mcpgateway.routers.oauth_router import _persist_learned_audience
-
-        await _persist_learned_audience(gateway, oauth_result, db)
-
-        db.flush.assert_not_called()
-        assert gateway.oauth_config["resource"] == "previously-learned-id"
-
-    @pytest.mark.asyncio
-    async def test_skips_opaque_token(self):
-        """Gracefully skips when token_aud is None (opaque token)."""
-        oauth_result = {"token_aud": None, "user_id": "u1"}
-
-        gateway = Mock(spec=Gateway)
-        gateway.name = "Test GW"
-        gateway.oauth_config = {"client_id": "cid"}
-
-        db = Mock(spec=Session)
-
-        from mcpgateway.routers.oauth_router import _persist_learned_audience
-
-        await _persist_learned_audience(gateway, oauth_result, db)
-
-        db.flush.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_skips_when_no_token_aud(self):
-        """Gracefully skips when token_aud is missing from result."""
-        oauth_result = {"user_id": "u1"}
-
-        gateway = Mock(spec=Gateway)
-        gateway.name = "Test GW"
-        gateway.oauth_config = {"client_id": "cid"}
-
-        db = Mock(spec=Session)
-
-        from mcpgateway.routers.oauth_router import _persist_learned_audience
-
-        await _persist_learned_audience(gateway, oauth_result, db)
-
-        db.flush.assert_not_called()
-
-    @pytest.mark.parametrize("falsy_resource", ["", []])
-    @pytest.mark.asyncio
-    async def test_persists_when_existing_resource_is_falsy(self, falsy_resource):
-        """Empty string / empty list persisted resource counts as unset; re-learning proceeds.
-
-        This lets an admin clear the field via the gateway update API to trigger
-        re-learning on the next callback (recovery path after stale config).
-        """
-        oauth_result = {"token_aud": "fresh-client-id"}
-
-        gateway = Mock(spec=Gateway)
-        gateway.name = "Test GW"
-        gateway.oauth_config = {"client_id": "cid", "resource": falsy_resource}
-
-        db = Mock(spec=Session)
-
-        from mcpgateway.routers.oauth_router import _persist_learned_audience
-
-        await _persist_learned_audience(gateway, oauth_result, db)
-
-        db.flush.assert_called_once()
-        assert gateway.oauth_config["resource"] == "fresh-client-id"
 
 
 class TestOAuthRouter:
@@ -1518,103 +1381,6 @@ class TestOAuthAccessHelpers:
         assert exc_info.value.status_code == 403
 
 
-class TestRFC8707ResourceNormalization:
-    """Test cases for RFC 8707 resource URL normalization."""
-
-    def test_normalize_resource_url_removes_fragment(self):
-        """Test that URL fragments are removed per RFC 8707."""
-        # First-Party
-        from mcpgateway.routers.oauth_router import _normalize_resource_url
-
-        url = "https://mcp.example.com/api#section"
-        assert _normalize_resource_url(url) == "https://mcp.example.com/api"
-
-    def test_normalize_resource_url_removes_query(self):
-        """Test that URL query strings are removed per RFC 8707."""
-        # First-Party
-        from mcpgateway.routers.oauth_router import _normalize_resource_url
-
-        url = "https://mcp.example.com/api?token=abc"
-        assert _normalize_resource_url(url) == "https://mcp.example.com/api"
-
-    def test_normalize_resource_url_removes_both(self):
-        """Test that both fragment and query are removed."""
-        # First-Party
-        from mcpgateway.routers.oauth_router import _normalize_resource_url
-
-        url = "https://mcp.example.com/api?token=abc#section"
-        assert _normalize_resource_url(url) == "https://mcp.example.com/api"
-
-    def test_normalize_resource_url_clean_url_unchanged(self):
-        """Test that clean URLs remain unchanged."""
-        # First-Party
-        from mcpgateway.routers.oauth_router import _normalize_resource_url
-
-        url = "https://mcp.example.com/api"
-        assert _normalize_resource_url(url) == "https://mcp.example.com/api"
-
-    def test_normalize_resource_url_preserves_path(self):
-        """Test that URL paths are preserved."""
-        # First-Party
-        from mcpgateway.routers.oauth_router import _normalize_resource_url
-
-        url = "https://mcp.example.com/api/v1/tools"
-        assert _normalize_resource_url(url) == "https://mcp.example.com/api/v1/tools"
-
-    def test_normalize_resource_url_handles_empty(self):
-        """Test that empty/None URLs return None."""
-        # First-Party
-        from mcpgateway.routers.oauth_router import _normalize_resource_url
-
-        assert _normalize_resource_url("") is None
-        assert _normalize_resource_url(None) is None
-
-    def test_normalize_resource_url_rejects_relative_uri(self):
-        """Test that relative URIs (no scheme) return None per RFC 8707."""
-        # First-Party
-        from mcpgateway.routers.oauth_router import _normalize_resource_url
-
-        # RFC 8707: resource MUST be an absolute URI
-        assert _normalize_resource_url("mcp.example.com/api") is None
-        assert _normalize_resource_url("/api/v1") is None
-
-    def test_normalize_resource_url_supports_urns(self):
-        """Test that URN-style absolute URIs are supported per RFC 8707."""
-        # First-Party
-        from mcpgateway.routers.oauth_router import _normalize_resource_url
-
-        # RFC 8707 allows any absolute URI, including URNs
-        assert _normalize_resource_url("urn:example:app") == "urn:example:app"
-        assert _normalize_resource_url("urn:ietf:params:oauth:token-type:jwt") == "urn:ietf:params:oauth:token-type:jwt"
-
-    def test_normalize_resource_url_supports_file_uri(self):
-        """Test that file:// URIs are supported."""
-        # First-Party
-        from mcpgateway.routers.oauth_router import _normalize_resource_url
-
-        assert _normalize_resource_url("file:///path/to/resource") == "file:///path/to/resource"
-
-    def test_normalize_resource_url_preserve_query_flag(self):
-        """Test that preserve_query=True keeps query component."""
-        # First-Party
-        from mcpgateway.routers.oauth_router import _normalize_resource_url
-
-        url = "https://api.example.com/v1?tenant=acme"
-        # Default: strip query
-        assert _normalize_resource_url(url) == "https://api.example.com/v1"
-        # With preserve_query: keep query
-        assert _normalize_resource_url(url, preserve_query=True) == "https://api.example.com/v1?tenant=acme"
-
-    def test_normalize_resource_url_always_strips_fragment(self):
-        """Test that fragments are always stripped even with preserve_query=True."""
-        # First-Party
-        from mcpgateway.routers.oauth_router import _normalize_resource_url
-
-        url = "https://api.example.com/v1?tenant=acme#section"
-        # Fragment is always removed (RFC 8707 MUST NOT)
-        assert _normalize_resource_url(url, preserve_query=True) == "https://api.example.com/v1?tenant=acme"
-
-
 class TestOAuthRouterAdditionalCoverage:
     """Additional coverage for OAuth router branches."""
 
@@ -1670,6 +1436,190 @@ class TestOAuthRouterAdditionalCoverage:
         assert mock_gateway.auth_type == "oauth"
         assert mock_gateway.oauth_config["client_id"] == "client-123"
         mock_db.commit.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_initiate_oauth_flow_dcr_does_not_persist_request_local_resource(self, mock_db, mock_request, mock_current_user):
+        """Regression for the 2nd-review MEDIUM: DCR must not persist the request-local
+        auto-derived ``resource`` to shared ``gateway.oauth_config``.
+
+        This route enforces gateway *access* but not ``gateways.update``, so persisting
+        the auto-derived resource would let any authenticated caller pin the shared
+        audience for all users — the same RBAC-bypass class the callback-path
+        redesign eliminated by moving learned audience to OAuthToken.learned_aud.
+        """
+        mock_gateway = Mock(spec=Gateway)
+        mock_gateway.id = "gateway123"
+        mock_gateway.name = "Gateway"
+        mock_gateway.url = "https://mcp.example.com/deep/path"
+        mock_gateway.visibility = "public"
+        mock_gateway.team_id = None
+        mock_gateway.auth_type = None
+        # Gateway has issuer but no client_id (triggers DCR) and no admin-configured resource.
+        mock_gateway.oauth_config = {
+            "grant_type": "authorization_code",
+            "issuer": "https://issuer.example.com",
+            "redirect_uri": "https://gateway.example.com/oauth/callback",
+        }
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+
+        auth_data = {"authorization_url": "https://issuer.example.com/auth"}
+
+        class _Registered:
+            client_id = "client-123"
+            client_secret_encrypted = None
+            token_endpoint_auth_method = "client_secret_post"
+
+        class _FakeDcrService:
+            async def get_or_register_client(self, **_kwargs):
+                return _Registered()
+
+            async def discover_as_metadata(self, _issuer):
+                return {"authorization_endpoint": "https://issuer.example.com/auth", "token_endpoint": "https://issuer.example.com/token"}
+
+        with patch("mcpgateway.routers.oauth_router.DcrService", return_value=_FakeDcrService()):
+            with patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_mgr:
+                mock_mgr = Mock()
+                mock_mgr.initiate_authorization_code_flow = AsyncMock(return_value=auth_data)
+                mock_oauth_mgr.return_value = mock_mgr
+
+                with patch("mcpgateway.routers.oauth_router.TokenStorageService"):
+                    from mcpgateway.routers.oauth_router import initiate_oauth_flow
+
+                    with patch("mcpgateway.routers.oauth_router.settings") as mock_settings:
+                        mock_settings.dcr_enabled = True
+                        mock_settings.dcr_auto_register_on_missing_credentials = True
+                        mock_settings.dcr_default_scopes = ["openid"]
+
+                        await initiate_oauth_flow("gateway123", mock_request, mock_current_user, mock_db)
+
+        # DCR credentials + AS metadata MUST be persisted (this is the whole point of DCR).
+        assert mock_gateway.oauth_config["client_id"] == "client-123"
+        assert mock_gateway.oauth_config["token_endpoint_auth_method"] == "client_secret_post"
+        assert mock_gateway.oauth_config["authorization_url"] == "https://issuer.example.com/auth"
+        assert mock_gateway.oauth_config["token_url"] == "https://issuer.example.com/token"
+
+        # Request-local auto-derived resource MUST NOT be persisted to shared config.
+        # It was set in the request-local dict for the outbound RFC 8707 request,
+        # but must be stripped before writing to gateway.oauth_config.
+        assert "resource" not in mock_gateway.oauth_config, (
+            "DCR persist path leaked request-local `resource` to shared gateway.oauth_config — "
+            "this is the RBAC-bypass class of bug the DCR-path fix eliminated. See "
+            "oauth_router.initiate_oauth_flow's persist_dict logic."
+        )
+
+    @pytest.mark.asyncio
+    async def test_initiate_oauth_flow_dcr_preserves_admin_configured_resource(self, mock_db, mock_request, mock_current_user):
+        """Admin-configured ``resource`` must survive the DCR persistence path unchanged."""
+        mock_gateway = Mock(spec=Gateway)
+        mock_gateway.id = "gateway123"
+        mock_gateway.name = "Gateway"
+        mock_gateway.url = "https://mcp.example.com/deep/path"
+        mock_gateway.visibility = "public"
+        mock_gateway.team_id = None
+        mock_gateway.auth_type = None
+        mock_gateway.oauth_config = {
+            "grant_type": "authorization_code",
+            "issuer": "https://issuer.example.com",
+            "redirect_uri": "https://gateway.example.com/oauth/callback",
+            "resource": "api://admin-configured-audience",
+        }
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+
+        auth_data = {"authorization_url": "https://issuer.example.com/auth"}
+
+        class _Registered:
+            client_id = "client-123"
+            client_secret_encrypted = None
+            token_endpoint_auth_method = "client_secret_post"
+
+        class _FakeDcrService:
+            async def get_or_register_client(self, **_kwargs):
+                return _Registered()
+
+            async def discover_as_metadata(self, _issuer):
+                return {"authorization_endpoint": "https://issuer.example.com/auth", "token_endpoint": "https://issuer.example.com/token"}
+
+        with patch("mcpgateway.routers.oauth_router.DcrService", return_value=_FakeDcrService()):
+            with patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_mgr:
+                mock_mgr = Mock()
+                mock_mgr.initiate_authorization_code_flow = AsyncMock(return_value=auth_data)
+                mock_oauth_mgr.return_value = mock_mgr
+
+                with patch("mcpgateway.routers.oauth_router.TokenStorageService"):
+                    from mcpgateway.routers.oauth_router import initiate_oauth_flow
+
+                    with patch("mcpgateway.routers.oauth_router.settings") as mock_settings:
+                        mock_settings.dcr_enabled = True
+                        mock_settings.dcr_auto_register_on_missing_credentials = True
+                        mock_settings.dcr_default_scopes = ["openid"]
+
+                        await initiate_oauth_flow("gateway123", mock_request, mock_current_user, mock_db)
+
+        # Admin's explicit resource must be preserved exactly — not overwritten by origin derivation.
+        assert mock_gateway.oauth_config["resource"] == "api://admin-configured-audience"
+
+    @pytest.mark.asyncio
+    async def test_initiate_oauth_flow_dcr_preserves_blank_stored_resource(self, mock_db, mock_request, mock_current_user):
+        """Documents the current DCR-persist semantics for ``stored_resource == ""``.
+
+        The strip logic uses ``if stored_resource is None: pop`` else preserve.  An
+        empty string is falsy but NOT ``None``, so the ``else`` branch runs and the
+        blank stored value is persisted as-is (not replaced by origin derivation).
+        This locks the intent: blank is treated as "explicit admin state" rather
+        than "no admin config".  If empty resource is later declared invalid, the
+        fix belongs in the gateway config validation layer, not in this DCR strip.
+        """
+        mock_gateway = Mock(spec=Gateway)
+        mock_gateway.id = "gateway123"
+        mock_gateway.name = "Gateway"
+        mock_gateway.url = "https://mcp.example.com/deep/path"
+        mock_gateway.visibility = "public"
+        mock_gateway.team_id = None
+        mock_gateway.auth_type = None
+        mock_gateway.oauth_config = {
+            "grant_type": "authorization_code",
+            "issuer": "https://issuer.example.com",
+            "redirect_uri": "https://gateway.example.com/oauth/callback",
+            "resource": "",
+        }
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+
+        auth_data = {"authorization_url": "https://issuer.example.com/auth"}
+
+        class _Registered:
+            client_id = "client-123"
+            client_secret_encrypted = None
+            token_endpoint_auth_method = "client_secret_post"
+
+        class _FakeDcrService:
+            async def get_or_register_client(self, **_kwargs):
+                return _Registered()
+
+            async def discover_as_metadata(self, _issuer):
+                return {"authorization_endpoint": "https://issuer.example.com/auth", "token_endpoint": "https://issuer.example.com/token"}
+
+        with patch("mcpgateway.routers.oauth_router.DcrService", return_value=_FakeDcrService()):
+            with patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_mgr:
+                mock_mgr = Mock()
+                mock_mgr.initiate_authorization_code_flow = AsyncMock(return_value=auth_data)
+                mock_oauth_mgr.return_value = mock_mgr
+
+                with patch("mcpgateway.routers.oauth_router.TokenStorageService"):
+                    from mcpgateway.routers.oauth_router import initiate_oauth_flow
+
+                    with patch("mcpgateway.routers.oauth_router.settings") as mock_settings:
+                        mock_settings.dcr_enabled = True
+                        mock_settings.dcr_auto_register_on_missing_credentials = True
+                        mock_settings.dcr_default_scopes = ["openid"]
+
+                        await initiate_oauth_flow("gateway123", mock_request, mock_current_user, mock_db)
+
+        # Blank stored resource must survive DCR persistence — the origin-derived value
+        # is stripped even though the stored value is falsy. This is the intentional
+        # "preserve explicit admin state" branch of the strip logic in
+        # oauth_router.initiate_oauth_flow's persist_dict block.
+        assert "resource" in mock_gateway.oauth_config
+        assert mock_gateway.oauth_config["resource"] == ""
 
     @pytest.mark.asyncio
     async def test_initiate_oauth_flow_team_access_denied(self, mock_db, mock_request, mock_current_user):

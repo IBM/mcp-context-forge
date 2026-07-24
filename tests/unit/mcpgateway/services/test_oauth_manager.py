@@ -1336,7 +1336,7 @@ async def test_complete_authorization_code_flow_scope_as_list(oauth_manager):
         patch.object(oauth_manager, "_validate_and_retrieve_state", return_value={"code_verifier": "verifier", "app_user_email": "user@example.com"}),
         patch.object(oauth_manager, "_exchange_code_for_tokens", return_value=mock_token_response),
         patch.object(oauth_manager, "_extract_user_id", return_value="user-1"),
-        patch.object(oauth_manager, "_extract_token_audience", return_value=None),
+        patch.object(oauth_manager, "_extract_aud_and_iss", return_value=(None, None)),
     ):
         result = await oauth_manager.complete_authorization_code_flow(
             gateway_id="gw-123", code="auth-code", state="test-state", credentials={"client_id": "cid", "token_url": "https://auth.example.com/token"}
@@ -1364,7 +1364,7 @@ async def test_complete_authorization_code_flow_scope_as_string(oauth_manager):
         patch.object(oauth_manager, "_validate_and_retrieve_state", return_value={"code_verifier": "verifier", "app_user_email": "user@example.com"}),
         patch.object(oauth_manager, "_exchange_code_for_tokens", return_value=mock_token_response),
         patch.object(oauth_manager, "_extract_user_id", return_value="user-1"),
-        patch.object(oauth_manager, "_extract_token_audience", return_value=None),
+        patch.object(oauth_manager, "_extract_aud_and_iss", return_value=(None, None)),
     ):
         result = await oauth_manager.complete_authorization_code_flow(
             gateway_id="gw-123", code="auth-code", state="test-state", credentials={"client_id": "cid", "token_url": "https://auth.example.com/token"}
@@ -1392,7 +1392,7 @@ async def test_complete_authorization_code_flow_scope_empty_string(oauth_manager
         patch.object(oauth_manager, "_validate_and_retrieve_state", return_value={"code_verifier": "verifier", "app_user_email": "user@example.com"}),
         patch.object(oauth_manager, "_exchange_code_for_tokens", return_value=mock_token_response),
         patch.object(oauth_manager, "_extract_user_id", return_value="user-1"),
-        patch.object(oauth_manager, "_extract_token_audience", return_value=None),
+        patch.object(oauth_manager, "_extract_aud_and_iss", return_value=(None, None)),
     ):
         result = await oauth_manager.complete_authorization_code_flow(
             gateway_id="gw-123", code="auth-code", state="test-state", credentials={"client_id": "cid", "token_url": "https://auth.example.com/token"}
@@ -1420,7 +1420,7 @@ async def test_complete_authorization_code_flow_scope_invalid_type(oauth_manager
         patch.object(oauth_manager, "_validate_and_retrieve_state", return_value={"code_verifier": "verifier", "app_user_email": "user@example.com"}),
         patch.object(oauth_manager, "_exchange_code_for_tokens", return_value=mock_token_response),
         patch.object(oauth_manager, "_extract_user_id", return_value="user-1"),
-        patch.object(oauth_manager, "_extract_token_audience", return_value=None),
+        patch.object(oauth_manager, "_extract_aud_and_iss", return_value=(None, None)),
     ):
         result = await oauth_manager.complete_authorization_code_flow(
             gateway_id="gw-123", code="auth-code", state="test-state", credentials={"client_id": "cid", "token_url": "https://auth.example.com/token"}
@@ -1448,7 +1448,7 @@ async def test_complete_authorization_code_flow_scope_mixed_types(oauth_manager)
         patch.object(oauth_manager, "_validate_and_retrieve_state", return_value={"code_verifier": "verifier", "app_user_email": "user@example.com"}),
         patch.object(oauth_manager, "_exchange_code_for_tokens", return_value=mock_token_response),
         patch.object(oauth_manager, "_extract_user_id", return_value="user-1"),
-        patch.object(oauth_manager, "_extract_token_audience", return_value=None),
+        patch.object(oauth_manager, "_extract_aud_and_iss", return_value=(None, None)),
     ):
         result = await oauth_manager.complete_authorization_code_flow(
             gateway_id="gw-123", code="auth-code", state="test-state", credentials={"client_id": "cid", "token_url": "https://auth.example.com/token"}
@@ -1459,6 +1459,86 @@ async def test_complete_authorization_code_flow_scope_mixed_types(oauth_manager)
     mock_token_storage.store_tokens.assert_called_once()
     call_kwargs = mock_token_storage.store_tokens.call_args[1]
     assert call_kwargs["scopes"] == ["read", "write"]
+
+
+class TestIssuerPinningOnAudienceLearning:
+    """Issuer pinning at learning time (restores the PR's advertised hardening).
+
+    When ``credentials["issuer"]`` is configured, the learned audience must only
+    be persisted if the token's ``iss`` claim matches (trailing slashes
+    normalized).  A mismatched or missing ``iss`` causes
+    ``complete_authorization_code_flow`` to pass ``None`` for both learned
+    values, which leaves any previously-learned per-user value intact
+    (``store_tokens`` only overwrites on non-None).
+    """
+
+    @staticmethod
+    async def _run_flow(oauth_manager, credentials, aud_iss):
+        mock_token_response = {"access_token": "test-token", "scope": "read", "expires_in": 3600}
+        mock_token_storage = AsyncMock()
+        mock_token_record = MagicMock()
+        mock_token_record.expires_at = None
+        mock_token_storage.store_tokens.return_value = mock_token_record
+        oauth_manager.token_storage = mock_token_storage
+
+        with (
+            patch.object(oauth_manager, "_validate_and_retrieve_state", return_value={"code_verifier": "verifier", "app_user_email": "user@example.com"}),
+            patch.object(oauth_manager, "_exchange_code_for_tokens", return_value=mock_token_response),
+            patch.object(oauth_manager, "_extract_user_id", return_value="user-1"),
+            patch.object(oauth_manager, "_extract_aud_and_iss", return_value=aud_iss),
+        ):
+            result = await oauth_manager.complete_authorization_code_flow(gateway_id="gw-123", code="auth-code", state="test-state", credentials=credentials)
+
+        assert result["success"] is True
+        mock_token_storage.store_tokens.assert_called_once()
+        return mock_token_storage.store_tokens.call_args[1]
+
+    @pytest.mark.asyncio
+    async def test_no_configured_issuer_persists_learned_values(self, oauth_manager):
+        """No issuer configured: pinning is skipped, learned aud/iss persist."""
+        call_kwargs = await self._run_flow(oauth_manager, {"client_id": "cid", "token_url": "https://idp.example.com/token"}, ("opaque-aud", "https://idp.example.com"))
+        assert call_kwargs["learned_aud"] == "opaque-aud"
+        assert call_kwargs["learned_iss"] == "https://idp.example.com"
+
+    @pytest.mark.asyncio
+    async def test_matching_issuer_persists_learned_values(self, oauth_manager):
+        """Token iss matches the configured issuer: learned values persist."""
+        credentials = {"client_id": "cid", "token_url": "https://idp.example.com/token", "issuer": "https://idp.example.com"}
+        call_kwargs = await self._run_flow(oauth_manager, credentials, ("opaque-aud", "https://idp.example.com"))
+        assert call_kwargs["learned_aud"] == "opaque-aud"
+        assert call_kwargs["learned_iss"] == "https://idp.example.com"
+
+    @pytest.mark.asyncio
+    async def test_trailing_slash_difference_still_matches(self, oauth_manager):
+        """Trailing slashes are normalized: 'https://idp.example.com/' matches 'https://idp.example.com'."""
+        credentials = {"client_id": "cid", "token_url": "https://idp.example.com/token", "issuer": "https://idp.example.com/"}
+        call_kwargs = await self._run_flow(oauth_manager, credentials, ("opaque-aud", "https://idp.example.com"))
+        assert call_kwargs["learned_aud"] == "opaque-aud"
+        assert call_kwargs["learned_iss"] == "https://idp.example.com"
+
+    @pytest.mark.asyncio
+    async def test_mismatched_issuer_suppresses_learned_values(self, oauth_manager):
+        """Cross-IdP bleed defense: token from a different AS must not inject an audience."""
+        credentials = {"client_id": "cid", "token_url": "https://idp.example.com/token", "issuer": "https://idp.example.com"}
+        call_kwargs = await self._run_flow(oauth_manager, credentials, ("opaque-aud", "https://attacker-idp.example.com"))
+        assert call_kwargs["learned_aud"] is None
+        assert call_kwargs["learned_iss"] is None
+
+    @pytest.mark.asyncio
+    async def test_missing_iss_with_configured_issuer_suppresses_learned_values(self, oauth_manager):
+        """A token without an iss claim cannot be pinned — do not persist its audience."""
+        credentials = {"client_id": "cid", "token_url": "https://idp.example.com/token", "issuer": "https://idp.example.com"}
+        call_kwargs = await self._run_flow(oauth_manager, credentials, ("opaque-aud", None))
+        assert call_kwargs["learned_aud"] is None
+        assert call_kwargs["learned_iss"] is None
+
+    @pytest.mark.asyncio
+    async def test_no_audience_nothing_to_pin(self, oauth_manager):
+        """Opaque tokens carry no aud; pinning is moot and store receives None."""
+        credentials = {"client_id": "cid", "token_url": "https://idp.example.com/token", "issuer": "https://idp.example.com"}
+        call_kwargs = await self._run_flow(oauth_manager, credentials, (None, "https://idp.example.com"))
+        assert call_kwargs["learned_aud"] is None
+        assert call_kwargs["learned_iss"] == "https://idp.example.com"
 
 
 @pytest.mark.asyncio

@@ -18,7 +18,7 @@ import hashlib
 import logging
 import re
 import secrets
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Union
 from urllib.parse import parse_qsl, quote, urlparse
 
 # Third-Party
@@ -970,9 +970,27 @@ class OAuthManager:
         # Extract user information from token response
         user_id = self._extract_user_id(token_response, credentials)
 
-        # Extract audience from token (best-effort) for caller to persist as resource.
-        # This enables audience learning for IdPs that map resource to a different aud.
-        token_aud = self._extract_token_audience(token_response.get("access_token", ""))
+        # Single decode extracts both aud and iss (best-effort, no signature verification)
+        # so the callback path can learn the IdP's audience mapping and pin it to the
+        # token's issuer.  See _decode_token_claims_unverified for the trust model.
+        token_aud, token_iss = self._extract_aud_and_iss(token_response.get("access_token", ""))
+
+        # Issuer pinning: when an issuer is configured, only persist the learned
+        # audience if the token's iss claim matches it (trailing slashes
+        # normalized, matching the convention in token_validation_service).
+        # A stale or misrouted token from a different AS must not inject an
+        # audience for the wrong IdP.  Passing None to store_tokens leaves any
+        # previously-learned value for this user intact (it only overwrites on
+        # non-None).  The check is skipped when no issuer is configured.
+        configured_issuer = credentials.get("issuer")
+        if configured_issuer and token_aud is not None:
+            if not isinstance(token_iss, str) or token_iss.rstrip("/") != str(configured_issuer).rstrip("/"):
+                logger.debug(
+                    "Skipping learned audience persistence for gateway %s: token iss does not match configured issuer",
+                    gateway_id,
+                )
+                token_aud = None
+                token_iss = None
 
         # Store tokens if storage service is available
         if self.token_storage:
@@ -993,10 +1011,18 @@ class OAuthManager:
                 refresh_token=token_response.get("refresh_token"),
                 expires_in=parse_expires_in(token_response),
                 scopes=scopes_list,
+                learned_aud=token_aud,
+                learned_iss=token_iss,
             )
 
-            return {"success": True, "user_id": user_id, "expires_at": token_record.expires_at.isoformat() if token_record.expires_at else None, "token_aud": token_aud}
-        return {"success": True, "user_id": user_id, "expires_at": None, "token_aud": token_aud}
+            return {
+                "success": True,
+                "user_id": user_id,
+                "expires_at": token_record.expires_at.isoformat() if token_record.expires_at else None,
+                "token_aud": token_aud,
+                "token_iss": token_iss,
+            }
+        return {"success": True, "user_id": user_id, "expires_at": None, "token_aud": token_aud, "token_iss": token_iss}
 
     async def get_access_token_for_user(self, gateway_id: str, app_user_email: str) -> Optional[str]:
         """Get valid access token for a specific user.
@@ -1855,20 +1881,36 @@ class OAuthManager:
         return "unknown_user"
 
     @staticmethod
-    def _extract_token_audience(access_token: str) -> Any:
-        """Extract the ``aud`` claim from a JWT access token (best-effort).
+    def _decode_token_claims_unverified(access_token: str) -> Dict[str, Any]:
+        """Best-effort decode of JWT claims **without** signature verification.
 
-        Returns the raw ``aud`` value (string or list) or ``None`` for opaque
-        tokens or decode failures.  No signature verification is performed.
+        Trust model (do not relax without re-evaluating):
+
+        * Signatures, expiration, issuer, and audience are NOT validated here.
+          The decoded claims are used only for *non-authoritative* metadata
+          extraction (audience learning, issuer pinning) at the moment the
+          token is received from the AS during the authorization-code
+          callback.
+        * The immediate trust boundary is the TLS connection to the
+          admin-configured token endpoint as a response to a callback we
+          initiated.  That makes the token's contents reliable enough for
+          metadata, but not for authorization decisions.
+        * Authorization-relevant validation happens upstream when the token
+          is presented to the protected resource server.  This codebase's
+          local ``_validate_audience`` / ``validate_oauth_token_claims``
+          path also runs without signature verification (see
+          ``mcpgateway/services/token_validation_service.py``); it is
+          informational only, not a security boundary.
 
         Args:
             access_token: The raw access token string.
 
         Returns:
-            The ``aud`` claim value, or None.
+            Decoded claims as a dict, or an empty dict for opaque tokens or
+            decode failures.
         """
         if not access_token:
-            return None
+            return {}
         try:
             # Third-Party
             import jwt as pyjwt  # pylint: disable=import-outside-toplevel
@@ -1878,9 +1920,72 @@ class OAuthManager:
                 options={"verify_signature": False, "verify_aud": False, "verify_iss": False, "verify_exp": False},
                 algorithms=["RS256", "RS384", "RS512", "ES256", "ES384", "ES512", "PS256", "PS384", "PS512", "HS256", "HS384", "HS512", "EdDSA"],
             )
-            return claims.get("aud")
-        except Exception:  # noqa: BLE001
-            return None
+        except Exception as exc:  # noqa: BLE001
+            # DEBUG-only: opaque/non-JWT access tokens are normal for some IdPs,
+            # so this is not a warning.  But operators chasing "audience never
+            # learned" need a breadcrumb to distinguish "token was opaque" from
+            # "JWT library raised something unexpected".  Log only the exception
+            # class name — the exception's string form can echo attacker-controlled
+            # parsing details from malformed tokens.
+            logger.debug("Unverified JWT decode failed: %s", type(exc).__name__)
+            return {}
+        return claims if isinstance(claims, dict) else {}
+
+    @staticmethod
+    def _coerce_aud_claim(aud: Any) -> Optional[Union[str, List[str]]]:
+        """Coerce a raw ``aud`` claim to a well-shaped, non-empty audience value or ``None``.
+
+        Empty strings, empty lists, and lists containing empty/whitespace-only strings
+        are rejected as ``None`` so a malformed IdP response cannot overwrite a
+        previously-learned per-user audience via ``TokenStorageService.store_tokens``
+        (whose ``if learned_aud is not None`` guard would otherwise pass through an
+        empty value and silently clobber good state).
+
+        Args:
+            aud: Raw claim value.
+
+        Returns:
+            The ``aud`` claim as a non-empty ``str`` or non-empty ``list[str]`` of
+            non-empty strings, otherwise ``None``.
+        """
+        if isinstance(aud, str):
+            return aud if aud.strip() else None
+        if isinstance(aud, list) and aud and all(isinstance(item, str) and item.strip() for item in aud):
+            return aud
+        return None
+
+    @staticmethod
+    def _coerce_iss_claim(iss: Any) -> Optional[str]:
+        """Coerce a raw ``iss`` claim to a non-empty string or ``None``.
+
+        Args:
+            iss: Raw claim value.
+
+        Returns:
+            The ``iss`` claim as a non-empty string, otherwise ``None``.
+        """
+        if isinstance(iss, str) and iss:
+            return iss
+        return None
+
+    @staticmethod
+    def _extract_aud_and_iss(access_token: str) -> tuple[Optional[Union[str, List[str]]], Optional[str]]:
+        """Extract ``aud`` and ``iss`` from a JWT access token in a single decode.
+
+        The callback path needs both claims (audience learning + issuer pinning),
+        and each decode is measurable overhead on every OAuth callback. Sharing
+        one decode halves that cost. No signature verification is performed;
+        see ``_decode_token_claims_unverified`` for the trust model.
+
+        Args:
+            access_token: The raw access token string.
+
+        Returns:
+            ``(aud, iss)`` where each element follows the same shape rules as
+            :meth:`_coerce_aud_claim` / :meth:`_coerce_iss_claim`.
+        """
+        claims = OAuthManager._decode_token_claims_unverified(access_token)
+        return OAuthManager._coerce_aud_claim(claims.get("aud")), OAuthManager._coerce_iss_claim(claims.get("iss"))
 
 
 class OAuthError(Exception):

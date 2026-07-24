@@ -18,7 +18,7 @@ import logging
 import re
 import secrets
 from typing import Annotated, Any, Dict
-from urllib.parse import urlparse, urlunparse
+from urllib.parse import urlparse
 
 # Third-Party
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -44,6 +44,7 @@ from mcpgateway.services.token_storage_service import TokenStorageService
 # First-Party - CSP nonce support
 from mcpgateway.utils.csp_nonce import get_csp_nonce_from_request
 from mcpgateway.utils.log_sanitizer import sanitize_for_log
+from mcpgateway.utils.oauth_resource import derive_resource_origin
 from mcpgateway.utils.paths import resolve_root_path
 from mcpgateway.utils.verify_credentials import get_auth_header_value
 
@@ -102,88 +103,6 @@ async def enforce_fetch_tools_csrf(request: Request) -> None:
         raise HTTPException(status_code=403, detail="CSRF validation failed")
     if not secrets.compare_digest(csrf_header, csrf_cookie):
         raise HTTPException(status_code=403, detail="CSRF validation failed")
-
-
-def _normalize_resource_url(url: str | None, *, preserve_query: bool = False) -> str | None:
-    """Normalize URL for use as RFC 8707 resource parameter.
-
-    Per RFC 8707 Section 2:
-    - resource MUST be an absolute URI (scheme required; supports both URLs and URNs)
-    - resource MUST NOT include a fragment component
-    - resource SHOULD NOT include a query component (but allowed when necessary)
-
-    Args:
-        url: The resource URL to normalize
-        preserve_query: If True, preserve query component (for explicitly configured resources).
-                       If False, strip query (for auto-derived resources per RFC 8707 SHOULD NOT).
-
-    Returns:
-        Normalized URL suitable for RFC 8707 resource parameter, or None if invalid
-    """
-    if not url:
-        return None
-    parsed = urlparse(url)
-    # RFC 8707: resource MUST be an absolute URI (requires scheme)
-    # Support both hierarchical URIs (https://...) and URNs (urn:example:app)
-    if not parsed.scheme:
-        logger.warning(f"Invalid resource URL (must be absolute URI with scheme): {url}")
-        return None
-    # Remove fragment (MUST NOT per RFC 8707)
-    # Query: strip for auto-derived (SHOULD NOT), preserve for explicit config (allowed when necessary)
-    query = parsed.query if preserve_query else ""
-    normalized = urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, query, ""))
-    return normalized
-
-
-async def _persist_learned_audience(gateway: Gateway, oauth_result: Dict[str, Any], db: Session) -> None:
-    """Learn the IdP's audience identifier from the token and persist it.
-
-    Many IdPs (ServiceNow, Authentik, etc.) do not honor RFC 8707 and set the
-    ``aud`` claim to an abstract identifier (often the ``client_id``) rather than
-    the ``resource`` URL sent in the authorization request.  By persisting the
-    actual ``aud`` value as ``resource`` in the gateway's ``oauth_config``, we
-    ensure that subsequent token validation in ``_validate_audience`` succeeds
-    and that future OAuth requests use the IdP's preferred audience identifier.
-
-    Persistence is **first-write-only**: the learned audience is written only
-    when ``oauth_config["resource"]`` is currently unset.  The OAuth callback
-    path enforces gateway access (read-equivalent) but not ``gateways.update``,
-    so allowing every authenticated callback to overwrite shared gateway
-    configuration would let any user with gateway access mutate global state on
-    behalf of all other users.  To re-learn a stale audience after an IdP
-    change, an admin must clear the ``resource`` field via the gateway update
-    API (which does enforce ``gateways.update``).
-
-    This is a best-effort operation: opaque tokens, missing ``aud`` claims, and
-    already-set (truthy) resources are silently skipped.  Empty strings and
-    empty lists count as unset, so an admin can clear the field to trigger
-    re-learning on the next callback.
-
-    Args:
-        gateway: The gateway ORM object (will be mutated and flushed).
-        oauth_result: The result dict from ``complete_authorization_code_flow``,
-            expected to contain ``token_aud``.
-        db: Active database session.
-    """
-    token_aud = oauth_result.get("token_aud")
-    if token_aud is None:
-        return
-
-    # First-write-only: do not overwrite an existing usable resource.  Empty
-    # strings and empty lists are treated as unset (Python truthiness) so an
-    # admin can clear the field via the gateway update API to trigger
-    # re-learning on the next callback.  See docstring for the authorization
-    # rationale.
-    oauth_config = gateway.oauth_config or {}
-    if oauth_config.get("resource"):
-        return
-
-    # Store aud as-is (string or list) -- RFC 7519 allows both forms.
-    updated_config = dict(gateway.oauth_config) if gateway.oauth_config else {}
-    updated_config["resource"] = token_aud
-    gateway.oauth_config = updated_config
-    db.flush()
-    logger.info("Learned OAuth audience from IdP token for gateway %s; persisted as resource", gateway.name)
 
 
 oauth_router = APIRouter(prefix="/oauth", tags=["oauth"])
@@ -395,11 +314,17 @@ async def initiate_oauth_flow(gateway_id: str, request: Request, current_user: E
 
         oauth_config = gateway.oauth_config.copy()  # Work with a copy to avoid mutating the original
 
-        # RFC 8707: Set resource parameter for JWT access tokens.
-        # If resource was previously learned from the IdP's token aud claim, use it as-is.
-        # Otherwise derive from gateway.url for the first authorization request.
+        # RFC 8707: Set the outbound `resource` parameter for the IdP request.
+        # Admin-configured `oauth_config.resource` takes precedence; otherwise
+        # derive the gateway URL's *origin* (not full path) since most OAuth
+        # providers issue tokens with origin-level audiences.  This value is
+        # request-local — the DCR persist block below deliberately strips it
+        # before writing to shared config, and per-user inbound validation
+        # uses OAuthToken.learned_aud (populated on the callback).
         if not oauth_config.get("resource"):
-            oauth_config["resource"] = _normalize_resource_url(gateway.url)
+            origin = derive_resource_origin(gateway.url)
+            if origin:
+                oauth_config["resource"] = origin
 
         # Phase 1.4: Auto-trigger DCR if credentials are missing
         # Check if gateway has issuer but no client_id (DCR scenario)
@@ -450,9 +375,22 @@ async def initiate_oauth_flow(gateway_id: str, request: Request, current_user: E
                         oauth_config["token_url"] = metadata.get("token_endpoint")
                         logger.info(f"Discovered OAuth endpoints for {issuer}")
 
-                    # Update gateway's oauth_config and auth_type in database for future use.
-                    # Protect sensitive fields before persistence to keep service-layer behavior consistent.
-                    gateway.oauth_config = await protect_oauth_config_for_storage(oauth_config, existing_oauth_config=gateway.oauth_config)
+                    # Persist only DCR-derived fields (client credentials + AS metadata) —
+                    # deliberately strip the request-local `resource` derivation before
+                    # writing to shared config. This route enforces gateway *access* but
+                    # not gateways.update, so persisting the auto-derived resource would
+                    # let any authenticated caller pin the shared audience for all users
+                    # — the same RBAC-bypass class of bug the callback-path redesign
+                    # eliminated by moving learned audience to OAuthToken.learned_aud.
+                    # Admin-configured resource (present in gateway.oauth_config before
+                    # this request) is preserved as-is.
+                    persist_dict = dict(oauth_config)
+                    stored_resource = (gateway.oauth_config or {}).get("resource")
+                    if stored_resource is None:
+                        persist_dict.pop("resource", None)
+                    else:
+                        persist_dict["resource"] = stored_resource
+                    gateway.oauth_config = await protect_oauth_config_for_storage(persist_dict, existing_oauth_config=gateway.oauth_config)
                     gateway.auth_type = "oauth"  # Ensure auth_type is set for OAuth-protected servers
                     db.commit()
 
@@ -631,23 +569,26 @@ async def oauth_callback(
 
         # Complete OAuth flow
 
-        # RFC 8707: Set resource parameter for the token exchange request.
-        # If resource was previously learned from the IdP's token aud claim, use it as-is.
-        # Otherwise derive from gateway.url for the first authorization request.
+        # RFC 8707: Set the outbound `resource` parameter for the token exchange.
+        # Admin-configured `oauth_config.resource` takes precedence; otherwise
+        # derive the gateway URL's *origin* (not full path).  Request-local
+        # only — not persisted (see derive_resource_origin docstring).
         oauth_config_with_resource = gateway.oauth_config.copy()
         if not oauth_config_with_resource.get("resource"):
-            oauth_config_with_resource["resource"] = _normalize_resource_url(gateway.url)
+            origin = derive_resource_origin(gateway.url)
+            if origin:
+                oauth_config_with_resource["resource"] = origin
 
         result = await oauth_manager.complete_authorization_code_flow(
             gateway_id, code, state, oauth_config_with_resource, ca_certificate=gateway.ca_certificate, client_cert=gateway.client_cert, client_key=gateway.client_key
         )
 
-        # Learn the IdP's audience mapping from the token and persist as resource.
-        # RFC 8707 Section 2: "The authorization server may use the exact resource value
-        # as the audience or it may map from that value to a more general URI or abstract
-        # identifier for the given resource."  We persist whatever the IdP chose so that
-        # subsequent token validation matches.
-        await _persist_learned_audience(gateway, result, db)
+        # Token's aud/iss claims (best-effort, unverified) are persisted per-user by
+        # TokenStorageService.store_tokens as OAuthToken.learned_aud / learned_iss so
+        # subsequent validation can be authoritative for THIS USER without letting
+        # anyone with gateway access mutate globally-shared gateway config. See
+        # OAuthManager.complete_authorization_code_flow and
+        # token_validation_service._validate_audience for the full trust model.
 
         logger.info(f"Completed OAuth flow for gateway {SecurityValidator.sanitize_log_message(gateway_id)}, user {SecurityValidator.sanitize_log_message(str(result.get('user_id')))}")
 
