@@ -970,6 +970,48 @@ class TestTokenScopingMiddleware:
                     mock_resolve.assert_awaited_once_with(session_payload, "user@example.com", {})
 
     @pytest.mark.asyncio
+    async def test_uuid_only_session_token_resolves_email_before_session_scope(self, middleware, mock_request, monkeypatch):
+        """Production session tokens use UUID sub without email metadata and must still get DB-backed scope."""
+        mock_request.url.path = "/servers/a1b2c3d4-e5f6-0000-1111-222233334444"
+        mock_request.method = "GET"
+        mock_request.headers = {"Authorization": "Bearer session_token"}
+
+        user_id = "11111111-1111-1111-1111-111111111111"
+        session_payload = {
+            "sub": user_id,
+            "token_use": "session",
+            "teams": ["team-1"],
+            "scopes": {"permissions": ["*"]},
+        }
+        db = MagicMock()
+
+        def _get_db():
+            yield db
+
+        monkeypatch.setattr("mcpgateway.db.get_db", _get_db)
+        monkeypatch.setattr("mcpgateway.auth._get_email_by_id_sync", MagicMock(return_value="user@example.com"))
+
+        with (
+            patch.object(middleware, "_extract_token_scopes", return_value=session_payload),
+            patch("mcpgateway.middleware.token_scoping.resolve_session_teams", new=AsyncMock(return_value=["team-1"])) as mock_resolve,
+            patch.object(middleware, "_check_resource_team_ownership", return_value=ResourceOwnershipResult.ALLOWED) as mock_ownership,
+            patch.object(middleware, "_check_server_restriction", return_value=True),
+            patch.object(middleware, "_check_permission_restrictions", return_value=True),
+        ):
+            call_next = AsyncMock(return_value="success")
+
+            result = await middleware(mock_request, call_next)
+
+            assert result == "success"
+            mock_resolve.assert_awaited_once_with(session_payload, "user@example.com", {})
+            mock_ownership.assert_called_once_with(
+                "/servers/a1b2c3d4-e5f6-0000-1111-222233334444",
+                ["team-1"],
+                db=db,
+                _user_email="user@example.com",
+            )
+
+    @pytest.mark.asyncio
     async def test_session_token_skips_membership_check_on_stale_jwt_teams(self, middleware, mock_request):
         """Session tokens skip _check_team_membership; stale JWT teams produce empty intersection (public-only)."""
         mock_request.url.path = "/servers"
