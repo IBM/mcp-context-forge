@@ -770,7 +770,7 @@ class ToolCreate(BaseModel):
     # Declared for OpenAPI discoverability; consumed by the ``assemble_auth`` validator to build ``auth`` for the "authheaders" type.
     auth_headers: Optional[List[Dict[str, str]]] = Field(None, description="List of custom headers for 'authheaders' authentication (array of {'key': ..., 'value': ...} entries)")
     gateway_id: Optional[str] = Field(None, description="id of gateway for the tool")
-    tags: Optional[List[str]] = Field(default_factory=list, description="Tags for categorizing the tool")
+    tags: Optional[List[Union[str, Dict[str, str]]]] = Field(default_factory=list, description="Tags for categorizing the tool")
     deprecated: Optional[bool] = Field(default=False, description="Whether the tool is deprecated (visible but non-executable)")
 
     # Team scoping fields
@@ -791,7 +791,7 @@ class ToolCreate(BaseModel):
 
     @field_validator("tags")
     @classmethod
-    def validate_tags(cls, v: Optional[List[str]]) -> List[str]:
+    def validate_tags(cls, v: Optional[List[Union[str, Dict[str, str]]]]) -> List[Dict[str, str]]:
         """Validate and normalize tags.
 
         Args:
@@ -1344,7 +1344,7 @@ class ToolUpdate(BaseModelWithConfigDict):
     # Declared for OpenAPI discoverability; consumed by the ``assemble_auth`` validator to build ``auth`` for the "authheaders" type.
     auth_headers: Optional[List[Dict[str, str]]] = Field(None, description="List of custom headers for 'authheaders' authentication (array of {'key': ..., 'value': ...} entries)")
     gateway_id: Optional[str] = Field(None, description="id of gateway for the tool")
-    tags: Optional[List[str]] = Field(None, description="Tags for categorizing the tool")
+    tags: Optional[List[Union[str, Dict[str, str]]]] = Field(None, description="Tags for categorizing the tool")
     deprecated: Optional[bool] = Field(None, description="Whether the tool is deprecated (visible but non-executable)")
     visibility: Optional[Literal["private", "team", "public"]] = Field(None, description="Visibility level: private, team, or public")
 
@@ -1361,7 +1361,7 @@ class ToolUpdate(BaseModelWithConfigDict):
 
     @field_validator("tags")
     @classmethod
-    def validate_tags(cls, v: Optional[List[str]]) -> List[str]:
+    def validate_tags(cls, v: Optional[List[Union[str, Dict[str, str]]]]) -> List[Dict[str, str]]:
         """Validate and normalize tags.
 
         Args:
@@ -2033,7 +2033,7 @@ class ResourceCreate(BaseModel):
     mime_type: Optional[str] = Field(None, alias="mimeType", description="Resource MIME type")
     uri_template: Optional[str] = Field(None, description="URI template for parameterized resources")
     content: Union[str, bytes] = Field(..., description="Resource content (text or binary)")
-    tags: Optional[List[str]] = Field(default_factory=list, description="Tags for categorizing the resource")
+    tags: Optional[List[Union[str, Dict[str, str]]]] = Field(default_factory=list, description="Tags for categorizing the resource")
     extension_metadata: Optional[Dict[str, Any]] = Field(default=None, alias="extensionMetadata", description="Extension-specific metadata keyed by extension identifier")
 
     # Team scoping fields
@@ -2044,7 +2044,7 @@ class ResourceCreate(BaseModel):
 
     @field_validator("tags")
     @classmethod
-    def validate_tags(cls, v: Optional[List[str]]) -> List[str]:
+    def validate_tags(cls, v: Optional[List[Union[str, Dict[str, str]]]]) -> List[Dict[str, str]]:
         """Validate and normalize tags.
 
         Args:
@@ -2181,7 +2181,7 @@ class ResourceUpdate(BaseModelWithConfigDict):
     mime_type: Optional[str] = Field(None, description="Resource MIME type")
     uri_template: Optional[str] = Field(None, description="URI template for parameterized resources")
     content: Optional[Union[str, bytes]] = Field(None, description="Resource content (text or binary)")
-    tags: Optional[List[str]] = Field(None, description="Tags for categorizing the resource")
+    tags: Optional[List[Union[str, Dict[str, str]]]] = Field(None, description="Tags for categorizing the resource")
     extension_metadata: Optional[Dict[str, Any]] = Field(default=None, alias="extensionMetadata", description="Extension-specific metadata keyed by extension identifier")
 
     # Team scoping fields
@@ -2191,7 +2191,7 @@ class ResourceUpdate(BaseModelWithConfigDict):
 
     @field_validator("tags")
     @classmethod
-    def validate_tags(cls, v: Optional[List[str]]) -> List[str]:
+    def validate_tags(cls, v: Optional[List[Union[str, Dict[str, str]]]]) -> List[Dict[str, str]]:
         """Validate and normalize tags.
 
         Args:
@@ -2325,7 +2325,7 @@ class ResourceRead(BaseModelWithConfigDict):
     updated_at: datetime
     enabled: bool
     metrics: Optional[ResourceMetrics] = Field(None, description="Resource metrics (may be None in list operations)")
-    tags: List[str] = Field(default_factory=list, description="Tags for categorizing the resource")
+    tags: List[Union[str, Dict[str, str]]] = Field(default_factory=list, description="Tags for categorizing the resource")
     extension_metadata: Optional[Dict[str, Any]] = Field(default=None, alias="extensionMetadata", description="Extension-specific metadata keyed by extension identifier")
 
     # Comprehensive metadata for audit tracking
@@ -2600,7 +2600,7 @@ class PromptCreate(BaseModelWithConfigDict):
     description: Optional[str] = Field(None, description="Prompt description")
     template: str = Field(..., description="Prompt template text")
     arguments: List[PromptArgument] = Field(default_factory=list, description="List of arguments for the template")
-    tags: Optional[List[str]] = Field(default_factory=list, description="Tags for categorizing the prompt")
+    tags: Optional[List[Union[str, Dict[str, str]]]] = Field(default_factory=list, description="Tags for categorizing the prompt")
 
     # Team scoping fields
     team_id: Optional[str] = Field(None, description="Team ID for resource organization")
@@ -2610,7 +2610,7 @@ class PromptCreate(BaseModelWithConfigDict):
 
     @field_validator("tags")
     @classmethod
-    def validate_tags(cls, v: Optional[List[str]]) -> List[str]:
+    def validate_tags(cls, v: Optional[List[Union[str, Dict[str, str]]]]) -> List[Dict[str, str]]:
         """Validate and normalize tags.
 
         Args:
@@ -2769,7 +2769,7 @@ class PromptUpdate(BaseModelWithConfigDict):
     template: Optional[str] = Field(None, description="Prompt template text")
     arguments: Optional[List[PromptArgument]] = Field(None, description="List of arguments for the template")
 
-    tags: Optional[List[str]] = Field(None, description="Tags for categorizing the prompt")
+    tags: Optional[List[Union[str, Dict[str, str]]]] = Field(None, description="Tags for categorizing the prompt")
 
     # Team scoping fields
     team_id: Optional[str] = Field(None, description="Team ID for resource organization")
@@ -2778,7 +2778,7 @@ class PromptUpdate(BaseModelWithConfigDict):
 
     @field_validator("tags")
     @classmethod
-    def validate_tags(cls, v: Optional[List[str]]) -> List[str]:
+    def validate_tags(cls, v: Optional[List[Union[str, Dict[str, str]]]]) -> List[Dict[str, str]]:
         """Validate and normalize tags.
 
         Args:
@@ -3167,7 +3167,7 @@ class GatewayCreate(BaseModelWithConfigDict):
 
     @field_validator("tags")
     @classmethod
-    def validate_tags(cls, v: Optional[List[str]]) -> List[str]:
+    def validate_tags(cls, v: Optional[List[Union[str, Dict[str, str]]]]) -> List[Dict[str, str]]:
         """Validate and normalize tags.
 
         Args:
@@ -3531,7 +3531,7 @@ class GatewayUpdate(BaseModelWithConfigDict):
 
     @field_validator("tags")
     @classmethod
-    def validate_tags(cls, v: Optional[List[str]]) -> List[str]:
+    def validate_tags(cls, v: Optional[List[Union[str, Dict[str, str]]]]) -> List[Dict[str, str]]:
         """Validate and normalize tags.
 
         Args:
@@ -4373,18 +4373,18 @@ class ServerCreate(BaseModel):
     name: str = Field(..., description="The server's name")
     description: Optional[str] = Field(None, description="Server description")
     icon: Optional[str] = Field(None, description="URL for the server's icon")
-    tags: Optional[List[str]] = Field(default_factory=list, description="Tags for categorizing the server")
+    tags: Optional[List[Union[str, Dict[str, str]]]] = Field(default_factory=list, description="Tags for categorizing the server (accepts plain strings, normalized to {id,label} dicts by validator)")
 
     @field_validator("tags")
     @classmethod
-    def validate_tags(cls, v: Optional[List[str]]) -> List[str]:
+    def validate_tags(cls, v: Optional[List[Union[str, Dict[str, str]]]]) -> List[Dict[str, str]]:
         """Validate and normalize tags.
 
         Args:
-            v: Optional list of tag strings to validate
+            v: Optional list of tag strings to validate (accepts both plain strings and dict format)
 
         Returns:
-            List of validated tag strings
+            List of validated tag dicts in {id, label} format
         """
         return validate_tags_field(v)
 
@@ -4532,7 +4532,7 @@ class ServerUpdate(BaseModelWithConfigDict):
     name: Optional[str] = Field(None, description="The server's name")
     description: Optional[str] = Field(None, description="Server description")
     icon: Optional[str] = Field(None, description="URL for the server's icon")
-    tags: Optional[List[str]] = Field(None, description="Tags for categorizing the server")
+    tags: Optional[List[Union[str, Dict[str, str]]]] = Field(None, description="Tags for categorizing the server")
 
     # Team scoping fields
     team_id: Optional[str] = Field(None, description="Team ID for resource organization")
@@ -4545,7 +4545,7 @@ class ServerUpdate(BaseModelWithConfigDict):
 
     @field_validator("tags")
     @classmethod
-    def validate_tags(cls, v: Optional[List[str]]) -> List[str]:
+    def validate_tags(cls, v: Optional[List[Union[str, Dict[str, str]]]]) -> List[Dict[str, str]]:
         """Validate and normalize tags.
 
         Args:
@@ -4933,7 +4933,7 @@ class A2AAgentCreate(BaseModel):
             return ""
         return v
 
-    tags: List[str] = Field(default_factory=list, description="Tags for categorizing the agent")
+    tags: List[Union[str, Dict[str, str]]] = Field(default_factory=list, description="Tags for categorizing the agent (accepts plain strings, normalized to {id,label} dicts by validator)")
 
     # Team scoping fields
     team_id: Optional[str] = Field(None, description="Team ID for resource organization")
@@ -4974,14 +4974,14 @@ class A2AAgentCreate(BaseModel):
 
     @field_validator("tags")
     @classmethod
-    def validate_tags(cls, v: Optional[List[str]]) -> List[str]:
+    def validate_tags(cls, v: Optional[List[Union[str, Dict[str, str]]]]) -> List[Dict[str, str]]:
         """Validate and normalize tags.
 
         Args:
-            v: Optional list of tag strings to validate
+            v: Optional list of tag strings to validate (accepts both plain strings and dict format)
 
         Returns:
-            List of validated tag strings
+            List of validated tag dicts in {id, label} format
         """
         return validate_tags_field(v)
 
@@ -5251,7 +5251,7 @@ class A2AAgentUpdate(BaseModelWithConfigDict):
         description="Query parameter value (API key) - will be encrypted at rest",
     )
 
-    tags: Optional[List[str]] = Field(None, description="Tags for categorizing the agent")
+    tags: Optional[List[Union[str, Dict[str, str]]]] = Field(None, description="Tags for categorizing the agent")
 
     # Team scoping fields
     team_id: Optional[str] = Field(None, description="Team ID for resource organization")
@@ -5309,7 +5309,7 @@ class A2AAgentUpdate(BaseModelWithConfigDict):
 
     @field_validator("tags")
     @classmethod
-    def validate_tags(cls, v: Optional[List[str]]) -> Optional[List[str]]:
+    def validate_tags(cls, v: Optional[List[Union[str, Dict[str, str]]]]) -> Optional[List[Dict[str, str]]]:
         """Validate and normalize tags.
 
         Args:
@@ -7288,7 +7288,7 @@ class TokenCreateRequest(BaseModel):
     description: Optional[str] = Field(None, description="Token description", max_length=1000)
     expires_in_days: Optional[int] = Field(default=None, ge=1, description="Expiry in days (must be >= 1 if specified)")
     scope: Optional[TokenScopeRequest] = Field(None, description="Token scoping configuration")
-    tags: List[str] = Field(default_factory=list, description="Organizational tags")
+    tags: List[Union[str, Dict[str, str]]] = Field(default_factory=list, description="Organizational tags")
     team_id: Optional[str] = Field(None, description="Team ID for team-scoped tokens")
     is_active: bool = Field(default=True, description="Token active status")
     user_email: Optional[EmailStr] = Field(None, description="Email of user to create token for (admin only)")
@@ -7316,7 +7316,7 @@ class TokenUpdateRequest(BaseModel):
     name: Optional[str] = Field(None, description="New token name", min_length=1, max_length=255)
     description: Optional[str] = Field(None, description="New token description", max_length=1000)
     scope: Optional[TokenScopeRequest] = Field(None, description="New token scoping configuration")
-    tags: Optional[List[str]] = Field(None, description="New organizational tags")
+    tags: Optional[List[Union[str, Dict[str, str]]]] = Field(None, description="New organizational tags")
     is_active: Optional[bool] = Field(None, description="New token active status")
 
 
@@ -7380,7 +7380,7 @@ class TokenResponse(BaseModel):
     revoked_at: Optional[datetime] = Field(None, description="Revocation timestamp")
     revoked_by: Optional[str] = Field(None, description="Email of user who revoked token")
     revocation_reason: Optional[str] = Field(None, description="Reason for revocation")
-    tags: List[str] = Field(..., description="Organizational tags")
+    tags: List[Union[str, Dict[str, str]]] = Field(..., description="Organizational tags")
 
 
 class TokenCreateResponse(BaseModel):
@@ -7842,7 +7842,7 @@ class GrpcServiceCreate(BaseModel):
     tls_cert_path: Optional[str] = Field(None, description="Path to TLS certificate file")
     tls_key_path: Optional[str] = Field(None, description="Path to TLS key file")
     grpc_metadata: Dict[str, str] = Field(default_factory=dict, description="gRPC metadata headers")
-    tags: List[str] = Field(default_factory=list, description="Tags for categorization")
+    tags: List[Union[str, Dict[str, str]]] = Field(default_factory=list, description="Tags for categorization")
 
     # Team scoping fields
     team_id: Optional[str] = Field(None, description="ID of the team that owns this resource")
@@ -7911,7 +7911,7 @@ class GrpcServiceUpdate(BaseModel):
     tls_cert_path: Optional[str] = Field(None, description="TLS certificate path")
     tls_key_path: Optional[str] = Field(None, description="TLS key path")
     grpc_metadata: Optional[Dict[str, str]] = Field(None, description="gRPC metadata headers")
-    tags: Optional[List[str]] = Field(None, description="Service tags")
+    tags: Optional[List[Union[str, Dict[str, str]]]] = Field(None, description="Service tags")
     visibility: Optional[Literal["private", "team", "public"]] = Field(None, description="Visibility level: private, team, or public")
 
     @field_validator("name")
@@ -7998,7 +7998,7 @@ class GrpcServiceRead(BaseModel):
     last_reflection: Optional[datetime] = Field(None, description="Last reflection timestamp")
 
     # Tags
-    tags: List[str] = Field(default_factory=list, description="Service tags")
+    tags: List[Union[str, Dict[str, str]]] = Field(default_factory=list, description="Service tags")
 
     # Timestamps
     created_at: datetime = Field(..., description="Creation timestamp")
@@ -8026,7 +8026,7 @@ class PluginSummary(BaseModel):
     mode: str = Field(..., description="Plugin mode: enforce, permissive, or disabled")
     priority: int = Field(..., description="Plugin execution priority (lower = higher priority)")
     hooks: List[str] = Field(default_factory=list, description="Hook points where plugin executes")
-    tags: List[str] = Field(default_factory=list, description="Plugin tags for categorization")
+    tags: List[Union[str, Dict[str, str]]] = Field(default_factory=list, description="Plugin tags for categorization")
     status: str = Field(..., description="Plugin status: enabled or disabled")
     config_summary: Dict[str, Any] = Field(default_factory=dict, description="Summary of plugin configuration")
 
@@ -8115,7 +8115,7 @@ class CatalogServer(BaseModel):
     description: str = Field(..., description="Server description")
     requires_api_key: bool = Field(default=False, description="Whether API key is required")
     secure: bool = Field(default=False, description="Whether additional security is required")
-    tags: List[str] = Field(default_factory=list, description="Tags for categorization")
+    tags: List[Union[str, Dict[str, str]]] = Field(default_factory=list, description="Tags for categorization")
     transport: Optional[str] = Field(None, description="Transport type: SSE, STREAMABLEHTTP, or WEBSOCKET")
     logo_url: Optional[str] = Field(None, description="URL to server logo/icon")
     documentation_url: Optional[str] = Field(None, description="URL to server documentation")
@@ -8167,7 +8167,7 @@ class CatalogListRequest(BaseModel):
     auth_type: Optional[str] = Field(None, description="Filter by auth type")
     provider: Optional[str] = Field(None, description="Filter by provider")
     search: Optional[str] = Field(None, description="Search term for name/description")
-    tags: Optional[List[str]] = Field(None, description="Filter by tags")
+    tags: Optional[List[Union[str, Dict[str, str]]]] = Field(None, description="Filter by tags")
     show_registered_only: bool = Field(default=False, description="Show only registered servers")
     show_available_only: bool = Field(default=True, description="Show only available servers")
     limit: int = Field(default=100, description="Maximum number of results")
