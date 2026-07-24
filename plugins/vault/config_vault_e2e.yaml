@@ -1,0 +1,37 @@
+# Throwaway Vault plugin config for E2E validation (tool + A2A paths).
+# Registers the Vault plugin on BOTH hooks so we can exercise the MCP tool path
+# (tool_pre_invoke) and the A2A agent path (agent_pre_invoke) in one run.
+
+plugins:
+  - name: "VaultPlugin"
+    kind: "plugins.vault.vault_plugin.Vault"
+    description: "Vault plugin — generates bearer tokens from vault-saved tokens (E2E)"
+    version: "0.0.1"
+    author: "Adrian Popa"
+    hooks: ["tool_pre_invoke", "agent_pre_invoke"]
+    tags: ["security", "vault", "OAUTH2"]
+    mode: "permissive"  # enforce | enforce_ignore_error | permissive | disabled
+    priority: 10
+    conditions:
+      - prompts: []
+        server_ids: []
+        tenant_ids: []
+    config:
+      system_tag_prefix: "system"
+      vault_header_name: "X-Vault-Tokens"
+      vault_handling: "raw"
+      system_handling: "tag"
+      auth_header_tag_prefix: "AUTH_HEADER"
+
+# Plugin directories to scan
+plugin_dirs:
+  - "plugins/native"
+  - "plugins/custom"
+
+# Global plugin settings
+plugin_settings:
+  parallel_execution_within_band: true
+  plugin_timeout: 30
+  fail_on_plugin_error: true
+  enable_plugin_api: true
+  plugin_health_check_interval: 60
