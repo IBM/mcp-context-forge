@@ -3,11 +3,13 @@ import { Plus } from "lucide-react";
 import { useIntl } from "react-intl";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { ListSearch } from "@/components/ui/list-search";
 import { UserForm } from "@/components/users/UserForm";
 import { UsersTable } from "@/components/users/UsersTable";
 import { DeleteUserDialog } from "@/components/users/DeleteUserDialog";
 import { useUsersList } from "@/hooks/useUsersList";
 import { useQuery } from "@/hooks/useQuery";
+import { useLocalSearch } from "@/hooks/useLocalSearch";
 import { usersApi } from "@/api/users";
 import { ApiError } from "@/api/client";
 import { createOptimisticUser } from "@/hooks/useUserForm";
@@ -169,6 +171,9 @@ export function Users() {
 
   const error = queryError ? queryError.message : null;
 
+  const getUserText = useCallback((user: User) => `${user.full_name ?? ""} ${user.email}`, []);
+  const { query, setQuery, results } = useLocalSearch(allUsers, getUserText);
+
   return (
     <main className="p-6">
       {isFormOpen ? (
@@ -204,14 +209,25 @@ export function Users() {
             <h1 className="text-xl font-semibold text-foreground">
               {intl.formatMessage({ id: "users.title" })}
             </h1>
-            <Button
-              onClick={() => setIsFormOpen(true)}
-              className="gap-2"
-              aria-label={intl.formatMessage({ id: "users.createUser" })}
-            >
-              <Plus className="h-4 w-4" aria-hidden="true" />
-              {intl.formatMessage({ id: "users.createUser" })}
-            </Button>
+            <div className="flex items-center gap-3">
+              <ListSearch
+                value={query}
+                onChange={setQuery}
+                ariaLabel={intl.formatMessage(
+                  { id: "common.searchLabel" },
+                  { entity: intl.formatMessage({ id: "navigation.users" }) },
+                )}
+                placeholder={intl.formatMessage({ id: "common.search" })}
+              />
+              <Button
+                onClick={() => setIsFormOpen(true)}
+                className="gap-2"
+                aria-label={intl.formatMessage({ id: "users.createUser" })}
+              >
+                <Plus className="h-4 w-4" aria-hidden="true" />
+                {intl.formatMessage({ id: "users.createUser" })}
+              </Button>
+            </div>
           </header>
           {isLoading ? (
             <div
@@ -242,15 +258,20 @@ export function Users() {
               {allUsers.length > 0 ? (
                 <>
                   <UsersTable
-                    users={allUsers}
+                    users={results}
                     onDeleteClick={handleDeleteClick}
                     onEditClick={handleEditClick}
                   />
+                  {query.trim() && results.length === 0 && (
+                    <p className="mt-6 text-sm text-muted-foreground">
+                      {intl.formatMessage({ id: "common.search.noResults" })}
+                    </p>
+                  )}
 
                   <div className="mt-6 flex items-center justify-between">
                     <div className="flex items-center gap-4">
                       <div className="text-sm text-muted-foreground">
-                        {intl.formatMessage({ id: "users.showing" }, { count: allUsers.length })}
+                        {intl.formatMessage({ id: "users.showing" }, { count: results.length })}
                       </div>
                       <div className="flex items-center gap-2">
                         <label
@@ -272,7 +293,7 @@ export function Users() {
                         </select>
                       </div>
                     </div>
-                    {nextCursor && (
+                    {!query.trim() && nextCursor && (
                       <Button
                         variant="outline"
                         size="sm"
