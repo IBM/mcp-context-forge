@@ -62,7 +62,6 @@ import time
 from time import monotonic
 from typing import Any, Optional, Union
 from urllib.parse import urlsplit, urlunsplit
-import uuid
 
 # Third-Party
 from fastapi import Cookie, Depends, HTTPException, Request, status
@@ -763,6 +762,7 @@ async def _enforce_revocation_and_active_user(payload: dict) -> None:
     """
     # First-Party
     from mcpgateway.auth import _check_token_revoked_sync, _get_email_by_id_sync, _get_user_by_email_sync
+    from mcpgateway.auth_context import jwt_subject_is_uuid, resolve_jwt_user_email_from_payload
 
     jti = payload.get("jti")
     if jti:
@@ -774,23 +774,26 @@ async def _enforce_revocation_and_active_user(payload: dict) -> None:
         except Exception as exc:
             logger.warning("Token revocation check failed for JTI %s: %s", jti, exc)
 
-    username = payload.get("sub") or payload.get("email") or payload.get("username")
-    if not username:
-        return
-
     try:
-        user = await asyncio.to_thread(_get_user_by_email_sync, username)
-        if user is None and payload.get("token_use") == "session":
-            # Session tokens use UUID as sub; resolve to email first
-            try:
-                uuid.UUID(username)
-                resolved = await asyncio.to_thread(_get_email_by_id_sync, username)
-                if resolved:
-                    user = await asyncio.to_thread(_get_user_by_email_sync, resolved)
-            except ValueError:
-                pass  # Not a UUID, skip resolution
+        async def resolve_uuid_subject(user_id: str) -> str | None:
+            return await asyncio.to_thread(_get_email_by_id_sync, user_id)
+
+        username = await resolve_jwt_user_email_from_payload(payload, uuid_email_resolver=resolve_uuid_subject)
+        if not username:
+            raw_username = payload.get("username")
+            username = raw_username.strip() if isinstance(raw_username, str) and raw_username.strip() else None
+
+        unresolved_uuid_subject = False
+        if not username and jwt_subject_is_uuid(payload):
+            username = payload["sub"].strip()
+            unresolved_uuid_subject = True
+
+        if not username:
+            return
+
+        user = None if unresolved_uuid_subject else await asyncio.to_thread(_get_user_by_email_sync, username)
     except Exception as exc:
-        logger.warning("User status check failed for %s: %s", username, exc)
+        logger.warning("User status check failed for %s: %s", payload.get("sub") or payload.get("email") or payload.get("username"), exc)
         return
 
     if user is None:
