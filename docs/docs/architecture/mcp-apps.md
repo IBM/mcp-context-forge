@@ -47,7 +47,7 @@ For authenticated MCP initialization requests, the gateway advertises:
           "schemes": ["ui://"]
         },
         "bridge": {
-          "methods": ["tools/call"]
+          "methods": ["tools/call", "resources/read", "notifications/message", "ping"]
         }
       }
     }
@@ -281,6 +281,23 @@ Content-Type: application/json
 The RPC endpoint requires `tools.execute`. The tool must resolve within the
 stored server binding and must be app-visible through
 `audience: ["app"]` or `audience: ["model", "app"]`.
+
+### Supported AppBridge Methods
+
+The RPC endpoint accepts the standard MCP messages an app may send, and rejects
+everything else with `-32601`. Session ownership and the stored server binding
+are validated before any method is dispatched.
+
+| Method | Behaviour |
+| --- | --- |
+| `tools/call` | Invokes an app-visible tool within the bound server. |
+| `resources/read` | Reads a resource within the bound server, using the identity and team scoping stored on the session. |
+| `notifications/message` | Recorded by the gateway for observability and never proxied upstream. |
+| `ping` | Answered by the gateway without an upstream call. |
+
+Being a core MCP method does not make a method reachable over AppBridge: the
+allowlist is explicit, so `tools/list`, `resources/list`, `prompts/list`, and
+`resources/subscribe` remain rejected.
 
 ## Security Invariants
 

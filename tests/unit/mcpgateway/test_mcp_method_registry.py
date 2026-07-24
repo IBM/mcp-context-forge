@@ -54,6 +54,26 @@ class TestMCPMethodRegistry:
         assert not registry.is_core_method("extensions/custom")
         assert not registry.is_known_method("io.example/custom")
 
+    def test_app_bridge_methods_are_gated_on_the_feature_flag(self, monkeypatch):
+        """AppBridge methods are only routable while MCP Apps are enabled."""
+        registry = MCPMethodRegistry()
+
+        monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", False)
+        assert not registry.is_app_bridge_method("tools/call")
+
+        monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", True)
+        for method in ("tools/call", "resources/read", "notifications/message", "ping"):
+            assert registry.is_app_bridge_method(method)
+
+    def test_core_methods_are_not_implicitly_app_bridge_methods(self, monkeypatch):
+        """Being a core MCP method must not grant an app access over the AppBridge."""
+        monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", True)
+        registry = MCPMethodRegistry()
+
+        for method in ("initialize", "tools/list", "prompts/list", "resources/list", "resources/subscribe", "logging/setLevel"):
+            assert registry.is_core_method(method)
+            assert not registry.is_app_bridge_method(method)
+
     def test_non_core_mcp_apps_method_recognition_when_enabled(self, monkeypatch):
         """Enabled MCP Apps can make non-core AppBridge methods known."""
         monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", True)
