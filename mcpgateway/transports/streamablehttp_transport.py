@@ -299,6 +299,7 @@ _REJECT = object()
 
 # ASGI scope key for propagating gateway context from middleware to MCP handlers
 _MCPGATEWAY_CONTEXT_KEY = "_mcpgateway_context"
+_MCPGATEWAY_AUTH_CONTEXT_KEY = "_mcpgateway_auth_context"
 
 # Initialize ToolService, PromptService, ResourceService, CompletionService and MCP Server
 tool_service: ToolService = ToolService()
@@ -1726,6 +1727,11 @@ async def call_tool(
         <class 'dict'>
     """
     server_id, request_headers, user_context = await _get_request_context_or_default()
+    # The MCP SDK may execute this handler in a task that did not inherit the
+    # auth middleware's ContextVars. Materialize the typed identity in the
+    # current task from the canonical context recovered above.
+    _set_user_identity_from_dict(user_context)
+
     meta_data = None
     # Extract _meta from request context if available
     try:
@@ -2107,13 +2113,17 @@ async def _get_request_context_or_default() -> Tuple[str, dict[str, Any], dict[s
     if s_id != "default_server_id":
         headers = request_headers_var.get()
         session_id = headers.get("x-mcp-session-id") if headers else None
+        context_user = user_context_var.get()
 
-        # If we have a server_id but no session ID in headers, the ContextVars were captured
-        # before enrichment. Fall through to ASGI scope which has the enriched headers.
-        if not session_id:
+        # If identity or session enrichment is missing, these ContextVars were
+        # captured before request authentication. Fall through to the trusted
+        # ASGI scope instead of returning an empty or stale principal.
+        if not session_id or not context_user:
             logger.debug(
-                "[CONTEXT_RESOLUTION] Path 1 skipped (no session ID) | server_id=%s | falling through to ASGI scope",
+                "[CONTEXT_RESOLUTION] Path 1 skipped (incomplete request context) | server_id=%s | has_session_id=%s | has_user=%s | falling through to ASGI scope",
                 s_id[:8] if s_id else None,
+                bool(session_id),
+                bool(context_user),
             )
             # Don't return - fall through to Path 2 (ASGI scope)
         else:
@@ -2122,7 +2132,7 @@ async def _get_request_context_or_default() -> Tuple[str, dict[str, Any], dict[s
                 s_id[:8] if s_id else None,
                 bool(session_id),
             )
-            return s_id, headers, user_context_var.get()
+            return s_id, headers, context_user
 
     # 2. Try ASGI scope context injected by handle_streamable_http()
     ctx = None
@@ -2130,20 +2140,45 @@ async def _get_request_context_or_default() -> Tuple[str, dict[str, Any], dict[s
         ctx = mcp_app.request_context
         request = ctx.request
         if request:
-            gw_ctx = getattr(request, "scope", {}).get(_MCPGATEWAY_CONTEXT_KEY)
+            request_scope = getattr(request, "scope", {})
+            gw_ctx = request_scope.get(_MCPGATEWAY_CONTEXT_KEY)
+            if not isinstance(gw_ctx, dict):
+                request_state = request_scope.get("state")
+                if isinstance(request_state, dict):
+                    gw_ctx = request_state.get(_MCPGATEWAY_CONTEXT_KEY)
             if isinstance(gw_ctx, dict):
                 headers = gw_ctx.get("request_headers", {})
                 session_id = headers.get("x-mcp-session-id") if headers else None
-                logger.debug(
-                    "[CONTEXT_RESOLUTION] Path 2 (ASGI scope) | server_id=%s | has_session_id=%s",
-                    (gw_ctx.get("server_id") or s_id)[:8] if (gw_ctx.get("server_id") or s_id) else None,
-                    bool(session_id),
-                )
-                return (
-                    gw_ctx.get("server_id") or s_id,
-                    headers,
-                    gw_ctx.get("user_context", {}),
-                )
+                resolved_server_id = gw_ctx.get("server_id") or s_id
+                recovered_user_context = gw_ctx.get("user_context", {})
+                current_request_headers = dict(request.headers)
+                has_current_authorization = bool(get_auth_header_value(current_request_headers))
+                if has_current_authorization:
+                    logger.debug(
+                        "[CONTEXT_RESOLUTION] Path 2 skipped (current Authorization present) | server_id=%s | falling through to verified request recovery",
+                        resolved_server_id[:8] if resolved_server_id else None,
+                    )
+                elif not isinstance(recovered_user_context, dict) or not recovered_user_context.get("email"):
+                    logger.debug(
+                        "[CONTEXT_RESOLUTION] Path 2 skipped (incomplete ASGI context) | server_id=%s | has_session_id=%s | falling through to re-authentication",
+                        resolved_server_id[:8] if resolved_server_id else None,
+                        bool(session_id),
+                    )
+                else:
+                    logger.debug(
+                        "[CONTEXT_RESOLUTION] Path 2 (ASGI scope) | server_id=%s | has_session_id=%s",
+                        resolved_server_id[:8] if resolved_server_id else None,
+                        bool(session_id),
+                    )
+                    # The MCP SDK may run handlers in a task created before the
+                    # request ContextVars were populated. Rehydrate them from the
+                    # trusted ASGI scope so downstream services and proxy helpers
+                    # see the same authenticated identity recovered above.
+                    server_id_var.set(resolved_server_id)
+                    request_headers_var.set(headers)
+                    user_context_var.set(recovered_user_context)
+                    _set_user_identity_from_dict(recovered_user_context)
+                    return resolved_server_id, headers, recovered_user_context
     except LookupError:
         # Not in a request context — fall through to ContextVar defaults
         return s_id, request_headers_var.get(), user_context_var.get()
@@ -4048,7 +4083,16 @@ class SessionManagerWrapper:
 
         # Enforce server access parity for server-scoped Streamable HTTP MCP routes.
         # This mirrors /servers/{id}/sse and /servers/{id}/message guards.
-        user_context = user_context_var.get()
+        scope_state = scope.get("state")
+        user_context = (
+            scope_state.get(_MCPGATEWAY_AUTH_CONTEXT_KEY)
+            if isinstance(scope_state, dict)
+            else None
+        )
+        if not isinstance(user_context, dict):
+            user_context = scope.get(_MCPGATEWAY_AUTH_CONTEXT_KEY)
+        if not isinstance(user_context, dict):
+            user_context = user_context_var.get()
         if match and _should_enforce_streamable_rbac(user_context):
             _server_id = match.group("server_id")
             has_server_access = await _check_streamable_permission(
@@ -4519,11 +4563,15 @@ class SessionManagerWrapper:
         # handlers can retrieve it even when ContextVars are lost (the SDK's
         # task group was created at startup, so spawned handler tasks inherit
         # the startup context rather than the per-request context).
-        scope[_MCPGATEWAY_CONTEXT_KEY] = {
+        downstream_context = {
             "server_id": server_id_var.get(),
             "request_headers": enriched_headers,
             "user_context": user_context,
         }
+        scope[_MCPGATEWAY_CONTEXT_KEY] = downstream_context
+        scope_state = scope.setdefault("state", {})
+        if isinstance(scope_state, dict):
+            scope_state[_MCPGATEWAY_CONTEXT_KEY] = downstream_context
 
         buffered_request_body = bytearray()
         initialize_span_cm: Optional[ContextManager[Any]] = None
@@ -4788,6 +4836,10 @@ def _set_user_identity_from_dict(ctx: dict[str, Any]) -> None:
                 authenticated_at=datetime.now(timezone.utc),
             )
         )
+    else:
+        # Fail closed when the current request is anonymous or malformed.
+        # Without this reset a reused task could retain a previous principal.
+        user_identity_var.set(None)
 
 
 async def _set_proxy_user_context(proxy_user: str) -> dict[str, Any] | None:
@@ -4910,6 +4962,16 @@ class _StreamableHttpAuthHandler:
         self.receive = receive
         self.send = send
 
+    def _persist_auth_context(self) -> None:
+        """Store verified identity on the ASGI scope across task boundaries."""
+        auth_context = user_context_var.get()
+        if isinstance(auth_context, dict):
+            persisted_context = dict(auth_context)
+            self.scope[_MCPGATEWAY_AUTH_CONTEXT_KEY] = persisted_context
+            scope_state = self.scope.setdefault("state", {})
+            if isinstance(scope_state, dict):
+                scope_state[_MCPGATEWAY_AUTH_CONTEXT_KEY] = persisted_context
+
     async def _send_error(self, *, detail: str, status_code: int = HTTP_401_UNAUTHORIZED, headers: dict[str, str] | None = None) -> bool:
         """Send an error response and return False (auth rejected).
 
@@ -4990,6 +5052,7 @@ class _StreamableHttpAuthHandler:
             proxy_error = await _set_proxy_user_context(proxy_user)
             if proxy_error:
                 return await self._send_error(**proxy_error)
+            self._persist_auth_context()
             return True  # Trusted proxy supplied valid, active user
 
         # --- Standard JWT authentication flow (client auth enabled) ---
@@ -5003,9 +5066,18 @@ class _StreamableHttpAuthHandler:
                     token = credentials
 
         if token is None:
-            return await self._auth_no_token(path=path, bearer_header_supplied=bearer_header_supplied)
+            authenticated = await self._auth_no_token(
+                path=path,
+                bearer_header_supplied=bearer_header_supplied,
+            )
+            if authenticated:
+                self._persist_auth_context()
+            return authenticated
 
-        return await self._auth_jwt(token=token)
+        authenticated = await self._auth_jwt(token=token)
+        if authenticated:
+            self._persist_auth_context()
+        return authenticated
 
     async def _auth_no_token(self, *, path: str, bearer_header_supplied: bool) -> bool:
         """Handle unauthenticated MCP requests (no Bearer token present).

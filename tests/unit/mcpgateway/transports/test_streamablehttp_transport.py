@@ -5148,6 +5148,8 @@ async def test_streamable_http_auth_proxy_user_when_client_auth_disabled(monkeyp
 
     user_ctx = tr.user_context_var.get()
     assert user_ctx["email"] == "proxy_user@example.com"
+    assert scope[tr._MCPGATEWAY_AUTH_CONTEXT_KEY] == user_ctx
+    assert scope["state"][tr._MCPGATEWAY_AUTH_CONTEXT_KEY] == user_ctx
     assert user_ctx["teams"] == []
     assert user_ctx["is_authenticated"] is True
     assert user_ctx["is_admin"] is False
@@ -10380,6 +10382,8 @@ async def test_auth_session_token_admin_bypass(monkeypatch):
     user_ctx = tr.user_context_var.get()
     assert user_ctx["teams"] is None  # Admin bypass
     assert user_ctx["is_admin"] is True
+    assert scope[tr._MCPGATEWAY_AUTH_CONTEXT_KEY] == user_ctx
+    assert scope["state"][tr._MCPGATEWAY_AUTH_CONTEXT_KEY] == user_ctx
 
 
 @pytest.mark.asyncio
@@ -12176,6 +12180,78 @@ class TestCallToolDirectProxy:
         assert call_kwargs.kwargs["gateway_id"] == "gw-direct"
         assert call_kwargs.kwargs["name"] == "my_tool"
         assert call_kwargs.kwargs["arguments"] == {"arg": "value"}
+        assert call_kwargs.kwargs["user_context"] == {
+            "email": "user@test.com",
+            "teams": ["team1"],
+            "is_admin": False,
+            "is_authenticated": True,
+        }
+
+    @pytest.mark.asyncio
+    async def test_call_tool_direct_proxy_uses_scope_recovered_identity(self):
+        """Forward identity recovered from ASGI scope when the SDK task lost its ContextVar."""
+        # Third-Party
+        from mcp import types as mcp_types
+
+        recovered_identity = {
+            "email": "user@test.com",
+            "teams": ["team1"],
+            "is_admin": False,
+            "is_authenticated": True,
+        }
+        mock_gateway = MagicMock(id="gw-direct", gateway_mode="direct_proxy")
+        mock_db = MagicMock()
+        mock_db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=mock_gateway)))
+
+        @asynccontextmanager
+        async def mock_get_db():
+            yield mock_db
+
+        expected_result = mcp_types.CallToolResult(
+            content=[mcp_types.TextContent(type="text", text="direct proxy result")],
+            isError=False,
+        )
+        mock_invoke_direct = AsyncMock(return_value=expected_result)
+        tr.user_identity_var.set(None)
+
+        with (
+            patch(
+                "mcpgateway.transports.streamablehttp_transport._get_request_context_or_default",
+                AsyncMock(
+                    return_value=(
+                        "server-123",
+                        {"x-context-forge-gateway-id": "gw-direct"},
+                        recovered_identity,
+                    )
+                ),
+            ),
+            patch("mcpgateway.transports.streamablehttp_transport.get_db", mock_get_db),
+            patch(
+                "mcpgateway.transports.streamablehttp_transport.extract_gateway_id_from_headers",
+                return_value="gw-direct",
+            ),
+            patch(
+                "mcpgateway.transports.streamablehttp_transport._check_scoped_permission",
+                return_value=True,
+            ),
+            patch(
+                "mcpgateway.transports.streamablehttp_transport._check_streamable_permission",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
+            patch(
+                "mcpgateway.transports.streamablehttp_transport.check_gateway_access",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
+            patch.object(tr.tool_service, "invoke_tool_direct", mock_invoke_direct),
+        ):
+            result = await tr.call_tool("my_tool", {"arg": "value"})
+
+        assert result is expected_result
+        forwarded_identity = mock_invoke_direct.await_args.kwargs["user_context"]
+        assert forwarded_identity.email == recovered_identity["email"]
+        assert forwarded_identity.teams == recovered_identity["teams"]
 
     @pytest.mark.asyncio
     async def test_call_tool_direct_proxy_access_denied(self):
@@ -12949,7 +13025,63 @@ async def test_get_request_context_fast_path_no_session_id_falls_through(monkeyp
                 assert user["email"] == "fallback@test.com"
 
                 # Verify debug log for fallthrough
-                assert any("[CONTEXT_RESOLUTION] Path 1 skipped (no session ID)" in record.message for record in caplog.records)
+                assert any("[CONTEXT_RESOLUTION] Path 1 skipped (incomplete request context)" in record.message for record in caplog.records)
+    finally:
+        server_id_var.reset(s_tok)
+        request_headers_var.reset(h_tok)
+        user_context_var.reset(u_tok)
+
+
+@pytest.mark.asyncio
+async def test_get_request_context_fast_path_empty_identity_falls_through_to_scope():
+    """A session id must not make an empty startup identity authoritative."""
+    # Standard
+    from unittest.mock import PropertyMock
+
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import (
+        _get_request_context_or_default,
+        mcp_app,
+        request_headers_var,
+        server_id_var,
+        user_context_var,
+    )
+
+    scope_identity = {
+        "email": "user@test.com",
+        "teams": [],
+        "is_authenticated": True,
+        "is_admin": False,
+    }
+    scope_headers = {
+        "x-mcp-session-id": "session-123",
+        "x-context-forge-gateway-id": "gateway-123",
+    }
+    mock_request = MagicMock()
+    mock_request.scope = {
+        _MCPGATEWAY_CONTEXT_KEY: {
+            "server_id": "scope-server",
+            "request_headers": scope_headers,
+            "user_context": scope_identity,
+        }
+    }
+    mock_ctx = MagicMock()
+    mock_ctx.request = mock_request
+
+    s_tok = server_id_var.set("stale-server")
+    h_tok = request_headers_var.set({"x-mcp-session-id": "session-123"})
+    u_tok = user_context_var.set({})
+    try:
+        with patch.object(
+            type(mcp_app),
+            "request_context",
+            new_callable=PropertyMock,
+            return_value=mock_ctx,
+        ):
+            sid, headers, user = await _get_request_context_or_default()
+        assert sid == "scope-server"
+        assert headers == scope_headers
+        assert user == scope_identity
     finally:
         server_id_var.reset(s_tok)
         request_headers_var.reset(h_tok)
@@ -14920,20 +15052,32 @@ async def test_get_request_context_reads_scope_context(monkeypatch):
     from unittest.mock import PropertyMock
 
     # First-Party
-    from mcpgateway.transports.streamablehttp_transport import _get_request_context_or_default, mcp_app, server_id_var
+    from mcpgateway.transports.streamablehttp_transport import (
+        _get_request_context_or_default,
+        mcp_app,
+        request_headers_var,
+        server_id_var,
+        user_context_var,
+        user_identity_var,
+    )
 
     # Ensure ContextVars are at defaults (simulating SDK task context)
     token = server_id_var.set("default_server_id")
+    original_headers = request_headers_var.get()
+    original_user_context = user_context_var.get()
+    original_user_identity = user_identity_var.get()
 
     injected_user_context = {"email": "pub@example.com", "teams": [], "is_authenticated": True, "is_admin": False}
-    injected_headers = {"authorization": "Bearer tok123"}
+    injected_headers = {"x-mcp-session-id": "session-123"}
     injected_server_id = "abc123def456"  # pragma: allowlist secret
 
     mock_scope = {
-        _MCPGATEWAY_CONTEXT_KEY: {
-            "server_id": injected_server_id,
-            "request_headers": injected_headers,
-            "user_context": injected_user_context,
+        "state": {
+            _MCPGATEWAY_CONTEXT_KEY: {
+                "server_id": injected_server_id,
+                "request_headers": injected_headers,
+                "user_context": injected_user_context,
+            }
         }
     }
 
@@ -14950,8 +15094,15 @@ async def test_get_request_context_reads_scope_context(monkeypatch):
             assert sid == injected_server_id
             assert headers == injected_headers
             assert user == injected_user_context
+            assert server_id_var.get() == injected_server_id
+            assert request_headers_var.get() == injected_headers
+            assert user_context_var.get() == injected_user_context
+            assert user_identity_var.get().email == "pub@example.com"
     finally:
         server_id_var.reset(token)
+        request_headers_var.set(original_headers)
+        user_context_var.set(original_user_context)
+        user_identity_var.set(original_user_identity)
 
 
 @pytest.mark.asyncio
@@ -14988,6 +15139,137 @@ async def test_get_request_context_scope_fallback_to_reauth(monkeypatch):
 
             assert sid == valid_hex_id
             assert user == normalized
+    finally:
+        server_id_var.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_get_request_context_incomplete_scope_falls_back_to_reauth(monkeypatch):
+    """An ASGI context without a principal must not suppress verified request recovery."""
+    # Standard
+    from unittest.mock import PropertyMock
+
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import (
+        _get_request_context_or_default,
+        mcp_app,
+        server_id_var,
+    )
+
+    token = server_id_var.set("default_server_id")
+    gateway_id = "abc123def456"  # pragma: allowlist secret
+    current_headers = {
+        "authorization": "Bearer current-request-token",  # pragma: allowlist secret
+        "x-context-forge-gateway-id": gateway_id,
+    }
+    mock_request = MagicMock()
+    mock_request.scope = {
+        "state": {
+            _MCPGATEWAY_CONTEXT_KEY: {
+                "server_id": "default_server_id",
+                "request_headers": {"x-mcp-session-id": "stale-session"},
+                "user_context": {},
+            }
+        }
+    }
+    mock_request.url.path = "/mcp"
+    mock_request.headers = current_headers
+    mock_request.cookies = {}
+    mock_ctx = MagicMock()
+    mock_ctx.request = mock_request
+
+    raw_jwt = {"sub": "agent@example.com", "token_use": "api", "teams": ["team-1"]}
+    normalized = {
+        "email": "agent@example.com",
+        "teams": ["team-1"],
+        "is_admin": False,
+        "is_authenticated": True,
+    }
+    auth = AsyncMock(return_value=raw_jwt)
+    normalize = AsyncMock(return_value=normalized)
+    monkeypatch.setattr(
+        "mcpgateway.transports.streamablehttp_transport.require_auth_header_first",
+        auth,
+    )
+    monkeypatch.setattr(
+        "mcpgateway.transports.streamablehttp_transport._normalize_jwt_payload",
+        normalize,
+    )
+
+    try:
+        with patch.object(type(mcp_app), "request_context", new_callable=PropertyMock, return_value=mock_ctx):
+            sid, headers, user = await _get_request_context_or_default()
+
+            assert sid == "default_server_id"
+            assert headers == current_headers
+            assert user == normalized
+            auth.assert_awaited_once()
+            normalize.assert_awaited_once_with(raw_jwt)
+    finally:
+        server_id_var.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_get_request_context_authorization_replaces_stale_scope_identity(monkeypatch):
+    """A current bearer token must win over a populated but stale SDK scope."""
+    # Standard
+    from unittest.mock import PropertyMock
+
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import (
+        _get_request_context_or_default,
+        mcp_app,
+        server_id_var,
+    )
+
+    token = server_id_var.set("default_server_id")
+    current_headers = {
+        "authorization": "Bearer current-request-token",  # pragma: allowlist secret
+        "x-context-forge-gateway-id": "abc123def456",  # pragma: allowlist secret
+    }
+    mock_request = MagicMock()
+    mock_request.scope = {
+        "state": {
+            _MCPGATEWAY_CONTEXT_KEY: {
+                "server_id": "default_server_id",
+                "request_headers": {"x-mcp-session-id": "stale-session"},
+                "user_context": {
+                    "email": "stale@example.com",
+                    "is_authenticated": True,
+                },
+            }
+        }
+    }
+    mock_request.url.path = "/mcp"
+    mock_request.headers = current_headers
+    mock_request.cookies = {}
+    mock_ctx = MagicMock()
+    mock_ctx.request = mock_request
+
+    raw_jwt = {"sub": "current@example.com", "token_use": "api", "teams": []}
+    normalized = {
+        "email": "current@example.com",
+        "teams": [],
+        "is_admin": False,
+        "is_authenticated": True,
+    }
+    auth = AsyncMock(return_value=raw_jwt)
+    monkeypatch.setattr(
+        "mcpgateway.transports.streamablehttp_transport.require_auth_header_first",
+        auth,
+    )
+    monkeypatch.setattr(
+        "mcpgateway.transports.streamablehttp_transport._normalize_jwt_payload",
+        AsyncMock(return_value=normalized),
+    )
+
+    try:
+        with patch.object(type(mcp_app), "request_context", new_callable=PropertyMock, return_value=mock_ctx):
+            _sid, headers, user = await _get_request_context_or_default()
+
+            assert headers == current_headers
+            assert user == normalized
+            auth.assert_awaited_once()
     finally:
         server_id_var.reset(token)
 
