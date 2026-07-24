@@ -41,6 +41,7 @@ esac
 case "$*" in
     *repository/ubi10/ubi-minimal/images*) cat "$FIXTURE_DIR/ubi-minimal.json" ;;
     *repository/ubi10/nodejs-24/images*)   cat "$FIXTURE_DIR/nodejs.json" ;;
+    *repository/ubi10/ubi-init/images*)    cat "$FIXTURE_DIR/ubi-init.json" ;;
     *repository/ubi10/images*)             cat "$FIXTURE_DIR/ubi10.json" ;;
     *) echo "stub curl: unstubbed URL: $*" >&2; exit 22 ;;
 esac
@@ -175,7 +176,8 @@ write_tags() {  # write_tags <fixture-name> <tag>...
 }
 
 @test "refuses to manage a pin that is not a full build tag" {
-    sed -i '' 's|^ARG UBI_BASE=.*|ARG UBI_BASE=registry.access.redhat.com/ubi10:latest|' "$CONTAINERFILE_PATH"
+    sed -i.bak 's|^ARG UBI_BASE=.*|ARG UBI_BASE=registry.access.redhat.com/ubi10:latest|' "$CONTAINERFILE_PATH"
+    rm -f "${CONTAINERFILE_PATH}.bak"
     cp "$CONTAINERFILE_PATH" "$TEST_DIR/Containerfile.orig"
     write_tags ubi10.json        "10.2-1784669000"
     write_tags nodejs.json       "10.2-1784624696"
@@ -183,6 +185,37 @@ write_tags() {  # write_tags <fixture-name> <tag>...
 
     run "$SCRIPT"
     [ "$status" -eq 1 ]
+    cmp "$CONTAINERFILE_PATH" "$TEST_DIR/Containerfile.orig"
+    cmp "$WHEELS_CONTAINERFILE_PATH" "$TEST_DIR/wheels.Containerfile.orig"
+}
+
+@test "queries the Pyxis repository derived from the pinned image path" {
+    # Pin UBI_BASE at an image path the old hard-coded map did not know; the
+    # script must query that repository, not a static per-ARG mapping.
+    sed -i.bak 's|^ARG UBI_BASE=.*|ARG UBI_BASE=registry.access.redhat.com/ubi10/ubi-init:10.2-100|' "$CONTAINERFILE_PATH"
+    rm -f "${CONTAINERFILE_PATH}.bak"
+    write_tags ubi-init.json     "10.2-1784669000"
+    write_tags nodejs.json       "10.2-1784624696"
+    write_tags ubi-minimal.json  "10.2-1784581369"
+
+    run "$SCRIPT"
+    [ "$status" -eq 0 ]
+
+    run grep '^ARG UBI_BASE=' "$CONTAINERFILE_PATH"
+    [ "$output" = "ARG UBI_BASE=registry.access.redhat.com/ubi10/ubi-init:10.2-1784669000" ]
+}
+
+@test "refuses a pin on a registry other than registry.access.redhat.com" {
+    sed -i.bak 's|^ARG UBI_BASE=.*|ARG UBI_BASE=quay.io/ubi10:10.2-1784581466|' "$CONTAINERFILE_PATH"
+    rm -f "${CONTAINERFILE_PATH}.bak"
+    cp "$CONTAINERFILE_PATH" "$TEST_DIR/Containerfile.orig"
+    write_tags ubi10.json        "10.2-1784669000"
+    write_tags nodejs.json       "10.2-1784624696"
+    write_tags ubi-minimal.json  "10.2-1784581369"
+
+    run "$SCRIPT"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"not on registry.access.redhat.com"* ]]
     cmp "$CONTAINERFILE_PATH" "$TEST_DIR/Containerfile.orig"
     cmp "$WHEELS_CONTAINERFILE_PATH" "$TEST_DIR/wheels.Containerfile.orig"
 }
