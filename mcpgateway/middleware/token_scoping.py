@@ -793,6 +793,7 @@ class TokenScopingMiddleware:
         from mcpgateway.auth import _get_email_by_id_sync  # pylint: disable=import-outside-toplevel
 
         async def resolve_uuid_subject(user_id: str) -> str | None:
+            """Resolve a UUID subject to the owning user's email."""
             return await asyncio.to_thread(_get_email_by_id_sync, user_id)
 
         return await resolve_jwt_user_email_from_payload(payload, uuid_email_resolver=resolve_uuid_subject)

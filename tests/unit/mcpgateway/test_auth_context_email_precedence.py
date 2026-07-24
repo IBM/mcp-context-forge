@@ -220,6 +220,13 @@ class TestJwtPayloadEmailResolution:
         assert await auth_context.resolve_jwt_user_email_from_payload(payload, uuid_email_resolver=resolve_user_id) is None
 
     @pytest.mark.asyncio
+    async def test_uuid_sub_without_resolver_resolves_to_none(self):
+        """UUID subjects need an explicit resolver to become user_email."""
+        payload = {"sub": self.USER_ID}
+
+        assert await auth_context.resolve_jwt_user_email_from_payload(payload) is None
+
+    @pytest.mark.asyncio
     async def test_signed_user_email_does_not_call_uuid_resolver(self):
         """Well-formed UUID-sub API tokens avoid a DB lookup."""
 

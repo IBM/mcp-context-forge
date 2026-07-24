@@ -775,7 +775,9 @@ async def _enforce_revocation_and_active_user(payload: dict) -> None:
             logger.warning("Token revocation check failed for JTI %s: %s", jti, exc)
 
     try:
+
         async def resolve_uuid_subject(user_id: str) -> str | None:
+            """Resolve a UUID subject to the owning user's email."""
             return await asyncio.to_thread(_get_email_by_id_sync, user_id)
 
         username = await resolve_jwt_user_email_from_payload(payload, uuid_email_resolver=resolve_uuid_subject)
