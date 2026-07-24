@@ -26084,6 +26084,11 @@ class TestParseOAuthResource:
     def test_non_string_returns_none(self, raw):
         assert parse_oauth_resource_form(raw) is None
 
+    @pytest.mark.parametrize("raw", [",,", " , ", ",\n,", " , , "])
+    def test_delimiter_only_returns_none(self, raw):
+        """Separators with no URI content yield zero pieces after splitting."""
+        assert parse_oauth_resource_form(raw) is None
+
     def test_single_uri_passes_through(self):
         assert parse_oauth_resource_form("https://api.example.com") == "https://api.example.com"
 

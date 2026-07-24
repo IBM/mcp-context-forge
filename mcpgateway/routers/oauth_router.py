@@ -105,14 +105,6 @@ async def enforce_fetch_tools_csrf(request: Request) -> None:
         raise HTTPException(status_code=403, detail="CSRF validation failed")
 
 
-# _derive_resource_origin moved to mcpgateway.services.token_validation_service
-# so the OAuth route, the refresh path in token_storage_service, and the
-# validator fallback all share one implementation. Re-exported below.
-from mcpgateway.services.token_validation_service import _derive_resource_origin  # noqa: E402  pylint: disable=wrong-import-position
-
-__all__ = ["_derive_resource_origin"]
-
-
 def _is_well_formed_audience(value: Any) -> bool:
     """Return True if *value* is a usable audience claim shape.
 

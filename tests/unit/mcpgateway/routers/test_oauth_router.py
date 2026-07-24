@@ -3219,3 +3219,140 @@ class TestOAuthClientManagementScopeGuard:
             assert exc_info.value.status_code == 403
         else:
             assert _require_unnarrowed_admin(request, admin_user) is None
+
+
+class TestIsWellFormedAudience:
+    """Shape validation for the audience claim gate used before persisting learned audiences."""
+
+    @pytest.mark.parametrize("value", ["https://api.example.com", " client-id ", "a"])
+    def test_accepts_non_empty_strings(self, value):
+        from mcpgateway.routers.oauth_router import _is_well_formed_audience
+
+        assert _is_well_formed_audience(value) is True
+
+    @pytest.mark.parametrize("value", ["", "   ", "\t\n"])
+    def test_rejects_blank_strings(self, value):
+        from mcpgateway.routers.oauth_router import _is_well_formed_audience
+
+        assert _is_well_formed_audience(value) is False
+
+    @pytest.mark.parametrize("value", [["a"], ["a", "b"], [" a "]])
+    def test_accepts_lists_of_non_empty_strings(self, value):
+        from mcpgateway.routers.oauth_router import _is_well_formed_audience
+
+        assert _is_well_formed_audience(value) is True
+
+    @pytest.mark.parametrize("value", [[], ["", "a"], ["   "], ["a", 1], [None], ["a", ["b"]]])
+    def test_rejects_malformed_lists(self, value):
+        from mcpgateway.routers.oauth_router import _is_well_formed_audience
+
+        assert _is_well_formed_audience(value) is False
+
+    @pytest.mark.parametrize("value", [None, 0, 1, 3.14, True, {"aud": "x"}, ("a",)])
+    def test_rejects_non_string_non_list(self, value):
+        from mcpgateway.routers.oauth_router import _is_well_formed_audience
+
+        assert _is_well_formed_audience(value) is False
+
+
+class TestPersistLearnedAudience:
+    """Branch coverage for _persist_learned_audience (first-write-only learning with issuer pinning)."""
+
+    @staticmethod
+    def _gateway(oauth_config):
+        gateway = Mock(spec=Gateway)
+        gateway.name = "gw-audience-test"
+        gateway.oauth_config = oauth_config
+        return gateway
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("bad_aud", [None, "", "   ", 123, [], ["", "  "], ["ok", 7], {"aud": "x"}])
+    async def test_skips_malformed_token_aud(self, mock_db, bad_aud):
+        """Malformed token_aud must be dropped without touching persisted state."""
+        from mcpgateway.routers.oauth_router import _persist_learned_audience
+
+        gateway = self._gateway({"issuer": "https://idp.example.com"})
+        await _persist_learned_audience(gateway, {"token_aud": bad_aud}, mock_db)
+
+        mock_db.flush.assert_not_called()
+        assert gateway.oauth_config == {"issuer": "https://idp.example.com"}
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("existing_resource", ["https://api.example.com", ["https://a.example.com", "https://b.example.com"]])
+    async def test_skips_when_resource_already_set(self, mock_db, existing_resource):
+        """First-write-only: an existing usable resource is never overwritten by a callback."""
+        from mcpgateway.routers.oauth_router import _persist_learned_audience
+
+        gateway = self._gateway({"resource": existing_resource})
+        await _persist_learned_audience(gateway, {"token_aud": "new-audience"}, mock_db)
+
+        mock_db.flush.assert_not_called()
+        assert gateway.oauth_config == {"resource": existing_resource}
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("bad_iss", [None, 123, "https://other-idp.example.com", "https://idp.example.com.evil.example"])
+    async def test_skips_when_token_issuer_mismatches(self, mock_db, bad_iss):
+        """Issuer pinning: a token from a different (or unverifiable) AS cannot inject an audience."""
+        from mcpgateway.routers.oauth_router import _persist_learned_audience
+
+        gateway = self._gateway({"issuer": "https://idp.example.com"})
+        await _persist_learned_audience(gateway, {"token_aud": "aud-x", "token_iss": bad_iss}, mock_db)
+
+        mock_db.flush.assert_not_called()
+        assert gateway.oauth_config == {"issuer": "https://idp.example.com"}
+
+    @pytest.mark.asyncio
+    async def test_persists_when_issuer_matches_modulo_trailing_slash(self, mock_db):
+        """Trailing-slash differences between configured issuer and iss claim are equivalent."""
+        from mcpgateway.routers.oauth_router import _persist_learned_audience
+
+        gateway = self._gateway({"issuer": "https://idp.example.com/"})
+        await _persist_learned_audience(gateway, {"token_aud": "aud-x", "token_iss": "https://idp.example.com"}, mock_db)
+
+        mock_db.flush.assert_called_once_with()
+        assert gateway.oauth_config == {"issuer": "https://idp.example.com/", "resource": "aud-x"}
+
+    @pytest.mark.asyncio
+    async def test_persists_when_no_issuer_configured(self, mock_db):
+        """Without a configured issuer the pinning check is skipped (non-OIDC setups)."""
+        from mcpgateway.routers.oauth_router import _persist_learned_audience
+
+        gateway = self._gateway({})
+        await _persist_learned_audience(gateway, {"token_aud": ["aud-a", "aud-b"]}, mock_db)
+
+        mock_db.flush.assert_called_once_with()
+        assert gateway.oauth_config == {"resource": ["aud-a", "aud-b"]}
+
+    @pytest.mark.asyncio
+    async def test_persists_when_oauth_config_is_none(self, mock_db):
+        from mcpgateway.routers.oauth_router import _persist_learned_audience
+
+        gateway = self._gateway(None)
+        await _persist_learned_audience(gateway, {"token_aud": "aud-x"}, mock_db)
+
+        mock_db.flush.assert_called_once_with()
+        assert gateway.oauth_config == {"resource": "aud-x"}
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("blank_resource", ["", "   ", [], ["", "  "]])
+    async def test_blank_resource_treated_as_unset_and_relearned(self, mock_db, blank_resource):
+        """Empty shapes count as unset so clearing the field via the update API re-arms learning."""
+        from mcpgateway.routers.oauth_router import _persist_learned_audience
+
+        gateway = self._gateway({"resource": blank_resource})
+        await _persist_learned_audience(gateway, {"token_aud": "aud-new"}, mock_db)
+
+        mock_db.flush.assert_called_once_with()
+        assert gateway.oauth_config == {"resource": "aud-new"}
+
+    @pytest.mark.asyncio
+    async def test_input_oauth_config_dict_is_not_mutated(self, mock_db):
+        """The write path copies the config dict instead of mutating the caller's object."""
+        from mcpgateway.routers.oauth_router import _persist_learned_audience
+
+        original = {"issuer": "https://idp.example.com"}
+        gateway = self._gateway(original)
+        await _persist_learned_audience(gateway, {"token_aud": "aud-x", "token_iss": "https://idp.example.com"}, mock_db)
+
+        assert original == {"issuer": "https://idp.example.com"}
+        assert gateway.oauth_config is not original
