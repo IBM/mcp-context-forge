@@ -12380,6 +12380,9 @@ async def admin_delete_tool(tool_id: str, request: Request, db: Session = Depend
     except PermissionError as e:
         LOGGER.warning(f"Permission denied for user {user_email} deleting tool {tool_id}: {e}")
         error_message = str(e)
+    except ToolLockConflictError as e:
+        LOGGER.warning(f"Lock conflict for user {user_email} deleting tool {tool_id}: {e}")
+        error_message = "Tool is being modified by another request. Please try again."
     except Exception as e:
         LOGGER.error(f"Error deleting tool: {e}")
         error_message = "Failed to delete tool. Please try again."

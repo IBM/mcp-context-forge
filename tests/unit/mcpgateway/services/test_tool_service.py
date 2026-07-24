@@ -49,6 +49,7 @@ from mcpgateway.services.tool_service import (
     TextContent,
     ToolError,
     ToolInvocationError,
+    ToolLockConflictError,
     ToolNameConflictError,
     ToolNotFoundError,
     ToolResult,
@@ -1657,15 +1658,31 @@ class TestToolService:
 
     @pytest.mark.asyncio
     async def test_delete_tool_not_found(self, tool_service, test_db):
-        """Test deleting a non-existent tool."""
-        # Mock DB get to return None
+        """Missing tool surfaces ToolNotFoundError, not a generic ToolError wrap."""
         test_db.get = Mock(return_value=None)
+        test_db.rollback = Mock()
 
-        # The service wraps the exception in ToolError
-        with pytest.raises(ToolError) as exc_info:
+        with pytest.raises(ToolNotFoundError) as exc_info:
             await tool_service.delete_tool(test_db, 999)
 
         assert "Tool not found: 999" in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_delete_tool_lock_conflict(self, tool_service, test_db):
+        """Concurrent locker on the tool row surfaces as ToolLockConflictError (409)."""
+        from sqlalchemy.exc import OperationalError
+
+        test_db.rollback = Mock()
+
+        with patch(
+            "mcpgateway.services.tool_service.get_for_update",
+            side_effect=OperationalError("locked", {}, Exception("locked")),
+        ):
+            with pytest.raises(ToolLockConflictError) as exc_info:
+                await tool_service.delete_tool(test_db, "tool-id")
+
+        assert "currently being modified" in str(exc_info.value)
+        test_db.rollback.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_set_tool_state(self, tool_service, mock_tool, test_db):

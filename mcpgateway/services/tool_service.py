@@ -3358,24 +3358,34 @@ class ToolService(BaseService):
 
         Raises:
             ToolNotFoundError: If the tool is not found.
+            ToolLockConflictError: If the tool row is locked by another transaction.
             PermissionError: If user doesn't own the tool.
             ToolError: For other deletion errors.
 
         Examples:
             >>> from mcpgateway.services.tool_service import ToolService
-            >>> from unittest.mock import MagicMock, AsyncMock
+            >>> from unittest.mock import MagicMock, AsyncMock, patch
             >>> service = ToolService()
             >>> db = MagicMock()
             >>> tool = MagicMock()
-            >>> db.get.return_value = tool
-            >>> db.delete = MagicMock()
             >>> db.commit = MagicMock()
             >>> service._notify_tool_deleted = AsyncMock()
             >>> import asyncio
-            >>> asyncio.run(service.delete_tool(db, 'tool_id'))
+            >>> with patch("mcpgateway.services.tool_service.get_for_update", return_value=tool):
+            ...     asyncio.run(service.delete_tool(db, 'tool_id'))
         """
         try:
-            tool = db.get(DbTool, tool_id)
+            # Use nowait=True to fail fast if row is locked, mirroring set_tool_state.
+            # This serializes concurrent associate/delete operations on the same tool
+            # so callers see a 409 rather than an opaque 500 from a downstream FK
+            # violation when an INSERT into server_tool_association races with the
+            # association cleanup below.
+            try:
+                tool = get_for_update(db, DbTool, tool_id, nowait=True)
+            except OperationalError as lock_err:
+                # Row is locked by another transaction - fail fast with 409
+                db.rollback()
+                raise ToolLockConflictError(f"Tool {tool_id} is currently being modified by another request") from lock_err
             if not tool:
                 raise ToolNotFoundError(f"Tool not found: {tool_id}")
 
@@ -3473,6 +3483,14 @@ class ToolService(BaseService):
                 resource_id=tool_id,
                 error=pe,
             )
+            raise
+        except ToolLockConflictError:
+            # Re-raise lock conflicts without wrapping - allows 409 response.
+            # Rollback already performed in the inner OperationalError handler.
+            raise
+        except ToolNotFoundError:
+            # Re-raise not found without wrapping - allows 404 response
+            db.rollback()
             raise
         except Exception as e:
             db.rollback()
