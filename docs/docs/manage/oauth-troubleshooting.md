@@ -655,6 +655,169 @@ This section covers requests that present an access token issued by an external 
 
 ---
 
+---
+
+## Popup OAuth Flow Issues (React UI)
+
+### Popup Blocked by Browser
+
+**Symptom**: OAuth popup doesn't open, or opens then immediately closes.
+
+**Cause**: Browser popup blocker or user gesture requirement not met.
+
+**Fix**:
+- Ensure OAuth is triggered by direct user action (click handler)
+- Check browser console for popup blocker warnings
+- Add site to browser's popup allowlist
+- Use `window.open()` synchronously in click handler (not in async callback)
+
+### postMessage Not Received
+
+**Symptom**: Popup completes OAuth but parent window doesn't receive result.
+
+**Causes**:
+1. Parent window closed before callback
+2. Event listener not registered before popup opens
+3. `event.source` validation rejecting message
+4. Cross-origin policy blocking message
+
+**Diagnosis**:
+```javascript
+// Add debug logging to message handler
+window.addEventListener('message', (event) => {
+  console.log('Received message:', event.data);
+  console.log('Event source matches popup:', event.source === authWindow);
+  console.log('Event origin:', event.origin);
+});
+```
+
+**Fix**:
+- Register message listener BEFORE opening popup
+- Verify `event.source === authWindow` check is correct
+- Check browser console for CORS/CSP errors
+- Ensure parent window stays open during OAuth flow
+
+### Popup State Mismatch
+
+**Symptom**: Callback fails with "Invalid state" even though popup flow worked.
+
+**Cause**: State token doesn't have `popup.` prefix.
+
+**Diagnosis**:
+```bash
+# Check state generation logs
+grep "popup\." logs/mcpgateway.log
+grep "Stored OAuth state" logs/mcpgateway.log
+```
+
+**Fix**:
+- Verify `popup=true` query parameter is included in authorize URL
+- Check `oauth_manager.py:1033` generates prefixed state
+- Ensure state prefix isn't stripped during storage/retrieval
+
+### CSP Blocks Inline Script
+
+**Symptom**: Popup shows blank page or "Content Security Policy" error.
+
+**Cause**: Strict CSP without nonce support for inline scripts.
+
+**Diagnosis**:
+```bash
+# Check browser console for CSP errors
+# Look for: "Refused to execute inline script because it violates CSP"
+```
+
+**Fix**:
+- Verify CSP middleware generates nonces (`mcpgateway/middleware/csp_middleware.py`)
+- Check `get_csp_nonce_from_request()` returns valid nonce
+- Ensure callback script includes nonce attribute: `<script nonce="...">`
+- Review CSP header: should include `script-src 'self' 'nonce-...'`
+
+### Popup Closes Before User Sees Result
+
+**Symptom**: Popup closes immediately, user doesn't see success/error message.
+
+**Cause**: `window.close()` executes before user can read the message.
+
+**Expected Behavior**:
+- Popup posts message to parent and closes automatically
+- Parent window should display success/error notification
+- Popup fallback HTML is only shown if `window.opener` is missing
+
+**Fix**: Handle notifications in parent window, not popup:
+```javascript
+window.addEventListener('message', (event) => {
+  if (event.source !== authWindow) return;
+
+  const { type, status, error, errorDescription } = event.data;
+
+  if (type === 'oauth_callback') {
+    if (status === 'success') {
+      showNotification('OAuth authorization successful', 'success');
+    } else {
+      showNotification(`OAuth failed: ${errorDescription}`, 'error');
+    }
+  }
+});
+```
+
+### Multiple Popups or Duplicate Messages
+
+**Symptom**: Multiple OAuth popups open or parent receives duplicate messages.
+
+**Cause**:
+- User clicks "Authorize" multiple times
+- Event listener registered multiple times
+- Popup reference not tracked
+
+**Fix**:
+```javascript
+let authWindow = null;
+
+function startOAuth(gatewayId) {
+  // Close existing popup if any
+  if (authWindow && !authWindow.closed) {
+    authWindow.close();
+  }
+
+  authWindow = window.open(
+    `/oauth/authorize/${gatewayId}?popup=true`,
+    'oauth-popup',
+    'width=600,height=700'
+  );
+}
+
+// Use once() to prevent duplicate listeners
+window.addEventListener('message', handleOAuthMessage, { once: true });
+```
+
+### Popup Opens But Shows Error Page
+
+**Symptom**: Popup opens but immediately shows OAuth error page.
+
+**Causes**:
+1. Gateway not configured for OAuth
+2. Missing OAuth configuration fields
+3. Invalid redirect URI
+4. Provider rejected authorization request
+
+**Diagnosis**:
+```bash
+# Check gateway OAuth config
+curl -H "Authorization: Bearer $TOKEN" \
+  http://localhost:4444/oauth/status/{gateway_id}
+
+# Check logs for authorization errors
+grep "OAuth provider returned error" logs/mcpgateway.log
+```
+
+**Fix**:
+- Verify gateway has `auth_type: oauth` and complete `oauth_config`
+- Check redirect URI matches provider configuration
+- Review provider's authorization requirements (scopes, audience, etc.)
+
+---
+
 ## Related Documentation
 
 - [OAuth Integration](oauth.md) - Main OAuth setup guide

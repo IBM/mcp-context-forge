@@ -27,6 +27,7 @@
 - **`make setup`** - For fresh checkouts: copies `.env.example` → `.env` and runs `init-secrets-patch-env` to provision real secrets before first use.
 - **`mcpgateway/scripts/init_secrets.py`** - Script backing both Makefile targets; generates secrets using `secrets.token_hex(32)` and rewrites the relevant lines in `.env` without touching unrelated configuration.
 - **`mcpgateway/scripts/validate_env.py`** - Startup validation script invoked by the container entrypoint and `make check-env` that enforces the secret strength policy and surfaces clear remediation guidance.
+- **Popup-Based OAuth Authorization Flow** ([#5660](https://github.com/IBM/mcp-context-forge/issues/5660)) - `GET /oauth/authorize/{gateway_id}` accepts an optional `popup` query parameter that prefixes the generated state token with `popup.`. `GET /oauth/callback` detects the prefix and, for both success and every error path (provider error, missing code, invalid state, `OAuthError`, unexpected exception), responds with a minimal CSP-nonce'd `postMessage` script instead of the full HTML admin page, so a React UI can drive the flow in a popup window without a parent-page navigation. Non-popup flows keep the existing full HTML response unchanged.
 
 ### Removed
 
