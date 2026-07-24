@@ -1315,7 +1315,7 @@ async def main():
     EVALUATION_CACHE = EvaluationCache()
     JUDGE_CACHE = JudgeResponseCache()
     BENCHMARK_CACHE = BenchmarkCache()
-    RESULTS_STORE = ResultsStore()
+    RESULTS_STORE = await ResultsStore.create()
 
     # Mark storage as ready
     mark_storage_ready()
