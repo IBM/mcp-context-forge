@@ -105,19 +105,19 @@ class TestTokenValidationResult:
         assert len(errors) == 1
         assert "audience" in errors[0].lower()
 
-    def test_blocking_errors_audience_advisory_when_not_authoritative(self):
-        """audience_match=False is advisory (not blocking) when audience_authoritative=False."""
+    def test_blocking_errors_audience_advisory_when_derived(self):
+        """audience_match=False is advisory (not blocking) when audience_source is 'derived'."""
         r = TokenValidationResult(is_jwt=True)
         r.audience_match = False
-        r.audience_authoritative = False
+        r.audience_source = "derived"
         r.warnings.append("Token audience mismatch: token aud does not match expected resource or gateway URL")
         assert r.blocking_errors == []
 
-    def test_blocking_errors_audience_blocking_when_authoritative(self):
-        """audience_match=False is blocking when audience_authoritative=True (default)."""
+    def test_blocking_errors_audience_blocking_when_configured(self):
+        """audience_match=False is blocking when audience_source is 'configured' (default)."""
         r = TokenValidationResult(is_jwt=True)
         r.audience_match = False
-        r.audience_authoritative = True
+        r.audience_source = "configured"
         r.warnings.append("Token audience mismatch: token aud does not match expected resource or gateway URL")
         assert len(r.blocking_errors) == 1
 
@@ -330,7 +330,7 @@ class TestValidateOauthTokenClaims:
         result = validate_oauth_token_claims(token, oauth_config, "https://gw.example.com", "test-gw")
 
         assert result.audience_match is False
-        assert result.audience_authoritative is True
+        assert result.audience_source == "configured"
         assert len(result.blocking_errors) == 1
 
     def test_audience_mismatch_advisory_when_no_resource_configured(self):
@@ -340,18 +340,19 @@ class TestValidateOauthTokenClaims:
         result = validate_oauth_token_claims(token, oauth_config, "https://gw.example.com", "test-gw")
 
         assert result.audience_match is False
-        assert result.audience_authoritative is False
+        assert result.audience_source == "derived"
         assert any("audience" in w.lower() for w in result.warnings)
         assert result.blocking_errors == []
 
-    def test_audience_match_when_no_resource_authoritative_irrelevant(self):
-        """When audience matches, audience_authoritative stays at default (True) and is not lowered."""
+    def test_audience_match_when_no_resource_source_recorded(self):
+        """When audience matches via the derived fallback, the source is recorded as 'derived' but nothing blocks."""
         token = _make_jwt({"aud": "https://gw.example.com"})
         oauth_config = {}
         result = validate_oauth_token_claims(token, oauth_config, "https://gw.example.com", "test-gw")
 
         assert result.audience_match is True
-        assert result.audience_authoritative is True
+        assert result.audience_source == "derived"
+        assert result.blocking_errors == []
 
     # -- Scope mismatch --
 
@@ -549,7 +550,7 @@ class TestOAuthRequireConfiguredResourceSetting:
             result = validate_oauth_token_claims(token, {}, "https://gw.example.com", "test-gw")
 
         assert result.audience_match is False
-        assert result.audience_authoritative is False
+        assert result.audience_source == "derived"
         assert result.blocking_errors == []
 
     def test_enabled_makes_auto_derived_authoritative(self):
@@ -558,9 +559,11 @@ class TestOAuthRequireConfiguredResourceSetting:
             token = _make_jwt({"aud": "wrong-aud"})
             result = validate_oauth_token_claims(token, {}, "https://gw.example.com", "test-gw")
 
-        assert result.audience_match is False
-        assert result.audience_authoritative is True
-        assert len(result.blocking_errors) == 1
+            # blocking_errors evaluates the strict setting at access time,
+            # so assert inside the patch context.
+            assert result.audience_match is False
+            assert result.audience_source == "derived"
+            assert len(result.blocking_errors) == 1
 
     def test_setting_does_not_downgrade_configured_resource(self):
         """When resource is explicitly configured, mismatch is always authoritative — setting is a no-op."""
@@ -570,7 +573,7 @@ class TestOAuthRequireConfiguredResourceSetting:
             result = validate_oauth_token_claims(token, {"resource": "configured"}, "https://gw.example.com", "test-gw")
 
         assert result.audience_match is False
-        assert result.audience_authoritative is True
+        assert result.audience_source == "configured"
         assert len(result.blocking_errors) == 1
 
     def test_setting_only_affects_mismatches(self):
@@ -608,7 +611,7 @@ class TestLearnedAudPrecedence:
     caller's own OAuthToken row. The precedence is
     ``oauth_config.resource`` > ``learned_aud`` > ``gateway_url``, with the
     first two authoritative and the last advisory (unless the strict setting
-    is on). These tests lock the ordering + the authoritative flag behavior
+    is on). These tests lock the ordering + the audience_source behavior
     for the per-user learned path so a regression cannot silently drop the
     per-user check to advisory.
     """
@@ -618,7 +621,7 @@ class TestLearnedAudPrecedence:
         result = validate_oauth_token_claims(token, {}, "https://gw.example.com", "test-gw", learned_aud="opaque-tenant-a-id")
 
         assert result.audience_match is True
-        assert result.audience_authoritative is True
+        assert result.audience_source == "learned"
         assert result.blocking_errors == []
 
     def test_learned_aud_mismatch_is_authoritative(self):
@@ -626,7 +629,7 @@ class TestLearnedAudPrecedence:
         result = validate_oauth_token_claims(token, {}, "https://gw.example.com", "test-gw", learned_aud="opaque-tenant-a-id")
 
         assert result.audience_match is False
-        assert result.audience_authoritative is True
+        assert result.audience_source == "learned"
         assert len(result.blocking_errors) == 1
 
     def test_configured_resource_beats_learned_aud(self):
@@ -635,7 +638,7 @@ class TestLearnedAudPrecedence:
         result = validate_oauth_token_claims(token, {"resource": "configured-value"}, "https://gw.example.com", "test-gw", learned_aud="learned-value")
 
         assert result.audience_match is False
-        assert result.audience_authoritative is True
+        assert result.audience_source == "configured"
         assert len(result.blocking_errors) == 1
 
     def test_learned_aud_list_shape_supported(self):
@@ -653,7 +656,7 @@ class TestLearnedAudPrecedence:
             result = validate_oauth_token_claims(token, {}, "https://gw.example.com", "test-gw", learned_aud=None)
 
         assert result.audience_match is False
-        assert result.audience_authoritative is False
+        assert result.audience_source == "derived"
         assert result.blocking_errors == []
 
     def test_empty_learned_aud_falls_back_to_gateway_url(self):
@@ -664,5 +667,5 @@ class TestLearnedAudPrecedence:
             result = validate_oauth_token_claims(token, {}, "https://gw.example.com", "test-gw", learned_aud="")
 
         assert result.audience_match is False
-        assert result.audience_authoritative is False
+        assert result.audience_source == "derived"
         assert result.blocking_errors == []
