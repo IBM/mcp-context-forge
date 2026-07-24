@@ -45,7 +45,7 @@ authors = [
 
 dependencies = [
     "llm-guard>=0.3.16",
-    "mcp>=1.28.1",
+    "mcp>=1.28.1,<2",
     "orjson>=3.11.9",
     "rapidfuzz>=3.14.5",
     "redis>=8.0.1",
