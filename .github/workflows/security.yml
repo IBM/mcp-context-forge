@@ -1,0 +1,171 @@
+name: Security Testing
+
+on:
+  pull_request:
+    branches: [main, develop]
+  schedule:
+    - cron: "0 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+  actions: read
+
+env:
+  PYTHON_VERSION: "3.11"
+
+jobs:
+  sast:
+    name: SAST (Semgrep + Bandit)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install security tools
+        run: pip install semgrep bandit[toml] bandit-sarif-formatter
+
+      - name: Run Semgrep
+        run: |
+          mkdir -p reports/security
+          semgrep scan \
+            --config=p/python \
+            --config=p/owasp-top-ten \
+            --config=security/semgrep-rules.yml \
+            --sarif \
+            --output=reports/security/semgrep.sarif \
+            --exclude=tests/ \
+            mcpgateway/
+        continue-on-error: true
+
+      - name: Upload Semgrep SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: reports/security/semgrep.sarif
+          category: semgrep
+
+      - name: Run Bandit
+        run: |
+          bandit --recursive mcpgateway/ \
+            --configfile pyproject.toml \
+            --format sarif \
+            --output reports/security/bandit.sarif \
+            --severity-level medium \
+            --confidence-level medium \
+            --exclude ./tests,./docs
+        continue-on-error: true
+
+      - name: Upload Bandit SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: reports/security/bandit.sarif
+          category: bandit
+
+      - name: Upload reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sast-reports-${{ github.run_id }}
+          path: reports/security/
+          retention-days: 30
+
+  dependency-scan:
+    name: Dependency Vulnerability Scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install pip-audit
+        run: pip install pip-audit
+
+      - name: Run pip-audit
+        run: |
+          mkdir -p reports/security
+          pip-audit \
+            --requirement requirements.txt \
+            --format json \
+            --output reports/security/pip-audit.json \
+            --strict
+        continue-on-error: true
+
+      - name: Upload dependency scan
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-scan-${{ github.run_id }}
+          path: reports/security/pip-audit.json
+          retention-days: 30
+
+  dast:
+    name: DAST (OWASP ZAP)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    services:
+      gateway:
+        image: ghcr.io/ibm/mcp-context-forge:latest
+        ports:
+          - 4444:4444
+        env:
+          SECRET_KEY: ${{ secrets.TEST_SECRET_KEY || 'ci-test-secret' }}
+          DB_URL: "sqlite:///./test.db"
+          LOG_LEVEL: WARNING
+        options: >-
+          --health-cmd "curl -sf http://localhost:4444/health || exit 1"
+          --health-interval 10s
+          --health-retries 12
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Wait for gateway
+        run: |
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:4444/health && exit 0
+            sleep 5
+          done
+          exit 1
+
+      - name: Run ZAP baseline scan
+        uses: zaproxy/action-baseline@v0.12.0
+        with:
+          target: http://localhost:4444
+          rules_file_name: security/zap-config.yml
+          fail_action: true
+          allow_issue_writing: false
+
+      - name: Upload DAST reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dast-reports-${{ github.run_id }}
+          path: reports/security/
+          retention-days: 30
+
+  security-gate:
+    name: Security Gate
+    needs: [sast, dependency-scan, dast]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Evaluate gate
+        run: |
+          if [[ "${{ needs.sast.result }}" == "failure" || \
+                "${{ needs.dependency-scan.result }}" == "failure" || \
+                "${{ needs.dast.result }}" == "failure" ]]; then
+            echo "Security gate FAILED."
+            exit 1
+          fi
+          echo "Security gate PASSED."

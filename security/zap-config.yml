@@ -1,0 +1,79 @@
+env:
+  contexts:
+    - name: mcp-gateway
+      urls:
+        - http://localhost:4444
+      includePaths:
+        - "http://localhost:4444/.*"
+      excludePaths:
+        - "http://localhost:4444/static/.*"
+        - "http://localhost:4444/favicon.ico"
+      authentication:
+        method: json
+        parameters:
+          loginUrl: http://localhost:4444/auth/token
+          loginRequestBody: '{"username":"{%username%}","password":"{%password%}"}'
+        verification:
+          method: response
+          loggedInRegex: '"access_token"'
+          loggedOutRegex: '"detail":".*[Uu]nauthorized'
+      users:
+        - name: admin
+          credentials:
+            username: admin
+            password: ${ZAP_ADMIN_PASSWORD}
+
+  parameters:
+    failOnError: true
+    failOnWarning: false
+    progressToStdout: true
+
+jobs:
+  - type: passiveScan-config
+    parameters:
+      maxAlertsPerRule: 10
+      scanOnlyInScope: true
+
+  - type: spider
+    name: spider
+    parameters:
+      context: mcp-gateway
+      user: admin
+      maxDuration: 5
+      maxDepth: 10
+      maxChildren: 20
+
+  - type: passiveScan-wait
+    parameters:
+      maxDuration: 5
+
+  - type: activeScan
+    name: activeScan
+    parameters:
+      context: mcp-gateway
+      user: admin
+      policy: mcp-gateway-policy
+      maxRuleDurationInMins: 5
+      maxScanDurationInMins: 60
+
+  - type: report
+    parameters:
+      template: sarif
+      reportDir: /zap/reports
+      reportFile: zap-results.sarif
+
+  - type: report
+    parameters:
+      template: traditional-json
+      reportDir: /zap/reports
+      reportFile: zap-results.json
+
+alertFilters:
+  - ruleId: 10027
+    newRisk: False Positive
+    url: ".*"
+    evidence: "TODO"
+  - ruleId: 10096
+    newRisk: False Positive
+    url: ".*"
+    evidence: ""
