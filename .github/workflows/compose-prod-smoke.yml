@@ -41,6 +41,14 @@ jobs:
       GATEWAY_CPU_LIMIT: "4"
       GATEWAY_CPU_RESERVATION: "1"
       TESTING_LOCUST_WORKERS: "1"
+      # Union of every profile started across both stacks: the default
+      # stack enables with-fast-time (auto on linux/amd64), and testing-up
+      # adds testing/inspector/sso. Diagnostics and teardown must span all
+      # of them or profile-only containers (fast test, A2A, Locust,
+      # Inspector, Keycloak) are silently dropped from logs and left
+      # running. Applied only to ps/logs/down — NOT to `up`, which must
+      # keep starting one stack at a time.
+      SMOKE_COMPOSE_PROFILES: "with-fast-time,testing,inspector,sso"
 
     steps:
       - name: Checkout source
@@ -144,10 +152,14 @@ jobs:
       # ── Always-run diagnostics ─────────────────────────────────
       - name: Show compose status
         if: always()
+        env:
+          COMPOSE_PROFILES: ${{ env.SMOKE_COMPOSE_PROFILES }}
         run: docker compose -f docker-compose.yml ps -a || true
 
       - name: Collect compose logs on failure
         if: failure()
+        env:
+          COMPOSE_PROFILES: ${{ env.SMOKE_COMPOSE_PROFILES }}
         run: docker compose -f docker-compose.yml logs --no-color > /tmp/compose-prod-smoke.log || true
 
       - name: Upload compose logs on failure
@@ -171,6 +183,8 @@ jobs:
 
       - name: Stop compose stack
         if: always()
+        env:
+          COMPOSE_PROFILES: ${{ env.SMOKE_COMPOSE_PROFILES }}
         run: make compose-down || true
 
   # ── Required status check gate ─────────────────────────────────
