@@ -487,7 +487,7 @@ describe("CreateServer", () => {
     await user.click(screen.getByRole("button", { name: /Continue/ }));
     await screen.findByRole("heading", { name: "Connect a source" });
 
-    await user.click(screen.getAllByRole("button", { name: "+ Connect" })[0]!);
+    await user.click(screen.getByRole("button", { name: "Connect" }));
 
     expect(mockNavigate).toHaveBeenCalledWith("/app/servers?openForm=true");
   });
