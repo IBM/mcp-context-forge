@@ -11265,18 +11265,6 @@ async def test_get_overview_partial_renders(monkeypatch, mock_request, mock_db):
     engine.dialect.name = "sqlite"
     monkeypatch.setattr("mcpgateway.admin.version_module.engine", engine)
     monkeypatch.setattr("mcpgateway.admin.version_module._database_version", lambda: ("", True))
-    monkeypatch.setattr(
-        "mcpgateway.admin.version_module.MCP_RUNTIME_STATUS_PAYLOAD",
-        {
-            "mode": "rust-managed",
-            "mounted": "rust",
-            "session_core_mode": "rust",
-            "resume_core_mode": "rust",
-            "live_stream_core_mode": "rust",
-            "affinity_core_mode": "rust",
-            "session_auth_reuse_mode": "rust",
-        },
-    )
     monkeypatch.setattr("mcpgateway.admin.version_module.REDIS_AVAILABLE", False)
     monkeypatch.setattr("mcpgateway.admin.version_module.START_TIME", 0)
 
@@ -11342,18 +11330,6 @@ async def test_get_overview_partial_a2a_plugin_manager_redis(monkeypatch, mock_r
     engine.dialect.name = "sqlite"
     monkeypatch.setattr("mcpgateway.admin.version_module.engine", engine)
     monkeypatch.setattr("mcpgateway.admin.version_module._database_version", lambda: ("", True))
-    monkeypatch.setattr(
-        "mcpgateway.admin.version_module.MCP_RUNTIME_STATUS_PAYLOAD",
-        {
-            "mode": "python",
-            "mounted": "python",
-            "session_core_mode": "python",
-            "resume_core_mode": "python",
-            "live_stream_core_mode": "python",
-            "affinity_core_mode": "python",
-            "session_auth_reuse_mode": "python",
-        },
-    )
     monkeypatch.setattr("mcpgateway.admin.version_module.REDIS_AVAILABLE", True)
     monkeypatch.setattr("mcpgateway.admin.version_module.START_TIME", 0)
 
@@ -11410,18 +11386,6 @@ async def test_get_overview_partial_redis_check_exception(monkeypatch, mock_requ
     engine.dialect.name = "sqlite"
     monkeypatch.setattr("mcpgateway.admin.version_module.engine", engine)
     monkeypatch.setattr("mcpgateway.admin.version_module._database_version", lambda: ("", True))
-    monkeypatch.setattr(
-        "mcpgateway.admin.version_module.MCP_RUNTIME_STATUS_PAYLOAD",
-        {
-            "mode": "python",
-            "mounted": "python",
-            "session_core_mode": "python",
-            "resume_core_mode": "python",
-            "live_stream_core_mode": "python",
-            "affinity_core_mode": "python",
-            "session_auth_reuse_mode": "python",
-        },
-    )
     monkeypatch.setattr("mcpgateway.admin.version_module.REDIS_AVAILABLE", True)
     monkeypatch.setattr("mcpgateway.admin.version_module.START_TIME", 0)
 
@@ -11473,18 +11437,6 @@ async def test_get_overview_partial_error_returns_html(monkeypatch, mock_request
     engine.dialect.name = "sqlite"
     monkeypatch.setattr("mcpgateway.admin.version_module.engine", engine)
     monkeypatch.setattr("mcpgateway.admin.version_module._database_version", lambda: ("", True))
-    monkeypatch.setattr(
-        "mcpgateway.admin.version_module.MCP_RUNTIME_STATUS_PAYLOAD",
-        {
-            "mode": "python",
-            "mounted": "python",
-            "session_core_mode": "python",
-            "resume_core_mode": "python",
-            "live_stream_core_mode": "python",
-            "affinity_core_mode": "python",
-            "session_auth_reuse_mode": "python",
-        },
-    )
     monkeypatch.setattr("mcpgateway.admin.version_module.REDIS_AVAILABLE", False)
     monkeypatch.setattr("mcpgateway.admin.version_module.START_TIME", 0)
 
