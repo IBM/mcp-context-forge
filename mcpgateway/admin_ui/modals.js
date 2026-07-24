@@ -12,6 +12,58 @@ import { resetEditSelections } from "./servers.js";
 import { cleanupToolTestModal } from "./tools.js";
 import { getCookie, safeGetElement } from "./utils.js";
 
+const modalOpeners = new Map();
+const focusableSelector = [
+  "a[href]",
+  "button:not([disabled])",
+  "input:not([disabled]):not([type='hidden'])",
+  "select:not([disabled])",
+  "textarea:not([disabled])",
+  "[tabindex]:not([tabindex='-1'])",
+].join(",");
+
+function ensureModalAccessibility(modal, modalId) {
+  if (!modal.hasAttribute("role")) {
+    modal.setAttribute("role", "dialog");
+  }
+  modal.setAttribute("aria-modal", "true");
+
+  if (!modal.hasAttribute("aria-labelledby") && !modal.hasAttribute("aria-label")) {
+    const heading = modal.querySelector("h1, h2, h3, h4, h5, h6");
+    if (heading) {
+      if (!heading.id) {
+        heading.id = `${modalId}-title`;
+      }
+      modal.setAttribute("aria-labelledby", heading.id);
+    } else {
+      modal.setAttribute("aria-label", modalId.replace(/-/g, " "));
+    }
+  }
+}
+
+function focusModal(modal) {
+  const focusTarget = modal.querySelector(focusableSelector) || modal;
+  if (focusTarget === modal && !modal.hasAttribute("tabindex")) {
+    modal.setAttribute("tabindex", "-1");
+  }
+  focusTarget.focus({ preventScroll: true });
+}
+
+function rememberModalOpener(modalId) {
+  const activeElement = document.activeElement;
+  if (activeElement && activeElement !== document.body) {
+    modalOpeners.set(modalId, activeElement);
+  }
+}
+
+function restoreModalOpener(modalId) {
+  const opener = modalOpeners.get(modalId);
+  modalOpeners.delete(modalId);
+  if (opener?.isConnected && typeof opener.focus === "function") {
+    opener.focus({ preventScroll: true });
+  }
+}
+
 export function openModal(modalId) {
   try {
     if (AppState.isModalActive(modalId)) {
@@ -31,8 +83,11 @@ export function openModal(modalId) {
       resetModalState(modalId);
     }
 
+    ensureModalAccessibility(modal, modalId);
+    rememberModalOpener(modalId);
     modal.classList.remove("hidden");
     AppState.setModalActive(modalId);
+    focusModal(modal);
 
     console.log(`✓ Opened modal: ${modalId}`);
   } catch (error) {
@@ -78,6 +133,7 @@ export function closeModal(modalId, clearId = null) {
     // Always executes — modal hides even if cleanup failed
     modal.classList.add("hidden");
     AppState.setModalInactive(modalId);
+    restoreModalOpener(modalId);
 
     console.log(`✓ Closed modal: ${modalId}`);
   } catch (error) {
@@ -182,12 +238,16 @@ export const showCopyableModal = function (title, message, type = "info") {
   overlay.onclick = (e) => {
     if (e.target === overlay) {
       overlay.remove();
+      restoreModalOpener("copyable-modal-overlay");
     }
   };
 
   // Create modal content
   const modal = document.createElement("div");
   modal.className = `${colorScheme.bg} border-l-4 ${colorScheme.border} rounded-lg shadow-xl max-w-lg w-full mx-4 overflow-hidden`;
+  modal.setAttribute("role", "dialog");
+  modal.setAttribute("aria-modal", "true");
+  modal.setAttribute("aria-labelledby", "copyable-modal-title");
 
   modal.innerHTML = `
     <div class="p-4">
@@ -196,7 +256,7 @@ export const showCopyableModal = function (title, message, type = "info") {
           ${colorScheme.icon}
         </div>
         <div class="ml-3 flex-1">
-          <h3 class="text-lg font-medium ${colorScheme.title}">${escapeHtml(title)}</h3>
+          <h3 id="copyable-modal-title" class="text-lg font-medium ${colorScheme.title}">${escapeHtml(title)}</h3>
           <div class="mt-2">
             <pre id="copyable-modal-content" class="text-sm text-gray-700 dark:text-gray-300 whitespace-pre-wrap font-mono bg-white dark:bg-gray-800 p-3 rounded border border-gray-200 dark:border-gray-600 max-h-64 overflow-auto select-all cursor-text">${escapeHtml(message)}</pre>
           </div>
@@ -217,10 +277,15 @@ export const showCopyableModal = function (title, message, type = "info") {
   `;
 
   overlay.appendChild(modal);
+  rememberModalOpener("copyable-modal-overlay");
   document.body.appendChild(overlay);
+  focusModal(modal);
 
   // Add event listeners
-  safeGetElement("copyable-modal-close").onclick = () => overlay.remove();
+  safeGetElement("copyable-modal-close").onclick = () => {
+    overlay.remove();
+    restoreModalOpener("copyable-modal-overlay");
+  };
 
   safeGetElement("copyable-modal-copy").onclick = async () => {
     const content = safeGetElement("copyable-modal-content");
@@ -249,6 +314,7 @@ export const showCopyableModal = function (title, message, type = "info") {
   const handleEscape = (e) => {
     if (e.key === "Escape") {
       overlay.remove();
+      restoreModalOpener("copyable-modal-overlay");
       document.removeEventListener("keydown", handleEscape);
     }
   };

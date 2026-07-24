@@ -74,7 +74,12 @@ describe("setupFormValidation", () => {
     nameField.dispatchEvent(new Event("blur"));
 
     expect(nameField.classList.contains("border-red-500")).toBe(true);
+    expect(nameField.getAttribute("aria-invalid")).toBe("true");
     const errorMsg = document.querySelector('[data-error-message-for="name"]');
+    expect(errorMsg.id).toBe("test-name-error");
+    expect(errorMsg.getAttribute("role")).toBe("status");
+    expect(errorMsg.getAttribute("aria-live")).toBe("polite");
+    expect(nameField.getAttribute("aria-describedby")).toContain("test-name-error");
     expect(errorMsg.classList.contains("invisible")).toBe(false);
   });
 
@@ -83,8 +88,9 @@ describe("setupFormValidation", () => {
       <form>
         <div>
           <label for="test-name">Name</label>
-          <input id="test-name" name="name" value="" class="border-red-500" />
-          <p data-error-message-for="name">Old error</p>
+          <input id="test-name" name="name" value="" class="border-red-500" aria-invalid="true" aria-describedby="test-name-help test-name-error" />
+          <p id="test-name-help">Use a unique name.</p>
+          <p id="test-name-error" data-error-message-for="name">Old error</p>
         </div>
       </form>
     `;
@@ -96,6 +102,8 @@ describe("setupFormValidation", () => {
     nameField.dispatchEvent(new Event("blur"));
 
     expect(nameField.classList.contains("border-red-500")).toBe(false);
+    expect(nameField.getAttribute("aria-invalid")).toBe("false");
+    expect(nameField.getAttribute("aria-describedby")).toBe("test-name-help");
     const errorMsg = document.querySelector('[data-error-message-for="name"]');
     expect(errorMsg.classList.contains("invisible")).toBe(true);
   });
@@ -138,6 +146,10 @@ describe("setupFormValidation", () => {
     urlField.dispatchEvent(new Event("blur"));
 
     expect(urlField.classList.contains("border-red-500")).toBe(true);
+    expect(urlField.getAttribute("aria-invalid")).toBe("true");
+    const errorMsg = document.querySelector('[data-error-message-for="url"]');
+    expect(errorMsg.id).toBe("test-url-error");
+    expect(urlField.getAttribute("aria-describedby")).toContain("test-url-error");
   });
 
   test("skips empty optional URL fields", () => {
