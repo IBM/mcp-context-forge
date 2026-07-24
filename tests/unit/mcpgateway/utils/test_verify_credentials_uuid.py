@@ -967,12 +967,16 @@ async def test_verify_oauth_access_token_jwt_error(monkeypatch):
 
     mock_metadata = {"issuer": "https://auth.example.com", "jwks_uri": "https://auth.example.com/jwks"}
 
-    # Mock JWKS client that raises error
+    # Mock JWKS client that raises error.  NOTE: production code instantiates
+    # vc._NoRedirectPyJWKClient (a PyJWKClient subclass) and caches instances in
+    # vc._oauth_jwks_client_cache — patching jwt.PyJWKClient is a no-op and lets
+    # a REAL JWKS fetch ride out the network timeout (30s+ offline).
     mock_jwks_client = MagicMock()
     mock_jwks_client.get_signing_key_from_jwt = MagicMock(side_effect=jwt.PyJWTError("Invalid signature"))
 
     monkeypatch.setattr(vc, "_discover_oidc_metadata", AsyncMock(return_value=mock_metadata))
-    monkeypatch.setattr("jwt.PyJWKClient", lambda uri: mock_jwks_client)
+    monkeypatch.setattr(vc, "_NoRedirectPyJWKClient", lambda uri: mock_jwks_client)
+    vc._oauth_jwks_client_cache.clear()
 
     result = await vc.verify_oauth_access_token(token, ["https://auth.example.com"])
 

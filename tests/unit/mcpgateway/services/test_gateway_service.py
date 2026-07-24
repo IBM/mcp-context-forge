@@ -7840,6 +7840,22 @@ class TestUpdateGatewayAdvanced:
 class TestCheckSingleHealthAuthCode:
     """Cover auth_code token lookup and session pool paths in health checks."""
 
+    @staticmethod
+    def _patch_unreachable_http_client(monkeypatch):
+        """Make the health-check HTTP layer fail fast with a simulated unreachable host.
+
+        The default behavior attempts a real ``GET http://gw.test`` which, on
+        machines without outbound network (CI sandboxes), rides out the full
+        ``settings.health_check_timeout`` (30s) before raising.  These tests
+        only care that the failure handler runs, so raise immediately.
+        """
+        client_mock = AsyncMock()
+        client_mock.stream = MagicMock(side_effect=httpx.ConnectError("simulated unreachable host"))
+        monkeypatch.setattr(
+            "mcpgateway.services.gateway_service.get_isolated_http_client",
+            MagicMock(return_value=MagicMock(__aenter__=AsyncMock(return_value=client_mock), __aexit__=AsyncMock(return_value=False))),
+        )
+
     @pytest.mark.asyncio
     async def test_auth_code_no_user_email(self, gateway_service, monkeypatch):
         """Auth code health check without user email calls failure handler."""
@@ -7858,6 +7874,7 @@ class TestCheckSingleHealthAuthCode:
 
         gateway_service._handle_gateway_failure = AsyncMock()
         monkeypatch.setattr("mcpgateway.services.gateway_service.create_span", MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False))))
+        self._patch_unreachable_http_client(monkeypatch)
 
         await gateway_service._check_single_gateway_health(gw, user_email=None)
         gateway_service._handle_gateway_failure.assert_awaited_once()
@@ -7932,6 +7949,7 @@ class TestCheckSingleHealthAuthCode:
             "mcpgateway.services.gateway_service.fresh_db_session", MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False)))
         )
         monkeypatch.setattr("mcpgateway.services.gateway_service.create_span", MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False))))
+        self._patch_unreachable_http_client(monkeypatch)
 
         gateway_service._handle_gateway_failure = AsyncMock()
         await gateway_service._check_single_gateway_health(gw, user_email="user@test.com")
@@ -7957,6 +7975,7 @@ class TestCheckSingleHealthAuthCode:
             "mcpgateway.services.gateway_service.fresh_db_session", MagicMock(return_value=MagicMock(__enter__=MagicMock(side_effect=Exception("DB error")), __exit__=MagicMock(return_value=False)))
         )
         monkeypatch.setattr("mcpgateway.services.gateway_service.create_span", MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False))))
+        self._patch_unreachable_http_client(monkeypatch)
 
         gateway_service._handle_gateway_failure = AsyncMock()
         await gateway_service._check_single_gateway_health(gw, user_email="user@test.com")
