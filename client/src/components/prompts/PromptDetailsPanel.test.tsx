@@ -323,7 +323,7 @@ describe("PromptDetailsPanel", () => {
     );
 
     // First prompt is selected initially; the sidebar shows its visibility.
-    expect(screen.getByText("Public")).toBeInTheDocument();
+    expect(screen.getByText("Internal")).toBeInTheDocument();
     expect(screen.queryByText("Private")).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("tab", { name: /definition/i }));
@@ -331,7 +331,7 @@ describe("PromptDetailsPanel", () => {
 
     // Sidebar now reflects the row that was picked.
     expect(screen.getByText("Private")).toBeInTheDocument();
-    expect(screen.queryByText("Public")).not.toBeInTheDocument();
+    expect(screen.queryByText("Internal")).not.toBeInTheDocument();
   });
 
   it("keeps the panel title free of an overflow menu (moved to the table)", () => {

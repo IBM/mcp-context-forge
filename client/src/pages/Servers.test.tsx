@@ -453,7 +453,7 @@ describe("Servers", () => {
     await waitFor(() => {
       const panel = within(detailsPanel);
       expect(panel.getByText("Active")).toBeInTheDocument();
-      expect(panel.getByText("Public")).toBeInTheDocument();
+      expect(panel.getByText("Internal")).toBeInTheDocument();
       expect(panel.getByText("Server-Sent Events (SSE)")).toBeInTheDocument();
       expect(panel.getByText("Engineering")).toBeInTheDocument();
       expect(panel.getByText("test@example.com")).toBeInTheDocument();

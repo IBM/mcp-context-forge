@@ -233,7 +233,7 @@ describe("ToolDetailsPanel", () => {
     });
   });
 
-  it("displays public visibility correctly", async () => {
+  it("displays internal visibility correctly", async () => {
     const tools = [createMockTool(1, { visibility: "public" })];
     render(
       <ToolDetailsPanel
@@ -245,7 +245,7 @@ describe("ToolDetailsPanel", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("Public")).toBeInTheDocument();
+      expect(screen.getByText("Internal")).toBeInTheDocument();
     });
   });
 

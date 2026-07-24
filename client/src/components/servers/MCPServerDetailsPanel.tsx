@@ -14,6 +14,7 @@ import {
   Wrench,
 } from "lucide-react";
 import { MCPIcon } from "@/components/icons/MCPIcon";
+import { VisibilityInfoTooltip } from "@/components/common/VisibilityInfoTooltip";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { InlineTagAdd } from "@/components/ui/inline-tag-add";
@@ -243,7 +244,7 @@ export function MCPServerDetailsPanel({
 
   const getVisibilityLabel = useCallback((value?: string) => {
     if (value === "team") return "Team";
-    if (value === "public") return "Public";
+    if (value === "public") return "Internal";
     if (value === "private") return "Private";
     return "Not available";
   }, []);
@@ -514,6 +515,7 @@ export function MCPServerDetailsPanel({
                     <span className="flex items-center gap-2">
                       <Users className="size-3.5 text-muted-foreground" />
                       {getVisibilityLabel(server.visibility)}
+                      <VisibilityInfoTooltip side="left" />
                     </span>
                   </DetailRow>
                   <DetailRow label="Transport">

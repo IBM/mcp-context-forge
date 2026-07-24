@@ -18,6 +18,7 @@ import { OAuth2Auth } from "@/components/mcp-servers/OAuth2Auth";
 import { QueryParameterAuth } from "@/components/mcp-servers/QueryParameterAuth";
 import { useAuthContext } from "@/auth/AuthContext";
 import type { Visibility } from "@/types/server";
+import { VisibilityInfoTooltip } from "@/components/common/VisibilityInfoTooltip";
 
 export type { CustomHeader };
 
@@ -203,12 +204,15 @@ export function AdvancedSettings({
     <div className="space-y-6 py-4">
       {/* Visibility */}
       <div className="space-y-3">
-        <label
-          htmlFor="visibility"
-          className="text-sm font-medium text-neutral-950 dark:text-white"
-        >
-          Visibility
-        </label>
+        <div className="flex items-center gap-1.5">
+          <label
+            htmlFor="visibility"
+            className="text-sm font-medium text-neutral-950 dark:text-white"
+          >
+            Visibility
+          </label>
+          <VisibilityInfoTooltip />
+        </div>
         <Select value={visibility} onValueChange={onVisibilityChange}>
           <SelectTrigger
             id="visibility"
@@ -217,7 +221,7 @@ export function AdvancedSettings({
             <SelectValue placeholder="Select visibility" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="public">Public</SelectItem>
+            <SelectItem value="public">Internal</SelectItem>
             <SelectItem value="private">Private</SelectItem>
             <SelectItem value="team">Team</SelectItem>
           </SelectContent>
