@@ -41,7 +41,7 @@ function buildFourActionCards() {
     {
       icon: Code2,
       title: "REST API",
-      description: "Wrap an HTTP endpoint as an MCP tool",
+      description: "Wrap a HTTP endpoint as a MCP tool",
       buttonText: "Connect",
       onAction: restAction,
       disabled: true,
@@ -50,7 +50,7 @@ function buildFourActionCards() {
     {
       icon: Grid3x3,
       title: "gRPC",
-      description: "Translate a gRPC endpoint as an MCP tool.",
+      description: "Translate a gRPC endpoint as a MCP tool.",
       buttonText: "Connect",
       onAction: grpcAction,
       disabled: true,
