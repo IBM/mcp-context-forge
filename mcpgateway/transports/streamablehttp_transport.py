@@ -2214,6 +2214,11 @@ async def _resolve_subject_email(payload: dict[str, Any]) -> Optional[str]:
     user lookups, auth-cache entries and RBAC context on the same identity as
     the REST paths.
 
+    Per the repository's canonical email-over-sub precedence (see
+    ``mcpgateway.auth_context.get_user_email``), a non-empty string ``email``
+    claim always wins over ``sub`` when both are present, so the resolved
+    identity can never be spoofed by a conflicting ``sub`` claim.
+
     When the subject is a UUID that cannot be resolved (no matching user row),
     the raw subject is returned unchanged so the caller's existing
     ``require_user_in_db`` checks reject the request rather than silently
@@ -2231,10 +2236,13 @@ async def _resolve_subject_email(payload: dict[str, Any]) -> Optional[str]:
         'user@example.com'
         >>> asyncio.run(_resolve_subject_email({"email": "fallback@example.com"}))
         'fallback@example.com'
+        >>> asyncio.run(_resolve_subject_email({"email": "canonical@example.com", "sub": "ignored-sub"}))
+        'canonical@example.com'
         >>> asyncio.run(_resolve_subject_email({})) is None
         True
     """
-    subject: Optional[str] = payload.get("sub") or payload.get("email")
+    email_claim = payload.get("email")
+    subject: Optional[str] = email_claim if isinstance(email_claim, str) and email_claim else payload.get("sub")
     if not subject:
         return None
 

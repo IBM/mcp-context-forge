@@ -13343,6 +13343,38 @@ async def test_resolve_subject_email_falls_back_to_email_claim():
 
 
 @pytest.mark.asyncio
+async def test_resolve_subject_email_prefers_email_over_conflicting_sub():
+    """SECURITY: a non-empty 'email' claim wins over 'sub' when both are present.
+
+    Mirrors the repository's canonical email-over-sub precedence
+    (mcpgateway.auth_context.get_user_email). Without this, a token with a
+    forged/stale 'sub' UUID could resolve to a different principal than the
+    canonical email, mismatching cache keys, team visibility, and RBAC
+    (CWE-287/CWE-863).
+    """
+    lookup = Mock(return_value="should-not-be-used@example.com")
+    with patch("mcpgateway.auth._get_email_by_id_sync", lookup):
+        result = await tr._resolve_subject_email({"email": "canonical@example.com", "sub": SESSION_SUB_UUID, "token_use": "session"})
+
+    assert result == "canonical@example.com"
+    lookup.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_resolve_subject_email_non_string_email_falls_back_to_sub():
+    """A malformed (non-string) 'email' claim is ignored in favor of 'sub'."""
+    result = await tr._resolve_subject_email({"email": ["not", "a", "string"], "sub": "legacy@example.com", "token_use": "api"})
+    assert result == "legacy@example.com"
+
+
+@pytest.mark.asyncio
+async def test_resolve_subject_email_empty_email_falls_back_to_sub():
+    """An empty-string 'email' claim is treated as absent and falls back to 'sub'."""
+    result = await tr._resolve_subject_email({"email": "", "sub": "legacy@example.com", "token_use": "api"})
+    assert result == "legacy@example.com"
+
+
+@pytest.mark.asyncio
 async def test_resolve_subject_email_no_subject_returns_none():
     """A payload with no subject yields None rather than raising."""
     assert await tr._resolve_subject_email({}) is None
