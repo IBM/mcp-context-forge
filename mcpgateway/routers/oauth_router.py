@@ -44,6 +44,7 @@ from mcpgateway.services.token_storage_service import TokenStorageService
 # First-Party - CSP nonce support
 from mcpgateway.utils.csp_nonce import get_csp_nonce_from_request
 from mcpgateway.utils.log_sanitizer import sanitize_for_log
+from mcpgateway.utils.oauth_resource import derive_resource_origin
 from mcpgateway.utils.paths import resolve_root_path
 from mcpgateway.utils.verify_credentials import get_auth_header_value
 
@@ -102,14 +103,6 @@ async def enforce_fetch_tools_csrf(request: Request) -> None:
         raise HTTPException(status_code=403, detail="CSRF validation failed")
     if not secrets.compare_digest(csrf_header, csrf_cookie):
         raise HTTPException(status_code=403, detail="CSRF validation failed")
-
-
-# _derive_resource_origin moved to mcpgateway.services.token_validation_service
-# so the OAuth route, the refresh path in token_storage_service, and the
-# validator fallback all share one implementation. Re-exported below.
-from mcpgateway.services.token_validation_service import _derive_resource_origin  # noqa: E402  pylint: disable=wrong-import-position
-
-__all__ = ["_derive_resource_origin"]
 
 
 oauth_router = APIRouter(prefix="/oauth", tags=["oauth"])
@@ -329,7 +322,7 @@ async def initiate_oauth_flow(gateway_id: str, request: Request, current_user: E
         # before writing to shared config, and per-user inbound validation
         # uses OAuthToken.learned_aud (populated on the callback).
         if not oauth_config.get("resource"):
-            origin = _derive_resource_origin(gateway.url)
+            origin = derive_resource_origin(gateway.url)
             if origin:
                 oauth_config["resource"] = origin
 
@@ -579,10 +572,10 @@ async def oauth_callback(
         # RFC 8707: Set the outbound `resource` parameter for the token exchange.
         # Admin-configured `oauth_config.resource` takes precedence; otherwise
         # derive the gateway URL's *origin* (not full path).  Request-local
-        # only — not persisted (see _derive_resource_origin docstring).
+        # only — not persisted (see derive_resource_origin docstring).
         oauth_config_with_resource = gateway.oauth_config.copy()
         if not oauth_config_with_resource.get("resource"):
-            origin = _derive_resource_origin(gateway.url)
+            origin = derive_resource_origin(gateway.url)
             if origin:
                 oauth_config_with_resource["resource"] = origin
 
