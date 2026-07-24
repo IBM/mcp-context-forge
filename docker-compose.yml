@@ -136,6 +136,8 @@ services:
     # Environment - pick ONE database URL line, comment the rest
     # ──────────────────────────────────────────────────────────────────────
     environment:
+      # Bind all interfaces (config.py defaults HOST to 127.0.0.1, unreachable from nginx)
+      - HOST=${HOST:-0.0.0.0}
       # Domain for CORS/cookies (nginx default at http://localhost:8080)
       - APP_DOMAIN=${APP_DOMAIN:-http://localhost:8080}
       # Bind address - must be 0.0.0.0 inside Docker or other containers cannot connect
