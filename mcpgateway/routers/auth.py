@@ -234,8 +234,8 @@ async def login(login_request: LoginRequest, request: Request, db: Session = Dep
                 # First-Party
                 from mcpgateway.services.csrf_service import generate_csrf_token, set_csrf_cookie
 
-                # Decode JWT to get jti (don't verify since we just created it)
-                payload = jwt.decode(access_token, options={"verify_signature": False})
+                # Decode JWT to get jti (verify signature for defense-in-depth)
+                payload = jwt.decode(access_token, settings.jwt_secret_key.get_secret_value(), algorithms=[settings.jwt_algorithm])
                 session_id = payload.get("jti", "")
 
                 # Generate CSRF token
@@ -318,7 +318,7 @@ async def logout(request: Request, current_user: EmailUser = Depends(get_current
             if hasattr(secret_key, "get_secret_value"):
                 secret_key = secret_key.get_secret_value()
 
-            payload = jwt.decode(token, secret_key, algorithms=[settings.jwt_algorithm], options={"verify_signature": False})  # Already verified by get_current_user
+            payload = jwt.decode(token, secret_key, algorithms=[settings.jwt_algorithm])  # Verify signature for defense-in-depth
 
             jti = payload.get("jti")
             exp = payload.get("exp")
