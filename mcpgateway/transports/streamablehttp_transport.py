@@ -4283,6 +4283,7 @@ class SessionManagerWrapper:
                         # context, so OAuth and public-only sessions are honored without
                         # re-authenticating against public /rpc (JWTs/cookies only).
                         # First-Party
+                        from mcpgateway.auth_context import INTERNAL_RUNTIME_AUTH_HEADER, internal_runtime_auth_header_value  # pylint: disable=import-outside-toplevel
                         from mcpgateway.auth_context import encode_internal_mcp_auth_context  # pylint: disable=import-outside-toplevel,protected-access
                         from mcpgateway.main import app  # pylint: disable=import-outside-toplevel,cyclic-import
                         from mcpgateway.utils.internal_http import internal_loopback_base_url  # pylint: disable=import-outside-toplevel
@@ -4291,6 +4292,7 @@ class SessionManagerWrapper:
                         rpc_headers = {
                             "content-type": "application/json",
                             "x-mcp-session-id": mcp_session_id,
+                            INTERNAL_RUNTIME_AUTH_HEADER: internal_runtime_auth_header_value(),
                             "x-contextforge-auth-context": encode_internal_mcp_auth_context(get_streamable_http_auth_context()),
                         }
                         # Preserve the bearer under the configured auth header (AUTH_HEADER_NAME),

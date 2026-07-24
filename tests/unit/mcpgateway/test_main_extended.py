@@ -38,6 +38,7 @@ from mcpgateway.config import settings
 from mcpgateway.middleware.token_scoping import ResourceOwnershipResult
 import mcpgateway.db as db_mod
 from mcpgateway.auth import TokenValidationError
+from mcpgateway.auth_context import internal_runtime_auth_header_value
 from mcpgateway.main import (
     _build_internal_mcp_auth_scope,
     _build_internal_mcp_forwarded_user,
@@ -141,6 +142,7 @@ def _make_request(
 def _trusted_internal_mcp_headers(auth_context: dict[str, object], **extra_headers: str) -> dict[str, str]:
     """Build trusted internal MCP headers for unit tests."""
     return {
+        "x-contextforge-mcp-runtime-auth": internal_runtime_auth_header_value(),
         "x-contextforge-auth-context": base64.urlsafe_b64encode(orjson.dumps(auth_context)).decode().rstrip("="),
         **extra_headers,
     }
@@ -726,7 +728,7 @@ class TestInternalMcpHelperCoverage:
         """Malformed forwarded auth context should return a 400-style HTTPException."""
         request = MagicMock(spec=Request)
         request.headers = {
-            "x-contextforge-mcp-runtime": "affinity",
+            "x-contextforge-mcp-runtime-auth": internal_runtime_auth_header_value(),
             "x-contextforge-auth-context": "not-base64",
         }
         request.client = SimpleNamespace(host="127.0.0.1")
@@ -5988,7 +5990,7 @@ class TestRpcHandling:
         payload = {"jsonrpc": "2.0", "id": "1", "method": "tools/list", "params": {}}
         request = self._make_request(payload)
         request.headers = {
-            "x-contextforge-mcp-runtime": "affinity",
+            "x-contextforge-mcp-runtime-auth": internal_runtime_auth_header_value(),
             "x-contextforge-auth-context": base64.urlsafe_b64encode(
                 json.dumps(
                     {
@@ -6029,7 +6031,7 @@ class TestRpcHandling:
         payload = {"jsonrpc": "2.0", "id": "1", "method": "tools/list", "params": {}}
         request = self._make_request(payload)
         request.headers = {
-            "x-contextforge-mcp-runtime": "affinity",
+            "x-contextforge-mcp-runtime-auth": internal_runtime_auth_header_value(),
             "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com"}).encode()).decode().rstrip("="),
         }
         request.client = SimpleNamespace(host="10.0.0.2")
@@ -6043,7 +6045,7 @@ class TestRpcHandling:
         payload = {"jsonrpc": "2.0", "id": "1", "method": "tools/list", "params": {}}
         request = self._make_request(payload)
         request.headers = {
-            "x-contextforge-mcp-runtime": "affinity",
+            "x-contextforge-mcp-runtime-auth": internal_runtime_auth_header_value(),
             "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com"}).encode()).decode().rstrip("="),
         }
         request.client = SimpleNamespace(host="127.0.0.1")
@@ -6065,7 +6067,7 @@ class TestRpcHandling:
         payload = {"jsonrpc": "2.0", "id": "1", "method": "tools/list", "params": {}}
         request = self._make_request(payload)
         request.headers = {
-            "x-contextforge-mcp-runtime": "affinity",
+            "x-contextforge-mcp-runtime-auth": internal_runtime_auth_header_value(),
             "x-contextforge-auth-context": base64.urlsafe_b64encode(
                 json.dumps(
                     {
@@ -6142,7 +6144,7 @@ class TestRpcHandling:
     async def test_handle_internal_mcp_initialize_rejects_session_owner_mismatch(self, monkeypatch):
         request = self._make_request({"jsonrpc": "2.0", "id": "init-deny", "method": "initialize", "params": {"session_id": "sess-1", "protocolVersion": "2025-11-25"}})
         request.headers = {
-            "x-contextforge-mcp-runtime": "affinity",
+            "x-contextforge-mcp-runtime-auth": internal_runtime_auth_header_value(),
             "x-contextforge-server-id": "srv-1",
             "x-contextforge-auth-context": base64.urlsafe_b64encode(
                 json.dumps(
@@ -6178,7 +6180,7 @@ class TestRpcHandling:
     async def test_handle_internal_mcp_session_delete_cleans_up_session_state(self, monkeypatch):
         request = self._make_request({})
         request.headers = {
-            "x-contextforge-mcp-runtime": "affinity",
+            "x-contextforge-mcp-runtime-auth": internal_runtime_auth_header_value(),
             "x-contextforge-server-id": "srv-1",
             "mcp-session-id": "sess-1",
             "x-contextforge-auth-context": base64.urlsafe_b64encode(
@@ -6250,7 +6252,7 @@ class TestRpcHandling:
     async def test_handle_internal_mcp_session_delete_requires_session_header(self):
         request = self._make_request({})
         request.headers = {
-            "x-contextforge-mcp-runtime": "affinity",
+            "x-contextforge-mcp-runtime-auth": internal_runtime_auth_header_value(),
             "x-contextforge-auth-context": base64.urlsafe_b64encode(
                 json.dumps(
                     {
@@ -6275,7 +6277,7 @@ class TestRpcHandling:
     async def test_handle_internal_mcp_notifications_initialized_returns_no_content(self, monkeypatch):
         request = self._make_request({"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}})
         request.headers = {
-            "x-contextforge-mcp-runtime": "affinity",
+            "x-contextforge-mcp-runtime-auth": internal_runtime_auth_header_value(),
             "x-contextforge-server-id": "srv-1",
             "x-contextforge-auth-context": base64.urlsafe_b64encode(
                 json.dumps(
@@ -6305,7 +6307,7 @@ class TestRpcHandling:
     async def test_handle_internal_mcp_notifications_initialized_rejects_wrong_method(self):
         request = self._make_request({"jsonrpc": "2.0", "id": "notif-1", "method": "notifications/message", "params": {}})
         request.headers = {
-            "x-contextforge-mcp-runtime": "affinity",
+            "x-contextforge-mcp-runtime-auth": internal_runtime_auth_header_value(),
             "x-contextforge-auth-context": base64.urlsafe_b64encode(
                 json.dumps(
                     {
@@ -6334,7 +6336,7 @@ class TestRpcHandling:
     async def test_handle_internal_mcp_notifications_message_returns_no_content(self, monkeypatch):
         request = self._make_request({"jsonrpc": "2.0", "method": "notifications/message", "params": {"data": "hello", "level": "info", "logger": "tests"}})
         request.headers = {
-            "x-contextforge-mcp-runtime": "affinity",
+            "x-contextforge-mcp-runtime-auth": internal_runtime_auth_header_value(),
             "x-contextforge-server-id": "srv-1",
             "x-contextforge-auth-context": base64.urlsafe_b64encode(
                 json.dumps(
@@ -6364,7 +6366,7 @@ class TestRpcHandling:
     async def test_handle_internal_mcp_notifications_message_rejects_wrong_method(self):
         request = self._make_request({"jsonrpc": "2.0", "id": "notif-2", "method": "notifications/initialized", "params": {}})
         request.headers = {
-            "x-contextforge-mcp-runtime": "affinity",
+            "x-contextforge-mcp-runtime-auth": internal_runtime_auth_header_value(),
             "x-contextforge-auth-context": base64.urlsafe_b64encode(
                 json.dumps(
                     {
@@ -6393,7 +6395,7 @@ class TestRpcHandling:
     async def test_handle_internal_mcp_notifications_cancelled_returns_no_content(self, monkeypatch):
         request = self._make_request({"jsonrpc": "2.0", "method": "notifications/cancelled", "params": {"requestId": "run-1", "reason": "stop"}})
         request.headers = {
-            "x-contextforge-mcp-runtime": "affinity",
+            "x-contextforge-mcp-runtime-auth": internal_runtime_auth_header_value(),
             "x-contextforge-server-id": "srv-1",
             "x-contextforge-auth-context": base64.urlsafe_b64encode(
                 json.dumps(
@@ -6427,7 +6429,7 @@ class TestRpcHandling:
     async def test_handle_internal_mcp_notifications_cancelled_rejects_wrong_method(self):
         request = self._make_request({"jsonrpc": "2.0", "id": "notif-3", "method": "notifications/initialized", "params": {}})
         request.headers = {
-            "x-contextforge-mcp-runtime": "affinity",
+            "x-contextforge-mcp-runtime-auth": internal_runtime_auth_header_value(),
             "x-contextforge-auth-context": base64.urlsafe_b64encode(
                 json.dumps(
                     {
@@ -6456,7 +6458,7 @@ class TestRpcHandling:
     async def test_handle_internal_mcp_resources_list_returns_payload(self):
         request = self._make_request({"jsonrpc": "2.0", "id": "resources-1", "method": "resources/list", "params": {"cursor": "cursor-1"}})
         request.headers = {
-            "x-contextforge-mcp-runtime": "affinity",
+            "x-contextforge-mcp-runtime-auth": internal_runtime_auth_header_value(),
             "x-contextforge-auth-context": base64.urlsafe_b64encode(
                 json.dumps(
                     {
@@ -6496,7 +6498,7 @@ class TestRpcHandling:
     async def test_handle_internal_mcp_resources_read_returns_payload(self):
         request = self._make_request({"jsonrpc": "2.0", "id": "resources-read-1", "method": "resources/read", "params": {"uri": "resource://one", "requestId": "req-1"}})
         request.headers = {
-            "x-contextforge-mcp-runtime": "affinity",
+            "x-contextforge-mcp-runtime-auth": internal_runtime_auth_header_value(),
             "x-contextforge-auth-context": base64.urlsafe_b64encode(
                 json.dumps(
                     {
@@ -6539,7 +6541,7 @@ class TestRpcHandling:
 
         request = self._make_request({"jsonrpc": "2.0", "id": "resources-read-legacy", "method": "resources/read", "params": {"uri": "resource://legacy"}})
         request.headers = {
-            "x-contextforge-mcp-runtime": "affinity",
+            "x-contextforge-mcp-runtime-auth": internal_runtime_auth_header_value(),
             "x-contextforge-auth-context": base64.urlsafe_b64encode(
                 json.dumps(
                     {
@@ -6584,7 +6586,7 @@ class TestRpcHandling:
     async def test_handle_internal_mcp_resource_templates_list_returns_payload(self):
         request = self._make_request({"jsonrpc": "2.0", "id": "resource-templates-1", "method": "resources/templates/list", "params": {}})
         request.headers = {
-            "x-contextforge-mcp-runtime": "affinity",
+            "x-contextforge-mcp-runtime-auth": internal_runtime_auth_header_value(),
             "x-contextforge-auth-context": base64.urlsafe_b64encode(
                 json.dumps(
                     {
@@ -6623,7 +6625,7 @@ class TestRpcHandling:
     async def test_handle_internal_mcp_resource_templates_list_scope_and_cleanup_paths(self):
         request = self._make_request({"jsonrpc": "2.0", "id": "resource-templates-2", "method": "resources/templates/list", "params": {}})
         request.headers = {
-            "x-contextforge-mcp-runtime": "affinity",
+            "x-contextforge-mcp-runtime-auth": internal_runtime_auth_header_value(),
             "x-contextforge-server-id": "srv-1",
             "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "admin@example.com"}).encode()).decode().rstrip("="),
         }
@@ -6660,7 +6662,7 @@ class TestRpcHandling:
     async def test_handle_internal_mcp_resources_subscribe_returns_payload(self):
         request = self._make_request({"jsonrpc": "2.0", "id": "resources-sub-1", "method": "resources/subscribe", "params": {"uri": "resource://one"}})
         request.headers = {
-            "x-contextforge-mcp-runtime": "affinity",
+            "x-contextforge-mcp-runtime-auth": internal_runtime_auth_header_value(),
             "x-contextforge-auth-context": base64.urlsafe_b64encode(
                 json.dumps(
                     {
@@ -6697,7 +6699,7 @@ class TestRpcHandling:
     async def test_handle_internal_mcp_resources_unsubscribe_returns_payload(self):
         request = self._make_request({"jsonrpc": "2.0", "id": "resources-unsub-1", "method": "resources/unsubscribe", "params": {"uri": "resource://one"}})
         request.headers = {
-            "x-contextforge-mcp-runtime": "affinity",
+            "x-contextforge-mcp-runtime-auth": internal_runtime_auth_header_value(),
             "x-contextforge-auth-context": base64.urlsafe_b64encode(
                 json.dumps(
                     {
@@ -6736,7 +6738,7 @@ class TestRpcHandling:
 
         subscribe_request = self._make_request({"jsonrpc": "2.0", "id": "resources-sub-2", "method": "resources/subscribe", "params": []})
         subscribe_request.headers = {
-            "x-contextforge-mcp-runtime": "affinity",
+            "x-contextforge-mcp-runtime-auth": internal_runtime_auth_header_value(),
             "x-contextforge-server-id": "srv-1",
             "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com"}).encode()).decode().rstrip("="),
         }
@@ -6779,7 +6781,7 @@ class TestRpcHandling:
 
         unsubscribe_request = self._make_request({"jsonrpc": "2.0", "id": "resources-unsub-2", "method": "resources/unsubscribe", "params": []})
         unsubscribe_request.headers = {
-            "x-contextforge-mcp-runtime": "affinity",
+            "x-contextforge-mcp-runtime-auth": internal_runtime_auth_header_value(),
             "x-contextforge-server-id": "srv-1",
             "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com"}).encode()).decode().rstrip("="),
         }
@@ -6804,7 +6806,7 @@ class TestRpcHandling:
     async def test_handle_internal_mcp_prompts_list_returns_payload(self):
         request = self._make_request({"jsonrpc": "2.0", "id": "prompts-1", "method": "prompts/list", "params": {"cursor": "cursor-1"}})
         request.headers = {
-            "x-contextforge-mcp-runtime": "affinity",
+            "x-contextforge-mcp-runtime-auth": internal_runtime_auth_header_value(),
             "x-contextforge-auth-context": base64.urlsafe_b64encode(
                 json.dumps(
                     {
@@ -6844,7 +6846,7 @@ class TestRpcHandling:
     async def test_handle_internal_mcp_prompts_get_returns_payload(self):
         request = self._make_request({"jsonrpc": "2.0", "id": "prompts-get-1", "method": "prompts/get", "params": {"name": "prompt-one", "arguments": {"subject": "hi"}}})
         request.headers = {
-            "x-contextforge-mcp-runtime": "affinity",
+            "x-contextforge-mcp-runtime-auth": internal_runtime_auth_header_value(),
             "x-contextforge-auth-context": base64.urlsafe_b64encode(
                 json.dumps(
                     {
@@ -6885,7 +6887,7 @@ class TestRpcHandling:
     async def test_handle_internal_mcp_roots_list_returns_payload(self):
         request = self._make_request({"jsonrpc": "2.0", "id": "roots-1", "method": "roots/list", "params": {}})
         request.headers = {
-            "x-contextforge-mcp-runtime": "affinity",
+            "x-contextforge-mcp-runtime-auth": internal_runtime_auth_header_value(),
             "x-contextforge-auth-context": base64.urlsafe_b64encode(
                 json.dumps(
                     {
@@ -6922,7 +6924,7 @@ class TestRpcHandling:
     async def test_handle_internal_mcp_completion_complete_returns_payload(self):
         request = self._make_request({"jsonrpc": "2.0", "id": "completion-1", "method": "completion/complete", "params": {"prompt": "hi"}})
         request.headers = {
-            "x-contextforge-mcp-runtime": "affinity",
+            "x-contextforge-mcp-runtime-auth": internal_runtime_auth_header_value(),
             "x-contextforge-auth-context": base64.urlsafe_b64encode(
                 json.dumps(
                     {
@@ -6956,7 +6958,7 @@ class TestRpcHandling:
     async def test_handle_internal_mcp_completion_complete_returns_json_error_on_exception(self):
         request = self._make_request({"jsonrpc": "2.0", "id": "completion-err-1", "method": "completion/complete", "params": {"prompt": "hi"}})
         request.headers = {
-            "x-contextforge-mcp-runtime": "affinity",
+            "x-contextforge-mcp-runtime-auth": internal_runtime_auth_header_value(),
             "x-contextforge-auth-context": base64.urlsafe_b64encode(
                 json.dumps(
                     {
@@ -6994,7 +6996,7 @@ class TestRpcHandling:
     async def test_handle_internal_mcp_completion_complete_scope_and_cleanup_variants(self):
         request = self._make_request({"jsonrpc": "2.0", "id": "completion-3", "method": "completion/complete", "params": {}})
         request.headers = {
-            "x-contextforge-mcp-runtime": "affinity",
+            "x-contextforge-mcp-runtime-auth": internal_runtime_auth_header_value(),
             "x-contextforge-server-id": "srv-1",
             "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "admin@example.com"}).encode()).decode().rstrip("="),
         }
@@ -7029,7 +7031,7 @@ class TestRpcHandling:
     async def test_handle_internal_mcp_roots_list_ignores_invalidate_failure_on_cleanup(self):
         request = self._make_request({"jsonrpc": "2.0", "id": "roots-err", "method": "roots/list", "params": {}})
         request.headers = {
-            "x-contextforge-mcp-runtime": "affinity",
+            "x-contextforge-mcp-runtime-auth": internal_runtime_auth_header_value(),
             "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "admin@example.com"}).encode()).decode().rstrip("="),
         }
         request.client = SimpleNamespace(host="127.0.0.1")
@@ -7049,7 +7051,7 @@ class TestRpcHandling:
     async def test_handle_internal_mcp_sampling_create_message_returns_payload(self):
         request = self._make_request({"jsonrpc": "2.0", "id": "sampling-1", "method": "sampling/createMessage", "params": {"messages": []}})
         request.headers = {
-            "x-contextforge-mcp-runtime": "affinity",
+            "x-contextforge-mcp-runtime-auth": internal_runtime_auth_header_value(),
             "x-contextforge-auth-context": base64.urlsafe_b64encode(
                 json.dumps(
                     {
@@ -7081,7 +7083,7 @@ class TestRpcHandling:
     async def test_handle_internal_mcp_sampling_create_message_returns_json_error_on_exception(self):
         request = self._make_request({"jsonrpc": "2.0", "id": "sampling-err-1", "method": "sampling/createMessage", "params": {"messages": []}})
         request.headers = {
-            "x-contextforge-mcp-runtime": "affinity",
+            "x-contextforge-mcp-runtime-auth": internal_runtime_auth_header_value(),
             "x-contextforge-auth-context": base64.urlsafe_b64encode(
                 json.dumps(
                     {
@@ -7117,7 +7119,7 @@ class TestRpcHandling:
     async def test_handle_internal_mcp_sampling_create_message_scope_and_jsonrpc_variants(self):
         request = self._make_request({"jsonrpc": "2.0", "id": "sampling-3", "method": "sampling/createMessage", "params": []})
         request.headers = {
-            "x-contextforge-mcp-runtime": "affinity",
+            "x-contextforge-mcp-runtime-auth": internal_runtime_auth_header_value(),
             "x-contextforge-server-id": "srv-1",
             "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com"}).encode()).decode().rstrip("="),
         }
@@ -7155,7 +7157,7 @@ class TestRpcHandling:
     async def test_handle_internal_mcp_logging_set_level_returns_payload(self):
         request = self._make_request({"jsonrpc": "2.0", "id": "logging-1", "method": "logging/setLevel", "params": {"level": "warning"}})
         request.headers = {
-            "x-contextforge-mcp-runtime": "affinity",
+            "x-contextforge-mcp-runtime-auth": internal_runtime_auth_header_value(),
             "x-contextforge-auth-context": base64.urlsafe_b64encode(
                 json.dumps(
                     {
@@ -7188,7 +7190,7 @@ class TestRpcHandling:
     async def test_handle_internal_mcp_logging_set_level_non_dict_params_and_cleanup_path(self):
         request = self._make_request({"jsonrpc": "2.0", "id": "logging-2", "method": "logging/setLevel", "params": []})
         request.headers = {
-            "x-contextforge-mcp-runtime": "affinity",
+            "x-contextforge-mcp-runtime-auth": internal_runtime_auth_header_value(),
             "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com"}).encode()).decode().rstrip("="),
         }
         request.client = SimpleNamespace(host="127.0.0.1")
@@ -7242,7 +7244,7 @@ class TestRpcHandling:
         request = MagicMock(spec=Request)
         request.body = AsyncMock(return_value=b"{bad")
         request.headers = {
-            "x-contextforge-mcp-runtime": "affinity",
+            "x-contextforge-mcp-runtime-auth": internal_runtime_auth_header_value(),
             "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com"}).encode()).decode().rstrip("="),
         }
         request.query_params = {}
@@ -7297,7 +7299,7 @@ class TestRpcHandling:
         """Trusted internal handlers should reject unexpected JSON-RPC methods."""
         request = self._make_request({"jsonrpc": "2.0", "id": "bad-method", "method": wrong_method, "params": {}})
         request.headers = {
-            "x-contextforge-mcp-runtime": "affinity",
+            "x-contextforge-mcp-runtime-auth": internal_runtime_auth_header_value(),
             "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com"}).encode()).decode().rstrip("="),
         }
         request.client = SimpleNamespace(host="127.0.0.1")
@@ -7370,7 +7372,7 @@ class TestRpcHandling:
         """Handlers should coerce non-dict params to {} and continue safely."""
         request = self._make_request({"jsonrpc": "2.0", "id": "params-1", "method": method_name, "params": params})
         request.headers = {
-            "x-contextforge-mcp-runtime": "affinity",
+            "x-contextforge-mcp-runtime-auth": internal_runtime_auth_header_value(),
             "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com"}).encode()).decode().rstrip("="),
         }
         request.client = SimpleNamespace(host="127.0.0.1")
@@ -7403,7 +7405,7 @@ class TestRpcHandling:
     async def test_handle_internal_mcp_tools_list_returns_direct_definitions(self):
         request = self._make_request({"jsonrpc": "2.0", "id": "1", "method": "tools/list", "params": {}})
         request.headers = {
-            "x-contextforge-mcp-runtime": "affinity",
+            "x-contextforge-mcp-runtime-auth": internal_runtime_auth_header_value(),
             "x-contextforge-server-id": "srv-1",
             "x-contextforge-auth-context": base64.urlsafe_b64encode(
                 json.dumps(
@@ -7440,7 +7442,7 @@ class TestRpcHandling:
     async def test_handle_internal_mcp_tools_list_authz_returns_no_content(self):
         request = self._make_request({"jsonrpc": "2.0", "id": "1", "method": "tools/list", "params": {}})
         request.headers = {
-            "x-contextforge-mcp-runtime": "affinity",
+            "x-contextforge-mcp-runtime-auth": internal_runtime_auth_header_value(),
             "x-contextforge-server-id": "srv-1",
             "x-contextforge-auth-context": base64.urlsafe_b64encode(
                 json.dumps(
@@ -7472,7 +7474,7 @@ class TestRpcHandling:
     async def test_handle_internal_mcp_tools_list_authz_skips_rbac_for_unauthenticated_public_only(self):
         request = self._make_request({"jsonrpc": "2.0", "id": "1", "method": "tools/list", "params": {}})
         request.headers = {
-            "x-contextforge-mcp-runtime": "affinity",
+            "x-contextforge-mcp-runtime-auth": internal_runtime_auth_header_value(),
             "x-contextforge-server-id": "srv-1",
             "x-contextforge-auth-context": base64.urlsafe_b64encode(
                 json.dumps(
@@ -7516,7 +7518,7 @@ class TestRpcHandling:
     async def test_server_scoped_internal_mcp_authz_wrappers_return_no_content(self, handler):
         request = self._make_request({"jsonrpc": "2.0", "id": "1", "method": "noop", "params": {}})
         request.headers = {
-            "x-contextforge-mcp-runtime": "affinity",
+            "x-contextforge-mcp-runtime-auth": internal_runtime_auth_header_value(),
             "x-contextforge-server-id": "srv-1",
             "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com"}).encode()).decode().rstrip("="),
         }
@@ -7565,7 +7567,7 @@ class TestRpcHandling:
     ):
         request = self._make_request({"jsonrpc": "2.0", "id": "1", "method": "noop", "params": {}})
         request.headers = {
-            "x-contextforge-mcp-runtime": "affinity",
+            "x-contextforge-mcp-runtime-auth": internal_runtime_auth_header_value(),
             "x-contextforge-server-id": "srv-1",
             "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com"}).encode()).decode().rstrip("="),
         }
@@ -7594,7 +7596,7 @@ class TestRpcHandling:
     async def test_server_scoped_internal_mcp_authz_wrapper_rolls_back_and_invalidates_on_error(self):
         request = self._make_request({"jsonrpc": "2.0", "id": "1", "method": "noop", "params": {}})
         request.headers = {
-            "x-contextforge-mcp-runtime": "affinity",
+            "x-contextforge-mcp-runtime-auth": internal_runtime_auth_header_value(),
             "x-contextforge-server-id": "srv-1",
             "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com"}).encode()).decode().rstrip("="),
         }
@@ -7617,7 +7619,7 @@ class TestRpcHandling:
     async def test_handle_internal_mcp_tools_list_rejects_scoped_server_mismatch(self):
         request = self._make_request({"jsonrpc": "2.0", "id": "1", "method": "tools/list", "params": {}})
         request.headers = {
-            "x-contextforge-mcp-runtime": "affinity",
+            "x-contextforge-mcp-runtime-auth": internal_runtime_auth_header_value(),
             "x-contextforge-server-id": "srv-2",
             "x-contextforge-auth-context": base64.urlsafe_b64encode(
                 json.dumps(
@@ -7645,7 +7647,7 @@ class TestRpcHandling:
     async def test_handle_internal_mcp_tools_list_requires_server_scope(self):
         request = self._make_request({"jsonrpc": "2.0", "id": "1", "method": "tools/list", "params": {}})
         request.headers = {
-            "x-contextforge-mcp-runtime": "affinity",
+            "x-contextforge-mcp-runtime-auth": internal_runtime_auth_header_value(),
             "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com"}).encode()).decode().rstrip("="),
         }
         request.client = SimpleNamespace(host="127.0.0.1")
@@ -7658,7 +7660,7 @@ class TestRpcHandling:
     async def test_handle_internal_mcp_tools_list_admin_public_and_cleanup_paths(self):
         request = self._make_request({"jsonrpc": "2.0", "id": "tools-list-2", "method": "tools/list", "params": {}})
         request.headers = {
-            "x-contextforge-mcp-runtime": "affinity",
+            "x-contextforge-mcp-runtime-auth": internal_runtime_auth_header_value(),
             "x-contextforge-server-id": "srv-1",
             "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "admin@example.com"}).encode()).decode().rstrip("="),
         }
@@ -7676,7 +7678,7 @@ class TestRpcHandling:
 
         request_public = self._make_request({"jsonrpc": "2.0", "id": "tools-list-3", "method": "tools/list", "params": {}})
         request_public.headers = {
-            "x-contextforge-mcp-runtime": "affinity",
+            "x-contextforge-mcp-runtime-auth": internal_runtime_auth_header_value(),
             "x-contextforge-server-id": "srv-1",
             "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com"}).encode()).decode().rstrip("="),
         }
@@ -7718,7 +7720,7 @@ class TestRpcHandling:
     async def test_handle_internal_mcp_tools_call_returns_jsonrpc_result(self):
         request = self._make_request({"jsonrpc": "2.0", "id": "2", "method": "tools/call", "params": {"name": "echo", "arguments": {"text": "hello"}}})
         request.headers = {
-            "x-contextforge-mcp-runtime": "affinity",
+            "x-contextforge-mcp-runtime-auth": internal_runtime_auth_header_value(),
             "x-contextforge-server-id": "srv-1",
             "x-contextforge-auth-context": base64.urlsafe_b64encode(
                 json.dumps(
@@ -7758,7 +7760,7 @@ class TestRpcHandling:
     async def test_handle_internal_mcp_tools_call_skips_rbac_for_unauthenticated_public_only(self):
         request = self._make_request({"jsonrpc": "2.0", "id": "3", "method": "tools/call", "params": {"name": "echo", "arguments": {}}})
         request.headers = {
-            "x-contextforge-mcp-runtime": "affinity",
+            "x-contextforge-mcp-runtime-auth": internal_runtime_auth_header_value(),
             "x-contextforge-auth-context": base64.urlsafe_b64encode(
                 json.dumps(
                     {
@@ -7794,7 +7796,7 @@ class TestRpcHandling:
     async def test_handle_internal_mcp_tools_call_returns_jsonrpc_not_found(self):
         request = self._make_request({"jsonrpc": "2.0", "id": "4", "method": "tools/call", "params": {"name": "missing-tool", "arguments": {}}})
         request.headers = {
-            "x-contextforge-mcp-runtime": "affinity",
+            "x-contextforge-mcp-runtime-auth": internal_runtime_auth_header_value(),
             "x-contextforge-auth-context": base64.urlsafe_b64encode(
                 json.dumps(
                     {
@@ -7835,7 +7837,7 @@ class TestRpcHandling:
 
         request = self._make_request({"jsonrpc": "2.0", "id": "init-err", "method": "initialize", "params": []})
         request.headers = {
-            "x-contextforge-mcp-runtime": "affinity",
+            "x-contextforge-mcp-runtime-auth": internal_runtime_auth_header_value(),
             "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com"}).encode()).decode().rstrip("="),
         }
         request.client = SimpleNamespace(host="127.0.0.1")
@@ -7851,7 +7853,7 @@ class TestRpcHandling:
     async def test_handle_internal_mcp_initialize_generates_id_and_returns_jsonrpc_error(self, monkeypatch):
         request = self._make_request({"jsonrpc": "2.0", "method": "initialize", "params": {}})
         request.headers = {
-            "x-contextforge-mcp-runtime": "affinity",
+            "x-contextforge-mcp-runtime-auth": internal_runtime_auth_header_value(),
             "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com"}).encode()).decode().rstrip("="),
         }
         request.client = SimpleNamespace(host="127.0.0.1")
@@ -7867,7 +7869,7 @@ class TestRpcHandling:
     async def test_handle_internal_mcp_session_delete_denies_invalid_session_access(self, monkeypatch):
         request = self._make_request({"jsonrpc": "2.0", "id": "sess-del", "method": "delete", "params": {}})
         request.headers = {
-            "x-contextforge-mcp-runtime": "affinity",
+            "x-contextforge-mcp-runtime-auth": internal_runtime_auth_header_value(),
             "mcp-session-id": "sess-1",
             "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com"}).encode()).decode().rstrip("="),
         }
@@ -7882,7 +7884,7 @@ class TestRpcHandling:
     async def test_handle_internal_mcp_session_delete_ignores_pool_runtime_errors(self, monkeypatch):
         request = self._make_request({"jsonrpc": "2.0", "id": "sess-del", "method": "delete", "params": {}})
         request.headers = {
-            "x-contextforge-mcp-runtime": "affinity",
+            "x-contextforge-mcp-runtime-auth": internal_runtime_auth_header_value(),
             "mcp-session-id": "sess-1",
             "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com", "_rust_session_validated": True}).encode()).decode().rstrip("="),
         }
@@ -7898,7 +7900,7 @@ class TestRpcHandling:
     async def test_handle_internal_mcp_notifications_initialized_returns_internal_error_on_logging_failure(self, monkeypatch):
         request = self._make_request({"jsonrpc": "2.0", "id": "n2", "method": "notifications/initialized", "params": {}})
         request.headers = {
-            "x-contextforge-mcp-runtime": "affinity",
+            "x-contextforge-mcp-runtime-auth": internal_runtime_auth_header_value(),
             "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com"}).encode()).decode().rstrip("="),
         }
         request.client = SimpleNamespace(host="127.0.0.1")
@@ -7911,7 +7913,7 @@ class TestRpcHandling:
     async def test_handle_internal_mcp_notifications_message_accepts_non_dict_params(self, monkeypatch):
         request = self._make_request({"jsonrpc": "2.0", "id": "n3", "method": "notifications/message", "params": []})
         request.headers = {
-            "x-contextforge-mcp-runtime": "affinity",
+            "x-contextforge-mcp-runtime-auth": internal_runtime_auth_header_value(),
             "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com"}).encode()).decode().rstrip("="),
         }
         request.client = SimpleNamespace(host="127.0.0.1")
@@ -7925,7 +7927,7 @@ class TestRpcHandling:
     async def test_handle_internal_mcp_notifications_cancelled_accepts_non_dict_params_and_returns_internal_error(self, monkeypatch):
         request = self._make_request({"jsonrpc": "2.0", "id": "n4", "method": "notifications/cancelled", "params": []})
         request.headers = {
-            "x-contextforge-mcp-runtime": "affinity",
+            "x-contextforge-mcp-runtime-auth": internal_runtime_auth_header_value(),
             "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com"}).encode()).decode().rstrip("="),
         }
         request.client = SimpleNamespace(host="127.0.0.1")
@@ -7961,7 +7963,7 @@ class TestRpcHandling:
     async def test_handle_internal_mcp_resources_list_public_only_and_generic_cleanup_path(self):
         request = self._make_request({"jsonrpc": "2.0", "id": "res-list-2", "method": "resources/list", "params": {"cursor": "c1"}})
         request.headers = {
-            "x-contextforge-mcp-runtime": "affinity",
+            "x-contextforge-mcp-runtime-auth": internal_runtime_auth_header_value(),
             "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com"}).encode()).decode().rstrip("="),
         }
         request.client = SimpleNamespace(host="127.0.0.1")
@@ -7996,7 +7998,7 @@ class TestRpcHandling:
     async def test_handle_internal_mcp_resources_read_server_scope_missing_uri(self):
         request = self._make_request({"jsonrpc": "2.0", "id": "res-read", "method": "resources/read", "params": []})
         request.headers = {
-            "x-contextforge-mcp-runtime": "affinity",
+            "x-contextforge-mcp-runtime-auth": internal_runtime_auth_header_value(),
             "x-contextforge-server-id": "srv-1",
             "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com"}).encode()).decode().rstrip("="),
         }
@@ -8015,7 +8017,7 @@ class TestRpcHandling:
     async def test_handle_internal_mcp_resources_read_admin_unrestricted_with_plain_payload(self):
         request = self._make_request({"jsonrpc": "2.0", "id": "res-read", "method": "resources/read", "params": {"uri": "resource://one"}})
         request.headers = {
-            "x-contextforge-mcp-runtime": "affinity",
+            "x-contextforge-mcp-runtime-auth": internal_runtime_auth_header_value(),
             "x-contextforge-server-id": "srv-1",
             "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "admin@example.com"}).encode()).decode().rstrip("="),
         }
@@ -8042,7 +8044,7 @@ class TestRpcHandling:
 
         request = self._make_request({"jsonrpc": "2.0", "id": "res-read", "method": "resources/read", "params": {"uri": "resource://missing"}})
         request.headers = {
-            "x-contextforge-mcp-runtime": "affinity",
+            "x-contextforge-mcp-runtime-auth": internal_runtime_auth_header_value(),
             "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com"}).encode()).decode().rstrip("="),
         }
         request.client = SimpleNamespace(host="127.0.0.1")
@@ -8063,7 +8065,7 @@ class TestRpcHandling:
     async def test_handle_internal_mcp_resources_read_ignores_invalidate_failure_on_cleanup(self):
         request = self._make_request({"jsonrpc": "2.0", "id": "res-read-err", "method": "resources/read", "params": {"uri": "resource://err"}})
         request.headers = {
-            "x-contextforge-mcp-runtime": "affinity",
+            "x-contextforge-mcp-runtime-auth": internal_runtime_auth_header_value(),
             "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com"}).encode()).decode().rstrip("="),
         }
         request.client = SimpleNamespace(host="127.0.0.1")
@@ -8089,7 +8091,7 @@ class TestRpcHandling:
 
         request = self._make_request({"jsonrpc": "2.0", "id": "res-read-ambiguous", "method": "resources/read", "params": {"uri": "resource://dup"}})
         request.headers = {
-            "x-contextforge-mcp-runtime": "affinity",
+            "x-contextforge-mcp-runtime-auth": internal_runtime_auth_header_value(),
             "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com"}).encode()).decode().rstrip("="),
         }
         request.client = SimpleNamespace(host="127.0.0.1")
@@ -8138,7 +8140,7 @@ class TestRpcHandling:
     async def test_handle_internal_mcp_prompts_list_admin_unrestricted_and_cleanup_path(self):
         request = self._make_request({"jsonrpc": "2.0", "id": "prompts-list-2", "method": "prompts/list", "params": {}})
         request.headers = {
-            "x-contextforge-mcp-runtime": "affinity",
+            "x-contextforge-mcp-runtime-auth": internal_runtime_auth_header_value(),
             "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "admin@example.com"}).encode()).decode().rstrip("="),
         }
         request.client = SimpleNamespace(host="127.0.0.1")
@@ -8176,7 +8178,7 @@ class TestRpcHandling:
 
         request_missing = self._make_request({"jsonrpc": "2.0", "id": "prompt-get", "method": "prompts/get", "params": []})
         request_missing.headers = {
-            "x-contextforge-mcp-runtime": "affinity",
+            "x-contextforge-mcp-runtime-auth": internal_runtime_auth_header_value(),
             "x-contextforge-server-id": "srv-1",
             "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com"}).encode()).decode().rstrip("="),
         }
@@ -8195,7 +8197,7 @@ class TestRpcHandling:
 
         request_not_found = self._make_request({"jsonrpc": "2.0", "id": "prompt-get", "method": "prompts/get", "params": {"name": "missing"}})
         request_not_found.headers = {
-            "x-contextforge-mcp-runtime": "affinity",
+            "x-contextforge-mcp-runtime-auth": internal_runtime_auth_header_value(),
             "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "admin@example.com"}).encode()).decode().rstrip("="),
         }
         request_not_found.client = SimpleNamespace(host="127.0.0.1")
@@ -8214,7 +8216,7 @@ class TestRpcHandling:
 
         request_invalid = self._make_request({"jsonrpc": "2.0", "id": "prompt-get", "method": "prompts/get", "params": {"name": "broken"}})
         request_invalid.headers = {
-            "x-contextforge-mcp-runtime": "affinity",
+            "x-contextforge-mcp-runtime-auth": internal_runtime_auth_header_value(),
             "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "admin@example.com"}).encode()).decode().rstrip("="),
         }
         request_invalid.client = SimpleNamespace(host="127.0.0.1")
@@ -8236,7 +8238,7 @@ class TestRpcHandling:
     async def test_handle_internal_mcp_prompts_get_public_only_and_generic_cleanup_path(self):
         request = self._make_request({"jsonrpc": "2.0", "id": "prompt-get-2", "method": "prompts/get", "params": {"name": "prompt-one"}})
         request.headers = {
-            "x-contextforge-mcp-runtime": "affinity",
+            "x-contextforge-mcp-runtime-auth": internal_runtime_auth_header_value(),
             "x-contextforge-server-id": "srv-1",
             "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com"}).encode()).decode().rstrip("="),
         }
@@ -8288,7 +8290,7 @@ class TestRpcHandling:
     async def test_internal_mcp_handlers_return_jsonrpc_errors_from_authorization(self, handler, method_name):
         request = self._make_request({"jsonrpc": "2.0", "id": "rpc-1", "method": method_name, "params": {"uri": "resource://one", "name": "prompt-one"}})
         request.headers = {
-            "x-contextforge-mcp-runtime": "affinity",
+            "x-contextforge-mcp-runtime-auth": internal_runtime_auth_header_value(),
             "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com"}).encode()).decode().rstrip("="),
         }
         request.query_params = {}
@@ -8323,7 +8325,7 @@ class TestRpcHandling:
     async def test_internal_mcp_handlers_rollback_and_handle_generic_errors(self, handler, method_name, patch_target, raises):
         request = self._make_request({"jsonrpc": "2.0", "id": "rpc-2", "method": method_name, "params": {"uri": "resource://one", "name": "prompt-one"}})
         request.headers = {
-            "x-contextforge-mcp-runtime": "affinity",
+            "x-contextforge-mcp-runtime-auth": internal_runtime_auth_header_value(),
             "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com"}).encode()).decode().rstrip("="),
         }
         request.query_params = {}
@@ -8346,7 +8348,7 @@ class TestRpcHandling:
     async def test_handle_internal_mcp_tools_call_returns_forwarded_affinity_response(self):
         request = self._make_request({"jsonrpc": "2.0", "id": "aff-1", "method": "tools/call", "params": {"name": "echo"}})
         request.headers = {
-            "x-contextforge-mcp-runtime": "affinity",
+            "x-contextforge-mcp-runtime-auth": internal_runtime_auth_header_value(),
             "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com", "is_authenticated": True}).encode()).decode().rstrip("="),
         }
         request.client = SimpleNamespace(host="127.0.0.1")
@@ -8365,7 +8367,7 @@ class TestRpcHandling:
     async def test_handle_internal_mcp_tools_call_rolls_back_and_invalidates_on_unexpected_error(self):
         request = self._make_request({"jsonrpc": "2.0", "id": "aff-2", "method": "tools/call", "params": {"name": "echo"}})
         request.headers = {
-            "x-contextforge-mcp-runtime": "affinity",
+            "x-contextforge-mcp-runtime-auth": internal_runtime_auth_header_value(),
             "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com", "is_authenticated": True}).encode()).decode().rstrip("="),
         }
         request.client = SimpleNamespace(host="127.0.0.1")
@@ -8386,7 +8388,7 @@ class TestRpcHandling:
     async def test_handle_internal_mcp_rpc_rolls_back_and_invalidates_on_error(self):
         request = self._make_request({"jsonrpc": "2.0", "id": "rpc-rollback", "method": "tools/list", "params": {}})
         request.headers = {
-            "x-contextforge-mcp-runtime": "affinity",
+            "x-contextforge-mcp-runtime-auth": internal_runtime_auth_header_value(),
             "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com"}).encode()).decode().rstrip("="),
         }
         request.client = SimpleNamespace(host="127.0.0.1")
@@ -8405,7 +8407,7 @@ class TestRpcHandling:
     async def test_handle_internal_mcp_rpc_ignores_invalidate_failure_on_cleanup(self):
         request = self._make_request({"jsonrpc": "2.0", "id": "rpc-rollback", "method": "tools/list", "params": {}})
         request.headers = {
-            "x-contextforge-mcp-runtime": "affinity",
+            "x-contextforge-mcp-runtime-auth": internal_runtime_auth_header_value(),
             "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com"}).encode()).decode().rstrip("="),
         }
         request.client = SimpleNamespace(host="127.0.0.1")
@@ -8425,7 +8427,7 @@ class TestRpcHandling:
     async def test_handle_internal_mcp_notifications_message_returns_internal_error_on_logging_failure(self, monkeypatch):
         request = self._make_request({"jsonrpc": "2.0", "id": "n5", "method": "notifications/message", "params": {"level": "info"}})
         request.headers = {
-            "x-contextforge-mcp-runtime": "affinity",
+            "x-contextforge-mcp-runtime-auth": internal_runtime_auth_header_value(),
             "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com"}).encode()).decode().rstrip("="),
         }
         request.client = SimpleNamespace(host="127.0.0.1")
@@ -8437,7 +8439,7 @@ class TestRpcHandling:
     async def test_handle_internal_mcp_tools_call_rejects_parse_error_invalid_method_and_missing_tool_name(self):
         parse_request = MagicMock(spec=Request)
         parse_request.body = AsyncMock(return_value=b"{bad")
-        parse_request.headers = {"x-contextforge-mcp-runtime": "affinity", "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com"}).encode()).decode().rstrip("=")}
+        parse_request.headers = {"x-contextforge-mcp-runtime-auth": internal_runtime_auth_header_value(), "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com"}).encode()).decode().rstrip("=")}
         parse_request.query_params = {}
         parse_request.state = MagicMock()
         parse_request.client = SimpleNamespace(host="127.0.0.1")
@@ -8461,7 +8463,7 @@ class TestRpcHandling:
     async def test_handle_internal_mcp_tools_call_generates_id_and_returns_jsonrpc_plugin_error_while_ignoring_close_failures(self):
         request = self._make_request({"jsonrpc": "2.0", "method": "tools/call", "params": {"name": "echo"}})
         request.headers = {
-            "x-contextforge-mcp-runtime": "affinity",
+            "x-contextforge-mcp-runtime-auth": internal_runtime_auth_header_value(),
             "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com", "is_authenticated": True}).encode()).decode().rstrip("="),
         }
         request.client = SimpleNamespace(host="127.0.0.1")

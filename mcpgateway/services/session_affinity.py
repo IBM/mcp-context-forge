@@ -1156,6 +1156,7 @@ class SessionAffinity:
 
             # First-Party - lazy imports avoid a circular dependency with main/transport.
             # The forwarded envelope was already verified above, before any field was decoded.
+            from mcpgateway.auth_context import INTERNAL_RUNTIME_AUTH_HEADER, internal_runtime_auth_header_value  # pylint: disable=import-outside-toplevel
             from mcpgateway.main import app  # pylint: disable=import-outside-toplevel,cyclic-import
             from mcpgateway.utils.passthrough_headers import safe_extract_and_filter_for_loopback  # pylint: disable=import-outside-toplevel
             from mcpgateway.utils.verify_credentials import _resolve_auth_header_name  # pylint: disable=import-outside-toplevel,protected-access
@@ -1164,6 +1165,7 @@ class SessionAffinity:
             rpc_headers = {
                 "content-type": "application/json",
                 "x-mcp-session-id": mcp_session_id or "",
+                INTERNAL_RUNTIME_AUTH_HEADER: internal_runtime_auth_header_value(),
                 "x-contextforge-auth-context": auth_context_header,
             }
             # Preserve the bearer under the configured auth header (AUTH_HEADER_NAME),

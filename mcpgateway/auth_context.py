@@ -59,6 +59,7 @@ The names below are the **module's public API**. Callers in ``main.py``,
         INTERNAL_MCP_PATH_PREFIX
         INTERNAL_A2A_PATH_PREFIX
         INTERNAL_AUTH_CONTEXT_HEADER
+        INTERNAL_RUNTIME_AUTH_HEADER
 
     Auth-context encoding
         decode_internal_mcp_auth_context(header_value) -> dict
@@ -70,6 +71,8 @@ The names below are the **module's public API**. Callers in ``main.py``,
 
     Trust-gate helpers
         is_trusted_internal_mcp_request(request) -> bool
+        internal_runtime_auth_header_value() -> str
+        has_valid_internal_runtime_auth_header(request) -> bool
 
     Per-request JWT / scope resolution (the Layer-1 surface)
         get_token_teams_from_request(request) -> list[str] | None
@@ -87,6 +90,8 @@ should really go through one of the public wrappers above, or whether the
 helper belongs in ``mcpgateway.auth`` instead.
 
     _auth_encryption_secret_value        (config-dependent secret accessor)
+    _expected_internal_runtime_auth_header_for_secret (secret-derived trust value)
+    _expected_internal_runtime_auth_header (trust value for the current secret)
     _has_verified_jwt_payload            (probe used by the resolution helpers)
     _internal_path_requires_auth_context (path classifier for internal routes)
 
@@ -110,15 +115,19 @@ policy. The key invariants that this module enforces:
    via the fallback-admin branch; this carve-out is intentional and documented
    in ``AGENTS.md``.
 5. ``is_trusted_internal_mcp_request`` validates that in-process internal
-   requests are truly local (loopback addresses), carry a recognized
-   runtime marker ("affinity"), and optionally contain a valid
-   ``x-contextforge-auth-context`` header. All three checks must pass
-   for the middleware exemption to apply.
+   requests are truly local (loopback addresses) and carry the shared
+   secret-derived trust header (``x-contextforge-mcp-runtime-auth``); routes
+   other than ``*/authenticate`` must additionally carry a non-empty
+   ``x-contextforge-auth-context`` header. The loopback check is defense in
+   depth only - ``ProxyHeadersMiddleware(trusted_hosts="*")`` lets direct
+   callers influence ``request.client.host``, so the secret-derived header is
+   the actual trust boundary.
 """
 
 # Standard
 import asyncio
 import base64
+from functools import lru_cache
 import hashlib
 import hmac
 import logging
@@ -275,6 +284,63 @@ def _auth_encryption_secret_value() -> str:
 INTERNAL_MCP_PATH_PREFIX = "/_internal/mcp"
 INTERNAL_A2A_PATH_PREFIX = "/_internal/a2a"
 INTERNAL_AUTH_CONTEXT_HEADER = "x-contextforge-auth-context"
+INTERNAL_RUNTIME_AUTH_HEADER = "x-contextforge-mcp-runtime-auth"
+
+# Domain-separation string folded into the derived trust value.
+_INTERNAL_RUNTIME_AUTH_CONTEXT = "contextforge-internal-mcp-runtime-v1"
+
+
+@lru_cache(maxsize=8)
+def _expected_internal_runtime_auth_header_for_secret(secret: str) -> str:
+    """Return the shared secret-derived trust header for internal dispatch hops.
+
+    Args:
+        secret: Auth-encryption secret to derive the trust header from.
+
+    Returns:
+        Hex-encoded SHA-256 digest derived from the provided auth secret.
+    """
+    material = f"{secret}:{_INTERNAL_RUNTIME_AUTH_CONTEXT}".encode("utf-8")
+    return hashlib.sha256(material).hexdigest()
+
+
+def _expected_internal_runtime_auth_header() -> str:
+    """Return the current shared secret-derived trust header for internal hops.
+
+    Returns:
+        Hex-encoded SHA-256 digest derived from the current auth secret.
+    """
+    return _expected_internal_runtime_auth_header_for_secret(_auth_encryption_secret_value())
+
+
+def internal_runtime_auth_header_value() -> str:
+    """Return the trust header value internal dispatchers must attach.
+
+    Public accessor used by the stamp sites (session-affinity forwarding and
+    in-process internal dispatch) that construct requests to ``/_internal/*``
+    endpoints.
+
+    Returns:
+        The secret-derived value for ``x-contextforge-mcp-runtime-auth``.
+    """
+    return _expected_internal_runtime_auth_header()
+
+
+def has_valid_internal_runtime_auth_header(request: Request) -> bool:
+    """Validate the shared secret-derived trust header on an internal request.
+
+    Args:
+        request: Incoming internal request.
+
+    Returns:
+        ``True`` when the provided trust header matches the expected
+        secret-derived value.
+    """
+    provided = request.headers.get(INTERNAL_RUNTIME_AUTH_HEADER)
+    if not provided:
+        return False
+    return hmac.compare_digest(provided, _expected_internal_runtime_auth_header())
+
 
 # Redis-envelope signing for cross-worker request forwarding.
 FORWARD_SIG_FIELD = "forward_sig"
@@ -352,10 +418,13 @@ def is_trusted_internal_runtime_request(
 ) -> bool:
     """Return whether a request is a trusted in-process internal-runtime hop.
 
-    The trust boundary is the encoded ``x-contextforge-auth-context`` header
-    (HMAC-signed) and loopback client address. ProxyHeaders(trusted_hosts="*")
-    lets a direct external caller influence ``request.client.host`` (the replay
-    is hardened separately by stripping forwarded / client-IP headers).
+    The trust boundary is the shared secret-derived
+    ``x-contextforge-mcp-runtime-auth`` header; only callers holding the
+    auth-encryption secret (in-process dispatchers on this deployment) can
+    mint it. The loopback check is defense in depth, not an independent gate:
+    ProxyHeaders(trusted_hosts="*") lets a direct external caller influence
+    ``request.client.host`` (the replay is hardened separately by stripping
+    forwarded / client-IP headers).
 
     Args:
         request: Incoming request to inspect.
@@ -365,11 +434,13 @@ def is_trusted_internal_runtime_request(
             defaults to ``request.url.path``.
 
     Returns:
-        ``True`` only when prefix, optional auth context, and loopback all hold;
-        otherwise ``False``.
+        ``True`` only when prefix, secret-derived trust header, optional auth
+        context, and loopback all hold; otherwise ``False``.
     """
     p = path if path is not None else (getattr(getattr(request, "url", None), "path", "") or "")
     if not any(p == prefix or p.startswith(f"{prefix}/") for prefix in allowed_prefixes):
+        return False
+    if not has_valid_internal_runtime_auth_header(request):
         return False
     if require_auth_context and not request.headers.get(INTERNAL_AUTH_CONTEXT_HEADER):
         return False

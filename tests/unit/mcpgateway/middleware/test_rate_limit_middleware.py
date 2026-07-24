@@ -15,13 +15,17 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 
-def _trusted_internal_request(path, *, marker="affinity", hmac_value=None, ctx="ctx", client="127.0.0.1"):
+def _trusted_internal_request(path: str, *, hmac_value: str | None = "valid", ctx: str | None = "ctx", client: str = "127.0.0.1"):
     """Build a real loopback internal request for trust-gate exemption tests."""
     from starlette.requests import Request
 
-    _HMAC_DUMMY = "HMAC-DUMMY"  # pragma: allowlist secret
+    # First-Party
+    from mcpgateway.auth_context import _expected_internal_runtime_auth_header
 
     headers = []
+    if hmac_value is not None:
+        valid_value = _expected_internal_runtime_auth_header()
+        headers.append((b"x-contextforge-mcp-runtime-auth", (valid_value if hmac_value == "valid" else hmac_value).encode()))
     if ctx is not None:
         headers.append((b"x-contextforge-auth-context", ctx.encode()))
     scope = {

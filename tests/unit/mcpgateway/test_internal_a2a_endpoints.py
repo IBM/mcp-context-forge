@@ -1181,6 +1181,9 @@ class TestInternalA2ADenyPaths:
         # Third-Party
         from starlette.requests import Request
 
+        # First-Party
+        from mcpgateway.auth_context import internal_runtime_auth_header_value
+
         monkeypatch.setattr("mcpgateway.main.settings.mcpgateway_a2a_enabled", False)
 
         # Synthesize a request scope whose URL path is /_internal/mcp/...
@@ -1191,7 +1194,7 @@ class TestInternalA2ADenyPaths:
             "raw_path": b"/_internal/mcp/authenticate",
             "query_string": b"",
             "headers": [
-                (b"x-contextforge-mcp-runtime", b"affinity"),
+                (b"x-contextforge-mcp-runtime-auth", internal_runtime_auth_header_value().encode()),
             ],
             "client": ("127.0.0.1", 12345),
         }
