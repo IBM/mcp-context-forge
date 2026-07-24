@@ -1,5 +1,16 @@
 <!-- htmlhint doctype-first:false -->
-<table id="gateways-table" class="min-w-full divide-y divide-gray-200">
+<table id="gateways-table"
+       class="min-w-full divide-y divide-gray-200"
+       hx-get="{{ root_path }}/admin/gateways/partial"
+       hx-swap="outerHTML"
+        hx-vals="js:{'include_inactive': (document.getElementById('show-inactive-gateways') && document.getElementById('show-inactive-gateways').checked) || false, 'q': (document.getElementById('gateways-search-input') && document.getElementById('gateways-search-input').value) || '', 'tags': (document.getElementById('gateways-tag-filter') && document.getElementById('gateways-tag-filter').value) || ''}"
+       {% if gateway_async_lifecycle_enabled|default(false) %}
+       hx-trigger="refresh from:body, every 10s [!!document.querySelector('[data-gateway-status=pending], [data-gateway-status=deleting]')]"
+       hx-indicator="#gateway-polling-indicator"
+       {% else %}
+       hx-indicator="#gateways-loading"
+       {% endif %}
+>
   <thead class="bg-gray-50 dark:bg-gray-700">
     <tr>
       <th class="px-6 py-3 text-center text-xs font-medium text-gray-800 dark:text-gray-200 uppercase tracking-wider">Actions</th>
@@ -9,6 +20,9 @@
       <th class="px-6 py-3 text-left text-xs font-medium text-gray-800 dark:text-gray-200 uppercase tracking-wider w-24">URL</th>
       <th class="px-6 py-3 text-left text-xs font-medium text-gray-800 dark:text-gray-200 uppercase tracking-wider">Tags</th>
       <th class="px-6 py-3 text-left text-xs font-medium text-gray-800 dark:text-gray-200 uppercase tracking-wider">Status</th>
+      {% if gateway_async_lifecycle_enabled|default(false) %}
+      <th class="px-6 py-3 text-left text-xs font-medium text-gray-800 dark:text-gray-200 uppercase tracking-wider">Retry Info</th>
+      {% endif %}
       <th class="px-6 py-3 text-left text-xs font-medium text-gray-800 dark:text-gray-200 uppercase tracking-wider">Last Seen</th>
       <th class="px-6 py-3 text-left text-xs font-medium text-gray-800 dark:text-gray-200 uppercase tracking-wider">Owner</th>
       <th class="px-6 py-3 text-left text-xs font-medium text-gray-800 dark:text-gray-200 uppercase tracking-wider">Team</th>
@@ -20,6 +34,10 @@
       {% set gateway_label = gateway.name or gateway.id %}
       {% set can_modify = is_admin or gateway.ownerEmail == current_user_email or (gateway.visibility == 'team' and gateway.teamId and user_team_roles.get(gateway.teamId|string) == 'owner') %}
       {% set can_authorize = can_modify or gateway.visibility == 'public' or (gateway.visibility == 'team' and gateway.teamId and gateway.teamId|string in user_team_roles) %}
+      {# Async lifecycle variables (Issue #5127) #}
+      {% set async_enabled = gateway_async_lifecycle_enabled|default(false) %}
+      {% set gw_status = gateway.status|default('active') %}
+      {% set is_pending_or_deleting = async_enabled and gw_status in ['pending', 'deleting'] %}
       <tr id="gateway-row-{{ gateway.id }}" data-enabled="{{ gateway.enabled|lower }}" data-owner-email="{{ gateway.ownerEmail }}" data-team-id="{{ gateway.teamId or '' }}" data-visibility="{{ gateway.visibility }}">
         <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
           <div class="relative"
@@ -112,19 +130,21 @@
                 role="menuitem"
                 tabindex="0"
                 @click="dispatch('editGateway', {{ gateway.id|tojson_attr }})"
-                class="w-full flex items-center px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
+                class="w-full flex items-center px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 {% if is_pending_or_deleting %}opacity-50 cursor-not-allowed{% endif %}"
+                {% if is_pending_or_deleting %}disabled aria-disabled="true" title="Cannot edit while gateway is {{ gw_status }}"{% endif %}
               >Edit</button>
 
               <hr class="border-gray-200 dark:border-gray-600 my-1">
 
               <!-- Activate / Deactivate -->
-              <form method="POST" action="{{ root_path }}/admin/gateways/{{ gateway.id }}/state" class="contents" @submit="menuOpen = false" data-action-submit="handleToggleSubmit" data-arg0="gateways">
+              <form method="POST" action="{{ root_path }}/admin/gateways/{{ gateway.id }}/state" class="contents" {% if is_pending_or_deleting %}onsubmit="return false"{% endif %} @submit="menuOpen = false" data-action-submit="handleToggleSubmit" data-arg0="gateways">
                 <input type="hidden" name="activate" value="{{ 'false' if gateway.enabled else 'true' }}" />
                 <button
                   type="submit"
                   role="menuitem"
                   tabindex="0"
-                  class="w-full flex items-center px-4 py-2 text-sm {% if gateway.enabled %}text-yellow-600 dark:text-yellow-400{% else %}text-green-600 dark:text-green-400{% endif %} hover:bg-gray-100 dark:hover:bg-gray-700"
+                  class="w-full flex items-center px-4 py-2 text-sm {% if gateway.enabled %}text-yellow-600 dark:text-yellow-400{% else %}text-green-600 dark:text-green-400{% endif %} hover:bg-gray-100 dark:hover:bg-gray-700 {% if is_pending_or_deleting %}opacity-50 cursor-not-allowed{% endif %}"
+                  {% if is_pending_or_deleting %}disabled aria-disabled="true" title="Cannot activate/deactivate while gateway is {{ gw_status }}"{% endif %}
                 >{% if gateway.enabled %}Deactivate{% else %}Activate{% endif %}</button>
               </form>
 
@@ -135,7 +155,7 @@
                   role="menuitem"
                   tabindex="0"
                   class="w-full flex items-center px-4 py-2 text-sm text-red-600 dark:text-red-400 hover:bg-gray-100 dark:hover:bg-gray-700"
-                >Delete</button>
+                >{% if async_enabled and gw_status == 'pending' %}Cancel{% else %}Delete{% endif %}</button>
               </form>
               {% endif %}
             </div>
@@ -156,13 +176,53 @@
             <span class="text-gray-500 dark:text-gray-300 text-xs">None</span>
           {% endif %}
         </td>
-        <td class="px-6 py-4 whitespace-nowrap text-sm">
-          {% if gateway.enabled %}
-          <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">Active</span>
+        <td class="px-6 py-4 {% if not async_enabled %}whitespace-nowrap{% endif %} text-sm">
+          {% if async_enabled and gw_status == 'pending' %}
+          <div class="flex flex-col gap-1">
+            <span data-gateway-status="pending" class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400" role="status" aria-live="polite">
+              <span class="sr-only">Gateway status:</span>
+              🔄 Pending
+            </span>
+            {% if gateway.statusMessage %}
+            {# Auto-escaped by Jinja2 (XSS-safe) #}
+            <span class="block text-xs text-gray-600 dark:text-gray-400 break-words line-clamp-2">{{ gateway.statusMessage }}</span>
+            {% endif %}
+          </div>
+          {% elif async_enabled and gw_status == 'deleting' %}
+          <div class="flex flex-col gap-1">
+            <span data-gateway-status="deleting" class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-orange-100 text-orange-800 dark:bg-orange-900/20 dark:text-orange-400" role="status" aria-live="polite">
+              <span class="sr-only">Gateway status:</span>
+              🗑️ Deleting
+            </span>
+            {% if gateway.statusMessage %}
+            {# Auto-escaped by Jinja2 (XSS-safe) #}
+            <span class="block text-xs text-gray-600 dark:text-gray-400 break-words line-clamp-2">{{ gateway.statusMessage }}</span>
+            {% endif %}
+          </div>
+          {% elif async_enabled and gw_status == 'active' and gateway.enabled %}
+          <span data-gateway-status="active" class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400">Active</span>
+          {% elif gateway.enabled %}
+          <span data-gateway-status="active" class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">Active</span>
           {% else %}
-          <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-red-100 text-red-800">Inactive</span>
+          <span data-gateway-status="inactive" class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-red-100 text-red-800">Inactive</span>
           {% endif %}
         </td>
+        {% if async_enabled %}
+        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300">
+          {% if gw_status == 'pending' and gateway.registrationAttempts %}
+          <div class="flex flex-col gap-1" aria-live="polite">
+            <span class="text-xs">Attempts: {{ gateway.registrationAttempts }}</span>
+            {% if gateway.nextRetryAt %}
+            <span class="text-xs text-gray-400 dark:text-gray-500">
+              Next: {{ gateway.nextRetryAt[:19] if gateway.nextRetryAt is string else gateway.nextRetryAt.strftime('%Y-%m-%d %H:%M:%S') }}
+            </span>
+            {% endif %}
+          </div>
+          {% else %}
+          <span class="text-gray-400 dark:text-gray-600 text-xs">—</span>
+          {% endif %}
+        </td>
+        {% endif %}
         <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300">
           {% if gateway.lastSeen %}{{ gateway.lastSeen[:19] if gateway.lastSeen is string else gateway.lastSeen.strftime('%Y-%m-%d %H:%M:%S') }}{% else %}Never{% endif %}
         </td>

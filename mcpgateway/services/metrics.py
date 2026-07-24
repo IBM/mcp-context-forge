@@ -259,7 +259,7 @@ def _get_gateway_lifecycle_pending_registration_attempts_gauge():
 def _collect_gateway_lifecycle_metrics() -> tuple[dict[str, int], int, int]:
     """Collect aggregate lifecycle metrics from gateway rows."""
     # First-Party
-    from mcpgateway.db import fresh_db_session, Gateway  # pylint: disable=import-outside-toplevel
+    from mcpgateway.db import Gateway, fresh_db_session  # pylint: disable=import-outside-toplevel
 
     lifecycle_counts = {"pending": 0, "active": 0, "deleting": 0}
     pending_due_count = 0

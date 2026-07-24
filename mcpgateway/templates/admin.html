@@ -4828,6 +4828,14 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
             </div>
           </div>
 
+          <!-- Subtle polling indicator (top-right corner, only for async gateway polling) -->
+          <div id="gateway-polling-indicator" class="htmx-indicator fixed top-20 right-6 z-50">
+            <div class="flex items-center gap-2 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-full px-3 py-1.5 shadow-sm">
+              <div class="w-2 h-2 bg-blue-500 rounded-full animate-pulse"></div>
+              <span class="text-xs text-blue-700 dark:text-blue-300 font-medium">Updating...</span>
+            </div>
+          </div>
+
           <!-- Pagination Controls -->
           {# ---- compute safe pagination values first ---- #}
           {% set page = page if page is defined else 1 %}
