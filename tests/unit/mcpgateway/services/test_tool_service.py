@@ -9175,6 +9175,85 @@ class TestGrpcToolInvocation:
                 await tool_service.invoke_tool(test_db, "test.Svc.DoStuff", {}, request_headers=None)
 
 
+@pytest.mark.asyncio
+async def test_list_tools_creates_span(tool_service):
+    db = MagicMock()
+    db.commit = MagicMock()
+    tool = MagicMock()
+    tool.team_id = None
+    tool_service.convert_tool_to_read = MagicMock(return_value="tool-read")
+
+    span_cm = MagicMock(__enter__=MagicMock(return_value=None), __exit__=MagicMock(return_value=False))
+
+    with (
+        patch("mcpgateway.services.tool_service.create_span", return_value=span_cm) as mock_create_span,
+        patch("mcpgateway.services.tool_service._get_registry_cache") as mock_cache_fn,
+        patch.object(tool_service, "_apply_access_control", new=AsyncMock(side_effect=lambda query, *_args, **_kwargs: query)),
+        patch("mcpgateway.services.tool_service.unified_paginate", new_callable=AsyncMock) as mock_paginate,
+    ):
+        mock_cache_fn.return_value = AsyncMock(hash_filters=MagicMock(return_value="h"), get=AsyncMock(return_value=None), set=AsyncMock())
+        mock_paginate.return_value = ([tool], None)
+
+        result, _ = await tool_service.list_tools(db, user_email="user@example.com", token_teams=["team-1"], visibility="team")
+
+    assert result == ["tool-read"]
+    mock_create_span.assert_called_once()
+    assert mock_create_span.call_args[0][0] == "tool.list"
+    attrs = mock_create_span.call_args[0][1]
+    assert attrs["user.email"] == "user@example.com"
+    assert attrs["team.scope"] == "team-1"
+    assert attrs["visibility"] == "team"
+
+
+@pytest.mark.asyncio
+async def test_list_server_tools_creates_span(tool_service):
+    db = MagicMock()
+    db.commit = MagicMock()
+    db.execute.return_value.scalars.return_value.all.return_value = [MagicMock()]
+    tool_service.convert_tool_to_read = MagicMock(return_value="tool-read")
+
+    span_cm = MagicMock(__enter__=MagicMock(return_value=None), __exit__=MagicMock(return_value=False))
+
+    with patch("mcpgateway.services.tool_service.create_span", return_value=span_cm) as mock_create_span:
+        result = await tool_service.list_server_tools(db, "server-1", user_email="user@example.com", token_teams=["team-1"])
+
+    assert result == ["tool-read"]
+    assert mock_create_span.call_args[0][0] == "tool.list"
+    attrs = mock_create_span.call_args[0][1]
+    assert attrs["server_id"] == "server-1"
+    assert attrs["team.scope"] == "team-1"
+
+
+@pytest.mark.asyncio
+async def test_list_server_mcp_tool_definitions_creates_span(tool_service):
+    db = MagicMock()
+    db.commit = MagicMock()
+    db.execute.return_value.mappings.return_value.all.return_value = [
+        {
+            "name": "tool-one",
+            "title": None,
+            "description": "Tool One",
+            "input_schema": {"type": "object"},
+            "output_schema": None,
+            "annotations": None,
+            "owner_email": None,
+            "team_id": None,
+            "visibility": "public",
+        }
+    ]
+
+    span_cm = MagicMock(__enter__=MagicMock(return_value=None), __exit__=MagicMock(return_value=False))
+
+    with patch("mcpgateway.services.tool_service.create_span", return_value=span_cm) as mock_create_span:
+        result = await tool_service.list_server_mcp_tool_definitions(db, "server-1", token_teams=["team-1"])
+
+    assert result[0]["name"] == "tool-one"
+    assert mock_create_span.call_args[0][0] == "tool.list"
+    attrs = mock_create_span.call_args[0][1]
+    assert attrs["mcp.definition_mode"] is True
+    assert attrs["team.scope"] == "team-1"
+
+
 # Coverage decision-record (B7 anti-regression):
 #   ``invoke_tool`` has three byte-identical ``except asyncio.CancelledError: raise``
 #   clauses (REST ~5446, MCP ~5632, gRPC 5847) plus the gRPC timeout post-invoke hook

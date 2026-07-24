@@ -6360,6 +6360,7 @@ async def read_resource(resource_id: str, request: Request, db: Session = Depend
             token_teams=auth_token_teams,
             plugin_context_table=plugin_context_table,
             plugin_global_context=plugin_global_context,
+            request_headers=dict(request.headers),
         )
         _enforce_scoped_resource_access(request, db, user, f"/resources/{resource_id}")
         # Release transaction before response serialization
@@ -6377,7 +6378,10 @@ async def read_resource(resource_id: str, request: Request, db: Session = Depend
 
         # If already a ResourceContent, serialize directly
         if isinstance(content, ResourceContent):
-            return content.model_dump()
+            payload = content.model_dump()
+            if payload.get("meta") is None:
+                payload.pop("meta", None)
+            return payload
 
         # If TextContent, wrap into resource envelope with text
         if isinstance(content, TextContent):
@@ -7325,6 +7329,8 @@ async def register_gateway(
             response.headers["Retry-After"] = str(max(1, math.ceil(settings.gateway_async_lifecycle_poll_interval)))
         return result
     except Exception as ex:
+        if isinstance(ex, PermissionError):
+            return ORJSONResponse(content={"message": str(ex)}, status_code=status.HTTP_403_FORBIDDEN)
         if isinstance(ex, GatewayConnectionError):
             return ORJSONResponse(content={"message": str(ex)}, status_code=status.HTTP_502_BAD_GATEWAY)
         if isinstance(ex, ValueError):

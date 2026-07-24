@@ -3,9 +3,9 @@
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
 
-Rust MCP session/auth isolation correctness load test.
+MCP session/auth isolation correctness load test.
 This Locust harness is intentionally separate from the throughput benchmarks.
-It validates that a live Rust MCP session remains usable for the owner while
+It validates that a live MCP session remains usable for the owner while
 same-team peers and outsiders cannot hijack it under concurrent traffic.
 """
 
@@ -219,7 +219,7 @@ def _bootstrap_state() -> None:
 
     health = requests.get(f"{BASE_URL}/health", timeout=10)
     health.raise_for_status()
-    assert health.headers.get("x-contextforge-mcp-runtime-mode") == "rust-managed", f"Rust MCP runtime is not active at {BASE_URL}"
+    assert health.headers.get("x-contextforge-mcp-runtime-mode") == "python", f"Python MCP runtime is not active at {BASE_URL}"
 
     admin_token = _make_jwt(_cfg("PLATFORM_ADMIN_EMAIL", "admin@example.com"), is_admin=True, teams=None)
     admin_client = requests.Session()
@@ -231,7 +231,7 @@ def _bootstrap_state() -> None:
         "/teams/",
         json={
             "name": f"{ISOLATION_PREFIX}-team-{uuid.uuid4().hex[:8]}",
-            "description": "Rust MCP isolation load team",
+            "description": "MCP isolation load team",
             "visibility": "private",
         },
     )
@@ -249,7 +249,7 @@ def _bootstrap_state() -> None:
         json={
             "server": {
                 "name": f"{ISOLATION_PREFIX}-server-{uuid.uuid4().hex[:8]}",
-                "description": "Rust MCP isolation load server",
+                "description": "MCP isolation load server",
                 "associated_tools": tool_ids,
                 "associated_resources": [],
                 "associated_prompts": [],

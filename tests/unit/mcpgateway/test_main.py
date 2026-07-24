@@ -1826,7 +1826,7 @@ class TestPromptEndpoints:
         result = await read_resource(resource_id="test-resource", request=mock_request, db=mock_db, user=admin_user)
 
         # The endpoint converts ResourceContent to dict via model_dump()
-        assert result == {"type": "resource", "id": "test-resource", "uri": "file://test.txt", "mime_type": None, "text": "content", "blob": None, "meta": None}
+        assert result == {"type": "resource", "id": "test-resource", "uri": "file://test.txt", "mime_type": None, "text": "content", "blob": None}
         # Admin bypass: user_email preserved for owner matching (PR #4877), token_teams=None
         mock_read.assert_called_once()
         call_kwargs = mock_read.call_args[1]
