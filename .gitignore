@@ -191,6 +191,7 @@ aider*
 .claude/*
 CLAUDE.local.md
 .continue
+.omo/run-continuation
 
 # ========================================
 # Security & Static Analysis
