@@ -136,4 +136,5 @@ def test_clean_domain_resource_passes_through(admin_client: httpx.Client) -> Non
         "mime_type": "text/plain",
         "text": CLEAN_CONTENT,
         "blob": None,
+        "meta": None,
     }
