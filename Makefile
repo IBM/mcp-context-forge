@@ -879,6 +879,16 @@ smoketest:
 	@$(VENV_DIR)/bin/python ./smoketest.py --verbose || { echo "❌ Smoketest failed!"; exit 1; }
 	@echo "✅ Smoketest passed!"
 
+.PHONY: bats
+bats: ## Run all bats shell tests (tests/**/*.bats; requires bats-core)
+	@command -v bats >/dev/null 2>&1 || { echo "❌ bats not found - install with 'brew install bats-core' or see https://bats-core.readthedocs.io"; exit 1; }
+	@echo "🦇 Running bats shell tests..."
+	@files=$$(find tests -type f -name '*.bats' | sort); \
+	if [ -z "$$files" ]; then echo "ℹ️  No .bats files found under tests/"; exit 0; fi; \
+	echo "$$files" | sed 's/^/   /'; \
+	bats $$files || { echo "❌ bats tests failed!"; exit 1; }
+	@echo "✅ bats tests passed!"
+
 test-mcp-protocol-e2e: uv  ## MCP protocol E2E via FastMCP client (K=<filter> to pick one)
 	@echo "🔌 Running MCP protocol E2E tests against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
 	@echo "   Env: MCP_CLI_BASE_URL (gateway URL)  JWT_SECRET_KEY  PLATFORM_ADMIN_EMAIL"
@@ -4996,6 +5006,11 @@ container-build-rust-lite:
 container-rust: container-build-rust
 	@echo "🦀 Building and running container with Rust plugins..."
 	$(MAKE) container-run
+
+.PHONY: container-bump-image-versions
+container-bump-image-versions: ## Bump pinned UBI image tags in Containerfiles to latest within their minor line
+	@echo "🔄 Checking Red Hat Catalog for newer UBI image tags..."
+	@bash scripts/container-bump-image-versions.sh
 
 container-build-fips: ## Build FedRAMP-compliant image (ENABLE_FIPS=true) for Dreadnought/FedRAMP deployments
 	@$(MAKE) container-build ENABLE_FIPS_BUILD=true
