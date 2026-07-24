@@ -193,6 +193,43 @@ When `VALIDATION_STRICT=false`:
 !!! note "Upgrade note (v0.9.0 → v1.0.0.Beta2)"
     The forbidden-pattern check was introduced in v1.0.0.Beta2. If you are upgrading from v0.9.0 and your MCP servers expose tools with Markdown descriptions, set `VALIDATION_STRICT=false` or customize `TOOL_DESCRIPTION_FORBIDDEN_PATTERNS` to allow the specific characters your tools use.
 
+### Tool & Resource Content Pattern Detection
+
+A **separate** layer from the description forbidden-patterns check above scans tool/resource **name,
+description, and `inputSchema`** for injection patterns (XSS, command, SQL, template injection) when a tool or
+resource is **created, updated, or imported**. It is implemented by
+`ContentSecurityService.detect_malicious_patterns` and is gated by its **own** settings — **not**
+`VALIDATION_STRICT` / `TOOL_DESCRIPTION_FORBIDDEN_PATTERNS`:
+
+| Variable | Default | Effect |
+|----------|---------|--------|
+| `CONTENT_PATTERN_DETECTION_ENABLED` | `true` | Master switch — set `false` to disable the scan entirely |
+| `CONTENT_PATTERN_VALIDATION_MODE` | `strict` | `strict` / `moderate` warn **and block**; `lenient` warns only (no block), preserving the audit log |
+| `CONTENT_BLOCKED_PATTERNS` | (built-in list) | JSON array of regexes to match; overriding **replaces** the whole list |
+
+!!! note "Asymmetry: federation vs. manual edit"
+    This scan runs on the create / update / import paths, but **not** on gateway federation (which builds tool
+    rows directly). So tools discovered from an upstream gateway register successfully yet can be **rejected on
+    a later manual edit** if their content trips a pattern.
+
+**Common false positive — REST / Graph catalogs.** The default SQL rule
+`(?i)(union|select|insert|update|delete|drop)\s+` matches legitimate content such as Microsoft Graph OData
+(`Use $select to return fewer fields`) and CRUD-verb tool names (`update-…`, `delete-…`), which can block edits
+across a large federated catalog. To allow such content:
+
+```bash
+# Warn-only — recommended for a trusted upstream catalog; keeps detection in the audit log
+CONTENT_PATTERN_VALIDATION_MODE=lenient
+
+# Or disable the scan entirely
+CONTENT_PATTERN_DETECTION_ENABLED=false
+```
+
+!!! warning "Right knob for this error"
+    An error of the form `Malicious pattern detected in Tool inputSchema: select (type: sql_injection)` comes
+    from **this** layer. `VALIDATION_STRICT` and `TOOL_DESCRIPTION_FORBIDDEN_PATTERNS_ENABLED` do **not** affect
+    it — they control the tool-`description` shell-metacharacter check documented above. Use `CONTENT_PATTERN_*`.
+
 ### JSON Schema Validation
 
 **Scenario**: Validate tool and prompt schemas during registration
