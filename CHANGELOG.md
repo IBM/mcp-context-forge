@@ -8,6 +8,14 @@
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- **TokenBlocklistService revocation is async** - `TokenBlocklistService.revoke_token()` is now an async method and must be awaited. Existing sync callers must change `service.revoke_token(...)` to `await service.revoke_token(...)`; otherwise Python returns a truthy coroutine object and the token is not revoked.
+
+### Fixed
+
+- **Auto-revoked token status consistency** - Auto-revocation now marks matching API tokens inactive, invalidates auth-cache revocation entries, and renders a single revoked badge in the Admin UI.
+
 ## [1.0.7] - 2026-08-04 - Security Hardening, Unified Search, OAuth Improvements, Dataplane Enhancements, and Operational Reliability
 
 ### Overview

@@ -107,13 +107,15 @@ class TokenBlocklistService:
                 # Update EmailApiToken.is_active if token exists (repair inconsistent state if needed)
                 # Note: Session tokens don't have EmailApiToken records, so this is optional
                 api_token = db.execute(select(EmailApiToken).where(EmailApiToken.jti == jti)).scalar_one_or_none()
+                repaired = False
                 if api_token and api_token.is_active:
+                    repaired = True
                     api_token.is_active = False
-                    logger.debug(f"Set EmailApiToken.is_active=False for jti={jti}")
+                    logger.debug("Set EmailApiToken.is_active=False for jti=%s", jti[:8])
 
                 if existing:
                     # Commit the repair if we updated is_active
-                    if api_token and not api_token.is_active:
+                    if repaired:
                         db.commit()
                     logger.debug("Token %s already revoked", jti)
                     # Invalidate auth cache to ensure revoked token is rejected immediately
@@ -123,7 +125,12 @@ class TokenBlocklistService:
 
                         await auth_cache.invalidate_revocation(jti)
                     except Exception as cache_error:
-                        logger.debug("Failed to invalidate auth cache for revoked token %s: %s", jti, cache_error)
+                        logger.warning(
+                            "Auth cache invalidation failed for revoked token; token may be accepted until cache TTL expiry: jti=%s: %s",
+                            jti,
+                            cache_error,
+                            extra={"security_event": "revocation_cache_invalidation_failed", "security_severity": "high", "jti": jti},
+                        )
                     return True
 
                 # Create revocation record
@@ -140,13 +147,15 @@ class TokenBlocklistService:
                     # Update EmailApiToken.is_active if token exists (repair inconsistent state if needed)
                     # Note: Session tokens don't have EmailApiToken records, so this is optional
                     api_token = db.execute(select(EmailApiToken).where(EmailApiToken.jti == jti)).scalar_one_or_none()
+                    repaired = False
                     if api_token and api_token.is_active:
+                        repaired = True
                         api_token.is_active = False
-                        logger.debug(f"Set EmailApiToken.is_active=False for jti={jti}")
+                        logger.debug("Set EmailApiToken.is_active=False for jti=%s", jti[:8])
 
                     if existing:
                         # Commit the repair if we updated is_active
-                        if api_token and not api_token.is_active:
+                        if repaired:
                             db.commit()
                         logger.debug("Token %s already revoked", jti)
                         # Invalidate auth cache to ensure revoked token is rejected immediately
@@ -156,7 +165,12 @@ class TokenBlocklistService:
 
                             await auth_cache.invalidate_revocation(jti)
                         except Exception as cache_error:
-                            logger.debug("Failed to invalidate auth cache for revoked token %s: %s", jti, cache_error)
+                            logger.warning(
+                                "Auth cache invalidation failed for revoked token; token may be accepted until cache TTL expiry: jti=%s: %s",
+                                jti,
+                                cache_error,
+                                extra={"security_event": "revocation_cache_invalidation_failed", "security_severity": "high", "jti": jti},
+                            )
                         return True
 
                     # Create revocation record
@@ -186,7 +200,12 @@ class TokenBlocklistService:
 
                 await auth_cache.invalidate_revocation(jti)
             except Exception as cache_error:
-                logger.debug("Failed to invalidate auth cache for revoked token %s: %s", jti, cache_error)
+                logger.warning(
+                    "Auth cache invalidation failed for revoked token; token may be accepted until cache TTL expiry: jti=%s: %s",
+                    jti,
+                    cache_error,
+                    extra={"security_event": "revocation_cache_invalidation_failed", "security_severity": "high", "jti": jti},
+                )
 
             logger.info(
                 "Token revoked: jti=%s, reason=%s, revoked_by=%s",
