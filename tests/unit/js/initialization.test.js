@@ -1670,6 +1670,15 @@ describe("initializeExportImport", () => {
     expect(loadRecentImports).not.toHaveBeenCalled();
   });
 
+  test("skips if already initialized on window.Admin", () => {
+    window.Admin.exportImportInitialized = true;
+    buildExportImportDOM();
+
+    initializeExportImport();
+
+    expect(loadRecentImports).not.toHaveBeenCalled();
+  });
+
   test("attaches click on export-all-btn -> handleExportAll", () => {
     buildExportImportDOM();
 
@@ -1701,6 +1710,17 @@ describe("initializeExportImport", () => {
     importDropZone.click();
 
     expect(clickSpy).toHaveBeenCalled();
+  });
+
+  test("importDropZone click does not recurse when input click bubbles", () => {
+    const { importDropZone, importFileInput } = buildExportImportDOM();
+    const clickSpy = vi.spyOn(importFileInput, "click");
+
+    initializeExportImport();
+
+    importDropZone.click();
+
+    expect(clickSpy).toHaveBeenCalledTimes(1);
   });
 
   test("importFileInput change -> handleFileSelect", () => {
@@ -1769,6 +1789,7 @@ describe("initializeExportImport", () => {
     initializeExportImport();
 
     expect(window.Admin.exportImportInitialized).toBe(true);
+    expect(window.exportImportInitialized).toBe(true);
   });
 
   test("calls loadRecentImports", () => {
