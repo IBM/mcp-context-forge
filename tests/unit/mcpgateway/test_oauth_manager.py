@@ -2342,61 +2342,61 @@ class TestExtractTokenClaims:
 
         return pyjwt.encode(claims, "test-key-irrelevant-for-unverified-decode", algorithm="HS256")
 
-    # ---------- _extract_token_audience ----------
+    # ---------- _extract_aud_and_iss (audience element) ----------
 
     def test_audience_string(self):
         """A string aud claim is returned verbatim."""
         token = self._make_jwt({"aud": "my-client-id"})
-        assert OAuthManager._extract_token_audience(token) == "my-client-id"
+        assert OAuthManager._extract_aud_and_iss(token)[0] == "my-client-id"
 
     def test_audience_list_of_strings(self):
         """A list aud claim is returned verbatim when every item is a string."""
         token = self._make_jwt({"aud": ["api://a", "api://b"]})
-        assert OAuthManager._extract_token_audience(token) == ["api://a", "api://b"]
+        assert OAuthManager._extract_aud_and_iss(token)[0] == ["api://a", "api://b"]
 
     def test_audience_missing_returns_none(self):
         """A token without an aud claim yields None."""
         token = self._make_jwt({"sub": "user1"})
-        assert OAuthManager._extract_token_audience(token) is None
+        assert OAuthManager._extract_aud_and_iss(token)[0] is None
 
     def test_audience_unexpected_type_returns_none(self):
         """A non-string, non-list aud claim is rejected (RFC 7519 §4.1.3 disallows)."""
         token = self._make_jwt({"aud": 42})
-        assert OAuthManager._extract_token_audience(token) is None
+        assert OAuthManager._extract_aud_and_iss(token)[0] is None
 
     def test_audience_mixed_list_returns_none(self):
         """A list aud containing a non-string item is rejected."""
         token = self._make_jwt({"aud": ["valid", 42]})
-        assert OAuthManager._extract_token_audience(token) is None
+        assert OAuthManager._extract_aud_and_iss(token)[0] is None
 
     def test_audience_empty_string_token_returns_none(self):
         """Empty access token short-circuits to None (no jwt library invocation)."""
-        assert OAuthManager._extract_token_audience("") is None
+        assert OAuthManager._extract_aud_and_iss("")[0] is None
 
     def test_audience_opaque_token_returns_none(self):
         """A non-JWT (opaque) access token is silently dropped."""
-        assert OAuthManager._extract_token_audience("opaque-bearer-token") is None
+        assert OAuthManager._extract_aud_and_iss("opaque-bearer-token")[0] is None
 
     def test_audience_malformed_jwt_returns_none(self):
         """A string with too few segments to be a JWT is silently dropped."""
-        assert OAuthManager._extract_token_audience("not.a.jwt") is None
+        assert OAuthManager._extract_aud_and_iss("not.a.jwt")[0] is None
 
-    # ---------- _extract_token_issuer ----------
+    # ---------- _extract_aud_and_iss (issuer element) ----------
 
     def test_issuer_string(self):
         """A non-empty string iss claim is returned verbatim."""
         token = self._make_jwt({"iss": "https://idp.example.com"})
-        assert OAuthManager._extract_token_issuer(token) == "https://idp.example.com"
+        assert OAuthManager._extract_aud_and_iss(token)[1] == "https://idp.example.com"
 
     def test_issuer_missing_returns_none(self):
         """A token without an iss claim yields None."""
         token = self._make_jwt({"sub": "user1"})
-        assert OAuthManager._extract_token_issuer(token) is None
+        assert OAuthManager._extract_aud_and_iss(token)[1] is None
 
     def test_issuer_empty_string_returns_none(self):
         """An empty-string iss claim is rejected (cannot be pinned to)."""
         token = self._make_jwt({"iss": ""})
-        assert OAuthManager._extract_token_issuer(token) is None
+        assert OAuthManager._extract_aud_and_iss(token)[1] is None
 
     def test_issuer_non_string_returns_none(self):
         """A non-string iss claim is rejected (built manually since pyjwt rejects at encode time)."""
@@ -2407,26 +2407,26 @@ class TestExtractTokenClaims:
         header = base64.urlsafe_b64encode(json.dumps({"alg": "HS256", "typ": "JWT"}).encode()).rstrip(b"=").decode()
         payload = base64.urlsafe_b64encode(json.dumps({"iss": 42}).encode()).rstrip(b"=").decode()
         token = f"{header}.{payload}.invalid-signature"
-        assert OAuthManager._extract_token_issuer(token) is None
+        assert OAuthManager._extract_aud_and_iss(token)[1] is None
 
     def test_issuer_opaque_token_returns_none(self):
         """A non-JWT (opaque) access token is silently dropped."""
-        assert OAuthManager._extract_token_issuer("opaque-bearer-token") is None
+        assert OAuthManager._extract_aud_and_iss("opaque-bearer-token")[1] is None
 
     def test_issuer_empty_token_returns_none(self):
         """Empty access token short-circuits to None."""
-        assert OAuthManager._extract_token_issuer("") is None
+        assert OAuthManager._extract_aud_and_iss("")[1] is None
 
     def test_decode_failure_emits_debug_breadcrumb(self, caplog):
         """A decode failure logs at DEBUG so operators can chase 'audience never learned' reports."""
         with caplog.at_level("DEBUG", logger="mcpgateway.services.oauth_manager"):
-            assert OAuthManager._extract_token_audience("malformed.jwt.token") is None
+            assert OAuthManager._extract_aud_and_iss("malformed.jwt.token")[0] is None
         assert any("Unverified JWT decode failed" in record.message for record in caplog.records)
 
     def test_opaque_token_does_not_emit_debug_for_empty_input(self, caplog):
         """An empty access token short-circuits before the decoder, so no breadcrumb is emitted."""
         with caplog.at_level("DEBUG", logger="mcpgateway.services.oauth_manager"):
-            assert OAuthManager._extract_token_audience("") is None
+            assert OAuthManager._extract_aud_and_iss("")[0] is None
         assert not any("Unverified JWT decode failed" in record.message for record in caplog.records)
 
     # ---------- _coerce_aud_claim direct empty-shape rejection (Fix 3) ----------
