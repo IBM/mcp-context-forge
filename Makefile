@@ -806,6 +806,7 @@ clean:
 # help: test-protocol-compliance-matrix - Protocol compliance matrix across every runnable engine; summary table (pass MATRIX_ARGS='--format markdown --out X' to override)
 # help: test-mcp-protocol-e2e - MCP protocol E2E via FastMCP client against live gateway (K=<filter> to pick one; MCP_E2E_CLIENT_TIMEOUT env to extend the 5s client timeout)
 # help: test-mcp-cli         - [DEPRECATED] Alias for test-mcp-protocol-e2e (accepts same K=<filter>)
+# help: test-bats            - Run bats tests for git tooling (tests/bash; requires bats)
 # help: test-mcp-rbac        - RBAC + multi-transport MCP protocol tests (needs live gateway + SSE)
 # help: test-mcp-access-matrix - MCP role/access matrix (Rust transport, edge/full mode)
 # help: test-mcp-plugin-parity - MCP plugin parity E2E for current Python or Rust stack
@@ -846,7 +847,16 @@ clean:
 # help: query-log-analyze    - Analyze query log for N+1 patterns and slow queries
 # help: query-log-clear      - Clear database query log files
 
-.PHONY: smoketest test-mcp-cli test-mcp-rbac test-mcp-plugin-parity test-mcp-access-matrix test-mcp-session-isolation test-mcp-session-isolation-load test-e2e-sso test-live-gateway test test-verbose test-profile coverage test-docs pytest-examples test-curl htmlcov doctest doctest-verbose doctest-coverage doctest-check test-db-perf test-db-perf-verbose 2025-11-25 2025-11-25-core 2025-11-25-tasks 2025-11-25-auth 2025-11-25-report dev-query-log query-log-tail query-log-analyze query-log-clear load-test load-test-ui load-test-light load-test-heavy load-test-sustained load-test-stress load-test-report load-test-compose load-test-timeserver load-test-fasttime load-test-1000 load-test-summary load-test-baseline load-test-baseline-ui load-test-baseline-stress load-test-agentgateway-mcp-server-time
+.PHONY: smoketest test-mcp-cli test-mcp-rbac test-mcp-plugin-parity test-mcp-access-matrix \
+	test-mcp-session-isolation test-mcp-session-isolation-load test-e2e-sso \
+	test-live-gateway test test-verbose test-profile coverage test-docs pytest-examples \
+	test-curl htmlcov doctest doctest-verbose doctest-coverage doctest-check test-db-perf \
+	test-db-perf-verbose 2025-11-25 2025-11-25-core 2025-11-25-tasks 2025-11-25-auth \
+	2025-11-25-report dev-query-log query-log-tail query-log-analyze query-log-clear \
+	load-test load-test-ui load-test-light load-test-heavy load-test-sustained load-test-stress \
+	load-test-report load-test-compose load-test-timeserver load-test-fasttime load-test-1000 \
+	load-test-summary load-test-baseline load-test-baseline-ui load-test-baseline-stress \
+	load-test-agentgateway-mcp-server-time
 
 # Dirs/files always excluded from standard pytest runs.
 # tests/live_gateway/ — see tests/live_gateway/README.md. Subsuites need
@@ -878,10 +888,22 @@ test-mcp-protocol-e2e: uv  ## MCP protocol E2E via FastMCP client (K=<filter> to
 		|| { echo "❌ MCP protocol E2E tests failed!"; exit 1; }
 	@echo "✅ MCP protocol E2E tests passed!"
 
-test-mcp-cli:  ## [DEPRECATED] Alias for test-mcp-protocol-e2e (subprocess + mcp-cli path removed)
-	@echo "⚠️  'make test-mcp-cli' is deprecated — use 'make test-mcp-protocol-e2e'."
-	@echo "   The mcp-cli + mcpgateway.wrapper subprocess path was replaced by the FastMCP client."
-	@$(MAKE) test-mcp-protocol-e2e
+# deprecated: test-mcp-cli       - Use "make test-mcp-protocol-e2e" instead (v1.2.0)
+test-mcp-cli:
+	$(call deprecated_target,test-mcp-cli,make test-mcp-protocol-e2e,1.2.0)
+	@$(MAKE) --no-print-directory test-mcp-protocol-e2e K="$(K)"
+
+.PHONY: test-bats
+test-bats:                     ## 🧪  Run bats tests for git tooling (tests/bash)
+	@command -v bats >/dev/null 2>&1 || { \
+		echo "❌  bats not found - install it to run tests/bash:"; \
+		echo "    macOS:          brew install bats-core"; \
+		echo "    Debian/Ubuntu:  sudo apt-get install bats"; \
+		echo "    npm:            npm install -g bats"; \
+		exit 1; \
+	}
+	@echo "🧪  Running bats tests for git tooling (tests/bash)..."
+	@bats tests/bash/ && echo "✅  bats tests passed!" || { echo "❌  bats tests failed!"; exit 1; }
 
 test-protocol-compliance: uv  ## MCP protocol compliance harness — full (target, transport) matrix (K=<filter> to pick one)
 	@echo "📜 Running MCP protocol compliance harness (tests/live_gateway/protocol_compliance)..."
@@ -3341,9 +3363,9 @@ FILE_AWARE_LINTERS := isort black pylint mypy bandit pydocstyle \
 
 .PHONY: lint $(LINTERS) pyright-pr black black-check isort-check ruff-check ruff-fix ruff-format autoflake lint-py lint-yaml lint-json lint-md lint-strict \
 	lint-count-errors lint-report lint-changed lint-staged lint-commit \
-	lint-pre-commit lint-pre-push lint-parallel lint-cache-clear lint-stats \
+	lint-parallel lint-cache-clear lint-stats \
 	lint-complexity lint-watch lint-watch-quick \
-	lint-install-hooks lint-quick lint-fix lint-smart lint-target lint-all \
+	lint-quick lint-fix lint-smart lint-target lint-all \
 	lint-actionlint lint-chart-testing lint-helm-unittest lint-commitlint \
 	linting-python-env \
 	linting-workflow-actionlint linting-workflow-zizmor linting-workflow-reviewdog linting-workflow-commitlint \
@@ -3799,6 +3821,95 @@ pre-commit: uv                     ## 🪄  Run pre-commit tool
 		$(VENV_DIR)/bin/pre-commit run --config .pre-commit-config.yaml --all-files --show-diff-on-failure"
 
 RUFF_MODE   ?= check
+
+.PHONY: install-pre-commit-hooks
+install-pre-commit-hooks: uv          ## 🪝  Install pre-commit hooks
+	@echo "🪝  Installing pre-commit hooks..."
+	@# pre-commit refuses to install when core.hooksPath is set (e.g. an
+	@# MDM-managed global hook such as vault-radar in ~/.gitconfig). Shadow
+	@# the global git config for this invocation only — nothing is modified —
+	@# so the shim lands in <git-common-dir>/hooks, where the hooksPath hook's
+	@# own chain probe (vault-radar's probe_chain) detects and executes it.
+	@# Only the global scope is shadowed; a repo-local hooksPath still refuses.
+	@if git config --global core.hooksPath >/dev/null 2>&1; then \
+		echo "⚠️  Global core.hooksPath detected ($$(git config --global core.hooksPath)); installing shim into default hooks dir for chaining"; \
+		GIT_CONFIG_GLOBAL=/dev/null $(UV_BIN) run pre-commit install; \
+	else \
+		$(UV_BIN) run pre-commit install; \
+	fi
+	@echo "✅  Pre-commit hooks installed"
+
+.PHONY: configure-secrets-merge-driver
+configure-secrets-merge-driver:    ## 🔀  Configure git merge driver for .secrets.baseline
+	@echo "🔀  Configuring git merge driver for .secrets.baseline..."
+	@if ! git rev-parse --git-dir > /dev/null 2>&1; then \
+		echo "❌  Not in a git repository"; \
+		exit 1; \
+	fi
+	@git config merge.secrets-baseline.name "Regenerate .secrets.baseline via detect-secrets-scan"
+	@# Install the driver outside the worktree so it stays resolvable while
+	@# rebasing history that predates the script itself.
+	@common_dir=$$(cd "$$(git rev-parse --git-common-dir)" && pwd) && \
+	mkdir -p "$$common_dir/git-drivers" && \
+	cp scripts/git/resolve-secrets-baseline-conflict.sh "$$common_dir/git-drivers/" && \
+	chmod +x "$$common_dir/git-drivers/resolve-secrets-baseline-conflict.sh" && \
+	git config merge.secrets-baseline.driver "$$common_dir/git-drivers/resolve-secrets-baseline-conflict.sh %O %A %B %P" && \
+	echo "✅  Installed driver to $$common_dir/git-drivers/"
+	@# Bind the attribute repo-locally too: the versioned .gitattributes entry
+	@# only exists in later history, so early rebase picks would otherwise fall
+	@# back to the default text merge.
+	@info_attrs=$$(cd "$$(git rev-parse --git-common-dir)" && pwd)/info/attributes && \
+	mkdir -p "$$(dirname "$$info_attrs")" && \
+	if ! grep -qF ".secrets.baseline merge=secrets-baseline" "$$info_attrs" 2>/dev/null; then \
+		echo ".secrets.baseline merge=secrets-baseline" >> "$$info_attrs"; \
+		echo "✅  Added merge driver binding to $$info_attrs"; \
+	else \
+		echo "✅  $$info_attrs already contains merge driver binding"; \
+	fi
+	@if [ ! -f .gitattributes ]; then \
+		echo ".secrets.baseline merge=secrets-baseline" > .gitattributes; \
+		echo "✅  Created .gitattributes with merge driver entry"; \
+	elif ! grep -qF ".secrets.baseline merge=secrets-baseline" .gitattributes; then \
+		echo ".secrets.baseline merge=secrets-baseline" >> .gitattributes; \
+		echo "✅  Added merge driver entry to .gitattributes"; \
+	else \
+		echo "✅  .gitattributes already contains merge driver entry"; \
+	fi
+	@echo "✅  Git merge driver configured for .secrets.baseline"
+
+.PHONY: install-post-rewrite-detect-secrets-hook
+install-post-rewrite-detect-secrets-hook:     ## 🪝  Install post-rewrite hook that refreshes .secrets.baseline after rebase
+	@echo "🪝  Installing post-rewrite secrets refresh hook..."
+	@if ! git rev-parse --git-dir > /dev/null 2>&1; then \
+		echo "❌  Not in a git repository"; \
+		exit 1; \
+	fi
+	@# Idempotent + non-destructive install:
+	@#  - hook missing or already ours (marker comment) -> (over)write ours
+	@#  - foreign hook, no chain yet -> move it to post-rewrite.chain; our
+	@#    hook executes the chain after itself, so both still run
+	@#  - foreign hook AND chain present -> ambiguous; never clobber
+	@hooks_dir=$$(git rev-parse --git-common-dir)/hooks && \
+	target="$$hooks_dir/post-rewrite" && \
+	chain="$$hooks_dir/post-rewrite.chain" && \
+	if [ -f "$$target" ] && ! grep -q '^# contextforge: post-rewrite-secrets-refresh$$' "$$target"; then \
+		if [ -e "$$chain" ]; then \
+			echo "❌  Foreign post-rewrite hook and existing post-rewrite.chain both present; merge manually" >&2; \
+			exit 1; \
+		fi; \
+		mv "$$target" "$$chain" && chmod +x "$$chain" && \
+		echo "🔀  Moved existing post-rewrite hook to post-rewrite.chain (chained by our hook)"; \
+	fi && \
+	cp scripts/git/post-rewrite-secrets-refresh.sh "$$target" && \
+	chmod +x "$$target" && \
+	echo "✅  Installed $$target"
+
+.PHONY: configure-git
+configure-git: install-pre-commit-hooks configure-secrets-merge-driver install-post-rewrite-detect-secrets-hook  ## 🔧  Configure git hooks and merge drivers
+	@echo "✅  Git configuration complete"
+
+
+
 RUFF_SELECT ?=
 
 ruff: uv                            ## ⚡  Ruff linter (RUFF_MODE=check|fix|format, RUFF_SELECT=rules)
@@ -4137,48 +4248,6 @@ lint-report:							## 📋 Generate comprehensive linting report
 	@echo "## Error Count by Tool" >> $(DOCS_DIR)/reports/full-lint-report.md
 	@$(MAKE) --no-print-directory lint-count-errors TARGET="$(TARGET)" >> $(DOCS_DIR)/reports/full-lint-report.md 2>&1 || true
 	@echo "📄 Report generated: $(DOCS_DIR)/reports/full-lint-report.md"
-
-# -----------------------------------------------------------------------------
-# 🔧 PRE-COMMIT INTEGRATION
-# -----------------------------------------------------------------------------
-# help: lint-install-hooks   - Install git pre-commit hooks for linting
-# help: lint-pre-commit      - Run linting as pre-commit check
-# help: lint-pre-push        - Run linting as pre-push check
-.PHONY: lint-install-hooks lint-pre-commit lint-pre-push
-
-# Install git hooks for linting
-lint-install-hooks:						## 🔧 Install git hooks for auto-linting
-	@echo "🔧 Installing git pre-commit hooks for linting..."
-	@if [ ! -d ".git" ]; then \
-		echo "❌ Not a git repository"; \
-		exit 1; \
-	fi
-	@echo '#!/bin/bash' > .git/hooks/pre-commit
-	@echo '# Auto-generated pre-commit hook for linting' >> .git/hooks/pre-commit
-	@echo 'echo "🔍 Running pre-commit linting..."' >> .git/hooks/pre-commit
-	@echo 'make lint-pre-commit' >> .git/hooks/pre-commit
-	@chmod +x .git/hooks/pre-commit
-	@echo '#!/bin/bash' > .git/hooks/pre-push
-	@echo '# Auto-generated pre-push hook for linting' >> .git/hooks/pre-push
-	@echo 'echo "🔍 Running pre-push linting..."' >> .git/hooks/pre-push
-	@echo 'make lint-pre-push' >> .git/hooks/pre-push
-	@chmod +x .git/hooks/pre-push
-	@echo "✅ Git hooks installed:"
-	@echo "   📝 pre-commit: .git/hooks/pre-commit"
-	@echo "   📤 pre-push: .git/hooks/pre-push"
-	@echo "💡 To disable: rm .git/hooks/pre-commit .git/hooks/pre-push"
-
-# Pre-commit hook (lint staged files)
-lint-pre-commit:						## 🔍 Pre-commit linting check
-	@echo "🔍 Pre-commit linting check..."
-	@$(MAKE) --no-print-directory lint-staged
-	@echo "✅ Pre-commit linting passed!"
-
-# Pre-push hook (lint all changed files)
-lint-pre-push:							## 🔍 Pre-push linting check
-	@echo "🔍 Pre-push linting check..."
-	@$(MAKE) --no-print-directory lint-changed
-	@echo "✅ Pre-push linting passed!"
 
 # -----------------------------------------------------------------------------
 # 🎯 FILE TYPE SPECIFIC LINTING
@@ -4653,7 +4722,7 @@ dockle:
 # help: hadolint             - Lint Containerfile/Dockerfile(s) with hadolint
 .PHONY: hadolint
 # List of Containerfile/Dockerfile patterns to scan
-HADOFILES := Containerfile.* Dockerfile Dockerfile.*
+HADOFILES := Containerfile Containerfile.* Dockerfile Dockerfile.*
 
 hadolint:
 	@echo "🔎  hadolint scan..."
@@ -5690,6 +5759,7 @@ compose-siem-logs: ## 📜 Tail logs for SIEM stack services
 	$(COMPOSE_CMD) -f docker-compose.yml -f docker-compose.siem-opensearch.yml logs -f gateway opensearch
 
 .PHONY: compose-restart
+compose-restart:
 	@echo "🔄  Restarting stack..."
 	$(COMPOSE) pull
 	$(COMPOSE) build
@@ -6876,7 +6946,7 @@ SHELL_SCRIPTS := $(shell find . -type f -name '*.sh' \
 # Define shfmt binary location
 SHFMT := $(shell command -v shfmt 2>/dev/null || echo "$(HOME)/go/bin/shfmt")
 
-.PHONY: shell-linters-install shell-lint shfmt-fix shellcheck bashate
+.PHONY: shell-linters-install shell-lint shfmt-fix
 
 shell-linters-install:     ## 🔧  Install shellcheck, shfmt, bashate
 	@echo "🔧  Installing/ensuring shell linters are present..."
@@ -7497,10 +7567,39 @@ DETECT_SECRETS_FILES_EXCLUDE := '(?x)( \
   |uv\.lock$$                  \
   |go\.sum$$                   \
   |mcpgateway/sri_hashes\.json$$ \
-)'
+  )|^\.secrets\.baseline$$'
 
+# The commit to use as the baseline for determining changes files for the
+# detect secrets scan
+GIT_DIFF_TARGET ?= main
+
+# --diff-filter=d EXCLUDES delete files
+# 2>/dev/null silences the parse-time git error in checkouts with no main
+# ref (e.g. CI fetching only the PR ref); the driver recomputes the file
+# list itself in that case (see the fallback chain in
+# scripts/git/resolve-secrets-baseline-conflict.sh).
+DETECT_SECRETS_PATH ?= $(shell git diff $(GIT_DIFF_TARGET) --name-only --diff-filter=d 2>/dev/null)
+
+# The scan/merge/gate pipeline lives in ONE place: the .secrets.baseline git
+# merge driver (scripts/git/resolve-secrets-baseline-conflict.sh), documented
+# there including the line-by-line jq merge walkthrough. This target is a thin
+# wrapper: it execs the driver with placeholder %O/%B (`-`), .secrets.baseline
+# as both %A (output) and %P. GIT_DIFF_TARGET / DETECT_SECRETS_PATH are
+# forwarded only when the user set them (command line or environment); with
+# the file defaults above ($(origin) is 'file') nothing is forwarded, so the
+# driver's own fallback chain (root-branch probe -> whole-tree scan) can
+# engage.
 .PHONY: detect-secrets-scan
 detect-secrets-scan: uv                      ## 🔍  detect-secrets scan for secrets in repository
+	@echo "🔍 Running detect-secrets scan..."
+	$(if $(filter file default undefined,$(origin GIT_DIFF_TARGET)),,GIT_DIFF_TARGET="$(GIT_DIFF_TARGET)") $(if $(filter file default undefined,$(origin DETECT_SECRETS_PATH)),,DETECT_SECRETS_PATH="$(DETECT_SECRETS_PATH)") scripts/git/resolve-secrets-baseline-conflict.sh - .secrets.baseline - .secrets.baseline
+
+# Verbatim copy of main's detect-secrets-scan (whole-repo scan, updates
+# .secrets.baseline in place, report-only). This branch rescopes
+# detect-secrets-scan to files changed vs $(GIT_DIFF_TARGET); keep the -all
+# variant for whole-tree baseline regeneration.
+.PHONY: detect-secrets-scan-all
+detect-secrets-scan-all: uv                  ## 🔍  detect-secrets scan of the full repository (main's original detect-secrets-scan)
 	@echo "🔍 Running detect-secrets scan..."
 	@$(UV_BIN) tool run --from '$(DETECT_SECRETS_SPEC)' detect-secrets scan \
 		--update .secrets.baseline \

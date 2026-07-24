@@ -73,13 +73,71 @@ make ruff bandit interrogate pylint verify
 cd tools_rust/mcp_runtime && cargo fmt --check && cargo clippy -- -D warnings && cargo test
 ```
 
-#### Secret Detection (detect-secrets)
+## PR Review Workflow
+
+Standard prompt: *"Rebase against main, then conduct an in-depth PR Review."* It runs as a **fixed-point loop** terminating when a full pass surfaces no blocking findings. Each cycle clears blocking and functionally-impacting findings (within reason — escalate edge cases). Cosmetic suggestions can be deferred.
+
+### Review State: `llms/NOTES.md`
+
+`llms/NOTES.md` is the **ephemeral per-review cycle tracker** — lives in the `llms/` directory alongside other LLM guidance, persists across cycles within one review but never across reviews. It holds the cycle counter, the `Conducting review` / `Implementing suggestions` phase toggles, and per-gate checkboxes; update as you advance. The canonical, committed source is `llms/NOTES.template.md`. When starting a review, instantiate from the template:
+
+```bash
+cp llms/NOTES.template.md llms/NOTES.md
+```
+
+If `llms/NOTES.md` is missing or stale, reset from the template; never assume prior cycle state carries over.
+
+### Rebase
+
+```bash
+(cd ../mcp-context-forge && git pull)
+git rebase main
+```
+
+For each conflict, apply the resolution that best preserves both intents using
+the PR diff and recent main commits as context. Escalate when the conflict is
+semantic (logic intent on both sides), would silently weaken a test / security
+check / migration, or when you're not confident the fix matches the PR author's
+intent. Preserve sign-off (`git commit -s`) on any new commits.
+
+For conflicts with `.secrets.baseline`, use the version of `.secrets.baseline`
+from the main branch.
+
+### Cycle: review → fix → loop
+
+1. **Verify scope.** Cross-reference the PR description against any linked issues (`gh pr view`, `gh issue view`) and confirm the changes deliver what the PR claims. Partial coverage of an issue is acceptable when the PR documentation explicitly says so; unstated gaps or scope drift are blocking findings.
+2. **Review.** Default categorization: **blocking / functionally-impacting / suggestions / minor** (matches *Tone for GitHub Comments*). Output format and delivery channel (file, agent toolkit, `gh pr review`) decided per-PR — confirm before posting externally.
+3. **Fix.** Address every blocking and functionally-impacting finding this cycle. Update `llms/NOTES.md` to advance state.
+4. **Loop.** Repeat until a full pass yields zero blocking findings, then run the validation gate.
+
+### Pre-Merge Validation Gate
+
+Run from the worktree root, in order. Each must pass (or have a documented waiver) before the PR is ready:
+
+| # | Command | Validates |
+|---|---------|-----------|
+| 1 | `make ruff interrogate pylint` | Lint, docstring coverage, deeper static analysis |
+| 2 | `make test` | Full pytest suite |
+| 3 | `make coverage diff-cover` | Coverage of changed lines vs. base |
+| 4 | `make docker-nuke docker-prod-rust testing-up RUST_MCP_MODE=` | Rebuilds and launches the production-style gateway stack |
+| 5 | `make test-mcp-protocol-e2e test-mcp-rbac test-protocol-compliance` | MCP protocol E2E, RBAC, and compliance against the live gateway |
+| 6 | `make detect-secrets-scan` | No new secrets in files changed vs `main`; exits non-zero on live/unaudited findings (jq merge preserves out-of-scope audited entries; remediate with `make detect-secrets-audit`) |
+
+Distinct from the per-edit hygiene chain in *Essential Commands → Code Quality* (`make autoflake isort black pre-commit`, then `make ruff bandit interrogate pylint verify`): hygiene runs continuously; this gate runs once before declaring a PR ready.
+
+### Secret Detection (detect-secrets)
 
 When `detect-secrets` identifies false positives:
 
-- **Python files**: Suppress inline using `# pragma: allowlist secret` comment so they don't appear in `.secrets.baseline` after running `make detect-secrets-scan`
-  - The one exception to this is doctest strings where the content contains a false positive secret as the comment will interfere with assertions. In this case rely on the .secrets.baseline file and audit the result with 'make detect-secrest-audit'.
-- **All other file types**: Regenerate the baseline using `make detect-secrets-scan` to update `.secrets.baseline`
+- **Python files**: Suppress inline using `# pragma: allowlist secret` comment
+so they don't appear in `.secrets.baseline` after running `make
+detect-secrets-scan`
+    - The one exception to this is doctest strings where the content contains a
+    false positive secret as the comment will interfere with assertions. In this
+    case rely on the .secrets.baseline file and audit the result with 'make
+    detect-secrets-audit'.
+- **All other file types**: Regenerate the baseline using `make
+detect-secrets-scan` to update `.secrets.baseline`
 
 ## Authentication & RBAC Overview
 
@@ -419,7 +477,7 @@ exempt.
 - **Link issues**: `Closes #123`
 - Include tests for behavior changes
 - Require green lint and tests before PR
-- Don't push until asked, and if it's an external contributor, see todo/force-push.md first to push to the contributor's branch.
+- Don't push until asked.
 
 ### Tone for GitHub Comments
 
