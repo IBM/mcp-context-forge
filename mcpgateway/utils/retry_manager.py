@@ -435,11 +435,17 @@ class ResilientHttpClient:
                 if response.status_code == 429:
                     retry_after = response.headers.get("Retry-After")
                     if retry_after:
-                        retry_after_sec = float(retry_after)
-                        logger.info(f"Rate-limited. Retrying after {retry_after_sec}s.")
-                        await asyncio.sleep(retry_after_sec)
-                        attempt += 1
-                        continue
+                        try:
+                            retry_after_sec = float(retry_after)
+                        except ValueError:
+                            # RFC 9110 §10.2.3 also allows an HTTP-date, which is not a float.
+                            # Mirror stream(): fall through to normal exponential backoff.
+                            retry_after_sec = None
+                        if retry_after_sec:
+                            logger.info(f"Rate-limited. Retrying after {retry_after_sec}s.")
+                            await asyncio.sleep(retry_after_sec)
+                            attempt += 1
+                            continue
 
                 if not self._should_retry(Exception(), response):
                     return response
