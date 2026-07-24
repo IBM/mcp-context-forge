@@ -12,7 +12,7 @@ multiple IdP tenants with per-tenant aud values, and (b) users without
 gateways.update mutating shared gateway config via the OAuth callback path.
 
 Revision ID: c9f8e7d6a4b3
-Revises: b6c7d8e9f0a1
+Revises: d21698ae4a19
 Create Date: 2026-07-15 11:00:00.000000
 """
 
@@ -25,7 +25,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = "c9f8e7d6a4b3"  # pragma: allowlist secret
-down_revision: Union[str, Sequence[str], None] = "b6c7d8e9f0a1"  # pragma: allowlist secret
+down_revision: Union[str, Sequence[str], None] = "d21698ae4a19"  # pragma: allowlist secret
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
