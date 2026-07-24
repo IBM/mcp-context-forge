@@ -26,15 +26,18 @@ This test suite validates:
 # Standard
 import asyncio
 import os
+import threading
 import uuid
 
 # Third-Party
 from httpx import AsyncClient
 import pytest
 import pytest_asyncio
+from sqlalchemy.orm import sessionmaker
 
 # First-Party
-from mcpgateway.db import get_db
+from mcpgateway.db import EmailUser, get_db
+from mcpgateway.services.email_auth_service import EmailAuthService
 from tests.helpers.auth import make_auth_header_for_email, make_test_jwt
 
 # Set environment variables for testing
@@ -136,6 +139,69 @@ async def client(app_with_temp_db):
     app_with_temp_db.dependency_overrides.pop(get_current_user, None)
     app_with_temp_db.dependency_overrides.pop(get_current_user_with_permissions, None)
     app_with_temp_db.dependency_overrides.pop(require_admin_auth, None)
+
+
+@pytest.mark.asyncio
+@SKIP_IF_NOT_POSTGRES
+async def test_last_admin_check_serializes_concurrent_demotions(test_engine):
+    """A second demotion check observes first transaction's committed result."""
+    TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=test_engine)
+    suffix = uuid.uuid4().hex[:8]
+    first_email = f"concurrent-admin-a-{suffix}@example.com"
+    second_email = f"concurrent-admin-b-{suffix}@example.com"
+    locked = threading.Event()
+    release_first = threading.Event()
+
+    with TestingSessionLocal() as setup_db:
+        previously_active_admins = [user.email for user in setup_db.query(EmailUser).filter(EmailUser.is_admin.is_(True), EmailUser.is_active.is_(True)).all()]
+        setup_db.query(EmailUser).filter(EmailUser.email.in_(previously_active_admins)).update({EmailUser.is_active: False}, synchronize_session=False)
+        setup_db.add_all(
+            [
+                EmailUser(email=first_email, password_hash="dummy_hash", is_admin=True, is_active=True),
+                EmailUser(email=second_email, password_hash="dummy_hash", is_admin=True, is_active=True),
+            ]
+        )
+        setup_db.commit()
+
+    def demote_first_admin() -> bool:
+        with TestingSessionLocal() as db:
+            service = EmailAuthService(db)
+            result = asyncio.run(service.is_last_active_admin(first_email))
+            locked.set()
+            if not release_first.wait(timeout=5):
+                raise TimeoutError("Timed out waiting to release first demotion transaction")
+            user = db.query(EmailUser).filter(EmailUser.email == first_email).one()
+            user.is_admin = False
+            db.commit()
+            return result
+
+    def check_second_admin() -> bool:
+        with TestingSessionLocal() as db:
+            service = EmailAuthService(db)
+            return asyncio.run(service.is_last_active_admin(second_email))
+
+    first_task = asyncio.create_task(asyncio.to_thread(demote_first_admin))
+    second_task = None
+    try:
+        assert await asyncio.to_thread(locked.wait, 5), "First transaction did not acquire admin row locks"
+        second_task = asyncio.create_task(asyncio.to_thread(check_second_admin))
+        await asyncio.sleep(0.2)
+        assert not second_task.done(), "Second last-admin check did not wait for locked admin rows"
+
+        release_first.set()
+        first_result, second_result = await asyncio.gather(first_task, second_task)
+        assert first_result is False
+        assert second_result is True
+    finally:
+        release_first.set()
+        if not first_task.done():
+            await first_task
+        if second_task is not None and not second_task.done():
+            await second_task
+        with TestingSessionLocal() as cleanup_db:
+            cleanup_db.query(EmailUser).filter(EmailUser.email.in_([first_email, second_email])).delete(synchronize_session=False)
+            cleanup_db.query(EmailUser).filter(EmailUser.email.in_(previously_active_admins)).update({EmailUser.is_active: True}, synchronize_session=False)
+            cleanup_db.commit()
 
 
 # -------------------------

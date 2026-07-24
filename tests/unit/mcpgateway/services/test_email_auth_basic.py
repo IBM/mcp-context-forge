@@ -587,7 +587,12 @@ class TestEmailAuthServiceUserManagement:
 
             with patch("mcpgateway.services.email_auth_service.settings", mock_settings):
                 result = await service.create_user(
-                    email="active@example.com", password="SecurePass4$x", full_name="Active User", is_admin=False, is_active=True, auth_provider="local"  # pragma: allowlist secret
+                    email="active@example.com",
+                    password="SecurePass4$x",  # pragma: allowlist secret
+                    full_name="Active User",
+                    is_admin=False,
+                    is_active=True,
+                    auth_provider="local",  # pragma: allowlist secret
                 )
 
                 # Verify user was added with is_active=True
@@ -613,8 +618,13 @@ class TestEmailAuthServiceUserManagement:
 
             with patch("mcpgateway.services.email_auth_service.settings", mock_settings):
                 result = await service.create_user(
-                    email="inactive@example.com", password="SecurePass4$x", full_name="Inactive User", is_admin=False, is_active=False, auth_provider="local"  # pragma: allowlist secret
-                )  # pragma: allowlist secret
+                    email="inactive@example.com",
+                    password="SecurePass4$x",  # pragma: allowlist secret
+                    full_name="Inactive User",
+                    is_admin=False,
+                    is_active=False,
+                    auth_provider="local",
+                )
 
                 # Verify user was added with is_active=False
                 mock_db.add.assert_called()
@@ -2197,7 +2207,7 @@ class TestEmailAuthServiceUserUpdates:
         mock_result.scalar_one_or_none.return_value = mock_user
         mock_db.execute.return_value = mock_result
 
-        result = await service.update_user(email="test@example.com", is_admin=True)
+        result = await service.update_user(email="test@example.com", is_admin=True, requesting_user_email="admin@example.com")
 
         assert mock_user.is_admin is True
         mock_db.commit.assert_called()
@@ -2305,6 +2315,7 @@ class TestEmailAuthServiceUserUpdates:
             is_active=False,
             password_change_required=True,
             password="NewSecurePass4$xVeryLongForAdmin22!",  # pragma: allowlist secret
+            requesting_user_email="admin@example.com",
         )  # pragma: allowlist secret
 
         assert mock_user.full_name == "Updated Name"
@@ -2315,12 +2326,13 @@ class TestEmailAuthServiceUserUpdates:
         mock_db.commit.assert_called()
 
     @pytest.mark.asyncio
-    async def test_update_user_protect_all_admins_blocks_demote(self, service, mock_db, monkeypatch):
-        """Test that protect_all_admins blocks demoting any admin (not just last)."""
+    @pytest.mark.parametrize("protect_all_admins", [True, False])
+    async def test_update_user_allows_peer_admin_demotion(self, service, mock_db, monkeypatch, protect_all_admins):
+        """Peer-admin demotion is independent of login lockout protection."""
         # First-Party
         from mcpgateway.config import settings
 
-        monkeypatch.setattr(settings, "protect_all_admins", True)
+        monkeypatch.setattr(settings, "protect_all_admins", protect_all_admins)
 
         admin_user = MagicMock(spec=EmailUser)
         admin_user.email = "admin@example.com"
@@ -2331,17 +2343,24 @@ class TestEmailAuthServiceUserUpdates:
         mock_result.scalar_one_or_none.return_value = admin_user
         mock_db.execute.return_value = mock_result
 
-        with pytest.raises(ValueError, match="Admin protection is enabled"):
-            await service.update_user(email="admin@example.com", is_admin=False)
+        admin_role = MagicMock(id="admin-role-123")
+        viewer_role = MagicMock(id="viewer-role-456")
+        role_service = MagicMock()
+        role_service.get_role_by_name = AsyncMock(side_effect=[admin_role, viewer_role])
+        role_service.get_user_role_assignment = AsyncMock(side_effect=[MagicMock(is_active=True), None])
+        role_service.revoke_role_from_user = AsyncMock(return_value=True)
+        role_service.assign_role_to_user = AsyncMock()
+        service._role_service = role_service
+
+        with patch.object(service, "is_last_active_admin", new=AsyncMock(return_value=False)):
+            result = await service.update_user(email="admin@example.com", is_admin=False, requesting_user_email="other-admin@example.com")
+
+        assert result.is_admin is False
 
     @pytest.mark.asyncio
-    async def test_update_user_protect_all_admins_blocks_deactivate(self, service, mock_db, monkeypatch):
-        """Test that protect_all_admins blocks deactivating any admin."""
-        # First-Party
-        from mcpgateway.config import settings
-
-        monkeypatch.setattr(settings, "protect_all_admins", True)
-
+    @pytest.mark.parametrize("field", ["is_admin", "is_active"])
+    async def test_update_user_blocks_admin_self_removal_case_insensitive(self, service, mock_db, field):
+        """Admins cannot demote or deactivate themselves, regardless of email case."""
         admin_user = MagicMock(spec=EmailUser)
         admin_user.email = "admin@example.com"
         admin_user.is_admin = True
@@ -2351,8 +2370,24 @@ class TestEmailAuthServiceUserUpdates:
         mock_result.scalar_one_or_none.return_value = admin_user
         mock_db.execute.return_value = mock_result
 
-        with pytest.raises(ValueError, match="Admin protection is enabled"):
-            await service.update_user(email="admin@example.com", is_active=False)
+        with pytest.raises(ValueError, match="cannot demote or deactivate their own account"):
+            await service.update_user(email="Admin@Example.COM", requesting_user_email=" ADMIN@example.com ", **{field: False})
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("requesting_user_email", [None, "", "   "])
+    async def test_update_user_admin_removal_requires_requester_identity(self, service, mock_db, requesting_user_email):
+        """Admin removal fails closed when authenticated requester identity is absent."""
+        admin_user = MagicMock(spec=EmailUser)
+        admin_user.email = "admin@example.com"
+        admin_user.is_admin = True
+        admin_user.is_active = True
+
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = admin_user
+        mock_db.execute.return_value = mock_result
+
+        with pytest.raises(ValueError, match="Requesting user email is required"):
+            await service.update_user(email="admin@example.com", is_admin=False, requesting_user_email=requesting_user_email)
 
     @pytest.mark.asyncio
     async def test_update_user_protect_all_admins_allows_other_updates(self, service, mock_db, monkeypatch):
@@ -2395,7 +2430,7 @@ class TestEmailAuthServiceUserUpdates:
 
         with patch.object(service, "is_last_active_admin", new=AsyncMock(return_value=True)):
             with pytest.raises(ValueError, match="last remaining active admin"):
-                await service.update_user(email="admin@example.com", is_admin=False)
+                await service.update_user(email="admin@example.com", is_admin=False, requesting_user_email="other-admin@example.com")
 
     @pytest.mark.asyncio
     async def test_update_user_password_history_fail_closed_on_exception(self, service, mock_db, mock_user, mock_password_service):
@@ -2465,6 +2500,55 @@ class TestEmailAuthServiceUserUpdates:
         assert mock_user.is_active is False
         assert result == mock_user
         mock_db.commit.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_deactivate_user_active_admin_requires_requester_identity(self, service, mock_db, mock_user):
+        """Direct service calls cannot bypass requester validation for admins."""
+        mock_user.email = "admin@example.com"
+        mock_user.is_admin = True
+        mock_user.is_active = True
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_user
+
+        with pytest.raises(ValueError, match="Requesting user email is required"):
+            await service.deactivate_user("admin@example.com")
+
+    @pytest.mark.asyncio
+    async def test_deactivate_user_blocks_admin_self_deactivation(self, service, mock_db, mock_user):
+        """Direct service calls enforce case-insensitive self-deactivation protection."""
+        mock_user.email = "admin@example.com"
+        mock_user.is_admin = True
+        mock_user.is_active = True
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_user
+
+        with pytest.raises(ValueError, match="cannot demote or deactivate their own account"):
+            await service.deactivate_user("Admin@Example.com", requesting_user_email=" ADMIN@example.com ")
+
+    @pytest.mark.asyncio
+    async def test_deactivate_user_blocks_last_active_admin(self, service, mock_db, mock_user):
+        """Direct service calls enforce last-active-admin protection."""
+        mock_user.email = "admin@example.com"
+        mock_user.is_admin = True
+        mock_user.is_active = True
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_user
+
+        with patch.object(service, "is_last_active_admin", new=AsyncMock(return_value=True)):
+            with pytest.raises(ValueError, match="last remaining active admin"):
+                await service.deactivate_user("admin@example.com", requesting_user_email="other-admin@example.com")
+
+    @pytest.mark.asyncio
+    async def test_deactivate_user_allows_peer_admin_deactivation(self, service, mock_db, mock_user):
+        """Direct service calls allow peer deactivation when another admin remains."""
+        mock_user.email = "admin@example.com"
+        mock_user.is_admin = True
+        mock_user.is_active = True
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_user
+
+        with patch.object(service, "is_last_active_admin", new=AsyncMock(return_value=False)):
+            result = await service.deactivate_user("admin@example.com", requesting_user_email="other-admin@example.com")
+
+        assert result is mock_user
+        assert mock_user.is_active is False
+        mock_db.commit.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_deactivate_user_not_found(self, service, mock_db):
@@ -2913,37 +2997,33 @@ class TestEmailAuthServiceAdminCounting:
     async def test_is_last_active_admin_true(self, service, mock_db):
         """Test checking if user is last active admin - true case."""
         mock_user = MagicMock(spec=EmailUser)
+        mock_user.email = "admin@example.com"
         mock_user.is_admin = True
         mock_user.is_active = True
 
-        # First call: get user
-        mock_user_result = MagicMock()
-        mock_user_result.scalar_one_or_none.return_value = mock_user
-
-        # Second call: count admins
-        mock_count_result = MagicMock()
-        mock_count_result.scalar.return_value = 1
-
-        mock_db.execute.side_effect = [mock_user_result, mock_count_result]
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = [mock_user]
+        mock_db.execute.return_value = mock_result
 
         result = await service.is_last_active_admin("admin@example.com")
 
         assert result is True
+        stmt = mock_db.execute.call_args.args[0]
+        assert stmt._for_update_arg is not None
 
     @pytest.mark.asyncio
     async def test_is_last_active_admin_false_multiple_admins(self, service, mock_db):
         """Test checking if user is last active admin - false due to multiple admins."""
         mock_user = MagicMock(spec=EmailUser)
+        mock_user.email = "admin@example.com"
         mock_user.is_admin = True
         mock_user.is_active = True
+        other_admin = MagicMock(spec=EmailUser)
+        other_admin.email = "other@example.com"
 
-        mock_user_result = MagicMock()
-        mock_user_result.scalar_one_or_none.return_value = mock_user
-
-        mock_count_result = MagicMock()
-        mock_count_result.scalar.return_value = 3  # Multiple admins
-
-        mock_db.execute.side_effect = [mock_user_result, mock_count_result]
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = [mock_user, other_admin]
+        mock_db.execute.return_value = mock_result
 
         result = await service.is_last_active_admin("admin@example.com")
 
@@ -2952,12 +3032,8 @@ class TestEmailAuthServiceAdminCounting:
     @pytest.mark.asyncio
     async def test_is_last_active_admin_false_not_admin(self, service, mock_db):
         """Test checking if non-admin user is last active admin."""
-        mock_user = MagicMock(spec=EmailUser)
-        mock_user.is_admin = False
-        mock_user.is_active = True
-
         mock_result = MagicMock()
-        mock_result.scalar_one_or_none.return_value = mock_user
+        mock_result.scalars.return_value.all.return_value = []
         mock_db.execute.return_value = mock_result
 
         result = await service.is_last_active_admin("user@example.com")
@@ -2967,12 +3043,8 @@ class TestEmailAuthServiceAdminCounting:
     @pytest.mark.asyncio
     async def test_is_last_active_admin_false_inactive(self, service, mock_db):
         """Test checking if inactive admin is last active admin."""
-        mock_user = MagicMock(spec=EmailUser)
-        mock_user.is_admin = True
-        mock_user.is_active = False
-
         mock_result = MagicMock()
-        mock_result.scalar_one_or_none.return_value = mock_user
+        mock_result.scalars.return_value.all.return_value = []
         mock_db.execute.return_value = mock_result
 
         result = await service.is_last_active_admin("admin@example.com")
@@ -2983,7 +3055,7 @@ class TestEmailAuthServiceAdminCounting:
     async def test_is_last_active_admin_user_not_found(self, service, mock_db):
         """Test checking if non-existent user is last active admin."""
         mock_result = MagicMock()
-        mock_result.scalar_one_or_none.return_value = None
+        mock_result.scalars.return_value.all.return_value = []
         mock_db.execute.return_value = mock_result
 
         result = await service.is_last_active_admin("nonexistent@example.com")
@@ -3097,16 +3169,15 @@ class TestEmailAuthServiceAdminCounting:
     async def test_is_last_active_admin_true_additional_case(self, service, mock_db):
         """is_last_active_admin returns True when only 1 active admin."""
         mock_user = MagicMock()
+        mock_user.email = "admin@test.com"
         mock_user.is_admin = True
         mock_user.is_active = True
-        # First call: find user; Second call: count admins
-        user_result = MagicMock()
-        user_result.scalar_one_or_none.return_value = mock_user
-        count_result = MagicMock()
-        count_result.scalar.return_value = 1
-        mock_db.execute.side_effect = [user_result, count_result]
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = [mock_user]
+        mock_db.execute.return_value = mock_result
 
         result = await service.is_last_active_admin("admin@test.com")
+        assert result is True
 
     # =========================================================================
     # Password Policy Fallback Tests (Coverage for lines 294-320, 1145-1146, 1152-1154)
@@ -3191,7 +3262,9 @@ class TestEmailAuthServiceAdminCounting:
                 mock_settings.password_require_special = False
 
                 result = await service.change_password(
-                    email="test@example.com", old_password="OldSecurePass4$x!", new_password="NewSecurePass4$x!"  # pragma: allowlist secret  # pragma: allowlist secret
+                    email="test@example.com",
+                    old_password="OldSecurePass4$x!",  # pragma: allowlist secret
+                    new_password="NewSecurePass4$x!",  # pragma: allowlist secret
                 )
 
                 assert result is True
@@ -3228,7 +3301,9 @@ class TestEmailAuthServiceAdminCounting:
 
                 with pytest.raises(PasswordValidationError, match="must be different from current password"):
                     await service.change_password(
-                        email="test@example.com", old_password="SameSecurePass4$x!", new_password="SameSecurePass4$x!"  # pragma: allowlist secret  # pragma: allowlist secret
+                        email="test@example.com",
+                        old_password="SameSecurePass4$x!",  # pragma: allowlist secret
+                        new_password="SameSecurePass4$x!",  # pragma: allowlist secret
                     )
 
     @pytest.mark.asyncio
@@ -3323,5 +3398,7 @@ class TestEmailAuthServiceAdminCounting:
 
                 with pytest.raises(PasswordValidationError, match="Unable to verify password history"):
                     await service.change_password(
-                        email="test@example.com", old_password="SameSecurePass4$x!", new_password="SameSecurePass4$x!"  # pragma: allowlist secret  # pragma: allowlist secret
+                        email="test@example.com",
+                        old_password="SameSecurePass4$x!",  # pragma: allowlist secret
+                        new_password="SameSecurePass4$x!",  # pragma: allowlist secret
                     )

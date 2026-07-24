@@ -27,6 +27,7 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.auth import get_current_user
+from mcpgateway.auth_context import get_user_email
 from mcpgateway.common.query_params import QueryPaginationCursorResults
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
@@ -848,6 +849,7 @@ async def update_user_delegate(user_email: str, user_request: AdminUserUpdateReq
             password_change_required=user_request.password_change_required,
             password=user_request.password,
             admin_origin_source="api",
+            requesting_user_email=get_user_email(current_user_ctx),
         )
 
         logger.info(f"Admin {SecurityValidator.sanitize_log_message(current_user_ctx['email'])} updated user: {SecurityValidator.sanitize_log_message(user.email)}")
