@@ -141,6 +141,8 @@ services:
     environment:
       # Domain for CORS/cookies (nginx default at http://localhost:8080)
       - APP_DOMAIN=${APP_DOMAIN:-http://localhost:8080}
+      # Bind address - must be 0.0.0.0 inside Docker or other containers cannot connect
+      - HOST=${GATEWAY_HOST:-0.0.0.0}
       # Transport: sse, streamablehttp, http, or all (default: all)
       - TRANSPORT_TYPE=streamablehttp
       # High-level Rust MCP UX:
@@ -1477,9 +1479,11 @@ services:
     restart: unless-stopped
     networks: [mcpnet]
     ports:
-      - "8888:9080"    # Map host port 8888 to container port 9080 (server's default port)
-    # Use dual mode for both SSE (/sse) and Streamable HTTP (/http) endpoints
-    command: ["-transport=dual", "-listen=0.0.0.0:9080", "-log-level=info"]
+      - "8888:9080"    # Map host port 8888 to container port 9080
+    # Configured via environment variables (Streamable HTTP at /mcp)
+    environment:
+      - BIND_ADDRESS=0.0.0.0:9080
+      - RUST_LOG=info
 
   ###############################################################################
   # Auto-registration service - registers fast_time_server with gateway
@@ -1910,6 +1914,7 @@ services:
         condition: service_healthy
     environment:
       - "JWT_SECRET_KEY=${JWT_SECRET_KEY:?JWT_SECRET_KEY is not set. Run: make setup (first time) or make init-secrets-patch-env (if .env exists)}"
+      - "AUTH_ENCRYPTION_SECRET=${AUTH_ENCRYPTION_SECRET:?AUTH_ENCRYPTION_SECRET is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"
     restart: "no"
     entrypoint: ["/bin/sh", "-c"]
     command:
@@ -2117,6 +2122,7 @@ services:
         condition: service_healthy
     environment:
       - "JWT_SECRET_KEY=${JWT_SECRET_KEY:?JWT_SECRET_KEY is not set. Run: make setup (first time) or make init-secrets-patch-env (if .env exists)}"
+      - "AUTH_ENCRYPTION_SECRET=${AUTH_ENCRYPTION_SECRET:?AUTH_ENCRYPTION_SECRET is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"
     restart: "no"
     entrypoint: ["/bin/sh", "-c"]
     command:
