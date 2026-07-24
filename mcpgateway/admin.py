@@ -4963,7 +4963,7 @@ async def _admin_logout(request: Request) -> Response:
                     if last_activity_ts:
                         last_activity = datetime.fromtimestamp(last_activity_ts, tz=timezone.utc)
 
-                    blocklist_service.revoke_token(jti=jti, revoked_by=user_id, reason="admin_logout", token_expiry=token_expiry, last_activity=last_activity)
+                    await blocklist_service.revoke_token(jti=jti, revoked_by=user_id, reason="admin_logout", token_expiry=token_expiry, last_activity=last_activity)
                     LOGGER.info(f"Token revoked during admin logout: jti={jti}", extra={"security_event": "admin_logout_token_revoked", "security_severity": "low", "jti": jti, "user_id": user_id})
             except Exception as revoke_error:
                 # Log but don't fail logout if token revocation fails

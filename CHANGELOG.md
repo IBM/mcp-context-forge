@@ -8,8 +8,13 @@
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- **TokenBlocklistService revocation is async** - `TokenBlocklistService.revoke_token()` is now an async method and must be awaited. Existing sync callers must change `service.revoke_token(...)` to `await service.revoke_token(...)`; otherwise Python returns a truthy coroutine object and the token is not revoked.
+
 ### Fixed
 
+- **Auto-revoked token status consistency** - Auto-revocation now marks matching API tokens inactive, invalidates auth-cache revocation entries, and renders a single revoked badge in the Admin UI.
 - Fixed RBAC seeder race condition that produced HTTP 500 under concurrent bootstrap: added partial unique indexes on `roles(name, scope) WHERE is_active` and `user_roles` equivalent columns, plus savepoint/retry in `RoleService.create_role()` and `assign_role_to_user()`. The migration (`d21698ae4a19`) now also remaps `user_roles.role_id` from duplicate roles to the kept role before deactivating the duplicates (so `list_user_roles()` joins remain intact), and prefers unexpired / most-recently-granted assignments when deduplicating user-role rows (#4636)
 ### Security
 

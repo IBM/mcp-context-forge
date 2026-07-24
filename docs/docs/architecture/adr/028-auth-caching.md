@@ -52,6 +52,7 @@ Implement a two-tier authentication caching system with Redis as the primary sto
 3. **Cache invalidation hooks in services**
 
    - `token_catalog_service.py:revoke_token()` - Invalidates revocation cache
+   - `token_blocklist_service.py:revoke_token()` - Invalidates revocation cache after auto-revocation
    - `email_auth_service.py:change_password()` - Invalidates user cache
    - `team_management_service.py:add_member_to_team/remove_member_from_team()` - Invalidates team cache
 
