@@ -432,9 +432,11 @@ export function VirtualServerDetailsPanel({
                 </Button>
               </div>
 
-              <p className="mt-7 max-w-4xl text-[15px] leading-6 text-muted-foreground">
-                {server.description || intl.formatMessage({ id: "gateways.details.noDescription" })}
-              </p>
+              {server.description && (
+                <p className="mt-7 max-w-4xl text-[15px] leading-6 text-muted-foreground">
+                  {server.description}
+                </p>
+              )}
 
               <div className="my-8 h-px bg-border" />
 

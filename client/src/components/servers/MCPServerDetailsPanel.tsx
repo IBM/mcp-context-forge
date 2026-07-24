@@ -319,9 +319,11 @@ export function MCPServerDetailsPanel({
                 </div>
               </div>
 
-              <p className="mt-7 max-w-4xl text-[15px] leading-6 text-muted-foreground">
-                {server.description || "No description provided"}
-              </p>
+              {server.description && (
+                <p className="mt-7 max-w-4xl text-[15px] leading-6 text-muted-foreground">
+                  {server.description}
+                </p>
+              )}
 
               <div className="my-8 h-px bg-border" />
 
