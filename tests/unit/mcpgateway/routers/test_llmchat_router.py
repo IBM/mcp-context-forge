@@ -598,6 +598,27 @@ async def test_status_connected(monkeypatch: pytest.MonkeyPatch):
 
 
 @pytest.mark.asyncio
+async def test_status_sanitizes_user_id_xss():
+    """Attacker-controlled user_id must be sanitized before being reflected (CWE-79)."""
+    payload = "<b>evil-user</b>"
+    result = await llmchat_router.status(payload, user={"id": payload, "email": "evil@test.com"})
+
+    assert "<b>" not in result["user_id"]
+    assert "evil-user" in result["user_id"]
+
+
+@pytest.mark.asyncio
+async def test_disconnect_sanitizes_user_id_xss():
+    """Attacker-controlled user_id must be sanitized in disconnect responses (CWE-79)."""
+    payload = "<b>evil-user</b>"
+    result = await llmchat_router.disconnect(DisconnectInput(user_id=payload), user={"id": payload, "email": "evil@test.com"})
+
+    assert result["status"] == "no_active_session"
+    assert "<b>" not in result["user_id"]
+    assert "evil-user" in result["user_id"]
+
+
+@pytest.mark.asyncio
 async def test_get_config_sanitizes(monkeypatch: pytest.MonkeyPatch):
     config = llmchat_router.build_config(
         ConnectInput(
