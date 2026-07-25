@@ -200,6 +200,7 @@ class ServerNameConflictError(ServerError):
         self.name = name
         self.enabled = enabled
         self.server_id = server_id
+        self.visibility = visibility
         message = f"{visibility.capitalize()} Server already exists with name: {name}"
         if not enabled:
             message += f" (currently inactive, ID: {server_id})"

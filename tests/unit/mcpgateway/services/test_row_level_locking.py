@@ -242,6 +242,44 @@ class TestServerServiceLocking:
             # cover the actual locking behavior.
             assert mock_get.called or not mock_get.called  # Test runs successfully
 
+    @pytest.mark.asyncio
+    async def test_register_server_concurrent_conflict_raises_enriched_error(self):
+        """Loser of a concurrent same-name create gets ServerNameConflictError with server_id and visibility."""
+        # First-Party
+        from mcpgateway.services.server_service import ServerNameConflictError
+
+        service = ServerService()
+        db = MagicMock(spec=Session)
+
+        server_in = MagicMock(spec=ServerCreate)
+        server_in.name = "duplicate-server"
+        server_in.description = "Test"
+        server_in.icon = None
+        server_in.tags = []
+        server_in.id = None
+        server_in.team_id = None
+        server_in.owner_email = None
+        server_in.visibility = None
+        server_in.oauth_enabled = False
+        server_in.oauth_config = None
+
+        # Simulates the row locked by the winning concurrent create
+        existing = MagicMock(spec=Server)
+        existing.id = "existing-server-id"
+        existing.name = "duplicate-server"
+        existing.enabled = True
+        existing.visibility = "public"
+
+        with patch("mcpgateway.services.server_service.get_for_update", return_value=existing):
+            with pytest.raises(ServerNameConflictError) as exc_info:
+                await service.register_server(db, server_in, visibility="public")
+
+        assert exc_info.value.server_id == "existing-server-id"
+        assert exc_info.value.visibility == "public"
+        # The loser's insert must never happen
+        assert not db.add.called
+        assert not db.commit.called
+
 
 class TestResourceServiceLocking:
     """Test row-level locking in ResourceService."""
