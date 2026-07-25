@@ -133,3 +133,25 @@ async def test_webhook_send_uses_template(monkeypatch):
     await service._send_webhook(destination=destination, event=event)  # pylint: disable=protected-access
 
     mock_client.request.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_test_destination_escapes_destination_name_xss(monkeypatch):
+    """Attacker-controlled destination_name must be HTML-escaped in test results (CWE-79)."""
+    payload_str = "<script>alert(1)</script>"
+    service = svc.SIEMExportService()
+    service._destinations = {payload_str: {"name": payload_str, "type": "webhook", "url": "https://example.com/hook"}}  # pylint: disable=protected-access
+    service._send_to_destination = AsyncMock(side_effect=RuntimeError("connection refused"))  # pylint: disable=protected-access
+
+    result = await service.test_destination(payload_str)
+
+    assert result["status"] == "failed"
+    assert payload_str not in result["name"]
+    assert "&lt;script&gt;" in result["name"]
+
+    service._send_to_destination = AsyncMock(return_value=None)  # pylint: disable=protected-access
+    ok_result = await service.test_destination(payload_str)
+
+    assert ok_result["status"] == "ok"
+    assert payload_str not in ok_result["name"]
+    assert "&lt;script&gt;" in ok_result["name"]

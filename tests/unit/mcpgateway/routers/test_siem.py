@@ -145,6 +145,60 @@ async def test_test_siem_destination_internal_error(monkeypatch):
     assert exc_info.value.status_code == 500
 
 
+@pytest.mark.asyncio
+async def test_add_siem_destination_escapes_validation_error_xss(monkeypatch):
+    """Attacker-controlled input embedded in a ValueError must be HTML-escaped in the 400 detail (CWE-79)."""
+    payload_str = "<script>alert(1)</script>"
+    mock_service = MagicMock()
+    mock_service.add_destination = AsyncMock(side_effect=ValueError(f"invalid destination {payload_str}"))
+    monkeypatch.setattr(siem, "get_siem_export_service", lambda: mock_service)
+
+    payload = siem.DestinationUpsertRequest(name="dest-1", type="webhook", url="https://example.com/hook")
+
+    with pytest.raises(HTTPException) as exc_info:
+        await siem.add_siem_destination(payload=payload, _user={"email": "admin@example.com"})
+
+    assert exc_info.value.status_code == 400
+    assert payload_str not in str(exc_info.value.detail)
+    assert "&lt;script&gt;" in str(exc_info.value.detail)
+
+
+@pytest.mark.asyncio
+async def test_replace_siem_destinations_escapes_validation_error_xss(monkeypatch):
+    """Attacker-controlled input embedded in a ValueError must be HTML-escaped in the 400 detail (CWE-79)."""
+    payload_str = "<script>alert(1)</script>"
+    mock_service = MagicMock()
+    mock_service.replace_destinations = AsyncMock(side_effect=ValueError(f"invalid destination {payload_str}"))
+    monkeypatch.setattr(siem, "get_siem_export_service", lambda: mock_service)
+
+    payload = siem.DestinationBulkReplaceRequest(destinations=[siem.DestinationUpsertRequest(name="dest-1", type="webhook", url="https://example.com/hook")])
+
+    with pytest.raises(HTTPException) as exc_info:
+        await siem.replace_siem_destinations(payload=payload, _user={"email": "admin@example.com"})
+
+    assert exc_info.value.status_code == 400
+    assert payload_str not in str(exc_info.value.detail)
+    assert "&lt;script&gt;" in str(exc_info.value.detail)
+
+
+@pytest.mark.asyncio
+async def test_test_siem_destination_escapes_name_xss(monkeypatch):
+    """Attacker-controlled destination_name must be HTML-escaped before use (CWE-79)."""
+    payload_str = "<script>alert(1)</script>"
+    mock_service = MagicMock()
+    mock_service.test_destination = AsyncMock(side_effect=KeyError(f"Unknown destination: {payload_str}"))
+    monkeypatch.setattr(siem, "get_siem_export_service", lambda: mock_service)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await siem.test_siem_destination(destination_name=payload_str, _user={"email": "admin@example.com"})
+
+    assert exc_info.value.status_code == 404
+    assert payload_str not in str(exc_info.value.detail)
+    assert "&lt;script&gt;" in str(exc_info.value.detail)
+    # The escaped name (not the raw payload) is what reaches the service layer.
+    mock_service.test_destination.assert_awaited_once_with("&lt;script&gt;alert(1)&lt;/script&gt;")
+
+
 # ---------------------------------------------------------------------------
 # Deny-path regression tests (unauthenticated, insufficient permissions, feature disabled)
 # ---------------------------------------------------------------------------
