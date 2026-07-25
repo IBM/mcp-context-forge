@@ -172,7 +172,6 @@ The remaining ~93% is DOM manipulation, fetch calls, Chart.js rendering, and HTM
 | tests/unit/mcpgateway/middleware/test_security_headers_middleware.py                            |     16 |       0 |       16 |
 | tests/unit/mcpgateway/middleware/test_token_scoping.py                                          |     35 |       0 |       35 |
 | tests/unit/mcpgateway/middleware/test_token_scoping_extra.py                                    |     40 |       0 |       40 |
-| tests/unit/mcpgateway/middleware/test_validation_middleware.py                                  |     20 |       0 |       20 |
 | tests/unit/mcpgateway/plugins/agent/test_agent_plugins.py                                       |      8 |       0 |        8 |
 | tests/unit/mcpgateway/plugins/framework/external/grpc/proto/test_plugin_service_pb2_grpc.py     |      9 |       0 |        9 |
 | tests/unit/mcpgateway/plugins/framework/external/grpc/server/test_runtime.py                    |     22 |       0 |       22 |

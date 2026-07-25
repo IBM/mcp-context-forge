@@ -3,10 +3,9 @@
 This page lists active deprecations and migration guidance.
 
 !!! warning "Deprecated as of 2026-06-11; sunsets on 2026-07-07"
-    The Rust MCP runtime sidecar, Rust A2A runtime sidecar, and
-    `ValidationMiddleware` are deprecated. They remain available for existing
-    deployments, but new deployments should use the default Python runtime
-    paths and endpoint-level validation. They are scheduled for sunset on
+    The Rust MCP runtime sidecar and Rust A2A runtime sidecar are deprecated.
+    They remain available for existing deployments, but new deployments should
+    use the default Python runtime paths. They are scheduled for sunset on
     2026-07-07.
 
 ## Rust MCP runtime sidecar
@@ -24,22 +23,6 @@ Runtime signals:
 - Rust MCP runtime responses include `Deprecation`, `Sunset`, and
   `Link: <...>; rel="deprecation"` headers.
 
-## ValidationMiddleware
-
-`mcpgateway.middleware.validation_middleware.ValidationMiddleware` is
-deprecated.
-
-Use endpoint-level Pydantic models, the existing `SecurityValidator` helpers,
-and protocol-specific validation middleware instead. Leave
-`VALIDATION_MIDDLEWARE_ENABLED=false` unless you need compatibility with an
-existing deployment that already depends on this middleware.
-
-Runtime signals:
-
-- Gateway startup logs include a deprecation warning when the middleware is
-  enabled.
-- Instantiating the middleware emits a Python `DeprecationWarning`.
-
 ## Legacy MCP HTTP+SSE transport
 
 The MCP specification deprecated the legacy two-endpoint HTTP+SSE transport in
@@ -56,3 +39,23 @@ publisher omits that virtual host so a split deployment can use the dataplane's
 
 See the MCP [deprecated-feature registry](https://modelcontextprotocol.io/specification/draft/deprecated)
 and [transport guidance](https://modelcontextprotocol.io/specification/draft/basic/transports/streamable-http).
+
+## Removed
+
+### ValidationMiddleware
+
+`mcpgateway.middleware.validation_middleware.ValidationMiddleware` was
+deprecated as of 2026-06-11 and removed after the 2026-07-07 sunset.
+
+Use endpoint-level Pydantic models, the existing `SecurityValidator` helpers,
+and protocol-specific validation middleware instead.
+
+Removed settings (no longer read):
+
+- `VALIDATION_MIDDLEWARE_ENABLED`
+- `SANITIZE_OUTPUT`
+- `MAX_PATH_DEPTH`
+
+`VALIDATION_STRICT`, `EXPERIMENTAL_VALIDATE_IO`, `ALLOWED_ROOTS`,
+`MAX_PARAM_LENGTH`, and `DANGEROUS_PATTERNS` remain for schema and
+`SecurityValidator` paths.

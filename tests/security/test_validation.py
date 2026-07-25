@@ -3,7 +3,7 @@
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
 
-Tests for security validation middleware.
+Tests for security validation helpers.
 
 This module tests the gateway-level input validation and output sanitization
 features that protect against:
@@ -15,10 +15,9 @@ features that protect against:
 """
 
 import pytest
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 from mcpgateway.common.validators import SecurityValidator
-from mcpgateway.middleware.validation_middleware import ValidationMiddleware
 
 
 class TestSecurityValidator:
@@ -85,16 +84,6 @@ class TestSecurityValidator:
         result = SecurityValidator.validate_path("plugin://my-plugin/resource")
         assert result == "plugin://my-plugin/resource"
 
-    @pytest.mark.skip(reason="Path depth validation is in ValidationMiddleware, not SecurityValidator - needs dedicated middleware test")
-    def test_validate_path_depth_limit(self):
-        """Test path depth validation.
-
-        Note: Path depth checking is implemented in ValidationMiddleware.validate_resource_path,
-        which uses settings from mcpgateway.config. This test would need to mock the middleware
-        rather than SecurityValidator.
-        """
-        pass
-
     def test_allowed_roots_configuration(self):
         """Test allowed roots configuration."""
         # Test with allowed roots
@@ -154,43 +143,8 @@ class TestOutputSanitizer:
         assert result == "HelloWorld"
 
 
-class TestValidationMiddleware:
-    """Test validation middleware."""
-
-    def test_middleware_creation(self):
-        """Test middleware can be created."""
-        app = MagicMock()
-        middleware = ValidationMiddleware(app)
-        assert middleware is not None
-
-    @pytest.mark.asyncio
-    async def test_middleware_disabled(self):
-        """Test middleware bypasses when disabled."""
-        from unittest.mock import AsyncMock
-
-        app = MagicMock()
-        middleware = ValidationMiddleware(app)
-        middleware.enabled = False
-
-        request = MagicMock()
-        call_next = AsyncMock(return_value="response")
-
-        result = await middleware.dispatch(request, call_next)
-        assert result == "response"
-        call_next.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_path_traversal_detection(self):
-        """Test path traversal detection."""
-        app = MagicMock()
-        middleware = ValidationMiddleware(app)
-
-        # Test path traversal patterns
-        with pytest.raises(Exception, match="Path traversal"):
-            middleware.validate_resource_path("../../../etc/passwd")
-
-        with pytest.raises(Exception, match="Path traversal"):
-            middleware.validate_resource_path("/srv/data/../../secret.txt")
+class TestSecurityValidatorInjection:
+    """Test SecurityValidator injection prevention helpers."""
 
     @pytest.mark.asyncio
     async def test_command_injection_prevention(self):
