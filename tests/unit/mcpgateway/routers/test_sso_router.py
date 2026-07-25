@@ -953,6 +953,47 @@ async def test_delete_sso_provider_success(monkeypatch: pytest.MonkeyPatch):
 
 
 @pytest.mark.asyncio
+async def test_delete_sso_provider_escapes_provider_id_xss(monkeypatch: pytest.MonkeyPatch):
+    """Attacker-controlled provider_id must be HTML-escaped in reflected responses (CWE-79)."""
+
+    class DummyService:
+        def __init__(self, _db):
+            pass
+
+        def delete_provider(self, _provider_id):
+            return False
+
+    monkeypatch.setattr(sso_router, "SSOService", DummyService)
+
+    payload = "<script>alert(1)</script>"
+    with pytest.raises(HTTPException) as excinfo:
+        await sso_router.delete_sso_provider(payload, db=MagicMock(), user={"email": "admin@example.com"})
+
+    assert excinfo.value.status_code == 404
+    assert payload not in str(excinfo.value.detail)
+    assert "&lt;script&gt;" in str(excinfo.value.detail)
+
+
+@pytest.mark.asyncio
+async def test_delete_sso_provider_success_escapes_provider_id_xss(monkeypatch: pytest.MonkeyPatch):
+    """Attacker-controlled provider_id must be HTML-escaped in the success message (CWE-79)."""
+
+    class DummyService:
+        def __init__(self, _db):
+            pass
+
+        def delete_provider(self, _provider_id):
+            return True
+
+    monkeypatch.setattr(sso_router, "SSOService", DummyService)
+
+    payload = "<script>alert(1)</script>"
+    result = await sso_router.delete_sso_provider(payload, db=MagicMock(), user={"email": "admin@example.com"})
+    assert payload not in result["message"]
+    assert "&lt;script&gt;" in result["message"]
+
+
+@pytest.mark.asyncio
 async def test_list_pending_approvals(monkeypatch: pytest.MonkeyPatch):
     now = datetime.now(timezone.utc)
     approval = SimpleNamespace(
