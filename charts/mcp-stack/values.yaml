@@ -843,6 +843,7 @@ mcpContextForge:
     PASSWORD_REQUIRE_LOWERCASE: "true"     # require lowercase letters in passwords
     PASSWORD_REQUIRE_NUMBERS: "false"      # require numbers in passwords
     PASSWORD_REQUIRE_SPECIAL: "true"       # require special characters in passwords
+    PASSWORD_CHECK_SEQUENTIAL_CHARS: "true" # check for sequential characters (e.g., '123', 'abc')
     PASSWORD_CHANGE_ENFORCEMENT_ENABLED: "true" # enable password change enforcement checks
     ADMIN_REQUIRE_PASSWORD_CHANGE_ON_BOOTSTRAP: "true" # force admin to change password after bootstrap
     DETECT_DEFAULT_PASSWORD_ON_LOGIN: "true" # detect default passwords on login
