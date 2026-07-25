@@ -2812,6 +2812,15 @@ class Settings(BaseSettings):
     debug: bool = False
     expose_error_details: bool = False
 
+    # File Watcher
+    file_watcher_enabled: bool = Field(
+        default=False,
+        description="Opt-in file system watcher for automatic configuration reloading. "
+        "Best suited for development or controlled environments where hot-reload is needed. "
+        "Leave disabled in most production deployments to avoid extra file monitoring overhead. "
+        "Uses watchfiles (native inotify on Linux) for efficient monitoring.",
+    )
+
     # Observability (OpenTelemetry)
     deployment_env: str = Field(default="development", validation_alias=AliasChoices("DEPLOYMENT_ENV", "ENVIRONMENT"), description="Deployment environment label")
     otel_enable_observability: bool = Field(default=False, description="Enable OpenTelemetry observability")
