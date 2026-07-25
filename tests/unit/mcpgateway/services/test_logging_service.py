@@ -302,6 +302,24 @@ class TestUvicornHealthCheckFilter:
         result = filt.filter(record)
         assert result is True
 
+    def test_handles_getmessage_exception(self):
+        """Test that filter handles getMessage() exceptions gracefully."""
+        filt = self._get_filter()
+        record = logging.LogRecord(
+            name="uvicorn.access",
+            level=logging.INFO,
+            pathname="",
+            lineno=0,
+            msg="test",
+            args=(),
+            exc_info=None,
+        )
+        # Simulate getMessage raising an exception
+        with patch.object(record, "getMessage", side_effect=RuntimeError("mocked error")):
+            result = filt.filter(record)
+        # Should return True (allow the log) rather than crashing
+        assert result is True
+
     def test_handles_missing_args_gracefully(self):
         """Test that filter handles records without health/ready patterns."""
         filt = self._get_filter()
