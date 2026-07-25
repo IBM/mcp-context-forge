@@ -368,6 +368,12 @@ class Settings(BaseSettings):
         default=SecretStr("__REPLACE_ME__run_init-secrets_before_starting"),
         description="HMAC secret for JWT signing. MUST be set explicitly in staging/production. Generate with: python -m mcpgateway.scripts.init_secrets --stdout",
     )
+
+    # Password Policy Settings
+    password_check_sequential_chars: bool = Field(
+        default=True,
+        description="Check for sequential characters in passwords (e.g., '123', 'abc'). Set to False to disable this validation.",
+    )
     jwt_public_key_path: str = ""
     jwt_private_key_path: str = ""
     jwt_audience: str = "mcpgateway-api"
@@ -1281,22 +1287,30 @@ class Settings(BaseSettings):
     max_interval: float = Field(default=5.0, description="Maximum polling interval in seconds when the session is idle")
     backoff_factor: float = Field(default=1.5, description="Multiplier used to gradually increase the polling interval during inactivity")
 
-    @model_validator(mode="before")
-    @classmethod
-    def apply_environment_aware_defaults(cls, data: Any) -> Any:
-        """Apply defaults that depend on other settings values."""
-        if not isinstance(data, dict):
-            return data
+    @model_validator(mode="after")
+    def apply_environment_aware_defaults(self) -> "Settings":
+        """Apply defaults that depend on other settings values.
 
-        values: dict[str, Any] = dict(data)
-        # require_strong_secrets is a legacy flag; its environment-aware default is kept for
-        # backward compatibility with existing operator configs that read the field, but the
-        # value has no effect on startup security — validate_security_combinations() rejects
-        # weak secrets unconditionally regardless of this flag.
-        if "require_strong_secrets" not in values:
-            environment = str(values.get("environment", "development")).lower()
-            values["require_strong_secrets"] = environment == "production"
-        return values
+        This runs AFTER all field values have been set (including from .env),
+        allowing us to override require_strong_secrets based on environment.
+
+        require_strong_secrets is a legacy flag; its environment-aware default is
+        kept for backward compatibility with existing operator configs that read
+        the field, but the value has no effect on startup security —
+        validate_security_combinations() rejects weak secrets unconditionally
+        regardless of this flag.
+
+        Returns:
+            Itself with require_strong_secrets derived from the environment.
+        """
+        # If require_strong_secrets was not explicitly set to True, derive it from environment
+        # This allows production to automatically enable strong secret enforcement
+        # Skip this logic in client_mode as client mode bypasses server secret enforcement
+        if not self.client_mode and not self.require_strong_secrets:
+            environment = str(self.environment).lower()
+            if environment == "production":
+                self.require_strong_secrets = True
+        return self
 
     # redis configurations for Maintaining Chat Sessions in multi-worker environment
     llmchat_session_ttl: int = Field(default=300, description="Seconds for active_session key TTL")
@@ -1564,6 +1578,15 @@ class Settings(BaseSettings):
                 )
 
         if not self.client_mode:
+            # Validate BASIC_AUTH_PASSWORD when any basic auth method is enabled
+            if self.mcpgateway_ui_enabled or self.api_allow_basic_auth or self.docs_allow_basic_auth:
+                basic_auth_val = self.basic_auth_password.get_secret_value()
+                if basic_auth_val.lower() in weak_secrets:
+                    if env != "development":
+                        raise SecurityConfigurationError(
+                            f"basic_auth_password: Weak/default password rejected in '{env}' environment when basic auth is enabled. "
+                            "Run 'python -m mcpgateway.scripts.init_secrets' to generate strong values."
+                        )
             # Check for dangerous combinations - only log warnings, don't raise errors
             if not self.auth_required and self.mcpgateway_ui_enabled:
                 logger.warning("🔓 SECURITY WARNING: Admin UI is enabled without authentication. Consider setting AUTH_REQUIRED=true for production.")
