@@ -2508,7 +2508,6 @@ class ResourceService(BaseService):
                                 """Create httpx client with proper SSL verification for resource reading."""
                                 # First-Party
                                 from mcpgateway.services.http_client_service import get_default_verify  # pylint: disable=import-outside-toplevel
-                                from mcpgateway.utils.ssl_context_cache import get_cached_ssl_context  # pylint: disable=import-outside-toplevel
 
                                 # Handle gateway CA certificate if present
                                 if gateway.ca_certificate:

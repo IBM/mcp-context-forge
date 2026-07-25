@@ -609,7 +609,7 @@ class OAuthManager:
                 logger.info("""Successfully obtained access token via client credentials""")
                 return token_response["access_token"]
 
-            except ValueError:
+            except ValueError:  # pylint: disable=try-except-raise
                 # Re-raise ValueError immediately (e.g., mTLS validation errors from get_cached_ssl_context)
                 # These are configuration errors that should not be retried
                 raise
