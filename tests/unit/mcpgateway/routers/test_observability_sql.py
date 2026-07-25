@@ -493,3 +493,60 @@ class TestObservabilityRouterEndpoints:
 
         assert exc_info.value.status_code == 500
         assert "Export failed" in exc_info.value.detail
+
+
+class TestHoursCoercion:
+    """Tests for int(hours) coercion defense in observability endpoints."""
+
+    @pytest.mark.asyncio
+    async def test_get_stats_returns_integer_time_window(self, allow_permission):
+        """get_stats returns time_window_hours as int (defense in depth)."""
+        # First-Party
+        from mcpgateway.routers.observability import get_stats
+
+        mock_db = MagicMock()
+
+        query_total = MagicMock()
+        query_total.filter.return_value.scalar.return_value = 0
+        query_success = MagicMock()
+        query_success.filter.return_value.scalar.return_value = 0
+        query_error = MagicMock()
+        query_error.filter.return_value.scalar.return_value = 0
+        query_avg = MagicMock()
+        query_avg.filter.return_value.scalar.return_value = 0
+        query_slowest = MagicMock()
+        query_slowest.filter.return_value.group_by.return_value.order_by.return_value.limit.return_value.all.return_value = []
+
+        mock_db.query.side_effect = [query_total, query_success, query_error, query_avg, query_slowest]
+
+        result = await get_stats(hours=24, db=mock_db, _user={"email": "admin", "db": mock_db})
+
+        # Defense in depth: ensure time_window_hours is an int, not a float
+        assert isinstance(result["time_window_hours"], int)
+        assert result["time_window_hours"] == 24
+
+    @pytest.mark.asyncio
+    async def test_get_query_performance_passes_int_hours(self, allow_permission):
+        """get_query_performance coerces hours to int before passing to helpers."""
+        # First-Party
+        from mcpgateway.routers.observability import get_query_performance
+
+        mock_db = MagicMock()
+        mock_bind = MagicMock()
+        mock_bind.dialect.name = "sqlite"
+        mock_db.get_bind.return_value = mock_bind
+        mock_db.query.return_value.filter.return_value.all.return_value = []
+
+        with patch("mcpgateway.routers.observability._get_query_performance_python") as mock_py:
+            mock_py.return_value = {"total_traces": 0, "time_window_hours": 1}
+            result = await get_query_performance(
+                hours=1,
+                db=mock_db,
+                _user={"email": "admin", "db": mock_db},
+            )
+
+            # Verify Python helper was called with int hours (not float)
+            call_args = mock_py.call_args
+            hours_arg = call_args[0][2] if len(call_args[0]) > 2 else call_args[1].get("hours")
+            assert isinstance(hours_arg, int)
+            assert hours_arg == 1
