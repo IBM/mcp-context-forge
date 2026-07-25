@@ -85,7 +85,6 @@ class MessageFilterAgentPlugin(Plugin):
                 agent_id=payload.agent_id,
                 messages=filtered_messages,
                 tools=payload.tools,
-                headers=payload.headers,
                 model=payload.model,
                 system_prompt=payload.system_prompt,
                 parameters=payload.parameters,

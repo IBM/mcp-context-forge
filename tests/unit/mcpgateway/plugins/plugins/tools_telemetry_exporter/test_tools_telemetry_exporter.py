@@ -14,7 +14,8 @@ from unittest.mock import AsyncMock
 import pytest
 
 # First-Party
-from cpex.framework import GlobalContext, HttpHeaderPayload, PluginConfig, PluginContext, ToolHookType, ToolPostInvokePayload, ToolPreInvokePayload
+from cpex.framework import GlobalContext, PluginConfig, PluginContext, ToolHookType, ToolPostInvokePayload, ToolPreInvokePayload
+from cpex.framework.extensions import Extensions, HttpExtension
 from plugins.tools_telemetry_exporter.telemetry_exporter import ToolsTelemetryExporterPlugin
 
 
@@ -55,8 +56,10 @@ class TestToolsTelemetryExporterPlugin:
         payload = ToolPreInvokePayload(
             name="test_tool",
             args={"input": "hello"},
-            headers=HttpHeaderPayload(
-                {
+        )
+        ext = Extensions(
+            http=HttpExtension(
+                headers={
                     "Authorization": "Bearer secret-token",
                     "Cookie": "jwt_token=abc123; theme=dark",
                     "X-API-Key": "top-secret",  # pragma: allowlist secret
@@ -64,10 +67,10 @@ class TestToolsTelemetryExporterPlugin:
                     "Content-Type": "application/json",
                     "X-Request-Id": "req-123",
                 }
-            ),
+            )
         )
 
-        await plugin.tool_pre_invoke(payload, _create_context())
+        await plugin.tool_pre_invoke(payload, _create_context(), ext)
 
         attrs = plugin._export_telemetry.await_args.kwargs["attributes"]
         exported_headers = json.loads(attrs["headers"])
@@ -86,16 +89,18 @@ class TestToolsTelemetryExporterPlugin:
         payload = ToolPreInvokePayload(
             name="test_tool",
             args={},
-            headers=HttpHeaderPayload(
-                {
+        )
+        ext = Extensions(
+            http=HttpExtension(
+                headers={
                     "X-Delegation-Token": "delegation-secret",
                     "Upstream-Authorization": "Bearer upstream-secret",
                     "X-Session-Key": "session-secret",
                 }
-            ),
+            )
         )
 
-        await plugin.tool_pre_invoke(payload, _create_context())
+        await plugin.tool_pre_invoke(payload, _create_context(), ext)
 
         attrs = plugin._export_telemetry.await_args.kwargs["attributes"]
         exported_headers = json.loads(attrs["headers"])

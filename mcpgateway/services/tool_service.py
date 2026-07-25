@@ -35,7 +35,6 @@ import uuid
 import anyio
 from cpex.framework import (
     GlobalContext,
-    HttpHeaderPayload,
     PluginContextTable,
     PluginError,
     PluginViolationError,
@@ -72,7 +71,7 @@ from mcpgateway.db import get_for_update, server_tool_association
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import ToolMetric, ToolMetricsHourly
 from mcpgateway.observability import create_child_span, create_span, inject_trace_context_headers, otel_context_active, set_span_attribute, set_span_error
-from mcpgateway.plugins.utils import build_request_extensions, record_plugin_metrics
+from mcpgateway.plugins.utils import build_hook_extensions, build_request_extensions, headers_from_modified_extensions, record_plugin_metrics
 from mcpgateway.schemas import AuthenticationValues, ToolCreate, ToolMetrics, ToolRead, ToolUpdate, TopPerformer
 from mcpgateway.services.a2a_protocol import prepare_a2a_invocation
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
@@ -283,7 +282,7 @@ def _header_payload_keys(value: Any) -> Optional[list[str]]:
     return _mapping_keys(root)
 
 
-def _log_tool_pre_invoke_result(tool_name: str, original_args: Any, original_headers: Any, pre_result: Any) -> None:
+def _log_tool_pre_invoke_result(tool_name: str, original_args: Any, original_headers: Any, pre_result: Any, hook_extensions: Any = None) -> None:
     """Log sanitized TOOL_PRE_INVOKE output shape for plugin diagnostics."""
     try:
         if not logger.isEnabledFor(logging.DEBUG):
@@ -292,9 +291,9 @@ def _log_tool_pre_invoke_result(tool_name: str, original_args: Any, original_hea
         sanitized_tool_name = sanitize_for_log(tool_name)
         modified_payload = getattr(pre_result, "modified_payload", None)
         before_arg_keys = _mapping_keys(original_args)
-        before_header_keys = _header_payload_keys(original_headers)
+        before_header_keys = _mapping_keys(original_headers) if isinstance(original_headers, dict) else _header_payload_keys(original_headers)
 
-        if modified_payload is None:
+        if modified_payload is None and getattr(pre_result, "modified_extensions", None) is None:
             logger.debug(
                 "tool_pre_invoke completed for %s: modified_payload=None, arg_keys_before=%s, header_keys_before=%s",
                 sanitized_tool_name,
@@ -303,19 +302,24 @@ def _log_tool_pre_invoke_result(tool_name: str, original_args: Any, original_hea
             )
             return
 
-        after_arg_keys = _mapping_keys(getattr(modified_payload, "args", None))
-        after_header_keys = _header_payload_keys(getattr(modified_payload, "headers", None))
+        after_arg_keys = _mapping_keys(getattr(modified_payload, "args", None)) if modified_payload is not None else before_arg_keys
+        after_headers = headers_from_modified_extensions(pre_result)
+        if after_headers is not None:
+            after_header_keys = _mapping_keys(after_headers)
+        else:
+            after_header_keys = _header_payload_keys(getattr(modified_payload, "headers", None)) if modified_payload is not None else before_header_keys
         before_arg_set = set(before_arg_keys or [])
         after_arg_set = set(after_arg_keys or [])
         before_header_set = set(before_header_keys or [])
         after_header_set = set(after_header_keys or [])
-        modified_name = sanitize_for_log(getattr(modified_payload, "name", None))
+        modified_name = sanitize_for_log(getattr(modified_payload, "name", None)) if modified_payload is not None else None
 
         logger.debug(
-            "tool_pre_invoke completed for %s: modified_payload=True, modified_name=%s, "
+            "tool_pre_invoke completed for %s: modified_payload=%s, modified_name=%s, "
             "arg_keys_before=%s, arg_keys_after=%s, removed_arg_keys=%s, added_arg_keys=%s, "
             "header_keys_before=%s, header_keys_after=%s, removed_header_keys=%s, added_header_keys=%s",
             sanitized_tool_name,
+            modified_payload is not None,
             modified_name,
             before_arg_keys,
             after_arg_keys,
@@ -4445,26 +4449,26 @@ class ToolService(BaseService):
         # inject credentials and clean arguments before the Rust direct call.
         modified_args = arguments
         if has_pre_invoke and arguments is not None:
-            pre_invoke_headers = HttpHeaderPayload(root=dict(runtime_headers))
+            ext_in = build_hook_extensions(runtime_headers)
             pre_result, _ = await plugin_manager.invoke_hook(
                 ToolHookType.TOOL_PRE_INVOKE,
-                payload=ToolPreInvokePayload(name=name, args=arguments, headers=pre_invoke_headers),
+                payload=ToolPreInvokePayload(name=name, args=arguments),
                 global_context=hook_global_context,
                 local_contexts=plugin_context_table,
                 violations_as_exceptions=True,
-                extensions=build_request_extensions(),
+                extensions=ext_in,
             )
             record_plugin_metrics(current_trace_id.get(), pre_result.metadata)
-            _log_tool_pre_invoke_result(name, arguments, pre_invoke_headers, pre_result)
+            _log_tool_pre_invoke_result(name, arguments, runtime_headers, pre_result, ext_in)
             if pre_result.modified_payload:
                 modified_args = pre_result.modified_payload.args
                 if pre_result.modified_payload.name and pre_result.modified_payload.name != name:
                     tool_name_original = pre_result.modified_payload.name
-                if pre_result.modified_payload.headers is not None:
-                    plugin_headers = pre_result.modified_payload.headers.root if hasattr(pre_result.modified_payload.headers, "root") else {}
-                    for hk, hv in plugin_headers.items():
-                        if hk and hv:
-                            runtime_headers[str(hk).lower()] = str(hv)
+            plugin_headers = headers_from_modified_extensions(pre_result)
+            if plugin_headers is not None:
+                for hk, hv in plugin_headers.items():
+                    if hk and hv:
+                        runtime_headers[str(hk).lower()] = str(hv)
 
         # Defense in depth: strip X-Vault-Tokens (case-insensitive) from outbound
         # headers. The Vault plugin removes this header when it processes the token,
@@ -5356,23 +5360,24 @@ class ToolService(BaseService):
                         # Use pre-created Pydantic model from Phase 2 (no ORM access)
                         if tool_metadata:
                             global_context.metadata[TOOL_METADATA] = tool_metadata
-                        pre_invoke_headers = HttpHeaderPayload(root=headers)
+                        ext_in = build_hook_extensions(headers)
                         pre_result, context_table = await plugin_manager.invoke_hook(
                             ToolHookType.TOOL_PRE_INVOKE,
-                            payload=ToolPreInvokePayload(name=name, args=arguments, headers=pre_invoke_headers),
+                            payload=ToolPreInvokePayload(name=name, args=arguments),
                             global_context=global_context,
                             local_contexts=context_table,  # Pass context from previous hooks
                             violations_as_exceptions=True,
-                            extensions=build_request_extensions(),
+                            extensions=ext_in,
                         )
                         record_plugin_metrics(current_trace_id.get(), pre_result.metadata)
-                        _log_tool_pre_invoke_result(name, arguments, pre_invoke_headers, pre_result)
+                        _log_tool_pre_invoke_result(name, arguments, headers, pre_result, ext_in)
                         if pre_result.modified_payload:
                             payload = pre_result.modified_payload
                             name = payload.name
                             arguments = payload.args
-                            if payload.headers is not None:
-                                headers = payload.headers.model_dump()
+                        plugin_headers = headers_from_modified_extensions(pre_result)
+                        if plugin_headers is not None:
+                            headers = plugin_headers
 
                     # Build the payload based on integration type
                     payload = arguments.copy()
@@ -6199,23 +6204,24 @@ class ToolService(BaseService):
                             global_context.metadata[TOOL_METADATA] = tool_metadata
                         if gateway_metadata:
                             global_context.metadata[GATEWAY_METADATA] = gateway_metadata
-                        pre_invoke_headers = HttpHeaderPayload(root=headers)
+                        ext_in = build_hook_extensions(headers)
                         pre_result, context_table = await plugin_manager.invoke_hook(
                             ToolHookType.TOOL_PRE_INVOKE,
-                            payload=ToolPreInvokePayload(name=name, args=arguments, headers=pre_invoke_headers),
+                            payload=ToolPreInvokePayload(name=name, args=arguments),
                             global_context=global_context,
                             local_contexts=None,
                             violations_as_exceptions=True,
-                            extensions=build_request_extensions(),
+                            extensions=ext_in,
                         )
                         record_plugin_metrics(current_trace_id.get(), pre_result.metadata)
-                        _log_tool_pre_invoke_result(name, arguments, pre_invoke_headers, pre_result)
+                        _log_tool_pre_invoke_result(name, arguments, headers, pre_result, ext_in)
                         if pre_result.modified_payload:
                             payload = pre_result.modified_payload
                             name = payload.name
                             arguments = payload.args
-                            if payload.headers is not None:
-                                headers = payload.headers.model_dump()
+                        plugin_headers = headers_from_modified_extensions(pre_result)
+                        if plugin_headers is not None:
+                            headers = plugin_headers
 
                     # Defense in depth: strip X-Vault-Tokens (case-insensitive) from outbound
                     # headers. The Vault plugin removes this header when it processes the token,
@@ -6285,29 +6291,29 @@ class ToolService(BaseService):
                     if plugin_manager and plugin_manager.has_hooks_for(ToolHookType.TOOL_PRE_INVOKE) and not skip_pre_invoke:
                         if tool_metadata:
                             global_context.metadata[TOOL_METADATA] = tool_metadata
-                        pre_invoke_headers = HttpHeaderPayload(root=plugin_headers)
+                        ext_in = build_hook_extensions(plugin_headers)
                         pre_result, context_table = await plugin_manager.invoke_hook(
                             ToolHookType.TOOL_PRE_INVOKE,
-                            payload=ToolPreInvokePayload(name=name, args=arguments, headers=pre_invoke_headers),
+                            payload=ToolPreInvokePayload(name=name, args=arguments),
                             global_context=global_context,
                             local_contexts=context_table,
                             violations_as_exceptions=True,
-                            extensions=build_request_extensions(),
+                            extensions=ext_in,
                         )
                         record_plugin_metrics(current_trace_id.get(), pre_result.metadata)
-                        _log_tool_pre_invoke_result(name, arguments, pre_invoke_headers, pre_result)
+                        _log_tool_pre_invoke_result(name, arguments, plugin_headers, pre_result, ext_in)
                         if pre_result.modified_payload:
                             payload = pre_result.modified_payload
                             name = payload.name
                             arguments = payload.args
-                            if payload.headers is not None:
-                                plugin_returned_headers = payload.headers.model_dump()
-                                if a2a_allowlist:
-                                    allowlist_lower = {h.lower() for h in a2a_allowlist}
-                                    safe_headers = {k: v for k, v in plugin_returned_headers.items() if k.lower() in allowlist_lower}
-                                    if not settings.enable_sensitive_header_passthrough:
-                                        safe_headers = filter_sensitive_headers(safe_headers)
-                                    headers.update(safe_headers)
+                        plugin_returned_headers = headers_from_modified_extensions(pre_result)
+                        if plugin_returned_headers is not None:
+                            if a2a_allowlist:
+                                allowlist_lower = {h.lower() for h in a2a_allowlist}
+                                safe_headers = {k: v for k, v in plugin_returned_headers.items() if k.lower() in allowlist_lower}
+                                if not settings.enable_sensitive_header_passthrough:
+                                    safe_headers = filter_sensitive_headers(safe_headers)
+                                headers.update(safe_headers)
 
                     prepared = prepare_a2a_invocation(
                         agent_type=a2a_agent_type,

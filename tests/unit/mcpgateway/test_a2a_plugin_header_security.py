@@ -5,7 +5,7 @@ SPDX-License-Identifier: Apache-2.0
 
 Tests for plugin header modification security (PR #5183 review fix).
 
-Validates that plugin-returned headers in modified_payload.headers are
+Validates that plugin-returned headers in modified_extensions.http.headers are
 subject to the same filtering and whitelist enforcement as inbound headers.
 
 This prevents malicious or compromised plugins from injecting sensitive

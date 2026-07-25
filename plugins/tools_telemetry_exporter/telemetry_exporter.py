@@ -17,6 +17,7 @@ import orjson
 # First-Party
 from cpex.framework import get_attr, Plugin, PluginConfig, PluginContext
 from cpex.framework.constants import GATEWAY_METADATA, TOOL_METADATA
+from cpex.framework.extensions import Extensions
 from cpex.framework.hooks.tools import ToolPostInvokePayload, ToolPostInvokeResult, ToolPreInvokePayload, ToolPreInvokeResult
 from mcpgateway.services.logging_service import LoggingService
 
@@ -133,23 +134,24 @@ class ToolsTelemetryExporterPlugin(Plugin):
         return any(pattern.match(name) for pattern in _SENSITIVE_HEADER_PATTERNS)
 
     @classmethod
-    def _serialize_headers(cls, payload: ToolPreInvokePayload) -> str:
+    def _serialize_headers(cls, headers: dict[str, str] | None) -> str:
         """Serialize headers for telemetry, redacting sensitive values by default."""
-        if not payload.headers:
+        if not headers:
             return "{}"
 
         sanitized_headers = {}
-        for key, value in payload.headers.root.items():
+        for key, value in headers.items():
             sanitized_headers[key] = _MASKED_HEADER_VALUE if cls._is_sensitive_header_name(key) else value
 
         return orjson.dumps(sanitized_headers, default=str).decode()
 
-    async def tool_pre_invoke(self, payload: ToolPreInvokePayload, context: PluginContext) -> ToolPreInvokeResult:
+    async def tool_pre_invoke(self, payload: ToolPreInvokePayload, context: PluginContext, extensions: Extensions | None = None) -> ToolPreInvokeResult:
         """Capture pre-invocation telemetry for tools.
 
         Args:
             payload: The tool payload containing arguments.
             context: Plugin execution context.
+            extensions: Hook extensions (headers on ``extensions.http``).
 
         Returns:
             Result with potentially modified tool arguments.
@@ -157,6 +159,7 @@ class ToolsTelemetryExporterPlugin(Plugin):
         logger.info("ToolsTelemetryExporter: Capturing pre-invocation tool telemetry.")
         context_attributes = self._get_pre_invoke_context_attributes(context)
 
+        header_map = dict(extensions.http.headers) if extensions and extensions.http else {}
         export_attributes = {
             "request_id": context_attributes["request_id"],
             "user": context_attributes["user"],
@@ -169,7 +172,7 @@ class ToolsTelemetryExporterPlugin(Plugin):
             "tool.target_tool_name": context_attributes["tool"]["target_tool_name"],
             "tool.description": context_attributes["tool"]["description"],
             "tool.invocation.args": orjson.dumps(payload.args, default=str).decode(),
-            "headers": self._serialize_headers(payload),
+            "headers": self._serialize_headers(header_map),
         }
 
         await self._export_telemetry(attributes=export_attributes, span_name="tool.pre_invoke")

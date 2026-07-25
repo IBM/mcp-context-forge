@@ -10292,7 +10292,8 @@ class TestRustMcpExecutionPlan:
         post-hook check sees Authorization is present and lets the plan through.
         """
         # Third-Party
-        from cpex.framework import HttpHeaderPayload, PluginResult, ToolPreInvokePayload
+        from cpex.framework import PluginResult, ToolPreInvokePayload
+        from cpex.framework.extensions import Extensions, HttpExtension
 
         cache = self._cache_mock(
             self._cache_payload(
@@ -10317,9 +10318,15 @@ class TestRustMcpExecutionPlan:
             modified = ToolPreInvokePayload(
                 name=payload.name,
                 args=payload.args,
-                headers=HttpHeaderPayload({"Authorization": "Bearer plugin-injected-token"}),
             )
-            return PluginResult(modified_payload=modified, continue_processing=True), {}
+            return (
+                PluginResult(
+                    modified_payload=modified,
+                    modified_extensions=Extensions(http=HttpExtension(headers={"Authorization": "Bearer plugin-injected-token"})),
+                    continue_processing=True,
+                ),
+                {},
+            )
 
         mock_pm.invoke_hook = mock_invoke_hook
 
@@ -10478,7 +10485,8 @@ class TestRustMcpExecutionPlan:
     async def test_prepare_rust_mcp_pre_invoke_only_returns_eligible_plan_with_hooks(self, tool_service):
         """Pre-invoke hooks only (no post-invoke) should produce eligible plan with hook results."""
         # Third-Party
-        from cpex.framework import HttpHeaderPayload, ToolPreInvokePayload
+        from cpex.framework import ToolPreInvokePayload
+        from cpex.framework.extensions import Extensions, HttpExtension
         from cpex.framework.models import PluginResult
 
         cache = self._cache_mock(self._cache_payload(timeout_ms=2500))
@@ -10487,14 +10495,20 @@ class TestRustMcpExecutionPlan:
         mock_pm = MagicMock()
         mock_pm.has_hooks_for = MagicMock(side_effect=lambda hook_type: hook_type == ToolHookType.TOOL_PRE_INVOKE)
 
-        # Mock invoke_hook to return modified args and headers
+        # Mock invoke_hook to return modified args and headers via extensions
         async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False, **_kwargs):  # noqa: ARG001
             modified = ToolPreInvokePayload(
                 name=payload.name,
                 args={"cleaned_arg": "value"},
-                headers=HttpHeaderPayload({"x-injected-cred": "secret123"}),  # pragma: allowlist secret
             )
-            return PluginResult(modified_payload=modified, continue_processing=True), {}
+            return (
+                PluginResult(
+                    modified_payload=modified,
+                    modified_extensions=Extensions(http=HttpExtension(headers={"x-injected-cred": "secret123"})),  # pragma: allowlist secret
+                    continue_processing=True,
+                ),
+                {},
+            )
 
         mock_pm.invoke_hook = mock_invoke_hook
 
@@ -10595,8 +10609,9 @@ class TestRustMcpExecutionPlan:
 
         received_headers = {}
 
-        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False, **_kwargs):  # noqa: ARG001
-            received_headers.update(payload.headers.root)
+        async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False, extensions=None, **_kwargs):  # noqa: ARG001
+            if extensions and extensions.http:
+                received_headers.update(extensions.http.headers)
             return PluginResult(continue_processing=True), {}
 
         mock_pm.invoke_hook = mock_invoke_hook

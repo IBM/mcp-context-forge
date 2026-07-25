@@ -84,7 +84,7 @@ from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import EmailUser, fresh_db_session, SessionLocal
 from mcpgateway.plugins import get_plugin_manager
-from mcpgateway.plugins.utils import build_request_extensions, record_plugin_metrics
+from mcpgateway.plugins.utils import build_hook_extensions, record_plugin_metrics
 from mcpgateway.services.observability_service import current_trace_id
 from mcpgateway.transports.context import UserContext
 from mcpgateway.utils.correlation_id import get_correlation_id
@@ -1472,8 +1472,8 @@ async def get_current_user(
 
             context_table = getattr(request.state, "plugin_context_table", None) if request else None
 
-            # Invoke custom auth resolution hook
-            # violations_as_exceptions=True so PluginViolationError is raised for explicit denials
+            # Dual-write: HttpAuthResolveUserPayload.headers is still required in cpex 0.1.1;
+            # real data lives on extensions.http.headers.
             auth_result, context_table_result = await plugin_manager.invoke_hook(
                 HttpHookType.HTTP_AUTH_RESOLVE_USER,
                 payload=HttpAuthResolveUserPayload(
@@ -1485,7 +1485,7 @@ async def get_current_user(
                 global_context=global_context,
                 local_contexts=context_table,
                 violations_as_exceptions=True,  # Raise PluginViolationError for auth denials
-                extensions=build_request_extensions(),
+                extensions=build_hook_extensions(headers),
             )
             record_plugin_metrics(current_trace_id.get(), auth_result.metadata)
 

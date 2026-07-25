@@ -44,6 +44,7 @@ from cpex.framework import (
     PluginViolation,
     PluginViolationError,
 )
+from cpex.framework.extensions import Extensions, HttpExtension
 
 logger = logging.getLogger(__name__)
 
@@ -96,6 +97,7 @@ class CustomAuthPlugin(Plugin):
         self,
         payload: HttpPreRequestPayload,
         context: PluginContext,
+        extensions: Extensions | None = None,
     ) -> PluginResult[HttpHeaderPayload]:
         """Transform custom authentication headers before authentication.
 
@@ -110,6 +112,7 @@ class CustomAuthPlugin(Plugin):
         Args:
             payload: HTTP pre-request payload with headers.
             context: Plugin execution context.
+            extensions: Hook extensions (preferred source for headers).
 
         Returns:
             Result with modified headers if transformation applied.
@@ -117,7 +120,10 @@ class CustomAuthPlugin(Plugin):
         if not self._cfg.transform_headers:
             return PluginResult(continue_processing=True)
 
-        headers = dict(payload.headers.root)
+        if extensions and extensions.http:
+            headers = dict(extensions.http.headers)
+        else:
+            headers = dict(payload.headers.root)
 
         # Check if custom API key header is present
         api_key_header = self._cfg.api_key_header.lower()
@@ -128,10 +134,10 @@ class CustomAuthPlugin(Plugin):
             logger.info(f"Transforming {self._cfg.api_key_header} to Authorization header")
             headers["authorization"] = f"Bearer {api_key}"
 
-            # Return modified headers
-            modified_headers = HttpHeaderPayload(root=headers)
+            new_ext = (extensions or Extensions()).model_copy(update={"http": HttpExtension(headers=headers)})
             return PluginResult(
-                modified_payload=modified_headers,
+                modified_payload=HttpHeaderPayload(root=headers),
+                modified_extensions=new_ext,
                 metadata={"transformed": True, "original_header": self._cfg.api_key_header},
                 continue_processing=True,
             )
@@ -142,6 +148,7 @@ class CustomAuthPlugin(Plugin):
         self,
         payload: HttpAuthResolveUserPayload,
         context: PluginContext,
+        extensions: Extensions | None = None,
     ) -> PluginResult[dict]:
         """Resolve user identity using custom authentication mechanisms.
 
@@ -158,12 +165,16 @@ class CustomAuthPlugin(Plugin):
         Args:
             payload: Auth resolution payload with credentials and headers.
             context: Plugin execution context.
+            extensions: Hook extensions (preferred source for headers).
 
         Returns:
             Result with authenticated user dict if successful, or continue_processing=True
             to fall back to standard JWT authentication.
         """
-        headers = dict(payload.headers.root)
+        if extensions and extensions.http:
+            headers = dict(extensions.http.headers)
+        else:
+            headers = dict(payload.headers.root)
 
         # Example 1: API Key Authentication with Error Handling
         # Check if we have a bearer token that matches our API key mapping
@@ -264,6 +275,7 @@ class CustomAuthPlugin(Plugin):
         self,
         payload: HttpPostRequestPayload,
         context: PluginContext,
+        extensions: Extensions | None = None,
     ) -> PluginResult[HttpHeaderPayload]:
         """Add custom headers to response after request completion.
 
@@ -279,14 +291,18 @@ class CustomAuthPlugin(Plugin):
         Args:
             payload: HTTP post-request payload with response information.
             context: Plugin execution context.
+            extensions: Hook extensions (preferred source for request headers).
 
         Returns:
             Result with modified response headers if applicable.
         """
         response_headers = dict(payload.response_headers.root) if payload.response_headers else {}
 
-        # Add correlation ID from request to response (if present)
-        request_headers = dict(payload.headers.root)
+        # Prefer extensions.http.headers; fall back to dual-written payload.headers
+        if extensions and extensions.http:
+            request_headers = dict(extensions.http.headers)
+        else:
+            request_headers = dict(payload.headers.root)
         if "x-correlation-id" in request_headers:
             response_headers["x-correlation-id"] = request_headers["x-correlation-id"]
 
@@ -305,7 +321,9 @@ class CustomAuthPlugin(Plugin):
         # Note: context.global_context.request_id is the same across all hooks for this request
         logger.info(f"[{context.global_context.request_id}] Auth request completed: path={payload.path} method={payload.method} status={payload.status_code} client={payload.client_host}")
 
+        new_ext = (extensions or Extensions()).model_copy(update={"http": HttpExtension(headers=response_headers)})
         return PluginResult(
             modified_payload=HttpHeaderPayload(root=response_headers),
+            modified_extensions=new_ext,
             continue_processing=True,
         )

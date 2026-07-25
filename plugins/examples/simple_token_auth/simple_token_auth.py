@@ -14,6 +14,7 @@ from cpex.framework import (
     HttpAuthCheckPermissionPayload,
     HttpAuthCheckPermissionResultPayload,
     HttpAuthResolveUserPayload,
+    HttpHeaderPayload,
     HttpHookType,
     HttpPostRequestPayload,
     HttpPreRequestPayload,
@@ -24,6 +25,7 @@ from cpex.framework import (
     PluginViolation,
     PluginViolationError,
 )
+from cpex.framework.extensions import Extensions, HttpExtension
 from plugins.examples.simple_token_auth.token_storage import TokenStorage
 from pydantic import BaseModel
 
@@ -88,12 +90,13 @@ class SimpleTokenAuthPlugin(Plugin):
         """Expose token storage for external access (e.g., login endpoints)."""
         return self._storage
 
-    async def http_pre_request(self, payload: HttpPreRequestPayload, context: PluginContext) -> PluginResult:
+    async def http_pre_request(self, payload: HttpPreRequestPayload, context: PluginContext, extensions: Extensions | None = None) -> PluginResult:
         """Transform X-Auth-Token to Authorization: Bearer if configured.
 
         Args:
             payload: HTTP pre-request payload
             context: Plugin context
+            extensions: Hook extensions (preferred source for headers)
 
         Returns:
             PluginResult with potentially modified headers
@@ -101,7 +104,10 @@ class SimpleTokenAuthPlugin(Plugin):
         if not self._cfg.transform_to_bearer:
             return PluginResult(continue_processing=True)
 
-        headers = dict(payload.headers.root)
+        if extensions and extensions.http:
+            headers = dict(extensions.http.headers)
+        else:
+            headers = dict(payload.headers.root)
         token_header = self._cfg.token_header.lower()
         logger.info(f"[SimpleTokenAuth] http_pre_request - Looking for header: {token_header}, headers: {list(headers.keys())}")
 
@@ -121,10 +127,10 @@ class SimpleTokenAuthPlugin(Plugin):
 
         logger.info(f"[SimpleTokenAuth] Transformed {token_header} to Authorization: Bearer {token[:20]}...")
 
-        from cpex.framework import HttpHeaderPayload
-
+        new_ext = (extensions or Extensions()).model_copy(update={"http": HttpExtension(headers=headers)})
         return PluginResult(
             modified_payload=HttpHeaderPayload(root=headers),
+            modified_extensions=new_ext,
             metadata={"transformed": True, "original_header": token_header},
             continue_processing=True,
         )
@@ -238,22 +244,24 @@ class SimpleTokenAuthPlugin(Plugin):
             continue_processing=True,  # Permission granted, let middleware handle the response
         )
 
-    async def http_post_request(self, payload: HttpPostRequestPayload, context: PluginContext) -> PluginResult:
+    async def http_post_request(self, payload: HttpPostRequestPayload, context: PluginContext, extensions: Extensions | None = None) -> PluginResult:
         """Add authentication status headers to responses.
 
         Args:
             payload: HTTP post-request payload
             context: Plugin context
+            extensions: Hook extensions (preferred source for request headers)
 
         Returns:
             PluginResult with modified response headers
         """
-        from cpex.framework import HttpHeaderPayload
-
         response_headers = dict(payload.response_headers.root) if payload.response_headers else {}
 
-        # Add correlation ID if present in request
-        request_headers = dict(payload.headers.root)
+        # Prefer extensions.http.headers; fall back to dual-written payload.headers
+        if extensions and extensions.http:
+            request_headers = dict(extensions.http.headers)
+        else:
+            request_headers = dict(payload.headers.root)
         if "x-correlation-id" in request_headers:
             response_headers["x-correlation-id"] = request_headers["x-correlation-id"]
 
@@ -274,7 +282,12 @@ class SimpleTokenAuthPlugin(Plugin):
             elif payload.status_code == 401:
                 response_headers["x-auth-status"] = "failed"
 
-        return PluginResult(modified_payload=HttpHeaderPayload(root=response_headers), continue_processing=True)
+        new_ext = (extensions or Extensions()).model_copy(update={"http": HttpExtension(headers=response_headers)})
+        return PluginResult(
+            modified_payload=HttpHeaderPayload(root=response_headers),
+            modified_extensions=new_ext,
+            continue_processing=True,
+        )
 
     def get_supported_hooks(self) -> list[str]:
         """Return list of supported hook types."""
