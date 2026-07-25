@@ -2154,16 +2154,6 @@ class Settings(BaseSettings):
     log_search_max_results: int = Field(default=1000, description="Maximum results per log search query")
     log_retention_days: int = Field(default=30, description="Number of days to retain logs in database")
 
-    # External Log Integration Configuration
-    elasticsearch_enabled: bool = Field(default=False, description="Send logs to Elasticsearch")
-    elasticsearch_url: Optional[str] = Field(default=None, description="Elasticsearch cluster URL")
-    elasticsearch_index_prefix: str = Field(default="mcpgateway-logs", description="Elasticsearch index prefix")
-    syslog_enabled: bool = Field(default=False, description="Send logs to syslog")
-    syslog_host: Optional[str] = Field(default=None, description="Syslog server host")
-    syslog_port: int = Field(default=514, description="Syslog server port")
-    webhook_logging_enabled: bool = Field(default=False, description="Send logs to webhook endpoints")
-    webhook_logging_urls: List[str] = Field(default_factory=list, description="Webhook URLs for log delivery")
-
     @field_validator("siem_destinations", mode="before")
     @classmethod
     def parse_siem_destinations(cls, value: Any) -> List[Dict[str, Any]]:

@@ -783,17 +783,8 @@ mcpContextForge:
     STRUCTURED_LOGGING_ENABLED: "true" # enable structured logging
     STRUCTURED_LOGGING_DATABASE_ENABLED: "false" # persist structured logs to DB (impacts performance)
 
-    # External log sinks (all disabled by default)
+    # External log sinks (disabled by default)
     STRUCTURED_LOGGING_EXTERNAL_ENABLED: "false"
-    SYSLOG_ENABLED: "false"
-    ELASTICSEARCH_ENABLED: "false"
-    WEBHOOK_LOGGING_ENABLED: "false"
-    # Uncomment and configure when enabling an external sink:
-    # SYSLOG_HOST: ""
-    # SYSLOG_PORT: "514"
-    # ELASTICSEARCH_URL: ""
-    # ELASTICSEARCH_INDEX_PREFIX: "mcpgateway-logs"
-    # WEBHOOK_LOGGING_URLS: "[]"
 
     # Log search
     LOG_RETENTION_DAYS: "30" # retention in days

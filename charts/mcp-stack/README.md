@@ -734,14 +734,6 @@ For detailed guidance on resource limits and process management, see `docs/docs/
 | mcpContextForge.config.STRUCTURED_LOGGING_ENABLED | string | `"true"` |  |
 | mcpContextForge.config.STRUCTURED_LOGGING_EXTERNAL_ENABLED | string | `"false"` |  |
 | mcpContextForge.config.STRUCTURED_LOGGING_DATABASE_ENABLED | string | `"false"` |  |
-| mcpContextForge.config.SYSLOG_ENABLED | string | `"false"` |  |
-| mcpContextForge.config.SYSLOG_HOST | string | `""` |  |
-| mcpContextForge.config.SYSLOG_PORT | string | `"514"` |  |
-| mcpContextForge.config.ELASTICSEARCH_ENABLED | string | `"false"` |  |
-| mcpContextForge.config.ELASTICSEARCH_URL | string | `""` |  |
-| mcpContextForge.config.ELASTICSEARCH_INDEX_PREFIX | string | `"mcpgateway-logs"` |  |
-| mcpContextForge.config.WEBHOOK_LOGGING_ENABLED | string | `"false"` |  |
-| mcpContextForge.config.WEBHOOK_LOGGING_URLS | string | `"[]"` |  |
 | mcpContextForge.config.LOG_RETENTION_DAYS | string | `"30"` |  |
 | mcpContextForge.config.LOG_SEARCH_MAX_RESULTS | string | `"1000"` |  |
 | mcpContextForge.config.MASKED_AUTH_VALUE | string | `"*****"` |  |
