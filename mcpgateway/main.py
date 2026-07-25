@@ -1454,6 +1454,25 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
     # Initialize logging service FIRST to ensure all logging goes to dual output
     await logging_service.initialize()
+
+    # Start log config watcher if file watching is enabled and a config path is set.
+    # file_watcher_enabled ships with the file watcher service feature; when it is
+    # absent the watcher stays inert.
+    log_config_watcher_instance = None
+    if getattr(settings, "file_watcher_enabled", False) and settings.log_config_path:
+        try:
+            # First-Party
+            from mcpgateway.services.log_config_watcher import get_log_config_watcher  # pylint: disable=import-outside-toplevel
+
+            log_config_watcher_instance = await get_log_config_watcher(logging_service)
+            await log_config_watcher_instance.start(settings.log_config_path)
+            logger.info("Log config watcher started for: %s", settings.log_config_path)
+        except FileNotFoundError:
+            logger.warning("Log config file not found: %s - watcher not started", settings.log_config_path)
+        except RuntimeError as e:
+            logger.warning("Log config watcher not started: %s", e)
+        except Exception as e:
+            logger.error("Failed to start log config watcher: %s", e)
     logger.info("Starting ContextForge services")
 
     # Wait for the database to be ready, then run bootstrap (alembic + seed).
@@ -1907,6 +1926,14 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             logger.info("Plugin manager shutdown complete")
         except Exception as e:
             logger.error(f"Error shutting down plugin manager: {str(e)}")
+
+        # Stop log config watcher
+        if log_config_watcher_instance is not None:
+            try:
+                await log_config_watcher_instance.stop()
+                logger.info("Log config watcher stopped")
+            except Exception as e:
+                logger.debug(f"Error stopping log config watcher: {e}")
 
         # Stop cache invalidation subscriber
         try:
