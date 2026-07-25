@@ -133,12 +133,26 @@ def test_client_mode_skips_fail_closed_secret_enforcement():
         get_settings(client_mode=True, environment="production", jwt_secret_key="weak", auth_encryption_secret="UNCONFIGURED", require_strong_secrets=True)  # pragma: allowlist secret
 
 
-def test_apply_environment_aware_defaults_non_dict_passthrough():
-    """Verify non-dict inputs pass through unchanged in the model validator."""
-    sentinel = ("not", "a", "dict")
+def test_apply_environment_aware_defaults_after_validator():
+    """The after-validator derives require_strong_secrets from the environment."""
+    strong_jwt = "T3stJwtS3cr3t!XyZ#9kPqR@vW2mN8hL"  # pragma: allowlist secret
+    strong_enc = "T3stEncS3cr3t!XyZ#9kPqR@vW2mN8hL"  # pragma: allowlist secret
 
-    apply_defaults = getattr(Settings, "apply_environment_aware_defaults")
-    assert apply_defaults(sentinel) is sentinel
+    prod = Settings(
+        jwt_secret_key=strong_jwt,
+        auth_encryption_secret=strong_enc,
+        environment="production",
+        _env_file=None,
+    )
+    assert prod.require_strong_secrets is True
+
+    dev = Settings(
+        jwt_secret_key=strong_jwt,
+        auth_encryption_secret=strong_enc,
+        environment="development",
+        _env_file=None,
+    )
+    assert dev.require_strong_secrets is False
 
 
 def test_secret_below_min_length_raises():
