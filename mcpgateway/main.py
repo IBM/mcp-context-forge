@@ -7902,15 +7902,15 @@ async def remove_root(
     Returns:
         Status message indicating result.
     """
-    logger.debug(f"User '{safe_log_user(user)}' requested to remove root with URI: {uri}")
+    logger.debug(f"User '{safe_log_user(user)}' requested to remove root with URI: {html.escape(str(uri))}")
     try:
         await root_service.remove_root(uri)
     except RootServiceNotFoundError as e:
-        raise HTTPException(status_code=404, detail=str(e)) from e
+        raise HTTPException(status_code=404, detail=html.escape(str(e))) from e
     except Exception as e:
-        logger.error(f"Failed to remove root {uri}: {e}")
+        logger.error(f"Failed to remove root {html.escape(str(uri))}: {e}")
         raise HTTPException(status_code=500, detail="Internal error removing root") from e
-    return {"status": "success", "message": f"Root {uri} removed"}
+    return {"status": "success", "message": f"Root {html.escape(str(uri))} removed"}
 
 
 ##################

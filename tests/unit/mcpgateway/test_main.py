@@ -2584,6 +2584,28 @@ class TestRootEndpoints:
         assert response.status_code == 500
         assert "Internal error" in response.json()["detail"]
 
+    @patch("mcpgateway.main.root_service.remove_root")
+    def test_remove_root_escapes_uri_in_success_message(self, mock_remove, test_client, auth_headers):
+        """Attacker-controlled uri must be HTML-escaped in the success message (CWE-79)."""
+        mock_remove.return_value = None
+        response = test_client.delete("/roots/%3Cscript%3Ealert(1)%3C%2Fscript%3E", headers=auth_headers)
+        assert response.status_code == 200
+        message = response.json()["message"]
+        assert "<script>" not in message
+        assert "&lt;script&gt;" in message
+
+    @patch("mcpgateway.main.root_service.remove_root")
+    def test_remove_root_escapes_uri_in_not_found_detail(self, mock_remove, test_client, auth_headers):
+        """Attacker-controlled uri must be HTML-escaped in the 404 detail (CWE-79)."""
+        from mcpgateway.services.root_service import RootServiceNotFoundError
+
+        mock_remove.side_effect = RootServiceNotFoundError("Root not found: <script>alert(1)</script>")
+        response = test_client.delete("/roots/%3Cscript%3Ealert(1)%3C%2Fscript%3E", headers=auth_headers)
+        assert response.status_code == 404
+        detail = response.json()["detail"]
+        assert "<script>" not in detail
+        assert "&lt;script&gt;" in detail
+
 
     @patch("mcpgateway.main.root_service.subscribe_changes")
     def test_subscribe_root_changes(self, mock_subscribe, test_client, auth_headers):
