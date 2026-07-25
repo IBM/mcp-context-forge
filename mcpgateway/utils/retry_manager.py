@@ -441,7 +441,7 @@ class ResilientHttpClient:
                             # RFC 9110 §10.2.3 also allows an HTTP-date, which is not a float.
                             # Mirror stream(): fall through to normal exponential backoff.
                             retry_after_sec = None
-                        if retry_after_sec:
+                        if retry_after_sec is not None:
                             logger.info(f"Rate-limited. Retrying after {retry_after_sec}s.")
                             await asyncio.sleep(retry_after_sec)
                             attempt += 1
