@@ -833,7 +833,6 @@ mcpContextForge:
     PLATFORM_ADMIN_PASSWORD: changeme     # password for bootstrap platform admin user
     PLATFORM_ADMIN_FULL_NAME: Platform Administrator # full name for bootstrap platform admin
     DEFAULT_USER_PASSWORD: changeme       # default password for new users (bootstrap)
-
     # ─ Password Hashing & Security ─
     ARGON2ID_TIME_COST: "3"                # Argon2id time cost (iterations)
     ARGON2ID_MEMORY_COST: "65536"          # Argon2id memory cost in KiB
