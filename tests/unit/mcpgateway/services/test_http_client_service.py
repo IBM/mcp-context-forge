@@ -414,3 +414,45 @@ async def test_shared_http_client_ssl_cert_file_missing_fails_fast(monkeypatch):
         client = SharedHttpClient()
         with pytest.raises(ValueError, match="SSL_CERT_FILE"):
             await client._initialize()
+
+
+@pytest.mark.asyncio
+async def test_shared_http_client_skip_ssl_verify_disables_verification():
+    """SharedHttpClient passes verify=False to httpx when skip_ssl_verify is enabled."""
+    with patch("mcpgateway.config.settings") as mock_settings:
+        mock_settings.httpx_max_connections = 10
+        mock_settings.httpx_max_keepalive_connections = 5
+        mock_settings.httpx_keepalive_expiry = 30
+        mock_settings.httpx_connect_timeout = 5
+        mock_settings.httpx_read_timeout = 120
+        mock_settings.httpx_write_timeout = 30
+        mock_settings.httpx_pool_timeout = 10
+        mock_settings.httpx_http2_enabled = False
+        mock_settings.skip_ssl_verify = True
+
+        with patch("mcpgateway.services.http_client_service.httpx.AsyncClient") as mock_client_cls:
+            client = SharedHttpClient()
+            await client._initialize()
+            assert mock_client_cls.call_args.kwargs["verify"] is False
+
+
+@pytest.mark.asyncio
+async def test_shared_http_client_with_ssl_cert_file(tmp_path, monkeypatch):
+    """SharedHttpClient builds an SSL context from SSL_CERT_FILE when set."""
+    ca_path = _generate_ca_pem(tmp_path)
+    monkeypatch.setenv("SSL_CERT_FILE", ca_path)
+    with patch("mcpgateway.config.settings") as mock_settings:
+        mock_settings.httpx_max_connections = 10
+        mock_settings.httpx_max_keepalive_connections = 5
+        mock_settings.httpx_keepalive_expiry = 30
+        mock_settings.httpx_connect_timeout = 5
+        mock_settings.httpx_read_timeout = 120
+        mock_settings.httpx_write_timeout = 30
+        mock_settings.httpx_pool_timeout = 10
+        mock_settings.httpx_http2_enabled = False
+        mock_settings.skip_ssl_verify = False
+
+        with patch("mcpgateway.services.http_client_service.httpx.AsyncClient") as mock_client_cls:
+            client = SharedHttpClient()
+            await client._initialize()
+            assert isinstance(mock_client_cls.call_args.kwargs["verify"], ssl.SSLContext)

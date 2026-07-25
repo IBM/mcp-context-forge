@@ -3964,3 +3964,106 @@ class TestFetchGatewayPromptRegistryPath:
             result = await service._fetch_gateway_prompt_result(prompt, None, meta_data=None)
 
         assert result.description == "from fallback"
+
+    @pytest.mark.asyncio
+    async def test_fetch_gateway_prompt_sse_client_factory_ssl(self):
+        """SSE path receives an httpx client factory; the factory builds a default-verify client when no gateway CA is set."""
+        # First-Party
+        import httpx
+
+        service = PromptService()
+        prompt = self._build_gateway_prompt()
+        prompt.gateway.transport = "sse"
+        prompt.gateway.ca_certificate = None
+
+        remote_result = MagicMock()
+        remote_result.messages = []
+        remote_result.description = "sse-factory"
+
+        captured = {}
+
+        class _FakeStreamsCtx:
+            async def __aenter__(self):
+                return (MagicMock(), MagicMock())
+
+            async def __aexit__(self, *_exc):
+                return False
+
+        class _FakeClientSessionCtx:
+            async def __aenter__(self):
+                session = MagicMock()
+                session.initialize = AsyncMock()
+                return session
+
+            async def __aexit__(self, *_exc):
+                return False
+
+        def _fake_sse_client(*_args, **kwargs):
+            captured["factory"] = kwargs.get("httpx_client_factory")
+            return _FakeStreamsCtx()
+
+        with (
+            patch("mcpgateway.services.prompt_service._downstream_session_id_from_request", return_value=None),
+            patch("mcpgateway.services.prompt_service.sse_client", side_effect=_fake_sse_client),
+            patch("mcpgateway.services.prompt_service.ClientSession", return_value=_FakeClientSessionCtx()),
+            patch("mcpgateway.services.prompt_service._get_prompt_with_meta", new_callable=AsyncMock, return_value=remote_result),
+        ):
+            result = await service._fetch_gateway_prompt_result(prompt, None, meta_data=None)
+
+        assert result.description == "sse-factory"
+        client = captured["factory"]()
+        assert isinstance(client, httpx.AsyncClient)
+        await client.aclose()
+
+    @pytest.mark.asyncio
+    async def test_fetch_gateway_prompt_client_factory_with_ca_certificate(self):
+        """The httpx client factory uses the gateway CA certificate through the SSL context cache when present."""
+        # First-Party
+        import httpx
+
+        service = PromptService()
+        prompt = self._build_gateway_prompt()
+        prompt.gateway.ca_certificate = "CA-PEM"
+        prompt.gateway.client_cert = None
+        prompt.gateway.client_key = None
+
+        remote_result = MagicMock()
+        remote_result.messages = []
+        remote_result.description = "ca-factory"
+
+        captured = {}
+
+        class _FakeStreamsCtx:
+            async def __aenter__(self):
+                return (MagicMock(), MagicMock(), MagicMock())
+
+            async def __aexit__(self, *_exc):
+                return False
+
+        class _FakeClientSessionCtx:
+            async def __aenter__(self):
+                session = MagicMock()
+                session.initialize = AsyncMock()
+                return session
+
+            async def __aexit__(self, *_exc):
+                return False
+
+        def _fake_streamable_client(*_args, **kwargs):
+            captured["factory"] = kwargs.get("httpx_client_factory")
+            return _FakeStreamsCtx()
+
+        with (
+            patch("mcpgateway.services.prompt_service._downstream_session_id_from_request", return_value=None),
+            patch("mcpgateway.services.prompt_service.streamablehttp_client", side_effect=_fake_streamable_client),
+            patch("mcpgateway.services.prompt_service.ClientSession", return_value=_FakeClientSessionCtx()),
+            patch("mcpgateway.services.prompt_service._get_prompt_with_meta", new_callable=AsyncMock, return_value=remote_result),
+            patch("mcpgateway.utils.ssl_context_cache.get_cached_ssl_context", return_value=MagicMock()) as mock_ssl_cache,
+        ):
+            result = await service._fetch_gateway_prompt_result(prompt, None, meta_data=None)
+            client = captured["factory"]()
+            mock_ssl_cache.assert_called_once_with("CA-PEM", client_cert=None, client_key=None)
+            assert isinstance(client, httpx.AsyncClient)
+            await client.aclose()
+
+        assert result.description == "ca-factory"
