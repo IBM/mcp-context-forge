@@ -1,5 +1,7 @@
 # ContextForge
 
+[![MCP Toplist](https://mcptoplist.com/badge/glama%2FIBM%2Fmcp-context-forge.svg)](https://mcptoplist.com/server/glama%2FIBM%2Fmcp-context-forge)
+
 > An open source registry and proxy that federates MCP, A2A, and REST/gRPC APIs with centralized governance, discovery, and observability. Optimizes Agent & Tool calling, and supports plugins.
 
 ![ContextForge Banner](docs/docs/images/contextforge-logo_horizontal_black.png)
