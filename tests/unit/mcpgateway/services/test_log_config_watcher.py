@@ -16,6 +16,7 @@ Covers:
 """
 
 # Standard
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
@@ -25,6 +26,7 @@ from pydantic import ValidationError
 # First-Party
 from mcpgateway.common.models import LogLevel
 from mcpgateway.config import Settings
+import mcpgateway.main as main_module
 from mcpgateway.services.log_config_watcher import (
     ChangeType,
     FileChangeEvent,
@@ -440,3 +442,82 @@ def test_log_config_path_absolute_accepted():
 def test_log_config_path_empty_accepted():
     """An empty path disables the watcher and passes validation."""
     assert Settings(_env_file=None, log_config_path="").log_config_path == ""
+
+
+# ---------------------------------------------------------------------------
+# main.py lifespan wiring helpers
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_start_helper_inert_without_file_watcher_flag(monkeypatch):
+    """_start_log_config_watcher returns None when file_watcher_enabled is absent (file watcher feature not installed)."""
+    monkeypatch.setattr(main_module, "settings", SimpleNamespace(log_config_path="log_config.yaml"))
+    assert await main_module._start_log_config_watcher() is None
+
+
+@pytest.mark.asyncio
+async def test_start_helper_inert_when_file_watcher_disabled(monkeypatch):
+    """_start_log_config_watcher returns None when file_watcher_enabled is False."""
+    monkeypatch.setattr(main_module, "settings", SimpleNamespace(file_watcher_enabled=False, log_config_path="log_config.yaml"))
+    assert await main_module._start_log_config_watcher() is None
+
+
+@pytest.mark.asyncio
+async def test_start_helper_inert_without_config_path(monkeypatch):
+    """_start_log_config_watcher returns None when log_config_path is empty."""
+    monkeypatch.setattr(main_module, "settings", SimpleNamespace(file_watcher_enabled=True, log_config_path=""))
+    assert await main_module._start_log_config_watcher() is None
+
+
+@pytest.mark.asyncio
+async def test_start_helper_success(monkeypatch):
+    """_start_log_config_watcher starts the watcher and returns the running instance."""
+    mock_watcher = AsyncMock()
+    monkeypatch.setattr(main_module, "settings", SimpleNamespace(file_watcher_enabled=True, log_config_path="log_config.yaml"))
+
+    with patch("mcpgateway.services.log_config_watcher.get_log_config_watcher", new=AsyncMock(return_value=mock_watcher)):
+        result = await main_module._start_log_config_watcher()
+
+    assert result is mock_watcher
+    mock_watcher.start.assert_awaited_once_with("log_config.yaml")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "startup_error",
+    [
+        FileNotFoundError("log config file not found"),
+        RuntimeError("file watcher service unavailable"),
+        ValueError("unexpected failure"),
+    ],
+    ids=["missing-file", "watcher-unavailable", "unexpected-error"],
+)
+async def test_start_helper_failures_return_none(monkeypatch, startup_error):
+    """_start_log_config_watcher logs and returns None for missing file, unavailable watcher, and unexpected errors."""
+    monkeypatch.setattr(main_module, "settings", SimpleNamespace(file_watcher_enabled=True, log_config_path="log_config.yaml"))
+
+    with patch("mcpgateway.services.log_config_watcher.get_log_config_watcher", new=AsyncMock(side_effect=startup_error)):
+        assert await main_module._start_log_config_watcher() is None
+
+
+@pytest.mark.asyncio
+async def test_stop_helper_stops_instance():
+    """_stop_log_config_watcher calls stop() on a running watcher."""
+    mock_watcher = AsyncMock()
+    await main_module._stop_log_config_watcher(mock_watcher)
+    mock_watcher.stop.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_stop_helper_none_is_noop():
+    """_stop_log_config_watcher is a no-op when no watcher was started."""
+    await main_module._stop_log_config_watcher(None)  # must not raise
+
+
+@pytest.mark.asyncio
+async def test_stop_helper_swallows_errors():
+    """_stop_log_config_watcher logs but does not propagate stop() errors."""
+    mock_watcher = AsyncMock()
+    mock_watcher.stop.side_effect = RuntimeError("teardown exploded")
+    await main_module._stop_log_config_watcher(mock_watcher)  # must not raise
