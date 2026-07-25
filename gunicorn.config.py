@@ -33,8 +33,8 @@ from mcpgateway.config import settings
 # Bind to exactly what .env (or defaults) says
 bind = f"{settings.host}:{settings.port}"
 
-workers = 2  # A positive integer generally in the 2-4 x $(NUM_CORES)
-timeout = 600  # Set a timeout of 600
+workers = int(os.environ.get("GUNICORN_WORKERS", "2"))  # A positive integer generally in the 2-4 x $(NUM_CORES)
+timeout = int(os.environ.get("GUNICORN_TIMEOUT", "600"))  # Set a timeout of 600
 loglevel = "info"  # debug info warning error critical
 max_requests = 100000  # The maximum number of requests a worker will process before restarting
 max_requests_jitter = 100  # The maximum jitter to add to the max_requests setting.
@@ -138,32 +138,6 @@ def post_fork(server, worker):
         _reset_client()
     except ImportError:
         pass
-
-    # Recompute the session-affinity WORKER_ID per worker, but only when the feature
-    # is enabled. Captured at import time, so under --preload every worker would
-    # otherwise inherit the master's id ({hostname}:1) and subscribe to the same Redis
-    # channel, collapsing point-to-point forwarding into a per-container broadcast that
-    # fans every request out to all workers and degrades throughput by an order of
-    # magnitude. With the affinity flag off, no request path reads WORKER_ID, so gating
-    # the rebind (and the session_affinity import at fork) keeps "flag off" a clean
-    # no-op for the affinity machinery.
-    if settings.mcpgateway_session_affinity_enabled:
-        try:
-            import socket
-
-            from mcpgateway.services import session_affinity
-
-            session_affinity.WORKER_ID = f"{socket.gethostname()}:{worker.pid}"
-        except Exception as exc:  # noqa: BLE001 - fail loud, never crash the worker
-            # Silent fallback would re-introduce the per-container broadcast amplification.
-            server.log.warning(
-                "post_fork(pid=%s): failed to rebind session_affinity.WORKER_ID (%s: %s) — "
-                "workers may share the master's WORKER_ID and session-affinity forwarding "
-                "may broadcast each request to every worker in the container.",
-                worker.pid,
-                type(exc).__name__,
-                exc,
-            )
 
 
 def post_worker_init(worker):
