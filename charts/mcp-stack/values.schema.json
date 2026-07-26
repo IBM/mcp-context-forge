@@ -1804,8 +1804,8 @@
             },
             "AUTH_ENCRYPTION_SECRET": {
               "type": "string",
-              "description": "Auth encryption secret",
-              "default": "my-test-salt"
+              "description": "Auth encryption secret — must be set to a strong value before deploy (run make init-secrets-patch-env)",
+              "default": ""
             },
             "IDENTITY_PROPAGATION_ENABLED": {
               "type": "string",
@@ -1953,8 +1953,8 @@
             },
             "JWT_SECRET_KEY": {
               "type": "string",
-              "description": "JWT secret key",
-              "default": "my-test-key-but-now-longer-than-32-bytes"
+              "description": "JWT secret key — must be set to a strong value before deploy (run make init-secrets-patch-env)",
+              "default": ""
             },
             "MAX_FAILED_LOGIN_ATTEMPTS": {
               "type": "string"

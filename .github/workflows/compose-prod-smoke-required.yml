@@ -1,0 +1,34 @@
+# ===============================================================
+# Compose Production Smoke — Skip Reporter
+# ===============================================================
+#
+# This workflow is the complement of compose-prod-smoke.yml.
+# It runs on every PR and immediately reports success for the
+# "Compose Production Smoke Complete" required status check so
+# that PRs are not blocked waiting for a check that only runs
+# in the merge queue.
+#
+# Together with the compose-prod-smoke-complete gate job in
+# compose-prod-smoke.yml, the required check always has a result:
+#   - Pull request  → this workflow reports success (skipped)
+#   - Merge queue   → compose-prod-smoke.yml runs the real check
+#
+# ===============================================================
+
+name: Compose Production Smoke Skip Reporter
+
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review]
+    branches: ["main"]
+
+permissions:
+  contents: read
+
+jobs:
+  compose-prod-smoke-complete:
+    name: Compose Production Smoke Complete
+    runs-on: ubuntu-latest
+    steps:
+      - name: Compose production smoke skipped on PR — runs in merge queue
+        run: echo "Compose production smoke skipped — the real check runs in the merge queue via compose-prod-smoke.yml"

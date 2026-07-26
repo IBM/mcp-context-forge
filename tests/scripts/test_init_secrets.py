@@ -48,7 +48,7 @@ def test_token_entropy_and_length() -> None:
 def test_file_creation(mock_args: MagicMock, mock_chmod: MagicMock, tmp_path: Path) -> None:
     """Verify that the secrets file is created and permissions are set."""
     output_path = tmp_path / "test.env"
-    mock_args.return_value = argparse.Namespace(output=str(output_path), force=False, stdout=False)
+    mock_args.return_value = argparse.Namespace(output=str(output_path), force=False, stdout=False, patch=None, patch_env=None)
 
     main()
 
@@ -64,7 +64,7 @@ def test_file_creation(mock_args: MagicMock, mock_chmod: MagicMock, tmp_path: Pa
 @patch("argparse.ArgumentParser.parse_args")
 def test_write_failure_closes_fd(mock_args: MagicMock, mock_open: MagicMock, mock_fchmod: MagicMock, mock_close: MagicMock) -> None:
     """Verify that a failed secure write closes the raw file descriptor."""
-    mock_args.return_value = argparse.Namespace(output="test.env", force=False, stdout=False)
+    mock_args.return_value = argparse.Namespace(output="test.env", force=False, stdout=False, patch=None, patch_env=None)
 
     with pytest.raises(SystemExit) as cm:
         main()
@@ -76,20 +76,37 @@ def test_write_failure_closes_fd(mock_args: MagicMock, mock_open: MagicMock, moc
 
 
 @patch("argparse.ArgumentParser.parse_args")
-def test_file_exists_error(mock_args: MagicMock, tmp_path: Path) -> None:
+def test_file_exists_prompt_decline(mock_args: MagicMock, tmp_path: Path) -> None:
     """
-    Verify that the command fails if the file already exists without --force.
-
-    Expects a SystemExit with code 1.
+    When the output file already exists and the user declines the overwrite prompt,
+    the command must exit 0 and leave the existing file unchanged.
     """
     output_path = tmp_path / ".env.secrets"
     output_path.write_text("existing=true\n", encoding="utf-8")
-    mock_args.return_value = argparse.Namespace(output=str(output_path), force=False, stdout=False)
+    mock_args.return_value = argparse.Namespace(output=str(output_path), force=False, stdout=False, patch=None, patch_env=None)
 
-    with pytest.raises(SystemExit) as cm:
-        main()
-    assert cm.value.code == 1
+    with patch("mcpgateway.scripts.init_secrets._prompt_overwrite", return_value=False):
+        with pytest.raises(SystemExit) as cm:
+            main()
+    assert cm.value.code == 0
     assert output_path.read_text(encoding="utf-8") == "existing=true\n"
+
+
+@patch("argparse.ArgumentParser.parse_args")
+def test_file_exists_prompt_accept(mock_args: MagicMock, tmp_path: Path) -> None:
+    """
+    When the output file already exists and the user accepts the overwrite prompt,
+    the file must be overwritten with new secrets.
+    """
+    output_path = tmp_path / ".env.secrets"
+    output_path.write_text("existing=true\n", encoding="utf-8")
+    mock_args.return_value = argparse.Namespace(output=str(output_path), force=False, stdout=False, patch=None, patch_env=None)
+
+    with patch("mcpgateway.scripts.init_secrets._prompt_overwrite", return_value=True):
+        main()
+    content = output_path.read_text(encoding="utf-8")
+    assert "existing=true" not in content
+    assert "JWT_SECRET_KEY=" in content
 
 
 @patch("argparse.ArgumentParser.parse_args")
@@ -101,7 +118,7 @@ def test_force_behavior(mock_args: MagicMock, tmp_path: Path) -> None:
     """
     output_path = tmp_path / ".env.secrets"
     output_path.write_text("existing=true\n", encoding="utf-8")
-    mock_args.return_value = argparse.Namespace(output=str(output_path), force=True, stdout=False)
+    mock_args.return_value = argparse.Namespace(output=str(output_path), force=True, stdout=False, patch=None, patch_env=None)
 
     main()
 
@@ -119,7 +136,7 @@ def test_stdout_behavior(mock_args: MagicMock, mock_print: MagicMock) -> None:
 
     Checks that the built-in open is never called when stdout is True.
     """
-    mock_args.return_value = argparse.Namespace(output=".env.secrets", force=False, stdout=True)
+    mock_args.return_value = argparse.Namespace(output=".env.secrets", force=False, stdout=True, patch=None, patch_env=None)
 
     main()
 

@@ -77,35 +77,71 @@ If you don't need HA or automated backups (dev/test, POCs, teams without cluster
 
 ## Prerequisites
 
-- **`oc` CLI** with cluster access (developer or admin)
-- **Helm** CLI installed locally
-- **Ansible** installed locally:
-  ```bash
-  pip install ansible
-  ansible-galaxy collection install kubernetes.core
-  ```
+The following tools must be installed locally before you begin:
+
+1. **`oc` CLI** — with cluster access (developer or admin). Log in before running any commands:
+   ```bash
+   oc login <api-url>
+   oc whoami   # verify
+   ```
+2. **`helm`** — v3.14+. Verify with `helm version`.
+3. **`ansible`** + `kubernetes.core` collection:
+   ```bash
+   pip install ansible
+   ansible-galaxy collection install kubernetes.core
+   ```
+4. **Docker Hub account** — required to pull `redis:7` and the gateway image without hitting anonymous rate limits. Log in locally:
+   ```bash
+   docker login
+   ```
 
 ---
 
-## One-time cluster setup
+### One-time cluster setup
 
-These steps are performed once per cluster, not per deployment.
+**These steps are performed once per cluster, not per deployment. Skip any step that is already done.**
 
-- **Cluster sizing** — use **OCP Large** on Fyre (or equivalent: 3 worker nodes, 16 CPU and 32Gi RAM each).
-  Deployment alone requires ~20 CPU: 3 gateway pods (4 CPU each) + 3 NGINX pods (2 CPU each) + Redis (1 CPU) + system overhead.
-  Adding Locust benchmark requires ~2 CPU extra: 1 master + 3 workers (500m each).
-  OCP Medium (3 × 8 CPU) is insufficient — the third NGINX pod will stay `Pending`.
-- **`nfs-client` StorageClass** available on the cluster (dynamic NFS provisioner for Postgres and Redis PVCs)
-- **CrunchyData PGO operator** — install once cluster-wide (requires cluster-admin access, skips if already installed):
-  ```bash
-  make ocp-install-operator OCP_CLUSTER=<api-url>
-  ```
+**Step 1 — Verify cluster sizing**
+
+Use **OCP Large** on Fyre (or equivalent: 3 worker nodes, 16 CPU and 32Gi RAM each).
+
+- Deployment requires ~20 CPU: 3 gateway pods (4 CPU each) + 3 NGINX pods (2 CPU each) + Redis (1 CPU) + system overhead
+- Locust benchmark adds ~2 CPU: 1 master + 3 workers (500m each)
+- OCP Medium (3 × 8 CPU) is insufficient — the third NGINX pod will stay `Pending`
+
+**Step 2 — Ensure `nfs-client` StorageClass is available**
+
+Dynamic NFS provisioning is required for Postgres and Redis PVCs. Verify:
+
+```bash
+oc get storageclass nfs-client
+```
+
+If not present, contact your cluster administrator to set up a dynamic NFS provisioner with a StorageClass named `nfs-client` before proceeding.
+
+**Step 3 — Install the CrunchyData PGO operator** (requires cluster-admin, skips if already installed):
+
+```bash
+make ocp-install-operator OCP_CLUSTER=<api-url>
+```
 
 ---
 
-## Prepare secrets
+### Prepare secrets
 
-Create a secrets file at `charts/mcp-stack/profiles/ocp/values-pgo-secrets.yaml` (gitignored — never committed). This file is used for all deployments regardless of namespace:
+These steps are performed **once** and the secrets file is reused across all deployments.
+
+**Step 1 — Generate secrets**
+
+```bash
+make init-secrets
+```
+
+This writes generated secrets to `.env.secrets`. It saves using "=" instead of ": ". **USE ": " ONLY.** **
+
+**Step 2 — Create the secrets values file**
+
+Create `charts/mcp-stack/profiles/ocp/values-pgo-secrets.yaml` (gitignored — never committed) and copy the generated values in:
 
 ```yaml
 mcpContextForge:
@@ -122,43 +158,81 @@ testing:
       secret: "<same as JWT_SECRET_KEY above>"
 ```
 
+!!! warning "YAML syntax required"
+    This file must use YAML `key: value` syntax — **not** shell `.env` syntax (`key=value`).
+    Using `=` instead of `:` causes `helm install` to fail with a schema validation error.
+
 ---
 
-## Setup and deployment steps
+## Deployment steps
 
-The Make commands below wrap Ansible playbooks under the hood (`ansible/ocp/playbooks/`). You can also run the playbooks directly — see [ansible/ocp/README.md](https://github.com/IBM/mcp-context-forge/blob/main/ansible/ocp/README.md) for details.
+The Make commands below wrap Ansible playbooks (`ansible/ocp/playbooks/`). You can also run the playbooks directly — see [ansible/ocp/README.md](https://github.com/IBM/mcp-context-forge/blob/main/ansible/ocp/README.md) for details.
 
-**0. Create Docker Hub pull secret** (one-time per namespace, required to pull `redis:7` without hitting anonymous rate limits):
+**Step 1 — Create Docker Hub pull secret** (one-time per namespace):
+
+**a) If you are already logged in locally via `docker login`:**
+
+```bash
+oc create secret generic dockerhub-pull \
+  --from-file=.dockerconfigjson=$HOME/.docker/config.json \
+  --type=kubernetes.io/dockerconfigjson \
+  -n <namespace-change-me>
+```
+
+**b) If you prefer to supply credentials explicitly:**
 
 ```bash
 oc create secret docker-registry dockerhub-pull \
   --docker-server=docker.io \
   --docker-username=<your-dockerhub-username> \
   --docker-password=<your-dockerhub-password-or-token> \
-  -n <namespace>
+  -n <namespace-change-me>
 ```
 
-**1. Set up namespace and Postgres:**
+**Step 2 — Set up namespace and Postgres:**
 
 ```bash
-make ocp-setup OCP_NS=<namespace>
+make ocp-setup OCP_NS=<namespace-change-me>
 ```
 
 Checks the PGO operator is installed, creates the namespace if needed, applies the PostgresCluster CR (PVCs use dynamic `nfs-client` provisioning), waits for Postgres to be Ready, and grants the required schema privileges. Safe to run multiple times.
 
-**2. Deploy the full stack:**
+**Step 3 — Deploy the full stack:**
 
 ```bash
-make ocp-deploy OCP_NS=<namespace>
+make ocp-deploy OCP_NS=<namespace-change-me>
 ```
 
 Runs `helm install` with the PGO values and secrets files. Deploys gateway (3 pods), NGINX (3 pods), Redis (PVC dynamically provisioned), and connects to the PGO-managed Postgres. Database migration runs as a `pre-install` hook directly to Postgres (bypasses PgBouncer for advisory lock safety). Locust is **not** deployed at this stage — it is enabled on demand by `ocp-benchmark-setup`.
 
-**3. Run the MCP benchmark:**
+**Step 4 — Verify the deployment:**
+
+Check all pods are running:
 
 ```bash
-make ocp-benchmark-setup OCP_NS=<namespace>
-make ocp-benchmark OCP_NS=<namespace>
+oc get pods -n <namespace-change-me>
+# Expect: 3 gateway (1/1), 3 NGINX (1/1), 1 Redis (1/1), 2 fast-time-server (1/1)
+```
+
+Get the Route and open it in your browser:
+
+```bash
+oc get route -n <namespace-change-me> -o wide
+```
+
+Copy the `HOST/PORT` value from the output and open it in your browser:
+
+```
+https://<route-host>
+```
+
+You should see the ContextForge admin login page. Log in with the `BASIC_AUTH_USER` and `BASIC_AUTH_PASSWORD` values from your secrets file.
+
+**Step 5 — (Optional) Run the MCP benchmark:**
+
+```bash
+make ocp-benchmark-setup OCP_NS=<namespace-change-me>
+make ocp-benchmark OCP_NS=<namespace-change-me>
 ```
 
 `ocp-benchmark-setup` enables Locust (1 master + 3 workers), waits for workers to schedule, auto-fetches the virtual server ID, and configures everything. If only some workers schedule due to CPU pressure, the test continues with whatever workers are available and prints a warning.
@@ -166,8 +240,8 @@ make ocp-benchmark OCP_NS=<namespace>
 `ocp-benchmark` triggers the benchmark — defaults to 125 users, 30/s spawn, 60s. Override for heavier load:
 
 ```bash
-make ocp-benchmark OCP_NS=<namespace> BENCH_USERS=500 BENCH_SPAWN=50     # heavy load
-make ocp-benchmark OCP_NS=<namespace> BENCH_USERS=750 BENCH_SPAWN=75     # max throughput
+make ocp-benchmark OCP_NS=<namespace-change-me> BENCH_USERS=500 BENCH_SPAWN=50     # heavy load
+make ocp-benchmark OCP_NS=<namespace-change-me> BENCH_USERS=750 BENCH_SPAWN=75     # max throughput
 ```
 
 Benchmark results (OCP Large, 3 gateway pods, 3 NGINX, PGO Postgres, 3 Locust workers):
@@ -186,7 +260,7 @@ Benchmark results (OCP Large, 3 gateway pods, 3 NGINX, PGO Postgres, 3 Locust wo
 **To uninstall and start over:**
 
 ```bash
-make ocp-uninstall OCP_NS=<namespace>
+make ocp-uninstall OCP_NS=<namespace-change-me>
 ```
 
 Runs `helm uninstall` to remove the gateway, NGINX, Redis, Locust, and fast-time-server pods. The PostgresCluster (Postgres + PgBouncer + repo-host) and the namespace itself are preserved, so you can re-run `make ocp-deploy` without re-creating Postgres. Dynamically provisioned PVs are cleaned up automatically by the `nfs-client` provisioner based on the StorageClass reclaim policy.
@@ -428,7 +502,7 @@ When enabled, Locust is configured with:
 **1. Enable Locust and configure the server ID:**
 
 ```bash
-make ocp-benchmark-setup OCP_NS=<namespace>
+make ocp-benchmark-setup OCP_NS=<namespace-change-me>
 ```
 
 This is the recommended path. The target:
@@ -441,12 +515,12 @@ This is the recommended path. The target:
 If you prefer to do it manually, it's equivalent to:
 
 ```bash
-SERVER_ID=$(oc -n <namespace> exec deploy/<release>-mcp-stack-mcpgateway -- \
+SERVER_ID=$(oc -n <namespace-change-me> exec deploy/<release>-mcp-stack-mcpgateway -- \
   curl -s -H "Authorization: Bearer $TOKEN" http://localhost:4444/servers | \
   python3 -c "import json,sys; print(next(s for s in json.load(sys.stdin) if s['name'] == 'Fast Time Server')['id'])")
 
 helm upgrade <release> charts/mcp-stack \
-  -n <namespace> \
+  -n <namespace-change-me> \
   -f charts/mcp-stack/profiles/ocp/values-pgo.yaml \
   -f charts/mcp-stack/profiles/ocp/values-pgo-secrets.yaml \
   --set testing.locust.enabled=true \
@@ -457,10 +531,10 @@ helm upgrade <release> charts/mcp-stack \
 
 ```bash
 # Default (125 users, 30/s spawn, 60s)
-make ocp-benchmark OCP_NS=<namespace>
+make ocp-benchmark OCP_NS=<namespace-change-me>
 
 # Override for heavier load
-make ocp-benchmark OCP_NS=<namespace> BENCH_USERS=500 BENCH_SPAWN=50
+make ocp-benchmark OCP_NS=<namespace-change-me> BENCH_USERS=500 BENCH_SPAWN=50
 ```
 
 Results are printed automatically when the benchmark completes.
@@ -501,8 +575,10 @@ To enforce a plugin, change its `mode` from `"permissive"` to `"enforce"` in the
 | Issue | Solution |
 |-------|----------|
 | Gateway pods stuck at 0/1 Running | Check `oc logs` for DB connectivity. Verify PGO Postgres and PgBouncer pods are Running. |
+| Gateway pods in `CrashLoopBackOff` with "Schema not at head" | The migration job did not run or failed. Check `oc get jobs -n <namespace-change-me>` and `oc logs job/<release>-mcp-stack-migration`. Re-run with `helm uninstall` + `helm install`. |
 | Gateway pod Pending | Insufficient CPU on worker nodes. Check `oc describe pod` for scheduling errors. Free resources from other namespaces or reduce CPU requests. |
 | Redis PVC stuck in Pending | Check the `nfs-client` StorageClass exists (`oc get sc nfs-client`). If the dynamic provisioner isn't installed, see your cluster admin. |
+| `helm install` fails with "got string, want object" or "mapping values not allowed" | Your `values-pgo-secrets.yaml` uses shell syntax (`KEY=value`) instead of YAML (`key: value`). Fix all lines in the `secret:` block to use `: ` instead of `=`. |
 | Locust workers not connecting | Locust is off by default in the OCP values file. Run `make ocp-benchmark-setup` to enable it (sets `testing.locust.enabled=true`). If still failing, check DNS resolution to `<release>-mcp-stack-locust` — ZeroMQ ports 5557/5558 are included in the Locust Service template. |
 | Only some Locust workers scheduled | Cluster CPU is at high allocation. The benchmark setup target waits 90s and continues with whatever workers are available. RPS may be slightly lower than the 3-worker baseline. Free CPU on worker nodes if you want all 3. |
 | `helm upgrade` fails with field conflicts | Manual `oc` patches create field manager conflicts. Use `helm uninstall` + `helm install` instead. |
@@ -520,8 +596,10 @@ The `profiles/ocp/values-pgo.yaml` file includes these OCP-specific settings:
 |---------|-------|-----|
 | `mcpContextForge.image.pullPolicy` | `Always` | Ensure latest image is pulled |
 | `mcpContextForge.hpa.enabled` | `false` | Prevent HPA from fighting manual scaling during benchmarking |
+| `mcpContextForge.podSecurityContext.runAsUser` | `null` | Let OCP assign UID from its allowed range (hardcoded UIDs are rejected by OCP SCC) |
 | `migration.hookPhase` | `pre-install,pre-upgrade` | Migration runs before gateway pods start (Postgres already exists via PGO) |
 | `migration.hostKey` | `host` | Migration connects directly to Postgres, bypassing PgBouncer for advisory lock safety |
+| `migration.podSecurityContext.runAsNonRoot` | `true` | OCP SCC compatible — lets OCP assign UID rather than using hardcoded value |
 | `postgres.external.enabled` | `true` | Connect to CrunchyData PGO instead of Helm-managed Postgres |
 | `pgbouncer.enabled` | `false` | CrunchyData provides its own PgBouncer |
 | `nginxProxy.enabled` | `true` | NGINX proxy layer for load balancing |

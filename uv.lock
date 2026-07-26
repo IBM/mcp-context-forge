@@ -15,7 +15,7 @@ exclude-newer-span = "P10D"
 cpex-pii-filter = "2026-07-07T23:59:59Z"
 cpex-url-reputation = "2026-07-14T23:59:59Z"
 cpex-rate-limiter = "2026-07-14T23:59:59Z"
-cpex-secrets-detection = "2026-07-15T23:59:59Z"
+cpex-secrets-detection = "2026-07-21T23:59:59Z"
 cpex = "2026-07-14T23:59:59Z"
 cpex-retry-with-backoff = "2026-07-15T23:59:59Z"
 cpex-encoded-exfil-detection = "2026-07-14T23:59:59Z"
@@ -1039,19 +1039,19 @@ wheels = [
 
 [[package]]
 name = "cpex-secrets-detection"
-version = "0.3.9"
+version = "0.3.10"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cpex" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/db/3d/a99f84176361fc56b23085f89eee1e0b541453de04469db3c17812f29152/cpex_secrets_detection-0.3.9.tar.gz", hash = "sha256:bb4c7a964f64c2272e4e910a9539c58327fe9cc2e8cee49abbb0b77b8696c6cc", size = 57809, upload-time = "2026-07-15T14:12:27.693Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/25/d1/5093cc0a7d3c0ab8362856f396ca0ff8fba41d053c715b88fe4b6f94745c/cpex_secrets_detection-0.3.10.tar.gz", hash = "sha256:f2d8ccd6aaa6a3a678e56fa9e2606692b81246ad7fe46c037092205499b788e4", size = 58083, upload-time = "2026-07-21T16:09:47.836Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/62/3c/6c966fe0b0ab170f1140be507358d99869ab45fef3b6f379d5ad65237850/cpex_secrets_detection-0.3.9-cp311-abi3-macosx_11_0_arm64.whl", hash = "sha256:e910949f4cdbf2ad313d13fb2055643d649c739cc6b86a72171a5a213825c90d", size = 748516, upload-time = "2026-07-15T14:12:19.249Z" },
-    { url = "https://files.pythonhosted.org/packages/95/95/4635f8f0bfc567cdf78a42a22a81ef07dc3c2be7c575576d493e856a7ed4/cpex_secrets_detection-0.3.9-cp311-abi3-manylinux_2_34_aarch64.whl", hash = "sha256:885a3071f76a33f068b67767c8b64bb31a90b284626753ba09f1c6d3c03866ff", size = 790109, upload-time = "2026-07-15T14:12:20.701Z" },
-    { url = "https://files.pythonhosted.org/packages/29/51/9d2db8854b30f562ad37e106edff7fb15c3f99d54db0ca3faa1e81c49c8e/cpex_secrets_detection-0.3.9-cp311-abi3-manylinux_2_34_ppc64le.whl", hash = "sha256:ba72dca59851e58c7059ed246d6a18c3191827986d206647c28ffd95789c7aa3", size = 873264, upload-time = "2026-07-15T14:12:22.204Z" },
-    { url = "https://files.pythonhosted.org/packages/ae/71/c37843fa74616e9ae412f877a4ce2644dfd485ae03e91f1b6906ce8bbb17/cpex_secrets_detection-0.3.9-cp311-abi3-manylinux_2_34_s390x.whl", hash = "sha256:cacd4b58cc3d4f54555ba73b29788973a6228ccc4ee9c4d4196674c2c59d7579", size = 882966, upload-time = "2026-07-15T14:12:23.605Z" },
-    { url = "https://files.pythonhosted.org/packages/2f/f5/7823633bfea762910df55e8b02ebebe80b1f8e57800a3224c8add339ee7d/cpex_secrets_detection-0.3.9-cp311-abi3-manylinux_2_34_x86_64.whl", hash = "sha256:743f99059742c607616a7937963a07ca33ec132efe879ce4fffdb013141141d0", size = 846163, upload-time = "2026-07-15T14:12:24.932Z" },
-    { url = "https://files.pythonhosted.org/packages/22/35/56e54d9adbf85f74c7ca4df5c047b22338e524865b1707c58d68c6a3b1c5/cpex_secrets_detection-0.3.9-cp311-abi3-win_amd64.whl", hash = "sha256:d5901b652ff64180c3e63f95cd25fe3a078fa0a4a66b506aa0cd680227a09a5e", size = 776095, upload-time = "2026-07-15T14:12:26.28Z" },
+    { url = "https://files.pythonhosted.org/packages/5a/16/8c35d1076cf44bed85bb7c93c43ad4c79f96175ff033999930f91e1ad275/cpex_secrets_detection-0.3.10-cp311-abi3-macosx_11_0_arm64.whl", hash = "sha256:b48b3b079ee5ac0ab26c56c0f304e41071df4d25769156111b329a6c475e79fd", size = 748468, upload-time = "2026-07-21T16:09:39.382Z" },
+    { url = "https://files.pythonhosted.org/packages/71/07/03022e024c9a0af0ef3f609f2a6bf747009ff355195674d80506827b6af4/cpex_secrets_detection-0.3.10-cp311-abi3-manylinux_2_34_aarch64.whl", hash = "sha256:0e894f7be1711daa1b67f05ca96e766e07c02d92bd72c1c53595d54ae27f0b90", size = 792221, upload-time = "2026-07-21T16:09:40.76Z" },
+    { url = "https://files.pythonhosted.org/packages/a6/1e/670a9c5ae2e9289230e364588db0b71f20652191aa10d83a44cd22dcc50b/cpex_secrets_detection-0.3.10-cp311-abi3-manylinux_2_34_ppc64le.whl", hash = "sha256:2cabc414678d5b85dec89225a2be8a249ab34982693acb99e06fdf619ae208e9", size = 874396, upload-time = "2026-07-21T16:09:41.949Z" },
+    { url = "https://files.pythonhosted.org/packages/f2/31/8f2fe75dec6ed29ff102066bb7d64b8fd74bebad21e07f32b4b5a421a21e/cpex_secrets_detection-0.3.10-cp311-abi3-manylinux_2_34_s390x.whl", hash = "sha256:cca6f8737499967b8194ca9a7b650028fd649ad068eb030fbb84de80262739e1", size = 883169, upload-time = "2026-07-21T16:09:43.3Z" },
+    { url = "https://files.pythonhosted.org/packages/0e/82/7cc559fe81486a3b0607088556e42c46e5ef55ec318435b3826ee9e4543a/cpex_secrets_detection-0.3.10-cp311-abi3-manylinux_2_34_x86_64.whl", hash = "sha256:5e5c8976822987f888d511cd4c11a27b25adf2bf53b2335588cded6f1d5007a7", size = 846302, upload-time = "2026-07-21T16:09:44.903Z" },
+    { url = "https://files.pythonhosted.org/packages/5a/34/4411464e30633f6d255c1ed9373fe60eb92334e726c59824c3c99bf1bbef/cpex_secrets_detection-0.3.10-cp311-abi3-win_amd64.whl", hash = "sha256:282276788f65ae1e18ae1ceec5e123912666e30c9a1926c55faf352aef01fce8", size = 776875, upload-time = "2026-07-21T16:09:46.336Z" },
 ]
 
 [[package]]
@@ -3209,7 +3209,7 @@ requires-dist = [
     { name = "cpex-pii-filter", marker = "extra == 'plugins'", specifier = ">=0.3.6" },
     { name = "cpex-rate-limiter", marker = "extra == 'plugins'", specifier = ">=0.1.7" },
     { name = "cpex-retry-with-backoff", marker = "extra == 'plugins'", specifier = ">=0.3.7" },
-    { name = "cpex-secrets-detection", marker = "extra == 'plugins'", specifier = ">=0.3.9" },
+    { name = "cpex-secrets-detection", marker = "extra == 'plugins'", specifier = ">=0.3.10" },
     { name = "cpex-url-reputation", marker = "extra == 'plugins'", specifier = ">=0.3.5" },
     { name = "cryptography", specifier = ">=49.0.0" },
     { name = "fastapi", specifier = ">=0.139.0" },
@@ -3307,7 +3307,7 @@ dev = [
     { name = "playwright", specifier = ">=1.61.0" },
     { name = "pre-commit", specifier = ">=4.6.0" },
     { name = "prospector", extras = ["with-everything"], specifier = ">=1.19.0" },
-    { name = "pyasn1", specifier = ">=0.6.3" },
+    { name = "pyasn1", specifier = ">=0.6.4" },
     { name = "pydocstyle", specifier = ">=6.3.0" },
     { name = "pygments", specifier = ">=2.20.0" },
     { name = "pyrefly", specifier = ">=1.1.1" },
@@ -3336,7 +3336,7 @@ dev = [
     { name = "rich", specifier = ">=15.0.0" },
     { name = "schemathesis", specifier = ">=4.15.2" },
     { name = "settings-doc", specifier = ">=4.3.2" },
-    { name = "setuptools", specifier = ">=82.0.1" },
+    { name = "setuptools", specifier = ">=83.0.0" },
     { name = "snakeviz", specifier = ">=2.2.2" },
     { name = "tomlkit", specifier = ">=0.15.0" },
     { name = "tornado", specifier = ">=6.5.7" },
@@ -4466,11 +4466,11 @@ wheels = [
 
 [[package]]
 name = "pyasn1"
-version = "0.6.3"
+version = "0.6.4"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/5c/5f/6583902b6f79b399c9c40674ac384fd9cd77805f9e6205075f828ef11fb2/pyasn1-0.6.3.tar.gz", hash = "sha256:697a8ecd6d98891189184ca1fa05d1bb00e2f84b5977c481452050549c8a72cf", size = 148685, upload-time = "2026-03-17T01:06:53.382Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/a4/9a/23310166d960def5897e91fe20e5b724601b02a22e84ba1f94232c0b7f67/pyasn1-0.6.4.tar.gz", hash = "sha256:9c447d8431c947fe4c8febc4ed9e760bc29011a5b01e5c74b67025bd9fb8ce81", size = 151262, upload-time = "2026-07-09T01:12:33.988Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/5d/a0/7d793dce3fa811fe047d6ae2431c672364b462850c6235ae306c0efd025f/pyasn1-0.6.3-py3-none-any.whl", hash = "sha256:a80184d120f0864a52a073acc6fc642847d0be408e7c7252f31390c0f4eadcde", size = 83997, upload-time = "2026-03-17T01:06:52.036Z" },
+    { url = "https://files.pythonhosted.org/packages/9a/3b/6163796d69c3977d1e4287bea4a6979161cbbdd170ebb430511e8e1999ce/pyasn1-0.6.4-py3-none-any.whl", hash = "sha256:deda9277cfd454080ec40b207fb6df82206a3a2688735233cdcd8d3d565f088b", size = 84410, upload-time = "2026-07-09T01:12:32.92Z" },
 ]
 
 [[package]]
@@ -5811,11 +5811,11 @@ wheels = [
 
 [[package]]
 name = "setuptools"
-version = "82.0.1"
+version = "83.0.0"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/4f/db/cfac1baf10650ab4d1c111714410d2fbb77ac5a616db26775db562c8fab2/setuptools-82.0.1.tar.gz", hash = "sha256:7d872682c5d01cfde07da7bccc7b65469d3dca203318515ada1de5eda35efbf9", size = 1152316, upload-time = "2026-03-09T12:47:17.221Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/34/26/f5d29e25ffdb535afef2d35cdb55b325298f96debd670da4c325e08d70f4/setuptools-83.0.0.tar.gz", hash = "sha256:025bccbbf0fa05b6192bc64ae1e7b16e001fd6d6d4d5de03c97b1c1ade523bef", size = 1154254, upload-time = "2026-07-04T15:31:22.699Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/9d/76/f789f7a86709c6b087c5a2f52f911838cad707cc613162401badc665acfe/setuptools-82.0.1-py3-none-any.whl", hash = "sha256:a59e362652f08dcd477c78bb6e7bd9d80a7995bc73ce773050228a348ce2e5bb", size = 1006223, upload-time = "2026-03-09T12:47:15.026Z" },
+    { url = "https://files.pythonhosted.org/packages/5d/40/e1e72872c6354b306daef1703549e8e83b4d43cfea356311bf722a043752/setuptools-83.0.0-py3-none-any.whl", hash = "sha256:29b23c360f22f414dc7336bb39178cc7bcbf6021ed2733cde173f09dba19abb3", size = 1008090, upload-time = "2026-07-04T15:31:20.885Z" },
 ]
 
 [[package]]

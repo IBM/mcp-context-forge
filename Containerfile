@@ -45,9 +45,9 @@ ARG ENABLE_PROFILING=false
 #     --build-arg NODEJS_IMAGE=<internal-registry>/ubi9/nodejs-20:latest \
 #     --build-arg UBI_MINIMAL=<internal-registry>/ubi9/ubi-minimal:latest \
 #     .
-ARG UBI_BASE=registry.access.redhat.com/ubi10:10.2-1784581466
-ARG NODEJS_IMAGE=registry.access.redhat.com/ubi10/nodejs-24:10.2-1784624696
-ARG UBI_MINIMAL=registry.access.redhat.com/ubi10/ubi-minimal:10.2-1784581369
+ARG UBI_BASE=registry.access.redhat.com/ubi10:10.2-1784668814
+ARG NODEJS_IMAGE=registry.access.redhat.com/ubi10/nodejs-24:10.2-1784784528
+ARG UBI_MINIMAL=registry.access.redhat.com/ubi10/ubi-minimal:10.2-1784669047
 # Wheel closure stage — used only for s390x and ppc64le where PyPI manylinux
 # binary wheels are unavailable (tiktoken/psycopg/cryptography require native
 # compilation, and psycopg-binary has no s390x wheel at all).
@@ -191,6 +191,15 @@ COPY --chown=10001:10001 package.json package-lock.json ./
 # Install frontend dependencies
 RUN npm ci
 
+# Vite 8's bundler (rolldown) ships a native NAPI addon per arch; on s390x
+# that addon segfaults on load (rolldown/napi-rs issue on this niche,
+# big-endian target). npm skips @rolldown/binding-wasm32-wasi by default
+# since its cpu field is "wasm32", not "s390x", so install it explicitly and
+# force rolldown to use the WASI binding instead of the crashing native one.
+RUN if [ "$(uname -m)" = "s390x" ]; then \
+        npm install --no-save @rolldown/binding-wasm32-wasi@1.1.5; \
+    fi
+
 # Create directory structure with correct ownership before Vite build
 USER root
 RUN mkdir -p mcpgateway/static && chown -R 10001:10001 mcpgateway
@@ -201,7 +210,11 @@ COPY --chown=10001:10001 mcpgateway/admin_ui/ mcpgateway/admin_ui/
 COPY --chown=10001:10001 vite.config.js ./
 
 # Run Vite build
-RUN npm run vite:build
+RUN if [ "$(uname -m)" = "s390x" ]; then \
+        NAPI_RS_FORCE_WASI=true npm run vite:build; \
+    else \
+        npm run vite:build; \
+    fi
 
 
 ###########################
