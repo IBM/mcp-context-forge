@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 import hashlib
 import json
 import time
-from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple, Union
+from typing import Any, AsyncGenerator, Dict, List, Optional, Set, Tuple, Union
 from urllib.parse import urlparse
 import uuid
 
@@ -395,6 +395,57 @@ async def resolve_a2a_oauth_authorization(agent_id: str, agent_name: str, oauth_
     finally:
         if not lock.locked():
             _A2A_OAUTH_ACQUIRE_LOCKS.pop(cache_key, None)
+
+
+# Strong references to in-flight invalidation tasks. The event loop only keeps a
+# weak reference to a task, so without this a fire-and-forget task can be garbage
+# collected before it completes.
+_BACKGROUND_TASKS: Set[Any] = set()
+
+
+def _log_invalidation_task_exception(task: Any) -> None:
+    """Log an exception raised inside a background invalidation task.
+
+    Args:
+        task: The completed invalidation task.
+    """
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        logger.warning("A2A cache invalidation task failed: %s", exc)
+
+
+def _schedule_a2a_invalidation(agent_name: str) -> None:
+    """Schedule a best-effort A2A cache invalidation publish.
+
+    The coroutine is constructed only after a running loop is confirmed and the
+    task is retained until completion, so a scheduling failure cannot leak an
+    un-awaited coroutine and a live task cannot be garbage collected early.
+
+    Args:
+        agent_name: Name of the agent whose cache entry should be invalidated.
+    """
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return  # No running event loop (e.g., in tests)
+
+    coro = _publish_a2a_invalidation("agent", name=agent_name)
+    try:
+        task = loop.create_task(coro)
+    except Exception as exc:  # pylint: disable=broad-except
+        # Close the coroutine we just built so it cannot raise
+        # "coroutine ... was never awaited" during garbage collection.
+        coro.close()
+        # Best-effort, but log so a Redis outage stops being invisible - stale
+        # Rust L1 caches silently serve old agent data until TTL expires.
+        logger.warning("Rust-cache invalidation scheduling failed for agent %s: %s", agent_name, exc)
+        return
+
+    _BACKGROUND_TASKS.add(task)
+    task.add_done_callback(_BACKGROUND_TASKS.discard)
+    task.add_done_callback(_log_invalidation_task_exception)
 
 
 class A2AAgentError(Exception):
@@ -1087,16 +1138,7 @@ class A2AAgentService(BaseService):
                 except Exception as cache_error:
                     logger.warning("Cache invalidation failed after agent commit: %s", cache_error)
 
-                try:
-                    loop = asyncio.get_running_loop()
-                    loop.create_task(_publish_a2a_invalidation("agent", name=new_agent.name))
-                except RuntimeError:
-                    pass  # No running event loop (e.g., in tests)
-                except Exception as exc:
-                    # Best-effort, but log so a Redis outage stops being
-                    # invisible — stale Rust L1 caches silently serve old
-                    # agent data until TTL expires.
-                    logger.warning("Rust-cache invalidation scheduling failed for agent %s: %s", new_agent.name, exc)
+                _schedule_a2a_invalidation(new_agent.name)
 
                 # Automatically create a tool for the A2A agent if not already present
                 # Tool creation is wrapped in try/except to ensure agent registration succeeds
@@ -2082,13 +2124,7 @@ class A2AAgentService(BaseService):
 
             await admin_stats_cache.invalidate_tags()
 
-            try:
-                loop = asyncio.get_running_loop()
-                loop.create_task(_publish_a2a_invalidation("agent", name=agent.name))
-            except RuntimeError:
-                pass  # No running event loop (e.g., in tests)
-            except Exception as exc:
-                logger.warning("Rust-cache invalidation scheduling failed for agent %s: %s", agent.name, exc)
+            _schedule_a2a_invalidation(agent.name)
 
             # Update the associated tool if it exists
             # Wrap in try/except to handle tool sync failures gracefully - the agent
@@ -2294,13 +2330,7 @@ class A2AAgentService(BaseService):
 
                 await admin_stats_cache.invalidate_tags()
 
-                try:
-                    loop = asyncio.get_running_loop()
-                    loop.create_task(_publish_a2a_invalidation("agent", name=agent_name))
-                except RuntimeError:
-                    pass  # No running event loop (e.g., in tests)
-                except Exception as exc:
-                    logger.warning("Rust-cache invalidation scheduling failed for agent %s: %s", agent_name, exc)
+                _schedule_a2a_invalidation(agent_name)
 
                 logger.info("Deleted A2A agent: %s (ID: %s)", agent_name, agent_id)
 
