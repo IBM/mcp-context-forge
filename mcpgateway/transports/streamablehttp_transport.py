@@ -334,6 +334,7 @@ server_id_var: contextvars.ContextVar[str] = contextvars.ContextVar("server_id",
 # `from mcpgateway.transports.streamablehttp_transport import request_headers_var`
 # keep working.
 from mcpgateway.transports.context import request_headers_var, user_context_var, user_identity_var  # noqa: E402  # pylint: disable=wrong-import-position
+from cpex.framework import GlobalContext  # noqa: E402  # pylint: disable=wrong-import-position
 
 _oauth_checked_var: contextvars.ContextVar[bool] = contextvars.ContextVar("_oauth_checked", default=False)
 
@@ -1916,6 +1917,24 @@ async def call_tool(
 
     try:
         async with get_db() as db:
+            # Build global context from authenticated user context (mirrors
+            # http_auth_middleware.py + auth._propagate_tenant_id() for MCP path)
+            plugin_ctx: Optional[GlobalContext] = None
+            user_ctx = user_context_var.get()
+            if user_ctx and isinstance(user_ctx, dict):
+                user_tenant_id: Optional[str] = None
+                user_teams = user_ctx.get("teams")
+                if isinstance(user_teams, list) and len(user_teams) == 1:
+                    tid = user_teams[0]
+                    if isinstance(tid, str):
+                        user_tenant_id = tid
+                plugin_ctx = GlobalContext(
+                    request_id=uuid.uuid4().hex,
+                    server_id=server_id,
+                    tenant_id=user_tenant_id,
+                    user=app_user_email,
+                )
+
             # Use tool service for all tool invocations (handles direct_proxy internally)
             result = await tool_service.invoke_tool(
                 db=db,
@@ -1928,6 +1947,7 @@ async def call_tool(
                 server_id=server_id,
                 meta_data=meta_data,
                 require_model_visible=True,
+                plugin_global_context=plugin_ctx,
             )
             if not result or not result.content:
                 logger.warning("No content returned by tool: %s", name)
