@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { Wrench } from "lucide-react";
+import { Bot, Code2, Grid3x3, Wrench } from "lucide-react";
 import { http, HttpResponse } from "msw";
 import { SourceSelection } from "@/components/gateways/SourceSelection";
 import type { ActionCard } from "@/components/gateways/types";
@@ -17,6 +17,48 @@ const actionCards: ActionCard[] = [
     onAction: vi.fn(),
   },
 ];
+
+function buildFourActionCards() {
+  const mcpAction = vi.fn();
+  const aiAction = vi.fn();
+  const restAction = vi.fn();
+  const grpcAction = vi.fn();
+  const cards: ActionCard[] = [
+    {
+      icon: Wrench,
+      title: "MCP server",
+      description: "Register an MCP server",
+      buttonText: "Connect",
+      onAction: mcpAction,
+    },
+    {
+      icon: Bot,
+      title: "AI agent",
+      description: "Add an agent over A2A, OpenAI, or Anthropic protocols",
+      buttonText: "Connect",
+      onAction: aiAction,
+    },
+    {
+      icon: Code2,
+      title: "REST API",
+      description: "Wrap a HTTP endpoint as a MCP tool",
+      buttonText: "Connect",
+      onAction: restAction,
+      disabled: true,
+      disabledReason: "Coming soon",
+    },
+    {
+      icon: Grid3x3,
+      title: "gRPC",
+      description: "Translate a gRPC endpoint as a MCP tool.",
+      buttonText: "Connect",
+      onAction: grpcAction,
+      disabled: true,
+      disabledReason: "Coming soon",
+    },
+  ];
+  return { cards, mcpAction, aiAction, restAction, grpcAction };
+}
 
 describe("SourceSelection", () => {
   it("lazy-loads selectable MCP servers and hides sources already in the virtual server", async () => {
@@ -152,5 +194,49 @@ describe("SourceSelection", () => {
     );
 
     expect(await screen.findByRole("alert")).toHaveTextContent("HTTP 500");
+  });
+
+  it("shows the connect button only on the initially selected card", () => {
+    const { cards } = buildFourActionCards();
+
+    renderWithProviders(<SourceSelection actionCards={cards} />);
+
+    expect(screen.getAllByRole("button", { name: "Connect" })).toHaveLength(1);
+  });
+
+  it("moves the connect button when a different enabled card is selected", async () => {
+    const user = userEvent.setup();
+    const { cards, aiAction } = buildFourActionCards();
+
+    renderWithProviders(<SourceSelection actionCards={cards} />);
+
+    await user.click(screen.getByTestId("action-card-AI agent"));
+    expect(screen.getAllByRole("button", { name: "Connect" })).toHaveLength(1);
+
+    await user.click(screen.getByRole("button", { name: "Connect" }));
+    expect(aiAction).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps disabled cards non-interactive and free of a connect button", async () => {
+    const user = userEvent.setup();
+    const { cards, restAction, grpcAction } = buildFourActionCards();
+
+    renderWithProviders(<SourceSelection actionCards={cards} />);
+
+    const restCard = screen.getByTestId("action-card-REST API");
+    const grpcCard = screen.getByTestId("action-card-gRPC");
+
+    expect(restCard).toHaveAttribute("aria-disabled", "true");
+    expect(grpcCard).toHaveAttribute("aria-disabled", "true");
+    expect(restCard).toHaveAccessibleName(/Coming soon/i);
+    expect(grpcCard).toHaveAccessibleName(/Coming soon/i);
+    expect(screen.queryByText("Coming soon")).not.toBeInTheDocument();
+
+    await user.click(restCard);
+    await user.click(grpcCard);
+
+    expect(restAction).not.toHaveBeenCalled();
+    expect(grpcAction).not.toHaveBeenCalled();
+    expect(screen.getAllByRole("button", { name: "Connect" })).toHaveLength(1);
   });
 });
