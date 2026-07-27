@@ -6,6 +6,7 @@ Exports MCP tool invocation metrics to ICA core-services.
 """
 
 # Standard
+import os
 import time
 from typing import Any, Optional
 
@@ -34,11 +35,23 @@ class IcaMeteringExporterPlugin(Plugin):
         super().__init__(config)
         self.telemetry_config = config.config
         self.http_client: Optional[httpx.AsyncClient] = None
+        self.env_model_name: Optional[str] = None
+
+        # Parse gateway-level defaults from plugin config
+        self._gateway_configs: dict[str, dict] = {}
+        raw_gateways = self.telemetry_config.get("gateways", [])
+        if isinstance(raw_gateways, list):
+            for gw in raw_gateways:
+                gw_id = gw.get("id")
+                if gw_id:
+                    self._gateway_configs[gw_id] = gw
+
         if self.telemetry_config.get("enabled", False):
             self.http_client = httpx.AsyncClient(
                 timeout=httpx.Timeout(5.0, connect=2.0),
                 limits=httpx.Limits(max_keepalive_connections=5),
             )
+            self.env_model_name = os.getenv("MCP_DEFAULT_MODEL")
 
     async def shutdown(self) -> None:
         """Plugin cleanup code - close HTTP client."""
@@ -85,44 +98,103 @@ class IcaMeteringExporterPlugin(Plugin):
         if not isinstance(ctx_meta, dict):
             ctx_meta = {}
 
-        # modelName sources in priority order:
-        # 1. Pre-invoke transport headers (OpenWebUI sets X-OpenWebUI-Model-Id)
-        # 2. meta_data.model (set by ContextForge internal API callers)
-        # 3. Fallback to empty string
-        model_name = (
-            context.state.get("ica_metering_model_name")
-            or ctx_meta.get("model")
-        )
+        # Resolve model name using priority cascade
+        headers = getattr(getattr(payload, "headers", None), "root", {})
+        if not isinstance(headers, dict):
+            headers = {}
+        model_name, model_source = self._resolve_model_name(context, headers, ctx_meta)
 
         tokens = self._extract_tokens(payload.result)
 
-        metering_payload = {
+        tool_details: dict[str, Any] = {
+            "toolName": payload.name,
+            "serverId": context.global_context.server_id or "unknown",
+            "serverName": gateway_meta.get("name"),
+            "gatewayId": gateway_meta.get("id"),
+            "integrationType": "MCP",
+            "requestType": "SSE",
+            "latencyMs": latency_ms,
+            "hasError": self._is_error(payload.result),
+            "errorMessage": self._extract_error_message(payload.result),
+            "cached": context.state.get("cache_hit", False),
+            "retryAttempt": context.state.get("retry_count", 0),
+            "modelName": model_name,
+            "traceId": context.global_context.request_id,
+            "tokenInput": tokens.get("input"),
+            "tokenOutput": tokens.get("output"),
+            "source": "ContextForge",
+        }
+
+        metering_payload: dict[str, Any] = {
             "userEmail": context.global_context.user or "unknown",
             "teamName": context.global_context.tenant_id or "unknown",
-            "toolDetails": {
-                "toolName": payload.name,
-                "serverId": context.global_context.server_id or "unknown",
-                "serverName": gateway_meta.get("name"),
-                "gatewayId": gateway_meta.get("id"),
-                # TODO: Extract from gateway metadata once available
-                # For MVP, all ContextForge tools are MCP over SSE
-                "integrationType": "MCP",
-                "requestType": "SSE",
-                "latencyMs": latency_ms,
-                "hasError": self._is_error(payload.result),
-                "errorMessage": self._extract_error_message(payload.result),
-                "cached": context.state.get("cache_hit", False),
-                "retryAttempt": context.state.get("retry_count", 0),
-                "modelName": model_name,
-                "traceId": context.global_context.request_id,
-                "tokenInput": tokens.get("input"),
-                "tokenOutput": tokens.get("output"),
-                "source": "ContextForge",
-            },
+            "toolDetails": tool_details,
         }
+
+        # Optional model source tracking for debugging
+        if self.telemetry_config.get("include_model_source", False):
+            metering_payload.setdefault("_metadata", {})["modelSource"] = model_source
 
         await self._send_to_ica(metering_payload)
         return ToolPostInvokeResult(continue_processing=True)
+
+    def _resolve_model_name(
+        self,
+        context: PluginContext,
+        headers: dict,
+        ctx_meta: dict,
+    ) -> tuple[Optional[str], Optional[str]]:
+        """
+        Resolve model name from multiple sources in priority order.
+
+        Priority:
+          1. Transport header (X-OpenWebUI-Model-Id) — set by OpenWebUI tools.py,
+             stored in context.state by tool_pre_invoke
+          2. Session metadata (global_context.metadata["model_name"]) — CLI client session init
+          3. Environment variable (MCP_DEFAULT_MODEL) — container/env config
+          4. Tool call meta_data.model — API callers
+          5. Gateway-level default from config — per-gateway fallback
+          6. Global default from config — system-wide fallback
+          7. None — truly unknown
+
+        Returns:
+            Tuple of (model_name, source_label)
+        """
+        # Priority 1: Transport headers (extracted by tool_pre_invoke from payload headers)
+        model = context.state.get("ica_metering_model_name")
+        if model:
+            return str(model), "transport_header"
+
+        # Priority 2: Session metadata (set by CLI client during session init)
+        model = context.global_context.metadata.get("model_name")
+        if model:
+            return str(model), "session_init"
+
+        # Priority 3: Environment variable
+        if self.env_model_name:
+            return self.env_model_name, "environment"
+
+        # Priority 4: Tool call meta_data (API callers)
+        model = ctx_meta.get("model")
+        if model:
+            return str(model), "tool_metadata"
+
+        # Priority 5: Gateway-level default
+        gw_meta = context.global_context.metadata.get(GATEWAY_METADATA)
+        if isinstance(gw_meta, dict):
+            gateway_id = gw_meta.get("id")
+            if gateway_id and gateway_id in self._gateway_configs:
+                model = self._gateway_configs[gateway_id].get("default_model")
+                if model:
+                    return str(model), "gateway_default"
+
+        # Priority 6: Global default from config
+        model = self.telemetry_config.get("global_default_model")
+        if model:
+            return str(model), "global_default"
+
+        # Priority 7: Truly unknown
+        return None, "unknown"
 
     @staticmethod
     def _is_error(result: Any) -> bool:
