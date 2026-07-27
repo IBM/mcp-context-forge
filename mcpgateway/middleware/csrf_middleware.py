@@ -21,6 +21,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 # First-Party
+from mcpgateway.auth_context import get_jwt_user_email_from_payload
 from mcpgateway.config import settings
 from mcpgateway.services.csrf_service import get_csrf_service
 from mcpgateway.utils.verify_credentials import get_auth_header_value, verify_jwt_token_cached
@@ -146,7 +147,7 @@ class CSRFMiddleware(BaseHTTPMiddleware):
             if raw_token:
                 try:
                     payload = await verify_jwt_token_cached(raw_token, request)
-                    user_id = payload.get("sub") or payload.get("email") or payload.get("user", {}).get("email")
+                    user_id = get_jwt_user_email_from_payload(payload)
                     session_id = payload.get("jti")
                 except Exception as exc:
                     logger.warning("CSRF fallback JWT verification failed for %s %s: %s", request.method, request.url.path, exc)
