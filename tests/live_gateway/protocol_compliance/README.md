@@ -67,7 +67,7 @@ This harness covers:
 | RFC 9728 Protected Resource Metadata endpoint routed | `test_oauth_authorization.py` (tier 1) |
 | OAuth 2.1 `client_credentials` grant round-trip via Keycloak | `test_oauth_authorization.py` (tier 2 — needs Keycloak) |
 | JWT-signature validation (tampered tokens rejected) | `test_oauth_authorization.py` (tier 2) |
-| OAuth 2.1 code+PKCE flow, DCR, introspection, full PRM payload | `tests/compliance/mcp_2025_11_25/authorization/` (separate suite) |
+| Protected Resource Metadata path shape and WWW-Authenticate challenges | `test_oauth_authorization.py` (tier 1), `test_security_best_practices.py` |
 | Token scoping and RBAC for admin routes | `tests/live_gateway/mcp/test_mcp_rbac_transport.py` |
 
 ### Starting Keycloak for tier 2 tests
