@@ -2413,6 +2413,50 @@ class TestToolService:
         assert _pin_url_to_resolved_ip("https://api.example.com:8443/path?sig=abc", "2001:4860:4860::8888") == "https://[2001:4860:4860::8888]:8443/path?sig=abc"
 
     @pytest.mark.asyncio
+    async def test_invoke_tool_rest_multipart_pins_url_and_forwards_sni_extensions(self, tool_service, mock_tool, mock_global_config_obj, test_db, monkeypatch):
+        """Multipart REST calls should keep connection metadata after stripping Content-Type."""
+
+        async def validate_pinned(value: str, _field_name: str = "URL"):
+            return {
+                "validated_url": value,
+                "hostname": "upload.example.com",
+                "original_authority": "upload.example.com",
+                "resolved_ip": "8.8.4.4",
+            }
+
+        monkeypatch.setattr("mcpgateway.services.tool_service.SecurityValidator.validate_url_for_connection_pinning", validate_pinned)
+
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "POST"
+        mock_tool.url = "https://upload.example.com/files"
+        mock_tool.jsonpath_filter = ""
+        mock_tool.auth_value = None
+        mock_tool.headers = {"Content-Type": "multipart/form-data", "X-Custom": "custom-value"}
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        mock_response = AsyncMock()
+        mock_response.raise_for_status = Mock()
+        mock_response.status_code = 200
+        mock_response.json = Mock(return_value={"result": "multipart response"})
+        tool_service._http_client.request.return_value = mock_response
+
+        with (
+            patch("mcpgateway.services.tool_service.metrics_buffer", Mock(record_tool_metric=Mock())),
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={}),
+            patch("mcpgateway.services.tool_service.extract_using_jq", return_value={"result": "multipart response"}),
+        ):
+            await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None)
+
+        tool_service._http_client.request.assert_called_once_with(
+            "POST",
+            "https://8.8.4.4/files",
+            files={"param": (None, "value")},
+            params={},
+            headers={"X-Custom": "custom-value", "Host": "upload.example.com"},
+            extensions={"sni_hostname": "upload.example.com"},
+        )
+
+    @pytest.mark.asyncio
     async def test_invoke_tool_rest_post_form_urlencoded(self, tool_service, mock_tool, mock_global_config_obj, test_db):
         """REST tool with Content-Type: application/x-www-form-urlencoded should use data= encoding."""
         mock_tool.integration_type = "REST"

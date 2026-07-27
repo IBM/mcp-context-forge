@@ -20,6 +20,7 @@ The tests cover:
 """
 
 # Standard
+import asyncio
 import socket
 from unittest.mock import MagicMock, patch
 
@@ -2390,6 +2391,53 @@ class TestOutboundUrlConnectionPinningValidation:
         }
 
     @pytest.mark.asyncio
+    async def test_validate_url_for_connection_pinning_rejects_empty_value(self):
+        """Empty outbound URLs are rejected before DNS work."""
+
+        with pytest.raises(ValueError, match="cannot be empty"):
+            await SecurityValidator.validate_url_for_connection_pinning("", "Tool URL")
+
+    @pytest.mark.asyncio
+    async def test_validate_url_for_connection_pinning_rejects_validation_timeout(self):
+        """Slow URL validation fails closed for async callers."""
+
+        with patch("mcpgateway.common.validators.asyncio.wait_for", side_effect=asyncio.TimeoutError):
+            with pytest.raises(ValueError, match="DNS validation timed out"):
+                await SecurityValidator.validate_url_for_connection_pinning("https://api.example.com/path", "Tool URL")
+
+    @pytest.mark.asyncio
+    async def test_validate_url_for_connection_pinning_rejects_missing_hostname(self):
+        """Validated URL metadata must include a hostname."""
+
+        with patch.object(SecurityValidator, "validate_url", return_value="http:///path"):
+            with pytest.raises(ValueError, match="not a valid URL"):
+                await SecurityValidator.validate_url_for_connection_pinning("http:///path", "Tool URL")
+
+    @pytest.mark.asyncio
+    async def test_validate_url_for_connection_pinning_wraps_parse_errors(self):
+        """Unexpected parse failures are normalized to validation errors."""
+
+        with (
+            patch.object(SecurityValidator, "validate_url", return_value="https://api.example.com/path"),
+            patch("mcpgateway.common.validators.urlparse", side_effect=RuntimeError("parse failed")),
+        ):
+            with pytest.raises(ValueError, match="not a valid URL"):
+                await SecurityValidator.validate_url_for_connection_pinning("https://api.example.com/path", "Tool URL")
+
+    @pytest.mark.asyncio
+    async def test_validate_url_for_connection_pinning_unwraps_ipv4_mapped_literal(self):
+        """IPv4-mapped IPv6 literal URLs pin to the embedded IPv4 address."""
+
+        with (
+            patch.object(SecurityValidator, "validate_url", return_value="https://[::ffff:8.8.8.8]/path"),
+            patch("mcpgateway.common.validators.settings", self._settings()),
+        ):
+            result = await SecurityValidator.validate_url_for_connection_pinning("https://[::ffff:8.8.8.8]/path", "Tool URL")
+
+        assert result["hostname"] == "::ffff:8.8.8.8"
+        assert result["resolved_ip"] == "8.8.8.8"
+
+    @pytest.mark.asyncio
     async def test_validate_url_for_connection_pinning_rejects_disallowed_dns_answer(self, monkeypatch):
         """Every resolved address must satisfy the existing outbound URL policy."""
 
@@ -2419,3 +2467,59 @@ class TestOutboundUrlConnectionPinningValidation:
 
         assert result["resolved_ip"] == "127.0.0.1"
         assert result["original_authority"] == "local-tool.example"
+
+    @pytest.mark.asyncio
+    async def test_resolve_hostname_for_connection_pinning_fails_closed_on_dns_error(self, monkeypatch):
+        """DNS errors are rejected when fail-closed behavior is enabled."""
+
+        def mock_getaddrinfo(_host, *_args, **_kwargs):
+            raise socket.gaierror("not found")
+
+        monkeypatch.setattr("mcpgateway.common.validators.socket.getaddrinfo", mock_getaddrinfo)
+
+        with patch("mcpgateway.common.validators.settings", self._settings()):
+            with pytest.raises(ValueError, match="DNS resolution failed"):
+                await SecurityValidator._resolve_hostname_for_connection_pinning("api.example.com", "Tool URL", 5.0)
+
+    @pytest.mark.asyncio
+    async def test_resolve_hostname_for_connection_pinning_fails_open_when_configured(self, monkeypatch):
+        """DNS errors can return no pin when fail-open behavior is configured."""
+
+        def mock_getaddrinfo(_host, *_args, **_kwargs):
+            raise socket.gaierror("not found")
+
+        monkeypatch.setattr("mcpgateway.common.validators.socket.getaddrinfo", mock_getaddrinfo)
+
+        with patch("mcpgateway.common.validators.settings", self._settings(ssrf_dns_fail_closed=False)):
+            result = await SecurityValidator._resolve_hostname_for_connection_pinning("api.example.com", "Tool URL", 5.0)
+
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_resolve_hostname_for_connection_pinning_unwraps_and_skips_invalid_answers(self, monkeypatch):
+        """Resolver answers are normalized and invalid addresses are ignored."""
+
+        def mock_getaddrinfo(_host, _port, _family=0, _type=0, _proto=0, _flags=0):
+            return [
+                (socket.AF_INET6, socket.SOCK_STREAM, 6, "", ("::ffff:8.8.4.4", 0, 0, 0)),
+                (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("not-an-ip", 0)),
+            ]
+
+        monkeypatch.setattr("mcpgateway.common.validators.socket.getaddrinfo", mock_getaddrinfo)
+
+        result = await SecurityValidator._resolve_hostname_for_connection_pinning("api.example.com", "Tool URL", 5.0)
+
+        assert result == ["8.8.4.4"]
+
+    @pytest.mark.asyncio
+    async def test_resolve_hostname_for_connection_pinning_rejects_no_valid_answers(self, monkeypatch):
+        """Fail-closed DNS rejects resolver answers that contain no usable IPs."""
+
+        def mock_getaddrinfo(_host, _port, _family=0, _type=0, _proto=0, _flags=0):
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("not-an-ip", 0))]
+
+        monkeypatch.setattr("mcpgateway.common.validators.socket.getaddrinfo", mock_getaddrinfo)
+
+        with patch("mcpgateway.common.validators.settings", self._settings()):
+            with pytest.raises(ValueError, match="returned no addresses"):
+                await SecurityValidator._resolve_hostname_for_connection_pinning("api.example.com", "Tool URL", 5.0)
