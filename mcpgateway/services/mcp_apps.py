@@ -36,6 +36,11 @@ MCP_APP_MIME_TYPE = "text/html;profile=mcp-app"
 # Deprecated flat metadata key kept for backward compatibility with servers that
 # predate the nested ``_meta.ui`` shape. Removed from the spec before GA.
 LEGACY_RESOURCE_URI_META_KEY = "ui/resourceUri"
+UI_URI_SCHEME = "ui://"
+# Canonical nested keys that take precedence over the deprecated flat one.
+NESTED_RESOURCE_URI_KEYS = ("resourceUri", "resource_uri")
+# Upstream-controlled URIs are bounded before they reach the logs.
+MAX_LOGGED_URI_LENGTH = 120
 
 _ALLOWED_CSP_DIRECTIVES = frozenset(
     {
@@ -139,24 +144,38 @@ def mcp_ui_metadata(value: Any) -> Dict[str, Any]:
     return ui if isinstance(ui, dict) else {}
 
 
+def _loggable_uri(value: str) -> str:
+    """Reduce an upstream-controlled URI to a bounded, credential-free form for logging."""
+    safe = value.split("?", 1)[0].split("#", 1)[0]
+    scheme, separator, remainder = safe.partition("://")
+    if separator and "@" in remainder.split("/", 1)[0]:
+        safe = f"{scheme}://{remainder.split('@', 1)[1]}"
+    if len(safe) > MAX_LOGGED_URI_LENGTH:
+        safe = f"{safe[:MAX_LOGGED_URI_LENGTH]}...(truncated)"
+    return safe
+
+
 def _legacy_ui_resource_uri(meta: Dict[str, Any], ui: Dict[str, Any]) -> Optional[str]:
     """Return the deprecated flat ``ui/resourceUri`` value when it should be applied."""
     legacy_uri = meta.get(LEGACY_RESOURCE_URI_META_KEY)
     if not isinstance(legacy_uri, str) or not legacy_uri:
         return None
 
-    nested_uri = ui.get("resourceUri") or ui.get("resource_uri")
-    if nested_uri:
-        # The nested key is canonical and wins; upstream servers may legitimately
-        # emit both, so only a genuine disagreement is worth reporting.
-        if nested_uri != legacy_uri:
-            logger.info("Ignoring deprecated _meta[%r]=%r in favour of nested resourceUri %r", LEGACY_RESOURCE_URI_META_KEY, legacy_uri, nested_uri)
+    for nested_key in NESTED_RESOURCE_URI_KEYS:
+        if nested_key not in ui:
+            continue
+        # Presence, not truthiness: the canonical key stays authoritative even when its
+        # value is empty or malformed, so a bad nested value is rejected downstream by
+        # validate_extension_metadata instead of being silently replaced. Upstream servers
+        # may legitimately emit both shapes, so only a genuine disagreement is reported.
+        if ui[nested_key] != legacy_uri:
+            logger.info("Ignoring deprecated _meta[%r] in favour of the nested %s already present", LEGACY_RESOURCE_URI_META_KEY, nested_key)
         return None
 
-    if not legacy_uri.startswith("ui://"):
-        # Folding an invalid URI in would fail extension metadata validation and
+    if not legacy_uri.startswith(UI_URI_SCHEME) or not legacy_uri[len(UI_URI_SCHEME) :].strip():
+        # Folding an unusable URI in would fail extension metadata validation and
         # drop the whole tool, so keep the pre-existing "ignore it" behaviour.
-        logger.warning("Ignoring deprecated _meta[%r]=%r because it does not use the ui:// scheme", LEGACY_RESOURCE_URI_META_KEY, legacy_uri)
+        logger.warning("Ignoring deprecated _meta[%r]=%r because it is not a usable %s URI", LEGACY_RESOURCE_URI_META_KEY, _loggable_uri(legacy_uri), UI_URI_SCHEME)
         return None
 
     return legacy_uri

@@ -8,6 +8,7 @@ Tests for the minimal MCP Apps helpers.
 
 # Standard
 import asyncio
+import logging
 from contextlib import contextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -211,6 +212,8 @@ def test_merge_mcp_protocol_meta_accepts_matching_nested_and_flat_resource_uri()
     [
         "https://example.com/widget.html",
         "",
+        "ui://",
+        "ui://   ",
         123,
         None,
         ["ui://widgets/example"],
@@ -223,6 +226,33 @@ def test_merge_mcp_protocol_meta_ignores_unusable_flat_resource_uri(legacy_value
     merge_mcp_protocol_meta(payload)
 
     assert "extensionMetadata" not in payload
+
+
+@pytest.mark.parametrize("nested_key", ["resourceUri", "resource_uri"])
+@pytest.mark.parametrize("nested_value", ["", None, False, 0, "https://example.com/widget.html"])
+def test_merge_mcp_protocol_meta_keeps_present_but_unusable_nested_resource_uri(nested_key, nested_value) -> None:
+    """A present canonical key stays authoritative even when its value is empty or malformed."""
+    payload = {"_meta": {"ui": {nested_key: nested_value}, LEGACY_RESOURCE_URI_META_KEY: "ui://widgets/legacy"}}
+
+    merge_mcp_protocol_meta(payload)
+
+    assert payload["extensionMetadata"][MCP_UI_EXTENSION] == {nested_key: nested_value}
+
+
+def test_merge_mcp_protocol_meta_does_not_log_full_flat_resource_uri(caplog) -> None:
+    """Rejected upstream URIs must not reach the logs verbatim."""
+    legacy_uri = "https://user:s3cret@example.com/" + "a" * 500 + "?token=abcdef#frag"  # pragma: allowlist secret
+    payload = {"_meta": {LEGACY_RESOURCE_URI_META_KEY: legacy_uri}}
+
+    with caplog.at_level(logging.WARNING, logger="mcpgateway.services.mcp_apps"):
+        merge_mcp_protocol_meta(payload)
+
+    logged = caplog.text
+    assert "extensionMetadata" not in payload
+    assert legacy_uri not in logged
+    assert "s3cret" not in logged
+    assert "token=abcdef" not in logged
+    assert "truncated" in logged
 
 
 def test_merge_mcp_protocol_meta_does_not_mutate_source_meta() -> None:
