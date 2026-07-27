@@ -40,7 +40,7 @@ from enum import Enum
 import re
 from typing import Any, assert_never, AsyncGenerator, ContextManager, Dict, Iterable, List, Optional, Pattern, Tuple, Union
 from urllib.parse import urlsplit, urlunsplit
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 # Third-Party
 import anyio
@@ -2203,6 +2203,63 @@ async def _get_request_context_or_default() -> Tuple[str, dict[str, Any], dict[s
         return s_id, request_headers_var.get(), user_context_var.get()
 
 
+async def _resolve_subject_email(payload: dict[str, Any]) -> Optional[str]:
+    """Resolve a JWT subject claim to the user's email address.
+
+    Session tokens (``token_use: "session"``) carry ``sub`` as the
+    ``EmailUser.id`` UUID; legacy/API tokens carry the email directly.  This
+    mirrors the resolution already performed by
+    ``mcpgateway.auth.get_current_user`` and
+    ``mcpgateway.auth.resolve_session_teams`` so that the MCP transport keys its
+    user lookups, auth-cache entries and RBAC context on the same identity as
+    the REST paths.
+
+    Per the repository's canonical email-over-sub precedence (see
+    ``mcpgateway.auth_context.get_user_email``), a non-empty string ``email``
+    claim always wins over ``sub`` when both are present, so the resolved
+    identity can never be spoofed by a conflicting ``sub`` claim.
+
+    When the subject is a UUID that cannot be resolved (no matching user row),
+    the raw subject is returned unchanged so the caller's existing
+    ``require_user_in_db`` checks reject the request rather than silently
+    downgrading it to anonymous access.
+
+    Args:
+        payload: Decoded JWT payload.
+
+    Returns:
+        The user's email address, or ``None`` when the token carries no subject.
+
+    Examples:
+        >>> import asyncio
+        >>> asyncio.run(_resolve_subject_email({"sub": "user@example.com"}))
+        'user@example.com'
+        >>> asyncio.run(_resolve_subject_email({"email": "fallback@example.com"}))
+        'fallback@example.com'
+        >>> asyncio.run(_resolve_subject_email({"email": "canonical@example.com", "sub": "ignored-sub"}))
+        'canonical@example.com'
+        >>> asyncio.run(_resolve_subject_email({})) is None
+        True
+    """
+    email_claim = payload.get("email")
+    subject: Optional[str] = email_claim if isinstance(email_claim, str) and email_claim else payload.get("sub")
+    if not subject:
+        return None
+
+    try:
+        UUID(subject)
+    except (ValueError, AttributeError, TypeError):
+        # Already an email (legacy/API token, or a session token issued before
+        # the user row existed) — no database round-trip needed.
+        return subject
+
+    # First-Party
+    from mcpgateway.auth import _get_email_by_id_sync  # pylint: disable=import-outside-toplevel
+
+    resolved = await asyncio.to_thread(_get_email_by_id_sync, subject)
+    return resolved or subject
+
+
 async def _normalize_jwt_payload(payload: dict[str, Any]) -> dict[str, Any]:
     """Normalize a raw JWT payload to the canonical user context shape.
 
@@ -2218,7 +2275,7 @@ async def _normalize_jwt_payload(payload: dict[str, Any]) -> dict[str, Any]:
     Returns:
         Canonical user context dict with keys email, teams, is_admin, is_authenticated, token_use.
     """
-    email = payload.get("sub") or payload.get("email")
+    email = await _resolve_subject_email(payload)
     jwt_is_admin = payload.get("is_admin", False)
     if not jwt_is_admin:
         user_info = payload.get("user", {})
@@ -5086,7 +5143,9 @@ class _StreamableHttpAuthHandler:
             from mcpgateway.cache.auth_cache import CachedAuthContext, get_auth_cache  # pylint: disable=import-outside-toplevel
 
             jti = user_payload.get("jti")
-            user_email = user_payload.get("sub") or user_payload.get("email")
+            # Resolve sub (a UUID for session tokens) to the user's email before any
+            # cache lookup or DB query, so MCP keys the same identity as the REST paths.
+            user_email = await _resolve_subject_email(user_payload)
             nested_user = user_payload.get("user", {})
             nested_is_admin = nested_user.get("is_admin", False) if isinstance(nested_user, dict) else False
             is_admin = user_payload.get("is_admin", False) or nested_is_admin
