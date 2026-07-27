@@ -93,6 +93,10 @@ function makeAuthContext(email = "admin@example.com") {
     login: vi.fn(),
     logout: vi.fn(),
     setSelectedTeamId: vi.fn(),
+    permissions: [],
+    permissionsLoading: false,
+    permissionsError: false,
+    hasPermission: () => true,
   } as ReturnType<typeof AuthContextModule.useAuthContext>;
 }
 
