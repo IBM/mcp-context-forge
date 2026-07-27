@@ -15,6 +15,10 @@ metadata:
   name: {{ include "mcp-stack.fullname" . }}-mcpgateway
   labels:
     {{- include "mcp-stack.labels" . | nindent 4 }}
+  {{- with merge (default dict .Values.mcpContextForge.annotations) (default dict .Values.annotations) }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
 spec:
   replicas: {{ .Values.mcpContextForge.replicaCount }}
 
@@ -26,6 +30,13 @@ spec:
     metadata:
       labels:
         app: {{ include "mcp-stack.fullname" . }}-mcpgateway
+        {{- with merge (default dict .Values.mcpContextForge.podLabels) (default dict .Values.podLabels) }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with merge (default dict .Values.mcpContextForge.podAnnotations) (default dict .Values.podAnnotations) }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
 
     spec:
       # Image pull secrets

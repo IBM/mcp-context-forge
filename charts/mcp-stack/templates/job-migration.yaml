@@ -11,6 +11,9 @@ metadata:
     "helm.sh/hook": {{ .Values.migration.hookPhase | default "post-install,pre-upgrade" }}
     # Delete old Job before new one and clean up succeeded ones
     "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+    {{- with .Values.migration.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
 spec:
   # Job configuration
   backoffLimit: {{ .Values.migration.backoffLimit }}
@@ -22,6 +25,13 @@ spec:
       labels:
         {{- include "mcp-stack.labels" . | nindent 8 }}
         app.kubernetes.io/component: migration
+        {{- with merge (default dict .Values.migration.podLabels) (default dict .Values.podLabels) }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with merge (default dict .Values.migration.podAnnotations) (default dict .Values.podAnnotations) }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
     spec:
       restartPolicy: {{ .Values.migration.restartPolicy }}
       {{- if or .Values.serviceAccount.create .Values.serviceAccount.name }}

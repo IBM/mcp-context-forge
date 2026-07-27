@@ -43,6 +43,21 @@ tolerations: []
   #   effect: "NoSchedule"
 
 ########################################################################
+# ANNOTATIONS & LABELS
+# Applied to all Deployments/Jobs and pod templates in the release when
+# set. Per-component values are merged with these globals; component
+# values take precedence on conflicting keys.
+########################################################################
+annotations: {}
+  # example.com/owner: platform-team
+
+podAnnotations: {}
+  # prometheus.io/scrape: "true"
+
+podLabels: {}
+  # env: production
+
+########################################################################
 # NETWORK POLICIES
 # Conservative, ingress-focused micro-segmentation for in-cluster data
 # services. Disable globally if your CNI does not enforce NetworkPolicy
@@ -185,6 +200,17 @@ mcpContextForge:
   # Node scheduling overrides — takes precedence over top-level nodeSelector/tolerations
   nodeSelector: {}
   tolerations: []
+
+  # Annotations applied to the Deployment resource itself
+  annotations: {}
+    # example.com/owner: platform-team
+
+  # Annotations applied to every pod in this Deployment
+  podAnnotations: {}
+    # prometheus.io/scrape: "true"
+
+  # Extra labels applied to every pod in this Deployment
+  podLabels: {}
 
   # Optional ingress for HTTP traffic
   ingress:
@@ -1061,6 +1087,11 @@ migration:
   # Node scheduling overrides — takes precedence over top-level nodeSelector/tolerations
   nodeSelector: {}
   tolerations: []
+  # Annotations applied to every pod in this Job
+  podAnnotations: {}
+
+  # Extra labels applied to every pod in this Job
+  podLabels: {}
 
   # Migration command configuration
   command:
@@ -1120,6 +1151,14 @@ postgres:
   # Node scheduling overrides — takes precedence over top-level nodeSelector/tolerations
   nodeSelector: {}
   tolerations: []
+  # Annotations applied to the Deployment resource itself
+  annotations: {}
+
+  # Annotations applied to every pod in this Deployment
+  podAnnotations: {}
+
+  # Extra labels applied to every pod in this Deployment
+  podLabels: {}
 
   # Graceful shutdown helps prevent WAL/checkpoint corruption on restart.
   terminationGracePeriodSeconds: 120
@@ -1189,6 +1228,14 @@ pgbouncer:
   # Node scheduling overrides — takes precedence over top-level nodeSelector/tolerations
   nodeSelector: {}
   tolerations: []
+  # Annotations applied to the Deployment resource itself
+  annotations: {}
+
+  # Annotations applied to every pod in this Deployment
+  podAnnotations: {}
+
+  # Extra labels applied to every pod in this Deployment
+  podLabels: {}
 
   image:
     repository: edoburu/pgbouncer
@@ -1254,6 +1301,14 @@ redis:
   # Node scheduling overrides — takes precedence over top-level nodeSelector/tolerations
   nodeSelector: {}
   tolerations: []
+  # Annotations applied to the Deployment resource itself
+  annotations: {}
+
+  # Annotations applied to every pod in this Deployment
+  podAnnotations: {}
+
+  # Extra labels applied to every pod in this Deployment
+  podLabels: {}
 
   image:
     repository: redis
@@ -1366,6 +1421,14 @@ pgadmin:
   # Node scheduling overrides — takes precedence over top-level nodeSelector/tolerations
   nodeSelector: {}
   tolerations: []
+  # Annotations applied to the Deployment resource itself
+  annotations: {}
+
+  # Annotations applied to every pod in this Deployment
+  podAnnotations: {}
+
+  # Extra labels applied to every pod in this Deployment
+  podLabels: {}
 
   image:
     repository: dpage/pgadmin4
@@ -1424,6 +1487,14 @@ redisCommander:
   # Node scheduling overrides — takes precedence over top-level nodeSelector/tolerations
   nodeSelector: {}
   tolerations: []
+  # Annotations applied to the Deployment resource itself
+  annotations: {}
+
+  # Annotations applied to every pod in this Deployment
+  podAnnotations: {}
+
+  # Extra labels applied to every pod in this Deployment
+  podLabels: {}
 
   image:
     repository: rediscommander/redis-commander
@@ -1517,6 +1588,14 @@ mcpFastTimeServer:
   # Node scheduling overrides — takes precedence over top-level nodeSelector/tolerations
   nodeSelector: {}
   tolerations: []
+  # Annotations applied to the Deployment resource itself
+  annotations: {}
+
+  # Annotations applied to every pod in this Deployment
+  podAnnotations: {}
+
+  # Extra labels applied to every pod in this Deployment
+  podLabels: {}
 
   image:
     repository: ghcr.io/ibm/fast-time-server
@@ -1589,6 +1668,14 @@ nginxProxy:
   # Node scheduling overrides — takes precedence over top-level nodeSelector/tolerations
   nodeSelector: {}
   tolerations: []
+  # Annotations applied to the Deployment resource itself
+  annotations: {}
+
+  # Annotations applied to every pod in this Deployment
+  podAnnotations: {}
+
+  # Extra labels applied to every pod in this Deployment
+  podLabels: {}
 
   image:
     repository: mcpgateway/nginx-cache
