@@ -84,3 +84,102 @@ tests:
             key: global-key
             operator: Exists
             effect: NoSchedule
+
+  - it: no podAnnotations rendered by default
+    set:
+      pgadmin.enabled: true
+    asserts:
+      - notExists:
+          path: spec.template.metadata.annotations
+
+  - it: global podAnnotations applied when set
+    set:
+      pgadmin.enabled: true
+      podAnnotations:
+        com.rapid7.insightops/log: app.log
+    asserts:
+      - equal:
+          path: spec.template.metadata.annotations
+          value:
+            com.rapid7.insightops/log: app.log
+
+  - it: component podAnnotations merged with global
+    set:
+      pgadmin.enabled: true
+      podAnnotations:
+        com.rapid7.insightops/log: app.log
+      pgadmin.podAnnotations:
+        app-specific: pgadmin
+    asserts:
+      - equal:
+          path: spec.template.metadata.annotations["com.rapid7.insightops/log"]
+          value: app.log
+      - equal:
+          path: spec.template.metadata.annotations["app-specific"]
+          value: pgadmin
+
+  - it: component podAnnotations override global on same key
+    set:
+      pgadmin.enabled: true
+      podAnnotations:
+        shared-key: global-value
+      pgadmin.podAnnotations:
+        shared-key: component-value
+    asserts:
+      - equal:
+          path: spec.template.metadata.annotations["shared-key"]
+          value: component-value
+
+  - it: global podLabels applied to pod template
+    set:
+      pgadmin.enabled: true
+      podLabels:
+        env: production
+    asserts:
+      - equal:
+          path: spec.template.metadata.labels["env"]
+          value: production
+
+  - it: deployment annotations rendered when set
+    set:
+      pgadmin.enabled: true
+      pgadmin.annotations:
+        example.com/owner: platform
+    asserts:
+      - equal:
+          path: metadata.annotations["example.com/owner"]
+          value: platform
+
+  - it: no deployment annotations rendered by default
+    set:
+      pgadmin.enabled: true
+    asserts:
+      - notExists:
+          path: metadata.annotations
+
+  - it: global annotations merged with component annotations
+    set:
+      pgadmin.enabled: true
+      annotations:
+        example.com/owner: platform-team
+      pgadmin.annotations:
+        example.com/component: pgadmin
+    asserts:
+      - equal:
+          path: metadata.annotations["example.com/owner"]
+          value: platform-team
+      - equal:
+          path: metadata.annotations["example.com/component"]
+          value: pgadmin
+
+  - it: component annotations override global on same key
+    set:
+      pgadmin.enabled: true
+      annotations:
+        example.com/owner: global-value
+      pgadmin.annotations:
+        example.com/owner: component-value
+    asserts:
+      - equal:
+          path: metadata.annotations["example.com/owner"]
+          value: component-value

@@ -84,3 +84,102 @@ tests:
             key: global-key
             operator: Exists
             effect: NoSchedule
+
+  - it: no podAnnotations rendered by default
+    set:
+      mcpFastTimeServer.enabled: true
+    asserts:
+      - notExists:
+          path: spec.template.metadata.annotations
+
+  - it: global podAnnotations applied when set
+    set:
+      mcpFastTimeServer.enabled: true
+      podAnnotations:
+        com.rapid7.insightops/log: app.log
+    asserts:
+      - equal:
+          path: spec.template.metadata.annotations
+          value:
+            com.rapid7.insightops/log: app.log
+
+  - it: component podAnnotations merged with global
+    set:
+      mcpFastTimeServer.enabled: true
+      podAnnotations:
+        com.rapid7.insightops/log: app.log
+      mcpFastTimeServer.podAnnotations:
+        app-specific: mcpFastTimeServer
+    asserts:
+      - equal:
+          path: spec.template.metadata.annotations["com.rapid7.insightops/log"]
+          value: app.log
+      - equal:
+          path: spec.template.metadata.annotations["app-specific"]
+          value: mcpFastTimeServer
+
+  - it: component podAnnotations override global on same key
+    set:
+      mcpFastTimeServer.enabled: true
+      podAnnotations:
+        shared-key: global-value
+      mcpFastTimeServer.podAnnotations:
+        shared-key: component-value
+    asserts:
+      - equal:
+          path: spec.template.metadata.annotations["shared-key"]
+          value: component-value
+
+  - it: global podLabels applied to pod template
+    set:
+      mcpFastTimeServer.enabled: true
+      podLabels:
+        env: production
+    asserts:
+      - equal:
+          path: spec.template.metadata.labels["env"]
+          value: production
+
+  - it: deployment annotations rendered when set
+    set:
+      mcpFastTimeServer.enabled: true
+      mcpFastTimeServer.annotations:
+        example.com/owner: platform
+    asserts:
+      - equal:
+          path: metadata.annotations["example.com/owner"]
+          value: platform
+
+  - it: no deployment annotations rendered by default
+    set:
+      mcpFastTimeServer.enabled: true
+    asserts:
+      - notExists:
+          path: metadata.annotations
+
+  - it: global annotations merged with component annotations
+    set:
+      mcpFastTimeServer.enabled: true
+      annotations:
+        example.com/owner: platform-team
+      mcpFastTimeServer.annotations:
+        example.com/component: mcpFastTimeServer
+    asserts:
+      - equal:
+          path: metadata.annotations["example.com/owner"]
+          value: platform-team
+      - equal:
+          path: metadata.annotations["example.com/component"]
+          value: mcpFastTimeServer
+
+  - it: component annotations override global on same key
+    set:
+      mcpFastTimeServer.enabled: true
+      annotations:
+        example.com/owner: global-value
+      mcpFastTimeServer.annotations:
+        example.com/owner: component-value
+    asserts:
+      - equal:
+          path: metadata.annotations["example.com/owner"]
+          value: component-value

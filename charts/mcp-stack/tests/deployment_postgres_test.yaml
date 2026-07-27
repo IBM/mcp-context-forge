@@ -84,3 +84,102 @@ tests:
             key: global-key
             operator: Exists
             effect: NoSchedule
+
+  - it: no podAnnotations rendered by default
+    set:
+      postgres.enabled: true
+    asserts:
+      - notExists:
+          path: spec.template.metadata.annotations
+
+  - it: global podAnnotations applied when set
+    set:
+      postgres.enabled: true
+      podAnnotations:
+        com.rapid7.insightops/log: app.log
+    asserts:
+      - equal:
+          path: spec.template.metadata.annotations
+          value:
+            com.rapid7.insightops/log: app.log
+
+  - it: component podAnnotations merged with global
+    set:
+      postgres.enabled: true
+      podAnnotations:
+        com.rapid7.insightops/log: app.log
+      postgres.podAnnotations:
+        app-specific: postgres
+    asserts:
+      - equal:
+          path: spec.template.metadata.annotations["com.rapid7.insightops/log"]
+          value: app.log
+      - equal:
+          path: spec.template.metadata.annotations["app-specific"]
+          value: postgres
+
+  - it: component podAnnotations override global on same key
+    set:
+      postgres.enabled: true
+      podAnnotations:
+        shared-key: global-value
+      postgres.podAnnotations:
+        shared-key: component-value
+    asserts:
+      - equal:
+          path: spec.template.metadata.annotations["shared-key"]
+          value: component-value
+
+  - it: global podLabels applied to pod template
+    set:
+      postgres.enabled: true
+      podLabels:
+        env: production
+    asserts:
+      - equal:
+          path: spec.template.metadata.labels["env"]
+          value: production
+
+  - it: deployment annotations rendered when set
+    set:
+      postgres.enabled: true
+      postgres.annotations:
+        example.com/owner: platform
+    asserts:
+      - equal:
+          path: metadata.annotations["example.com/owner"]
+          value: platform
+
+  - it: no deployment annotations rendered by default
+    set:
+      postgres.enabled: true
+    asserts:
+      - notExists:
+          path: metadata.annotations
+
+  - it: global annotations merged with component annotations
+    set:
+      postgres.enabled: true
+      annotations:
+        example.com/owner: platform-team
+      postgres.annotations:
+        example.com/component: postgres
+    asserts:
+      - equal:
+          path: metadata.annotations["example.com/owner"]
+          value: platform-team
+      - equal:
+          path: metadata.annotations["example.com/component"]
+          value: postgres
+
+  - it: component annotations override global on same key
+    set:
+      postgres.enabled: true
+      annotations:
+        example.com/owner: global-value
+      postgres.annotations:
+        example.com/owner: component-value
+    asserts:
+      - equal:
+          path: metadata.annotations["example.com/owner"]
+          value: component-value

@@ -84,3 +84,102 @@ tests:
             key: global-key
             operator: Exists
             effect: NoSchedule
+
+  - it: no podAnnotations rendered by default
+    set:
+      pgbouncer.enabled: true
+    asserts:
+      - notExists:
+          path: spec.template.metadata.annotations
+
+  - it: global podAnnotations applied when set
+    set:
+      pgbouncer.enabled: true
+      podAnnotations:
+        com.rapid7.insightops/log: app.log
+    asserts:
+      - equal:
+          path: spec.template.metadata.annotations
+          value:
+            com.rapid7.insightops/log: app.log
+
+  - it: component podAnnotations merged with global
+    set:
+      pgbouncer.enabled: true
+      podAnnotations:
+        com.rapid7.insightops/log: app.log
+      pgbouncer.podAnnotations:
+        app-specific: pgbouncer
+    asserts:
+      - equal:
+          path: spec.template.metadata.annotations["com.rapid7.insightops/log"]
+          value: app.log
+      - equal:
+          path: spec.template.metadata.annotations["app-specific"]
+          value: pgbouncer
+
+  - it: component podAnnotations override global on same key
+    set:
+      pgbouncer.enabled: true
+      podAnnotations:
+        shared-key: global-value
+      pgbouncer.podAnnotations:
+        shared-key: component-value
+    asserts:
+      - equal:
+          path: spec.template.metadata.annotations["shared-key"]
+          value: component-value
+
+  - it: global podLabels applied to pod template
+    set:
+      pgbouncer.enabled: true
+      podLabels:
+        env: production
+    asserts:
+      - equal:
+          path: spec.template.metadata.labels["env"]
+          value: production
+
+  - it: deployment annotations rendered when set
+    set:
+      pgbouncer.enabled: true
+      pgbouncer.annotations:
+        example.com/owner: platform
+    asserts:
+      - equal:
+          path: metadata.annotations["example.com/owner"]
+          value: platform
+
+  - it: no deployment annotations rendered by default
+    set:
+      pgbouncer.enabled: true
+    asserts:
+      - notExists:
+          path: metadata.annotations
+
+  - it: global annotations merged with component annotations
+    set:
+      pgbouncer.enabled: true
+      annotations:
+        example.com/owner: platform-team
+      pgbouncer.annotations:
+        example.com/component: pgbouncer
+    asserts:
+      - equal:
+          path: metadata.annotations["example.com/owner"]
+          value: platform-team
+      - equal:
+          path: metadata.annotations["example.com/component"]
+          value: pgbouncer
+
+  - it: component annotations override global on same key
+    set:
+      pgbouncer.enabled: true
+      annotations:
+        example.com/owner: global-value
+      pgbouncer.annotations:
+        example.com/owner: component-value
+    asserts:
+      - equal:
+          path: metadata.annotations["example.com/owner"]
+          value: component-value
