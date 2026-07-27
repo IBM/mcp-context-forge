@@ -158,6 +158,35 @@ describe("Tools", () => {
     expect(screen.getByText("Inactive")).toBeInTheDocument();
   });
 
+  it("shows the gateway description in the tool details panel", async () => {
+    const mockTools: Tool[] = [createMockTool(1, "described-gateway")];
+    server.use(
+      http.get("/tools", () => HttpResponse.json(mockTools)),
+      http.get("/gateways", () =>
+        HttpResponse.json({
+          gateways: [
+            {
+              id: "gateway-described-gateway",
+              name: "Described gateway",
+              url: "https://example.com/mcp",
+              description: "Tools for repository automation",
+            },
+          ],
+          nextCursor: null,
+        }),
+      ),
+    );
+
+    const user = userEvent.setup();
+    renderWithRouter(<Tools />);
+
+    await waitFor(() => expect(screen.getByText("described-gateway")).toBeInTheDocument());
+    await user.click(screen.getByLabelText("More options for described-gateway"));
+    await user.click(await screen.findByText("View Details"));
+
+    expect(await screen.findByText("Tools for repository automation")).toBeInTheDocument();
+  });
+
   it("renders Add tools card", async () => {
     server.use(http.get("/tools", () => HttpResponse.json([])));
 
