@@ -10,12 +10,18 @@
   "dashboard.home.headline.default": "Up and running...",
   "dashboard.home.card.system": "System",
   "dashboard.home.card.activity": "Activity feed",
-  "dashboard.home.card.mcp": "MCP runtime",
-  "dashboard.home.card.a2a": "A2A runtime",
+  "dashboard.home.card.mcp": "MCP",
+  "dashboard.home.card.a2a": "A2A",
   "dashboard.home.card.rest": "REST API",
   "dashboard.home.card.grpc": "gRPC",
   "dashboard.home.placeholder.system": "System status card (coming soon)",
   "dashboard.home.placeholder.activity": "Activity feed (coming soon)",
   "dashboard.home.placeholder.mcp": "MCP health card (coming soon)",
-  "dashboard.home.permissionDenied": "You do not have permission to view this."
+  "dashboard.home.permissionDenied": "You do not have permission to view this.",
+  "dashboard.home.mcp.healthy": "Healthy",
+  "dashboard.home.mcp.unhealthy": "Unhealthy",
+  "dashboard.home.mcp.error": "Couldn't load system health.",
+  "dashboard.home.mcp.postgres": "PostgreSQL",
+  "dashboard.home.mcp.redis": "Redis",
+  "dashboard.home.mcp.notConfigured": "Not configured"
 }

@@ -10,12 +10,18 @@
   "dashboard.home.headline.default": "Em funcionamento...",
   "dashboard.home.card.system": "Sistema",
   "dashboard.home.card.activity": "Feed de atividades",
-  "dashboard.home.card.mcp": "Runtime MCP",
-  "dashboard.home.card.a2a": "Runtime A2A",
+  "dashboard.home.card.mcp": "MCP",
+  "dashboard.home.card.a2a": "A2A",
   "dashboard.home.card.rest": "API REST",
   "dashboard.home.card.grpc": "gRPC",
   "dashboard.home.placeholder.system": "Cartão de status do sistema (em breve)",
   "dashboard.home.placeholder.activity": "Feed de atividades (em breve)",
   "dashboard.home.placeholder.mcp": "Cartão de integridade do MCP (em breve)",
-  "dashboard.home.permissionDenied": "Você não tem permissão para ver isto."
+  "dashboard.home.permissionDenied": "Você não tem permissão para ver isto.",
+  "dashboard.home.mcp.healthy": "Íntegro",
+  "dashboard.home.mcp.unhealthy": "Com problemas",
+  "dashboard.home.mcp.error": "Não foi possível carregar a integridade do sistema.",
+  "dashboard.home.mcp.postgres": "PostgreSQL",
+  "dashboard.home.mcp.redis": "Redis",
+  "dashboard.home.mcp.notConfigured": "Não configurado"
 }
