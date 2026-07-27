@@ -64,6 +64,8 @@ class BackendConfig(TypedDict):
     url: str
     transport: str
     passthrough_headers: list[str]
+    add_headers: dict[str, str]
+    remove_headers: list[str]
     capabilities: dict[str, Any]
     allowed_tool_names: list[str]
     allowed_resource_names: list[str]
@@ -236,6 +238,8 @@ class DataplanePublisherService:
                     "url": gateway["url"],
                     "transport": gateway["transport"],
                     "passthrough_headers": gateway["passthrough_headers"] or [],
+                    "add_headers": gateway.get("add_headers") or {},
+                    "remove_headers": gateway.get("remove_headers") or [],
                     "capabilities": gateway.get("capabilities") or {},
                 }
                 for gateway in gateways
@@ -375,6 +379,10 @@ class DataplanePublisherService:
                     "url": gateway.url,
                     "transport": gateway.transport,
                     "passthrough_headers": gateway.passthrough_headers,
+                    # DB columns not yet present; getattr keeps the diff in this file and
+                    # emits the Rust-side defaults ({} / []) until the columns land.
+                    "add_headers": getattr(gateway, "add_headers", None) or {},
+                    "remove_headers": getattr(gateway, "remove_headers", None) or [],
                     "capabilities": gateway.capabilities or {},
                 }
                 for gateway in gateway_rows
