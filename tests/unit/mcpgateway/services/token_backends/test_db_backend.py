@@ -772,11 +772,11 @@ async def test_refresh_access_token_no_expires_in_preserves_ttl(backend_with_enc
         }
         mock_oauth_class.return_value = mock_oauth
 
-        with patch("mcpgateway.services.token_backends.db_backend.logger") as mock_logger:
+        with patch("mcpgateway.services.token_backends.refresh_helpers.logger") as mock_logger:
             result = await backend_with_encryption._refresh_access_token(token_record)
 
             assert result == "new_token"
-            # Should log about preserving prior TTL
+            # Should log about preserving prior TTL (from refresh_helpers)
             info_calls = [call for call in mock_logger.info.call_args_list if "preserving prior TTL" in str(call)]
             assert len(info_calls) > 0
 
