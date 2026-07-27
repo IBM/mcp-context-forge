@@ -175,9 +175,10 @@ test.describe("MCP Servers page", () => {
 
     await expect(page.getByRole("menuitem", { name: "View Details" })).toBeVisible();
     await expect(page.getByRole("menuitem", { name: "Edit" })).toBeVisible();
-    await expect(page.getByRole("menuitem", { name: "Test Connection" })).toBeVisible();
     await expect(page.getByRole("menuitem", { name: "Deactivate" })).toBeVisible();
     await expect(page.getByRole("menuitem", { name: "Delete" })).toBeVisible();
+    // Test Connection moved into the details drawer, no longer an overflow-menu item.
+    await expect(page.getByRole("menuitem", { name: "Test Connection" })).toHaveCount(0);
   });
 
   test("optimistically removes server on delete confirmation and shows success toast", async ({
