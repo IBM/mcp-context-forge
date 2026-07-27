@@ -201,9 +201,6 @@ export function Tools() {
   } = useQuery<Tool[]>("/tools?limit=0&include_inactive=true");
   const { data: gatewaysData } = useQuery<CursorPaginatedGatewaysResponse>(
     "/gateways?limit=0&include_pagination=true",
-    {
-      enabled: !isLoading,
-    },
   );
 
   useEffect(() => {
