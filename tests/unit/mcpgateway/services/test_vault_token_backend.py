@@ -19,6 +19,7 @@ import pytest
 # First-Party
 from mcpgateway.db import Gateway
 from mcpgateway.services.oauth_manager import OAuthError, OAuthInvalidGrantError
+from mcpgateway.services.token_backends.base import TokenRecord
 from mcpgateway.services.token_backends.vault_backend import VaultAuthError, VaultConnectionError, VaultTokenBackend
 
 
@@ -1838,3 +1839,172 @@ class TestVaultTokenBackendPR5244:
             # Assert: store_tokens called with NEW TTL (7200 seconds)
             call_kwargs = backend.store_tokens.call_args.kwargs
             assert call_kwargs["expires_in"] == 7200  # New TTL, not preserved
+
+
+
+
+# ============================================================================
+# Additional Coverage Tests - Target 93%+ Coverage
+# ============================================================================
+
+
+class TestVaultTokenBackendAdditionalCoverage:
+    """Additional tests to achieve 93%+ code coverage."""
+
+    @pytest.mark.asyncio
+    async def test_refresh_with_no_refresh_token_in_record(self):
+        """Refresh returns None when vault record has no refresh_token."""
+        mock_db = MagicMock()
+        mock_settings = MagicMock()
+        mock_settings.vault_addr = "http://127.0.0.1:8200"
+        mock_settings.vault_token = SecretStr("hvs.test-token")
+        mock_settings.vault_namespace = ""
+        mock_settings.vault_kv_mount = "secret"
+        mock_settings.vault_kv_path_prefix = "contextforge/oauth"
+        mock_settings.vault_tls_verify = True
+        mock_settings.vault_token_cache_enabled = False
+        mock_settings.vault_token_cache_ttl = 300
+        mock_settings.vault_token_cache_max_size = 10000
+
+        backend = VaultTokenBackend(mock_db, mock_settings)
+
+        # Vault data WITHOUT refresh_token
+        vault_data = {
+            "token": {"access_token": "token123", "scopes": ["read"]},
+            "user_id": "user123",
+        }
+
+        result = await backend._refresh_access_token(
+            gateway_id="gw-1",
+            team_id="team1",
+            app_user_email="user@test.com",
+            refresh_token=None,  # No refresh token
+            vault_data=vault_data,
+        )
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_refresh_preserves_token_on_generic_exception(self):
+        """Token preserved when refresh encounters generic exception."""
+        mock_db = MagicMock()
+        mock_settings = MagicMock()
+        mock_settings.vault_addr = "http://127.0.0.1:8200"
+        mock_settings.vault_token = SecretStr("hvs.test-token")
+        mock_settings.vault_namespace = ""
+        mock_settings.vault_kv_mount = "secret"
+        mock_settings.vault_kv_path_prefix = "contextforge/oauth"
+        mock_settings.vault_tls_verify = True
+        mock_settings.vault_token_cache_enabled = False
+        mock_settings.vault_token_cache_ttl = 300
+        mock_settings.vault_token_cache_max_size = 10000
+
+        backend = VaultTokenBackend(mock_db, mock_settings)
+
+        mock_gateway = MagicMock(spec=Gateway)
+        mock_gateway.id = "gw-123"
+        mock_gateway.url = "https://gateway.example.com"
+        mock_gateway.oauth_config = {
+            "client_id": "test",
+            "client_secret": "secret",  # pragma: allowlist secret
+            "token_url": "https://idp.example.com/token",
+        }
+        mock_gateway.ca_certificate = None
+        mock_gateway.client_cert = None
+        mock_gateway.client_key = None
+        mock_gateway.visibility = "public"
+        mock_gateway.owner_email = None
+        mock_db.query.return_value.filter.return_value.first.return_value = mock_gateway
+
+        vault_data = {
+            "token": {"access_token": "token", "refresh_token": "refresh", "scopes": ["read"]},
+            "user_id": "user123",
+        }
+
+        backend.revoke_user_tokens = AsyncMock()
+
+        with patch("mcpgateway.services.token_backends.vault_backend.OAuthManager") as mock_oauth_cls:
+            mock_oauth = MagicMock()
+            mock_oauth.refresh_token = AsyncMock(side_effect=Exception("Network timeout"))
+            mock_oauth_cls.return_value = mock_oauth
+
+            result = await backend._refresh_access_token(
+                gateway_id="gw-123",
+                team_id="team1",
+                app_user_email="user@test.com",
+                refresh_token="refresh",
+                vault_data=vault_data,
+            )
+
+            # Token preserved, not deleted
+            assert result is None
+            backend.revoke_user_tokens.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_revoke_user_tokens_success(self):
+        """Token successfully revoked from Vault."""
+        mock_db = MagicMock()
+        mock_settings = MagicMock()
+        mock_settings.vault_addr = "http://127.0.0.1:8200"
+        mock_settings.vault_token = SecretStr("hvs.test-token")
+        mock_settings.vault_namespace = ""
+        mock_settings.vault_kv_mount = "secret"
+        mock_settings.vault_kv_path_prefix = "contextforge/oauth"
+        mock_settings.vault_tls_verify = True
+        mock_settings.vault_token_cache_enabled = True
+        mock_settings.vault_token_cache_ttl = 300
+        mock_settings.vault_token_cache_max_size = 10000
+
+        backend = VaultTokenBackend(mock_db, mock_settings)
+
+        # Mock gateway
+        mock_gateway = MagicMock()
+        mock_gateway.url = "https://mcp.example.com"
+        mock_db.get.return_value = mock_gateway
+
+        # Populate cache
+        cache_key = (
+            "team1",
+            backend._hash_server_id("https://mcp.example.com"),
+            "user@test.com",
+        )
+        VaultTokenBackend._token_cache[cache_key] = {"token": "cached", "cache_expires": datetime.now(timezone.utc) + timedelta(seconds=300)}
+
+        with patch.object(backend, "_vault_request", new_callable=AsyncMock) as mock_vault:
+            mock_vault.return_value = None
+
+            await backend.revoke_user_tokens("gw-123", "team1", "user@test.com")
+
+            # Assert: DELETE called and cache cleared
+            mock_vault.assert_called_once()
+            assert mock_vault.call_args[0][0] == "DELETE"
+            assert cache_key not in VaultTokenBackend._token_cache
+
+    @pytest.mark.asyncio
+    async def test_revoke_user_tokens_without_team_id(self):
+        """Token revoked when team_id is None (admin/fallback path)."""
+        mock_db = MagicMock()
+        mock_settings = MagicMock()
+        mock_settings.vault_addr = "http://127.0.0.1:8200"
+        mock_settings.vault_token = SecretStr("hvs.test-token")
+        mock_settings.vault_namespace = ""
+        mock_settings.vault_kv_mount = "secret"
+        mock_settings.vault_kv_path_prefix = "contextforge/oauth"
+        mock_settings.vault_tls_verify = True
+        mock_settings.vault_token_cache_enabled = False
+        mock_settings.vault_token_cache_ttl = 300
+        mock_settings.vault_token_cache_max_size = 10000
+
+        backend = VaultTokenBackend(mock_db, mock_settings)
+
+        mock_gateway = MagicMock()
+        mock_gateway.url = "https://mcp.example.com"
+        mock_db.get.return_value = mock_gateway
+
+        with patch.object(backend, "_vault_request", new_callable=AsyncMock) as mock_vault:
+            mock_vault.return_value = None
+
+            await backend.revoke_user_tokens("gw-123", None, "user@test.com")
+
+            # Assert: DELETE called with correct path (no team_id segment)
+            mock_vault.assert_called_once()
