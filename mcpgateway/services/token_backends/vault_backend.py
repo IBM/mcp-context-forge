@@ -24,9 +24,10 @@ from sqlalchemy.orm import Session
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import Settings
 from mcpgateway.db import Gateway
-from mcpgateway.services.oauth_manager import OAuthManager, parse_expires_in
+from mcpgateway.services.oauth_manager import OAuthError, OAuthInvalidGrantError, OAuthManager, parse_expires_in
 
-from .base import AbstractTokenBackend, TokenRecord, normalize_resource_url
+from .base import AbstractTokenBackend, TokenRecord
+from .refresh_helpers import apply_omit_resource_and_normalize, compute_prior_ttl
 
 logger = logging.getLogger(__name__)
 
@@ -721,16 +722,9 @@ class VaultTokenBackend(AbstractTokenBackend):
 
             oauth_config = gateway.oauth_config.copy()
 
-            # RFC 8707: Set resource parameter
-            existing_resource = oauth_config.get("resource")
-            if existing_resource:
-                if isinstance(existing_resource, list):
-                    normalized = [normalize_resource_url(r, preserve_query=True) for r in existing_resource]
-                    oauth_config["resource"] = [r for r in normalized if r]
-                else:
-                    oauth_config["resource"] = normalize_resource_url(existing_resource, preserve_query=True)
-            elif gateway.url:
-                oauth_config["resource"] = normalize_resource_url(gateway.url)
+            # RFC 8707: Set resource parameter for JWT access tokens during refresh
+            # PR #5244: Apply omit_resource flag and normalize resource parameter
+            apply_omit_resource_and_normalize(oauth_config, gateway.url, gateway_id)
 
             # Use OAuthManager to refresh the token
             oauth_manager = OAuthManager()
@@ -749,6 +743,19 @@ class VaultTokenBackend(AbstractTokenBackend):
             new_refresh_token = token_response.get("refresh_token", refresh_token)
             expires_in = parse_expires_in(token_response)
 
+            # PR #5244: Preserve prior TTL if refresh response omits expires_in
+            if expires_in is None:
+                expires_in = compute_prior_ttl(
+                    vault_data.get("expires_at"),
+                    vault_data.get("updated_at"),
+                    gateway_id,
+                )
+                if expires_in is None:
+                    logger.info(
+                        "No expires_in on refresh response for gateway %s; no prior TTL to preserve",
+                        SecurityValidator.sanitize_log_message(gateway_id),
+                    )
+
             # Store refreshed tokens back to Vault
             await self.store_tokens(
                 gateway_id=gateway_id,
@@ -765,10 +772,32 @@ class VaultTokenBackend(AbstractTokenBackend):
 
             return new_access_token
 
+        except OAuthInvalidGrantError as e:
+            # RFC 6749 §5.2: invalid_grant is a permanent failure — the refresh
+            # token has been revoked, expired, or does not match the grant.
+            # OAuthInvalidGrantError is raised by OAuthManager only when the
+            # token endpoint explicitly returns {"error": "invalid_grant"}, so
+            # this match is based on structured type, not substring heuristics.
+            logger.warning(
+                "Refresh token is permanently invalid for gateway %s (invalid_grant). Deleting token to force re-authorization. Error: %s",
+                gateway_id,
+                str(e),
+            )
+            await self.revoke_user_tokens(gateway_id, team_id, app_user_email)
+            return None
+        except OAuthError as e:
+            # All other OAuth errors (invalid_client, invalid_request, network
+            # failures wrapped as OAuthError, etc.).
+            # These are configuration or transient errors — NOT a permanent
+            # token failure.  Preserve the token so a later retry can succeed.
+            logger.error(
+                "Token refresh failed for gateway %s but error does not indicate invalid refresh token. Preserving token for retry. Error: %s",
+                gateway_id,
+                str(e),
+            )
+            return None
         except Exception as e:
-            logger.error("Failed to refresh OAuth token in Vault for gateway %s: %s", gateway_id, str(e))
-            # If refresh fails with invalid/expired error, delete tokens
-            if "invalid" in str(e).lower() or "expired" in str(e).lower():
-                logger.warning("Refresh token appears invalid/expired, deleting tokens in Vault for gateway %s", gateway_id)
-                await self.revoke_user_tokens(gateway_id, team_id, app_user_email)
+            # Non-OAuth errors (network, parsing, Vault connectivity, etc.)
+            logger.error("Unexpected error refreshing token in Vault for gateway %s: %s", gateway_id, str(e))
+            # Preserve token - this is likely a transient or configuration issue
             return None

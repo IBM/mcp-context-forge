@@ -26,38 +26,13 @@ from mcpgateway.services.encryption_service import get_encryption_service
 from mcpgateway.services.oauth_manager import OAuthError, OAuthInvalidGrantError, OAuthManager, parse_expires_in
 
 from .base import AbstractTokenBackend, TokenRecord
+from .refresh_helpers import apply_omit_resource_and_normalize, compute_prior_ttl
 
 logger = logging.getLogger(__name__)
 
 
-def _preserve_prior_ttl(token_record: OAuthToken) -> Optional[int]:
-    """Compute the token's prior TTL in seconds, or None if not derivable.
-
-    Used when an OAuth refresh response omits expires_in but the token
-    previously had a finite lifetime - the gateway preserves the original
-    issuance TTL by computing expires_at - updated_at from the existing
-    record. Returns None when either timestamp is missing or the difference
-    is non-positive (clock skew or already-expired records).
-
-    Args:
-        token_record: Existing OAuth token row, before the refresh applies.
-
-    Returns:
-        Positive integer seconds of prior TTL, or None.
-    """
-    prev_expires_at = token_record.expires_at
-    prev_updated_at = token_record.updated_at
-    if prev_expires_at is None or prev_updated_at is None:
-        return None
-    # Normalize naive timestamps to UTC for the subtraction.
-    if prev_expires_at.tzinfo is None:
-        prev_expires_at = prev_expires_at.replace(tzinfo=timezone.utc)
-    if prev_updated_at.tzinfo is None:
-        prev_updated_at = prev_updated_at.replace(tzinfo=timezone.utc)
-    prev_ttl = int((prev_expires_at - prev_updated_at).total_seconds())
-    if prev_ttl <= 0:
-        return None
-    return prev_ttl
+# Note: _preserve_prior_ttl() has been replaced by compute_prior_ttl() from refresh_helpers.py
+# to avoid code duplication between DatabaseTokenBackend and VaultTokenBackend.
 
 
 class DatabaseTokenBackend(AbstractTokenBackend):
@@ -455,66 +430,8 @@ class DatabaseTokenBackend(AbstractTokenBackend):
                     oauth_config["client_secret"] = decrypted_secret
 
             # RFC 8707: Set resource parameter for JWT access tokens during refresh
-            # Standard
-            from urllib.parse import urlparse, urlunparse  # pylint: disable=import-outside-toplevel
-
-            def normalize_resource(url: str, *, preserve_query: bool = False) -> str | None:
-                """Normalize a resource value per RFC 8707, or pass through opaque identifiers.
-
-                URL-shaped inputs are canonicalized (fragment stripped; query stripped
-                or preserved per ``preserve_query``).  Non-URL inputs are returned
-                verbatim so that opaque audience identifiers learned from IdPs that do
-                not honor RFC 8707 (e.g. ServiceNow / Authentik returning ``aud=client_id``)
-                round-trip correctly through token refresh.  RFC 8707 §2 explicitly
-                permits the AS to map ``resource`` to an abstract identifier; the
-                resource server therefore must accept either form.
-
-                Args:
-                    url: Resource URL or opaque audience identifier to normalize.
-                    preserve_query: If True, preserve query (for explicit config). If False, strip query.
-
-                Returns:
-                    Normalized URL string, the original opaque value, or None if input is empty.
-                """
-                if not url:
-                    return None
-                parsed = urlparse(url)
-                # If the value lacks a scheme it is not a URL; treat as an opaque
-                # audience identifier and pass through verbatim so a learned
-                # client_id-style audience survives refresh.
-                if not parsed.scheme:
-                    return url
-                # Remove fragment (MUST NOT); query: preserve for explicit, strip for auto-derived
-                query = parsed.query if preserve_query else ""
-                return urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, query, ""))
-
-            # RFC 8707: Set resource parameter for JWT access tokens during refresh
-            # Respect omit_resource flag - if explicitly set to true, skip all resource handling
-            omit_resource = oauth_config.get("omit_resource", False)
-            if omit_resource:
-                # User explicitly disabled resource parameter - remove it if present
-                oauth_config.pop("resource", None)
-                logger.debug("Omitting resource parameter for gateway %s as per omit_resource=true config", token_record.gateway_id)
-            else:
-                existing_resource = oauth_config.get("resource")
-                if existing_resource:
-                    # Normalize existing resource - preserve query for explicit config
-                    if isinstance(existing_resource, list):
-                        original_count = len(existing_resource)
-                        normalized = [normalize_resource(r, preserve_query=True) for r in existing_resource]
-                        oauth_config["resource"] = [r for r in normalized if r]
-                        if not oauth_config["resource"] and original_count > 0:
-                            logger.warning("All %s configured resource values were empty and removed during refresh", original_count)
-                    else:
-                        normalized = normalize_resource(existing_resource, preserve_query=True)
-                        if not normalized and existing_resource:
-                            logger.warning("Configured resource was empty and removed during refresh: %s", existing_resource)
-                        oauth_config["resource"] = normalized
-                elif gateway.url:
-                    # Derive from gateway.url if not explicitly configured (strip query)
-                    oauth_config["resource"] = normalize_resource(gateway.url)
-                    if not oauth_config.get("resource"):
-                        logger.warning("Gateway URL is empty, skipping resource parameter: %s", gateway.url)
+            # PR #5244: Apply omit_resource flag and normalize resource parameter
+            apply_omit_resource_and_normalize(oauth_config, gateway.url, token_record.gateway_id)
 
             # Use OAuthManager to refresh the token
             oauth_manager = OAuthManager()
@@ -547,14 +464,9 @@ class DatabaseTokenBackend(AbstractTokenBackend):
             if expires_in is not None:
                 token_record.expires_at = now + timedelta(seconds=expires_in)
             else:
-                # Preserve prior TTL if available
-                preserved_ttl = _preserve_prior_ttl(token_record)
+                # PR #5244: Preserve prior TTL if available
+                preserved_ttl = compute_prior_ttl(token_record.expires_at, token_record.updated_at, token_record.gateway_id)
                 if preserved_ttl is not None:
-                    logger.info(
-                        "No expires_in on refresh response for gateway %s; preserving prior TTL of %d seconds",
-                        SecurityValidator.sanitize_log_message(token_record.gateway_id),
-                        preserved_ttl,
-                    )
                     token_record.expires_at = now + timedelta(seconds=preserved_ttl)
                 else:
                     logger.info(
