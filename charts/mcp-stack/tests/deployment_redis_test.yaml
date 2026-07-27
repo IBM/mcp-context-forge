@@ -58,3 +58,91 @@ tests:
           content:
             name: redis-config
             mountPath: /usr/local/etc/redis
+
+  - it: no nodeSelector rendered by default
+    set:
+      redis.enabled: true
+      redis.external.enabled: false
+    asserts:
+      - notExists:
+          path: spec.template.spec.nodeSelector
+
+  - it: global nodeSelector is applied when set
+    set:
+      redis.enabled: true
+      redis.external.enabled: false
+      nodeSelector:
+        kubernetes.io/os: linux
+    asserts:
+      - equal:
+          path: spec.template.spec.nodeSelector
+          value:
+            kubernetes.io/os: linux
+
+  - it: component nodeSelector overrides global
+    set:
+      redis.enabled: true
+      redis.external.enabled: false
+      nodeSelector:
+        kubernetes.io/os: linux
+      redis.nodeSelector:
+        node-role: redis
+    asserts:
+      - equal:
+          path: spec.template.spec.nodeSelector
+          value:
+            node-role: redis
+
+  - it: no tolerations rendered by default
+    set:
+      redis.enabled: true
+      redis.external.enabled: false
+    asserts:
+      - notExists:
+          path: spec.template.spec.tolerations
+
+  - it: global tolerations are applied when set
+    set:
+      redis.enabled: true
+      redis.external.enabled: false
+      tolerations:
+        - key: dedicated
+          operator: Equal
+          value: mcp
+          effect: NoSchedule
+    asserts:
+      - contains:
+          path: spec.template.spec.tolerations
+          content:
+            key: dedicated
+            operator: Equal
+            value: mcp
+            effect: NoSchedule
+
+  - it: component tolerations override global
+    set:
+      redis.enabled: true
+      redis.external.enabled: false
+      tolerations:
+        - key: global-key
+          operator: Exists
+          effect: NoSchedule
+      redis.tolerations:
+        - key: redis-key
+          operator: Equal
+          value: redis
+          effect: NoSchedule
+    asserts:
+      - contains:
+          path: spec.template.spec.tolerations
+          content:
+            key: redis-key
+            operator: Equal
+            value: redis
+            effect: NoSchedule
+      - notContains:
+          path: spec.template.spec.tolerations
+          content:
+            key: global-key
+            operator: Exists
+            effect: NoSchedule

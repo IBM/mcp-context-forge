@@ -53,3 +53,77 @@ tests:
       - equal:
           path: spec.template.spec.automountServiceAccountToken
           value: false
+
+  - it: no nodeSelector rendered by default
+    asserts:
+      - notExists:
+          path: spec.template.spec.nodeSelector
+
+  - it: global nodeSelector is applied when set
+    set:
+      nodeSelector:
+        kubernetes.io/os: linux
+    asserts:
+      - equal:
+          path: spec.template.spec.nodeSelector
+          value:
+            kubernetes.io/os: linux
+
+  - it: component nodeSelector overrides global
+    set:
+      nodeSelector:
+        kubernetes.io/os: linux
+      mcpContextForge.nodeSelector:
+        node-role: mcp-workloads
+    asserts:
+      - equal:
+          path: spec.template.spec.nodeSelector
+          value:
+            node-role: mcp-workloads
+
+  - it: no tolerations rendered by default
+    asserts:
+      - notExists:
+          path: spec.template.spec.tolerations
+
+  - it: global tolerations are applied when set
+    set:
+      tolerations:
+        - key: dedicated
+          operator: Equal
+          value: mcp
+          effect: NoSchedule
+    asserts:
+      - contains:
+          path: spec.template.spec.tolerations
+          content:
+            key: dedicated
+            operator: Equal
+            value: mcp
+            effect: NoSchedule
+
+  - it: component tolerations override global
+    set:
+      tolerations:
+        - key: global-key
+          operator: Exists
+          effect: NoSchedule
+      mcpContextForge.tolerations:
+        - key: mcp-key
+          operator: Equal
+          value: mcp
+          effect: NoSchedule
+    asserts:
+      - contains:
+          path: spec.template.spec.tolerations
+          content:
+            key: mcp-key
+            operator: Equal
+            value: mcp
+            effect: NoSchedule
+      - notContains:
+          path: spec.template.spec.tolerations
+          content:
+            key: global-key
+            operator: Exists
+            effect: NoSchedule
