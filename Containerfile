@@ -194,10 +194,12 @@ RUN npm ci
 # Vite 8's bundler (rolldown) ships a native NAPI addon per arch; on s390x
 # that addon segfaults on load (rolldown/napi-rs issue on this niche,
 # big-endian target). npm skips @rolldown/binding-wasm32-wasi by default
-# since its cpu field is "wasm32", not "s390x", so install it explicitly and
-# force rolldown to use the WASI binding instead of the crashing native one.
+# since its cpu field is "wasm32", not "s390x". --force is required because
+# npm's platform check (EBADPLATFORM) rejects the mismatched cpu field
+# regardless of --no-save; --force overrides that check so the WASI binding
+# installs and rolldown can use it instead of the crashing native one.
 RUN if [ "$(uname -m)" = "s390x" ]; then \
-        npm install --no-save @rolldown/binding-wasm32-wasi@1.1.5; \
+        npm install --no-save --force @rolldown/binding-wasm32-wasi@1.1.5; \
     fi
 
 # Create directory structure with correct ownership before Vite build
