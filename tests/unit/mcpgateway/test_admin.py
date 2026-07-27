@@ -19847,6 +19847,31 @@ class TestTeamLookups:
         assert result[0]["name"] == "Alpha"
 
     @pytest.mark.asyncio
+    async def test_admin_search_teams_admin_scoped_token_forwards_team_ids(self, monkeypatch, allow_permission, mock_db):
+        """A scoped admin token forwards normalized team_ids to list_teams (dict/str extraction)."""
+        mock_auth = MagicMock()
+        admin_user = SimpleNamespace(is_admin=True)
+        mock_auth.get_user_by_email = AsyncMock(return_value=admin_user)
+        monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: mock_auth)
+
+        team = SimpleNamespace(id="tb", name="Beta", slug="beta", description="", visibility="public", is_active=True)
+        ts = MagicMock()
+        ts.list_teams = AsyncMock(return_value={"data": [team]})
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: ts)
+
+        # token_teams mixes a raw str id and a dict id to exercise both extraction branches
+        result = await admin_search_teams(
+            q="Beta",
+            include_inactive=False,
+            limit=10,
+            visibility=None,
+            db=mock_db,
+            user={"email": "admin@test.com", "token_teams": ["tb", {"id": "tc"}]},
+        )
+        assert result[0]["id"] == "tb"
+        assert ts.list_teams.await_args.kwargs["team_ids"] == ["tb", "tc"]
+
+    @pytest.mark.asyncio
     async def test_admin_search_teams_non_admin_filters(self, monkeypatch, allow_permission, mock_db):
         """Cover visibility and q filter continue branches in admin_search_teams (non-admin)."""
         mock_auth = MagicMock()

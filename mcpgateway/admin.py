@@ -5581,9 +5581,25 @@ async def admin_search_teams(
     # The CALLER (admin.py) distinguishes.
 
     if current_user.is_admin:
-        # Admin sees all non-personal teams plus their own personal team (single query)
+        # Honor explicit token narrowing even for admins (Layer 1 constrains
+        # visibility independently of RBAC/admin status). token_teams is None for
+        # full admin bypass (unrestricted); an explicit list (including []) scopes
+        # the result. The scope is pushed into the query so it applies before
+        # pagination (an allowed team must not be dropped for sorting past the
+        # first page) and so an explicit scope no longer surfaces the personal team.
+        raw_token_teams = user.get("token_teams")
+        admin_scoped_team_ids: Optional[list[str]] = None
+        if raw_token_teams is not None:
+            admin_scoped_team_ids = [team["id"] if isinstance(team, dict) else team for team in raw_token_teams]
         result = await team_service.list_teams(
-            page=1, per_page=limit, include_inactive=include_inactive, visibility_filter=visibility, include_personal=False, search_query=search_query, personal_owner_email=user_email
+            page=1,
+            per_page=limit,
+            include_inactive=include_inactive,
+            visibility_filter=visibility,
+            include_personal=False,
+            search_query=search_query,
+            personal_owner_email=user_email,
+            team_ids=admin_scoped_team_ids,
         )
         # Result is dict {data, pagination...} (since page provided)
         teams = result["data"]
@@ -5595,12 +5611,14 @@ async def admin_search_teams(
         # returns every membership and ignores token scope, so a token narrowed to
         # a team subset would otherwise leak sibling teams the caller belongs to but
         # is scoped out of. _get_user_team_ids honors token_teams/_cached_team_ids;
-        # the caller's own personal team stays visible (owner is always visible).
+        # an unscoped caller's own memberships (including their personal team) are in
+        # this set, while an explicit scope (including [] = public-only) does not add
+        # a personal-team fallback, matching normalize_token_teams()/get_team_from_token().
         scoped_team_ids = set(await _get_user_team_ids(user, db))
         # Filter in memory
         filtered = []
         for t in all_teams:
-            if not getattr(t, "is_personal", False) and t.id not in scoped_team_ids:
+            if t.id not in scoped_team_ids:
                 continue
             if not include_inactive and not t.is_active:
                 continue

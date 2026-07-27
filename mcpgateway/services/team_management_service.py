@@ -1856,6 +1856,7 @@ class TeamManagementService:
         include_personal: bool = False,
         search_query: Optional[str] = None,
         personal_owner_email: Optional[str] = None,
+        team_ids: Optional[List[str]] = None,
     ) -> Union[Tuple[List[EmailTeam], Optional[str]], Dict[str, Any]]:
         """List teams with pagination support (cursor or page based).
 
@@ -1871,6 +1872,7 @@ class TeamManagementService:
             include_personal: Whether to include personal teams
             search_query: Search term for name/slug/description
             personal_owner_email: When set (and include_personal=False), includes this user's personal team alongside non-personal teams
+            team_ids: When set, restrict results to these team IDs before pagination (e.g. token-scoped callers). An empty list matches no teams.
 
         Returns:
             Union[Tuple[List[EmailTeam], Optional[str]], Dict[str, Any]]:
@@ -1886,6 +1888,11 @@ class TeamManagementService:
             personal_owner_email=personal_owner_email,
             search_description=True,
         )
+
+        # Restrict to specific team IDs before pagination so token-scoped callers
+        # are filtered in the query rather than on an already-limited page.
+        if team_ids is not None:
+            query = query.where(EmailTeam.id.in_(team_ids))
 
         # Choose ordering based on pagination mode:
         # - Page-based (UI): alphabetical by name for user-friendly display
