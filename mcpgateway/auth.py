@@ -635,7 +635,8 @@ async def get_team_from_token(payload: Dict[str, Any]) -> Optional[str]:
     Args:
         payload (Dict[str, Any]):
             The token payload. Expected fields:
-            - "sub" (str): The user's unique identifier (email).
+            - "sub" (str): Opaque user subject. New service-issued tokens use
+              ``EmailUser.id``; legacy tokens may contain the user email.
             - "teams" (List[str], optional): List containing team ID.
 
     Returns:
@@ -645,17 +646,17 @@ async def get_team_from_token(payload: Dict[str, Any]) -> Optional[str]:
     Examples:
         >>> import asyncio
         >>> # --- Case 1: Token has team ---
-        >>> payload = {"sub": "user@example.com", "teams": ["team_456"]}
+        >>> payload = {"sub": "550e8400-e29b-41d4-a716-446655440000", "teams": ["team_456"]}
         >>> asyncio.run(get_team_from_token(payload))
         'team_456'
 
         >>> # --- Case 2: Token has explicit empty teams (public-only) ---
-        >>> payload = {"sub": "user@example.com", "teams": []}
+        >>> payload = {"sub": "550e8400-e29b-41d4-a716-446655440000", "teams": []}
         >>> asyncio.run(get_team_from_token(payload))  # Returns None
         >>> # None
 
         >>> # --- Case 3: Token has no teams key (secure default) ---
-        >>> payload = {"sub": "user@example.com"}
+        >>> payload = {"sub": "550e8400-e29b-41d4-a716-446655440000"}
         >>> asyncio.run(get_team_from_token(payload))  # Returns None
         >>> # None
     """
@@ -1564,11 +1565,16 @@ async def get_current_user(
         payload = await verify_jwt_token_cached(credentials.credentials, request)
 
         logger.debug("JWT token validated successfully")
-        # Extract user identifier (support both new and legacy token formats)
-        email = payload.get("sub")
-        if email is None:
-            # Try legacy format
-            email = payload.get("email")
+
+        # Extract user identifier (support new UUID-sub and legacy email-sub formats).
+        # Signed email metadata wins; only UUID-only tokens need DB resolution.
+        from mcpgateway.auth_context import resolve_jwt_user_email_from_payload  # pylint: disable=import-outside-toplevel
+
+        async def resolve_uuid_subject(user_id: str) -> str | None:
+            """Resolve a UUID subject to the owning user's email."""
+            return await asyncio.to_thread(_get_email_by_id_sync, user_id)
+
+        email = await resolve_jwt_user_email_from_payload(payload, uuid_email_resolver=resolve_uuid_subject)
 
         if email is None:
             logger.debug("No email/sub found in JWT payload")
@@ -1577,16 +1583,6 @@ async def get_current_user(
                 detail="Invalid token",
                 headers={"WWW-Authenticate": "Bearer"},
             )
-
-        # If sub is a UUID (new token format), resolve to email via DB lookup
-        if email is not None:
-            try:
-                uuid.UUID(email)
-                resolved = await asyncio.to_thread(_get_email_by_id_sync, email)
-                if resolved is not None:
-                    email = resolved
-            except ValueError:
-                pass  # sub is an email (legacy format), keep as-is
 
         logger.debug("JWT authentication successful for email: %s", email)
 
@@ -2112,21 +2108,28 @@ def _inject_userinfo_instate(request: Optional[object] = None, user: Optional[Em
 
 
 async def get_user_email_from_token(payload: dict, db: Session) -> Optional[str]:
-    """Resolve user email from JWT payload (supports both UUID and email in sub).
+    """Resolve user email from JWT payload.
 
     This helper enables backward-compatible token migration from email-based
-    to user-ID-based tokens. It checks if the 'sub' claim contains a UUID
-    (new format) or an email address (legacy format).
+    to user-ID-based tokens. Signed email metadata is used first, then UUID
+    subjects are resolved through the database, and legacy email-sub tokens are
+    returned as-is.
 
     Args:
-        payload: JWT payload dictionary containing 'sub' claim
+        payload: JWT payload dictionary.
         db: Database session for user lookup
 
     Returns:
         User email string if found, None otherwise
 
     Examples:
-        >>> # New format: sub contains UUID
+        >>> # New API-token format: sub contains UUID, signed metadata carries email
+        >>> payload = {"sub": "550e8400-e29b-41d4-a716-446655440000", "user": {"email": "user@example.com"}}
+        >>> email = await get_user_email_from_token(payload, db)  # doctest: +SKIP
+        >>> email  # doctest: +SKIP
+        'user@example.com'
+
+        >>> # UUID-only format: resolve sub through the DB
         >>> payload = {"sub": "550e8400-e29b-41d4-a716-446655440000"}
         >>> email = await get_user_email_from_token(payload, db)  # doctest: +SKIP
         >>> email  # doctest: +SKIP
@@ -2144,6 +2147,11 @@ async def get_user_email_from_token(payload: dict, db: Session) -> Optional[str]
         >>> email is None  # doctest: +SKIP
         True
     """
+    from mcpgateway.auth_context import get_jwt_user_email_from_payload  # pylint: disable=import-outside-toplevel
+
+    user_email = get_jwt_user_email_from_payload(payload)
+    if user_email is not None:
+        return user_email
 
     sub = payload.get("sub")
     if not sub:

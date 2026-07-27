@@ -33,6 +33,18 @@ async def test_get_user_email_from_token_with_email():
 
 
 @pytest.mark.asyncio
+async def test_get_user_email_from_token_prefers_signed_user_email():
+    """Test new API token format with UUID sub and signed user.email metadata."""
+    payload = {"sub": TEST_UUID, "user": {"email": "user@example.com"}}
+    db = MagicMock()
+
+    email = await get_user_email_from_token(payload, db)
+
+    assert email == "user@example.com"
+    db.query.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_get_user_email_from_token_with_user_id():
     """Test new token format with UUID in sub claim."""
     payload = {"sub": TEST_UUID}
