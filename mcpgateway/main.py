@@ -10693,6 +10693,72 @@ async def _handle_app_bridge_resources_read(db: Session, request: Request, app_s
     return {"jsonrpc": "2.0", "result": {"contents": [serialize_resource_content_for_mcp(result, fallback_uri=uri)]}, "id": req_id}
 
 
+async def _handle_app_bridge_tools_call(db: Session, request: Request, app_session, params: Dict[str, Any], req_id: Any, requester_email: Optional[str]) -> Dict[str, Any]:
+    """Invoke an app-visible tool on behalf of an MCP App through its bound session.
+
+    The call is scoped to the server the AppBridge session is bound to and uses the
+    identity and team scoping captured when the session was created.
+
+    Args:
+        db: Database session.
+        request: Incoming request, used for plugin context and header passthrough.
+        app_session: The validated AppBridge session.
+        params: JSON-RPC params carrying the tool ``name`` and ``arguments``.
+        req_id: JSON-RPC request id echoed back to the caller.
+        requester_email: Email of the authenticated caller driving the app.
+
+    Returns:
+        A JSON-RPC response dictionary with the tool result or an error.
+    """
+    name = params.get("name")
+    if not name:
+        return {"jsonrpc": "2.0", "error": {"code": -32602, "message": "Missing tool name in parameters"}, "id": req_id}
+
+    try:
+        token_teams = app_session.token_teams
+        tool_user_email = None if token_teams is None else app_session.user_email
+        request_headers = {k.lower(): v for k, v in request.headers.items()}
+        request_headers.pop("x-context-forge-gateway-id", None)
+        result = await tool_service.invoke_tool(
+            db=db,
+            name=name,
+            arguments=params.get("arguments", {}),
+            request_headers=request_headers,
+            app_user_email=requester_email,
+            user_email=tool_user_email,
+            token_teams=token_teams,
+            server_id=app_session.server_id,
+            plugin_context_table=getattr(request.state, "plugin_context_table", None),
+            plugin_global_context=getattr(request.state, "plugin_global_context", None),
+            meta_data=params.get("_meta"),
+            require_app_visible=True,
+        )
+        if hasattr(result, "model_dump"):
+            result = result.model_dump(by_alias=True, exclude_none=True)
+        return {"jsonrpc": "2.0", "result": result, "id": req_id}
+    except ToolNotFoundError:
+        return {"jsonrpc": "2.0", "error": {"code": -32601, "message": f"Tool not found: {name}"}, "id": req_id}
+    except ToolError as exc:
+        logger.info("AppBridge tool call failed with tool error for %s: %s", name, exc)
+        return {"jsonrpc": "2.0", "error": {"code": -32000, "message": str(exc)}, "id": req_id}
+    except PluginViolationError as exc:
+        error_code = -32602
+        if exc.violation and hasattr(exc.violation, "mcp_error_code") and isinstance(exc.violation.mcp_error_code, int):
+            error_code = exc.violation.mcp_error_code
+        return {"jsonrpc": "2.0", "error": {"code": error_code, "message": str(exc)}, "id": req_id}
+    except PluginError as exc:
+        error_code = -32603
+        if exc.error and hasattr(exc.error, "mcp_error_code") and isinstance(exc.error.mcp_error_code, int):
+            error_code = exc.error.mcp_error_code
+        return {"jsonrpc": "2.0", "error": {"code": error_code, "message": str(exc)}, "id": req_id}
+    except (ValidationError, ValueError) as exc:
+        logger.info("AppBridge tool call received invalid parameters for %s: %s", name, exc)
+        return {"jsonrpc": "2.0", "error": {"code": -32602, "message": str(exc)}, "id": req_id}
+    except Exception:
+        logger.exception("AppBridge tool call failed for %s", name)
+        return {"jsonrpc": "2.0", "error": {"code": -32603, "message": "Internal error"}, "id": req_id}
+
+
 @utility_router.post("/appbridge/sessions/{app_session_id}/rpc")
 @require_permission("tools.execute")
 async def handle_mcp_app_session_rpc(app_session_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)):
@@ -10744,58 +10810,22 @@ async def handle_mcp_app_session_rpc(app_session_id: str, request: Request, db: 
 
     if method == "notifications/message":
         _record_app_bridge_log(app_session, params)
-        return {"jsonrpc": "2.0", "result": {}, "id": req_id}
+        # A JSON-RPC notification carries no id and MUST NOT receive a JSON-RPC response, so
+        # this is acknowledged at the transport level only: 202 Accepted with an empty body,
+        # matching the Streamable HTTP rule for notification-only input.
+        return Response(status_code=status.HTTP_202_ACCEPTED)
 
     if method == "resources/read":
+        # RBAC is a layer of its own, separate from the session's token/team scoping: the
+        # endpoint decorator only proves tools.execute, which a caller can retain after
+        # resources.read has been revoked. Authorize the read per method.
+        try:
+            await _ensure_rpc_permission(user, db, "resources.read", method, request=request)
+        except JSONRPCError as exc:
+            return {"jsonrpc": "2.0", "error": exc.to_dict()["error"], "id": req_id}
         return await _handle_app_bridge_resources_read(db, request, app_session, params, req_id)
 
-    name = params.get("name")
-    if not name:
-        return {"jsonrpc": "2.0", "error": {"code": -32602, "message": "Missing tool name in parameters"}, "id": req_id}
-
-    try:
-        token_teams = app_session.token_teams
-        tool_user_email = None if token_teams is None else app_session.user_email
-        request_headers = {k.lower(): v for k, v in request.headers.items()}
-        request_headers.pop("x-context-forge-gateway-id", None)
-        result = await tool_service.invoke_tool(
-            db=db,
-            name=name,
-            arguments=params.get("arguments", {}),
-            request_headers=request_headers,
-            app_user_email=requester_email,
-            user_email=tool_user_email,
-            token_teams=token_teams,
-            server_id=app_session.server_id,
-            plugin_context_table=getattr(request.state, "plugin_context_table", None),
-            plugin_global_context=getattr(request.state, "plugin_global_context", None),
-            meta_data=params.get("_meta"),
-            require_app_visible=True,
-        )
-        if hasattr(result, "model_dump"):
-            result = result.model_dump(by_alias=True, exclude_none=True)
-        return {"jsonrpc": "2.0", "result": result, "id": req_id}
-    except ToolNotFoundError:
-        return {"jsonrpc": "2.0", "error": {"code": -32601, "message": f"Tool not found: {name}"}, "id": req_id}
-    except ToolError as exc:
-        logger.info("AppBridge tool call failed with tool error for %s: %s", name, exc)
-        return {"jsonrpc": "2.0", "error": {"code": -32000, "message": str(exc)}, "id": req_id}
-    except PluginViolationError as exc:
-        error_code = -32602
-        if exc.violation and hasattr(exc.violation, "mcp_error_code") and isinstance(exc.violation.mcp_error_code, int):
-            error_code = exc.violation.mcp_error_code
-        return {"jsonrpc": "2.0", "error": {"code": error_code, "message": str(exc)}, "id": req_id}
-    except PluginError as exc:
-        error_code = -32603
-        if exc.error and hasattr(exc.error, "mcp_error_code") and isinstance(exc.error.mcp_error_code, int):
-            error_code = exc.error.mcp_error_code
-        return {"jsonrpc": "2.0", "error": {"code": error_code, "message": str(exc)}, "id": req_id}
-    except (ValidationError, ValueError) as exc:
-        logger.info("AppBridge tool call received invalid parameters for %s: %s", name, exc)
-        return {"jsonrpc": "2.0", "error": {"code": -32602, "message": str(exc)}, "id": req_id}
-    except Exception:
-        logger.exception("AppBridge tool call failed for %s", name)
-        return {"jsonrpc": "2.0", "error": {"code": -32603, "message": "Internal error"}, "id": req_id}
+    return await _handle_app_bridge_tools_call(db, request, app_session, params, req_id, requester_email)
 
 
 @utility_router.post("/_internal/mcp/tools/call/")
@@ -11778,9 +11808,6 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
             result = {}
         elif method.startswith("extensions/") or method.startswith("io.modelcontextprotocol/"):
             # Check if this is a known MCP Apps method.
-            # First-Party
-            from mcpgateway.services.mcp_method_registry import mcp_method_registry
-
             if not mcp_method_registry.is_known_method(method):
                 raise JSONRPCError(-32601, f"Method not found: {method}", {})
             # Known MCP Apps method but not yet implemented here.

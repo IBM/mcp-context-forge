@@ -868,7 +868,10 @@ class TestAppBridgeEndpoints:
             invoke_mock.assert_not_awaited()
             read_mock.assert_not_awaited()
 
-        assert result["result"] == {}
+        # A JSON-RPC notification must not receive a JSON-RPC response; the app gets a
+        # bare transport-level acknowledgement instead.
+        assert result.status_code == 202
+        assert result.body == b""
 
     @pytest.mark.asyncio
     async def test_rpc_resources_read_is_scoped_to_the_bound_session(self, monkeypatch, mock_db, valid_app_session):
@@ -888,12 +891,14 @@ class TestAppBridgeEndpoints:
             patch.object(main_mod, "_assert_session_owner_or_admin", new=AsyncMock()),
             patch.object(main_mod, "get_request_identity", return_value=("user@example.com", False)),
             patch.object(main_mod.mcp_app_session_service, "get_valid_session", return_value=valid_app_session),
+            patch.object(main_mod, "_ensure_rpc_permission", new=AsyncMock()) as permission_mock,
             patch.object(main_mod.resource_service, "read_resource", new=AsyncMock(return_value=content)) as read_mock,
         ):
             result = await main_mod.handle_mcp_app_session_rpc.__wrapped__("test-session-id", request=request, db=mock_db, user={"email": "user@example.com"})
             call_kwargs = read_mock.await_args.kwargs
 
         assert result["result"]["contents"][0]["uri"] == "ui://widgets/example"
+        assert permission_mock.await_args.args[2] == "resources.read"
         assert call_kwargs["server_id"] == "server-123"
         assert call_kwargs["token_teams"] == ["team1"]
         assert call_kwargs["user"] == "user@example.com"
@@ -934,6 +939,7 @@ class TestAppBridgeEndpoints:
             patch.object(main_mod, "_assert_session_owner_or_admin", new=AsyncMock()),
             patch.object(main_mod, "get_request_identity", return_value=("user@example.com", False)),
             patch.object(main_mod.mcp_app_session_service, "get_valid_session", return_value=valid_app_session),
+            patch.object(main_mod, "_ensure_rpc_permission", new=AsyncMock()),
         ):
             result = await main_mod.handle_mcp_app_session_rpc.__wrapped__(
                 "test-session-id",
@@ -958,6 +964,61 @@ class TestAppBridgeEndpoints:
             with patch.object(main_mod.resource_service, "read_resource", new=AsyncMock(side_effect=RuntimeError("boom"))):
                 result = await main_mod.handle_mcp_app_session_rpc.__wrapped__("test-session-id", request=request, db=mock_db, user={"email": "user@example.com"})
             assert result["error"]["code"] == -32603
+
+    def test_rpc_resources_read_denied_without_resources_read_permission(self, monkeypatch, mock_db, valid_app_session):
+        """Holding tools.execute must not be enough to read a resource over the AppBridge."""
+        # First-Party
+        from mcpgateway import main as main_mod
+
+        monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", True)
+
+        class GrantsOnlyToolsExecute:
+            """Permission service double granting tools.execute and nothing else."""
+
+            def __init__(self, _db) -> None:
+                pass
+
+            async def check_permission(self, **kwargs) -> bool:
+                """Grant only the endpoint-level tools.execute permission."""
+                return kwargs.get("permission") == "tools.execute"
+
+        class DeniesResourcesRead:
+            """RPC permission checker double that denies resources.read."""
+
+            def __init__(self, _user) -> None:
+                pass
+
+            async def has_permission(self, permission, **kwargs) -> bool:
+                """Deny resources.read, grant anything else."""
+                return permission != "resources.read"
+
+        route_app = FastAPI()
+        route_app.include_router(main_mod.utility_router)
+        route_app.dependency_overrides[main_mod.get_db] = lambda: mock_db
+        route_app.dependency_overrides[main_mod.get_current_user_with_permissions] = lambda: {"email": "user@example.com", "db": mock_db, "is_admin": False}
+        client = TestClient(route_app, raise_server_exceptions=False)
+
+        with (
+            patch("mcpgateway.middleware.rbac.PermissionService", GrantsOnlyToolsExecute),
+            patch.object(main_mod, "PermissionChecker", DeniesResourcesRead),
+            patch.object(main_mod, "_build_rpc_permission_user", return_value={"email": "user@example.com"}),
+            patch.object(main_mod, "_assert_session_owner_or_admin", new=AsyncMock()),
+            patch.object(main_mod, "get_request_identity", return_value=("user@example.com", False)),
+            patch.object(main_mod.mcp_app_session_service, "get_valid_session", return_value=valid_app_session),
+            patch.object(main_mod.resource_service, "read_resource", new=AsyncMock()) as read_mock,
+        ):
+            response = client.post(
+                "/appbridge/sessions/test-session-id/rpc",
+                json={"jsonrpc": "2.0", "id": "1", "method": "resources/read", "params": {"uri": "ui://widgets/example"}},
+                headers={"mcp-session-id": "mcp-session-123"},
+            )
+        client.close()
+
+        # The route decorator passed on tools.execute, so the denial must come from the
+        # method-specific resources.read check inside the handler.
+        assert response.status_code == 200
+        assert response.json()["error"]["code"] == -32003
+        read_mock.assert_not_awaited()
 
 
 class TestAppBridgeSessionSecurity:
