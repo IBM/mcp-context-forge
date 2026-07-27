@@ -23,7 +23,7 @@ from starlette.responses import JSONResponse, Response
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.services.csrf_service import get_csrf_service
-from mcpgateway.utils.verify_credentials import get_auth_header_value, verify_jwt_token_cached
+from mcpgateway.utils.verify_credentials import get_auth_header_value, is_proxy_auth_trust_active, verify_jwt_token_cached
 
 logger = logging.getLogger(__name__)
 
@@ -118,7 +118,13 @@ class CSRFMiddleware(BaseHTTPMiddleware):
         # ambient cookie-borne credentials; a request with no Authorization header and no
         # auth cookie has nothing for CSRF to protect. Let the auth layer produce the
         # correct 401 instead of a misleading 403 CSRF error.
-        if not auth_header and not (request.cookies.get("jwt_token") or request.cookies.get("access_token")):
+        #
+        # Exception: trusted-proxy-header auth is still ambient (the identity comes from
+        # the proxy's own session cookie, injected as a header) so it must not fall
+        # through here.
+        has_auth_cookie = bool(request.cookies.get("jwt_token") or request.cookies.get("access_token"))
+        has_proxy_identity = is_proxy_auth_trust_active(settings) and bool(request.headers.get(settings.proxy_user_header))
+        if not auth_header and not has_auth_cookie and not has_proxy_identity:
             return await call_next(request)
 
         # 5. Extract CSRF token from header. Do not consume form bodies here:

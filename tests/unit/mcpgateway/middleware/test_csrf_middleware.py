@@ -347,6 +347,76 @@ async def test_non_bearer_auth_header_without_cookie_still_returns_403():
 
 
 @pytest.mark.asyncio
+async def test_proxy_header_identity_still_requires_csrf():
+    """Test that trusted-proxy-header identity is not treated as credential-less.
+
+    Deny-path regression test for issue #5743 follow-up: under
+    MCP_CLIENT_AUTH_ENABLED=false + TRUST_PROXY_AUTH(_DANGEROUSLY)=true, identity
+    comes from the proxy header (e.g. X-Authenticated-User), backed by the
+    proxy's own ambient session cookie. The request has no Authorization header
+    and no jwt_token/access_token cookie, but it must NOT fall through the
+    no-credentials guard — otherwise a cross-site POST that triggers the proxy
+    to inject the header would run with CSRF protection bypassed.
+    """
+    middleware = CSRFMiddleware(app=AsyncMock())
+    call_next = AsyncMock(return_value=Response("ok", status_code=200))
+
+    request = MagicMock(spec=Request)
+    request.method = "POST"
+    request.url.path = "/api/data"
+    request.headers = {"X-Authenticated-User": "victim@example.com"}
+    request.cookies = {}
+
+    with patch("mcpgateway.middleware.csrf_middleware.settings") as mock_settings, patch(
+        "mcpgateway.middleware.csrf_middleware.is_proxy_auth_trust_active", return_value=True
+    ):
+        mock_settings.csrf_enabled = True
+        mock_settings.auth_required = True
+        mock_settings.csrf_exempt_paths = []
+        mock_settings.csrf_token_name = "X-CSRF-Token"
+        mock_settings.proxy_user_header = "X-Authenticated-User"
+
+        response = await middleware.dispatch(request, call_next)
+
+    assert response.status_code == 403
+    assert response.body == b'{"detail":"CSRF validation failed","code":"CSRF_TOKEN_INVALID"}'
+    call_next.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_proxy_header_present_but_trust_inactive_falls_through():
+    """Test that a stray proxy-user header is ignored when proxy trust is not active.
+
+    Positive control for the fix above: when `is_proxy_auth_trust_active()` is
+    False (the default; e.g. MCP client auth still enabled), the presence of an
+    X-Authenticated-User header must not itself block the credential-less
+    fall-through, since the header carries no authority in that configuration.
+    """
+    middleware = CSRFMiddleware(app=AsyncMock())
+    call_next = AsyncMock(return_value=Response("ok", status_code=200))
+
+    request = MagicMock(spec=Request)
+    request.method = "POST"
+    request.url.path = "/api/data"
+    request.headers = {"X-Authenticated-User": "someone@example.com"}
+    request.cookies = {}
+
+    with patch("mcpgateway.middleware.csrf_middleware.settings") as mock_settings, patch(
+        "mcpgateway.middleware.csrf_middleware.is_proxy_auth_trust_active", return_value=False
+    ):
+        mock_settings.csrf_enabled = True
+        mock_settings.auth_required = True
+        mock_settings.csrf_exempt_paths = []
+        mock_settings.csrf_token_name = "X-CSRF-Token"
+        mock_settings.proxy_user_header = "X-Authenticated-User"
+
+        response = await middleware.dispatch(request, call_next)
+
+    assert response.status_code == 200
+    call_next.assert_awaited_once_with(request)
+
+
+@pytest.mark.asyncio
 async def test_csrf_disabled_allows_all_requests():
     """Test that CSRF_ENABLED=False allows all requests through."""
     middleware = CSRFMiddleware(app=AsyncMock())
