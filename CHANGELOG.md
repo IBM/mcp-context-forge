@@ -89,8 +89,6 @@ Release 1.0.6 consolidates **61 PRs** focused on **OAuth RFC 8693 token exchange
   rotate long-lived tokens; enabling `DERIVE_KEY_PER_ENVIRONMENT` invalidates tokens issued before it
   was turned on. RS*/ES* deployments must use distinct key pairs per environment.
 
-- **Redis Connection Leak** ([#5711](https://github.com/IBM/mcp-context-forge/pull/5711)) - The `mcpgateway/plugins/__init__.py` had a connection leak in `_plugin_invalidation_listener`. The pubsub client was unsubscribed but the connection was never closed, eventually leading to connection pool exhaustion.
-
 ### Changed
 
 #### **API**
