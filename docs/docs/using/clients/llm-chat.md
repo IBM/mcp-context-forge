@@ -41,6 +41,7 @@ All LLM providers are configured via the Admin UI's LLM Settings. Navigate to **
 ```bash
 # ===== Redis Connection =====
 CACHE_TYPE=redis                          # Enable Redis
+# Default: database -- must be set to "redis" for multi-worker LLM Chat
 REDIS_URL=redis://localhost:6379/0       # Redis connection string
 
 # ===== Session Management =====
