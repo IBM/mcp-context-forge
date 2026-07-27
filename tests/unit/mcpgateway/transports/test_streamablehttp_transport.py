@@ -13278,7 +13278,7 @@ async def test_normalize_jwt_payload_session_admin_no_email_no_bypass():
 
 
 # ---------------------------------------------------------------------------
-# _resolve_subject_email tests (issue #5215)
+# _resolve_jwt_user_email_for_streamable tests (issue #5215)
 #
 # Session tokens carry sub = EmailUser.id (a UUID); legacy/API tokens carry the
 # email. The MCP transport used to treat sub as an email unconditionally, so
@@ -13294,7 +13294,7 @@ async def test_resolve_subject_email_uuid_sub_resolves_to_email():
     """A session token's UUID sub is resolved to the user's email via the DB."""
     lookup = Mock(return_value="user@example.com")
     with patch("mcpgateway.auth._get_email_by_id_sync", lookup):
-        result = await tr._resolve_subject_email({"sub": SESSION_SUB_UUID, "token_use": "session"})
+        result = await tr._resolve_jwt_user_email_for_streamable({"sub": SESSION_SUB_UUID, "token_use": "session"})
 
     assert result == "user@example.com"
     lookup.assert_called_once_with(SESSION_SUB_UUID)
@@ -13305,7 +13305,7 @@ async def test_resolve_subject_email_legacy_sub_skips_db_lookup():
     """An email sub short-circuits before any DB round-trip (hot-path guard)."""
     lookup = Mock(return_value="should-not-be-used@example.com")
     with patch("mcpgateway.auth._get_email_by_id_sync", lookup):
-        result = await tr._resolve_subject_email({"sub": "legacy@example.com", "token_use": "api"})
+        result = await tr._resolve_jwt_user_email_for_streamable({"sub": "legacy@example.com", "token_use": "api"})
 
     assert result == "legacy@example.com"
     lookup.assert_not_called()
@@ -13316,29 +13316,30 @@ async def test_resolve_subject_email_session_token_with_email_sub():
     """Session tokens issued without a user row carry an email sub (admin.py:4273)."""
     lookup = Mock(return_value="should-not-be-used@example.com")
     with patch("mcpgateway.auth._get_email_by_id_sync", lookup):
-        result = await tr._resolve_subject_email({"sub": "admin@example.com", "token_use": "session"})
+        result = await tr._resolve_jwt_user_email_for_streamable({"sub": "admin@example.com", "token_use": "session"})
 
     assert result == "admin@example.com"
     lookup.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_resolve_subject_email_unresolvable_uuid_returns_raw_subject():
-    """An unresolvable UUID keeps the raw subject so require_user_in_db still denies.
+async def test_resolve_subject_email_unresolvable_uuid_returns_none():
+    """An unresolvable UUID returns None so the caller can reject it explicitly.
 
-    SECURITY: the request must fail closed on the caller's existing
-    "User not found in database" branch, never silently downgrade to anonymous.
+    SECURITY: the request must fail closed on the caller's UUID-subject guard,
+    never by treating the raw UUID as an email and never by silently downgrading
+    it to anonymous.
     """
     with patch("mcpgateway.auth._get_email_by_id_sync", Mock(return_value=None)):
-        result = await tr._resolve_subject_email({"sub": SESSION_SUB_UUID, "token_use": "session"})
+        result = await tr._resolve_jwt_user_email_for_streamable({"sub": SESSION_SUB_UUID, "token_use": "session"})
 
-    assert result == SESSION_SUB_UUID
+    assert result is None
 
 
 @pytest.mark.asyncio
 async def test_resolve_subject_email_falls_back_to_email_claim():
     """Falls back to the 'email' claim when 'sub' is absent."""
-    result = await tr._resolve_subject_email({"email": "fallback@example.com"})
+    result = await tr._resolve_jwt_user_email_for_streamable({"email": "fallback@example.com"})
     assert result == "fallback@example.com"
 
 
@@ -13354,7 +13355,7 @@ async def test_resolve_subject_email_prefers_email_over_conflicting_sub():
     """
     lookup = Mock(return_value="should-not-be-used@example.com")
     with patch("mcpgateway.auth._get_email_by_id_sync", lookup):
-        result = await tr._resolve_subject_email({"email": "canonical@example.com", "sub": SESSION_SUB_UUID, "token_use": "session"})
+        result = await tr._resolve_jwt_user_email_for_streamable({"email": "canonical@example.com", "sub": SESSION_SUB_UUID, "token_use": "session"})
 
     assert result == "canonical@example.com"
     lookup.assert_not_called()
@@ -13363,21 +13364,21 @@ async def test_resolve_subject_email_prefers_email_over_conflicting_sub():
 @pytest.mark.asyncio
 async def test_resolve_subject_email_non_string_email_falls_back_to_sub():
     """A malformed (non-string) 'email' claim is ignored in favor of 'sub'."""
-    result = await tr._resolve_subject_email({"email": ["not", "a", "string"], "sub": "legacy@example.com", "token_use": "api"})
+    result = await tr._resolve_jwt_user_email_for_streamable({"email": ["not", "a", "string"], "sub": "legacy@example.com", "token_use": "api"})
     assert result == "legacy@example.com"
 
 
 @pytest.mark.asyncio
 async def test_resolve_subject_email_empty_email_falls_back_to_sub():
     """An empty-string 'email' claim is treated as absent and falls back to 'sub'."""
-    result = await tr._resolve_subject_email({"email": "", "sub": "legacy@example.com", "token_use": "api"})
+    result = await tr._resolve_jwt_user_email_for_streamable({"email": "", "sub": "legacy@example.com", "token_use": "api"})
     assert result == "legacy@example.com"
 
 
 @pytest.mark.asyncio
 async def test_resolve_subject_email_no_subject_returns_none():
     """A payload with no subject yields None rather than raising."""
-    assert await tr._resolve_subject_email({}) is None
+    assert await tr._resolve_jwt_user_email_for_streamable({}) is None
 
 
 @pytest.mark.asyncio
@@ -13393,7 +13394,7 @@ async def test_resolve_subject_email_db_error_propagates():
 
     with patch("mcpgateway.auth._get_email_by_id_sync", Mock(side_effect=SQLAlchemyError("db down"))):
         with pytest.raises(SQLAlchemyError):
-            await tr._resolve_subject_email({"sub": SESSION_SUB_UUID, "token_use": "session"})
+            await tr._resolve_jwt_user_email_for_streamable({"sub": SESSION_SUB_UUID, "token_use": "session"})
 
 
 @pytest.mark.asyncio
