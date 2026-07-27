@@ -345,7 +345,7 @@ async def startup_event():
 
     # Initialize caching and storage
     tools["cache"] = {"evaluation": EvaluationCache(), "judge": JudgeResponseCache(), "benchmark": BenchmarkCache()}
-    tools["storage"] = ResultsStore()
+    tools["storage"] = await ResultsStore.create()
 
     # Log available judges
     available_judges = judge_tools.get_available_judges()

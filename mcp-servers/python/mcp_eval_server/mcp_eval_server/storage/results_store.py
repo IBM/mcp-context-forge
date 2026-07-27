@@ -9,28 +9,48 @@ Results storage system for MCP Eval Server.
 
 # Standard
 from pathlib import Path
-import sqlite3
 from typing import Any, Dict, List, Optional
 
+# Third-Party
+import aiosqlite
 import orjson
 
-class ResultsStore:
-    """SQLite-based storage for evaluation results."""
 
-    def __init__(self, db_path: str = "evaluation_results.db"):
-        """Initialize results store.
+class ResultsStore:
+    """SQLite-based async storage for evaluation results.
+
+    Use the async factory method to instantiate::
+
+        store = await ResultsStore.create("evaluation_results.db")
+    """
+
+    def __init__(self, db_path: str = "evaluation_results.db") -> None:
+        """Store the DB path. Call :meth:`create` instead for a fully-initialised instance.
 
         Args:
             db_path: Path to SQLite database file
         """
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._init_database()
 
-    def _init_database(self):
-        """Initialize database schema."""
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute(
+    @classmethod
+    async def create(cls, db_path: str = "evaluation_results.db") -> "ResultsStore":
+        """Async factory – create and initialise the database schema.
+
+        Args:
+            db_path: Path to SQLite database file
+
+        Returns:
+            A fully-initialised :class:`ResultsStore` instance.
+        """
+        instance = cls(db_path)
+        await instance._init_database()
+        return instance
+
+    async def _init_database(self) -> None:
+        """Initialise database schema (runs DDL statements, idempotent)."""
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute(
                 """
                 CREATE TABLE IF NOT EXISTS evaluation_results (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -48,7 +68,7 @@ class ResultsStore:
             """
             )
 
-            conn.execute(
+            await db.execute(
                 """
                 CREATE TABLE IF NOT EXISTS evaluation_steps (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -65,7 +85,7 @@ class ResultsStore:
             """
             )
 
-            conn.execute(
+            await db.execute(
                 """
                 CREATE TABLE IF NOT EXISTS judge_evaluations (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -82,23 +102,25 @@ class ResultsStore:
             """
             )
 
-            conn.execute(
+            await db.execute(
                 """
                 CREATE INDEX IF NOT EXISTS idx_results_suite ON evaluation_results(suite_id);
             """
             )
 
-            conn.execute(
+            await db.execute(
                 """
                 CREATE INDEX IF NOT EXISTS idx_steps_results ON evaluation_steps(results_id);
             """
             )
 
-            conn.execute(
+            await db.execute(
                 """
                 CREATE INDEX IF NOT EXISTS idx_judge_model ON judge_evaluations(judge_model);
             """
             )
+
+            await db.commit()
 
     async def store_evaluation_result(self, result: Dict[str, Any]) -> str:
         """Store complete evaluation result.
@@ -111,9 +133,9 @@ class ResultsStore:
         """
         results_id = result["results_id"]
 
-        with sqlite3.connect(self.db_path) as conn:
+        async with aiosqlite.connect(self.db_path) as db:
             # Store main result
-            conn.execute(
+            await db.execute(
                 """
                 INSERT OR REPLACE INTO evaluation_results (
                     results_id, suite_id, suite_name, overall_score, passed,
@@ -135,7 +157,7 @@ class ResultsStore:
 
             # Store step results
             for step_result in result.get("step_results", []):
-                conn.execute(
+                await db.execute(
                     """
                     INSERT INTO evaluation_steps (
                         results_id, tool_name, success, score, execution_time,
@@ -153,6 +175,8 @@ class ResultsStore:
                     ),
                 )
 
+            await db.commit()
+
         return results_id
 
     def _extract_score(self, result: Dict[str, Any]) -> Optional[float]:
@@ -164,7 +188,15 @@ class ResultsStore:
         Returns:
             Optional[float]: Extracted score as float if found, None otherwise.
         """
-        score_fields = ["overall_score", "score", "clarity_score", "coherence_score", "factuality_score", "completion_rate", "accuracy"]
+        score_fields = [
+            "overall_score",
+            "score",
+            "clarity_score",
+            "coherence_score",
+            "factuality_score",
+            "completion_rate",
+            "accuracy",
+        ]
 
         for field in score_fields:
             if field in result:
@@ -183,18 +215,18 @@ class ResultsStore:
         Returns:
             Evaluation result or None if not found
         """
-        with sqlite3.connect(self.db_path) as conn:
-            conn.row_factory = sqlite3.Row
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
 
             # Get main result
-            cursor = conn.execute(
+            async with db.execute(
                 """
                 SELECT * FROM evaluation_results WHERE results_id = ?
             """,
                 (results_id,),
-            )
+            ) as cursor:
+                row = await cursor.fetchone()
 
-            row = cursor.fetchone()
             if not row:
                 return None
 
@@ -205,7 +237,12 @@ class ResultsStore:
 
             return result
 
-    async def list_evaluation_results(self, suite_id: Optional[str] = None, limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
+    async def list_evaluation_results(
+        self,
+        suite_id: Optional[str] = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> List[Dict[str, Any]]:
         """List evaluation results with optional filtering.
 
         Args:
@@ -216,11 +253,11 @@ class ResultsStore:
         Returns:
             List of evaluation result summaries
         """
-        with sqlite3.connect(self.db_path) as conn:
-            conn.row_factory = sqlite3.Row
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
 
             if suite_id:
-                cursor = conn.execute(
+                async with db.execute(
                     """
                     SELECT results_id, suite_id, suite_name, overall_score,
                            passed, created_at, execution_time
@@ -230,9 +267,10 @@ class ResultsStore:
                     LIMIT ? OFFSET ?
                 """,
                     (suite_id, limit, offset),
-                )
+                ) as cursor:
+                    rows = await cursor.fetchall()
             else:
-                cursor = conn.execute(
+                async with db.execute(
                     """
                     SELECT results_id, suite_id, suite_name, overall_score,
                            passed, created_at, execution_time
@@ -241,11 +279,19 @@ class ResultsStore:
                     LIMIT ? OFFSET ?
                 """,
                     (limit, offset),
-                )
+                ) as cursor:
+                    rows = await cursor.fetchall()
 
-            return [dict(row) for row in cursor.fetchall()]
+            return [dict(row) for row in rows]
 
-    async def store_judge_evaluation(self, judge_model: str, response_hash: str, criteria_hash: str, evaluation: Dict[str, Any], execution_time: float) -> None:
+    async def store_judge_evaluation(
+        self,
+        judge_model: str,
+        response_hash: str,
+        criteria_hash: str,
+        evaluation: Dict[str, Any],
+        execution_time: float,
+    ) -> None:
         """Store judge evaluation result.
 
         Args:
@@ -255,8 +301,8 @@ class ResultsStore:
             evaluation: Judge evaluation result
             execution_time: Time taken for evaluation
         """
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute(
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute(
                 """
                 INSERT INTO judge_evaluations (
                     judge_model, response_hash, criteria_hash, overall_score,
@@ -274,6 +320,7 @@ class ResultsStore:
                     execution_time,
                 ),
             )
+            await db.commit()
 
     async def get_evaluation_statistics(self) -> Dict[str, Any]:
         """Get overall evaluation statistics.
@@ -281,8 +328,10 @@ class ResultsStore:
         Returns:
             Statistics dictionary
         """
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.execute(
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+
+            async with db.execute(
                 """
                 SELECT
                     COUNT(*) as total_evaluations,
@@ -293,12 +342,11 @@ class ResultsStore:
                     MAX(created_at) as last_evaluation
                 FROM evaluation_results
             """
-            )
-
-            stats = dict(cursor.fetchone())
+            ) as cursor:
+                stats = dict(await cursor.fetchone())  # type: ignore[arg-type]
 
             # Get suite statistics
-            cursor = conn.execute(
+            async with db.execute(
                 """
                 SELECT
                     suite_name,
@@ -310,9 +358,8 @@ class ResultsStore:
                 ORDER BY count DESC
                 LIMIT 10
             """
-            )
-
-            stats["top_suites"] = [dict(row) for row in cursor.fetchall()]
+            ) as cursor:
+                stats["top_suites"] = [dict(row) for row in await cursor.fetchall()]
 
             return stats
 
@@ -325,15 +372,17 @@ class ResultsStore:
         Returns:
             Number of results removed
         """
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.execute(
+        async with aiosqlite.connect(self.db_path) as db:
+            async with db.execute(
                 """
                 DELETE FROM evaluation_results
                 WHERE created_at < datetime('now', '-' || CAST(? AS TEXT) || ' days')
             """,
                 (days_old,),
-            )
+            ) as cursor:
+                deleted = cursor.rowcount
+
+            await db.commit()
 
             # Steps are deleted automatically due to foreign key constraint
-
-            return cursor.rowcount
+            return deleted
