@@ -995,7 +995,7 @@ class SecurityValidator:
         return text
 
     @classmethod
-    def validate_url(cls, value: str, field_name: str = "URL") -> str:
+    def validate_url(cls, value: str, field_name: str = "URL", *, skip_ssrf: bool = False) -> str:
         """Validate URLs for allowed schemes and safe display.
 
         Validation is performed on a percent-decoded copy of the URL to block
@@ -1008,6 +1008,9 @@ class SecurityValidator:
         Args:
             value (str): Value to validate
             field_name (str): Name of field being validated
+            skip_ssrf (bool): Skip DNS-based SSRF checks. Intended only for
+                callers that immediately resolve, validate, and pin the same
+                outbound connection target.
 
         Returns:
             str: The ORIGINAL (percent-encoded) URL if acceptable. Downstream
@@ -1284,7 +1287,7 @@ class SecurityValidator:
                 if decoded_hostname == "0.0.0.0":  # nosec B104 - blocked for security
                     raise ValueError(f"{field_name} contains invalid IP address (0.0.0.0)")
 
-                if settings.ssrf_protection_enabled:
+                if settings.ssrf_protection_enabled and not skip_ssrf:
                     cls._validate_ssrf(decoded_hostname, field_name)
 
             # Validate port number
@@ -1385,6 +1388,19 @@ class SecurityValidator:
         raise ValueError(f"Invalid hostname: {hostname}")
 
     @classmethod
+    def _validate_ssrf_blocked_hostname(cls, hostname: str, field_name: str) -> str:
+        """Normalize a hostname and enforce hostname-only SSRF block rules."""
+        hostname = _unquote_if_needed(hostname)
+        hostname_normalized = cls._normalize_hostname(hostname)
+
+        for blocked_host in settings.ssrf_blocked_hosts:
+            blocked_normalized = cls._normalize_hostname(blocked_host)
+            if hostname_normalized == blocked_normalized:
+                raise ValueError(f"{field_name} contains blocked hostname '{hostname}' (SSRF protection)")
+
+        return hostname_normalized
+
+    @classmethod
     def _validate_ssrf(cls, hostname: str, field_name: str) -> None:
         """Validate hostname/IP against SSRF protection rules.
 
@@ -1442,19 +1458,7 @@ class SecurityValidator:
             >>> with patch('mcpgateway.common.validators.settings', mock_settings):
             ...     SecurityValidator._validate_ssrf('8.8.8.8', 'URL')  # Should not raise
         """
-        # Defensive idempotent decode: percent-encoded hostnames (e.g.
-        # %31%32%37%2E%30%2E%30%2E%31 = 127.0.0.1) must be normalized for
-        # callers other than validate_url() which already decodes.
-        hostname = _unquote_if_needed(hostname)
-
-        # Normalize hostname: lowercase, strip trailing dots, IDN conversion
-        hostname_normalized = cls._normalize_hostname(hostname)
-
-        # Check blocked hostnames (case-insensitive, normalized)
-        for blocked_host in settings.ssrf_blocked_hosts:
-            blocked_normalized = cls._normalize_hostname(blocked_host)
-            if hostname_normalized == blocked_normalized:
-                raise ValueError(f"{field_name} contains blocked hostname '{hostname}' (SSRF protection)")
+        hostname_normalized = cls._validate_ssrf_blocked_hostname(hostname, field_name)
 
         # Resolve hostname to IP for network-based checks
         # Uses getaddrinfo to check ALL resolved addresses (A and AAAA records)
@@ -1559,18 +1563,22 @@ class SecurityValidator:
         loop = asyncio.get_running_loop()
         try:
             validated_url = await asyncio.wait_for(
-                loop.run_in_executor(None, lambda: cls.validate_url(value, field_name)),
+                loop.run_in_executor(None, lambda: cls.validate_url(value, field_name, skip_ssrf=True)),
                 timeout=dns_timeout,
             )
         except asyncio.TimeoutError as exc:
-            raise ValueError(f"{field_name} DNS validation timed out") from exc
+            raise ValueError(f"{field_name} URL validation timed out") from exc
 
         try:
             parsed = urlparse(validated_url)
             hostname = parsed.hostname
             if not hostname:
                 raise ValueError(f"{field_name} is not a valid URL")
-            hostname_normalized = cls._normalize_hostname(_unquote_if_needed(hostname))
+            hostname_normalized = _unquote_if_needed(hostname)
+            if settings.ssrf_protection_enabled:
+                hostname_normalized = cls._validate_ssrf_blocked_hostname(hostname_normalized, field_name)
+            else:
+                hostname_normalized = cls._normalize_hostname(hostname_normalized)
         except ValueError:
             raise
         except Exception as exc:

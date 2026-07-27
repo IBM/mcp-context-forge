@@ -1176,6 +1176,17 @@ class TestValidateUrlSecurity:
         monkeypatch.setattr(validators.settings, "ssrf_protection_enabled", False)
         assert SecurityValidator.validate_url("https://example.com", "URL") == "https://example.com"
 
+    def test_validate_url_skip_ssrf_keeps_structural_checks(self):
+        """Internal callers can skip DNS SSRF work without bypassing URL safety checks."""
+
+        with patch.object(SecurityValidator, "_validate_ssrf") as validate_ssrf:
+            assert SecurityValidator.validate_url("https://127.0.0.1/path", "URL", skip_ssrf=True) == "https://127.0.0.1/path"
+
+        validate_ssrf.assert_not_called()
+
+        with pytest.raises(ValueError, match="script patterns"):
+            SecurityValidator.validate_url("https://example.com/?q=onload=alert(1)", "URL", skip_ssrf=True)
+
     def test_script_patterns_in_url(self, monkeypatch):
         """Script patterns (non-protocol) should be blocked (line 1064)."""
         import mcpgateway.common.validators as validators
@@ -2402,8 +2413,44 @@ class TestOutboundUrlConnectionPinningValidation:
         """Slow URL validation fails closed for async callers."""
 
         with patch("mcpgateway.common.validators.asyncio.wait_for", side_effect=asyncio.TimeoutError):
-            with pytest.raises(ValueError, match="DNS validation timed out"):
+            with pytest.raises(ValueError, match="URL validation timed out"):
                 await SecurityValidator.validate_url_for_connection_pinning("https://api.example.com/path", "Tool URL")
+
+    @pytest.mark.asyncio
+    async def test_validate_url_for_connection_pinning_resolves_hostname_once(self, monkeypatch):
+        """The same DNS result is used for policy checks and connection pinning."""
+
+        resolved_hosts = []
+
+        def mock_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
+            resolved_hosts.append(host)
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("8.8.4.4", port or 443))]
+
+        monkeypatch.setattr("mcpgateway.common.validators.socket.getaddrinfo", mock_getaddrinfo)
+
+        with patch("mcpgateway.common.validators.settings", self._settings()):
+            result = await SecurityValidator.validate_url_for_connection_pinning("https://api.example.com/path", "Tool URL")
+
+        assert resolved_hosts == ["api.example.com"]
+        assert result["resolved_ip"] == "8.8.4.4"
+
+    @pytest.mark.asyncio
+    async def test_validate_url_for_connection_pinning_preserves_blocked_hostname_policy(self, monkeypatch):
+        """Hostname blocklist checks still run before DNS pinning."""
+
+        resolved_hosts = []
+
+        def mock_getaddrinfo(host, *_args, **_kwargs):
+            resolved_hosts.append(host)
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("8.8.4.4", 443))]
+
+        monkeypatch.setattr("mcpgateway.common.validators.socket.getaddrinfo", mock_getaddrinfo)
+
+        with patch("mcpgateway.common.validators.settings", self._settings(ssrf_blocked_hosts=["api.example.com"])):
+            with pytest.raises(ValueError, match="blocked hostname"):
+                await SecurityValidator.validate_url_for_connection_pinning("https://api.example.com/path", "Tool URL")
+
+        assert resolved_hosts == []
 
     @pytest.mark.asyncio
     async def test_validate_url_for_connection_pinning_rejects_missing_hostname(self):
