@@ -13,6 +13,7 @@ export type Tool = NonNullable<ToolRead>;
 export interface ToolGroup {
   gatewaySlug: string;
   gatewayId?: string | null;
+  gatewayDescription?: string;
   tools: Tool[];
   isActive: boolean;
 }

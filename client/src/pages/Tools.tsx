@@ -8,6 +8,7 @@ import { ApiError } from "@/api/client";
 import { useRouter } from "@/router";
 import { extractApiErrorDetail, sanitizeError } from "@/utils/errors";
 import type { Tool, ToolGroup } from "@/types/tool";
+import type { CursorPaginatedGatewaysResponse, GatewayRead } from "@/generated/types";
 import { Card, CardHeader, CardContent } from "@/components/ui/card";
 import { CardTag } from "@/components/ui/card-tag";
 import { Button } from "@/components/ui/button";
@@ -21,12 +22,22 @@ import { ToolDetailsPanel } from "@/components/tools/ToolDetailsPanel";
 import { ToolForm } from "@/components/tools/ToolForm";
 import { ConfirmDialog } from "@/components/servers/ConfirmDialog";
 
-function buildGroups(tools: Tool[], restToolsLabel: string): ToolGroup[] {
+function buildGroups(
+  tools: Tool[],
+  gatewayDescriptionById: Map<string, string>,
+  restToolsLabel: string,
+): ToolGroup[] {
   const map = new Map<string, ToolGroup>();
   for (const tool of tools) {
     const slug = tool.gatewaySlug || restToolsLabel;
     if (!map.has(slug)) {
-      map.set(slug, { gatewaySlug: slug, gatewayId: tool.gatewayId, tools: [], isActive: false });
+      map.set(slug, {
+        gatewaySlug: slug,
+        gatewayId: tool.gatewayId,
+        gatewayDescription: tool.gatewayId ? gatewayDescriptionById.get(tool.gatewayId) : undefined,
+        tools: [],
+        isActive: false,
+      });
     }
     const group = map.get(slug)!;
     group.tools.push(tool);
@@ -188,6 +199,9 @@ export function Tools() {
     refetch,
     setData: setToolsData,
   } = useQuery<Tool[]>("/tools?limit=0&include_inactive=true");
+  const { data: gatewaysData } = useQuery<CursorPaginatedGatewaysResponse>(
+    "/gateways?limit=0&include_pagination=true",
+  );
 
   useEffect(() => {
     if (toolsData) setAllTools(toolsData);
@@ -199,8 +213,23 @@ export function Tools() {
 
   const toolForForm = editedToolData?.id === editingTool?.id ? editedToolData : editingTool;
 
+  const gatewayDescriptionById = useMemo(() => {
+    const gateways: NonNullable<GatewayRead>[] = (gatewaysData?.gateways ?? []).filter(
+      (gateway): gateway is NonNullable<GatewayRead> => gateway !== null,
+    );
+    const entries: [string, string][] = [];
+    for (const gateway of gateways) {
+      const description = gateway.description?.trim();
+      if (gateway.id && description) entries.push([gateway.id, description]);
+    }
+    return new Map(entries);
+  }, [gatewaysData]);
+
   const restToolsLabel = intl.formatMessage({ id: "tools.restToolsGroup" });
-  const groups = useMemo(() => buildGroups(allTools, restToolsLabel), [allTools, restToolsLabel]);
+  const groups = useMemo(
+    () => buildGroups(allTools, gatewayDescriptionById, restToolsLabel),
+    [allTools, gatewayDescriptionById, restToolsLabel],
+  );
 
   // Keep the open details panel pointed at the latest group data so status
   // changes (e.g. activate/deactivate) are reflected once the list is updated.
@@ -439,6 +468,7 @@ export function Tools() {
             <ToolDetailsPanel
               tools={activeGroup.tools}
               gatewaySlug={activeGroup.gatewaySlug}
+              gatewayDescription={activeGroup.gatewayDescription}
               open={isDetailsPanelOpen}
               selectedToolId={selectedToolIdForDetails}
               onClose={handleCloseDetails}
