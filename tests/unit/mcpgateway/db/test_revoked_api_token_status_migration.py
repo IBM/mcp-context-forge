@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Tests for migration e5136a7c9d01."""
+"""Location: ./tests/unit/mcpgateway/db/test_revoked_api_token_status_migration.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
+SPDX-License-Identifier: Apache-2.0
+
+Tests for migration e5136a7c9d01.
+"""
 
 import importlib
 

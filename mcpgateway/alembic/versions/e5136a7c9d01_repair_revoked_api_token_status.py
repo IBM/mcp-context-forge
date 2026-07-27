@@ -1,5 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Repair active API-token rows that already have revocation records.
+"""Location: ./mcpgateway/alembic/versions/e5136a7c9d01_repair_revoked_api_token_status.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
+SPDX-License-Identifier: Apache-2.0
+
+Repair active API-token rows that already have revocation records.
 
 Revision ID: e5136a7c9d01
 Revises: d21698ae4a19
