@@ -4,5 +4,18 @@
   "dashboard.overview": "Visão Geral",
   "dashboard.stats": "Estatísticas",
   "dashboard.recentActivity": "Atividade Recente",
-  "dashboard.errorLoadingSources": "Erro ao carregar as fontes do painel"
+  "dashboard.errorLoadingSources": "Erro ao carregar as fontes do painel",
+  "dashboard.home.clear": "Limpar",
+  "dashboard.home.emptyState": "Estado vazio (a adicionar)",
+  "dashboard.home.headline.default": "Em funcionamento...",
+  "dashboard.home.card.system": "Sistema",
+  "dashboard.home.card.activity": "Feed de atividades",
+  "dashboard.home.card.mcp": "Runtime MCP",
+  "dashboard.home.card.a2a": "Runtime A2A",
+  "dashboard.home.card.rest": "API REST",
+  "dashboard.home.card.grpc": "gRPC",
+  "dashboard.home.placeholder.system": "Cartão de status do sistema (em breve)",
+  "dashboard.home.placeholder.activity": "Feed de atividades (em breve)",
+  "dashboard.home.placeholder.mcp": "Cartão de integridade do MCP (em breve)",
+  "dashboard.home.permissionDenied": "Você não tem permissão para ver isto."
 }
