@@ -1816,6 +1816,56 @@ class TestListenerLoopBranches:
         # aclose() must have been awaited once before the backoff sleep.
         pubsub.aclose.assert_awaited_once()
 
+    @pytest.mark.asyncio
+    async def test_pubsub_aclose_timeout_guard_prevents_hang(self, monkeypatch):
+        """``wait_for(aclose(), timeout=2.0)`` lets the listener exit even when aclose() hangs.
+
+        Regression guard for the timeout introduced to bound a hanging aclose():
+        if the ``timeout=2.0`` parameter were removed (or the wait_for dropped),
+        the finally block would suspend indefinitely and the listener task would
+        never return.
+
+        The test replaces aclose() with a coroutine that sleeps for 999 s and
+        asserts the entire listener finishes well inside that window.
+        """
+        import time
+
+        import mcpgateway.plugins as framework
+
+        async def _fake_handle(msg):
+            raise asyncio.CancelledError()
+
+        monkeypatch.setattr(framework, "_handle_invalidation_message", _fake_handle)
+
+        async def _hanging_aclose():
+            await asyncio.sleep(999)
+
+        pubsub = MagicMock()
+        pubsub.subscribe = AsyncMock()
+        pubsub.aclose = _hanging_aclose  # not an AsyncMock — returns a real coroutine
+
+        class _Listen:
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self):
+                return {"type": "message", "data": "{}"}
+
+        pubsub.listen = MagicMock(return_value=_Listen())
+
+        client = MagicMock()
+        client.pubsub = MagicMock(return_value=pubsub)
+        monkeypatch.setattr(framework, "_redis", AsyncMock(return_value=client))
+
+        start = time.monotonic()
+        await framework._plugin_invalidation_listener()
+        elapsed = time.monotonic() - start
+
+        # The listener must complete well before aclose()'s 999 s sleep expires.
+        # A generous upper bound of 5 s covers slow CI environments while still
+        # being far shorter than the hang duration.
+        assert elapsed < 5.0, f"Listener took {elapsed:.2f}s — timeout guard may be missing"
+
 
 # ---------------------------------------------------------------------------
 # HMAC signing and verification tests

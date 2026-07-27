@@ -13,6 +13,8 @@
 - **Missing Server and Gateway Deletes** - `DELETE /servers/{id}` and `DELETE /gateways/{id}` now return `404 Not Found` when the target no longer exists, instead of incorrectly returning `403 Forbidden`.
 - **Custom Auth Headers on Tools** ([#5314](https://github.com/IBM/mcp-context-forge/pull/5314), [#5201](https://github.com/IBM/mcp-context-forge/issues/5201)) - `POST /tools` and `PUT /tools/{tool_id}` now persist the `auth_headers` array instead of silently storing `auth_value: null`. Invalid header keys/values are rejected with a 422 rather than an unhandled 500.
 
+- **Redis Connection Leak** ([#5711](https://github.com/IBM/mcp-context-forge/pull/5711)) - The `mcpgateway/plugins/__init__.py` had a connection leak in `_plugin_invalidation_listener`. The pubsub client is unsubscribed but the connection was never closed, eventually leading to connection pool exhaustion.
+
 ### Changed
 
 - **Stricter `authheaders` Key Validation (Gateways, Tools, A2A Agents)** ([#5314](https://github.com/IBM/mcp-context-forge/pull/5314)) - Header-key validation is now shared across all create/update schemas and the admin form. Keys with embedded whitespace (e.g. `X Api Key`) were previously accepted and stored as invalid HTTP header names that failed at invocation time; they are now rejected with a 422 at config time, and surrounding whitespace is trimmed before storage. Gateway or A2A configs relying on the old behavior will need their header keys corrected on the next update.

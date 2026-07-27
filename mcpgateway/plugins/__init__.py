@@ -528,10 +528,13 @@ async def _plugin_invalidation_listener() -> None:
             backoff = min(max_backoff, backoff * 2)
         finally:
             # Always release the pubsub connection back to the pool.
-            # Using wait_for shields aclose() from an in-flight CancelledError:
+            # wait_for bounds aclose() so a stalled redis-py connection cannot
+            # block the finally clause indefinitely.
             if pubsub is not None:
                 try:
                     await asyncio.wait_for(pubsub.aclose(), timeout=2.0)
+                except asyncio.TimeoutError:
+                    _logger.debug("Plugin invalidation listener: pubsub aclose timed out")
                 except Exception as exc:
                     _logger.error("Plugin invalidation listener: pubsub aclose failed (%s)", exc)
 
