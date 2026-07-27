@@ -1249,6 +1249,18 @@ plugins:
       metering_url: ""
       metering_token: ""
       enabled: false
+      # Model name fallback defaults
+      # global_default_model: "gpt-4"  # Fallback when no other source provides model
+      # include_model_source: false     # Set true to emit modelSource field in metering payload
+
+      # Gateway-level default model configuration (optional)
+      # gateways:
+      #   - id: "gw-research"
+      #     name: "Research Team Gateway"
+      #     default_model: "claude-opus-4"
+      #   - id: "gw-support"
+      #     name: "Support Team Gateway"
+      #     default_model: "claude-sonnet-3.5"
 
   # TOON Encoder - Convert JSON to TOON format for token efficiency
   - name: "ToonEncoder"
