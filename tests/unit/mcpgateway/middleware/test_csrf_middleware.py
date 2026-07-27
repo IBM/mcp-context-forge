@@ -9,7 +9,8 @@ Tests cover request validation, token checking, exempt paths, and referer valida
 """
 
 # Standard
-from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
 import pytest
@@ -552,6 +553,41 @@ async def test_session_id_from_header():
     assert response.status_code == 200
     # Verify session_id from JWT context was used
     mock_csrf_service.validate_csrf_token.assert_called_once_with("valid_token", "user@example.com", "header_session_123")
+
+
+@pytest.mark.asyncio
+async def test_fallback_jwt_uuid_sub_uses_signed_email():
+    """CSRF JWT fallback should bind UUID-sub tokens to signed user.email."""
+    middleware = CSRFMiddleware(app=AsyncMock())
+    call_next = AsyncMock(return_value=Response("ok", status_code=200))
+
+    request = MagicMock(spec=Request)
+    request.method = "POST"
+    request.url.path = "/api/data"
+    request.headers = {"X-CSRF-Token": "valid_token"}
+    request.state = SimpleNamespace()
+    request.cookies = {"csrf_token": "valid_token", "jwt_token": "jwt-token"}
+
+    payload = {"sub": "11111111-1111-1111-1111-111111111111", "user": {"email": "user@example.com"}, "jti": "session123"}
+    mock_csrf_service = MagicMock()
+    mock_csrf_service.validate_csrf_token.return_value = True
+
+    with (
+        patch("mcpgateway.middleware.csrf_middleware.settings") as mock_settings,
+        patch("mcpgateway.middleware.csrf_middleware.get_csrf_service", return_value=mock_csrf_service),
+        patch("mcpgateway.middleware.csrf_middleware.verify_jwt_token_cached", AsyncMock(return_value=payload)),
+    ):
+        mock_settings.csrf_enabled = True
+        mock_settings.auth_required = True
+        mock_settings.csrf_exempt_paths = []
+        mock_settings.csrf_token_name = "X-CSRF-Token"
+        mock_settings.csrf_check_referer = False
+        mock_settings.csrf_cookie_name = "csrf_token"
+
+        response = await middleware.dispatch(request, call_next)
+
+    assert response.status_code == 200
+    mock_csrf_service.validate_csrf_token.assert_called_once_with("valid_token", "user@example.com", "session123")
 
 
 @pytest.mark.asyncio
