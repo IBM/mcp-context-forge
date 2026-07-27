@@ -6,6 +6,7 @@ import { server } from "@/test/mocks/server";
 import { TestConnectionPanel } from "./TestConnectionPanel";
 
 const TEST_ENDPOINT = "*/v1/mcp-servers/test";
+const HANDSHAKE_ENDPOINT = "*/v1/mcp-servers/test-handshake";
 
 describe("TestConnectionPanel", () => {
   const defaultProps = {
@@ -391,5 +392,123 @@ describe("TestConnectionPanel", () => {
     await user.tab();
 
     expect(screen.queryByText(/path shouldn't include a scheme or host/i)).not.toBeInTheDocument();
+  });
+
+  describe("MCP handshake mode", () => {
+    it("hides Method, Content type, and Body while keeping URL, Path, and Headers", async () => {
+      const user = userEvent.setup();
+      render(<TestConnectionPanel {...defaultProps} />);
+
+      await user.click(screen.getByRole("tab", { name: /mcp handshake/i }));
+
+      expect(screen.getByLabelText(/^url/i)).toBeInTheDocument();
+      expect(screen.getByLabelText(/^path/i)).toBeInTheDocument();
+      expect(screen.getByLabelText(/headers/i)).toBeInTheDocument();
+      expect(screen.queryByRole("radiogroup", { name: /method/i })).not.toBeInTheDocument();
+      expect(screen.queryByLabelText(/content type/i)).not.toBeInTheDocument();
+      expect(screen.queryByLabelText(/body/i)).not.toBeInTheDocument();
+    });
+
+    it("shows the stored-credentials hint under Headers", async () => {
+      const user = userEvent.setup();
+      render(<TestConnectionPanel {...defaultProps} />);
+
+      await user.click(screen.getByRole("tab", { name: /mcp handshake/i }));
+
+      expect(screen.getByText(/stored credentials for registered servers/i)).toBeInTheDocument();
+    });
+
+    it("renders server identity rows and component count badges on success", async () => {
+      const user = userEvent.setup();
+      let requestBody: Record<string, unknown> | undefined;
+      server.use(
+        http.post(HANDSHAKE_ENDPOINT, async ({ request }) => {
+          requestBody = (await request.json()) as Record<string, unknown>;
+          return HttpResponse.json({
+            success: true,
+            latencyMs: 12,
+            negotiationPath: "server_discover",
+            protocolVersion: "2026-07-28",
+            serverName: "git-server",
+            serverVersion: "1.2.3",
+            capabilities: { tools: {}, resources: {} },
+            componentCounts: { tools: 3, resources: 1 },
+            countsPartial: false,
+            credentialSource: "none",
+          });
+        }),
+      );
+      render(<TestConnectionPanel {...defaultProps} />);
+
+      await user.click(screen.getByRole("tab", { name: /mcp handshake/i }));
+      await user.click(screen.getByRole("button", { name: /^test connection$/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText(/handshake succeeded/i)).toBeInTheDocument();
+      });
+      expect(screen.getByText("git-server")).toBeInTheDocument();
+      expect(screen.getByText("1.2.3")).toBeInTheDocument();
+      expect(screen.getByText("2026-07-28")).toBeInTheDocument();
+      expect(screen.getByText("server/discover")).toBeInTheDocument();
+      expect(screen.getByText("3 tools")).toBeInTheDocument();
+      expect(screen.getByText("1 resources")).toBeInTheDocument();
+      expect(requestBody).toEqual(expect.objectContaining({ baseUrl: "https://example.com" }));
+    });
+
+    it.each([
+      ["transport", "Transport"],
+      ["protocol", "Protocol negotiation"],
+      ["auth", "Authentication"],
+      ["invalid_response", "Invalid response"],
+    ])("renders the %s failure classification and error copy", async (failureClass, label) => {
+      const user = userEvent.setup();
+      server.use(
+        http.post(HANDSHAKE_ENDPOINT, () =>
+          HttpResponse.json({
+            success: false,
+            latencyMs: 5,
+            credentialSource: "none",
+            failureClass,
+            error: "Actionable copy for the failure.",
+          }),
+        ),
+      );
+      render(<TestConnectionPanel {...defaultProps} />);
+
+      await user.click(screen.getByRole("tab", { name: /mcp handshake/i }));
+      await user.click(screen.getByRole("button", { name: /^test connection$/i }));
+
+      await waitFor(() => {
+        expect(screen.getByRole("alert")).toBeInTheDocument();
+      });
+      expect(screen.getByText(/handshake failed/i)).toBeInTheDocument();
+      expect(screen.getByText(label)).toBeInTheDocument();
+      expect(screen.getByText("Actionable copy for the failure.")).toBeInTheDocument();
+    });
+
+    it("cancels the in-flight handshake when the panel unmounts", async () => {
+      const user = userEvent.setup();
+      let aborted = false;
+      server.use(
+        http.post(HANDSHAKE_ENDPOINT, async ({ request }) => {
+          // Resolve only once the client aborts, so the test can observe cancellation.
+          await new Promise<void>((resolve) => {
+            request.signal.addEventListener("abort", () => {
+              aborted = true;
+              resolve();
+            });
+          });
+          return HttpResponse.json({ success: true, latencyMs: 1 });
+        }),
+      );
+      const { unmount } = render(<TestConnectionPanel {...defaultProps} />);
+
+      await user.click(screen.getByRole("tab", { name: /mcp handshake/i }));
+      await user.click(screen.getByRole("button", { name: /^test connection$/i }));
+
+      unmount();
+
+      await waitFor(() => expect(aborted).toBe(true));
+    });
   });
 });

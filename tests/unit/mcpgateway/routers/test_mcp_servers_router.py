@@ -19,8 +19,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 # First-Party
-from mcpgateway.routers.mcp_servers_router import _validated_team_id, check_mcp_server_connectivity
-from mcpgateway.schemas import GatewayTestRequest, GatewayTestResponse
+from mcpgateway.routers.mcp_servers_router import _validated_team_id, check_mcp_server_connectivity, check_mcp_server_handshake
+from mcpgateway.schemas import GatewayHandshakeRequest, GatewayHandshakeResponse, GatewayTestRequest, GatewayTestResponse
 
 # Local
 from tests.utils.rbac_mocks import patch_rbac_decorators, restore_rbac_decorators
@@ -577,3 +577,237 @@ async def test_admin_bypass_cross_team_team_id_allowed(gateway_test_request, db_
             )
 
     assert result.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# Tests: POST /test-handshake
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def handshake_request() -> GatewayHandshakeRequest:
+    """A valid GatewayHandshakeRequest pointing at a public test host."""
+    return GatewayHandshakeRequest(base_url="http://example.com", path="/mcp", headers={})
+
+
+def _mock_resilient_client(*responses):
+    """Build a mock ResilientHttpClient whose request() returns the given responses in order."""
+    mock_client = AsyncMock()
+    mock_client.request = AsyncMock(side_effect=list(responses))
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+    return mock_client
+
+
+def _json_response(status_code: int, payload):
+    """Build a mock httpx.Response with a JSON body."""
+    response = MagicMock()
+    response.status_code = status_code
+    response.json.return_value = payload
+    return response
+
+
+@pytest.mark.asyncio
+async def test_handshake_allowlist_rejection(user_ctx, db_session, monkeypatch):
+    """URL rejected by the test policy returns a generic transport failure with no outbound call."""
+    from mcpgateway import config
+
+    monkeypatch.setattr(config.settings, "gateway_test_allow_registered_only", False)
+    monkeypatch.setattr(config.settings, "gateway_test_allowed_hosts", [])
+
+    request = GatewayHandshakeRequest(base_url="http://internal.private.host", path="/mcp")
+
+    mock_client = _mock_resilient_client()
+    with patch("mcpgateway.services.gateway_service.ResilientHttpClient", return_value=mock_client):
+        result = await check_mcp_server_handshake(request=request, team_id=None, user=user_ctx, db=db_session)
+
+    assert isinstance(result, GatewayHandshakeResponse)
+    assert result.success is False
+    assert result.failure_class == "transport"
+    assert "not allowed" in result.error
+    mock_client.request.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("configure_allowlist")
+async def test_handshake_discover_success(handshake_request, user_ctx, db_session):
+    """server/discover 200 with a JSON-RPC result yields the server_discover negotiation path."""
+    db_session.execute.return_value.scalars.return_value.first.return_value = None
+
+    discover = _json_response(200, {"jsonrpc": "2.0", "id": 1, "result": {"serverInfo": {"name": "srv", "version": "1.0"}, "capabilities": {"tools": {}}}})
+    tools_list = _json_response(200, {"jsonrpc": "2.0", "id": 2, "result": {"tools": [{}, {}, {}]}})
+    mock_client = _mock_resilient_client(discover, tools_list)
+
+    with patch("mcpgateway.services.gateway_service.ResilientHttpClient", return_value=mock_client):
+        result = await check_mcp_server_handshake(request=handshake_request, team_id=None, user=user_ctx, db=db_session)
+
+    assert result.success is True
+    assert result.negotiation_path == "server_discover"
+    assert result.protocol_version == "2026-07-28"
+    assert result.server_name == "srv"
+    assert result.server_version == "1.0"
+    assert result.component_counts == {"tools": 3}
+    assert result.counts_partial is False
+    assert result.credential_source == "none"
+
+
+def _mock_sdk_session(init_side_effect=None):
+    """Build mocked streamablehttp_client / ClientSession context managers."""
+    init_result = MagicMock()
+    init_result.protocolVersion = "2025-11-25"
+    init_result.serverInfo.name = "legacy-srv"
+    init_result.serverInfo.version = "2.0"
+    init_result.capabilities.tools = MagicMock()
+    init_result.capabilities.resources = None
+    init_result.capabilities.prompts = None
+    init_result.capabilities.model_dump.return_value = {"tools": {}}
+    init_result.model_dump.return_value = {"protocolVersion": "2025-11-25"}
+
+    tools_result = MagicMock()
+    tools_result.tools = [MagicMock(), MagicMock()]
+    tools_result.nextCursor = None
+
+    session = MagicMock()
+    session.initialize = AsyncMock(side_effect=init_side_effect, return_value=init_result) if init_side_effect else AsyncMock(return_value=init_result)
+    session.list_tools = AsyncMock(return_value=tools_result)
+    session.__aenter__ = AsyncMock(return_value=session)
+    session.__aexit__ = AsyncMock(return_value=None)
+
+    transport_cm = MagicMock()
+    transport_cm.__aenter__ = AsyncMock(return_value=(MagicMock(), MagicMock(), MagicMock()))
+    transport_cm.__aexit__ = AsyncMock(return_value=None)
+
+    return transport_cm, session
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("configure_allowlist")
+async def test_handshake_discover_fallback_to_initialize(handshake_request, user_ctx, db_session):
+    """A JSON-RPC -32601 from server/discover falls back to the SDK initialize path."""
+    db_session.execute.return_value.scalars.return_value.first.return_value = None
+
+    discover = _json_response(200, {"jsonrpc": "2.0", "id": 1, "error": {"code": -32601, "message": "Method not found"}})
+    mock_client = _mock_resilient_client(discover)
+    transport_cm, session = _mock_sdk_session()
+
+    with patch("mcpgateway.services.gateway_service.ResilientHttpClient", return_value=mock_client):
+        with patch("mcpgateway.services.gateway_service.streamablehttp_client", return_value=transport_cm):
+            with patch("mcpgateway.services.gateway_service.ClientSession", return_value=session):
+                result = await check_mcp_server_handshake(request=handshake_request, team_id=None, user=user_ctx, db=db_session)
+
+    assert result.success is True
+    assert result.negotiation_path == "initialize"
+    assert result.protocol_version == "2025-11-25"
+    assert result.server_name == "legacy-srv"
+    assert result.component_counts == {"tools": 2}
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("configure_allowlist")
+async def test_handshake_discover_401_is_auth_failure(handshake_request, user_ctx, db_session):
+    """HTTP 401 from server/discover short-circuits as an auth failure with no initialize attempt."""
+    db_session.execute.return_value.scalars.return_value.first.return_value = None
+
+    mock_client = _mock_resilient_client(_json_response(401, {"error": "unauthorized"}))
+
+    with patch("mcpgateway.services.gateway_service.ResilientHttpClient", return_value=mock_client):
+        with patch("mcpgateway.services.gateway_service.streamablehttp_client") as mock_streamable:
+            result = await check_mcp_server_handshake(request=handshake_request, team_id=None, user=user_ctx, db=db_session)
+
+    assert result.success is False
+    assert result.failure_class == "auth"
+    mock_streamable.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("configure_allowlist")
+async def test_handshake_connect_error_is_transport_failure(handshake_request, user_ctx, db_session):
+    """httpx.ConnectError during server/discover is a transport failure."""
+    import httpx
+
+    db_session.execute.return_value.scalars.return_value.first.return_value = None
+
+    mock_client = AsyncMock()
+    mock_client.request = AsyncMock(side_effect=httpx.ConnectError("connection refused"))
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+
+    with patch("mcpgateway.services.gateway_service.ResilientHttpClient", return_value=mock_client):
+        result = await check_mcp_server_handshake(request=handshake_request, team_id=None, user=user_ctx, db=db_session)
+
+    assert result.success is False
+    assert result.failure_class == "transport"
+    assert "Could not reach the MCP server" in result.error
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("configure_allowlist")
+async def test_handshake_initialize_garbage_is_invalid_response(handshake_request, user_ctx, db_session):
+    """A decode error during initialize classifies as invalid_response."""
+    import json as stdlib_json
+
+    db_session.execute.return_value.scalars.return_value.first.return_value = None
+
+    discover = _json_response(404, {"error": "not found"})
+    mock_client = _mock_resilient_client(discover)
+    transport_cm, session = _mock_sdk_session(init_side_effect=stdlib_json.JSONDecodeError("Expecting value", "doc", 0))
+
+    with patch("mcpgateway.services.gateway_service.ResilientHttpClient", return_value=mock_client):
+        with patch("mcpgateway.services.gateway_service.streamablehttp_client", return_value=transport_cm):
+            with patch("mcpgateway.services.gateway_service.ClientSession", return_value=session):
+                result = await check_mcp_server_handshake(request=handshake_request, team_id=None, user=user_ctx, db=db_session)
+
+    assert result.success is False
+    assert result.failure_class == "invalid_response"
+    assert "not valid MCP" in result.error
+
+
+@pytest.mark.asyncio
+async def test_handshake_unauthenticated_request_returns_401(handshake_request, db_session):
+    """Request without authenticated user context raises 401."""
+    from fastapi import HTTPException
+
+    with pytest.raises(HTTPException) as exc_info:
+        await check_mcp_server_handshake(request=handshake_request, team_id=None, user=None, db=db_session)
+
+    assert exc_info.value.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_handshake_insufficient_permission_returns_403(handshake_request, user_ctx, db_session):
+    """User without gateways.read permission is denied with 403."""
+    from fastapi import HTTPException
+
+    with patch("mcpgateway.middleware.rbac.PermissionService") as mock_ps_class:
+        mock_ps = MagicMock()
+        mock_ps.check_permission = AsyncMock(return_value=False)
+        mock_ps_class.return_value = mock_ps
+
+        with pytest.raises(HTTPException) as exc_info:
+            await check_mcp_server_handshake(request=handshake_request, team_id=None, user=user_ctx, db=db_session)
+
+    assert exc_info.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_handshake_cross_team_team_id_returns_403(handshake_request, db_session):
+    """Non-admin user supplying a team_id outside their authorized teams raises 403."""
+    import uuid
+    from fastapi import HTTPException
+
+    authorized_team = uuid.UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa").hex
+    foreign_team = uuid.UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb").hex
+
+    non_admin_user = {
+        "email": "user@example.com",
+        "full_name": "Regular User",
+        "is_admin": False,
+        "token_teams": [authorized_team],
+        "db": db_session,
+    }
+
+    with pytest.raises(HTTPException) as exc_info:
+        await check_mcp_server_handshake(request=handshake_request, team_id=foreign_team, user=non_admin_user, db=db_session)
+
+    assert exc_info.value.status_code == 403
+    assert "team" in exc_info.value.detail.lower()
