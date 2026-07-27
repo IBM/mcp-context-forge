@@ -18,6 +18,7 @@ import pytest
 
 # First-Party
 from mcpgateway.db import Gateway
+from mcpgateway.services.oauth_manager import OAuthError, OAuthInvalidGrantError
 from mcpgateway.services.token_backends.vault_backend import VaultAuthError, VaultConnectionError, VaultTokenBackend
 
 
@@ -1321,7 +1322,8 @@ class TestVaultTokenBackendRefreshToken:
 
         with patch("mcpgateway.services.token_backends.vault_backend.OAuthManager") as mock_oauth_class:
             mock_oauth = AsyncMock()
-            mock_oauth.refresh_token.side_effect = Exception("invalid_grant: refresh token expired")
+            # Use OAuthInvalidGrantError to trigger token deletion (PR #5244)
+            mock_oauth.refresh_token.side_effect = OAuthInvalidGrantError("invalid_grant: refresh token expired")
             mock_oauth_class.return_value = mock_oauth
 
             with patch.object(backend, "revoke_user_tokens", new_callable=AsyncMock) as mock_revoke:
@@ -1336,8 +1338,9 @@ class TestVaultTokenBackendRefreshToken:
 
                     assert result is None
                     mock_revoke.assert_called_once()
+                    # PR #5244: Now logs as warning about permanently invalid token
                     warning_calls = [call for call in mock_logger.warning.call_args_list
-                                   if "invalid/expired" in str(call)]
+                                   if "permanently invalid" in str(call) or "invalid_grant" in str(call)]
                     assert len(warning_calls) > 0
 
 
@@ -1456,3 +1459,382 @@ class TestVaultTokenBackendExpiredTokenHandling:
             )
 
             assert token is None
+
+
+
+# ============================================================================
+# PR #5244: RFC 6749 Compliant Token Deletion, omit_resource, TTL Preservation
+# ============================================================================
+
+
+class TestVaultTokenBackendPR5244:
+    """Test suite for PR #5244 features: RFC 6749 token deletion, omit_resource, TTL preservation."""
+
+    @pytest.mark.asyncio
+    async def test_refresh_deletes_token_on_invalid_grant(self):
+        """PR #5244: Token is deleted when OAuthManager raises OAuthInvalidGrantError."""
+        mock_db = MagicMock()
+        mock_settings = MagicMock()
+        mock_settings.vault_addr = "http://127.0.0.1:8200"
+        mock_settings.vault_token = SecretStr("hvs.test-token")
+        mock_settings.vault_namespace = ""
+        mock_settings.vault_kv_mount = "secret"
+        mock_settings.vault_kv_path_prefix = "contextforge/oauth"
+        mock_settings.vault_tls_verify = True
+        mock_settings.vault_token_cache_enabled = False
+        mock_settings.vault_token_cache_ttl = 300
+        mock_settings.vault_token_cache_max_size = 10000
+
+        backend = VaultTokenBackend(mock_db, mock_settings)
+
+        # Setup: mock gateway
+        mock_gateway = MagicMock(spec=Gateway)
+        mock_gateway.id = "gw-test-123"
+        mock_gateway.url = "https://gateway.example.com"
+        mock_gateway.oauth_config = {
+            "client_id": "test-client",
+            "client_secret": "test-secret",  # pragma: allowlist secret
+            "token_url": "https://idp.example.com/token",
+        }
+        mock_gateway.ca_certificate = None
+        mock_gateway.client_cert = None
+        mock_gateway.client_key = None
+        mock_gateway.visibility = "public"
+        mock_gateway.owner_email = None
+        mock_db.query.return_value.filter.return_value.first.return_value = mock_gateway
+
+        # Setup: mock existing token in Vault
+        vault_data = {
+            "token": {"access_token": "old_token", "refresh_token": "old_refresh", "scopes": ["read"]},
+            "expires_at": "2026-07-27T10:00:00Z",
+            "updated_at": "2026-07-27T09:00:00Z",
+            "user_id": "oauth-user-123",
+        }
+
+        # Mock revoke_user_tokens
+        backend.revoke_user_tokens = AsyncMock()
+
+        # Mock OAuthManager to raise OAuthInvalidGrantError
+        with patch("mcpgateway.services.token_backends.vault_backend.OAuthManager") as mock_oauth_cls:
+            mock_oauth_mgr = MagicMock()
+            mock_oauth_mgr.refresh_token = AsyncMock(side_effect=OAuthInvalidGrantError("invalid_grant"))
+            mock_oauth_cls.return_value = mock_oauth_mgr
+
+            # Execute
+            result = await backend._refresh_access_token(
+                gateway_id="gw-test-123",
+                team_id="team-1",
+                app_user_email="user@test.com",
+                refresh_token="old_refresh",
+                vault_data=vault_data,
+            )
+
+            # Assert: token deleted
+            assert result is None
+            backend.revoke_user_tokens.assert_called_once_with("gw-test-123", "team-1", "user@test.com")
+
+    @pytest.mark.asyncio
+    async def test_refresh_preserves_token_on_oauth_error(self):
+        """PR #5244: Token is preserved when OAuthManager raises OAuthError (not invalid_grant)."""
+        mock_db = MagicMock()
+        mock_settings = MagicMock()
+        mock_settings.vault_addr = "http://127.0.0.1:8200"
+        mock_settings.vault_token = SecretStr("hvs.test-token")
+        mock_settings.vault_namespace = ""
+        mock_settings.vault_kv_mount = "secret"
+        mock_settings.vault_kv_path_prefix = "contextforge/oauth"
+        mock_settings.vault_tls_verify = True
+        mock_settings.vault_token_cache_enabled = False
+        mock_settings.vault_token_cache_ttl = 300
+        mock_settings.vault_token_cache_max_size = 10000
+
+        backend = VaultTokenBackend(mock_db, mock_settings)
+
+        mock_gateway = MagicMock(spec=Gateway)
+        mock_gateway.id = "gw-test-123"
+        mock_gateway.url = "https://gateway.example.com"
+        mock_gateway.oauth_config = {
+            "client_id": "test-client",
+            "client_secret": "test-secret",  # pragma: allowlist secret
+            "token_url": "https://idp.example.com/token",
+        }
+        mock_gateway.ca_certificate = None
+        mock_gateway.client_cert = None
+        mock_gateway.client_key = None
+        mock_gateway.visibility = "public"
+        mock_gateway.owner_email = None
+        mock_db.query.return_value.filter.return_value.first.return_value = mock_gateway
+
+        vault_data = {
+            "token": {"access_token": "old_token", "refresh_token": "old_refresh", "scopes": ["read"]},
+            "user_id": "oauth-user-123",
+        }
+
+        backend.revoke_user_tokens = AsyncMock()
+
+        # Mock OAuthManager to raise generic OAuthError (e.g., invalid_client)
+        with patch("mcpgateway.services.token_backends.vault_backend.OAuthManager") as mock_oauth_cls:
+            mock_oauth_mgr = MagicMock()
+            mock_oauth_mgr.refresh_token = AsyncMock(side_effect=OAuthError("invalid_client: wrong credentials"))
+            mock_oauth_cls.return_value = mock_oauth_mgr
+
+            result = await backend._refresh_access_token(
+                gateway_id="gw-test-123",
+                team_id="team-1",
+                app_user_email="user@test.com",
+                refresh_token="old_refresh",
+                vault_data=vault_data,
+            )
+
+            # Assert: token preserved (NOT deleted)
+            assert result is None
+            backend.revoke_user_tokens.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_refresh_omits_resource_when_flag_true(self):
+        """PR #5244: Resource parameter is NOT sent when omit_resource=true."""
+        mock_db = MagicMock()
+        mock_settings = MagicMock()
+        mock_settings.vault_addr = "http://127.0.0.1:8200"
+        mock_settings.vault_token = SecretStr("hvs.test-token")
+        mock_settings.vault_namespace = ""
+        mock_settings.vault_kv_mount = "secret"
+        mock_settings.vault_kv_path_prefix = "contextforge/oauth"
+        mock_settings.vault_tls_verify = True
+        mock_settings.vault_token_cache_enabled = False
+        mock_settings.vault_token_cache_ttl = 300
+        mock_settings.vault_token_cache_max_size = 10000
+
+        backend = VaultTokenBackend(mock_db, mock_settings)
+
+        mock_gateway = MagicMock(spec=Gateway)
+        mock_gateway.id = "gw-test-123"
+        mock_gateway.url = "https://gateway.example.com"
+        mock_gateway.oauth_config = {
+            "client_id": "test-client",
+            "client_secret": "test-secret",  # pragma: allowlist secret
+            "token_url": "https://idp.example.com/token",
+            "omit_resource": True,
+            "resource": "https://api.example.com",  # Should be removed
+        }
+        mock_gateway.ca_certificate = None
+        mock_gateway.client_cert = None
+        mock_gateway.client_key = None
+        mock_db.query.return_value.filter.return_value.first.return_value = mock_gateway
+
+        vault_data = {
+            "token": {"access_token": "old_token", "refresh_token": "old_refresh", "scopes": ["read"]},
+            "user_id": "oauth-user-123",
+        }
+
+        backend.store_tokens = AsyncMock()
+
+        with patch("mcpgateway.services.token_backends.vault_backend.OAuthManager") as mock_oauth_cls:
+            mock_oauth_mgr = MagicMock()
+            mock_oauth_mgr.refresh_token = AsyncMock(return_value={
+                "access_token": "new_token",
+                "refresh_token": "new_refresh",
+                "expires_in": 3600,
+            })
+            mock_oauth_cls.return_value = mock_oauth_mgr
+
+            result = await backend._refresh_access_token(
+                gateway_id="gw-test-123",
+                team_id="team-1",
+                app_user_email="user@test.com",
+                refresh_token="old_refresh",
+                vault_data=vault_data,
+            )
+
+            # Assert: refresh called WITHOUT resource parameter
+            mock_oauth_mgr.refresh_token.assert_called_once()
+            call_args = mock_oauth_mgr.refresh_token.call_args
+            oauth_config_passed = call_args[0][1]
+            assert "resource" not in oauth_config_passed
+            assert result == "new_token"
+
+    @pytest.mark.asyncio
+    async def test_refresh_injects_resource_when_flag_false(self):
+        """PR #5244: Resource parameter IS sent when omit_resource=false (default)."""
+        mock_db = MagicMock()
+        mock_settings = MagicMock()
+        mock_settings.vault_addr = "http://127.0.0.1:8200"
+        mock_settings.vault_token = SecretStr("hvs.test-token")
+        mock_settings.vault_namespace = ""
+        mock_settings.vault_kv_mount = "secret"
+        mock_settings.vault_kv_path_prefix = "contextforge/oauth"
+        mock_settings.vault_tls_verify = True
+        mock_settings.vault_token_cache_enabled = False
+        mock_settings.vault_token_cache_ttl = 300
+        mock_settings.vault_token_cache_max_size = 10000
+
+        backend = VaultTokenBackend(mock_db, mock_settings)
+
+        mock_gateway = MagicMock(spec=Gateway)
+        mock_gateway.id = "gw-test-123"
+        mock_gateway.url = "https://gateway.example.com"
+        mock_gateway.oauth_config = {
+            "client_id": "test-client",
+            "client_secret": "test-secret",  # pragma: allowlist secret
+            "token_url": "https://idp.example.com/token",
+        }
+        mock_gateway.ca_certificate = None
+        mock_gateway.client_cert = None
+        mock_gateway.client_key = None
+        mock_db.query.return_value.filter.return_value.first.return_value = mock_gateway
+
+        vault_data = {
+            "token": {"access_token": "old_token", "refresh_token": "old_refresh", "scopes": ["read"]},
+            "user_id": "oauth-user-123",
+        }
+
+        backend.store_tokens = AsyncMock()
+
+        with patch("mcpgateway.services.token_backends.vault_backend.OAuthManager") as mock_oauth_cls:
+            mock_oauth_mgr = MagicMock()
+            mock_oauth_mgr.refresh_token = AsyncMock(return_value={
+                "access_token": "new_token",
+                "expires_in": 3600,
+            })
+            mock_oauth_cls.return_value = mock_oauth_mgr
+
+            result = await backend._refresh_access_token(
+                gateway_id="gw-test-123",
+                team_id="team-1",
+                app_user_email="user@test.com",
+                refresh_token="old_refresh",
+                vault_data=vault_data,
+            )
+
+            # Assert: refresh called WITH resource parameter
+            mock_oauth_mgr.refresh_token.assert_called_once()
+            call_args = mock_oauth_mgr.refresh_token.call_args
+            oauth_config_passed = call_args[0][1]
+            assert "resource" in oauth_config_passed
+            assert oauth_config_passed["resource"] == "https://gateway.example.com"
+
+    @pytest.mark.asyncio
+    async def test_refresh_preserves_prior_ttl_when_expires_in_omitted(self):
+        """PR #5244: Prior TTL is preserved when IdP omits expires_in in refresh response."""
+        mock_db = MagicMock()
+        mock_settings = MagicMock()
+        mock_settings.vault_addr = "http://127.0.0.1:8200"
+        mock_settings.vault_token = SecretStr("hvs.test-token")
+        mock_settings.vault_namespace = ""
+        mock_settings.vault_kv_mount = "secret"
+        mock_settings.vault_kv_path_prefix = "contextforge/oauth"
+        mock_settings.vault_tls_verify = True
+        mock_settings.vault_token_cache_enabled = False
+        mock_settings.vault_token_cache_ttl = 300
+        mock_settings.vault_token_cache_max_size = 10000
+
+        backend = VaultTokenBackend(mock_db, mock_settings)
+
+        mock_gateway = MagicMock(spec=Gateway)
+        mock_gateway.id = "gw-test-123"
+        mock_gateway.url = "https://gateway.example.com"
+        mock_gateway.oauth_config = {
+            "client_id": "test-client",
+            "client_secret": "test-secret",  # pragma: allowlist secret
+            "token_url": "https://idp.example.com/token",
+        }
+        mock_gateway.ca_certificate = None
+        mock_gateway.client_cert = None
+        mock_gateway.client_key = None
+        mock_db.query.return_value.filter.return_value.first.return_value = mock_gateway
+
+        # Existing token with known TTL (3600 seconds)
+        now = datetime.now(timezone.utc)
+        vault_data = {
+            "token": {"access_token": "old_token", "refresh_token": "old_refresh", "scopes": ["read"]},
+            "expires_at": (now + timedelta(seconds=3600)).isoformat(),
+            "updated_at": now.isoformat(),
+            "user_id": "oauth-user-123",
+        }
+
+        backend.store_tokens = AsyncMock()
+
+        with patch("mcpgateway.services.token_backends.vault_backend.OAuthManager") as mock_oauth_cls:
+            mock_oauth_mgr = MagicMock()
+            # Refresh response WITHOUT expires_in
+            mock_oauth_mgr.refresh_token = AsyncMock(return_value={
+                "access_token": "new_token",
+                "refresh_token": "new_refresh",
+                # NO expires_in field
+            })
+            mock_oauth_cls.return_value = mock_oauth_mgr
+
+            await backend._refresh_access_token(
+                gateway_id="gw-test-123",
+                team_id="team-1",
+                app_user_email="user@test.com",
+                refresh_token="old_refresh",
+                vault_data=vault_data,
+            )
+
+            # Assert: store_tokens called with preserved TTL (3600 seconds)
+            backend.store_tokens.assert_called_once()
+            call_kwargs = backend.store_tokens.call_args.kwargs
+            assert call_kwargs["expires_in"] == 3600  # Preserved prior TTL
+
+    @pytest.mark.asyncio
+    async def test_refresh_uses_new_ttl_when_expires_in_present(self):
+        """PR #5244: New expires_in is used when present in refresh response."""
+        mock_db = MagicMock()
+        mock_settings = MagicMock()
+        mock_settings.vault_addr = "http://127.0.0.1:8200"
+        mock_settings.vault_token = SecretStr("hvs.test-token")
+        mock_settings.vault_namespace = ""
+        mock_settings.vault_kv_mount = "secret"
+        mock_settings.vault_kv_path_prefix = "contextforge/oauth"
+        mock_settings.vault_tls_verify = True
+        mock_settings.vault_token_cache_enabled = False
+        mock_settings.vault_token_cache_ttl = 300
+        mock_settings.vault_token_cache_max_size = 10000
+
+        backend = VaultTokenBackend(mock_db, mock_settings)
+
+        mock_gateway = MagicMock(spec=Gateway)
+        mock_gateway.id = "gw-test-123"
+        mock_gateway.url = "https://gateway.example.com"
+        mock_gateway.oauth_config = {
+            "client_id": "test-client",
+            "client_secret": "test-secret",  # pragma: allowlist secret
+            "token_url": "https://idp.example.com/token",
+        }
+        mock_gateway.ca_certificate = None
+        mock_gateway.client_cert = None
+        mock_gateway.client_key = None
+        mock_db.query.return_value.filter.return_value.first.return_value = mock_gateway
+
+        now = datetime.now(timezone.utc)
+        vault_data = {
+            "token": {"access_token": "old_token", "refresh_token": "old_refresh", "scopes": ["read"]},
+            "expires_at": (now + timedelta(seconds=3600)).isoformat(),
+            "updated_at": now.isoformat(),
+            "user_id": "oauth-user-123",
+        }
+
+        backend.store_tokens = AsyncMock()
+
+        with patch("mcpgateway.services.token_backends.vault_backend.OAuthManager") as mock_oauth_cls:
+            mock_oauth_mgr = MagicMock()
+            # Refresh response WITH new expires_in
+            mock_oauth_mgr.refresh_token = AsyncMock(return_value={
+                "access_token": "new_token",
+                "refresh_token": "new_refresh",
+                "expires_in": 7200,  # New TTL: 2 hours
+            })
+            mock_oauth_cls.return_value = mock_oauth_mgr
+
+            await backend._refresh_access_token(
+                gateway_id="gw-test-123",
+                team_id="team-1",
+                app_user_email="user@test.com",
+                refresh_token="old_refresh",
+                vault_data=vault_data,
+            )
+
+            # Assert: store_tokens called with NEW TTL (7200 seconds)
+            call_kwargs = backend.store_tokens.call_args.kwargs
+            assert call_kwargs["expires_in"] == 7200  # New TTL, not preserved
