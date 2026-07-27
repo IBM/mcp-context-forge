@@ -532,15 +532,19 @@ async def test_structured_logger_metadata_payload(monkeypatch):
     assert call["message"] == "Upstream MCP session creation failed"
     assert call["component"] == "upstream_session_registry"
 
+    # Verify error_details (matches tool_service.py pattern)
+    error_details = call["error_details"]
+    assert error_details["error_category"] == "auth_unauthorized"
+    assert error_details["error_type"] == "HTTPStatusError"
+    assert "error_message" in error_details
+    assert error_details["exception_count"] == 1
+
     # Verify metadata payload
     metadata = call["metadata"]
     assert "url" in metadata
     assert metadata["downstream_session_id"] == "test-session"
     assert metadata["gateway_id"] == "test-gateway"
     assert metadata["transport_type"] == "streamablehttp"
-    assert metadata["error_category"] == "auth_unauthorized"
-    assert metadata["exception_type"] == "HTTPStatusError"
-    assert "exception_message" in metadata
 
 
 @pytest.mark.asyncio
@@ -595,3 +599,247 @@ async def test_cross_layer_error_message_consistency(monkeypatch):
         # This RuntimeError would be caught by tool_service.py which unwraps
         # BaseExceptionGroup. Since we already unwrapped at registry level,
         # the consuming layer receives a clean RuntimeError with actionable text.
+
+
+@pytest.mark.asyncio
+async def test_httpx_connect_timeout_category(monkeypatch):
+    """Regression test for blocking issue #2: httpx.ConnectTimeout should be categorized as 'timeout'."""
+    # First-Party
+    from mcpgateway.services import upstream_session_registry as usr
+
+    # httpx.ConnectTimeout is the actual type raised by httpx transports on timeout
+    request = httpx.Request("GET", "https://upstream.example.com/mcp")
+    connect_timeout = httpx.ConnectTimeout(message="Connect timeout", request=request)
+
+    def fake_stream(**_kw):
+        return _FakeTransportCtx(enter_exc=connect_timeout)
+
+    monkeypatch.setattr(usr, "streamablehttp_client", fake_stream)
+    monkeypatch.setattr(usr, "ClientSession", _FakeClientSessionCM)
+
+    req = _make_request()
+    with pytest.raises(RuntimeError) as exc_info:
+        await usr._default_session_factory(req)  # pylint: disable=protected-access
+
+    error_msg = str(exc_info.value)
+    # MUST be categorized as timeout, not unknown
+    assert "[timeout]" in error_msg, "httpx.ConnectTimeout should be categorized as 'timeout'"
+    assert "ConnectTimeout" in error_msg
+
+
+@pytest.mark.asyncio
+async def test_httpx_read_timeout_category(monkeypatch):
+    """Regression test for blocking issue #2: httpx.ReadTimeout should be categorized as 'timeout'."""
+    # First-Party
+    from mcpgateway.services import upstream_session_registry as usr
+
+    request = httpx.Request("GET", "https://upstream.example.com/mcp")
+    read_timeout = httpx.ReadTimeout(message="Read timeout", request=request)
+
+    def fake_stream(**_kw):
+        return _FakeTransportCtx(enter_exc=read_timeout)
+
+    monkeypatch.setattr(usr, "streamablehttp_client", fake_stream)
+    monkeypatch.setattr(usr, "ClientSession", _FakeClientSessionCM)
+
+    req = _make_request()
+    with pytest.raises(RuntimeError) as exc_info:
+        await usr._default_session_factory(req)  # pylint: disable=protected-access
+
+    error_msg = str(exc_info.value)
+    assert "[timeout]" in error_msg, "httpx.ReadTimeout should be categorized as 'timeout'"
+    assert "ReadTimeout" in error_msg
+
+
+@pytest.mark.asyncio
+async def test_httpx_connect_error_with_refused_message(monkeypatch):
+    """Regression test for blocking issue #2: httpx.ConnectError with 'refused' should be 'connection_refused'."""
+    # First-Party
+    from mcpgateway.services import upstream_session_registry as usr
+
+    # httpx.ConnectError is what gets raised on connection refused through httpx
+    connect_error = httpx.ConnectError("All connection attempts failed: connection refused")
+
+    def fake_stream(**_kw):
+        return _FakeTransportCtx(enter_exc=connect_error)
+
+    monkeypatch.setattr(usr, "streamablehttp_client", fake_stream)
+    monkeypatch.setattr(usr, "ClientSession", _FakeClientSessionCM)
+
+    req = _make_request()
+    with pytest.raises(RuntimeError) as exc_info:
+        await usr._default_session_factory(req)  # pylint: disable=protected-access
+
+    error_msg = str(exc_info.value)
+    # When message contains "refused", should be connection_refused, not connection_error
+    assert "[connection_refused]" in error_msg, "httpx.ConnectError with 'refused' should be 'connection_refused'"
+    assert "ConnectError" in error_msg
+
+
+@pytest.mark.asyncio
+async def test_httpx_connect_error_generic(monkeypatch):
+    """httpx.ConnectError without 'refused' should be 'connection_error'."""
+    # First-Party
+    from mcpgateway.services import upstream_session_registry as usr
+
+    connect_error = httpx.ConnectError("All connection attempts failed")
+
+    def fake_stream(**_kw):
+        return _FakeTransportCtx(enter_exc=connect_error)
+
+    monkeypatch.setattr(usr, "streamablehttp_client", fake_stream)
+    monkeypatch.setattr(usr, "ClientSession", _FakeClientSessionCM)
+
+    req = _make_request()
+    with pytest.raises(RuntimeError) as exc_info:
+        await usr._default_session_factory(req)  # pylint: disable=protected-access
+
+    error_msg = str(exc_info.value)
+    assert "[connection_error]" in error_msg
+    assert "ConnectError" in error_msg
+
+
+@pytest.mark.asyncio
+async def test_credential_sanitization_in_http_error(monkeypatch):
+    """Regression test for blocking issue #1: HTTPStatusError with URL secrets should be sanitized."""
+    # First-Party
+    from mcpgateway.services import upstream_session_registry as usr
+
+    # Create an HTTP 401 error with an API key in the URL (as httpx.HTTPStatusError would)
+    request = httpx.Request("GET", "https://api.example.com/mcp?apiKey=secret123&q=search")  # pragma: allowlist secret
+    response = httpx.Response(401, request=request)
+    # httpx.HTTPStatusError.__str__ embeds the full request URL
+    http_error = httpx.HTTPStatusError(
+        f"Client error '401 Unauthorized' for url '{request.url}'",
+        request=request,
+        response=response
+    )
+
+    def fake_stream(**_kw):
+        return _FakeTransportCtx(enter_exc=http_error)
+
+    monkeypatch.setattr(usr, "streamablehttp_client", fake_stream)
+    monkeypatch.setattr(usr, "ClientSession", _FakeClientSessionCM)
+
+    req = _make_request()
+    with pytest.raises(RuntimeError) as exc_info:
+        await usr._default_session_factory(req)  # pylint: disable=protected-access
+
+    error_msg = str(exc_info.value)
+    # Credential MUST be redacted in the error message
+    assert "secret123" not in error_msg, "API key should be redacted from error message"  # pragma: allowlist secret
+    assert "REDACTED" in error_msg, "Sensitive query param should be replaced with REDACTED"
+    assert "apiKey=REDACTED" in error_msg or "apikey=REDACTED" in error_msg.lower()
+    # Non-sensitive params should be preserved
+    assert "q=search" in error_msg, "Non-sensitive query params should not be redacted"
+
+
+@pytest.mark.asyncio
+async def test_credential_sanitization_with_bearer_token(monkeypatch):
+    """Regression test for blocking issue #1: Error messages with Bearer tokens should be sanitized."""
+    # First-Party
+    from mcpgateway.services import upstream_session_registry as usr
+
+    # Create an error message that includes a Bearer token (common in auth errors)
+    request = httpx.Request("GET", "https://api.example.com/mcp?token=Bearer_secret_token_abc123")  # pragma: allowlist secret
+    response = httpx.Response(403, request=request)
+    http_error = httpx.HTTPStatusError(
+        f"Client error '403 Forbidden' for url '{request.url}'",
+        request=request,
+        response=response
+    )
+
+    def fake_stream(**_kw):
+        return _FakeTransportCtx(enter_exc=http_error)
+
+    monkeypatch.setattr(usr, "streamablehttp_client", fake_stream)
+    monkeypatch.setattr(usr, "ClientSession", _FakeClientSessionCM)
+
+    req = _make_request()
+    with pytest.raises(RuntimeError) as exc_info:
+        await usr._default_session_factory(req)  # pylint: disable=protected-access
+
+    error_msg = str(exc_info.value)
+    # Token MUST be redacted
+    assert "Bearer_secret_token_abc123" not in error_msg, "Token should be redacted from error message"  # pragma: allowlist secret
+    assert "REDACTED" in error_msg, "Token parameter should be replaced with REDACTED"
+
+
+@pytest.mark.asyncio
+async def test_mcp_protocol_error_category(monkeypatch):
+    """McpError should be categorized as 'mcp_protocol_error'."""
+    # First-Party
+    from mcpgateway.services import upstream_session_registry as usr
+    from mcp import McpError
+    from mcp.types import ErrorData
+
+    # Create ErrorData and wrap it in McpError (MCP SDK pattern)
+    error_data = ErrorData(code=-32000, message="Session initialization failed: unsupported capability")
+    mcp_error = McpError(error_data)
+
+    def fake_stream(**_kw):
+        return _FakeTransportCtx(enter_exc=mcp_error)
+
+    monkeypatch.setattr(usr, "streamablehttp_client", fake_stream)
+    monkeypatch.setattr(usr, "ClientSession", _FakeClientSessionCM)
+
+    req = _make_request()
+    with pytest.raises(RuntimeError) as exc_info:
+        await usr._default_session_factory(req)  # pylint: disable=protected-access
+
+    error_msg = str(exc_info.value)
+    assert "[mcp_protocol_error]" in error_msg
+    assert "McpError" in error_msg
+
+
+@pytest.mark.asyncio
+async def test_ssl_error_category_with_isinstance_check(monkeypatch):
+    """ssl.SSLError should be categorized as 'ssl_tls' via isinstance check."""
+    # First-Party
+    from mcpgateway.services import upstream_session_registry as usr
+
+    ssl_error = ssl.SSLError("certificate verify failed: self signed certificate")
+
+    def fake_stream(**_kw):
+        return _FakeTransportCtx(enter_exc=ssl_error)
+
+    monkeypatch.setattr(usr, "streamablehttp_client", fake_stream)
+    monkeypatch.setattr(usr, "ClientSession", _FakeClientSessionCM)
+
+    req = _make_request()
+    with pytest.raises(RuntimeError) as exc_info:
+        await usr._default_session_factory(req)  # pylint: disable=protected-access
+
+    error_msg = str(exc_info.value)
+    assert "[ssl_tls]" in error_msg
+    assert "SSLError" in error_msg
+
+
+@pytest.mark.asyncio
+async def test_exception_group_with_multiple_exceptions_logged(monkeypatch, caplog):
+    """Verify that exception_count > 1 is logged when ExceptionGroup contains multiple exceptions."""
+    # First-Party
+    from mcpgateway.services import upstream_session_registry as usr
+
+    # Create an ExceptionGroup with multiple errors
+    error1 = ConnectionRefusedError("Connection refused")
+    error2 = TimeoutError("Timeout")
+    group = ExceptionGroup("multiple errors", [error1, error2])
+
+    def fake_stream(**_kw):
+        return _FakeTransportCtx(enter_exc=group)
+
+    monkeypatch.setattr(usr, "streamablehttp_client", fake_stream)
+    monkeypatch.setattr(usr, "ClientSession", _FakeClientSessionCM)
+
+    req = _make_request()
+
+    with caplog.at_level("ERROR"):
+        with pytest.raises(RuntimeError):
+            await usr._default_session_factory(req)  # pylint: disable=protected-access
+
+    # Verify the log mentions multiple exceptions
+    assert any(
+        "2 exceptions in group" in record.message
+        for record in caplog.records
+    ), "Logger should mention when exception group contains multiple exceptions"

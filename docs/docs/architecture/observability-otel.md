@@ -533,10 +533,14 @@ trace headers (`traceparent`, `X-Correlation-ID`) or baggage before pooling:
 - 10-20x latency improvement is critical
 - Upstream servers don't need trace context or baggage
 
-**Disable Session Pooling** (for distributed tracing):
-```bash
-MCP_SESSION_POOL_ENABLED=false
-```
+**Disable Session Reuse** (for distributed tracing):
+
+The upstream session registry automatically falls back to per-call sessions when:
+- Tracing is active (distributed tracing requires per-request headers)
+- No `Mcp-Session-Id` header is present (no downstream session to bind to)
+- Registry is not initialized (tests, early startup)
+
+Use cases for per-call sessions:
 - Need end-to-end distributed tracing
 - Upstream MCP servers participate in traces
 - Need downstream baggage propagation
@@ -652,7 +656,7 @@ the same baggage values are emitted as `tenant.id` and `user.id`.
 
 ### Overview
 
-When MCP sessions are enabled (`MCP_SESSION_POOL_ENABLED=true` or when using the upstream session registry), ContextForge automatically categorizes upstream connection failures into 13 distinct error categories. This enhancement replaces generic "unhandled errors in a TaskGroup" messages with specific, actionable diagnostics that enable operators to quickly identify root causes.
+When the upstream session registry is used (when a downstream `Mcp-Session-Id` header is present and tracing is inactive), ContextForge automatically categorizes upstream connection failures into 13 distinct error categories. This enhancement replaces generic "unhandled errors in a TaskGroup" messages with specific, actionable diagnostics that enable operators to quickly identify root causes.
 
 ### Error Categories
 
@@ -666,6 +670,7 @@ When MCP sessions are enabled (`MCP_SESSION_POOL_ENABLED=true` or when using the
 | `not_found` | HTTP 404 response | Wrong endpoint URL, server not registered |
 | `upstream_server_error` | HTTP 5xx response | Server crash, database failure, internal error |
 | `http_error` | Other HTTP error status | Rate limiting (429), client error (4xx) |
+| `mcp_protocol_error` | MCP protocol-level error | Failed session.initialize(), unsupported capability |
 | `dns_resolution` | DNS lookup failure | Invalid hostname, DNS server down |
 | `connection_reset` | Connection reset by peer | Network interruption, server restart |
 | `connection_error` | General connection failure | Network unavailable, routing issue |
@@ -752,7 +757,7 @@ This ensures operators see actionable error information without needing to parse
 
 ### Fallback Behavior
 
-When MCP sessions are **disabled** (`MCP_SESSION_POOL_ENABLED=false`), the per-call session path in `tool_service.py` performs its own ExceptionGroup unwrapping. Both paths now provide consistent error diagnostics.
+When the upstream session registry is **not used** (no `Mcp-Session-Id` header, or tracing is active, or registry initialization failed), the per-call session path in `tool_service.py` performs its own ExceptionGroup unwrapping and error sanitization. Both paths provide consistent error diagnostics and credential redaction.
 
 ### Observability Best Practices
 
