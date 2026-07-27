@@ -38,6 +38,7 @@ from starlette.responses import Response
 
 # First-Party
 import mcpgateway.db
+from mcpgateway.config import settings as settings_wrapper
 from mcpgateway.db import Base, EmailUser, get_db
 from mcpgateway.middleware.csrf_middleware import CSRFMiddleware
 from mcpgateway.services.csrf_service import CSRFService
@@ -239,6 +240,19 @@ def e2e_client(_main_app_with_llm_routes, _e2e_db_engine) -> Generator:
     mcpgateway.db.engine = _e2e_db_engine
     app.dependency_overrides[get_db] = override_get_db
 
+    # settings.secure_cookies defaults to True (config.py), so jwt_token/CSRF
+    # cookies are set with the Secure flag unless a local .env overrides it —
+    # which CI's checkout doesn't have. httpx's TestClient models real browser
+    # cookie-jar semantics: a Secure cookie set over this plain-http base_url
+    # is silently dropped on the very next request, breaking the whole session
+    # (dashboard load 302s back to /admin/login instead of rendering) with no
+    # exception raised anywhere to explain why. Pin it False for this
+    # non-TLS test transport, matching what .env.example ships for real
+    # non-TLS deployments.
+    _secure_cookies_was_shadowed = "secure_cookies" in settings_wrapper.__dict__
+    _original_secure_cookies = settings_wrapper.__dict__.get("secure_cookies")
+    settings_wrapper.__dict__["secure_cookies"] = False
+
     argon2 = Argon2PasswordService()
     db = TestSessionLocal()
     db.add(
@@ -264,6 +278,10 @@ def e2e_client(_main_app_with_llm_routes, _e2e_db_engine) -> Generator:
     app.dependency_overrides.clear()
     mcpgateway.db.SessionLocal = original_session_local
     mcpgateway.db.engine = original_engine
+    if _secure_cookies_was_shadowed:
+        settings_wrapper.__dict__["secure_cookies"] = _original_secure_cookies
+    else:
+        settings_wrapper.__dict__.pop("secure_cookies", None)
 
 
 def test_admin_login_csrf_token_validates_llm_provider_write(e2e_client):
