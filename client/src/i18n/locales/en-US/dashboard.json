@@ -4,5 +4,18 @@
   "dashboard.overview": "Overview",
   "dashboard.stats": "Statistics",
   "dashboard.recentActivity": "Recent Activity",
-  "dashboard.errorLoadingSources": "Error loading dashboard sources"
+  "dashboard.errorLoadingSources": "Error loading dashboard sources",
+  "dashboard.home.clear": "Clear",
+  "dashboard.home.emptyState": "Empty state (to add)",
+  "dashboard.home.headline.default": "Up and running...",
+  "dashboard.home.card.system": "System",
+  "dashboard.home.card.activity": "Activity feed",
+  "dashboard.home.card.mcp": "MCP runtime",
+  "dashboard.home.card.a2a": "A2A runtime",
+  "dashboard.home.card.rest": "REST API",
+  "dashboard.home.card.grpc": "gRPC",
+  "dashboard.home.placeholder.system": "System status card (coming soon)",
+  "dashboard.home.placeholder.activity": "Activity feed (coming soon)",
+  "dashboard.home.placeholder.mcp": "MCP health card (coming soon)",
+  "dashboard.home.permissionDenied": "You do not have permission to view this."
 }

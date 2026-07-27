@@ -1,6 +1,28 @@
 import { http, HttpResponse } from "msw";
 
+import { RECENT_ACTIVITY_FIXTURE } from "./fixtures/recentActivity";
+
 export const handlers = [
+  // Mock Recent Activity endpoint — backed by RECENT_ACTIVITY_FIXTURE.
+  http.get("*/api/logs/activity", ({ request }) => {
+    const url = new URL(request.url);
+    const limitParam = url.searchParams.get("limit");
+    const since = url.searchParams.get("since");
+
+    const parsedLimit = limitParam ? parseInt(limitParam, 10) : 10;
+    const limit = Number.isFinite(parsedLimit) ? Math.max(1, Math.min(100, parsedLimit)) : 10;
+
+    let items = RECENT_ACTIVITY_FIXTURE;
+    if (since) {
+      const sinceMs = Date.parse(since);
+      if (!Number.isNaN(sinceMs)) {
+        items = items.filter((item) => Date.parse(item.timestamp) > sinceMs);
+      }
+    }
+
+    return HttpResponse.json({ items: items.slice(0, limit) });
+  }),
+
   // Mock login endpoint
   http.post("*/app/auth/login", async ({ request }) => {
     const body = await request.json();

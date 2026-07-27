@@ -76,6 +76,10 @@ describe("PromptForm", () => {
       login: vi.fn(),
       logout: vi.fn(),
       setSelectedTeamId: vi.fn(),
+      permissions: [],
+      permissionsLoading: false,
+      permissionsError: false,
+      hasPermission: () => true,
     });
   });
 
@@ -114,6 +118,10 @@ describe("PromptForm", () => {
       login: vi.fn(),
       logout: vi.fn(),
       setSelectedTeamId: vi.fn(),
+      permissions: [],
+      permissionsLoading: false,
+      permissionsError: false,
+      hasPermission: () => true,
     });
     mockPost.mockResolvedValue({
       id: "prompt-1",
@@ -193,6 +201,10 @@ describe("PromptForm", () => {
       login: vi.fn(),
       logout: vi.fn(),
       setSelectedTeamId: vi.fn(),
+      permissions: [],
+      permissionsLoading: false,
+      permissionsError: false,
+      hasPermission: () => true,
     });
 
     renderPromptForm();

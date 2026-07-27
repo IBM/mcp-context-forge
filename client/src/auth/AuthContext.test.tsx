@@ -23,6 +23,12 @@ vi.mock("../api/client", () => {
   };
 });
 
+// The permissions effect fires after authentication; mock it so it resolves
+// deterministically and does not hit the (mocked) api.get for /app/auth/me.
+vi.mock("../api/permissions", () => ({
+  permissionsApi: { listMine: vi.fn().mockResolvedValue([]) },
+}));
+
 // Helper component to test context values
 function TestComponent() {
   const auth = useAuthContext();
