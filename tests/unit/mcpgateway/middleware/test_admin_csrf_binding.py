@@ -19,15 +19,26 @@ login handler source binds ``csrf_user_id`` to the email, not the id/sub.
 """
 
 # Standard
+import datetime
+from datetime import timezone
 import inspect
+import os
+from typing import Generator
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
 import pytest
+from fastapi import Depends, status
+from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 from starlette.requests import Request
 from starlette.responses import Response
 
 # First-Party
+import mcpgateway.db
+from mcpgateway.db import Base, EmailUser, get_db
 from mcpgateway.middleware.csrf_middleware import CSRFMiddleware
 from mcpgateway.services.csrf_service import CSRFService
 
@@ -153,3 +164,163 @@ def test_admin_login_binds_csrf_to_email_not_sub_claim():
     source = inspect.getsource(admin)
     assert 'csrf_user_id = admin_email' in source, "csrf_user_id must bind to the admin's email (CSRFMiddleware's identity), not the JWT sub claim"
     assert 'csrf_user_id = str(payload["sub"])' not in source, "csrf_user_id must not bind to the JWT sub claim (EmailUser.id) — CSRFMiddleware validates against .email"
+
+
+# ---------------------------------------------------------------------------
+# End-to-end regression: real /admin/login -> real /llm/providers write
+# ---------------------------------------------------------------------------
+
+ADMIN_PASSWORD = "AdminPass123!"  # pragma: allowlist secret
+
+
+@pytest.fixture
+def _e2e_db_engine():
+    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    return engine
+
+
+@pytest.fixture(scope="session")
+def _main_app_with_llm_routes(main_app_with_admin_api):
+    """Dynamically mount llm_config_router/llm_admin_router if missing.
+
+    Mirrors ``main_app_with_admin_api`` (tests/conftest.py): the session
+    bootstrap force-disables ``LLMCHAT_ENABLED`` for import speed, so
+    ``/llm/providers`` (llm_config_router) isn't mounted on a plain
+    ``mcpgateway.main.app`` import. Unlike the admin router, no existing
+    fixture re-mounts the LLM routers, so this does it the same way.
+    """
+    app = main_app_with_admin_api
+    existing = [r for r in app.routes if getattr(r, "path", "") == "/llm/providers"]
+    if not existing:
+        # First-Party
+        from mcpgateway.config import get_settings
+        from mcpgateway.config import settings as settings_wrapper
+
+        os.environ["LLMCHAT_ENABLED"] = "true"
+        settings_wrapper.__dict__.pop("llmchat_enabled", None)
+        get_settings.cache_clear()
+
+        from mcpgateway.admin import enforce_admin_csrf
+        from mcpgateway.routers.llm_admin_router import llm_admin_router
+        from mcpgateway.routers.llm_config_router import llm_config_router
+
+        app.include_router(llm_config_router, prefix="/llm", tags=["LLM Configuration"])
+        app.include_router(llm_admin_router, prefix="/admin/llm", tags=["LLM Admin"], dependencies=[Depends(enforce_admin_csrf)])
+
+    yield app
+
+
+@pytest.fixture
+def e2e_client(_main_app_with_llm_routes, _e2e_db_engine) -> Generator:
+    """A TestClient wired to the real app/middleware stack with an isolated in-memory DB.
+
+    Depends on ``main_app_with_admin_api`` (tests/conftest.py) because the session
+    bootstrap force-disables ``MCPGATEWAY_ADMIN_API_ENABLED`` for import speed, which
+    means ``admin_router`` (and therefore ``/admin/login``) isn't mounted on a plain
+    ``mcpgateway.main.app`` import.
+    """
+    # Third-Party
+    from mcpgateway.services.argon2_service import Argon2PasswordService
+
+    app = _main_app_with_llm_routes
+    TestSessionLocal = sessionmaker(bind=_e2e_db_engine)
+
+    def override_get_db():
+        db = TestSessionLocal()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    original_session_local = mcpgateway.db.SessionLocal
+    original_engine = mcpgateway.db.engine
+    mcpgateway.db.SessionLocal = TestSessionLocal
+    mcpgateway.db.engine = _e2e_db_engine
+    app.dependency_overrides[get_db] = override_get_db
+
+    argon2 = Argon2PasswordService()
+    db = TestSessionLocal()
+    db.add(
+        EmailUser(
+            email=USER_EMAIL,
+            password_hash=argon2.hash_password(ADMIN_PASSWORD),
+            full_name="Admin E2E Test",
+            is_admin=True,
+            is_active=True,
+            auth_provider="local",
+            email_verified_at=datetime.datetime.now(timezone.utc),
+        )
+    )
+    db.commit()
+    db.close()
+
+    # base_url must match settings.app_domain (default http://localhost:4444) so
+    # Origin/Referer checks in CSRFMiddleware and the RBAC same-origin-referer
+    # check both see a host they actually allow (TestClient's default
+    # "testserver" host matches neither).
+    yield TestClient(app, base_url="http://localhost:4444")
+
+    app.dependency_overrides.clear()
+    mcpgateway.db.SessionLocal = original_session_local
+    mcpgateway.db.engine = original_engine
+
+
+def test_admin_login_csrf_token_validates_llm_provider_write(e2e_client):
+    """End-to-end regression for #5739: a real /admin/login must produce a CSRF
+    cookie that a subsequent /llm/providers write actually validates against.
+
+    This exercises the full stack (real login handler, real CSRFMiddleware,
+    real RBAC) rather than hand-built Request mocks, so a regression in how the
+    login handler binds `csrf_user_id` (or in how CSRFMiddleware derives its
+    own identity) would be caught here even if the more targeted unit tests
+    above still pass.
+    """
+    login_resp = e2e_client.post(
+        "/admin/login",
+        data={"email": USER_EMAIL, "password": ADMIN_PASSWORD},
+        follow_redirects=False,
+    )
+    assert login_resp.status_code == 303, login_resp.text
+    assert "jwt_token" in e2e_client.cookies
+
+    # A real browser auto-follows the 303 to GET /admin/. That first dashboard
+    # load is what actually rotates the CSRF cookie to the HMAC-bound value
+    # (see admin_ui()'s csrf_user_id/csrf_session_id binding in admin.py) —
+    # the login handler itself only sets an opaque, non-HMAC placeholder.
+    dashboard_resp = e2e_client.get("/admin/", headers={"origin": "http://localhost:4444", "accept": "text/html"})
+    assert dashboard_resp.status_code == 200, dashboard_resp.text
+    csrf_token = e2e_client.cookies.get("mcpgateway_csrf_token")
+    assert csrf_token, "dashboard load must set the mcpgateway_csrf_token cookie"
+
+    create_resp = e2e_client.post(
+        "/llm/providers",
+        json={"name": "e2e-test-provider", "provider_type": "openai"},
+        headers={"X-CSRF-Token": csrf_token, "referer": "http://localhost:4444/admin/"},
+    )
+
+    assert create_resp.status_code != 403, create_resp.text
+    assert "CSRF_TOKEN_INVALID" not in create_resp.text
+    assert create_resp.status_code == status.HTTP_201_CREATED, create_resp.text
+
+
+def test_admin_login_csrf_token_rejected_without_header(e2e_client):
+    """Sanity check for the harness itself: the same write without the CSRF
+    header must still 403, proving the positive-path test above isn't passing
+    because CSRF enforcement is silently disabled in this test setup.
+    """
+    login_resp = e2e_client.post(
+        "/admin/login",
+        data={"email": USER_EMAIL, "password": ADMIN_PASSWORD},
+        follow_redirects=False,
+    )
+    assert login_resp.status_code == 303, login_resp.text
+
+    create_resp = e2e_client.post(
+        "/llm/providers",
+        json={"name": "e2e-test-provider-2", "provider_type": "openai"},
+        headers={"origin": "http://localhost:4444"},
+    )
+
+    assert create_resp.status_code == 403
+    assert "CSRF_TOKEN_INVALID" in create_resp.text

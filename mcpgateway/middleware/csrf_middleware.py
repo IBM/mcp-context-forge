@@ -135,8 +135,14 @@ class CSRFMiddleware(BaseHTTPMiddleware):
         # Bind CSRF tokens to the verified JWT session (jti) when available
         session_id = getattr(request.state, "jti", None)
 
-        # Fallback: derive user/session from a verified JWT when request.state
-        # was not populated yet (middleware ordering or disabled auth-context).
+        # Fallback: derive whichever of user_id/session_id request.state didn't
+        # already populate (middleware ordering, disabled auth-context, or a
+        # local/session login for which request.state.jti is never set — see
+        # auth.py's _set_auth_method_from_payload). Only fill in the missing
+        # piece; never clobber a user_id already resolved from
+        # request.state.user.email above, or every session-cookie request
+        # would silently re-resolve identity to the JWT `sub` (EmailUser.id)
+        # instead of the email CSRFMiddleware is supposed to bind to.
         if not user_id or not session_id:
             raw_token = request.cookies.get("jwt_token") or request.cookies.get("access_token")
             if not raw_token:
@@ -146,8 +152,10 @@ class CSRFMiddleware(BaseHTTPMiddleware):
             if raw_token:
                 try:
                     payload = await verify_jwt_token_cached(raw_token, request)
-                    user_id = payload.get("sub") or payload.get("email") or payload.get("user", {}).get("email")
-                    session_id = payload.get("jti")
+                    if not user_id:
+                        user_id = payload.get("email") or payload.get("user", {}).get("email") or payload.get("sub")
+                    if not session_id:
+                        session_id = payload.get("jti")
                 except Exception as exc:
                     logger.warning("CSRF fallback JWT verification failed for %s %s: %s", request.method, request.url.path, exc)
 
