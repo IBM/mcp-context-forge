@@ -175,7 +175,8 @@ class TokenUsageMiddleware:
             if jti and not user_email:
                 try:
                     user_email = _get_api_token_owner_email_by_jti(jti)
-                except Exception:
+                except Exception as exc:
+                    logger.debug("Failed to resolve API token owner by JTI for usage logging: %s", exc)
                     user_email = None  # DB error: skip logging rather than misattribute usage
 
             if not jti or not user_email:
@@ -235,7 +236,8 @@ class TokenUsageMiddleware:
                             return  # JTI not in DB — forged token, skip logging
                         # Use the DB-stored owner, not the unverified JWT claim
                         user_email = token_row.user_email
-                except Exception:
+                except Exception as exc:
+                    logger.debug("Failed to verify API token owner by JTI for rejected usage logging: %s", exc)
                     return  # DB error — skip logging rather than log unverified data
 
                 blocked = True

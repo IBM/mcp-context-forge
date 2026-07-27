@@ -7,6 +7,7 @@ Unit tests for token usage logging middleware.
 """
 
 # Standard
+import logging
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -343,6 +344,44 @@ async def test_logs_api_token_usage_fallback_uses_jti_owner_for_uuid_only_sub():
     assert call_args.kwargs["jti"] == "jti-uuid-only-sub"
     assert call_args.kwargs["user_email"] == "owner@example.com"
     assert call_args.kwargs["user_email"] != user_id
+
+
+@pytest.mark.asyncio
+async def test_logs_jti_owner_lookup_error(caplog):
+    """JTI owner fallback DB errors should be visible in debug logs."""
+    app = AsyncMock()
+
+    async def app_impl(scope, receive, send):
+        """Send a successful ASGI response for usage logging."""
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"ok"})
+
+    app.side_effect = app_impl
+    middleware = TokenUsageMiddleware(app=app)
+
+    scope = {
+        "type": "http",
+        "path": "/api/resources",
+        "method": "POST",
+        "state": {
+            "auth_method": "api_token",
+            "jti": "jti-db-error",
+            "user": None,
+        },
+        "headers": [(b"authorization", b"Bearer uuid_only_sub_token")],
+    }
+    mock_payload = {"jti": "jti-db-error", "sub": "11111111-1111-1111-1111-111111111111"}
+
+    caplog.set_level(logging.DEBUG, logger="mcpgateway.middleware.token_usage_middleware")
+    with (
+        patch("mcpgateway.middleware.token_usage_middleware.verify_jwt_token_cached", AsyncMock(return_value=mock_payload)),
+        patch("mcpgateway.middleware.token_usage_middleware._get_api_token_owner_email_by_jti", side_effect=RuntimeError("db unavailable")),
+        patch("mcpgateway.middleware.token_usage_middleware.TokenCatalogService") as mock_token_service,
+    ):
+        await _make_asgi_call(middleware, scope)
+
+    assert "Failed to resolve API token owner by JTI for usage logging" in caplog.text
+    mock_token_service.assert_not_called()
 
 
 @pytest.mark.asyncio
