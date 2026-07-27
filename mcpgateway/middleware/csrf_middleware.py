@@ -114,6 +114,13 @@ class CSRFMiddleware(BaseHTTPMiddleware):
         if _extract_bearer_token(auth_header):
             return await call_next(request)
 
+        # 4b. Skip requests that carry no credentials at all. CSRF only defends against
+        # ambient cookie-borne credentials; a request with no Authorization header and no
+        # auth cookie has nothing for CSRF to protect. Let the auth layer produce the
+        # correct 401 instead of a misleading 403 CSRF error.
+        if not auth_header and not (request.cookies.get("jwt_token") or request.cookies.get("access_token")):
+            return await call_next(request)
+
         # 5. Extract CSRF token from header. Do not consume form bodies here:
         # BaseHTTPMiddleware cannot safely replay request bodies for downstream handlers.
         csrf_token = request.headers.get(settings.csrf_token_name)
