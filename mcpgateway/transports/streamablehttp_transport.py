@@ -1196,13 +1196,23 @@ async def _check_streamable_permission(
     if not user_email:
         return False
 
+    # Extract team_id from token teams for RBAC role lookup.
+    # token_teams is used for Layer 1 (visibility), team_id is used for Layer 2 (RBAC).
+    token_teams = user_context.get("teams")
+    team_id = None
+    if token_teams and len(token_teams) == 1:
+        team_id = token_teams[0]
+    elif token_teams and len(token_teams) > 1:
+        check_any_team = True
+
     try:
         async with get_db() as db:
             permission_service = PermissionService(db)
             granted = await permission_service.check_permission(
                 user_email=user_email,
                 permission=permission,
-                token_teams=user_context.get("teams"),
+                team_id=team_id,
+                token_teams=token_teams,
                 allow_admin_bypass=allow_admin_bypass,
                 check_any_team=check_any_team,
             )
@@ -5087,6 +5097,7 @@ class _StreamableHttpAuthHandler:
 
             jti = user_payload.get("jti")
             user_email = user_payload.get("sub") or user_payload.get("email")
+            logger.info("[UUID_RESOLUTION] streamablehttp: JWT sub=%s, email=%s, jti=%s", user_email, user_payload.get("email"), jti)
             nested_user = user_payload.get("user", {})
             nested_is_admin = nested_user.get("is_admin", False) if isinstance(nested_user, dict) else False
             is_admin = user_payload.get("is_admin", False) or nested_is_admin
@@ -5115,7 +5126,7 @@ class _StreamableHttpAuthHandler:
 
                         if cached_user:
                             db_user_is_admin = bool(cached_user.get("is_admin", False))
-                        elif settings.require_user_in_db and user_email != platform_admin_email:
+                        elif settings.require_user_in_db and user_email != platform_admin_email and not is_admin:
                             return await self._send_error(detail="User not found in database", headers={"WWW-Authenticate": "Bearer"})
 
                         if token_use == "session" and not is_admin:  # nosec B105 - token_use is a JWT claim type, not a password
@@ -5146,7 +5157,17 @@ class _StreamableHttpAuthHandler:
 
                     if cached_user:
                         db_user_is_admin = bool(cached_user.get("is_admin", False))
-                    elif settings.require_user_in_db and user_email != platform_admin_email:
+                        # CRITICAL: Update user_email to resolved email from DB (was UUID from JWT sub)
+                        # The batched auth context resolved UUID->email in _get_auth_context_batched_sync
+                        # Only update if we got a different email (UUID was resolved)
+                        resolved_email = cached_user.get("email")
+                        if resolved_email and resolved_email != user_email:
+                            logger.info("[UUID_RESOLUTION] streamablehttp: user_email updated from UUID %s to email %s", user_email, resolved_email)
+                            user_email = resolved_email
+                        elif not resolved_email:
+                            # User found but no email in cached_user - this shouldn't happen but log it
+                            logger.warning("[UUID_RESOLUTION] streamablehttp: cached_user exists but has no email field")
+                    elif settings.require_user_in_db and user_email != platform_admin_email and not is_admin:
                         return await self._send_error(detail="User not found in database", headers={"WWW-Authenticate": "Bearer"})
 
                     if auth_cache is not None:
@@ -5198,7 +5219,7 @@ class _StreamableHttpAuthHandler:
                         return await self._send_error(detail="Account disabled", headers={"WWW-Authenticate": "Bearer"})
                     if user_record:
                         db_user_is_admin = bool(getattr(user_record, "is_admin", False))
-                    if user_record is None and settings.require_user_in_db and user_email != platform_admin_email:
+                    if user_record is None and settings.require_user_in_db and user_email != platform_admin_email and not is_admin:
                         return await self._send_error(detail="User not found in database", headers={"WWW-Authenticate": "Bearer"})
 
                     if auth_cache is not None:
@@ -5308,6 +5329,7 @@ class _StreamableHttpAuthHandler:
                 else:
                     _record_mcp_auth_cache_event("team_membership_cache_hit")
 
+            logger.info("[UUID_RESOLUTION] streamablehttp: Creating auth context with user_email=%s, final_teams=%s", user_email, final_teams)
             auth_user_ctx: dict[str, Any] = {
                 "email": user_email,
                 "teams": final_teams,

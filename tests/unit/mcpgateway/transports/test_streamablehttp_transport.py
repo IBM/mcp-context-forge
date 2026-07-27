@@ -17595,3 +17595,85 @@ async def test_list_tools_sso_admin_gets_admin_bypass_at_service_layer(monkeypat
     await list_tools()
 
     assert called["args"] == (None, None)
+
+
+class TestCheckStreamablePermissionTeamExtraction:
+    """team_id / check_any_team derivation from token teams (auth hardening).
+
+    token_teams drives Layer 1 (visibility); the Layer-2 RBAC role lookup must
+    receive team_id for single-team tokens and check_any_team for multi-team
+    tokens, otherwise team-scoped roles are never evaluated.
+    """
+
+    @staticmethod
+    def _install_fakes(monkeypatch, captured):
+        class FakePermissionService:
+            def __init__(self, _db):
+                pass
+
+            async def check_permission(self, **kwargs):
+                captured.update(kwargs)
+                return True
+
+        db_cm = MagicMock()
+        db_cm.__aenter__ = AsyncMock(return_value=MagicMock())
+        db_cm.__aexit__ = AsyncMock(return_value=False)
+
+        monkeypatch.setattr(tr, "PermissionService", FakePermissionService)
+        monkeypatch.setattr(tr, "get_db", lambda: db_cm)
+
+    @pytest.mark.asyncio
+    async def test_single_team_token_passes_team_id(self, monkeypatch):
+        """A token scoped to exactly one team yields team_id for the RBAC lookup."""
+        captured: dict = {}
+        self._install_fakes(monkeypatch, captured)
+
+        granted = await tr._check_streamable_permission(
+            user_context={"email": "user@example.com", "teams": ["team-1"]},
+            permission="tools.execute",
+        )
+
+        assert granted is True
+        assert captured["team_id"] == "team-1"
+        assert captured["token_teams"] == ["team-1"]
+        assert captured["check_any_team"] is False
+
+    @pytest.mark.asyncio
+    async def test_multi_team_token_sets_check_any_team(self, monkeypatch):
+        """A token scoped to multiple teams triggers the any-team RBAC lookup."""
+        captured: dict = {}
+        self._install_fakes(monkeypatch, captured)
+
+        granted = await tr._check_streamable_permission(
+            user_context={"email": "user@example.com", "teams": ["team-1", "team-2"]},
+            permission="tools.execute",
+        )
+
+        assert granted is True
+        assert captured["team_id"] is None
+        assert captured["check_any_team"] is True
+
+    @pytest.mark.asyncio
+    async def test_public_only_token_passes_no_team_scope(self, monkeypatch):
+        """A public-only token (teams=[]) yields neither team_id nor any-team."""
+        captured: dict = {}
+        self._install_fakes(monkeypatch, captured)
+
+        granted = await tr._check_streamable_permission(
+            user_context={"email": "user@example.com", "teams": []},
+            permission="tools.execute",
+        )
+
+        assert granted is True
+        assert captured["team_id"] is None
+        assert captured["check_any_team"] is False
+
+    @pytest.mark.asyncio
+    async def test_unauthenticated_context_denied(self, monkeypatch):
+        """Deny-path: missing email in the user context is rejected up-front."""
+        granted = await tr._check_streamable_permission(
+            user_context={"teams": ["team-1"]},
+            permission="tools.execute",
+        )
+
+        assert granted is False

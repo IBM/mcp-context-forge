@@ -38,6 +38,17 @@ from mcpgateway.utils.verify_credentials import (
 )
 
 
+@pytest.fixture(autouse=True)
+def mock_plugin_manager_for_auth():
+    """Mock get_plugin_manager to return None by default for all auth tests.
+
+    This prevents AttributeError when code checks plugin_manager.config.plugin_settings.
+    Individual tests can override this by patching get_plugin_manager themselves.
+    """
+    with patch("mcpgateway.auth.get_plugin_manager", return_value=None):
+        yield
+
+
 class TestGetDb:
     """Test cases for the get_db dependency function."""
 
@@ -6742,3 +6753,238 @@ class TestAuthJwtRoutingReturn:
             result = await handler._auth_jwt(token="unused")
 
         assert result is False
+
+
+class TestGetUserByEmailSyncUuidResolution:
+    """UUID-first resolution in _get_user_by_email_sync (auth hardening).
+
+    New-format JWTs carry the user's UUID in ``sub``; the lookup must try
+    ``EmailUser.id`` first and fall back to ``EmailUser.email``.
+    """
+
+    UUID_SUB = "550e8400-e29b-41d4-a716-446655440000"
+
+    @staticmethod
+    def _user_row(email="resolved@example.com"):
+        return SimpleNamespace(
+            email=email,
+            password_hash="h",
+            full_name="U",
+            is_admin=False,
+            is_active=True,
+            auth_provider="local",
+            password_change_required=False,
+            email_verified_at=None,
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+        )
+
+    @staticmethod
+    def _install_session(monkeypatch, user_by_id=None, user_by_email=None, queries=None):
+        from contextlib import contextmanager
+
+        class DummyResult:
+            def __init__(self, value):
+                self._value = value
+
+            def scalar_one_or_none(self):
+                return self._value
+
+        class DummySession:
+            def execute(self, q):
+                where = str(q).split("WHERE", 1)[-1]
+                if queries is not None:
+                    queries.append(where)
+                if "email_users.id" in where:
+                    return DummyResult(user_by_id)
+                return DummyResult(user_by_email)
+
+        @contextmanager
+        def _session_ctx():
+            yield DummySession()
+
+        monkeypatch.setattr("mcpgateway.auth.fresh_db_session", _session_ctx)
+
+    def test_uuid_input_resolves_via_id_lookup(self, monkeypatch):
+        """UUID input is resolved through the id column and returns the user."""
+        from mcpgateway.auth import _get_user_by_email_sync
+
+        queries: list = []
+        self._install_session(monkeypatch, user_by_id=self._user_row(), user_by_email=None, queries=queries)
+
+        result = _get_user_by_email_sync(self.UUID_SUB)
+
+        assert result is not None
+        assert result.email == "resolved@example.com"
+        assert any("email_users.id" in where for where in queries)
+
+    def test_uuid_input_falls_back_to_email_lookup(self, monkeypatch):
+        """A UUID that misses the id lookup still falls back to the email lookup."""
+        from mcpgateway.auth import _get_user_by_email_sync
+
+        queries: list = []
+        self._install_session(monkeypatch, user_by_id=None, user_by_email=self._user_row(), queries=queries)
+
+        result = _get_user_by_email_sync(self.UUID_SUB)
+
+        assert result is not None
+        assert result.email == "resolved@example.com"
+        assert any("email_users.id" in where for where in queries)
+        assert any("email_users.email" in where for where in queries)
+
+    def test_email_input_skips_id_lookup(self, monkeypatch):
+        """Plain email input goes straight to the email query."""
+        from mcpgateway.auth import _get_user_by_email_sync
+
+        queries: list = []
+        self._install_session(monkeypatch, user_by_id=None, user_by_email=self._user_row(), queries=queries)
+
+        result = _get_user_by_email_sync("resolved@example.com")
+
+        assert result is not None
+        assert not any("email_users.id" in where for where in queries)
+
+
+class TestBatchedAuthContextUuidResolution:
+    """_get_auth_context_batched_sync resolves UUID subs and scopes team queries by resolved email."""
+
+    UUID_SUB = "550e8400-e29b-41d4-a716-446655440000"
+
+    def test_uuid_sub_team_queries_use_resolved_email(self, monkeypatch):
+        """Team membership queries must bind the resolved email, not the UUID sub."""
+        from contextlib import contextmanager
+
+        from mcpgateway.auth import _get_auth_context_batched_sync
+
+        user_row = SimpleNamespace(
+            email="resolved@example.com",
+            password_hash="h",
+            full_name="U",
+            is_admin=False,
+            is_active=True,
+            auth_provider="local",
+            password_change_required=False,
+            email_verified_at=None,
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+        )
+        calls: list = []
+
+        class DummyResult:
+            def __init__(self, scalar=None, rows=None):
+                self._scalar = scalar
+                self._rows = rows or []
+
+            def scalar_one_or_none(self):
+                return self._scalar
+
+            def all(self):
+                return self._rows
+
+        class DummySession:
+            def execute(self, q):
+                calls.append(q.compile().params)
+                where = str(q).split("WHERE", 1)[-1]
+                if "email_users.id" in where:
+                    return DummyResult(scalar=user_row)
+                if "email_users.email" in where:
+                    return DummyResult(scalar=None)
+                if "is_personal" in where:
+                    return DummyResult(scalar=None)
+                return DummyResult(rows=[])
+
+        @contextmanager
+        def _session_ctx():
+            yield DummySession()
+
+        monkeypatch.setattr("mcpgateway.auth.fresh_db_session", _session_ctx)
+
+        result = _get_auth_context_batched_sync(self.UUID_SUB)
+
+        assert result["user"] is not None
+        assert result["user"]["email"] == "resolved@example.com"
+        # First query must target the id column (UUID-first resolution).
+        assert self.UUID_SUB in calls[0].values()
+        # Every subsequent team query must bind the resolved email, never the UUID.
+        bound_values = [value for params in calls[1:] for value in params.values()]
+        assert "resolved@example.com" in bound_values
+        assert self.UUID_SUB not in bound_values
+
+
+class TestStreamableAuthJwtHardening:
+    """Streamable-HTTP JWT auth hardening: admin bypass and UUID→email propagation."""
+
+    @pytest.mark.asyncio
+    async def test_admin_token_not_rejected_by_require_user_in_db(self, monkeypatch):
+        """A token with a valid is_admin claim is not 401'd when the user row is missing."""
+        handler, _responses = _make_handler()
+        payload = {"sub": "no-such-user@example.com", "jti": "jti-1", "is_admin": True, "token_use": "access"}
+        monkeypatch.setattr(settings, "auth_cache_enabled", False)
+        monkeypatch.setattr(settings, "auth_cache_batch_queries", True)
+        monkeypatch.setattr(settings, "require_user_in_db", True)
+        empty_ctx = {"user": None, "personal_team_id": None, "is_token_revoked": False, "team_ids": [], "team_names": {}}
+
+        with (
+            patch("mcpgateway.transports.streamablehttp_transport.verify_credentials", AsyncMock(return_value=payload)),
+            patch("mcpgateway.auth._get_auth_context_batched_sync", return_value=empty_ctx),
+            patch("mcpgateway.auth.resolve_trace_team_name", AsyncMock(return_value=None)),
+            patch("mcpgateway.transports.streamablehttp_transport.set_trace_context_from_teams"),
+            patch("mcpgateway.transports.streamablehttp_transport._set_user_identity_from_dict"),
+        ):
+            result = await handler._auth_jwt(token="jwt-token")
+
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_non_admin_token_rejected_by_require_user_in_db(self, monkeypatch):
+        """Deny-path: non-admin token with no DB user is still rejected."""
+        handler, responses = _make_handler()
+        payload = {"sub": "no-such-user@example.com", "jti": "jti-1", "token_use": "access"}
+        monkeypatch.setattr(settings, "auth_cache_enabled", False)
+        monkeypatch.setattr(settings, "auth_cache_batch_queries", True)
+        monkeypatch.setattr(settings, "require_user_in_db", True)
+        empty_ctx = {"user": None, "personal_team_id": None, "is_token_revoked": False, "team_ids": [], "team_names": {}}
+
+        with (
+            patch("mcpgateway.transports.streamablehttp_transport.verify_credentials", AsyncMock(return_value=payload)),
+            patch("mcpgateway.auth._get_auth_context_batched_sync", return_value=empty_ctx),
+            patch("mcpgateway.auth.resolve_trace_team_name", AsyncMock(return_value=None)),
+            patch("mcpgateway.transports.streamablehttp_transport.set_trace_context_from_teams"),
+            patch("mcpgateway.transports.streamablehttp_transport._set_user_identity_from_dict"),
+        ):
+            result = await handler._auth_jwt(token="jwt-token")
+
+        assert result is False
+        start = next(m for m in responses if m["type"] == "http.response.start")
+        assert start["status"] == 401
+
+    @pytest.mark.asyncio
+    async def test_uuid_sub_resolved_email_propagates_to_user_context(self, monkeypatch):
+        """The resolved email (not the UUID sub) flows into the request user context."""
+        from mcpgateway.transports.context import user_context_var
+
+        handler, _responses = _make_handler()
+        uuid_sub = "550e8400-e29b-41d4-a716-446655440000"
+        payload = {"sub": uuid_sub, "jti": "jti-1", "token_use": "access"}
+        monkeypatch.setattr(settings, "auth_cache_enabled", False)
+        monkeypatch.setattr(settings, "auth_cache_batch_queries", True)
+        monkeypatch.setattr(settings, "require_user_in_db", True)
+        batched = {
+            "user": {"email": "resolved@example.com", "is_active": True, "is_admin": False},
+            "personal_team_id": None,
+            "is_token_revoked": False,
+            "team_ids": [],
+            "team_names": {},
+        }
+
+        with (
+            patch("mcpgateway.transports.streamablehttp_transport.verify_credentials", AsyncMock(return_value=payload)),
+            patch("mcpgateway.auth._get_auth_context_batched_sync", return_value=batched),
+            patch("mcpgateway.auth.resolve_trace_team_name", AsyncMock(return_value=None)),
+            patch("mcpgateway.transports.streamablehttp_transport.set_trace_context_from_teams"),
+            patch("mcpgateway.transports.streamablehttp_transport._set_user_identity_from_dict"),
+        ):
+            result = await handler._auth_jwt(token="jwt-token")
+
+        assert result is True
+        assert user_context_var.get()["email"] == "resolved@example.com"

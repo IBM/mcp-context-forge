@@ -28,6 +28,11 @@ def _make_settings(**kwargs):
     base = {
         "jwt_secret_key": STRONG_JWT_KEY,
         "auth_encryption_secret": STRONG_ENC_KEY,
+        # Explicit values keep the test hermetic when the runner environment
+        # exports basic-auth toggles (e.g. MCPGATEWAY_UI_ENABLED=true in CI).
+        "mcpgateway_ui_enabled": False,
+        "api_allow_basic_auth": False,
+        "docs_allow_basic_auth": False,
     }
     base.update(kwargs)
     return Settings.model_validate(base)

@@ -1962,6 +1962,64 @@ def test_strong_secrets_accepted_in_all_envs():
         assert s.auth_encryption_secret.get_secret_value() == strong_enc
 
 
+def test_weak_basic_auth_password_rejected_in_staging_when_ui_enabled():
+    """Weak basic_auth_password is rejected outside development when the Admin UI uses basic auth."""
+    from mcpgateway.config import SecurityConfigurationError
+
+    with pytest.raises(SecurityConfigurationError, match="basic_auth_password"):
+        Settings(
+            jwt_secret_key=_TEST_JWT_SECRET,
+            auth_encryption_secret=_TEST_ENC_SECRET,
+            basic_auth_password="changeme",  # nosec B106  # pragma: allowlist secret
+            mcpgateway_ui_enabled=True,
+            environment="staging",
+            _env_file=None,
+        )
+
+
+def test_weak_basic_auth_password_rejected_in_production_when_api_basic_auth_enabled():
+    """Weak basic_auth_password is rejected in production when API basic auth is enabled."""
+    from mcpgateway.config import SecurityConfigurationError
+
+    with pytest.raises(SecurityConfigurationError, match="basic_auth_password"):
+        Settings(
+            jwt_secret_key=_TEST_JWT_SECRET,
+            auth_encryption_secret=_TEST_ENC_SECRET,
+            basic_auth_password="changeme",  # nosec B106  # pragma: allowlist secret
+            api_allow_basic_auth=True,
+            environment="production",
+            _env_file=None,
+        )
+
+
+def test_weak_basic_auth_password_allowed_in_development():
+    """Development environments keep the weak-password warning-only posture."""
+    s = Settings(
+        jwt_secret_key=_TEST_JWT_SECRET,
+        auth_encryption_secret=_TEST_ENC_SECRET,
+        basic_auth_password="changeme",  # nosec B106  # pragma: allowlist secret
+        mcpgateway_ui_enabled=True,
+        environment="development",
+        _env_file=None,
+    )
+    assert s.basic_auth_password.get_secret_value() == "changeme"  # nosec B105  # pragma: allowlist secret
+
+
+def test_weak_basic_auth_password_allowed_when_basic_auth_disabled():
+    """No basic-auth method enabled -> basic_auth_password strength is not enforced."""
+    s = Settings(
+        jwt_secret_key=_TEST_JWT_SECRET,
+        auth_encryption_secret=_TEST_ENC_SECRET,
+        basic_auth_password="changeme",  # nosec B106  # pragma: allowlist secret
+        mcpgateway_ui_enabled=False,
+        api_allow_basic_auth=False,
+        docs_allow_basic_auth=False,
+        environment="staging",
+        _env_file=None,
+    )
+    assert s.basic_auth_password.get_secret_value() == "changeme"  # nosec B105  # pragma: allowlist secret
+
+
 def test_empty_secret_raises():
     """Empty jwt_secret_key is rejected unconditionally."""
     from mcpgateway.config import SecurityConfigurationError
