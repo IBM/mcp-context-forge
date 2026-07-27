@@ -31,7 +31,7 @@ with patch("mcpgateway.middleware.rbac.require_permission", _noop_decorator):
         from mcpgateway.db import EmailTeam, EmailTeamInvitation, EmailTeamMember, EmailUser
         from mcpgateway.routers import teams
         from mcpgateway.services.team_invitation_service import TeamInvitationService
-        from mcpgateway.services.team_management_service import JoinRequestNotFoundError, TeamManagementService
+        from mcpgateway.services.team_management_service import JoinRequestNotFoundError, TeamManagementService, TeamSeedResult
 
         importlib.reload(teams)
 
@@ -160,7 +160,7 @@ class TestUpdateTeamMaxMembersCap:
     @pytest.mark.asyncio
     async def test_non_admin_create_exceeds_cap_rejected(self, user_ctx, db):
         """Non-admin create with max_members > cap returns 400."""
-        with mock_permission_check(is_admin=user_ctx.get("is_admin", False)), _svc(create_team=AsyncMock(side_effect=ValueError("max_members cannot exceed the configured limit of 100"))):
+        with mock_permission_check(is_admin=user_ctx.get("is_admin", False)), _svc(create_team_with_members=AsyncMock(side_effect=ValueError("max_members cannot exceed the configured limit of 100"))):
             from mcpgateway.schemas import TeamCreateRequest
 
             req = TeamCreateRequest(name="BigTeam", max_members=200)
@@ -173,7 +173,7 @@ class TestUpdateTeamMaxMembersCap:
     async def test_admin_create_exceeds_cap_allowed(self, admin_ctx, db, mock_team):
         """Admin create with max_members > cap succeeds."""
         mock_team.max_members = 500
-        with mock_permission_check(is_admin=admin_ctx.get("is_admin", False)), _svc(create_team=AsyncMock(return_value=mock_team), get_member_counts_batch_cached=AsyncMock(return_value={})):
+        with mock_permission_check(is_admin=admin_ctx.get("is_admin", False)), _svc(create_team_with_members=AsyncMock(return_value=TeamSeedResult(team=mock_team)), get_member_counts_batch_cached=AsyncMock(return_value={})):
             from mcpgateway.schemas import TeamCreateRequest
 
             req = TeamCreateRequest(name="BigTeam", max_members=500)
@@ -184,7 +184,7 @@ class TestUpdateTeamMaxMembersCap:
     async def test_non_admin_create_at_cap_allowed(self, user_ctx, db, mock_team):
         """Non-admin create with max_members == cap succeeds."""
         mock_team.max_members = 100
-        with mock_permission_check(is_admin=user_ctx.get("is_admin", False)), _svc(create_team=AsyncMock(return_value=mock_team)):
+        with mock_permission_check(is_admin=user_ctx.get("is_admin", False)), _svc(create_team_with_members=AsyncMock(return_value=TeamSeedResult(team=mock_team))):
             from mcpgateway.schemas import TeamCreateRequest
 
             req = TeamCreateRequest(name="Team", max_members=100)

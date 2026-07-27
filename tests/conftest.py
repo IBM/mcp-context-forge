@@ -67,6 +67,25 @@ def _force_safe_test_db_defaults() -> None:
 _force_safe_test_db_defaults()
 
 
+# ---------------------------------------------------------------------------
+# Inject strong test secrets so Settings() validates in all environments.
+#
+# config.py validate_security_combinations now rejects placeholder and
+# known-weak secrets unconditionally (in development too).  Tests must
+# therefore supply real secrets.  We use setdefault so that a developer who
+# has already exported real values in their shell is not overridden.
+#
+# The values below are deliberately recognisable as test-only material
+# (fixed, not cryptographically random) — they are not stored anywhere and
+# never used in production.
+# ---------------------------------------------------------------------------
+_TEST_JWT_SECRET = "test-jwt-secret-DO-NOT-USE-IN-PRODUCTION-this-is-only-for-pytest-runs"  # nosec B105  # pragma: allowlist secret
+_TEST_ENC_SECRET = "test-enc-secret-DO-NOT-USE-IN-PRODUCTION-this-is-only-for-pytest-runs"  # nosec B105  # pragma: allowlist secret
+
+os.environ.setdefault("JWT_SECRET_KEY", _TEST_JWT_SECRET)
+os.environ.setdefault("AUTH_ENCRYPTION_SECRET", _TEST_ENC_SECRET)
+
+
 def _force_minimal_main_app_features() -> None:
     """Default heavy optional features to off before anything imports mcpgateway.main.
 
@@ -202,6 +221,7 @@ def test_settings():
         basic_auth_password="testpass",  # pragma: allowlist secret
         auth_required=False,
         mcp_client_auth_enabled=False,
+        environment="development",  # Use development mode for tests
     )
 
 
@@ -222,6 +242,8 @@ def app():
     mp.setattr(settings, "database_url", url, raising=False)
     # Disable auth for tests - allows dependency injection mocking to work
     mp.setattr(settings, "auth_required", False, raising=False)
+    # Use development mode for tests - allows weak secrets and relaxed validation
+    mp.setattr(settings, "environment", "development", raising=False)
 
     engine = create_engine(url, connect_args={"check_same_thread": False}, poolclass=StaticPool)
     TestSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -298,6 +320,8 @@ def app_with_temp_db():
     mp.setattr(settings, "database_url", url, raising=False)
     # Disable auth for tests - allows dependency injection mocking to work
     mp.setattr(settings, "auth_required", False, raising=False)
+    # Use development mode for tests
+    mp.setattr(settings, "environment", "development", raising=False)
 
     engine = create_engine(url, connect_args={"check_same_thread": False}, poolclass=StaticPool)
     TestSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -370,9 +394,10 @@ def main_app_with_admin_api():
     # Capture prior env so we can restore it at fixture teardown. The
     # fixture is session-scoped so teardown only runs once at end-of-
     # session, but keeping state changes reversible is good hygiene.
-    _prior_env = {key: os.environ.get(key) for key in ("MCPGATEWAY_ADMIN_API_ENABLED", "MCPGATEWAY_UI_ENABLED")}
+    _prior_env = {key: os.environ.get(key) for key in ("MCPGATEWAY_ADMIN_API_ENABLED", "MCPGATEWAY_UI_ENABLED", "ENVIRONMENT")}
     os.environ["MCPGATEWAY_ADMIN_API_ENABLED"] = "true"
     os.environ["MCPGATEWAY_UI_ENABLED"] = "true"
+    os.environ["ENVIRONMENT"] = "development"  # Use development mode for tests
 
     # Earlier tests (notably tests/unit/mcpgateway/test_main_extended.py)
     # call `monkeypatch.setattr(settings, <field>, <value>)`, which sets
@@ -380,7 +405,7 @@ def main_app_with_admin_api():
     # __getattr__. Monkeypatch cleanup is not always reliable for these
     # shadowed attributes, so we explicitly strip the feature flags we
     # care about flipping back on.
-    for shadowed in ("mcpgateway_admin_api_enabled", "mcpgateway_ui_enabled", "llmchat_enabled"):
+    for shadowed in ("mcpgateway_admin_api_enabled", "mcpgateway_ui_enabled", "llmchat_enabled", "environment"):
         settings_wrapper.__dict__.pop(shadowed, None)
     get_settings.cache_clear()
 

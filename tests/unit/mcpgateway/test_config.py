@@ -33,10 +33,10 @@ from mcpgateway.config import (
 # --------------------------------------------------------------------------- #
 def test_parse_allowed_origins_json_and_csv():
     """Validator should accept JSON array *or* comma-separated string."""
-    s_json = Settings(allowed_origins='["https://a.com", "https://b.com"]')
+    s_json = Settings(allowed_origins='["https://a.com", "https://b.com"]', environment="development", _env_file=None)
     assert s_json.allowed_origins == {"https://a.com", "https://b.com"}
 
-    s_csv = Settings(allowed_origins="https://x.com , https://y.com")
+    s_csv = Settings(allowed_origins="https://x.com , https://y.com", environment="development", _env_file=None)
     assert s_csv.allowed_origins == {"https://x.com", "https://y.com"}
 
 
@@ -46,7 +46,7 @@ def test_parse_allowed_origins_json_and_csv():
 def test_parse_sso_entra_admin_groups_json_and_csv():
     """sso_entra_admin_groups should accept JSON array or comma-separated string."""
     # Test JSON format
-    s_json = Settings(sso_entra_admin_groups='["admin", "superadmin"]', _env_file=None)
+    s_json = Settings(sso_entra_admin_groups='["admin", "superadmin"]', environment="development", _env_file=None)
     assert s_json.sso_entra_admin_groups == ["admin", "superadmin"]
 
 
@@ -54,7 +54,7 @@ def test_parse_sso_entra_admin_groups_json_and_csv():
 
 def test_ratelimiter_redis_url_defaults():
     """Test rate limiter Redis config defaults to None."""
-    s = Settings(_env_file=None)
+    s = Settings(environment="development", _env_file=None)
     assert s.ratelimiter_redis_url is None
     assert s.ratelimiter_redis_max_connections == 50
     assert s.ratelimiter_redis_socket_timeout == 2.0
@@ -68,6 +68,7 @@ def test_ratelimiter_redis_url_set():
         ratelimiter_redis_max_connections=100,
         ratelimiter_redis_socket_timeout=5.0,
         ratelimiter_redis_socket_connect_timeout=3.0,
+        environment="development",
         _env_file=None
     )
     assert s.ratelimiter_redis_url == "redis://localhost:6380/0"
@@ -82,37 +83,37 @@ def test_ratelimiter_redis_url_validation_rejects_invalid_scheme():
     from pydantic import ValidationError
 
     with pytest.raises(ValidationError, match="must start with redis:// or rediss://"):
-        Settings(ratelimiter_redis_url="http://localhost:6379", _env_file=None)
+        Settings(ratelimiter_redis_url="http://localhost:6379", environment="development", _env_file=None)
 
     with pytest.raises(ValidationError, match="must start with redis:// or rediss://"):
-        Settings(ratelimiter_redis_url="postgresql://localhost:5432", _env_file=None)
+        Settings(ratelimiter_redis_url="postgresql://localhost:5432", environment="development", _env_file=None)
 
 
 def test_ratelimiter_redis_url_validation_accepts_valid_schemes():
     """Test rate limiter Redis URL validation accepts redis:// and rediss://."""
-    s1 = Settings(ratelimiter_redis_url="redis://localhost:6379/0", _env_file=None)
+    s1 = Settings(ratelimiter_redis_url="redis://localhost:6379/0", environment="development", _env_file=None)
     assert s1.ratelimiter_redis_url == "redis://localhost:6379/0"
 
-    s2 = Settings(ratelimiter_redis_url="rediss://localhost:6379/0", _env_file=None)
+    s2 = Settings(ratelimiter_redis_url="rediss://localhost:6379/0", environment="development", _env_file=None)
     assert s2.ratelimiter_redis_url == "rediss://localhost:6379/0"
 
     # Test CSV format
-    s_csv = Settings(sso_entra_admin_groups="admin, superadmin", _env_file=None)
+    s_csv = Settings(sso_entra_admin_groups="admin, superadmin", environment="development", _env_file=None)
     assert s_csv.sso_entra_admin_groups == ["admin", "superadmin"]
 
     # Test empty list
-    s_empty = Settings(sso_entra_admin_groups="", _env_file=None)
+    s_empty = Settings(sso_entra_admin_groups="", environment="development", _env_file=None)
     assert s_empty.sso_entra_admin_groups == []
 
 
 def test_sso_entra_graph_fallback_settings_defaults_and_overrides():
     """Graph fallback settings should expose sane defaults and accept overrides."""
-    defaults = Settings(_env_file=None)
+    defaults = Settings(environment="development", _env_file=None)
     assert defaults.sso_entra_graph_api_enabled is True
     assert defaults.sso_entra_graph_api_timeout == 10
     assert defaults.sso_entra_graph_api_max_groups == 0
 
-    custom = Settings(sso_entra_graph_api_enabled=False, sso_entra_graph_api_timeout=25, sso_entra_graph_api_max_groups=500, _env_file=None)
+    custom = Settings(sso_entra_graph_api_enabled=False, sso_entra_graph_api_timeout=25, sso_entra_graph_api_max_groups=500, environment="development", _env_file=None)
     assert custom.sso_entra_graph_api_enabled is False
     assert custom.sso_entra_graph_api_timeout == 25
     assert custom.sso_entra_graph_api_max_groups == 500
@@ -121,10 +122,10 @@ def test_sso_entra_graph_fallback_settings_defaults_and_overrides():
 def test_sso_entra_graph_timeout_and_max_groups_validation():
     """Graph fallback timeout and max_groups should enforce configured bounds."""
     with pytest.raises(ValidationError):
-        Settings(sso_entra_graph_api_timeout=0, _env_file=None)
+        Settings(sso_entra_graph_api_timeout=0, environment="development", _env_file=None)
 
     with pytest.raises(ValidationError):
-        Settings(sso_entra_graph_api_max_groups=-1, _env_file=None)
+        Settings(sso_entra_graph_api_max_groups=-1, environment="development", _env_file=None)
 
 
 @pytest.mark.parametrize("bad_value", [0, 11, 100])
@@ -141,7 +142,7 @@ def test_uaid_max_federation_hops_rejects_out_of_range(bad_value):
     from pydantic import ValidationError
 
     with pytest.raises(ValidationError):
-        Settings(uaid_max_federation_hops=bad_value, _env_file=None)
+        Settings(uaid_max_federation_hops=bad_value, environment="development", _env_file=None)
 
 
 @pytest.mark.parametrize("good_value", [1, 5, 10])
@@ -151,7 +152,7 @@ def test_uaid_max_federation_hops_accepts_bounds(good_value):
     Inclusive bounds — regression guard against an off-by-one on the
     `le=10` constraint.
     """
-    settings = Settings(uaid_max_federation_hops=good_value, _env_file=None)
+    settings = Settings(uaid_max_federation_hops=good_value, environment="development", _env_file=None)
     assert settings.uaid_max_federation_hops == good_value
 
 
@@ -202,6 +203,7 @@ def test_load_siem_destinations_from_file(tmp_path: Path):
     settings = Settings(
         siem_destinations=[],
         siem_destinations_file=str(cfg),
+        environment="development",
         _env_file=None,
     )
 
@@ -214,6 +216,7 @@ def test_load_siem_destinations_missing_file(tmp_path: Path):
     settings = Settings(
         siem_destinations=[],
         siem_destinations_file=str(missing),
+        environment="development",
         _env_file=None,
     )
 
@@ -228,18 +231,18 @@ def test_database_settings_sqlite_and_non_sqlite(tmp_path: Path) -> None:
     # sqlite -> check_same_thread flag present
     db_file = tmp_path / "foo" / "bar.db"
     url = f"sqlite:///{db_file}"
-    s_sqlite = Settings(database_url=url)
+    s_sqlite = Settings(database_url=url, environment="development", _env_file=None)
     assert s_sqlite.database_settings["connect_args"] == {"check_same_thread": False}
 
     # non-sqlite -> empty connect_args
-    s_pg = Settings(database_url="postgresql://u:p@db/test")  # pragma: allowlist secret
+    s_pg = Settings(database_url="postgresql://u:p@db/test", environment="development", _env_file=None)  # pragma: allowlist secret
     assert s_pg.database_settings["connect_args"] == {}
 
 
 def test_validate_database_creates_missing_parent(tmp_path: Path) -> None:
     db_file = tmp_path / "newdir" / "db.sqlite"
     url = f"sqlite:///{db_file}"
-    s = Settings(database_url=url, _env_file=None)
+    s = Settings(database_url=url, environment="development", _env_file=None)
 
     # Parent shouldn't exist yet
     assert not db_file.parent.exists()
@@ -249,16 +252,16 @@ def test_validate_database_creates_missing_parent(tmp_path: Path) -> None:
 
 
 def test_validate_transport_accepts_and_rejects():
-    Settings(transport_type="http").validate_transport()  # should not raise
+    Settings(transport_type="http", environment="development", _env_file=None).validate_transport()  # should not raise
 
     with pytest.raises(ValueError):
-        Settings(transport_type="bogus").validate_transport()
+        Settings(transport_type="bogus", environment="development", _env_file=None).validate_transport()
 
 
 def test_cors_settings_branches():
     """cors_settings property returns CORS configuration based on cors_enabled flag."""
     # Test with cors_enabled = True (default)
-    s_enabled = Settings(cors_enabled=True, _env_file=None)
+    s_enabled = Settings(cors_enabled=True, environment="development", _env_file=None)
     result = s_enabled.cors_settings
     assert result["allow_methods"] == ["*"]
     assert result["allow_headers"] == ["*"]
@@ -266,7 +269,7 @@ def test_cors_settings_branches():
     assert s_enabled.allowed_origins.issubset(set(result["allow_origins"]))
 
     # Test with cors_enabled = False
-    s_disabled = Settings(cors_enabled=False, _env_file=None)
+    s_disabled = Settings(cors_enabled=False, environment="development", _env_file=None)
     result = s_disabled.cors_settings
     assert result == {}  # Empty dict when disabled
 
@@ -297,15 +300,20 @@ def test_get_settings_is_lru_cached(mock_settings):
 # --------------------------------------------------------------------------- #
 #                       Keep the user-supplied baseline                       #
 # --------------------------------------------------------------------------- #
+# High-entropy test secrets — must pass the entropy gate (score ≥ 3.5)
+_TEST_JWT_SECRET = "T3stJwtS3cr3t!XyZ#9kPqR@vW2mN8hL"  # pragma: allowlist secret
+_TEST_ENC_SECRET = "T3stEncS3cr3t!XyZ#9kPqR@vW2mN8hL"  # pragma: allowlist secret
+
+
 def test_settings_default_values():
     dummy_env = {
-        "JWT_SECRET_KEY": "x" * 32,  # required, at least 32 chars
-        "AUTH_ENCRYPTION_SECRET": "dummy-secret",  # pragma: allowlist secret
+        "JWT_SECRET_KEY": _TEST_JWT_SECRET,
+        "AUTH_ENCRYPTION_SECRET": _TEST_ENC_SECRET,
         "APP_DOMAIN": "http://localhost",
     }
 
     with patch.dict(os.environ, dummy_env, clear=True):
-        settings = Settings(_env_file=None)
+        settings = Settings(environment="development", _env_file=None)
 
         assert settings.app_name == "ContextForge"
         assert settings.host == "127.0.0.1"
@@ -314,8 +322,8 @@ def test_settings_default_values():
         assert settings.basic_auth_user == "admin"
         assert settings.basic_auth_password == SecretStr("changeme")
         assert settings.auth_required is True
-        assert settings.jwt_secret_key.get_secret_value() == "x" * 32
-        assert settings.auth_encryption_secret.get_secret_value() == "dummy-secret"
+        assert settings.jwt_secret_key.get_secret_value() == _TEST_JWT_SECRET
+        assert settings.auth_encryption_secret.get_secret_value() == _TEST_ENC_SECRET
         assert str(settings.app_domain) == "http://localhost/"
         assert settings.metrics_delete_raw_after_rollup is True
         assert settings.metrics_delete_raw_after_rollup_hours == 1
@@ -339,35 +347,35 @@ def test_skip_migrations_defaults_to_false():
     set to True when they pair with a dedicated migration step.
     """
     dummy_env = {
-        "JWT_SECRET_KEY": "x" * 32,
-        "AUTH_ENCRYPTION_SECRET": "dummy-secret",  # pragma: allowlist secret
+        "JWT_SECRET_KEY": _TEST_JWT_SECRET,
+        "AUTH_ENCRYPTION_SECRET": _TEST_ENC_SECRET,
     }
     with patch.dict(os.environ, dummy_env, clear=True):
-        settings = Settings(_env_file=None)
+        settings = Settings(environment="development", _env_file=None)
         assert settings.mcpgateway_skip_migrations is False
 
 
 def test_skip_migrations_env_true_flips_flag():
     """MCPGATEWAY_SKIP_MIGRATIONS=true → in-pod bootstrap is suppressed."""
     dummy_env = {
-        "JWT_SECRET_KEY": "x" * 32,
-        "AUTH_ENCRYPTION_SECRET": "dummy-secret",  # pragma: allowlist secret
+        "JWT_SECRET_KEY": _TEST_JWT_SECRET,
+        "AUTH_ENCRYPTION_SECRET": _TEST_ENC_SECRET,
         "MCPGATEWAY_SKIP_MIGRATIONS": "true",
     }
     with patch.dict(os.environ, dummy_env, clear=True):
-        settings = Settings(_env_file=None)
+        settings = Settings(environment="development", _env_file=None)
         assert settings.mcpgateway_skip_migrations is True
 
 
 def test_skip_migrations_env_false_keeps_flag_off():
     """Explicit MCPGATEWAY_SKIP_MIGRATIONS=false matches the default."""
     dummy_env = {
-        "JWT_SECRET_KEY": "x" * 32,
-        "AUTH_ENCRYPTION_SECRET": "dummy-secret",  # pragma: allowlist secret
+        "JWT_SECRET_KEY": _TEST_JWT_SECRET,
+        "AUTH_ENCRYPTION_SECRET": _TEST_ENC_SECRET,
         "MCPGATEWAY_SKIP_MIGRATIONS": "false",
     }
     with patch.dict(os.environ, dummy_env, clear=True):
-        settings = Settings(_env_file=None)
+        settings = Settings(environment="development", _env_file=None)
         assert settings.mcpgateway_skip_migrations is False
 
 
@@ -387,7 +395,7 @@ def test_supports_transport_properties():
 # --------------------------------------------------------------------------- #
 def test_compression_default_values():
     """Test that compression settings have correct defaults."""
-    s = Settings(_env_file=None)
+    s = Settings(environment="development", _env_file=None)
     assert s.compression_enabled is True
     assert s.compression_minimum_size == 500
     assert s.compression_gzip_level == 6
@@ -403,6 +411,7 @@ def test_compression_custom_values():
         compression_gzip_level=9,
         compression_brotli_quality=11,
         compression_zstd_level=22,
+        environment="development",
         _env_file=None,
     )
     assert s.compression_enabled is False
@@ -415,56 +424,56 @@ def test_compression_custom_values():
 def test_compression_minimum_size_validation():
     """Test that compression_minimum_size validates >= 0."""
     # Valid: 0 is allowed (compress all responses)
-    s = Settings(compression_minimum_size=0, _env_file=None)
+    s = Settings(compression_minimum_size=0, environment="development", _env_file=None)
     assert s.compression_minimum_size == 0
 
     with pytest.raises(ValidationError) as exc_info:
-        Settings(compression_minimum_size=-1, _env_file=None)
+        Settings(compression_minimum_size=-1, environment="development", _env_file=None)
     assert "greater than or equal to 0" in str(exc_info.value).lower()
 
 
 def test_compression_gzip_level_validation():
     """Test that gzip level validates 1-9 range."""
     for level in [1, 6, 9]:
-        s = Settings(compression_gzip_level=level, _env_file=None)
+        s = Settings(compression_gzip_level=level, environment="development", _env_file=None)
         assert s.compression_gzip_level == level
 
     with pytest.raises(ValidationError) as exc_info:
-        Settings(compression_gzip_level=0, _env_file=None)
+        Settings(compression_gzip_level=0, environment="development", _env_file=None)
     assert "greater than or equal to 1" in str(exc_info.value).lower()
 
     with pytest.raises(ValidationError) as exc_info:
-        Settings(compression_gzip_level=10, _env_file=None)
+        Settings(compression_gzip_level=10, environment="development", _env_file=None)
     assert "less than or equal to 9" in str(exc_info.value).lower()
 
 
 def test_compression_brotli_quality_validation():
     """Test that brotli quality validates 0-11 range."""
     for quality in [0, 4, 11]:
-        s = Settings(compression_brotli_quality=quality, _env_file=None)
+        s = Settings(compression_brotli_quality=quality, environment="development", _env_file=None)
         assert s.compression_brotli_quality == quality
 
     with pytest.raises(ValidationError) as exc_info:
-        Settings(compression_brotli_quality=-1, _env_file=None)
+        Settings(compression_brotli_quality=-1, environment="development", _env_file=None)
     assert "greater than or equal to 0" in str(exc_info.value).lower()
 
     with pytest.raises(ValidationError) as exc_info:
-        Settings(compression_brotli_quality=12, _env_file=None)
+        Settings(compression_brotli_quality=12, environment="development", _env_file=None)
     assert "less than or equal to 11" in str(exc_info.value).lower()
 
 
 def test_compression_zstd_level_validation():
     """Test that zstd level validates 1-22 range."""
     for level in [1, 3, 22]:
-        s = Settings(compression_zstd_level=level, _env_file=None)
+        s = Settings(compression_zstd_level=level, environment="development", _env_file=None)
         assert s.compression_zstd_level == level
 
     with pytest.raises(ValidationError) as exc_info:
-        Settings(compression_zstd_level=0, _env_file=None)
+        Settings(compression_zstd_level=0, environment="development", _env_file=None)
     assert "greater than or equal to 1" in str(exc_info.value).lower()
 
     with pytest.raises(ValidationError) as exc_info:
-        Settings(compression_zstd_level=23, _env_file=None)
+        Settings(compression_zstd_level=23, environment="development", _env_file=None)
     assert "less than or equal to 22" in str(exc_info.value).lower()
 
 
@@ -524,34 +533,34 @@ def test_normalize_env_list_vars_invalid_json_bracket():
 # --------------------------------------------------------------------------- #
 def test_x_frame_options_null_returns_none():
     """x_frame_options set to 'null' or 'none' should return None."""
-    s = Settings(x_frame_options="null", _env_file=None)
+    s = Settings(x_frame_options="null", environment="development", _env_file=None)
     assert s.x_frame_options is None
 
-    s2 = Settings(x_frame_options="None", _env_file=None)
+    s2 = Settings(x_frame_options="None", environment="development", _env_file=None)
     assert s2.x_frame_options is None
 
 
 def test_x_frame_options_normal_value():
     """Normal x_frame_options value should be preserved."""
-    s = Settings(x_frame_options="DENY", _env_file=None)
+    s = Settings(x_frame_options="DENY", environment="development", _env_file=None)
     assert s.x_frame_options == "DENY"
 
 
 def test_x_frame_options_empty_string_returns_none():
     """Empty-string x_frame_options should be normalized to None (allow embedding)."""
-    s = Settings(x_frame_options="", _env_file=None)
+    s = Settings(x_frame_options="", environment="development", _env_file=None)
     assert s.x_frame_options is None
 
 
 def test_x_frame_options_whitespace_only_returns_none():
     """Whitespace-only x_frame_options should be normalized to None (allow embedding)."""
-    s = Settings(x_frame_options="   ", _env_file=None)
+    s = Settings(x_frame_options="   ", environment="development", _env_file=None)
     assert s.x_frame_options is None
 
 
 def test_x_frame_options_none_value_returns_none():
     """x_frame_options set to None should return None."""
-    s = Settings(x_frame_options=None, _env_file=None)
+    s = Settings(x_frame_options=None, environment="development", _env_file=None)
     assert s.x_frame_options is None
 
 
@@ -560,25 +569,25 @@ def test_x_frame_options_none_value_returns_none():
 # --------------------------------------------------------------------------- #
 def test_parse_allowed_roots_json():
     """JSON array string should be parsed into list."""
-    s = Settings(allowed_roots='["/api", "/v2"]', _env_file=None)
+    s = Settings(allowed_roots='["/api", "/v2"]', environment="development", _env_file=None)
     assert s.allowed_roots == ["/api", "/v2"]
 
 
 def test_parse_allowed_roots_json_non_list_falls_back_to_csv():
     """Valid JSON that is not a list should fall back to comma-splitting (config.py:648->654)."""
-    s = Settings(allowed_roots='{"root": "/api"}', _env_file=None)
+    s = Settings(allowed_roots='{"root": "/api"}', environment="development", _env_file=None)
     assert s.allowed_roots == ['{"root": "/api"}']
 
 
 def test_parse_allowed_roots_csv():
     """CSV string should be parsed into list."""
-    s = Settings(allowed_roots="/api, /v2", _env_file=None)
+    s = Settings(allowed_roots="/api, /v2", environment="development", _env_file=None)
     assert s.allowed_roots == ["/api", "/v2"]
 
 
 def test_parse_allowed_roots_empty():
     """Empty string should return empty list."""
-    s = Settings(allowed_roots="", _env_file=None)
+    s = Settings(allowed_roots="", environment="development", _env_file=None)
     assert s.allowed_roots == []
 
 
@@ -733,21 +742,47 @@ def test_gateway_update_accepts_safe_public_oauth_token_url():
 # --------------------------------------------------------------------------- #
 def test_validate_secrets_non_secretstr_input():
     """Passing a plain string for jwt_secret_key should return SecretStr."""
-    s = Settings(jwt_secret_key="a" * 32, _env_file=None)
+    s = Settings(jwt_secret_key=_TEST_JWT_SECRET, environment="development", _env_file=None)
     assert isinstance(s.jwt_secret_key, SecretStr)
-    assert s.jwt_secret_key.get_secret_value() == "a" * 32
+    assert s.jwt_secret_key.get_secret_value() == _TEST_JWT_SECRET
 
 
-def test_validate_secrets_weak_secret_warns():
-    """Weak secret should trigger warnings but not fail."""
-    s = Settings(jwt_secret_key="changeme", _env_file=None)
-    assert s.jwt_secret_key.get_secret_value() == "changeme"
+def test_validate_secrets_weak_secret_raises_in_all_envs():
+    """Known-weak secret raises SecurityConfigurationError in every environment.
+
+    ``"changeme"`` is 8 chars — below the 32-char length floor — so ``"too short"``
+    fires before the weak-value check.  Both are valid rejection reasons; the test
+    asserts either message to remain correct regardless of check ordering.
+    """
+    # Standard
+    from mcpgateway.config import SecurityConfigurationError
+
+    for env in ("development", "staging", "production"):
+        with pytest.raises(SecurityConfigurationError) as exc_info:
+            Settings(
+                jwt_secret_key="changeme",  # nosec B106
+                environment=env,
+                _env_file=None,
+            )
+        msg = str(exc_info.value)
+        assert "too short" in msg or "known-weak/default value" in msg
 
 
-def test_validate_secrets_low_entropy_warns():
-    """Low entropy secret should trigger warnings."""
-    s = Settings(jwt_secret_key="aaaa", _env_file=None)
-    assert s.jwt_secret_key.get_secret_value() == "aaaa"
+def test_validate_secrets_low_entropy_raises():
+    """Low-entropy secret raises SecurityConfigurationError even outside WEAK_VALUES.
+
+    The entropy gate (score < 3.5) is unconditional — it fires in every
+    environment regardless of client_mode.  To reach the entropy check the secret
+    must first pass the length floor (≥ 32 chars), so we use a long repetitive
+    string that is not in WEAK_VALUES but has near-zero entropy.
+    """
+    from mcpgateway.config import SecurityConfigurationError
+
+    # 32 × 'a': long enough to pass the length floor, not in WEAK_VALUES, but
+    # Shannon entropy ≈ 0 — ensures the "low entropy" branch is hit.
+    low_entropy_secret = "a" * 32
+    with pytest.raises(SecurityConfigurationError, match="low entropy"):
+        Settings(jwt_secret_key=low_entropy_secret, environment="development", _env_file=None)
 
 
 def test_validate_secrets_direct_call_non_secretstr_value():
@@ -767,26 +802,26 @@ def test_validate_secrets_direct_call_non_secretstr_value():
 # --------------------------------------------------------------------------- #
 def test_validate_admin_password_plain_string():
     """Plain string password should be wrapped as SecretStr."""
-    s = Settings(basic_auth_password="StrongP@ss1!", _env_file=None)  # pragma: allowlist secret
+    s = Settings(basic_auth_password="StrongP@ss1!", environment="development", _env_file=None)  # pragma: allowlist secret
     assert isinstance(s.basic_auth_password, SecretStr)
     assert s.basic_auth_password.get_secret_value() == "StrongP@ss1!"
 
 
 def test_validate_admin_password_short_warns():
     """Short password should trigger warning."""
-    s = Settings(basic_auth_password="ab", _env_file=None)
+    s = Settings(basic_auth_password="ab", environment="development", _env_file=None)
     assert s.basic_auth_password.get_secret_value() == "ab"
 
 
 def test_validate_admin_password_high_complexity():
     """Complex password with 3+ categories passes without extra warning."""
-    s = Settings(basic_auth_password="Abc123!@#", _env_file=None)  # pragma: allowlist secret
+    s = Settings(basic_auth_password="Abc123!@#", environment="development", _env_file=None)  # pragma: allowlist secret
     assert s.basic_auth_password.get_secret_value() == "Abc123!@#"
 
 
 def test_validate_admin_password_low_complexity():
     """Low complexity password triggers warning."""
-    s = Settings(basic_auth_password="alllower", _env_file=None)  # pragma: allowlist secret
+    s = Settings(basic_auth_password="alllower", environment="development", _env_file=None)  # pragma: allowlist secret
     assert s.basic_auth_password.get_secret_value() == "alllower"
 
 
@@ -806,26 +841,26 @@ def test_validate_admin_password_direct_call_plain_string():
 # --------------------------------------------------------------------------- #
 def test_validate_cors_origins_empty_set():
     """Empty set allowed_origins should work."""
-    s = Settings(allowed_origins=set(), _env_file=None)
+    s = Settings(allowed_origins=set(), environment="development", _env_file=None)
     assert s.allowed_origins == set()
 
 
 def test_validate_cors_origins_valid_set():
     """Valid origins set should be preserved."""
     origins = {"http://localhost:3000", "https://example.com"}
-    s = Settings(allowed_origins=origins, _env_file=None)
+    s = Settings(allowed_origins=origins, environment="development", _env_file=None)
     assert s.allowed_origins == origins
 
 
 def test_validate_cors_origins_wildcard_warns():
     """Wildcard origin should trigger warning."""
-    s = Settings(allowed_origins={"*"}, _env_file=None)
+    s = Settings(allowed_origins={"*"}, environment="development", _env_file=None)
     assert "*" in s.allowed_origins
 
 
 def test_validate_cors_origins_invalid_format_warns():
     """Origin without http:// or https:// should trigger warning."""
-    s = Settings(allowed_origins={"example.com"}, _env_file=None)
+    s = Settings(allowed_origins={"example.com"}, environment="development", _env_file=None)
     assert "example.com" in s.allowed_origins
 
 
@@ -855,13 +890,13 @@ def test_validate_cors_origins_invalid_type_direct_call():
 # --------------------------------------------------------------------------- #
 def test_validate_database_url_weak_password_warns():
     """Database URL with weak password triggers warning."""
-    s = Settings(database_url="postgresql://admin:password123@localhost/db", _env_file=None)  # pragma: allowlist secret
+    s = Settings(database_url="postgresql://admin:password123@localhost/db", environment="development", _env_file=None)  # pragma: allowlist secret
     assert "postgresql" in s.database_url
 
 
 def test_validate_database_url_sqlite_info():
     """SQLite URL triggers info message."""
-    s = Settings(database_url="sqlite:///./test.db", _env_file=None)
+    s = Settings(database_url="sqlite:///./test.db", environment="development", _env_file=None)
     assert s.database_url == "sqlite:///./test.db"
 
 
@@ -870,19 +905,19 @@ def test_validate_database_url_sqlite_info():
 # --------------------------------------------------------------------------- #
 def test_security_combinations_ui_no_auth():
     """UI enabled without auth should warn."""
-    s = Settings(auth_required=False, mcpgateway_ui_enabled=True, _env_file=None)
+    s = Settings(auth_required=False, mcpgateway_ui_enabled=True, environment="development", _env_file=None)
     assert s.auth_required is False
 
 
 def test_security_combinations_ssl_no_dev():
     """SSL verification disabled outside dev should warn."""
-    s = Settings(skip_ssl_verify=True, dev_mode=False, _env_file=None)
+    s = Settings(skip_ssl_verify=True, dev_mode=False, environment="development", _env_file=None)
     assert s.skip_ssl_verify is True
 
 
 def test_security_combinations_debug_no_dev():
     """Debug enabled outside dev should warn."""
-    s = Settings(debug=True, dev_mode=False, _env_file=None)
+    s = Settings(debug=True, dev_mode=False, environment="development", _env_file=None)
     assert s.debug is True
 
 
@@ -898,6 +933,7 @@ def test_get_security_warnings_many():
         dev_mode=False,
         token_expiry=1440,  # Max allowed value (was 20000)
         tool_rate_limit=2000,
+        environment="development",
         _env_file=None,
     )
     warnings = s.get_security_warnings()
@@ -919,6 +955,7 @@ def test_get_security_warnings_clean():
         allowed_origins={"https://example.com"},
         token_expiry=60,
         tool_rate_limit=100,
+        environment="development",
         _env_file=None,
     )
     warnings = s.get_security_warnings()
@@ -928,14 +965,14 @@ def test_get_security_warnings_clean():
 
 def test_get_security_warnings_dev_mode():
     """Dev mode should generate a warning."""
-    s = Settings(dev_mode=True, _env_file=None)
+    s = Settings(dev_mode=True, environment="development", _env_file=None)
     warnings = s.get_security_warnings()
     assert any("Development mode" in w for w in warnings)
 
 
 def test_get_security_warnings_long_token():
     """Very long token expiry should generate a warning."""
-    s = Settings(token_expiry=1440, _env_file=None)  # Max allowed value
+    s = Settings(token_expiry=1440, environment="development", _env_file=None)  # Max allowed value
     warnings = s.get_security_warnings()
     # Should NOT have token expiry warning since 1440 < 10080
     assert not any("token expiry" in w for w in warnings)
@@ -943,14 +980,14 @@ def test_get_security_warnings_long_token():
 
 def test_get_security_warnings_high_rate_limit():
     """Very high rate limit should generate a warning."""
-    s = Settings(tool_rate_limit=5000, _env_file=None)
+    s = Settings(tool_rate_limit=5000, environment="development", _env_file=None)
     warnings = s.get_security_warnings()
     assert any("rate limit" in w for w in warnings)
 
 
 def test_get_security_warnings_wildcard_cors():
     """Wildcard CORS origin should generate a warning."""
-    s = Settings(cors_enabled=True, allowed_origins={"*"}, _env_file=None)
+    s = Settings(cors_enabled=True, allowed_origins={"*"}, environment="development", _env_file=None)
     warnings = s.get_security_warnings()
     assert any("CORS allows all origins" in w for w in warnings)
 
@@ -960,7 +997,7 @@ def test_get_security_warnings_wildcard_cors():
 # --------------------------------------------------------------------------- #
 def test_get_security_status():
     """get_security_status should return a dict with all expected keys."""
-    s = Settings(auth_required=True, _env_file=None)
+    s = Settings(auth_required=True, environment="development", _env_file=None)
     status = s.get_security_status()
     assert "secure_secrets" in status
     assert "auth_enabled" in status
@@ -979,7 +1016,7 @@ def test_get_security_status():
 # --------------------------------------------------------------------------- #
 def test_parse_allowed_origins_quoted_string():
     """Outer quotes should be stripped from allowed_origins string."""
-    s = Settings(allowed_origins='"https://a.com,https://b.com"', _env_file=None)
+    s = Settings(allowed_origins='"https://a.com,https://b.com"', environment="development", _env_file=None)
     assert "https://a.com" in s.allowed_origins
     assert "https://b.com" in s.allowed_origins
 
@@ -993,12 +1030,12 @@ def test_validate_log_level_invalid():
     from pydantic import ValidationError
 
     with pytest.raises(ValidationError):
-        Settings(log_level="TRACE", _env_file=None)
+        Settings(log_level="TRACE", environment="development", _env_file=None)
 
 
 def test_validate_log_level_case_insensitive():
     """Log level should be case-insensitive and uppercased."""
-    s = Settings(log_level="debug", _env_file=None)
+    s = Settings(log_level="debug", environment="development", _env_file=None)
     assert s.log_level == "DEBUG"
 
 
@@ -1007,20 +1044,20 @@ def test_validate_log_level_case_insensitive():
 # --------------------------------------------------------------------------- #
 def test_parse_sso_issuers_none():
     """None should return empty list."""
-    s = Settings(sso_issuers=None, _env_file=None)
+    s = Settings(sso_issuers=None, environment="development", _env_file=None)
     assert s.sso_issuers == []
 
 
 def test_parse_sso_issuers_list():
     """List input should pass through."""
-    s = Settings(sso_issuers=["https://issuer.com"], _env_file=None)
+    s = Settings(sso_issuers=["https://issuer.com"], environment="development", _env_file=None)
     assert len(s.sso_issuers) == 1
     assert str(s.sso_issuers[0]).rstrip("/") == "https://issuer.com"
 
 
 def test_parse_sso_issuers_json_string():
     """JSON array string should be parsed."""
-    s = Settings(sso_issuers='["https://a.com", "https://b.com"]', _env_file=None)
+    s = Settings(sso_issuers='["https://a.com", "https://b.com"]', environment="development", _env_file=None)
     assert len(s.sso_issuers) == 2
     urls = [str(u).rstrip("/") for u in s.sso_issuers]
     assert "https://a.com" in urls
@@ -1029,7 +1066,7 @@ def test_parse_sso_issuers_json_string():
 
 def test_parse_sso_issuers_csv_string():
     """CSV string should be parsed."""
-    s = Settings(sso_issuers="https://a.com, https://b.com", _env_file=None)
+    s = Settings(sso_issuers="https://a.com, https://b.com", environment="development", _env_file=None)
     assert len(s.sso_issuers) == 2
     urls = [str(u).rstrip("/") for u in s.sso_issuers]
     assert "https://a.com" in urls
@@ -1038,7 +1075,7 @@ def test_parse_sso_issuers_csv_string():
 
 def test_parse_sso_issuers_empty_string():
     """Empty string should return empty list."""
-    s = Settings(sso_issuers="", _env_file=None)
+    s = Settings(sso_issuers="", environment="development", _env_file=None)
     assert s.sso_issuers == []
 
 
@@ -1048,7 +1085,7 @@ def test_parse_sso_issuers_invalid_json():
     from pydantic import ValidationError
 
     with pytest.raises(ValidationError):
-        Settings(sso_issuers="[invalid", _env_file=None)
+        Settings(sso_issuers="[invalid", environment="development", _env_file=None)
 
 
 def test_parse_sso_issuers_invalid_type():
@@ -1057,7 +1094,7 @@ def test_parse_sso_issuers_invalid_type():
     from pydantic import ValidationError
 
     with pytest.raises(ValidationError):
-        Settings(sso_issuers=123, _env_file=None)
+        Settings(sso_issuers=123, environment="development", _env_file=None)
 
 
 # --------------------------------------------------------------------------- #
@@ -1065,14 +1102,14 @@ def test_parse_sso_issuers_invalid_type():
 # --------------------------------------------------------------------------- #
 def test_gateway_tool_name_separator_invalid():
     """Invalid separator should default to '-'."""
-    s = Settings(gateway_tool_name_separator="invalid", _env_file=None)
+    s = Settings(gateway_tool_name_separator="invalid", environment="development", _env_file=None)
     assert s.gateway_tool_name_separator == "-"
 
 
 def test_gateway_tool_name_separator_valid():
     """Valid separators should be preserved."""
     for sep in ["-", "--", "_", "."]:
-        s = Settings(gateway_tool_name_separator=sep, _env_file=None)
+        s = Settings(gateway_tool_name_separator=sep, environment="development", _env_file=None)
         assert s.gateway_tool_name_separator == sep
 
 
@@ -1081,19 +1118,19 @@ def test_gateway_tool_name_separator_valid():
 # --------------------------------------------------------------------------- #
 def test_custom_well_known_files_empty():
     """Empty well_known_custom_files should return empty dict."""
-    s = Settings(well_known_custom_files="", _env_file=None)
+    s = Settings(well_known_custom_files="", environment="development", _env_file=None)
     assert s.custom_well_known_files == {}
 
 
 def test_custom_well_known_files_valid_json():
     """Valid JSON should be parsed into dict."""
-    s = Settings(well_known_custom_files='{"robots.txt": "User-agent: *"}', _env_file=None)
+    s = Settings(well_known_custom_files='{"robots.txt": "User-agent: *"}', environment="development", _env_file=None)
     assert s.custom_well_known_files == {"robots.txt": "User-agent: *"}
 
 
 def test_custom_well_known_files_invalid_json():
     """Invalid JSON should return empty dict."""
-    s = Settings(well_known_custom_files="not-valid-json", _env_file=None)
+    s = Settings(well_known_custom_files="not-valid-json", environment="development", _env_file=None)
     assert s.custom_well_known_files == {}
 
 
@@ -1102,13 +1139,13 @@ def test_custom_well_known_files_invalid_json():
 # --------------------------------------------------------------------------- #
 def test_auto_enable_security_txt_with_content():
     """security_txt_enabled should be True when content is provided."""
-    s = Settings(well_known_security_txt="Contact: security@example.com", _env_file=None)
+    s = Settings(well_known_security_txt="Contact: security@example.com", environment="development", _env_file=None)
     assert s.well_known_security_txt_enabled is True
 
 
 def test_auto_enable_security_txt_empty():
     """security_txt_enabled should be False when content is empty."""
-    s = Settings(well_known_security_txt="", _env_file=None)
+    s = Settings(well_known_security_txt="", environment="development", _env_file=None)
     assert s.well_known_security_txt_enabled is False
 
 
@@ -1127,13 +1164,13 @@ def test_auto_enable_security_txt_falls_back_to_bool_value_direct_call():
 # --------------------------------------------------------------------------- #
 def test_parse_list_from_env_none():
     """None should return empty list."""
-    s = Settings(sso_entra_admin_groups=None, _env_file=None)
+    s = Settings(sso_entra_admin_groups=None, environment="development", _env_file=None)
     assert s.sso_entra_admin_groups == []
 
 
 def test_parse_list_from_env_invalid_json_fallback():
     """Invalid JSON starting with '[' should fall back to CSV parsing."""
-    s = Settings(sso_entra_admin_groups="[not-valid", _env_file=None)
+    s = Settings(sso_entra_admin_groups="[not-valid", environment="development", _env_file=None)
     assert s.sso_entra_admin_groups == ["[not-valid"]
 
 
@@ -1143,13 +1180,14 @@ def test_parse_list_from_env_invalid_type():
     from pydantic import ValidationError
 
     with pytest.raises(ValidationError):
-        Settings(sso_entra_admin_groups=123, _env_file=None)
+        Settings(sso_entra_admin_groups=123, environment="development", _env_file=None)
 
 
 def test_ui_hide_sections_csv_aliases_and_invalid_values():
     """UI section hide list should normalize aliases and ignore invalid values."""
     s = Settings(
         mcpgateway_ui_hide_sections="prompts,CATALOG,a2a,invalid,prompts",
+        environment="development",
         _env_file=None,
     )
     assert s.mcpgateway_ui_hide_sections == ["prompts", "servers", "agents"]
@@ -1159,6 +1197,7 @@ def test_ui_hide_sections_json_array_input():
     """UI section hide list should accept JSON array input."""
     s = Settings(
         mcpgateway_ui_hide_sections='["tools", "resources"]',
+        environment="development",
         _env_file=None,
     )
     assert s.mcpgateway_ui_hide_sections == ["tools", "resources"]
@@ -1168,6 +1207,7 @@ def test_ui_hide_sections_empty_tokens_stripped():
     """Empty tokens from double commas should be ignored."""
     s = Settings(
         mcpgateway_ui_hide_sections="tools,,prompts,",
+        environment="development",
         _env_file=None,
     )
     assert s.mcpgateway_ui_hide_sections == ["tools", "prompts"]
@@ -1177,6 +1217,7 @@ def test_ui_hide_sections_accepts_extended_sections():
     """Extended admin tabs should be accepted as valid hideable sections."""
     s = Settings(
         mcpgateway_ui_hide_sections="overview,roots,mcp-registry,metrics,plugins,export-import,logs,version-info,maintenance",
+        environment="development",
         _env_file=None,
     )
     assert s.mcpgateway_ui_hide_sections == [
@@ -1195,7 +1236,7 @@ def test_ui_hide_sections_accepts_extended_sections():
 def test_ui_hide_sections_empty_default(monkeypatch):
     """Default value should be empty list."""
     monkeypatch.delenv("MCPGATEWAY_UI_HIDE_SECTIONS", raising=False)
-    s = Settings(_env_file=None)
+    s = Settings(environment="development", _env_file=None)
     assert s.mcpgateway_ui_hide_sections == []
 
 
@@ -1203,6 +1244,7 @@ def test_ui_hide_header_items_json_normalization():
     """UI header hide list should normalize case and deduplicate values."""
     s = Settings(
         mcpgateway_ui_hide_header_items='["logout", "THEME_TOGGLE", "logout", "invalid"]',
+        environment="development",
         _env_file=None,
     )
     assert s.mcpgateway_ui_hide_header_items == ["logout", "theme_toggle"]
@@ -1212,6 +1254,7 @@ def test_ui_hide_header_items_csv_input():
     """UI header hide list should accept CSV input."""
     s = Settings(
         mcpgateway_ui_hide_header_items="logout,team_selector",
+        environment="development",
         _env_file=None,
     )
     assert s.mcpgateway_ui_hide_header_items == ["logout", "team_selector"]
@@ -1220,13 +1263,13 @@ def test_ui_hide_header_items_csv_input():
 def test_ui_hide_header_items_empty_default(monkeypatch):
     """Default value should be empty list."""
     monkeypatch.delenv("MCPGATEWAY_UI_HIDE_HEADER_ITEMS", raising=False)
-    s = Settings(_env_file=None)
+    s = Settings(environment="development", _env_file=None)
     assert s.mcpgateway_ui_hide_header_items == []
 
 
 def test_ui_embedded_default_false():
     """Embedded mode should default to False."""
-    s = Settings(_env_file=None)
+    s = Settings(environment="development", _env_file=None)
     assert s.mcpgateway_ui_embedded is False
 
 
@@ -1234,6 +1277,7 @@ def test_ui_hide_sections_admin_csv():
     """Admin section hide list should normalize aliases and ignore invalid values."""
     s = Settings(
         mcpgateway_ui_hide_sections_admin="prompts,CATALOG,a2a,invalid,prompts",
+        environment="development",
         _env_file=None,
     )
     assert s.mcpgateway_ui_hide_sections_admin == ["prompts", "servers", "agents"]
@@ -1243,6 +1287,7 @@ def test_ui_hide_sections_admin_json_array():
     """Admin section hide list should accept JSON array input."""
     s = Settings(
         mcpgateway_ui_hide_sections_admin='["tools", "resources"]',
+        environment="development",
         _env_file=None,
     )
     assert s.mcpgateway_ui_hide_sections_admin == ["tools", "resources"]
@@ -1251,7 +1296,7 @@ def test_ui_hide_sections_admin_json_array():
 def test_ui_hide_sections_admin_empty_default(monkeypatch):
     """Admin section hide list should default to empty list."""
     monkeypatch.delenv("MCPGATEWAY_UI_HIDE_SECTIONS_ADMIN", raising=False)
-    s = Settings(_env_file=None)
+    s = Settings(environment="development", _env_file=None)
     assert s.mcpgateway_ui_hide_sections_admin == []
 
 
@@ -1259,6 +1304,7 @@ def test_ui_hide_header_items_admin_csv():
     """Admin header hide list should accept CSV input and normalize."""
     s = Settings(
         mcpgateway_ui_hide_header_items_admin="logout,THEME_TOGGLE,invalid",
+        environment="development",
         _env_file=None,
     )
     assert s.mcpgateway_ui_hide_header_items_admin == ["logout", "theme_toggle"]
@@ -1268,6 +1314,7 @@ def test_ui_hide_header_items_admin_json_array():
     """Admin header hide list should accept JSON array input."""
     s = Settings(
         mcpgateway_ui_hide_header_items_admin='["logout", "theme_toggle"]',
+        environment="development",
         _env_file=None,
     )
     assert s.mcpgateway_ui_hide_header_items_admin == ["logout", "theme_toggle"]
@@ -1276,7 +1323,7 @@ def test_ui_hide_header_items_admin_json_array():
 def test_ui_hide_header_items_admin_empty_default(monkeypatch):
     """Admin header hide list should default to empty list."""
     monkeypatch.delenv("MCPGATEWAY_UI_HIDE_HEADER_ITEMS_ADMIN", raising=False)
-    s = Settings(_env_file=None)
+    s = Settings(environment="development", _env_file=None)
     assert s.mcpgateway_ui_hide_header_items_admin == []
 
 
@@ -1285,7 +1332,7 @@ def test_ui_hide_header_items_admin_empty_default(monkeypatch):
 # --------------------------------------------------------------------------- #
 def test_validate_database_non_sqlite():
     """Non-SQLite databases should skip directory creation."""
-    s = Settings(database_url="postgresql://u:p@host/db", _env_file=None)  # pragma: allowlist secret
+    s = Settings(database_url="postgresql://u:p@host/db", environment="development", _env_file=None)  # pragma: allowlist secret
     s.validate_database()  # Should not raise or try to create dirs
 
 
@@ -1295,7 +1342,7 @@ def test_validate_database_non_sqlite():
 def test_init_passthrough_headers_json():
     """DEFAULT_PASSTHROUGH_HEADERS as JSON should be parsed."""
     with patch.dict(os.environ, {"DEFAULT_PASSTHROUGH_HEADERS": '["X-Custom", "X-Other"]'}, clear=False):
-        s = Settings(_env_file=None)
+        s = Settings(environment="development", _env_file=None)
         assert s.default_passthrough_headers == ["X-Custom", "X-Other"]
 
 
@@ -1304,7 +1351,7 @@ def test_init_passthrough_headers_json_not_array_falls_back_to_csv():
     with patch.dict(os.environ, {"DEFAULT_PASSTHROUGH_HEADERS": '{"a": 1}'}, clear=False):
         # Pass an explicit list to bypass pydantic_settings' eager env JSON parsing
         # (it would otherwise fail validation before our __init__ fallback executes).
-        s = Settings(default_passthrough_headers=["X-Tenant-Id"], _env_file=None)
+        s = Settings(default_passthrough_headers=["X-Tenant-Id"], environment="development", _env_file=None)
         assert s.default_passthrough_headers == ['{"a": 1}']
 
 
@@ -1312,7 +1359,7 @@ def test_init_passthrough_headers_default():
     """Missing DEFAULT_PASSTHROUGH_HEADERS should use safe defaults."""
     env = {k: v for k, v in os.environ.items() if k != "DEFAULT_PASSTHROUGH_HEADERS"}
     with patch.dict(os.environ, env, clear=True):
-        s = Settings(_env_file=None)
+        s = Settings(environment="development", _env_file=None)
         assert s.default_passthrough_headers == ["X-Tenant-Id", "X-Trace-Id"]
 
 
@@ -1361,14 +1408,20 @@ def test_generate_settings_schema():
 #                    client_mode bypasses security checks                      #
 # --------------------------------------------------------------------------- #
 def test_client_mode_skips_security_warnings():
-    """client_mode=True should skip security validation warnings."""
+    """client_mode=True stores the flag; entropy gate still enforced (GHSA-8pcq-mx48-hjvj).
+
+    client_mode no longer bypasses the unconditional entropy check — weak
+    secrets are rejected in every environment and every mode.  The test
+    verifies that Settings() succeeds when a real secret is supplied and
+    that the client_mode flag is stored correctly.
+    """
     s = Settings(
         client_mode=True,
-        jwt_secret_key="weak",
+        jwt_secret_key=_TEST_JWT_SECRET,
         basic_auth_password="x",
+        environment="development",
         _env_file=None,
     )
-    # Should not raise - client mode bypasses all warnings
     assert s.client_mode is True
 
 
@@ -1377,7 +1430,7 @@ def test_client_mode_skips_security_warnings():
 # --------------------------------------------------------------------------- #
 def test_log_summary():
     """log_summary should log settings without raising."""
-    s = Settings(_env_file=None)
+    s = Settings(environment="development", _env_file=None)
     s.log_summary()
 
 
@@ -1386,7 +1439,7 @@ def test_log_summary():
 # --------------------------------------------------------------------------- #
 def test_proxy_auth_warning():
     """Disabled MCP client auth with trust_proxy_auth=False should warn."""
-    s = Settings(mcp_client_auth_enabled=False, trust_proxy_auth=False, _env_file=None)
+    s = Settings(mcp_client_auth_enabled=False, trust_proxy_auth=False, environment="development", _env_file=None)
     assert s.mcp_client_auth_enabled is False
 
 
@@ -1396,6 +1449,7 @@ def test_proxy_auth_trust_requires_explicit_ack():
         mcp_client_auth_enabled=False,
         trust_proxy_auth=True,
         trust_proxy_auth_dangerously=False,
+        environment="development",
         _env_file=None,
     )
     assert s.trust_proxy_auth is False
@@ -1407,6 +1461,7 @@ def test_proxy_auth_trust_enabled_with_explicit_ack():
         mcp_client_auth_enabled=False,
         trust_proxy_auth=True,
         trust_proxy_auth_dangerously=True,
+        environment="development",
         _env_file=None,
     )
     assert s.trust_proxy_auth is True
@@ -1414,19 +1469,19 @@ def test_proxy_auth_trust_enabled_with_explicit_ack():
 
 def test_mcp_require_auth_defaults_to_auth_required_true():
     """When unset, MCP_REQUIRE_AUTH should follow AUTH_REQUIRED=true."""
-    s = Settings(auth_required=True, mcp_require_auth=None, _env_file=None)
+    s = Settings(auth_required=True, mcp_require_auth=None, environment="development", _env_file=None)
     assert s.mcp_require_auth is True
 
 
 def test_mcp_require_auth_defaults_to_auth_required_false():
     """When unset, MCP_REQUIRE_AUTH should follow AUTH_REQUIRED=false."""
-    s = Settings(auth_required=False, mcp_require_auth=None, _env_file=None)
+    s = Settings(auth_required=False, mcp_require_auth=None, environment="development", _env_file=None)
     assert s.mcp_require_auth is False
 
 
 def test_experimental_rust_mcp_runtime_defaults():
     """Experimental Rust MCP runtime settings should default to disabled with local sidecar URL."""
-    s = Settings(_env_file=None)
+    s = Settings(environment="development", _env_file=None)
     assert s.experimental_rust_mcp_runtime_enabled is False
     assert s.experimental_rust_mcp_runtime_url == "http://127.0.0.1:8787"
     assert s.experimental_rust_mcp_runtime_uds is None
@@ -1442,14 +1497,14 @@ def test_experimental_rust_mcp_runtime_defaults():
 def test_experimental_rust_mcp_runtime_uds_accepts_absolute_path(tmp_path: Path):
     """The optional Rust runtime UDS path should round-trip when configured."""
     uds_path = tmp_path / "contextforge-rust.sock"
-    s = Settings(experimental_rust_mcp_runtime_uds=str(uds_path), _env_file=None)
+    s = Settings(experimental_rust_mcp_runtime_uds=str(uds_path), environment="development", _env_file=None)
     assert s.experimental_rust_mcp_runtime_uds == str(uds_path)
 
 
 def test_experimental_rust_mcp_runtime_uds_rejects_relative_path():
     """The Rust runtime UDS path must be absolute."""
     with pytest.raises(ValueError, match="must be an absolute path"):
-        Settings(experimental_rust_mcp_runtime_uds="relative.sock", _env_file=None)
+        Settings(experimental_rust_mcp_runtime_uds="relative.sock", environment="development", _env_file=None)
 
 
 def test_experimental_rust_mcp_runtime_uds_rejects_missing_parent(tmp_path: Path):
@@ -1460,8 +1515,6 @@ def test_experimental_rust_mcp_runtime_uds_rejects_missing_parent(tmp_path: Path
 
 
 
-
-
 def test_auth_required_true_with_explicit_mcp_permissive_warns(caplog):
     """AUTH_REQUIRED=true with explicit MCP_REQUIRE_AUTH=false should warn."""
     caplog.set_level("WARNING", logger="mcpgateway.config")
@@ -1469,6 +1522,7 @@ def test_auth_required_true_with_explicit_mcp_permissive_warns(caplog):
     s = Settings(
         auth_required=True,
         mcp_require_auth=False,
+        environment="development",
         _env_file=None,
     )
 
@@ -1484,6 +1538,7 @@ def test_allow_unauthenticated_admin_warns_when_auth_disabled(caplog):
     s = Settings(
         auth_required=False,
         allow_unauthenticated_admin=True,
+        environment="development",
         _env_file=None,
     )
 
@@ -1508,14 +1563,14 @@ def test_derive_ed25519_public_key():
         encryption_algorithm=serialization.NoEncryption(),
     ).decode()
 
-    s = Settings(ed25519_private_key=pem, _env_file=None)
+    s = Settings(ed25519_private_key=pem, environment="development", _env_file=None)
     assert s.ed25519_public_key is not None
     assert "PUBLIC KEY" in s.ed25519_public_key
 
 
 def test_derive_ed25519_invalid_key_warns():
     """Invalid PEM data should log warning but not raise."""
-    s = Settings(ed25519_private_key="not-a-valid-pem-key", _env_file=None)  # pragma: allowlist secret
+    s = Settings(ed25519_private_key="not-a-valid-pem-key", environment="development", _env_file=None)  # pragma: allowlist secret
     assert s.ed25519_public_key is None
 
 
@@ -1532,7 +1587,7 @@ def test_derive_ed25519_non_ed25519_key_is_ignored():
         encryption_algorithm=serialization.NoEncryption(),
     ).decode()
 
-    s = Settings(ed25519_private_key=pem, _env_file=None)
+    s = Settings(ed25519_private_key=pem, environment="development", _env_file=None)
     assert s.ed25519_public_key is None
 
 
@@ -1541,25 +1596,25 @@ def test_derive_ed25519_non_ed25519_key_is_ignored():
 # --------------------------------------------------------------------------- #
 def test_direct_proxy_enabled_default_false():
     """mcpgateway_direct_proxy_enabled should default to False."""
-    s = Settings(_env_file=None)
+    s = Settings(environment="development", _env_file=None)
     assert s.mcpgateway_direct_proxy_enabled is False
 
 
 def test_direct_proxy_timeout_default_30():
     """mcpgateway_direct_proxy_timeout should default to 30."""
-    s = Settings(_env_file=None)
+    s = Settings(environment="development", _env_file=None)
     assert s.mcpgateway_direct_proxy_timeout == 30
 
 
 def test_ws_relay_feature_default_false():
     """mcpgateway_ws_relay_enabled should default to False."""
-    s = Settings(_env_file=None)
+    s = Settings(environment="development", _env_file=None)
     assert s.mcpgateway_ws_relay_enabled is False
 
 
 def test_reverse_proxy_feature_default_false():
     """mcpgateway_reverse_proxy_enabled should default to False."""
-    s = Settings(_env_file=None)
+    s = Settings(environment="development", _env_file=None)
     assert s.mcpgateway_reverse_proxy_enabled is False
 
 
@@ -1568,7 +1623,7 @@ def test_hot_server_check_interval_property():
     # First-Party
     from mcpgateway.config import Settings
 
-    s = Settings(gateway_auto_refresh_interval=60, _env_file=None)
+    s = Settings(gateway_auto_refresh_interval=60, environment="development", _env_file=None)
     # hot_server_check_interval defaults to gateway_auto_refresh_interval
     assert s.hot_server_check_interval == 60
 
@@ -1656,19 +1711,19 @@ def test_oauth_manager_non_string_token_url_raises():
 def test_uaid_allow_all_domains_defaults_false(monkeypatch):
     """Verify UAID_ALLOW_ALL_DOMAINS defaults to False (secure default)."""
     monkeypatch.delenv("UAID_ALLOW_ALL_DOMAINS", raising=False)
-    settings = Settings(_env_file=None)
+    settings = Settings(environment="development", _env_file=None)
     assert settings.uaid_allow_all_domains is False
 
 
 def test_uaid_forward_auth_defaults_true():
     """Verify UAID_FORWARD_AUTH defaults to True (auth forwarding enabled)."""
-    settings = Settings(_env_file=None)
+    settings = Settings(environment="development", _env_file=None)
     assert settings.uaid_forward_auth is True
 
 
 def test_uaid_allow_all_domains_can_be_enabled():
     """Verify UAID_ALLOW_ALL_DOMAINS can be explicitly enabled (dev mode)."""
-    settings = Settings(uaid_allow_all_domains=True, _env_file=None)
+    settings = Settings(uaid_allow_all_domains=True, environment="development", _env_file=None)
     assert settings.uaid_allow_all_domains is True
 
 
@@ -1676,19 +1731,19 @@ def test_uaid_allow_all_domains_can_be_enabled():
 def test_uaid_allowed_domains_rejects_localhost():
     """Verify validator rejects localhost in domain allowlist."""
     with pytest.raises(ValueError, match="loopback address"):
-        Settings(uaid_allowed_domains=["example.com", "localhost"], _env_file=None)
+        Settings(uaid_allowed_domains=["example.com", "localhost"], environment="development", _env_file=None)
 
 
 def test_uaid_allowed_domains_rejects_127_0_0_1():
     """Verify validator rejects 127.0.0.1 in domain allowlist."""
     with pytest.raises(ValueError, match="loopback address"):
-        Settings(uaid_allowed_domains=["127.0.0.1"], _env_file=None)
+        Settings(uaid_allowed_domains=["127.0.0.1"], environment="development", _env_file=None)
 
 
 def test_uaid_allowed_domains_rejects_link_local():
     """Verify validator rejects link-local addresses (169.254.x.x)."""
     with pytest.raises(ValueError, match="link-local address"):
-        Settings(uaid_allowed_domains=["169.254.1.1"], _env_file=None)
+        Settings(uaid_allowed_domains=["169.254.1.1"], environment="development", _env_file=None)
 
 
 def test_uaid_allowed_domains_rejects_private_ips():
@@ -1697,34 +1752,34 @@ def test_uaid_allowed_domains_rejects_private_ips():
     private_ips = ["10.0.0.1", "192.168.1.1", "172.16.0.1"]
     for ip in private_ips:
         with pytest.raises(ValueError, match="private IP range"):
-            Settings(uaid_allowed_domains=[ip], _env_file=None)
+            Settings(uaid_allowed_domains=[ip], environment="development", _env_file=None)
 
 
 def test_uaid_allowed_domains_172_range_boundary():
     """Verify only the private 172.16/12 range is rejected."""
     with pytest.raises(ValueError, match="private IP range"):
-        Settings(uaid_allowed_domains=["172.20.1.1"], _env_file=None)
+        Settings(uaid_allowed_domains=["172.20.1.1"], environment="development", _env_file=None)
 
-    settings = Settings(uaid_allowed_domains=["172.32.1.1"], _env_file=None)
+    settings = Settings(uaid_allowed_domains=["172.32.1.1"], environment="development", _env_file=None)
     assert settings.uaid_allowed_domains == ["172.32.1.1"]
 
 
 def test_uaid_allowed_domains_rejects_whitespace():
     """Verify validator rejects domains with whitespace."""
     with pytest.raises(ValueError, match="contains whitespace"):
-        Settings(uaid_allowed_domains=["example.com", "bad domain.com"], _env_file=None)
+        Settings(uaid_allowed_domains=["example.com", "bad domain.com"], environment="development", _env_file=None)
 
 
 def test_uaid_allowed_domains_accepts_valid_domains():
     """Verify validator accepts valid public domain names."""
     valid_domains = ["example.com", "gateway.acme.org", "api.partner.io"]
-    settings = Settings(uaid_allowed_domains=valid_domains, _env_file=None)
+    settings = Settings(uaid_allowed_domains=valid_domains, environment="development", _env_file=None)
     assert settings.uaid_allowed_domains == valid_domains
 
 
 def test_uaid_allowed_domains_accepts_empty_list():
     """Verify validator accepts empty list (fail-closed default)."""
-    settings = Settings(uaid_allowed_domains=[], _env_file=None)
+    settings = Settings(uaid_allowed_domains=[], environment="development", _env_file=None)
     assert settings.uaid_allowed_domains == []
 
 
@@ -1734,7 +1789,7 @@ def test_uaid_config_warns_on_contradictory_settings(caplog):
 
     # Capture warnings from the config logger
     with caplog.at_level(logging.WARNING, logger="mcpgateway.config"):
-        settings = Settings(uaid_allow_all_domains=True, uaid_allowed_domains=["example.com"], _env_file=None)
+        settings = Settings(uaid_allow_all_domains=True, uaid_allowed_domains=["example.com"], environment="development", _env_file=None)
 
     # Should create settings successfully but log warning
     assert settings.uaid_allow_all_domains is True
@@ -1747,19 +1802,19 @@ def test_uaid_config_warns_on_contradictory_settings(caplog):
 def test_uaid_allowed_domains_rejects_ipv6_with_brackets():
     """Verify validator rejects IPv6 loopback with bracket notation."""
     with pytest.raises(ValueError, match="loopback address"):
-        Settings(uaid_allowed_domains=["[::1]"], _env_file=None)
+        Settings(uaid_allowed_domains=["[::1]"], environment="development", _env_file=None)
 
 
 def test_uaid_allowed_domains_rejects_ipv6_zero_with_brackets():
     """Verify validator rejects IPv6 zero address with bracket notation."""
     with pytest.raises(ValueError, match="loopback address"):
-        Settings(uaid_allowed_domains=["[::0]"], _env_file=None)
+        Settings(uaid_allowed_domains=["[::0]"], environment="development", _env_file=None)
 
 
 def test_uaid_allowed_domains_multiple_invalid():
     """Verify validator reports all invalid domains when multiple are present."""
     with pytest.raises(ValueError, match="localhost.*127.0.0.1"):
-        Settings(uaid_allowed_domains=["localhost", "127.0.0.1", "example.com"], _env_file=None)
+        Settings(uaid_allowed_domains=["localhost", "127.0.0.1", "example.com"], environment="development", _env_file=None)
 
 
 def test_uaid_allowed_domains_rejects_loopback_with_port():
@@ -1767,18 +1822,18 @@ def test_uaid_allowed_domains_rejects_loopback_with_port():
     loopback_with_ports = ["localhost:4444", "127.0.0.1:4444", "[::1]:8080"]
     for domain in loopback_with_ports:
         with pytest.raises(ValueError, match="loopback address"):
-            Settings(uaid_allowed_domains=[domain], _env_file=None)
+            Settings(uaid_allowed_domains=[domain], environment="development", _env_file=None)
 
 
 def test_uaid_allowed_domains_rejects_link_local_with_port():
     """Verify validator rejects link-local addresses with ports."""
     with pytest.raises(ValueError, match="link-local address"):
-        Settings(uaid_allowed_domains=["169.254.1.1:8080"], _env_file=None)
+        Settings(uaid_allowed_domains=["169.254.1.1:8080"], environment="development", _env_file=None)
 
 
 def test_uaid_allowed_domains_accepts_valid_with_port():
     """Verify validator accepts valid public domains with ports."""
-    settings = Settings(uaid_allowed_domains=["example.com:8443", "gateway.io:4444"], _env_file=None)
+    settings = Settings(uaid_allowed_domains=["example.com:8443", "gateway.io:4444"], environment="development", _env_file=None)
     assert settings.uaid_allowed_domains == ["example.com:8443", "gateway.io:4444"]
 
 
@@ -1814,3 +1869,232 @@ def test_primary_worker_heartbeat_warns_at_exact_boundary(caplog):
     with caplog.at_level(logging.WARNING, logger="mcpgateway.config"):
         Settings(primary_worker_election_backend="redis", primary_worker_lease_ttl=14, primary_worker_heartbeat_interval=7, _env_file=None)
     assert _pw_heartbeat_warned(caplog)
+
+
+# ---------------------------------------------------------------------------
+#  GHSA-8pcq-mx48-hjvj — Unconditional secret enforcement regression tests
+# ---------------------------------------------------------------------------
+
+
+def test_placeholder_secret_raises_in_development():
+    """__REPLACE_ME__ placeholder is rejected even in development."""
+    from mcpgateway.config import SecurityConfigurationError
+
+    with pytest.raises(SecurityConfigurationError, match="unset placeholder"):
+        Settings(
+            jwt_secret_key="__REPLACE_ME__run_init-secrets_before_starting",
+            environment="development",
+            _env_file=None,
+        )
+
+
+def test_placeholder_secret_raises_in_staging():
+    """__REPLACE_ME__ placeholder is rejected in staging."""
+    from mcpgateway.config import SecurityConfigurationError
+
+    # Use a placeholder long enough (≥ 32 chars) to reach the placeholder check
+    # rather than the length-floor check.
+    with pytest.raises(SecurityConfigurationError, match="unset placeholder"):
+        Settings(
+            jwt_secret_key="__REPLACE_ME__padding-to-reach-32-chars-x",
+            environment="staging",
+            _env_file=None,
+        )
+
+
+def test_placeholder_secret_raises_in_production():
+    """__REPLACE_ME__ placeholder is rejected in production."""
+    from mcpgateway.config import SecurityConfigurationError
+
+    # Use a placeholder long enough (≥ 32 chars) to reach the placeholder check
+    # rather than the length-floor check.
+    with pytest.raises(SecurityConfigurationError, match="unset placeholder"):
+        Settings(
+            jwt_secret_key="__REPLACE_ME__padding-to-reach-32-chars-x",
+            environment="production",
+            _env_file=None,
+        )
+
+
+def test_weak_secret_raises_in_staging():
+    """Known-weak secret is rejected in staging (was already rejected there before fix)."""
+    from mcpgateway.config import SecurityConfigurationError
+
+    with pytest.raises(SecurityConfigurationError):
+        Settings(
+            jwt_secret_key="my-test-key-but-now-longer-than-32-bytes",  # nosec B106
+            environment="staging",
+            _env_file=None,
+        )
+
+
+def test_weak_auth_encryption_secret_raises_in_development():
+    """Known-weak auth_encryption_secret is rejected unconditionally (including development).
+
+    ``"my-test-salt"`` is 12 chars — below the 32-char length floor — so ``"too short"``
+    fires before the weak-value check.  The test accepts either rejection reason.
+    """
+    from mcpgateway.config import SecurityConfigurationError
+
+    with pytest.raises(SecurityConfigurationError) as exc_info:
+        Settings(
+            auth_encryption_secret="my-test-salt",  # nosec B106  # pragma: allowlist secret
+            environment="development",
+            _env_file=None,
+        )
+    msg = str(exc_info.value)
+    assert "too short" in msg or "known-weak/default value" in msg
+
+
+def test_strong_secrets_accepted_in_all_envs():
+    """Strong, non-placeholder secrets pass validation in every environment."""
+    strong_jwt = "a-strong-jwt-secret-that-is-long-enough-and-unique-xxxx"  # nosec B105
+    strong_enc = "a-strong-enc-secret-that-is-long-enough-and-unique-xxxx"  # nosec B105
+
+    for env in ("development", "staging", "production"):
+        s = Settings(
+            jwt_secret_key=strong_jwt,
+            auth_encryption_secret=strong_enc,
+            environment=env,
+            _env_file=None,
+        )
+        assert s.jwt_secret_key.get_secret_value() == strong_jwt
+        assert s.auth_encryption_secret.get_secret_value() == strong_enc
+
+
+def test_empty_secret_raises():
+    """Empty jwt_secret_key is rejected unconditionally."""
+    from mcpgateway.config import SecurityConfigurationError
+
+    with pytest.raises(SecurityConfigurationError, match="secret is empty"):
+        Settings(
+            jwt_secret_key="   ",
+            environment="development",
+            _env_file=None,
+        )
+
+
+def test_init_secrets_patch_mode_writes_strong_values(tmp_path):
+    """init_secrets ensure_env_file_secrets replaces placeholder values with strong ones."""
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "JWT_SECRET_KEY=__REPLACE_ME__run_init-secrets_before_starting\n"
+        "AUTH_ENCRYPTION_SECRET=__REPLACE_ME__run_init-secrets_before_starting\n"
+    )
+
+    import os as _os
+
+    from mcpgateway.scripts.init_secrets import ensure_env_file_secrets
+
+    # Patch os.environ to isolate the test
+    env_backup_jwt = _os.environ.pop("JWT_SECRET_KEY", None)
+    env_backup_enc = _os.environ.pop("AUTH_ENCRYPTION_SECRET", None)
+    try:
+        generated = ensure_env_file_secrets(env_file=str(env_file))
+    finally:
+        if env_backup_jwt is not None:
+            _os.environ["JWT_SECRET_KEY"] = env_backup_jwt
+        if env_backup_enc is not None:
+            _os.environ["AUTH_ENCRYPTION_SECRET"] = env_backup_enc
+
+    assert "JWT_SECRET_KEY" in generated
+    assert "AUTH_ENCRYPTION_SECRET" in generated
+
+    new_jwt = generated["JWT_SECRET_KEY"]
+    new_enc = generated["AUTH_ENCRYPTION_SECRET"]
+
+    # Generated values must be non-trivially long (token_urlsafe(32) → 43 chars)
+    assert len(new_jwt) >= 32
+    assert len(new_enc) >= 32
+
+    # Must not be placeholder or known-weak
+    assert not new_jwt.lower().startswith("__replace_me__")
+    assert new_jwt.lower() != "changeme"
+
+    # Running Settings() with the generated values must succeed
+    s = Settings(
+        jwt_secret_key=new_jwt,
+        auth_encryption_secret=new_enc,
+        environment="development",
+        _env_file=None,
+    )
+    assert s.jwt_secret_key.get_secret_value() == new_jwt
+
+
+def test_cross_process_consistency_simulated():
+    """Verify that a token signed with the same secret the gateway Settings sees is accepted.
+
+    This is a regression guard against any future per-process random generation
+    that would desync the gateway's validator from sibling bootstrap containers
+    (e.g. register_fast_time) that read JWT_SECRET_KEY from the environment directly.
+    """
+    import os as _os
+
+    strong_secret = "cross-process-consistency-test-secret-64-chars-long-XXXXXXXX"  # nosec B105  # pragma: allowlist secret
+
+    old_jwt = _os.environ.get("JWT_SECRET_KEY")
+    old_enc = _os.environ.get("AUTH_ENCRYPTION_SECRET")
+    try:
+        _os.environ["JWT_SECRET_KEY"] = strong_secret
+        _os.environ["AUTH_ENCRYPTION_SECRET"] = strong_secret
+
+        from mcpgateway.config import get_settings
+
+        get_settings.cache_clear()
+        s = get_settings()
+
+        # The secret that Settings loaded must be exactly the env-var value —
+        # no per-process random divergence allowed.
+        assert s.jwt_secret_key.get_secret_value() == strong_secret
+    finally:
+        if old_jwt is not None:
+            _os.environ["JWT_SECRET_KEY"] = old_jwt
+        else:
+            _os.environ.pop("JWT_SECRET_KEY", None)
+        if old_enc is not None:
+            _os.environ["AUTH_ENCRYPTION_SECRET"] = old_enc
+        else:
+            _os.environ.pop("AUTH_ENCRYPTION_SECRET", None)
+
+        from mcpgateway.config import get_settings as _gs
+
+        _gs.cache_clear()
+
+
+def test_alembic_env_import_does_not_require_secrets():
+    """Importing mcpgateway.alembic.env must not construct Settings().
+
+    alembic env.py defers all imports of mcpgateway.config and mcpgateway.db
+    into lazy helper functions (_configure_url / _get_metadata) so that
+    commands like ``alembic current`` and ``alembic heads`` work on a fresh
+    checkout that has no secrets configured.  This test verifies that the
+    module-level import path is safe even when environment variables are absent.
+    """
+    import importlib
+    import sys
+    import os
+
+    # Pop any previously cached module to force a fresh import.
+    sys.modules.pop("mcpgateway.alembic.env", None)
+
+    # Remove the real secret env-vars so that Settings() would raise if called.
+    env_backup = {}
+    for key in ("JWT_SECRET_KEY", "AUTH_ENCRYPTION_SECRET"):
+        env_backup[key] = os.environ.pop(key, None)
+
+    try:
+        # This must not raise SecurityConfigurationError — the module-level code
+        # must not call Settings() at import time.
+        env_mod = importlib.import_module("mcpgateway.alembic.env")
+        # Basic sanity: the module exposes the expected helpers.
+        assert callable(env_mod.run_migrations_offline)
+        assert callable(env_mod.run_migrations_online)
+        assert callable(env_mod._inside_alembic)
+        # When imported outside Alembic CLI, _inside_alembic() must return False.
+        assert env_mod._inside_alembic() is False
+    finally:
+        # Restore env-vars.
+        for key, val in env_backup.items():
+            if val is not None:
+                os.environ[key] = val
+        sys.modules.pop("mcpgateway.alembic.env", None)

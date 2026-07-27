@@ -51,7 +51,7 @@ with patch("mcpgateway.middleware.rbac.require_permission", mock_require_permiss
             TeamMemberUpdateRequest,
             TeamUpdateRequest,
         )
-        from mcpgateway.services.team_management_service import TeamManagementService
+        from mcpgateway.services.team_management_service import TeamManagementService, TeamSeedResult
 
 
 def mock_permission_check(is_admin=False):
@@ -136,7 +136,7 @@ class TestTeamsRouterV2:
              patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
 
             mock_service = AsyncMock(spec=TeamManagementService)
-            mock_service.create_team = AsyncMock(return_value=mock_team)
+            mock_service.create_team_with_members = AsyncMock(return_value=TeamSeedResult(team=mock_team))
             MockService.return_value = mock_service
 
             result = await teams.create_team(request, current_user_ctx=mock_user_context, db=mock_db)
@@ -144,8 +144,14 @@ class TestTeamsRouterV2:
             assert result.id == mock_team.id
             assert result.name == mock_team.name
             assert result.description == mock_team.description
-            mock_service.create_team.assert_called_once_with(
-                name=request.name, description=request.description, created_by=mock_user_context["email"], visibility=request.visibility, max_members=request.max_members, skip_limits=False
+            mock_service.create_team_with_members.assert_called_once_with(
+                name=request.name,
+                description=request.description,
+                created_by=mock_user_context["email"],
+                visibility=request.visibility,
+                max_members=request.max_members,
+                skip_limits=False,
+                members=request.members,
             )
 
     @pytest.mark.asyncio
@@ -162,7 +168,7 @@ class TestTeamsRouterV2:
              patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
 
             mock_service = AsyncMock(spec=TeamManagementService)
-            mock_service.create_team = AsyncMock(side_effect=ValueError("Team name cannot be empty"))
+            mock_service.create_team_with_members = AsyncMock(side_effect=ValueError("Team name cannot be empty"))
             MockService.return_value = mock_service
 
             with pytest.raises(HTTPException) as exc_info:

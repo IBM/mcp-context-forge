@@ -11,7 +11,7 @@ and time-based restrictions.
 
 # Standard
 from datetime import datetime, timedelta, timezone
-from enum import Enum, auto
+from enum import auto, Enum
 from functools import lru_cache
 import ipaddress
 import re
@@ -747,6 +747,15 @@ class TokenScopingMiddleware:
         if not permissions or "*" in permissions:
             return True  # No restrictions or full access
 
+        # Unified search (/v1/search, normalized to /search) is authenticated-only
+        # at this layer: it spans many entity types, each guarded by its own
+        # @require_permission, and per-entity denials are suppressed downstream by
+        # _safe_entity_search. Requiring a single permission here would wrongly 403
+        # a validly-scoped token (e.g. tools.read-only), so let it through and rely
+        # on the handler's per-entity RBAC + token/team scoping to filter results.
+        if request_path == "/search" or request_path.startswith("/search/"):
+            return True
+
         # Handle admin routes with granular route-group mapping.
         # Unmapped /admin/* paths are denied by default (fail-secure).
         if request_path.startswith("/admin"):
@@ -875,7 +884,9 @@ class TokenScopingMiddleware:
         normalized_path = self._normalize_path_for_matching(request_path)
         return method == "DELETE" and bool(_TARGETED_MISSING_DELETE_PATTERN.fullmatch(normalized_path))
 
-    def _check_resource_team_ownership(self, request_path: str, token_teams: list, db=None, _user_email: str = None) -> ResourceOwnershipResult:  # noqa: PLR0911  # pylint: disable=too-many-return-statements
+    def _check_resource_team_ownership(  # noqa: PLR0911  # pylint: disable=too-many-return-statements
+        self, request_path: str, token_teams: list, db=None, _user_email: str = None
+    ) -> ResourceOwnershipResult:
         """
         Check if the requested resource is accessible by the token.
 

@@ -22,6 +22,7 @@ from typing import TypeVar
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 # Third-Party
+import httpx
 from pydantic import ValidationError
 import pytest
 from url_normalize import url_normalize
@@ -6252,7 +6253,7 @@ class TestCheckSingleGatewayHealth:
 
     @pytest.mark.asyncio
     async def test_health_check_oauth_auth_code_no_user(self, gateway_service, monkeypatch):
-        """Auth code OAuth without user_email → marks gateway unhealthy."""
+        """Bug fix #5237: Auth code OAuth without user_email → proceeds with unauthenticated check."""
         gw = _make_gateway(
             id="gw-1",
             name="oauth-authcode-gw",
@@ -6269,10 +6270,22 @@ class TestCheckSingleGatewayHealth:
             last_refresh_at=None,
             refresh_interval_seconds=None,
         )
+
+        # Mock successful HTTP response (gateway is reachable, even without auth)
+        mock_response = MagicMock()
+        mock_response.status_code = 401  # Unauthorized but gateway is up
+        mock_response.raise_for_status.side_effect = httpx.HTTPStatusError("401", request=MagicMock(), response=mock_response)
+
         mock_client = MagicMock()
+        mock_stream_ctx = MagicMock()
+        mock_stream_ctx.__aenter__ = AsyncMock(return_value=mock_response)
+        mock_stream_ctx.__aexit__ = AsyncMock(return_value=False)
+        mock_client.stream = MagicMock(return_value=mock_stream_ctx)
+
         mock_ctx = AsyncMock()
         mock_ctx.__aenter__ = AsyncMock(return_value=mock_client)
         mock_ctx.__aexit__ = AsyncMock(return_value=False)
+
         monkeypatch.setattr("mcpgateway.services.gateway_service.get_isolated_http_client", lambda **kw: mock_ctx)
         monkeypatch.setattr(
             "mcpgateway.services.gateway_service.settings",
@@ -6285,10 +6298,20 @@ class TestCheckSingleGatewayHealth:
             ),
         )
         monkeypatch.setattr("mcpgateway.services.gateway_service.create_span", MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False))))
+
+        # Mock fresh_db_session to avoid DB error
+        mock_db_ctx = MagicMock()
+        mock_db = MagicMock()
+        mock_db.execute.return_value.scalar_one_or_none.return_value = None
+        mock_db_ctx.__enter__ = MagicMock(return_value=mock_db)
+        mock_db_ctx.__exit__ = MagicMock(return_value=False)
+        monkeypatch.setattr("mcpgateway.services.gateway_service.fresh_db_session", lambda: mock_db_ctx)
+
         gateway_service._handle_gateway_failure = AsyncMock()
 
         await gateway_service._check_single_gateway_health(gw, user_email=None)
-        gateway_service._handle_gateway_failure.assert_awaited_once()
+        # Bug fix: Gateway should NOT be marked unhealthy - 401 means gateway is reachable
+        gateway_service._handle_gateway_failure.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_health_check_query_param_auth(self, gateway_service, monkeypatch):
@@ -6451,6 +6474,59 @@ class TestCheckSingleGatewayHealth:
         mock_ssl.assert_called_once()
         call_kw = mock_ssl.call_args
         assert call_kw[1]["client_key"] == "raw-unencrypted-key"
+
+    @pytest.mark.asyncio
+    async def test_successful_health_check_resets_failure_counter(self, gateway_service, monkeypatch):
+        """Successful health check resets the failure counter even when gateway is reachable."""
+        gw = _make_gateway(
+            id="gw-reset",
+            name="reset-gw",
+            url="http://example.com/sse",
+            enabled=True,
+            reachable=True,
+            transport="sse",
+            auth_type=None,
+            auth_value=None,
+            auth_query_params=None,
+            ca_certificate=None,
+            ca_certificate_sig=None,
+            oauth_config=None,
+            last_refresh_at=None,
+            refresh_interval_seconds=None,
+        )
+
+        mock_response = AsyncMock()
+        mock_response.status_code = 200
+        mock_response.raise_for_status = MagicMock()
+        mock_stream_response = AsyncMock()
+        mock_stream_response.__aenter__ = AsyncMock(return_value=mock_response)
+        mock_stream_response.__aexit__ = AsyncMock(return_value=False)
+        mock_client = MagicMock()
+        mock_client.stream = MagicMock(return_value=mock_stream_response)
+        mock_ctx = AsyncMock()
+        mock_ctx.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_ctx.__aexit__ = AsyncMock(return_value=False)
+        monkeypatch.setattr("mcpgateway.services.gateway_service.get_isolated_http_client", lambda **kw: mock_ctx)
+        monkeypatch.setattr("mcpgateway.services.gateway_service.fresh_db_session", MagicMock())
+        monkeypatch.setattr(
+            "mcpgateway.services.gateway_service.settings",
+            MagicMock(
+                enable_ed25519_signing=False,
+                health_check_timeout=5,
+                auto_refresh_servers=False,
+                httpx_admin_read_timeout=5,
+                mcp_session_pool_enabled=False,
+            ),
+        )
+        monkeypatch.setattr("mcpgateway.services.gateway_service.create_span", MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False))))
+
+        # Pre-populate failure counter
+        gateway_service._gateway_failure_counts = {"gw-reset": 2}
+
+        await gateway_service._check_single_gateway_health(gw)
+
+        # Counter must be reset after successful health check
+        assert gateway_service._gateway_failure_counts["gw-reset"] == 0
 
 
 # ---------------------------------------------------------------------------

@@ -112,6 +112,23 @@ Example OAuth-enabled gateway record:
 
 For Client Credentials, omit `authorization_url` and `redirect_uri` and set `grant_type` to `client_credentials`.
 
+### Resource Parameter and `omit_resource`
+
+By default ContextForge derives an RFC 8707 `resource` parameter from the gateway URL and includes it in token requests and refresh calls. Some IdPs (e.g. certain Atlassian configurations) reject requests that include the `resource` parameter. Set `omit_resource: true` to suppress it:
+
+```json
+{
+  "oauth_config": {
+    "grant_type": "authorization_code",
+    "client_id": "your-client-id",
+    "token_url": "https://auth.example.com/token",
+    "omit_resource": true
+  }
+}
+```
+
+When `omit_resource` is `true`, the `resource` parameter is removed before every token request and refresh call, regardless of whether a `resource` value was explicitly configured or auto-derived from the gateway URL.
+
 ### Audience Parameter
 
 Some OAuth providers (Atlassian, Auth0, etc.) require an `audience` parameter instead of or in addition to the RFC 8707 `resource` parameter:
@@ -174,7 +191,7 @@ sequenceDiagram
 
 OAuth tokens are stored per gateway and user for the Authorization Code flow to ensure proper security isolation:
 
-- **User-Scoped Tokens**: OAuth tokens are scoped per ContextForge user (using app_user_email field) to prevent token sharing between users
+- **User-Scoped Tokens**: OAuth tokens are scoped per ContextForge user (using `app_user_email` field) to prevent token sharing between users
 - Store tokens per gateway + user combination with unique constraints
 - Auto-refresh using refresh tokens when near expiry
 - Encrypt tokens at rest using `AUTH_ENCRYPTION_SECRET`
@@ -182,6 +199,32 @@ OAuth tokens are stored per gateway and user for the Authorization Code flow to 
 
 !!! important "Security Enhancement"
     OAuth tokens are now user-scoped to prevent token sharing between users. Each Authorization Code flow token is tied to the specific ContextForge user who authorized it, providing better security isolation.
+
+### Token Deletion Policy
+
+Stored tokens are deleted selectively — only when the Authorization Server explicitly signals that the refresh token is permanently invalid:
+
+| Condition | Token action | RFC reference |
+|---|---|---|
+| `error: invalid_grant` from token endpoint | **Deleted** — refresh token revoked or expired | RFC 6749 §5.2 |
+| `error: invalid_client`, `invalid_request`, etc. | **Preserved** — configuration error, not a token failure | RFC 6749 §5.2 |
+| `client_secret` decryption failure | **Preserved** — `AUTH_ENCRYPTION_SECRET` mismatch, not a token failure | — |
+| Network / transient error | **Preserved** — retry on next cycle | — |
+
+!!! tip
+    If a gateway's refresh loop is failing with `invalid_client` after rotating `AUTH_ENCRYPTION_SECRET`, the token is preserved but refresh cannot succeed until the secret is re-encrypted with the current key. Re-save the gateway in the Admin UI to re-encrypt the `client_secret`.
+
+### Health Checks for Authorization Code Gateways
+
+Authorization Code gateways use **per-user** tokens — there is no platform-level service token. Health checks therefore verify **service reachability**, not token ownership:
+
+- If no stored token is available for the health-check user, the probe is sent **unauthenticated**
+- A **401 or 403** response is treated as **"gateway reachable but unauthorized"** — this is the expected response for an unauthenticated probe against a user-only upstream (e.g. Atlassian Remote MCP). The gateway is kept online.
+- A connection failure (timeout, DNS error, TCP reset) is treated as a genuine outage and counts toward `UNHEALTHY_THRESHOLD`
+- If a gateway was previously marked unreachable and then responds with 401/403, it is **automatically reactivated**
+
+!!! note
+    `PLATFORM_ADMIN_EMAIL` is used as the default identity for health-check token lookups. If that user has not completed the OAuth consent flow for a given gateway, the probe proceeds unauthenticated — this is expected behaviour, not an error.
 
 ---
 
@@ -224,6 +267,12 @@ OAuth tokens are stored per gateway and user for the Authorization Code flow to 
 - Rotate client secrets and avoid plaintext storage
 - Restrict who can create/modify OAuth-configured gateways
 - Monitor token fetch errors and rate limits from providers
+
+### AUTH_ENCRYPTION_SECRET and Stored Secrets
+
+- The `client_secret` is **always decrypted before use**; there is no plaintext fallback when encryption is configured
+- If decryption fails (wrong key or corrupted ciphertext), the refresh attempt is **aborted with an explicit error** and the stored token is preserved for the next cycle
+- Changing `AUTH_ENCRYPTION_SECRET` invalidates all stored encrypted secrets (client secrets, access tokens, refresh tokens) — after rotation, re-save every OAuth gateway in the Admin UI to re-encrypt with the new key
 
 See also: [securing.md](./securing.md) for general hardening guidance and [proxy.md](./proxy.md) for fronting the gateway with an auth proxy.
 

@@ -50,13 +50,14 @@ cpex-pii-filter = "2026-07-07T23:59:59Z"
 # protocol instead. See IBM/cpex-plugins#124 / #137. Vetted ahead of the usual window for both
 # reasons.
 cpex-retry-with-backoff = "2026-07-15T23:59:59Z"
-# cpex-secrets-detection pinned past its normal soak cutoff: 0.3.9 (2026-07-15)
-# adds field_allowlist and field_denylist support for gateway plugin config.
+# cpex-secrets-detection pinned past its normal soak cutoff: 0.3.10 (2026-07-21)
+# preserves secret field names during redaction. 0.3.9 adds field_allowlist and
+# field_denylist support for gateway plugin config.
 # 0.3.7 is the first release that emits result.metadata["secrets_detection"] for
 # tool_post_invoke, which tests/integration/plugins/test_plugin_metrics_consumer_integration.py
 # and tests/e2e/test_otel_plugin_metadata_e2e.py depend on. Vetted ahead of the usual window
-# for both reasons.
-cpex-secrets-detection = "2026-07-15T23:59:59Z"
+# for these reasons.
+cpex-secrets-detection = "2026-07-21T23:59:59Z"
 
 
 [tool.uv.sources]
@@ -67,7 +68,7 @@ compliance-reference-server = { path = "mcp-servers/python/compliance_reference_
 # ----------------------------------------------------------------
 [project]
 name = "mcp-contextforge-gateway"
-version = "1.0.5"
+version = "1.0.6"
 description = "ContextForge AI Gateway — an AI gateway, registry, and proxy for MCP, A2A, and REST/gRPC APIs. Exposes a unified control plane with centralized governance, discovery, and observability. Optimizes agent and tool calling, and supports plugins."
 keywords = ["MCP","API","gateway","proxy","tools",
   "agents","agentic ai","model context protocol","multi-agent","fastapi",
@@ -218,14 +219,14 @@ dev = [
     "url-normalize>=3.0.0",
     "uv>=0.11.6",
     "websockets>=16.0",
-    "pyasn1>=0.6.3", # a2a-sdk; https://github.com/IBM/mcp-context-forge/security/dependabot/73
+    "pyasn1>=0.6.4", # a2a-sdk; https://github.com/IBM/mcp-context-forge/security/dependabot/73
     "tornado>=6.5.7",  # transitive via jupyter; CVE-2026-31958
     # gRPC plugin framework testing (optional at runtime, required for test coverage)
     "grpcio>=1.81.1",
     "grpcio-reflection>=1.81.1",
     "grpcio-tools>=1.81.1",
     "pipdeptree>=3.1.0",
-    "setuptools>=82.0.1",
+    "setuptools>=83.0.0",
     "debugpy>=1.8.21",
     "maturin>=1.14.1",
     "Pygments>=2.20.0",
@@ -272,13 +273,6 @@ observability = [
     "opentelemetry-sdk>=1.43.0",
 ]
 
-# Granian HTTP server (optional, alternative to Gunicorn+Uvicorn)
-# Rust-based ASGI server with native HTTP/2, WebSocket, and mTLS support
-# Includes extras: pname (process naming), uvloop (faster event loop), reload (dev hot-reload)
-granian = [
-    "granian[pname,uvloop,reload]>=2.7.6",
-]
-
 # Async SQLite Driver (optional)
 aiosqlite = [
     "aiosqlite>=0.22.1",
@@ -312,7 +306,7 @@ plugins = [
     "cpex-pii-filter>=0.3.6",  # 0.3.6 is the first release that emits result.metadata on tool_post_invoke
     "cpex-rate-limiter>=0.1.7",  # 0.1.7 is the first release that emits result.metadata
     "cpex-retry-with-backoff>=0.3.7",  # 0.3.7 fixes a retry-detection regression against the gateway's CopyOnWriteDict payload isolation (IBM/cpex-plugins#124); 0.3.6 added the result.metadata emission but never actually retried in the gateway. Prior <0.3.2 CI pin (from #5332) is superseded.
-    "cpex-secrets-detection>=0.3.9",  # 0.3.9 adds field_allowlist and field_denylist support; 0.3.7 is the first release that emits result.metadata
+    "cpex-secrets-detection>=0.3.10",  # 0.3.10 preserves secret field names during redaction; 0.3.9 adds field filters; 0.3.7 first emits result.metadata
     "cpex-url-reputation>=0.3.5",  # 0.3.5 is the first release that emits result.metadata
 ]
 
@@ -327,11 +321,11 @@ grpc = [
 
 # Convenience meta-extras
 all = [
-    "mcp-contextforge-gateway[redis]>=1.0.5",
+    "mcp-contextforge-gateway[redis]>=1.0.6",
 ]
 
 dev-all = [
-    "mcp-contextforge-gateway[redis,dev,plugins]>=1.0.5",
+    "mcp-contextforge-gateway[redis,dev,plugins]>=1.0.6",
 ]
 
 # --------------------------------------------------------------------
@@ -412,6 +406,9 @@ ignore = [
     ".github/**",
     "Makefile",
     "mcpgateway/admin_ui/**",
+    "mcpgateway/static/assets/**",
+    "mcpgateway/static/css/**",
+    "mcpgateway/static/chunk-*.js",
     "mcpgateway/static/bundle-*.js",
 ]
 

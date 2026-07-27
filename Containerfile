@@ -45,9 +45,9 @@ ARG ENABLE_PROFILING=false
 #     --build-arg NODEJS_IMAGE=<internal-registry>/ubi9/nodejs-20:latest \
 #     --build-arg UBI_MINIMAL=<internal-registry>/ubi9/ubi-minimal:latest \
 #     .
-ARG UBI_BASE=registry.access.redhat.com/ubi10:1784094662
-ARG NODEJS_IMAGE=registry.access.redhat.com/ubi10/nodejs-24:1784092609
-ARG UBI_MINIMAL=registry.access.redhat.com/ubi10/ubi-minimal:1784094532
+ARG UBI_BASE=registry.access.redhat.com/ubi10:10.2-1784668814
+ARG NODEJS_IMAGE=registry.access.redhat.com/ubi10/nodejs-24:10.2-1784784528
+ARG UBI_MINIMAL=registry.access.redhat.com/ubi10/ubi-minimal:10.2-1784669047
 # Wheel closure stage — used only for s390x and ppc64le where PyPI manylinux
 # binary wheels are unavailable (tiktoken/psycopg/cryptography require native
 # compilation, and psycopg-binary has no s390x wheel at all).
@@ -191,6 +191,17 @@ COPY --chown=10001:10001 package.json package-lock.json ./
 # Install frontend dependencies
 RUN npm ci
 
+# Vite 8's bundler (rolldown) ships a native NAPI addon per arch; on s390x
+# that addon segfaults on load (rolldown/napi-rs issue on this niche,
+# big-endian target). npm skips @rolldown/binding-wasm32-wasi by default
+# since its cpu field is "wasm32", not "s390x". --force is required because
+# npm's platform check (EBADPLATFORM) rejects the mismatched cpu field
+# regardless of --no-save; --force overrides that check so the WASI binding
+# installs and rolldown can use it instead of the crashing native one.
+RUN if [ "$(uname -m)" = "s390x" ]; then \
+        npm install --no-save --force @rolldown/binding-wasm32-wasi@1.1.5; \
+    fi
+
 # Create directory structure with correct ownership before Vite build
 USER root
 RUN mkdir -p mcpgateway/static && chown -R 10001:10001 mcpgateway
@@ -201,7 +212,11 @@ COPY --chown=10001:10001 mcpgateway/admin_ui/ mcpgateway/admin_ui/
 COPY --chown=10001:10001 vite.config.js ./
 
 # Run Vite build
-RUN npm run vite:build
+RUN if [ "$(uname -m)" = "s390x" ]; then \
+        NAPI_RS_FORCE_WASI=true npm run vite:build; \
+    else \
+        npm run vite:build; \
+    fi
 
 
 ###########################
@@ -287,9 +302,9 @@ RUN set -euo pipefail \
     && /app/.venv/bin/pip install --no-cache-dir --upgrade pip setuptools wheel uv \
     && if [ -n "$(ls -A /tmp/wheels/*.whl 2>/dev/null)" ]; then \
         echo "📦 Hermetic install from prebuilt wheel closure"; \
-        /app/.venv/bin/uv pip install --no-index --find-links=/tmp/wheels ".[redis,observability,granian,plugins,llmchat]" "psycopg[c]>=3.3.3"; \
+        /app/.venv/bin/uv pip install --no-index --find-links=/tmp/wheels ".[redis,observability,plugins,llmchat]" "psycopg[c]>=3.3.3"; \
     else \
-        /app/.venv/bin/uv pip install ".[redis,postgres,observability,granian,plugins,llmchat]"; \
+        /app/.venv/bin/uv pip install ".[redis,postgres,observability,plugins,llmchat]"; \
     fi \
     && echo "✅ Plugins installed from PyPI via [plugins] extra" \
     && if [ "$ENABLE_RUST" = "true" ] && ls "/tmp/local-native-extension-wheels/"*.whl 1> /dev/null 2>&1; then \
@@ -338,7 +353,7 @@ COPY run.sh /app/
 #   - gunicorn config + mcp catalog (rare/occasional)
 #   - mcpgateway/ + plugins/ (change most often)
 # ----------------------------------------------------------------------------
-COPY --chmod=0755 run-gunicorn.sh run-granian.sh docker-entrypoint.sh run.sh /app/
+COPY --chmod=0755 run-gunicorn.sh docker-entrypoint.sh run.sh /app/
 COPY gunicorn.config.py mcp-catalog.yml /app/
 COPY mcpgateway/ /app/mcpgateway/
 COPY plugins/ /app/plugins/
@@ -372,7 +387,7 @@ LABEL maintainer="Mihai Criveti" \
     org.opencontainers.image.title="mcp/mcpgateway" \
     org.opencontainers.image.description="ContextForge: An enterprise-ready Model Context Protocol Gateway" \
     org.opencontainers.image.licenses="Apache-2.0" \
-    org.opencontainers.image.version="1.0.5"
+    org.opencontainers.image.version="1.0.6"
 
 # ----------------------------------------------------------------------------
 # Install minimal runtime dependencies
@@ -501,12 +516,5 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
 # ----------------------------------------------------------------------------
 # Entrypoint
 # ----------------------------------------------------------------------------
-# HTTP server selection via HTTP_SERVER environment variable:
-#   - gunicorn : Python-based with Uvicorn workers (default)
-#   - granian  : Rust-based HTTP server (alternative)
-#
-# Examples:
-#   docker run -e HTTP_SERVER=gunicorn mcpgateway  # Default
-#   docker run -e HTTP_SERVER=granian mcpgateway   # Alternative
-ENV HTTP_SERVER=gunicorn
+# HTTP server: Gunicorn with Uvicorn workers
 CMD ["./docker-entrypoint.sh"]

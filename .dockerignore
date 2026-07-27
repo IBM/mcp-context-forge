@@ -13,7 +13,6 @@ agent_runtimes/
 charts/
 deployment/
 docs/
-deployment/k8s/
 mcp-servers/
 !mcp-servers/
 !mcp-servers/rust/
@@ -24,13 +23,10 @@ mcp-servers/
 tests/
 test/
 attic/
-*.md
 .benchmarks/
 .claude
 
 # Rust MCP servers built from the root Cargo workspace.
-!mcp-servers/
-!mcp-servers/rust/
 !mcp-servers/rust/fast-time-server/
 !mcp-servers/rust/fast-time-server/Cargo.toml
 !mcp-servers/rust/fast-time-server/src/
@@ -48,8 +44,6 @@ attic/
 # Development environment directories
 .devcontainer/
 .github/
-.vscode/
-.idea/
 
 #----------------------------------------------------------------------
 # 2. Version control
@@ -65,7 +59,6 @@ attic/
 # Byte-compiled files
 __pycache__/
 *.py[cod]
-*.pyc
 *$py.class
 
 # C extensions
@@ -130,11 +123,8 @@ cython_debug/
 #----------------------------------------------------------------------
 # 4. Virtual environments
 #----------------------------------------------------------------------
-.env
 .venv
-.venv/
 **/.venv
-**/.venv/
 env/
 venv/
 ENV/
@@ -199,7 +189,6 @@ podman-compose*.yaml
 *~
 
 # Emacs
-*~
 \#*\#
 .\#*
 
@@ -237,7 +226,6 @@ MANIFEST.in
 .travis.*
 .gitlab-ci.yml
 .circleci/
-.github/
 azure-pipelines.yml
 Jenkinsfile
 
@@ -260,8 +248,6 @@ mypy.ini
 *.db
 *.sqlite
 *.sqlite3
-mcp.db
-db.sqlite3
 # Explicit database file patterns in application directories
 mcpgateway/*.db
 mcpgateway/*.sqlite
@@ -313,14 +299,9 @@ local_settings.py
 # 10. Framework-specific files
 #----------------------------------------------------------------------
 # Django
-*.log
-local_settings.py
-db.sqlite3
 db.sqlite3-journal
-media/
 
 # Flask
-instance/
 .webassets-cache
 
 # Scrapy
@@ -333,7 +314,6 @@ docs/build/
 # PyBuilder
 target/
 **/target/
-**/target/**
 
 # Jupyter Notebook
 .ipynb_checkpoints
@@ -371,7 +351,6 @@ celerybeat.pid
 *.rej
 .backup/
 backup/
-tmp/
 temp/
 
 #----------------------------------------------------------------------
@@ -379,17 +358,10 @@ temp/
 #----------------------------------------------------------------------
 *.md
 !README.md
-
-# Application configuration files (explicitly include)
-!mcp-catalog.yml
-LICENSE
-CHANGELOG
-AUTHORS
-CONTRIBUTORS
-TODO
-TODO.md
-DEVELOPING.md
-CONTRIBUTING.md
+!CHANGELOG.md
+!AUTHORS.md
+!DEVELOPING.md
+!CONTRIBUTING.md
 
 # Spelling
 .spellcheck-en.txt
@@ -410,7 +382,6 @@ Desktop.ini
 $RECYCLE.BIN/
 
 # Linux
-*~
 .fuse_hidden*
 .directory
 .Trash-*

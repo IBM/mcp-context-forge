@@ -32,7 +32,7 @@ These settings are enabled by default for security—only disable for backward c
 | `REQUIRE_JTI` | Require JTI claim in tokens for revocation support | `true` |
 | `REQUIRE_TOKEN_EXPIRATION` | Require exp claim in tokens | `true` |
 | `PUBLIC_REGISTRATION_ENABLED` | Allow public user self-registration | `false` |
-| `PROTECT_ALL_ADMINS` | Prevent any admin from being demoted or deactivated via API/UI | `true` |
+| `PROTECT_ALL_ADMINS` | Allow active admin accounts to bypass login lockout | `true` |
 |`REQUIRE_STRONG_SECRETS`|Enforces strong secret validation. Automatically defaults to true in production to ensure fail-safe deployments.|`true` (prod) / `false` (dev)|
 
 ### ⚙️ Project Defaults (Dev Setup)
@@ -114,7 +114,7 @@ ContextForge supports multiple database backends with full feature parity across
 | `BASIC_AUTH_PASSWORD`       | Password for HTTP Basic authentication (when enabled)                        | `changeme`          | string      |
 | `API_ALLOW_BASIC_AUTH`      | Enable Basic auth for API endpoints (disabled by default for security)       | `false`             | bool        |
 | `DOCS_ALLOW_BASIC_AUTH`     | Enable Basic auth for docs endpoints (disabled by default)                   | `false`             | bool        |
-| `PLATFORM_ADMIN_EMAIL`      | Email for bootstrap platform admin user (auto-created with admin privileges) | `admin@example.com` | string      |
+| `PLATFORM_ADMIN_EMAIL`      | Email for bootstrap platform admin user (auto-created with admin privileges). Also used as the default identity for OAuth health-check token lookups on `authorization_code` gateways — if this user has not completed consent for a gateway, health checks proceed unauthenticated (expected behaviour). | `admin@example.com` | string      |
 | `AUTH_REQUIRED`             | Require authentication for all API routes                                    | `true`              | bool        |
 | `JWT_ALGORITHM`             | Algorithm used to sign the JWTs (`HS256` is default, HMAC-based)             | `HS256`             | PyJWT algs  |
 | `JWT_SECRET_KEY`            | Secret key used to **sign JWT tokens** for API access                        | `my-test-key-but-now-longer-than-32-bytes`       | string      |
@@ -403,7 +403,7 @@ curl -X POST -H "Authorization: Bearer $TOKEN" \
 | `PASSWORD_RESET_RATE_WINDOW_MINUTES` | Password reset rate-limit window        | `15`                  | int > 0 |
 | `PASSWORD_RESET_INVALIDATE_SESSIONS` | Invalidate active sessions on reset     | `true`                | bool    |
 | `PASSWORD_RESET_MIN_RESPONSE_MS` | Minimum forgot-password response duration    | `250`                 | int >= 0 |
-| `PROTECT_ALL_ADMINS`         | Prevent any admin from being demoted or deactivated via API/UI. When false, only the last active admin is protected. | `true` | bool |
+| `PROTECT_ALL_ADMINS`         | Allow active admin accounts to bypass login lockout. Admin self-demotion and last-active-admin protection are always enforced independently. | `true` | bool |
 | `SMTP_ENABLED`                | Enable SMTP notifications for auth emails        | `false`               | bool    |
 | `SMTP_HOST`                   | SMTP host                                         | (none)                | string  |
 | `SMTP_PORT`                   | SMTP port                                         | `587`                 | int     |
@@ -414,6 +414,8 @@ curl -X POST -H "Authorization: Bearer $TOKEN" \
 | `SMTP_USE_TLS`                | Use STARTTLS                                      | `true`                | bool    |
 | `SMTP_USE_SSL`                | Use implicit SSL/TLS                              | `false`               | bool    |
 | `SMTP_TIMEOUT_SECONDS`        | SMTP timeout in seconds                           | `15`                  | int > 0 |
+
+Changing `PROTECT_ALL_ADMINS` does not control peer-administrator removal. An administrator with `admin.user_management` can demote or deactivate another administrator while at least one active administrator remains. Protect administrator credentials accordingly; deployments requiring dual control should enforce that process outside this endpoint.
 
 When `PASSWORD_RESET_ENABLED=false`, self-service forgot/reset endpoints are disabled (`403` on API and disabled/redirected UI flows).
 When `SMTP_ENABLED=false`, reset requests are accepted but no email is delivered.
@@ -553,6 +555,7 @@ ContextForge implements **OAuth 2.0 Dynamic Client Registration (RFC 7591)** and
 | `PERSONAL_TEAM_PREFIX`                   | Personal team naming prefix (empty = derive from display name) | `""` | string  |
 | `MAX_TEAMS_PER_USER`                     | Maximum number of teams a user can belong to    | `50`       | int > 0 |
 | `MAX_MEMBERS_PER_TEAM`                   | Default maximum members per team, resolved at check time. Teams without an explicit per-team override use this value. Platform admins are exempt from this limit. | `100`      | int > 0 |
+| `MAX_TEAM_MEMBER_SEEDS`                  | Hard ceiling on how many members can be seeded in a single `POST /teams` request (the `members` array), validated at the request boundary before any write. `MAX_MEMBERS_PER_TEAM` still applies underneath. | `500`      | int > 0 |
 | `INVITATION_EXPIRY_DAYS`                 | Number of days before team invitations expire   | `7`        | int > 0 |
 | `REQUIRE_EMAIL_VERIFICATION_FOR_INVITES` | Require email verification for team invitations | `true`     | bool    |
 | `ALLOW_TEAM_CREATION`                    | Allow users to create organizational teams (admins always can) | `true`  | bool    |
@@ -945,8 +948,8 @@ The gateway includes built-in observability features for tracking HTTP requests,
 | Setting                 | Description                               | Default | Options |
 | ----------------------- | ----------------------------------------- | ------- | ------- |
 | `HEALTH_CHECK_INTERVAL` | Health poll interval (secs)               | `60`    | int > 0 |
-| `HEALTH_CHECK_TIMEOUT`  | Health request timeout (secs)             | `5`     | int > 0 |
-| `GATEWAY_HEALTH_CHECK_TIMEOUT` | Per-check timeout for gateway health check (secs) | `5.0` | float > 0 |
+| `HEALTH_CHECK_TIMEOUT`  | Health request timeout (secs)             | `30`    | int > 0 |
+| `GATEWAY_HEALTH_CHECK_TIMEOUT` | Per-check timeout for gateway health check (secs) | `30.0` | float > 0 |
 | `UNHEALTHY_THRESHOLD`   | Fail-count before peer deactivation (-1 to disable) | `3`     | int     |
 | `GATEWAY_VALIDATION_TIMEOUT` | Gateway URL validation timeout (secs) | `5`     | int > 0 |
 | `MAX_CONCURRENT_HEALTH_CHECKS` | Max concurrent health checks        | `20`    | int > 0 |

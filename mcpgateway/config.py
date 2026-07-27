@@ -364,7 +364,10 @@ class Settings(BaseSettings):
     basic_auth_user: str = "admin"
     basic_auth_password: SecretStr = Field(default=SecretStr("changeme"))
     jwt_algorithm: str = "HS256"
-    jwt_secret_key: SecretStr = Field(default=SecretStr("changeme"))
+    jwt_secret_key: SecretStr = Field(
+        default=SecretStr("__REPLACE_ME__run_init-secrets_before_starting"),
+        description="HMAC secret for JWT signing. MUST be set explicitly in staging/production. Generate with: python -m mcpgateway.scripts.init_secrets --stdout",
+    )
     jwt_public_key_path: str = ""
     jwt_private_key_path: str = ""
     jwt_audience: str = "mcpgateway-api"
@@ -635,7 +638,10 @@ class Settings(BaseSettings):
     proxy_user_header: str = Field(default="X-Authenticated-User", description="Header containing authenticated username from proxy")
 
     #  Encryption key phrase for auth storage
-    auth_encryption_secret: SecretStr = Field(default=SecretStr("changeme"))
+    auth_encryption_secret: SecretStr = Field(
+        default=SecretStr("__REPLACE_ME__run_init-secrets_before_starting"),
+        description="Encryption key for stored credentials. MUST be set explicitly in staging/production. Generate with: python -m mcpgateway.scripts.init_secrets --stdout",
+    )
 
     # Query Parameter Authentication (INSECURE - disabled by default)
     insecure_allow_queryparam_auth: bool = Field(
@@ -973,7 +979,7 @@ class Settings(BaseSettings):
     )
     protect_all_admins: bool = Field(
         default=True,
-        description="When true (default), prevent any admin from being demoted, deactivated, or locked out via API/UI. When false, only the last active admin is protected.",
+        description="When true (default), allow active admin accounts to bypass login lockout. Admin self-demotion and last-active-admin protection are always enforced independently.",
     )
     platform_admin_email: str = Field(default="admin@example.com", description="Platform administrator email address")
     platform_admin_password: SecretStr = Field(default=SecretStr("changeme"), description="Platform administrator password")
@@ -1039,6 +1045,7 @@ class Settings(BaseSettings):
     personal_team_prefix: str = Field(default="", description="Personal team naming prefix")
     max_teams_per_user: int = Field(default=50, description="Maximum number of teams a user can belong to")
     max_members_per_team: int = Field(default=100, description="Maximum number of members per team")
+    max_team_member_seeds: int = Field(default=500, description="Hard ceiling on how many members can be seeded in a single POST /teams request (validated before any write)")
     invitation_expiry_days: int = Field(default=7, description="Number of days before team invitations expire")
     require_email_verification_for_invites: bool = Field(default=True, description="Require email verification for team invitations")
 
@@ -1232,7 +1239,15 @@ class Settings(BaseSettings):
     min_password_length: int = 12
     require_strong_secrets: bool = Field(
         default=False,
-        description="Enforces strong secret validation. Defaults to True in production, False in development for ease of testing. When enabled, secrets are checked against a list of weak values and must meet minimum length and entropy requirements.",
+        description=(
+            "Legacy flag — superseded by the unconditional secret-strength validator in "
+            "validate_security_combinations().  That validator raises SecurityConfigurationError "
+            "for any weak/placeholder secret before get_security_status() runs, so the "
+            "'if require_strong_secrets and is_weak' branch in get_security_status() can never "
+            "be reached with a genuinely weak secret.  The field is retained for backward "
+            "compatibility with existing operator configs and for the audit-log check in "
+            "main.log_critical_issues().  New code should not add further logic gated on it."
+        ),
     )
 
     llmchat_enabled: bool = Field(default=True, description="Enable LLM Chat feature")
@@ -1274,6 +1289,10 @@ class Settings(BaseSettings):
             return data
 
         values: dict[str, Any] = dict(data)
+        # require_strong_secrets is a legacy flag; its environment-aware default is kept for
+        # backward compatibility with existing operator configs that read the field, but the
+        # value has no effect on startup security — validate_security_combinations() rejects
+        # weak secrets unconditionally regardless of this flag.
         if "require_strong_secrets" not in values:
             environment = str(values.get("environment", "development")).lower()
             values["require_strong_secrets"] = environment == "production"
@@ -1375,7 +1394,7 @@ class Settings(BaseSettings):
 
             # Basic entropy check (at least 10 unique characters)
             if len(set(value)) < 10:
-                logger.warning(f"🔑 SECURITY WARNING - {field_name}: Secret has low entropy. Consider using a more random value.")
+                logger.warning(f"🔐 SECURITY WARNING - {field_name}: Secret has low entropy. Consider using a more random value.")
 
         # Always return SecretStr to keep it secret-safe
         return v if isinstance(v, SecretStr) else SecretStr(value)
@@ -1479,28 +1498,70 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_security_combinations(self) -> Self:
-        """Validate security setting combinations.  Only logs warnings; no changes are made.
+        """Validate security setting combinations and raise on unsafe secrets.
+
+        Placeholder and weak/known secrets are rejected unconditionally in every
+        environment (development, staging, and production alike).  Some compose
+        sibling containers (e.g. ``register_fast_time``, ``prometheus_token``)
+        sign tokens with the raw ``JWT_SECRET_KEY`` environment variable outside
+        this validator, so per-process random generation cannot be used as a
+        fallback — gateway and sibling containers must share the same secret.
+        The only safe option is an unconditional hard-fail that forces operators
+        to provide a real secret before the process will start.
+
+        Run ``python -m mcpgateway.scripts.init_secrets`` (or ``make init-secrets``
+        for interactive use, ``make init-secrets-patch-env`` to write directly into
+        ``.env``) to generate strong values automatically.
 
         Returns:
             Itself.
+
+        Raises:
+            SecurityConfigurationError: If jwt_secret_key or auth_encryption_secret
+                is unset (placeholder), matches a known-weak value, is shorter than
+                ``min_secret_length`` characters, or has low per-character entropy.
         """
-        # __REPLACE_ME__ placeholders block startup only in production; warn in other environments.
-        # Weak/default secrets are rejected in any non-development environment (staging + production).
-        # client_mode is intentionally NOT exempted — secret-strength enforcement is always active.
+        # client_mode is intentionally NOT exempted — secret-strength enforcement
+        # is always active regardless of deployment profile.
         weak_secrets = {v.lower() for v in self.WEAK_VALUES}
         env = str(self.environment).lower()
-        for field_name, secret_field in (("jwt_secret_key", self.jwt_secret_key), ("auth_encryption_secret", self.auth_encryption_secret)):
+        for field_name, secret_field in (
+            ("jwt_secret_key", self.jwt_secret_key),
+            ("auth_encryption_secret", self.auth_encryption_secret),
+        ):
             val = secret_field.get_secret_value()
-            if val.lower().startswith("__replace_me__"):
-                if env == "production":
-                    raise SecurityConfigurationError(f"{field_name}: Value is an unset placeholder (__REPLACE_ME__). Run 'python -m mcpgateway.scripts.init_secrets' to generate strong values.")
-                logger.warning(f"🔓 SECURITY WARNING - {field_name}: Value is an unset placeholder (__REPLACE_ME__). Run 'python -m mcpgateway.scripts.init_secrets' to generate strong values.")
-            if val.lower() in weak_secrets:
-                if env != "development":
-                    raise SecurityConfigurationError(f"{field_name}: Weak/default secret rejected in '{env}' environment. Run 'python -m mcpgateway.scripts.init_secrets' to generate strong values.")
-        # In non-production environments, unset placeholder secrets emit SECURITY WARNINGs but
-        # do not block startup. Production always rejects them. Weak secrets are rejected in
-        # staging and production; development allows them with warnings from the field validator.
+
+            if not val.strip():
+                raise SecurityConfigurationError(f"{field_name}: secret is empty. Set a real value (run 'python -m mcpgateway.scripts.init_secrets').")
+
+            if len(val) < self.min_secret_length:
+                raise SecurityConfigurationError(
+                    f"{field_name}: too short ({len(val)} chars, minimum {self.min_secret_length}). "
+                    "Run 'python -m mcpgateway.scripts.init_secrets' to generate strong values, "
+                    "or use 'make init-secrets-patch-env' to write them directly into .env."
+                )
+
+            is_placeholder = val.lower().startswith("__replace_me__")
+            is_weak = val.lower() in weak_secrets
+            entropy = calculate_entropy(val)
+            is_low_entropy = entropy < 3.5
+
+            if is_placeholder or is_weak or is_low_entropy:
+                if is_placeholder:
+                    reason = "unset placeholder (__REPLACE_ME__)"
+                elif is_weak:
+                    reason = "known-weak/default value"
+                else:
+                    reason = f"low entropy (score {entropy:.2f} < 3.5)"
+                raise SecurityConfigurationError(
+                    f"{field_name}: {reason} rejected in every environment (including '{env}'). "
+                    "Cross-process token consistency requires operators to supply a real secret before startup — "
+                    "no per-process random fallback is generated. "
+                    "To fix, choose one of:\n"
+                    "  make setup                  # recommended: auto-creates .env and patches secrets in-place\n"
+                    "  make init-secrets           # writes secrets to .env.secrets for review, then copy into .env\n"
+                    "  make init-secrets-patch-env # patches secrets directly into an existing .env"
+                )
 
         if not self.client_mode:
             # Check for dangerous combinations - only log warnings, don't raise errors
@@ -1648,17 +1709,12 @@ class Settings(BaseSettings):
             if name == "BASIC_AUTH_PASSWORD" and not (self.mcpgateway_ui_enabled or self.api_allow_basic_auth or self.docs_allow_basic_auth):
                 continue
             is_sentinel = value in self.SENTINEL_VALUES or value.lower().startswith("__replace_me__")
-            is_weak = value.lower() in self.WEAK_VALUES or calculate_entropy(value) < 3.5
 
             if is_sentinel:
                 error_msg = f"{name} is not configured. Running with default or empty values in production is prohibited as it leaves the gateway unprotected."
                 if is_prod:
                     return self._build_security_response("FAIL", "ERR_MISSING_CONFIG", error_msg, remediation_cmd)
                 logger.warning(f"DEV WARNING: {error_msg} {remediation_cmd}")
-
-            if self.require_strong_secrets and is_weak:
-                error_msg = f"Weak {name} detected. Using default values in production exposes the gateway to unauthorized access."
-                return self._build_security_response("FAIL", "ERR_WEAK_SECRET", error_msg, remediation_cmd)
 
         # Compute a security score: 100 minus 10 for each warning
         security_score = max(0, 100 - 10 * len(self.get_security_warnings()))
@@ -2504,10 +2560,10 @@ class Settings(BaseSettings):
     # Interval in seconds between gateway health checks.
     health_check_interval: int = 60
     # Timeout in seconds for each health check request
-    health_check_timeout: int = 5
+    health_check_timeout: int = 30
     # Per-check timeout (seconds) to bound total time of one gateway health check
     # Env: GATEWAY_HEALTH_CHECK_TIMEOUT
-    gateway_health_check_timeout: float = 5.0
+    gateway_health_check_timeout: float = 30.0
     # Consecutive failures before marking gateway offline
     unhealthy_threshold: int = 3
     # Max concurrent health checks per worker

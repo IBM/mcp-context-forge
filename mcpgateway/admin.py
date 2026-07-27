@@ -104,6 +104,7 @@ from mcpgateway.db import utc_now
 from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG, get_current_user_with_permissions, require_any_permission, require_permission
 from mcpgateway.routers.email_auth import create_access_token
 from mcpgateway.schemas import (
+    _encode_auth_headers_list,
     A2AAgentCreate,
     A2AAgentRead,
     A2AAgentUpdate,
@@ -145,7 +146,6 @@ from mcpgateway.schemas import (
     ToolMetrics,
     ToolRead,
     ToolUpdate,
-    _encode_auth_headers_list,
 )
 from mcpgateway.services.a2a_agent_plugin_binding_service import A2AAgentPluginBindingForbiddenError, A2AAgentPluginBindingNotFoundError, A2AAgentPluginBindingService
 from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService
@@ -5581,9 +5581,25 @@ async def admin_search_teams(
     # The CALLER (admin.py) distinguishes.
 
     if current_user.is_admin:
-        # Admin sees all non-personal teams plus their own personal team (single query)
+        # Honor explicit token narrowing even for admins (Layer 1 constrains
+        # visibility independently of RBAC/admin status). token_teams is None for
+        # full admin bypass (unrestricted); an explicit list (including []) scopes
+        # the result. The scope is pushed into the query so it applies before
+        # pagination (an allowed team must not be dropped for sorting past the
+        # first page) and so an explicit scope no longer surfaces the personal team.
+        raw_token_teams = user.get("token_teams")
+        admin_scoped_team_ids: Optional[list[str]] = None
+        if raw_token_teams is not None:
+            admin_scoped_team_ids = [team["id"] if isinstance(team, dict) else team for team in raw_token_teams]
         result = await team_service.list_teams(
-            page=1, per_page=limit, include_inactive=include_inactive, visibility_filter=visibility, include_personal=False, search_query=search_query, personal_owner_email=user_email
+            page=1,
+            per_page=limit,
+            include_inactive=include_inactive,
+            visibility_filter=visibility,
+            include_personal=False,
+            search_query=search_query,
+            personal_owner_email=user_email,
+            team_ids=admin_scoped_team_ids,
         )
         # Result is dict {data, pagination...} (since page provided)
         teams = result["data"]
@@ -5591,9 +5607,19 @@ async def admin_search_teams(
         # Non-admin search
         # Reuse user team fetching
         all_teams = await team_service.get_user_teams(user_email, include_personal=True)
+        # Narrow to the caller's normalized token scope (Layer 1). get_user_teams
+        # returns every membership and ignores token scope, so a token narrowed to
+        # a team subset would otherwise leak sibling teams the caller belongs to but
+        # is scoped out of. _get_user_team_ids honors token_teams/_cached_team_ids;
+        # an unscoped caller's own memberships (including their personal team) are in
+        # this set, while an explicit scope (including [] = public-only) does not add
+        # a personal-team fallback, matching normalize_token_teams()/get_team_from_token().
+        scoped_team_ids = set(await _get_user_team_ids(user, db))
         # Filter in memory
         filtered = []
         for t in all_teams:
+            if t.id not in scoped_team_ids:
+                continue
             if not include_inactive and not t.is_active:
                 continue
             if visibility and t.visibility != visibility:
@@ -8266,6 +8292,7 @@ async def admin_get_user_edit(
                     </label>
                 </div>'''
         }
+                {'<input type="hidden" name="is_admin" value="on">' if is_editing_self and user_obj.is_admin else ""}
                 <div>
                     <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
                         <input type="checkbox" name="email_verified" {"checked" if user_obj.is_email_verified() else ""}
@@ -8359,20 +8386,6 @@ async def admin_update_user(
         # Get current user's email to prevent self-demotion
         current_user_email = get_user_email(_user)
 
-        # Check if trying to remove admin privileges from last admin
-        user_obj = await auth_service.get_user_by_email(decoded_email)
-
-        # When editing self, preserve current admin status (checkbox is hidden in UI)
-        if user_obj and current_user_email.lower() == decoded_email.lower():
-            is_admin = user_obj.is_admin
-
-        if user_obj and user_obj.is_admin and not is_admin:
-            # This user is currently an admin and we're trying to remove admin privileges
-            if await auth_service.is_last_active_admin(decoded_email):
-                return HTMLResponse(
-                    content='<div class="text-red-500">Cannot remove administrator privileges from the last remaining admin user</div>', status_code=400, headers={"HX-Retarget": "#edit-user-error"}
-                )
-
         # Update user
         fn_val = form.get("full_name")
         pw_val = form.get("password")
@@ -8385,7 +8398,15 @@ async def admin_update_user(
             if not is_valid:
                 return HTMLResponse(content=f'<div class="text-red-500">Password validation failed: {error_msg}</div>', status_code=400, headers={"HX-Retarget": "#edit-user-error"})
 
-        await auth_service.update_user(email=decoded_email, full_name=full_name, is_admin=is_admin, email_verified=email_verified, password=password, admin_origin_source="ui")
+        await auth_service.update_user(
+            email=decoded_email,
+            full_name=full_name,
+            is_admin=is_admin,
+            email_verified=email_verified,
+            password=password,
+            admin_origin_source="ui",
+            requesting_user_email=current_user_email,
+        )
 
         # Return success message with auto-close and refresh
         success_html = """
@@ -8486,15 +8507,7 @@ async def admin_deactivate_user(
         # Get current user email from JWT
         current_user_email = get_user_email(user)
 
-        # Prevent self-deactivation
-        if decoded_email == current_user_email:
-            return HTMLResponse(content='<div class="text-red-500">Cannot deactivate your own account</div>', status_code=400)
-
-        # Prevent deactivating the last active admin user
-        if await auth_service.is_last_active_admin(decoded_email):
-            return HTMLResponse(content='<div class="text-red-500">Cannot deactivate the last remaining admin user</div>', status_code=400)
-
-        user_obj = await auth_service.deactivate_user(decoded_email)
+        user_obj = await auth_service.update_user(email=decoded_email, is_active=False, requesting_user_email=current_user_email, admin_origin_source="ui")
         admin_count = await auth_service.count_active_admin_users()
         return HTMLResponse(content=_render_user_card_html(user_obj, current_user_email, admin_count, root_path))
 
@@ -11464,26 +11477,25 @@ async def admin_search_a2a_agents(
     return _build_search_response(entity_key="agents", entity_type="agents", items=agents, query=search_query, tags=normalized_tags, tag_groups=tag_groups)
 
 
-@admin_router.get("/search", response_class=JSONResponse)
-@require_permission("admin.dashboard", allow_admin_bypass=False)
-async def admin_unified_search(
-    q: str = Query("", max_length=500, description="Search query"),
-    tags: QueryTagsFilter = None,
-    entity_types: QueryEntityTypes = None,
-    include_inactive: bool = False,
-    limit: int = Query(8, ge=1, le=settings.pagination_max_page_size, description="Per-entity result limit"),
-    limit_per_type: Optional[int] = Query(
-        None,
-        ge=1,
-        le=settings.pagination_max_page_size,
-        description="Optional alias for per-entity result limit",
-    ),
-    gateway_id: QueryGatewayIdList = None,
-    team_id: Optional[str] = Depends(_validated_team_id_param),
-    db: Session = Depends(get_db),
-    user=Depends(get_current_user_with_permissions),
-):
-    """Unified search across primary admin entities.
+async def perform_unified_search(
+    *,
+    q: str,
+    tags: Optional[str],
+    entity_types: Optional[str],
+    include_inactive: bool,
+    limit: int,
+    limit_per_type: Optional[int],
+    gateway_id: Optional[str],
+    team_id: Optional[str],
+    db: Session,
+    user: Any,
+) -> dict[str, Any]:
+    """Unified search across primary entities (shared, permission-agnostic core).
+
+    Single source of truth for unified search. Performs no top-level permission
+    check — callers own the outer gate (``admin.dashboard`` for the admin route,
+    auth-only for ``/v1/search``). Per-entity RBAC and token scoping are still
+    enforced inside each ``admin_search_*`` call.
 
     Searches servers, gateways, tools, resources, prompts, agents, teams, roots,
     and optionally users (when the caller has ``admin.user_management`` permission).
@@ -11737,6 +11749,61 @@ async def admin_unified_search(
         "items": flat_items,
         "count": len(flat_items),
     }
+
+
+@admin_router.get("/search", response_class=JSONResponse)
+@require_permission("admin.dashboard", allow_admin_bypass=False)
+async def admin_unified_search(
+    q: str = Query("", max_length=500, description="Search query"),
+    tags: QueryTagsFilter = None,
+    entity_types: QueryEntityTypes = None,
+    include_inactive: bool = False,
+    limit: int = Query(8, ge=1, le=settings.pagination_max_page_size, description="Per-entity result limit"),
+    limit_per_type: Optional[int] = Query(
+        None,
+        ge=1,
+        le=settings.pagination_max_page_size,
+        description="Optional alias for per-entity result limit",
+    ),
+    gateway_id: QueryGatewayIdList = None,
+    team_id: Optional[str] = Depends(_validated_team_id_param),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+):
+    """Unified search across primary admin entities (admin-gated wrapper).
+
+    Thin wrapper that enforces the ``admin.dashboard`` permission and delegates
+    to :func:`perform_unified_search`.
+
+    Args:
+        q (str): Free-text search query.
+        tags (Optional[str]): Tag filter expression (comma=OR, plus=AND).
+        entity_types (Optional[str]): Optional comma-separated entity type list.
+            Supported values: servers, gateways, tools, resources, prompts,
+            agents, teams, users, roots.
+        include_inactive (bool): Whether to include inactive entities.
+        limit (int): Default per-entity limit for returned items.
+        limit_per_type (Optional[int]): Optional alias overriding ``limit``.
+        gateway_id (Optional[str]): Gateway filter for tools/resources/prompts.
+        team_id (Optional[str]): Team scope filter.
+        db (Session): Database session.
+        user: Authenticated user context.
+
+    Returns:
+        dict[str, Any]: Grouped and flattened search results with metadata.
+    """
+    return await perform_unified_search(
+        q=q,
+        tags=tags,
+        entity_types=entity_types,
+        include_inactive=include_inactive,
+        limit=limit,
+        limit_per_type=limit_per_type,
+        gateway_id=gateway_id,
+        team_id=team_id,
+        db=db,
+        user=user,
+    )
 
 
 @admin_router.get("/tools/{tool_id}", response_model=ToolRead)

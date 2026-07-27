@@ -230,7 +230,7 @@ This creates:
 
 **When passphrase protection helps:**
 
-- The gateway (Gunicorn/Granian) can decrypt keys programmatically from environment variables
+- The gateway (Gunicorn) can decrypt keys programmatically from environment variables
 - Adds marginal protection if an attacker gets read-only filesystem access but not environment access
 - Useful for compliance requirements that mandate encrypted keys at rest
 
@@ -292,12 +292,13 @@ gateway:
 
 ### HTTP Server Selection
 
-The gateway supports two HTTP servers with different TLS implementations:
+The gateway uses Gunicorn with a custom Python SSL key manager:
 
 #### Gunicorn (Default)
 ```yaml
 environment:
-  - HTTP_SERVER=gunicorn
+  # Gunicorn HTTP server (the only supported server)
+  - GUNICORN_WORKERS=4
 ```
 
 Gunicorn uses a custom Python SSL key manager that:
@@ -305,20 +306,6 @@ Gunicorn uses a custom Python SSL key manager that:
 - Decrypts passphrase-protected keys at startup
 - Creates temporary unencrypted key files
 - Supports all SSL/TLS configurations
-
-#### Granian (Rust-based)
-```yaml
-environment:
-  - HTTP_SERVER=granian
-```
-
-Granian has native Rust TLS support:
-
-- Supports passphrase-protected keys via `--ssl-keyfile-password`
-- Better performance (Rust + Tokio)
-- Native HTTP/2 support
-
-Both servers work identically from a client perspective.
 
 ### Update Healthcheck
 
@@ -616,15 +603,7 @@ The `-k` flag skips SSL certificate verification for self-signed certificates.
 
 1. Verify `.env` file contains: `KEY_FILE_PASSWORD=your-passphrase`
 2. Verify docker-compose.yml references it: `- KEY_FILE_PASSWORD=${KEY_FILE_PASSWORD}`
-3. Restart gateway: `docker compose restart gateway`
-
-### Granian TLS Errors
-
-**Symptom**: Granian fails to start or shows TLS initialization errors.
-
-**Cause**: Passphrase not passed correctly to Granian.
-
-**Fix**: Granian expects the passphrase via environment variable. Ensure `KEY_FILE_PASSWORD` is set in `.env` and referenced in docker-compose.yml.
+ 3. Restart gateway: `docker compose restart gateway`
 
 ### Connection Refused
 
@@ -855,8 +834,8 @@ services:
       - KEY_FILE=/app/certs/key-encrypted.pem
       - KEY_FILE_PASSWORD=${KEY_FILE_PASSWORD}
 
-      # HTTP Server (gunicorn or granian)
-      - HTTP_SERVER=granian
+      # HTTP Server
+  - GUNICORN_WORKERS=4
 
       # Other settings...
       - HOST=0.0.0.0

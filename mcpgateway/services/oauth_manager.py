@@ -1803,9 +1803,15 @@ class OAuthManager:
                 # request parameters (including refresh_token / client_secret) in error
                 # responses, and HTML error pages can be unbounded — both leak via logs
                 # and OAuthError messages without this scrub.
-                error_payload = self._redact_token_response(self._parse_token_response(response))
+                parsed_error_response = self._parse_token_response(response)
+
                 if response.status_code in [400, 401]:
+                    error_code = parsed_error_response.get("error", "")
+                    error_payload = self._redact_token_response(parsed_error_response)
+                    if error_code == "invalid_grant":
+                        raise OAuthInvalidGrantError(f"Refresh token permanently invalid (invalid_grant): {error_payload}")
                     raise OAuthError(f"Refresh token invalid or expired: {error_payload}")
+                error_payload = self._redact_token_response(parsed_error_response)
                 logger.warning("Token refresh failed with status %s: %s", response.status_code, error_payload)
 
             except httpx.HTTPError as e:
@@ -1890,6 +1896,23 @@ class OAuthError(Exception):
         ...     raise OAuthError("Invalid grant type")
         ... except Exception as e:
         ...     isinstance(e, OAuthError)
+        True
+    """
+
+
+class OAuthInvalidGrantError(OAuthError):
+    """Raised when the OAuth token endpoint returns ``error: invalid_grant``.
+
+    Signals a permanent, irrecoverable refresh-token failure per RFC 6749 §5.2.
+    The refresh token has been revoked, expired, or does not match the
+    authorization grant.  Callers should delete the stored token and prompt the
+    user to re-authorize.
+
+    Examples:
+        >>> err = OAuthInvalidGrantError("invalid_grant: token revoked")
+        >>> isinstance(err, OAuthError)
+        True
+        >>> isinstance(err, OAuthInvalidGrantError)
         True
     """
 

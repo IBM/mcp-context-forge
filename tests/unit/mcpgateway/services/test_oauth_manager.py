@@ -1139,7 +1139,7 @@ async def test_refresh_token_400_error(oauth_manager):
     mock_client = AsyncMock()
     mock_client.post.return_value = mock_response
     with patch.object(oauth_manager, "_get_client", new_callable=AsyncMock, return_value=mock_client):
-        with pytest.raises(OAuthError, match=r"Refresh token invalid.*invalid_grant"):
+        with pytest.raises(OAuthError, match=r"Refresh token permanently invalid \(invalid_grant\)"):
             await oauth_manager.refresh_token("old-rt", {"client_id": "cid", "token_url": "https://auth/token"})
 
 
@@ -1165,7 +1165,7 @@ async def test_refresh_token_4xx_redacts_echoed_refresh_token(oauth_manager):
     mock_response = MagicMock()
     mock_response.status_code = 400
     mock_response.headers = {"content-type": "application/x-www-form-urlencoded"}
-    mock_response.text = "error=invalid_grant&refresh_token=leaked-rt-value&client_secret=leaked-secret"
+    mock_response.text = "error=invalid_grant&refresh_token=leaked-rt-value&client_secret=leaked-secret"  # pragma: allowlist secret
     mock_response.content = mock_response.text.encode()
 
     mock_client = AsyncMock()
