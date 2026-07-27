@@ -1,0 +1,86 @@
+suite: nginx-proxy deployment scheduling
+templates:
+  - templates/deployment-nginx-proxy.yaml
+
+tests:
+  - it: no nodeSelector rendered by default
+    set:
+      nginxProxy.enabled: true
+    asserts:
+      - notExists:
+          path: spec.template.spec.nodeSelector
+
+  - it: global nodeSelector is applied when set
+    set:
+      nginxProxy.enabled: true
+      nodeSelector:
+        kubernetes.io/os: linux
+    asserts:
+      - equal:
+          path: spec.template.spec.nodeSelector
+          value:
+            kubernetes.io/os: linux
+
+  - it: component nodeSelector overrides global
+    set:
+      nginxProxy.enabled: true
+      nodeSelector:
+        kubernetes.io/os: linux
+      nginxProxy.nodeSelector:
+        node-role: nginx-proxy
+    asserts:
+      - equal:
+          path: spec.template.spec.nodeSelector
+          value:
+            node-role: nginx-proxy
+
+  - it: no tolerations rendered by default
+    set:
+      nginxProxy.enabled: true
+    asserts:
+      - notExists:
+          path: spec.template.spec.tolerations
+
+  - it: global tolerations are applied when set
+    set:
+      nginxProxy.enabled: true
+      tolerations:
+        - key: dedicated
+          operator: Equal
+          value: mcp
+          effect: NoSchedule
+    asserts:
+      - contains:
+          path: spec.template.spec.tolerations
+          content:
+            key: dedicated
+            operator: Equal
+            value: mcp
+            effect: NoSchedule
+
+  - it: component tolerations override global
+    set:
+      nginxProxy.enabled: true
+      tolerations:
+        - key: global-key
+          operator: Exists
+          effect: NoSchedule
+      nginxProxy.tolerations:
+        - key: nginx-key
+          operator: Equal
+          value: nginx
+          effect: NoSchedule
+    asserts:
+      - contains:
+          path: spec.template.spec.tolerations
+          content:
+            key: nginx-key
+            operator: Equal
+            value: nginx
+            effect: NoSchedule
+      - notContains:
+          path: spec.template.spec.tolerations
+          content:
+            key: global-key
+            operator: Exists
+            effect: NoSchedule

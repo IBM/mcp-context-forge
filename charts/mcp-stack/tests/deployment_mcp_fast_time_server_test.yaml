@@ -1,0 +1,86 @@
+suite: mcp-fast-time-server deployment scheduling
+templates:
+  - templates/deployment-mcp-fast-time-server.yaml
+
+tests:
+  - it: no nodeSelector rendered by default
+    set:
+      mcpFastTimeServer.enabled: true
+    asserts:
+      - notExists:
+          path: spec.template.spec.nodeSelector
+
+  - it: global nodeSelector is applied when set
+    set:
+      mcpFastTimeServer.enabled: true
+      nodeSelector:
+        kubernetes.io/os: linux
+    asserts:
+      - equal:
+          path: spec.template.spec.nodeSelector
+          value:
+            kubernetes.io/os: linux
+
+  - it: component nodeSelector overrides global
+    set:
+      mcpFastTimeServer.enabled: true
+      nodeSelector:
+        kubernetes.io/os: linux
+      mcpFastTimeServer.nodeSelector:
+        node-role: fast-time
+    asserts:
+      - equal:
+          path: spec.template.spec.nodeSelector
+          value:
+            node-role: fast-time
+
+  - it: no tolerations rendered by default
+    set:
+      mcpFastTimeServer.enabled: true
+    asserts:
+      - notExists:
+          path: spec.template.spec.tolerations
+
+  - it: global tolerations are applied when set
+    set:
+      mcpFastTimeServer.enabled: true
+      tolerations:
+        - key: dedicated
+          operator: Equal
+          value: mcp
+          effect: NoSchedule
+    asserts:
+      - contains:
+          path: spec.template.spec.tolerations
+          content:
+            key: dedicated
+            operator: Equal
+            value: mcp
+            effect: NoSchedule
+
+  - it: component tolerations override global
+    set:
+      mcpFastTimeServer.enabled: true
+      tolerations:
+        - key: global-key
+          operator: Exists
+          effect: NoSchedule
+      mcpFastTimeServer.tolerations:
+        - key: fast-time-key
+          operator: Equal
+          value: fast-time
+          effect: NoSchedule
+    asserts:
+      - contains:
+          path: spec.template.spec.tolerations
+          content:
+            key: fast-time-key
+            operator: Equal
+            value: fast-time
+            effect: NoSchedule
+      - notContains:
+          path: spec.template.spec.tolerations
+          content:
+            key: global-key
+            operator: Exists
+            effect: NoSchedule

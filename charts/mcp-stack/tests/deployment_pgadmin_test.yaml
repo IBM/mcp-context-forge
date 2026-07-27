@@ -1,0 +1,86 @@
+suite: pgadmin deployment scheduling
+templates:
+  - templates/deployment-pgadmin.yaml
+
+tests:
+  - it: no nodeSelector rendered by default
+    set:
+      pgadmin.enabled: true
+    asserts:
+      - notExists:
+          path: spec.template.spec.nodeSelector
+
+  - it: global nodeSelector is applied when set
+    set:
+      pgadmin.enabled: true
+      nodeSelector:
+        kubernetes.io/os: linux
+    asserts:
+      - equal:
+          path: spec.template.spec.nodeSelector
+          value:
+            kubernetes.io/os: linux
+
+  - it: component nodeSelector overrides global
+    set:
+      pgadmin.enabled: true
+      nodeSelector:
+        kubernetes.io/os: linux
+      pgadmin.nodeSelector:
+        node-role: pgadmin
+    asserts:
+      - equal:
+          path: spec.template.spec.nodeSelector
+          value:
+            node-role: pgadmin
+
+  - it: no tolerations rendered by default
+    set:
+      pgadmin.enabled: true
+    asserts:
+      - notExists:
+          path: spec.template.spec.tolerations
+
+  - it: global tolerations are applied when set
+    set:
+      pgadmin.enabled: true
+      tolerations:
+        - key: dedicated
+          operator: Equal
+          value: mcp
+          effect: NoSchedule
+    asserts:
+      - contains:
+          path: spec.template.spec.tolerations
+          content:
+            key: dedicated
+            operator: Equal
+            value: mcp
+            effect: NoSchedule
+
+  - it: component tolerations override global
+    set:
+      pgadmin.enabled: true
+      tolerations:
+        - key: global-key
+          operator: Exists
+          effect: NoSchedule
+      pgadmin.tolerations:
+        - key: pgadmin-key
+          operator: Equal
+          value: pgadmin
+          effect: NoSchedule
+    asserts:
+      - contains:
+          path: spec.template.spec.tolerations
+          content:
+            key: pgadmin-key
+            operator: Equal
+            value: pgadmin
+            effect: NoSchedule
+      - notContains:
+          path: spec.template.spec.tolerations
+          content:
+            key: global-key
+            operator: Exists
+            effect: NoSchedule

@@ -1,0 +1,86 @@
+suite: postgres deployment scheduling
+templates:
+  - templates/deployment-postgres.yaml
+
+tests:
+  - it: no nodeSelector rendered by default
+    set:
+      postgres.enabled: true
+    asserts:
+      - notExists:
+          path: spec.template.spec.nodeSelector
+
+  - it: global nodeSelector is applied when set
+    set:
+      postgres.enabled: true
+      nodeSelector:
+        kubernetes.io/os: linux
+    asserts:
+      - equal:
+          path: spec.template.spec.nodeSelector
+          value:
+            kubernetes.io/os: linux
+
+  - it: component nodeSelector overrides global
+    set:
+      postgres.enabled: true
+      nodeSelector:
+        kubernetes.io/os: linux
+      postgres.nodeSelector:
+        node-role: postgres
+    asserts:
+      - equal:
+          path: spec.template.spec.nodeSelector
+          value:
+            node-role: postgres
+
+  - it: no tolerations rendered by default
+    set:
+      postgres.enabled: true
+    asserts:
+      - notExists:
+          path: spec.template.spec.tolerations
+
+  - it: global tolerations are applied when set
+    set:
+      postgres.enabled: true
+      tolerations:
+        - key: dedicated
+          operator: Equal
+          value: mcp
+          effect: NoSchedule
+    asserts:
+      - contains:
+          path: spec.template.spec.tolerations
+          content:
+            key: dedicated
+            operator: Equal
+            value: mcp
+            effect: NoSchedule
+
+  - it: component tolerations override global
+    set:
+      postgres.enabled: true
+      tolerations:
+        - key: global-key
+          operator: Exists
+          effect: NoSchedule
+      postgres.tolerations:
+        - key: postgres-key
+          operator: Equal
+          value: postgres
+          effect: NoSchedule
+    asserts:
+      - contains:
+          path: spec.template.spec.tolerations
+          content:
+            key: postgres-key
+            operator: Equal
+            value: postgres
+            effect: NoSchedule
+      - notContains:
+          path: spec.template.spec.tolerations
+          content:
+            key: global-key
+            operator: Exists
+            effect: NoSchedule
