@@ -1336,10 +1336,11 @@ name = "fastapi"
 version = "0.140.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "anyio" },
+    { name = "annotated-doc" },
     { name = "pydantic" },
     { name = "starlette" },
     { name = "typing-extensions" },
+    { name = "typing-inspection" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/0d/fb/fd7671137d9fa3df1d93a2f5111eb982709201724b29f211e4beb2d58688/fastapi-0.140.0.tar.gz", hash = "sha256:f338951b82fd74ca8f843163aec43ea1a1ce84d515415a50fa98fa25572a5544", size = 420968, upload-time = "2026-07-24T21:16:41.187Z" }
 wheels = [
@@ -3190,7 +3191,7 @@ requires-dist = [
     { name = "cpex-url-reputation", marker = "extra == 'plugins'", specifier = ">=0.3.5" },
     { name = "cryptography", specifier = ">=49.0.0" },
     { name = "fastapi", specifier = ">=0.140.0" },
-    { name = "filelock", specifier = ">=3.32.0" },
+    { name = "filelock", specifier = ">=3.32.0,<3.33.0" },
     { name = "grpcio", marker = "extra == 'grpc'", specifier = ">=1.83.0" },
     { name = "grpcio-reflection", marker = "extra == 'grpc'", specifier = ">=1.83.0" },
     { name = "grpcio-tools", marker = "extra == 'grpc'", specifier = ">=1.83.0" },
