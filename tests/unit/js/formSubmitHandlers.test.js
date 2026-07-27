@@ -218,6 +218,112 @@ describe("handleResourceFormSubmit", () => {
 
     expect(globalThis.fetch).toHaveBeenCalled();
   });
+
+  // Issue #4991: a duplicate URI must be attributed to the URI field instead of
+  // only surfacing as a generic banner/toast message.
+  test("attributes a 409 URI conflict to the URI field", async () => {
+    const event = createFormEvent(`
+      <form>
+        <input name="name" value="TestResource" />
+        <div class="relative">
+          <input name="uri" id="resource-uri" value="resource://test" />
+          <p data-error-message-for="uri" class="absolute top-full left-0 mt-1 text-xs text-red-500 invisible">URI is required.</p>
+        </div>
+        <input name="visibility" value="public" />
+      </form>
+      <div id="status-resources"></div>
+      <div id="add-resource-loading" style="display:none"></div>
+    `);
+
+    const conflictMessage =
+      "Public Resource already exists with URI: resource://test — resource URIs must be unique within this scope (names may repeat).";
+
+    vi.spyOn(globalThis, "fetch").mockResolvedValue({ ok: false, status: 409 });
+    // safeParseJsonResponse throws for non-OK responses (see security.js).
+    safeParseJsonResponse.mockRejectedValue(new Error(conflictMessage));
+
+    await handleResourceFormSubmit(event);
+
+    const inlineError = document.querySelector(
+      'p[data-error-message-for="uri"]'
+    );
+    expect(inlineError.classList.contains("invisible")).toBe(false);
+    expect(inlineError.textContent).toBe(conflictMessage);
+
+    const uriInput = document.getElementById("resource-uri");
+    expect(uriInput.classList.contains("border-red-500")).toBe(true);
+    expect(uriInput.classList.contains("focus:ring-red-500")).toBe(true);
+    expect(document.activeElement).toBe(uriInput);
+
+    // Existing banner + toast behaviour is preserved.
+    expect(document.getElementById("status-resources").textContent).toBe(
+      conflictMessage
+    );
+    expect(showErrorMessage).toHaveBeenCalledWith(conflictMessage);
+  });
+
+  test("leaves the URI field untouched for non-conflict errors", async () => {
+    const event = createFormEvent(`
+      <form>
+        <input name="name" value="TestResource" />
+        <div class="relative">
+          <input name="uri" id="resource-uri" value="resource://test" />
+          <p data-error-message-for="uri" class="absolute top-full left-0 mt-1 text-xs text-red-500 invisible">URI is required.</p>
+        </div>
+        <input name="visibility" value="public" />
+      </form>
+      <div id="status-resources"></div>
+      <div id="add-resource-loading" style="display:none"></div>
+    `);
+
+    vi.spyOn(globalThis, "fetch").mockResolvedValue({ ok: false, status: 500 });
+    safeParseJsonResponse.mockRejectedValue(new Error("Internal Server Error"));
+
+    await handleResourceFormSubmit(event);
+
+    const inlineError = document.querySelector(
+      'p[data-error-message-for="uri"]'
+    );
+    expect(inlineError.classList.contains("invisible")).toBe(true);
+    expect(
+      document
+        .getElementById("resource-uri")
+        .classList.contains("border-red-500")
+    ).toBe(false);
+    expect(showErrorMessage).toHaveBeenCalledWith("Internal Server Error");
+  });
+
+  test("clears a stale URI conflict error on resubmit", async () => {
+    // The add-resource panel is not inside a modal, so modals.js does not reset
+    // it - the handler must clear the previous conflict itself.
+    const event = createFormEvent(`
+      <form>
+        <input name="name" value="TestResource" />
+        <div class="relative">
+          <input name="uri" id="resource-uri" class="border-red-500 focus:ring-red-500" value="resource://other" />
+          <p data-error-message-for="uri" class="absolute top-full left-0 mt-1 text-xs text-red-500">Resource already exists with URI: resource://test</p>
+        </div>
+        <input name="visibility" value="public" />
+      </form>
+      <div id="status-resources"></div>
+      <div id="add-resource-loading" style="display:none"></div>
+    `);
+
+    vi.spyOn(globalThis, "fetch").mockResolvedValue({ ok: false, status: 500 });
+    safeParseJsonResponse.mockRejectedValue(new Error("Internal Server Error"));
+
+    await handleResourceFormSubmit(event);
+
+    const inlineError = document.querySelector(
+      'p[data-error-message-for="uri"]'
+    );
+    expect(inlineError.classList.contains("invisible")).toBe(true);
+    expect(
+      document
+        .getElementById("resource-uri")
+        .classList.contains("border-red-500")
+    ).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------

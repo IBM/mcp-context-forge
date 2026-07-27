@@ -2779,6 +2779,8 @@ class TestResourceUrlDetectedMimeTypePriority:
         mock_db.get = MagicMock(return_value=mock_resource)
         mock_db.commit = MagicMock()
         mock_db.refresh = MagicMock()
+        # No competing resource holds the new URI (private visibility is pre-checked too).
+        mock_db.execute.return_value.scalar_one_or_none.return_value = None
 
         # Update with new URI that has .json extension
         update = ResourceUpdate(uri="https://api.example.com/data.json", mime_type="text/html")  # User provides wrong type
@@ -2814,6 +2816,8 @@ class TestResourceUrlDetectedMimeTypePriority:
         mock_db.get = MagicMock(return_value=mock_resource)
         mock_db.commit = MagicMock()
         mock_db.refresh = MagicMock()
+        # No competing resource holds the new URI (private visibility is pre-checked too).
+        mock_db.execute.return_value.scalar_one_or_none.return_value = None
 
         # Update with new URI and empty MIME type
         update = ResourceUpdate(uri="https://example.com/document.pdf", mime_type="")  # Empty string
@@ -8604,3 +8608,153 @@ class TestReadResourceMetaDataValidationIntegration:
             await service.invoke_resource(db, resource_id="res-1", resource_uri="file:///test.txt", meta_data=hidden_depth)
 
         db.execute.assert_not_called()
+
+
+class TestResourceUriUniquenessScope:
+    """URI-scoped uniqueness behaviour (issue #4991).
+
+    Uses a real in-memory SQLite session so the DB constraints
+    ``uq_team_owner_gateway_uri_resource`` / ``uq_team_owner_uri_resource_local``
+    participate in the assertions rather than being mocked away.
+    """
+
+    @pytest.fixture
+    def db(self):
+        """Create a real in-memory SQLite session with the full schema."""
+        # Third-Party
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+        from sqlalchemy.pool import StaticPool
+
+        # First-Party
+        from mcpgateway.db import Base
+
+        engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+        Base.metadata.create_all(bind=engine)
+        session = sessionmaker(bind=engine)()
+        try:
+            yield session
+        finally:
+            session.close()
+            engine.dispose()
+
+    @pytest.fixture
+    def service(self, monkeypatch):
+        """Create a ResourceService with plugins disabled and notifications stubbed out."""
+        monkeypatch.setenv("PLUGINS_ENABLED", "false")
+        svc = ResourceService()
+        monkeypatch.setattr(svc, "_notify_resource_added", AsyncMock())
+        monkeypatch.setattr(svc, "_notify_resource_updated", AsyncMock())
+        return svc
+
+    @staticmethod
+    def _create(uri: str, name: str) -> ResourceCreate:
+        """Build a minimal ResourceCreate.
+
+        Args:
+            uri: Resource URI.
+            name: Resource display name.
+
+        Returns:
+            ResourceCreate: The populated creation schema.
+        """
+        return ResourceCreate(uri=uri, name=name, description="d", mime_type="text/plain", content="content")
+
+    # ------------------------------------------------------------------ #
+    # Regression guard for #5664: names are display labels, not keys.    #
+    # ------------------------------------------------------------------ #
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("visibility", ["public", "team", "private"])
+    async def test_duplicate_name_with_distinct_uri_succeeds(self, service, db, visibility):
+        """Duplicate resource *names* must remain legal as long as the URIs differ.
+
+        This is the #5664 regression guard: PR #5158 added name uniqueness, which
+        violates the MCP spec (``uri`` is the identifier, ``name`` is a display
+        label) and crash-looped a production deployment. Do not reintroduce it.
+        """
+        kwargs = {"visibility": visibility, "created_by": "owner@example.com", "owner_email": "owner@example.com"}
+        if visibility == "team":
+            kwargs["team_id"] = "team-1"
+
+        first = await service.register_resource(db, self._create("file://first.txt", "Shared Label"), **kwargs)
+        second = await service.register_resource(db, self._create("file://second.txt", "Shared Label"), **kwargs)
+
+        assert first.name == second.name == "Shared Label"
+        assert {first.uri, second.uri} == {"file://first.txt", "file://second.txt"}
+
+    @pytest.mark.asyncio
+    async def test_duplicate_name_distinct_uri_survives_db_flush(self, service, db):
+        """The duplicate-name rows must actually persist -- no DB-level name constraint."""
+        await service.register_resource(db, self._create("file://a.txt", "Same Name"), visibility="public")
+        await service.register_resource(db, self._create("file://b.txt", "Same Name"), visibility="public")
+
+        rows = db.query(DbResource).filter(DbResource.name == "Same Name").all()
+        assert len(rows) == 2
+
+    # ------------------------------------------------------------------ #
+    # private visibility duplicate URI -> friendly conflict, not 500     #
+    # ------------------------------------------------------------------ #
+
+    @pytest.mark.asyncio
+    async def test_register_private_duplicate_uri_raises_conflict(self, service, db):
+        """A private duplicate URI must raise ResourceURIConflictError, not a raw IntegrityError."""
+        kwargs = {"visibility": "private", "created_by": "owner@example.com", "owner_email": "owner@example.com", "team_id": "team-1"}
+        await service.register_resource(db, self._create("file://dup.txt", "First"), **kwargs)
+
+        with pytest.raises(ResourceURIConflictError) as exc_info:
+            await service.register_resource(db, self._create("file://dup.txt", "Second"), **kwargs)
+
+        message = str(exc_info.value)
+        assert "Resource already exists with URI" in message
+        assert "file://dup.txt" in message
+        assert "resource URIs must be unique within this scope (names may repeat)." in message
+
+    @pytest.mark.asyncio
+    async def test_register_private_same_uri_different_owner_succeeds(self, service, db):
+        """The private pre-check is scoped to (team_id, owner_email, gateway_id, uri)."""
+        await service.register_resource(db, self._create("file://mine.txt", "Mine"), visibility="private", created_by="a@example.com", owner_email="a@example.com")
+        result = await service.register_resource(db, self._create("file://mine.txt", "Mine"), visibility="private", created_by="b@example.com", owner_email="b@example.com")
+
+        assert result.uri == "file://mine.txt"
+
+    @pytest.mark.asyncio
+    async def test_register_private_conflict_reports_inactive_suffix(self, service, db):
+        """The ``(currently inactive, ID: ...)`` suffix must still append after the new wording."""
+        kwargs = {"visibility": "private", "created_by": "owner@example.com", "owner_email": "owner@example.com"}
+        created = await service.register_resource(db, self._create("file://off.txt", "Off"), **kwargs)
+        row = db.query(DbResource).filter(DbResource.id == created.id).one()
+        row.enabled = False
+        db.commit()
+
+        with pytest.raises(ResourceURIConflictError) as exc_info:
+            await service.register_resource(db, self._create("file://off.txt", "Off Again"), **kwargs)
+
+        message = str(exc_info.value)
+        assert "resource URIs must be unique within this scope (names may repeat)." in message
+        assert f"(currently inactive, ID: {created.id})" in message
+
+    @pytest.mark.asyncio
+    async def test_update_private_duplicate_uri_raises_conflict(self, service, db):
+        """update_resource must also pre-check private duplicates instead of hitting the DB constraint."""
+        kwargs = {"visibility": "private", "created_by": "owner@example.com", "owner_email": "owner@example.com"}
+        existing = await service.register_resource(db, self._create("file://taken.txt", "Taken"), **kwargs)
+        target = await service.register_resource(db, self._create("file://free.txt", "Free"), **kwargs)
+
+        with pytest.raises(ResourceURIConflictError) as exc_info:
+            await service.update_resource(db, target.id, ResourceUpdate(uri="file://taken.txt"))
+
+        message = str(exc_info.value)
+        assert "file://taken.txt" in message
+        assert "resource URIs must be unique within this scope (names may repeat)." in message
+        assert existing.id != target.id
+
+    @pytest.mark.asyncio
+    async def test_update_private_duplicate_name_succeeds(self, service, db):
+        """Renaming a private resource to an existing name must stay legal."""
+        await service.register_resource(db, self._create("file://one.txt", "Original"), visibility="private", created_by="o@example.com", owner_email="o@example.com")
+        target = await service.register_resource(db, self._create("file://two.txt", "Other"), visibility="private", created_by="o@example.com", owner_email="o@example.com")
+
+        result = await service.update_resource(db, target.id, ResourceUpdate(name="Original"))
+
+        assert result.name == "Original"
