@@ -2812,6 +2812,14 @@ class Settings(BaseSettings):
     debug: bool = False
     expose_error_details: bool = False
 
+    # Log Configuration Watcher
+    log_config_path: str = Field(
+        default="log_config.yaml",
+        description="Path to the YAML log configuration file used when FILE_WATCHER_ENABLED=true "
+        "(relative to project root or absolute). Absolute paths are allowed but should be used carefully. "
+        "Relative paths are resolved against the project root and validated to prevent path traversal.",
+    )
+
     # Observability (OpenTelemetry)
     deployment_env: str = Field(default="development", validation_alias=AliasChoices("DEPLOYMENT_ENV", "ENVIRONMENT"), description="Deployment environment label")
     otel_enable_observability: bool = Field(default=False, description="Enable OpenTelemetry observability")
@@ -3051,6 +3059,42 @@ Disallow: /
         if not uds_path.parent.exists():
             raise ValueError(f"{field_name} parent directory does not exist: {uds_path.parent}")
         return str(uds_path)
+
+    @field_validator("log_config_path", mode="after")
+    @classmethod
+    def _validate_log_config_path(cls, value: str) -> str:
+        """Validate log_config_path to prevent path traversal attacks.
+
+        Args:
+            value: The log config path from configuration.
+
+        Returns:
+            The validated path string.
+
+        Raises:
+            ValueError: If the path contains path traversal sequences or resolves outside the project directory.
+        """
+        if not value:
+            return value
+
+        project_root = Path(__file__).parent.parent.resolve()
+        config_path = Path(value).expanduser()
+
+        if config_path.is_absolute():
+            return str(config_path)
+
+        resolved_path = (project_root / config_path).resolve()
+
+        try:
+            resolved_path.relative_to(project_root)
+        except ValueError:
+            raise ValueError(
+                f"log_config_path '{value}' resolves outside the project directory. "
+                f"Resolved to: {resolved_path}, Project root: {project_root}. "
+                f"Use an absolute path if you need to reference files outside the project."
+            )
+
+        return value
 
     # -------------------------------
     # Flexible list parsing for envs

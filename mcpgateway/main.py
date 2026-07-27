@@ -1426,6 +1426,49 @@ def _restore_default_sighup_handler() -> None:
     signal.signal(signal.SIGHUP, signal.SIG_DFL)
 
 
+async def _start_log_config_watcher() -> Optional[Any]:
+    """Start the log config watcher when file watching is enabled and a path is set.
+
+    The file watcher service ships as a separate feature; when its
+    ``file_watcher_enabled`` setting is absent the watcher stays inert.
+
+    Returns:
+        The running watcher instance, or ``None`` when disabled or when startup failed.
+    """
+    if not (getattr(settings, "file_watcher_enabled", False) and settings.log_config_path):
+        return None
+    try:
+        # First-Party
+        from mcpgateway.services.log_config_watcher import get_log_config_watcher  # pylint: disable=import-outside-toplevel
+
+        log_config_watcher_instance = await get_log_config_watcher(logging_service)
+        await log_config_watcher_instance.start(settings.log_config_path)
+        logger.info("Log config watcher started for: %s", settings.log_config_path)
+        return log_config_watcher_instance
+    except FileNotFoundError:
+        logger.warning("Log config file not found: %s - watcher not started", settings.log_config_path)
+    except RuntimeError as e:
+        logger.warning("Log config watcher not started: %s", e)
+    except Exception as e:
+        logger.error("Failed to start log config watcher: %s", e)
+    return None
+
+
+async def _stop_log_config_watcher(log_config_watcher_instance: Optional[Any]) -> None:
+    """Stop the log config watcher if it was started.
+
+    Args:
+        log_config_watcher_instance: The watcher returned by :func:`_start_log_config_watcher`, or ``None``.
+    """
+    if log_config_watcher_instance is None:
+        return
+    try:
+        await log_config_watcher_instance.stop()
+        logger.info("Log config watcher stopped")
+    except Exception as e:
+        logger.debug(f"Error stopping log config watcher: {e}")
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     """
@@ -1454,6 +1497,9 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
     # Initialize logging service FIRST to ensure all logging goes to dual output
     await logging_service.initialize()
+
+    # Start log config watcher if file watching is enabled and a config path is set
+    log_config_watcher_instance = await _start_log_config_watcher()
     logger.info("Starting ContextForge services")
 
     # Wait for the database to be ready, then run bootstrap (alembic + seed).
@@ -1907,6 +1953,9 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             logger.info("Plugin manager shutdown complete")
         except Exception as e:
             logger.error(f"Error shutting down plugin manager: {str(e)}")
+
+        # Stop log config watcher
+        await _stop_log_config_watcher(log_config_watcher_instance)
 
         # Stop cache invalidation subscriber
         try:

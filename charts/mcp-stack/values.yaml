@@ -983,6 +983,11 @@ mcpContextForge:
     MCPGATEWAY_BOOTSTRAP_ROLES_IN_DB_ENABLED: "false" # Enable Bootstrap additional system roles feature
     MCPGATEWAY_BOOTSTRAP_ROLES_IN_DB_FILE: "additional_roles_in_db.json" # Create and populate this file as given in the .env.example to add additional roles
 
+    # - Dynamic Log Configuration -
+    # Opt-in hot-reload of the log level from a YAML config file (format: `level: INFO`).
+    # Requires the file watcher service feature; leave unset in most production deployments.
+    # LOG_CONFIG_PATH: "log_config.yaml" # path to YAML log config file (relative to project root or absolute)
+
 
   ####################################################################
   # envFrom is managed by the chart (gateway secret + configmap).
