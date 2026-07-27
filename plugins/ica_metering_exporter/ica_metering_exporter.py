@@ -60,9 +60,7 @@ class IcaMeteringExporterPlugin(Plugin):
             await self.http_client.aclose()
             self.http_client = None
 
-    async def tool_pre_invoke(
-        self, payload: ToolPreInvokePayload, context: PluginContext
-    ) -> ToolPreInvokeResult:
+    async def tool_pre_invoke(self, payload: ToolPreInvokePayload, context: PluginContext) -> ToolPreInvokeResult:
         """Record tool invocation start time and extract model name from transport headers."""
         if not self.telemetry_config.get("enabled", False):
             return ToolPreInvokeResult(continue_processing=True)
@@ -76,9 +74,7 @@ class IcaMeteringExporterPlugin(Plugin):
         logger.debug("ICA metering: Pre-invoke for tool %s", payload.name)
         return ToolPreInvokeResult(continue_processing=True)
 
-    async def tool_post_invoke(
-        self, payload: ToolPostInvokePayload, context: PluginContext
-    ) -> ToolPostInvokeResult:
+    async def tool_post_invoke(self, payload: ToolPostInvokePayload, context: PluginContext) -> ToolPostInvokeResult:
         """Compute latency, resolve model name via cascade, build metering payload, fire-and-forget to ICA."""
         if not self.telemetry_config.get("enabled", False):
             return ToolPostInvokeResult(continue_processing=True)
@@ -257,8 +253,6 @@ class IcaMeteringExporterPlugin(Plugin):
         except httpx.NetworkError:
             logger.warning("ICA metering: Network error")
         except httpx.HTTPStatusError as e:
-            logger.error(
-                "ICA metering: HTTP %s: %s", e.response.status_code, e.response.text
-            )
+            logger.error("ICA metering: HTTP %s: %s", e.response.status_code, e.response.text)
         except Exception as e:
             logger.error("ICA metering: Failed to send metrics: %s", e)
