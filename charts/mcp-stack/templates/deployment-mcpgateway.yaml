@@ -50,6 +50,14 @@ spec:
                     app: {{ include "mcp-stack.fullname" . }}-mcpgateway
                 topologyKey: kubernetes.io/hostname
       {{- end }}
+      {{- with (coalesce .Values.mcpContextForge.nodeSelector .Values.nodeSelector) }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with (coalesce .Values.mcpContextForge.tolerations .Values.tolerations) }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       securityContext:
         {{- toYaml .Values.mcpContextForge.podSecurityContext | nindent 8 }}
         seccompProfile:

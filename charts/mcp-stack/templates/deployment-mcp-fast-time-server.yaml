@@ -34,6 +34,14 @@ spec:
       serviceAccountName: {{ include "mcp-stack.serviceAccountName" . }}
       {{- end }}
       automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
+      {{- with (coalesce .Values.mcpFastTimeServer.nodeSelector .Values.nodeSelector) }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with (coalesce .Values.mcpFastTimeServer.tolerations .Values.tolerations) }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       {{- if gt (int .Values.mcpFastTimeServer.replicaCount) 1 }}
       affinity:
         podAntiAffinity:
