@@ -139,6 +139,207 @@ class TestIcaMeteringExporterPlugin:
         sent_payload = plugin._send_to_ica.await_args.args[0]
         assert sent_payload["toolDetails"]["latencyMs"] is None
 
+    # ── Model resolution priority cascade tests ──────────────────
+
+    @pytest.mark.asyncio
+    async def test_model_resolution_priority_1_headers(self):
+        """Priority 1: Transport headers should take highest priority."""
+        plugin = _create_plugin()
+        plugin.env_model_name = "env-model"
+        context = _create_context(
+            metadata={"model_name": "session-model", GATEWAY_METADATA: {"id": "gw-1"}},
+        )
+        plugin._gateway_configs = {"gw-1": {"default_model": "gateway-model"}}
+        plugin.telemetry_config["global_default_model"] = "global-model"
+        await plugin.tool_pre_invoke(
+            ToolPreInvokePayload(
+                name="tool", args={},
+                headers={"X-OpenWebUI-Model-Id": "header-model"},
+            ),
+            context,
+        )
+        payload = ToolPostInvokePayload(name="tool", result={"content": [], "isError": False})
+        await plugin.tool_post_invoke(payload, context)
+
+        sent_payload = plugin._send_to_ica.await_args.args[0]
+        assert sent_payload["toolDetails"]["modelName"] == "header-model"
+
+    @pytest.mark.asyncio
+    async def test_model_resolution_priority_2_session_init(self):
+        """Priority 2: Session metadata should resolve when headers absent."""
+        plugin = _create_plugin()
+        context = _create_context(
+            metadata={"model_name": "session-model"},
+        )
+        await plugin.tool_pre_invoke(
+            ToolPreInvokePayload(name="tool", args={}, headers={}),
+            context,
+        )
+        payload = ToolPostInvokePayload(name="tool", result={"content": [], "isError": False})
+        await plugin.tool_post_invoke(payload, context)
+
+        sent_payload = plugin._send_to_ica.await_args.args[0]
+        assert sent_payload["toolDetails"]["modelName"] == "session-model"
+
+    @pytest.mark.asyncio
+    async def test_model_resolution_priority_3_environment(self):
+        """Priority 3: Environment variable should resolve when headers and session absent."""
+        plugin = _create_plugin()
+        plugin.env_model_name = "env-gpt-4"
+        context = _create_context(metadata={})
+        await plugin.tool_pre_invoke(
+            ToolPreInvokePayload(name="tool", args={}, headers={}),
+            context,
+        )
+        payload = ToolPostInvokePayload(name="tool", result={"content": [], "isError": False})
+        await plugin.tool_post_invoke(payload, context)
+
+        sent_payload = plugin._send_to_ica.await_args.args[0]
+        assert sent_payload["toolDetails"]["modelName"] == "env-gpt-4"
+
+    @pytest.mark.asyncio
+    async def test_model_resolution_priority_4_tool_metadata(self):
+        """Priority 4: meta_data.model should resolve when higher priorities absent."""
+        plugin = _create_plugin()
+        context = _create_context(
+            metadata={"meta_data": {"model": "tool-meta-model"}},
+        )
+        await plugin.tool_pre_invoke(
+            ToolPreInvokePayload(name="tool", args={}, headers={}),
+            context,
+        )
+        payload = ToolPostInvokePayload(name="tool", result={"content": [], "isError": False})
+        await plugin.tool_post_invoke(payload, context)
+
+        sent_payload = plugin._send_to_ica.await_args.args[0]
+        assert sent_payload["toolDetails"]["modelName"] == "tool-meta-model"
+
+    @pytest.mark.asyncio
+    async def test_model_resolution_priority_5_gateway_default(self):
+        """Priority 5: Gateway-level default should resolve when higher priorities absent."""
+        plugin = _create_plugin()
+        plugin._gateway_configs = {"gw-research": {"default_model": "gateway-model"}}
+        context = _create_context(
+            metadata={GATEWAY_METADATA: {"id": "gw-research"}},
+        )
+        await plugin.tool_pre_invoke(
+            ToolPreInvokePayload(name="tool", args={}, headers={}),
+            context,
+        )
+        payload = ToolPostInvokePayload(name="tool", result={"content": [], "isError": False})
+        await plugin.tool_post_invoke(payload, context)
+
+        sent_payload = plugin._send_to_ica.await_args.args[0]
+        assert sent_payload["toolDetails"]["modelName"] == "gateway-model"
+
+    @pytest.mark.asyncio
+    async def test_model_resolution_priority_6_global_default(self):
+        """Priority 6: Global default should resolve when all higher priorities absent."""
+        plugin = _create_plugin()
+        plugin.telemetry_config["global_default_model"] = "global-default-model"
+        context = _create_context(metadata={})
+        await plugin.tool_pre_invoke(
+            ToolPreInvokePayload(name="tool", args={}, headers={}),
+            context,
+        )
+        payload = ToolPostInvokePayload(name="tool", result={"content": [], "isError": False})
+        await plugin.tool_post_invoke(payload, context)
+
+        sent_payload = plugin._send_to_ica.await_args.args[0]
+        assert sent_payload["toolDetails"]["modelName"] == "global-default-model"
+
+    @pytest.mark.asyncio
+    async def test_model_resolution_priority_7_unknown(self):
+        """Priority 7: None when all sources exhausted."""
+        plugin = _create_plugin()
+        context = _create_context(metadata={})
+        await plugin.tool_pre_invoke(
+            ToolPreInvokePayload(name="tool", args={}, headers={}),
+            context,
+        )
+        payload = ToolPostInvokePayload(name="tool", result={"content": [], "isError": False})
+        await plugin.tool_post_invoke(payload, context)
+
+        sent_payload = plugin._send_to_ica.await_args.args[0]
+        assert sent_payload["toolDetails"]["modelName"] is None
+
+    @pytest.mark.asyncio
+    async def test_model_source_tracking_when_enabled(self):
+        """modelSource field should be emitted when include_model_source is true."""
+        plugin = _create_plugin({"enabled": True, "include_model_source": True,
+                                "metering_url": "http://localhost:8080/event",
+                                "metering_token": "test-token"})
+        context = _create_context(metadata={"model_name": "session-model"})
+        await plugin.tool_pre_invoke(
+            ToolPreInvokePayload(name="tool", args={}, headers={}),
+            context,
+        )
+        payload = ToolPostInvokePayload(name="tool", result={"content": [], "isError": False})
+        await plugin.tool_post_invoke(payload, context)
+
+        sent_payload = plugin._send_to_ica.await_args.args[0]
+        assert sent_payload["_metadata"]["modelSource"] == "session_init"
+        assert sent_payload["toolDetails"]["modelName"] == "session-model"
+
+    @pytest.mark.asyncio
+    async def test_model_source_tracking_not_emitted_when_disabled(self):
+        """modelSource field should not be emitted when include_model_source is false."""
+        plugin = _create_plugin()
+        context = _create_context(metadata={"model_name": "session-model"})
+        await plugin.tool_pre_invoke(
+            ToolPreInvokePayload(name="tool", args={}, headers={}),
+            context,
+        )
+        payload = ToolPostInvokePayload(name="tool", result={"content": [], "isError": False})
+        await plugin.tool_post_invoke(payload, context)
+
+        sent_payload = plugin._send_to_ica.await_args.args[0]
+        assert "_metadata" not in sent_payload
+
+    @pytest.mark.asyncio
+    async def test_model_resolution_full_cascade_header_wins(self):
+        """All 6 sources present - Priority 1 (transport header) wins."""
+        plugin = _create_plugin()
+        plugin.env_model_name = "env-model"
+        plugin._gateway_configs = {"gw-1": {"default_model": "gateway-model"}}
+        plugin.telemetry_config["global_default_model"] = "global-model"
+        context = _create_context(
+            metadata={
+                "model_name": "session-model",
+                "meta_data": {"model": "meta-model"},
+                GATEWAY_METADATA: {"id": "gw-1"},
+            },
+        )
+        await plugin.tool_pre_invoke(
+            ToolPreInvokePayload(
+                name="tool", args={},
+                headers={"X-OpenWebUI-Model-Id": "header-model"},
+            ),
+            context,
+        )
+        payload = ToolPostInvokePayload(name="tool", result={"content": [], "isError": False})
+        await plugin.tool_post_invoke(payload, context)
+
+        sent_payload = plugin._send_to_ica.await_args.args[0]
+        assert sent_payload["toolDetails"]["modelName"] == "header-model"
+
+    @pytest.mark.asyncio
+    async def test_model_resolution_picks_highest_available(self):
+        """Only Priority 2 (session) available — should use that."""
+        plugin = _create_plugin()
+        context = _create_context(
+            metadata={"model_name": "session-only"},
+        )
+        await plugin.tool_pre_invoke(
+            ToolPreInvokePayload(name="tool", args={}, headers={}),
+            context,
+        )
+        payload = ToolPostInvokePayload(name="tool", result={"content": [], "isError": False})
+        await plugin.tool_post_invoke(payload, context)
+
+        sent_payload = plugin._send_to_ica.await_args.args[0]
+        assert sent_payload["toolDetails"]["modelName"] == "session-only"
+
     # ── Post-invoke structured JSON tests ────────────────────────
 
     @pytest.mark.asyncio
