@@ -32,6 +32,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 # First-Party
+from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import EmailApiToken, fresh_db_session, TokenRevocation, utc_now
 from mcpgateway.services.logging_service import LoggingService
@@ -56,6 +57,22 @@ class TokenBlocklistService:
         """
         self.db = db
         self._redis_client = None
+
+    async def _invalidate_auth_cache(self, jti: str) -> None:
+        """Best-effort invalidate cached authentication state for a revoked token."""
+        safe_jti = SecurityValidator.sanitize_log_message(jti)
+        try:
+            # First-Party
+            from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
+
+            await auth_cache.invalidate_revocation(jti)
+        except Exception as cache_error:
+            logger.warning(
+                "Auth cache invalidation failed for revoked token; token may be accepted until cache TTL expiry: jti=%s: %s",
+                safe_jti,
+                cache_error,
+                extra={"security_event": "revocation_cache_invalidation_failed", "security_severity": "high", "jti": safe_jti},
+            )
 
     def _get_redis_client(self):
         """Get Redis client for caching (lazy initialization).
@@ -111,26 +128,14 @@ class TokenBlocklistService:
                 if api_token and api_token.is_active:
                     repaired = True
                     api_token.is_active = False
-                    logger.debug("Set EmailApiToken.is_active=False for jti=%s", jti[:8])
+                    logger.debug("Set EmailApiToken.is_active=False for jti=%s", SecurityValidator.sanitize_log_message(jti[:8]))
 
                 if existing:
                     # Commit the repair if we updated is_active
                     if repaired:
                         db.commit()
-                    logger.debug("Token %s already revoked", jti)
-                    # Invalidate auth cache to ensure revoked token is rejected immediately
-                    try:
-                        # First-Party
-                        from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
-
-                        await auth_cache.invalidate_revocation(jti)
-                    except Exception as cache_error:
-                        logger.warning(
-                            "Auth cache invalidation failed for revoked token; token may be accepted until cache TTL expiry: jti=%s: %s",
-                            jti,
-                            cache_error,
-                            extra={"security_event": "revocation_cache_invalidation_failed", "security_severity": "high", "jti": jti},
-                        )
+                    logger.debug("Token %s already revoked", SecurityValidator.sanitize_log_message(jti[:8]))
+                    await self._invalidate_auth_cache(jti)
                     return True
 
                 # Create revocation record
@@ -151,26 +156,14 @@ class TokenBlocklistService:
                     if api_token and api_token.is_active:
                         repaired = True
                         api_token.is_active = False
-                        logger.debug("Set EmailApiToken.is_active=False for jti=%s", jti[:8])
+                        logger.debug("Set EmailApiToken.is_active=False for jti=%s", SecurityValidator.sanitize_log_message(jti[:8]))
 
                     if existing:
                         # Commit the repair if we updated is_active
                         if repaired:
                             db.commit()
-                        logger.debug("Token %s already revoked", jti)
-                        # Invalidate auth cache to ensure revoked token is rejected immediately
-                        try:
-                            # First-Party
-                            from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
-
-                            await auth_cache.invalidate_revocation(jti)
-                        except Exception as cache_error:
-                            logger.warning(
-                                "Auth cache invalidation failed for revoked token; token may be accepted until cache TTL expiry: jti=%s: %s",
-                                jti,
-                                cache_error,
-                                extra={"security_event": "revocation_cache_invalidation_failed", "security_severity": "high", "jti": jti},
-                            )
+                        logger.debug("Token %s already revoked", SecurityValidator.sanitize_log_message(jti[:8]))
+                        await self._invalidate_auth_cache(jti)
                         return True
 
                     # Create revocation record
@@ -193,32 +186,23 @@ class TokenBlocklistService:
                 except Exception as e:
                     logger.warning("Failed to cache revocation in Redis: %s", e)
 
-            # Invalidate auth cache to ensure revoked token is rejected immediately
-            try:
-                # First-Party
-                from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
+            await self._invalidate_auth_cache(jti)
 
-                await auth_cache.invalidate_revocation(jti)
-            except Exception as cache_error:
-                logger.warning(
-                    "Auth cache invalidation failed for revoked token; token may be accepted until cache TTL expiry: jti=%s: %s",
-                    jti,
-                    cache_error,
-                    extra={"security_event": "revocation_cache_invalidation_failed", "security_severity": "high", "jti": jti},
-                )
-
+            safe_jti = SecurityValidator.sanitize_log_message(jti)
+            safe_reason = SecurityValidator.sanitize_log_message(reason)
+            safe_revoked_by = SecurityValidator.sanitize_log_message(revoked_by)
             logger.info(
                 "Token revoked: jti=%s, reason=%s, revoked_by=%s",
-                jti,
-                reason,
-                revoked_by,
-                extra={"security_event": "token_revocation", "security_severity": "medium", "jti": jti, "reason": reason, "revoked_by": revoked_by},
+                safe_jti,
+                safe_reason,
+                safe_revoked_by,
+                extra={"security_event": "token_revocation", "security_severity": "medium", "jti": safe_jti, "reason": safe_reason, "revoked_by": safe_revoked_by},
             )
 
             return True
 
         except Exception as e:
-            logger.error("Failed to revoke token %s: %s", jti, e)
+            logger.error("Failed to revoke token %s: %s", SecurityValidator.sanitize_log_message(jti), e)
             return False
 
     def is_token_revoked(self, jti: str) -> bool:
