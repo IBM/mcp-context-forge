@@ -32,6 +32,7 @@ class IcaMeteringExporterPlugin(Plugin):
     """Export MCP tool invocation metrics to ICA metering service."""
 
     def __init__(self, config: PluginConfig) -> None:
+        """Initialize plugin: parse config, parse gateway defaults, create HTTP client if enabled."""
         super().__init__(config)
         self.telemetry_config = config.config
         self.http_client: Optional[httpx.AsyncClient] = None
@@ -62,6 +63,7 @@ class IcaMeteringExporterPlugin(Plugin):
     async def tool_pre_invoke(
         self, payload: ToolPreInvokePayload, context: PluginContext
     ) -> ToolPreInvokeResult:
+        """Record tool invocation start time and extract model name from transport headers."""
         if not self.telemetry_config.get("enabled", False):
             return ToolPreInvokeResult(continue_processing=True)
 
@@ -77,6 +79,7 @@ class IcaMeteringExporterPlugin(Plugin):
     async def tool_post_invoke(
         self, payload: ToolPostInvokePayload, context: PluginContext
     ) -> ToolPostInvokeResult:
+        """Compute latency, resolve model name via cascade, build metering payload, fire-and-forget to ICA."""
         if not self.telemetry_config.get("enabled", False):
             return ToolPostInvokeResult(continue_processing=True)
 
