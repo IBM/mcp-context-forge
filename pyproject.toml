@@ -124,7 +124,7 @@ dependencies = [
     "cpex>=0.1.1",
     "cryptography>=49.0.0",
     "fastapi>=0.140.0",
-    "filelock>=3.32.0", # verified against 3.30.0's fork-safety guard (gateway_service.py rebuilds post-fork); ceiling caps unknown future releases
+    "filelock>=3.32.0", # 3.30.0 added fork-safety guard that raises on pre-fork lock reuse; gateway_service.py:5351 rebuilds the lock post-fork per-PID (fix from #5654). Ceiling removed: 3.30.x–3.32.x have zero runtime changes; primary_worker.py and bootstrap_db.py create FileLock post-fork so are unaffected.
     "gunicorn>=26.0.0",
     "httpx>=0.28.1",
     "httpx[http2]>=0.28.1",
@@ -139,7 +139,7 @@ dependencies = [
     "orjson>=3.11.9",
     "parse>=1.22.1",
     "prometheus-fastapi-instrumentator>=8.1.0", # 8.0.1: fix _IncludedRouter crash (issue #370)
-    "prometheus_client>=0.26.0", # 0.25.0 exceeds 10-day min-release-age policy
+    "prometheus_client>=0.26.0",
     "psutil>=7.2.2",
     "pydantic>=2.13.4",
     "pydantic[email]>=2.13.4",
@@ -191,7 +191,6 @@ dev = [
     "pip-licenses>=5.5.5",
     "pip_audit>=2.10.1",
     "pre-commit>=4.6.0",
-    "prospector[with_everything]>=1.19.0",
     "pydocstyle>=6.3.0",
     "pyrefly>=1.1.1",
     "pyright>=1.1.411",
@@ -329,7 +328,7 @@ grpc = [
     "grpcio>=1.83.0",
     "grpcio-reflection>=1.83.0",
     "grpcio-tools>=1.83.0",
-    "protobuf>=7.35.1", # grpcio-reflection 1.78.x caps at <7.0.0
+    "protobuf>=7.35.1", # grpcio-reflection >=1.79.0 lifted the <7.0.0 protobuf cap; lock resolves grpcio-reflection 1.83.0 alongside protobuf 7.35.1
 ]
 
 # Convenience meta-extras
