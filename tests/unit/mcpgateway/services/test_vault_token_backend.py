@@ -2008,3 +2008,111 @@ class TestVaultTokenBackendAdditionalCoverage:
 
             # Assert: DELETE called with correct path (no team_id segment)
             mock_vault.assert_called_once()
+
+
+# ============================================================================
+# Additional Coverage: Store Tokens Edge Cases
+# ============================================================================
+
+
+class TestVaultTokenBackendStoreTokensEdgeCases:
+    """Tests for store_tokens edge cases to improve coverage."""
+
+    @pytest.mark.asyncio
+    async def test_store_tokens_preserves_original_created_at(self):
+        """When updating existing token, original created_at is preserved."""
+        mock_db = MagicMock()
+        mock_settings = MagicMock()
+        mock_settings.vault_addr = "http://127.0.0.1:8200"
+        mock_settings.vault_token = SecretStr("hvs.test-token")
+        mock_settings.vault_namespace = ""
+        mock_settings.vault_kv_mount = "secret"
+        mock_settings.vault_kv_path_prefix = "contextforge/oauth"
+        mock_settings.vault_tls_verify = True
+        mock_settings.vault_token_cache_enabled = False
+        mock_settings.vault_token_cache_ttl = 300
+        mock_settings.vault_token_cache_max_size = 10000
+
+        backend = VaultTokenBackend(mock_db, mock_settings)
+
+        mock_gateway = MagicMock()
+        mock_gateway.url = "https://mcp.example.com"
+        mock_db.get.return_value = mock_gateway
+
+        # Mock existing record with created_at
+        original_timestamp = "2026-07-27T10:00:00Z"
+        existing_record = {
+            "data": {
+                "data": {
+                    "created_at": original_timestamp,
+                    "token": {"access_token": "old_token"},
+                }
+            }
+        }
+
+        with patch.object(backend, "_vault_request", new_callable=AsyncMock) as mock_vault:
+            # GET returns existing record, POST stores new
+            mock_vault.side_effect = [existing_record, {"data": {"version": 2}}]
+
+            await backend.store_tokens(
+                gateway_id="gw-123",
+                team_id="team1",
+                user_id="user123",
+                app_user_email="user@test.com",
+                access_token="new_token",
+                refresh_token="new_refresh",
+                expires_in=3600,
+                scopes=["read"],
+            )
+
+            # Assert: POST called with preserved created_at
+            assert mock_vault.call_count == 2
+            post_call = mock_vault.call_args_list[1]
+            payload = post_call[0][2]  # Third arg is data
+            assert payload["data"]["created_at"] == original_timestamp
+
+    @pytest.mark.asyncio
+    async def test_store_tokens_cache_invalidation_with_cache_enabled(self):
+        """Cache is invalidated when storing new tokens (cache enabled path)."""
+        mock_db = MagicMock()
+        mock_settings = MagicMock()
+        mock_settings.vault_addr = "http://127.0.0.1:8200"
+        mock_settings.vault_token = SecretStr("hvs.test-token")
+        mock_settings.vault_namespace = ""
+        mock_settings.vault_kv_mount = "secret"
+        mock_settings.vault_kv_path_prefix = "contextforge/oauth"
+        mock_settings.vault_tls_verify = True
+        mock_settings.vault_token_cache_enabled = True  # Enable cache
+        mock_settings.vault_token_cache_ttl = 300
+        mock_settings.vault_token_cache_max_size = 10000
+
+        backend = VaultTokenBackend(mock_db, mock_settings)
+
+        mock_gateway = MagicMock()
+        mock_gateway.url = "https://mcp.example.com"
+        mock_db.get.return_value = mock_gateway
+
+        # Pre-populate cache
+        server_id = backend._hash_server_id("https://mcp.example.com")
+        cache_key = ("team1", server_id, "user@test.com")
+        VaultTokenBackend._token_cache[cache_key] = {
+            "token": "cached_token",
+            "cache_expires": datetime.now(timezone.utc) + timedelta(seconds=300),
+        }
+
+        with patch.object(backend, "_vault_request", new_callable=AsyncMock) as mock_vault:
+            mock_vault.side_effect = [None, {"data": {"version": 1}}]
+
+            await backend.store_tokens(
+                gateway_id="gw-123",
+                team_id="team1",
+                user_id="user123",
+                app_user_email="user@test.com",
+                access_token="new_token",
+                refresh_token="new_refresh",
+                expires_in=3600,
+                scopes=["read"],
+            )
+
+            # Assert: cache entry removed (lines 324-326)
+            assert cache_key not in VaultTokenBackend._token_cache
