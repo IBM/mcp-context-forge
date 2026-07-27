@@ -9,7 +9,7 @@ license = { text = "{{ cookiecutter.license }}" }
 readme = "README.md"
 requires-python = ">={{ cookiecutter.python_min }}"
 dependencies = [
-  "mcp>=1.0.0",
+  "mcp>=1.0.0,<2",
   "orjson>=3.11.5",
   "pydantic>=2.5.0",
 ]
