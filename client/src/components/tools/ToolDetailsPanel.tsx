@@ -31,6 +31,7 @@ function DetailRow({
 export function ToolDetailsPanel({
   tools,
   gatewaySlug,
+  gatewayDescription,
   open,
   selectedToolId,
   onClose,
@@ -41,6 +42,7 @@ export function ToolDetailsPanel({
 }: {
   tools: Tool[];
   gatewaySlug: string;
+  gatewayDescription?: string;
   open: boolean;
   selectedToolId?: string | null;
   onClose: () => void;
@@ -172,10 +174,9 @@ export function ToolDetailsPanel({
                 </div>
               </div>
 
-              {/* Subtitle */}
-              <p className="mb-8 text-sm text-muted-foreground">
-                {getIntegrationTypeLabel(tools[0]?.integrationType)}
-              </p>
+              {gatewayDescription?.trim() && (
+                <p className="mb-8 text-sm text-muted-foreground">{gatewayDescription.trim()}</p>
+              )}
 
               {/* Table */}
               <ToolsTable

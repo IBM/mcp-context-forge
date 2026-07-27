@@ -91,21 +91,45 @@ describe("ToolDetailsPanel", () => {
     expect(aside).toHaveAttribute("aria-hidden", "false");
   });
 
-  it("displays gateway name and integration type", () => {
+  it("displays gateway name, description, and integration type", () => {
     const tools = [createMockTool(1, { integrationType: "MCP" })];
     render(
       <ToolDetailsPanel
         tools={tools}
         gatewaySlug="test-gateway"
+        gatewayDescription="Gateway for test tools"
         open={true}
         onClose={mockOnClose}
       />,
     );
 
     expect(screen.getAllByText("test-gateway").length).toBeGreaterThan(0);
-    // "MCP Server" appears in the subtitle and in Component details Type row
-    expect(screen.getAllByText("MCP Server").length).toBeGreaterThan(0);
+    expect(screen.getByText("Gateway for test tools")).toBeInTheDocument();
+    expect(screen.getByText("MCP Server")).toBeInTheDocument();
   });
+
+  it.each([undefined, "", "   "])(
+    "does not render a subtitle when gateway description is %p",
+    (gatewayDescription) => {
+      const tools = [createMockTool(1, { integrationType: "MCP" })];
+      const { container } = render(
+        <ToolDetailsPanel
+          tools={tools}
+          gatewaySlug="test-gateway"
+          gatewayDescription={gatewayDescription}
+          open={true}
+          onClose={mockOnClose}
+        />,
+      );
+
+      const heading = screen.getByRole("heading", { name: "test-gateway", level: 3 });
+      expect(heading.closest("div.mb-6")?.nextElementSibling).not.toBeInstanceOf(
+        HTMLParagraphElement,
+      );
+      expect(container.querySelector("p.mb-8")).not.toBeInTheDocument();
+      expect(screen.getByText("MCP Server")).toBeInTheDocument();
+    },
+  );
 
   it("displays all tools in table", () => {
     const tools = [createMockTool(1), createMockTool(2), createMockTool(3)];
