@@ -3,16 +3,12 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { server } from "@/test/mocks/server";
-import { TestConnectionDialog } from "./TestConnectionDialog";
+import { TestConnectionPanel } from "./TestConnectionPanel";
 
 const TEST_ENDPOINT = "*/v1/mcp-servers/test";
 
-describe("TestConnectionDialog", () => {
-  const mockOnOpenChange = vi.fn();
+describe("TestConnectionPanel", () => {
   const defaultProps = {
-    open: true,
-    onOpenChange: mockOnOpenChange,
-    serverName: "Test Server",
     serverUrl: "https://example.com",
   };
 
@@ -21,16 +17,15 @@ describe("TestConnectionDialog", () => {
   });
 
   it("renders with initial state", () => {
-    render(<TestConnectionDialog {...defaultProps} />);
+    render(<TestConnectionPanel {...defaultProps} />);
 
-    expect(screen.getByRole("heading", { name: /test connection/i })).toBeInTheDocument();
     expect(screen.getByDisplayValue("https://example.com")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^test connection$/i })).toBeInTheDocument();
     expect(screen.getByText(/run a test to see the response/i)).toBeInTheDocument();
   });
 
   it("displays all form fields", () => {
-    render(<TestConnectionDialog {...defaultProps} />);
+    render(<TestConnectionPanel {...defaultProps} />);
 
     expect(screen.getByLabelText(/^url/i)).toBeInTheDocument();
     expect(screen.getByRole("radiogroup", { name: /method/i })).toBeInTheDocument();
@@ -40,7 +35,7 @@ describe("TestConnectionDialog", () => {
   });
 
   it("exposes HTTP methods as radio options", () => {
-    render(<TestConnectionDialog {...defaultProps} />);
+    render(<TestConnectionPanel {...defaultProps} />);
 
     expect(screen.getByRole("radio", { name: "Get" })).toHaveAttribute("aria-checked", "true");
     expect(screen.getByRole("radio", { name: "Post" })).toBeInTheDocument();
@@ -49,7 +44,7 @@ describe("TestConnectionDialog", () => {
 
   it("hides the body field for GET and shows it for other methods", async () => {
     const user = userEvent.setup();
-    render(<TestConnectionDialog {...defaultProps} />);
+    render(<TestConnectionPanel {...defaultProps} />);
 
     // GET is selected by default — no body field.
     expect(screen.queryByLabelText(/body/i)).not.toBeInTheDocument();
@@ -69,7 +64,7 @@ describe("TestConnectionDialog", () => {
         return HttpResponse.json({ statusCode: 200, latencyMs: 42, body: { ok: true } });
       }),
     );
-    render(<TestConnectionDialog {...defaultProps} />);
+    render(<TestConnectionPanel {...defaultProps} />);
 
     await user.click(screen.getByRole("button", { name: /^test connection$/i }));
 
@@ -96,7 +91,7 @@ describe("TestConnectionDialog", () => {
         HttpResponse.json({ statusCode: 502, latencyMs: 10, body: { error: "Request failed" } }),
       ),
     );
-    render(<TestConnectionDialog {...defaultProps} />);
+    render(<TestConnectionPanel {...defaultProps} />);
 
     await user.click(screen.getByRole("button", { name: /^test connection$/i }));
 
@@ -112,7 +107,7 @@ describe("TestConnectionDialog", () => {
         HttpResponse.json({ detail: "Access denied" }, { status: 403 }),
       ),
     );
-    render(<TestConnectionDialog {...defaultProps} />);
+    render(<TestConnectionPanel {...defaultProps} />);
 
     await user.click(screen.getByRole("button", { name: /^test connection$/i }));
 
@@ -130,7 +125,7 @@ describe("TestConnectionDialog", () => {
         return HttpResponse.json({ statusCode: 200, latencyMs: 5, body: {} });
       }),
     );
-    render(<TestConnectionDialog {...defaultProps} />);
+    render(<TestConnectionPanel {...defaultProps} />);
 
     await user.click(screen.getByRole("radio", { name: "Post" }));
     await user.type(screen.getByLabelText(/body/i), '{{"hello":"world"}');
@@ -153,7 +148,7 @@ describe("TestConnectionDialog", () => {
         return HttpResponse.json({ statusCode: 200, latencyMs: 3, body: {} });
       }),
     );
-    render(<TestConnectionDialog {...defaultProps} />);
+    render(<TestConnectionPanel {...defaultProps} />);
 
     await user.type(
       screen.getByLabelText(/headers/i),
@@ -178,7 +173,7 @@ describe("TestConnectionDialog", () => {
         return HttpResponse.json({ statusCode: 200, latencyMs: 3, body: {} });
       }),
     );
-    render(<TestConnectionDialog {...defaultProps} />);
+    render(<TestConnectionPanel {...defaultProps} />);
 
     await user.type(screen.getByLabelText(/^path/i), "/health");
     await user.click(screen.getByRole("button", { name: /^test connection$/i }));
@@ -198,7 +193,7 @@ describe("TestConnectionDialog", () => {
         return HttpResponse.json({ statusCode: 200, latencyMs: 3, body: {} });
       }),
     );
-    render(<TestConnectionDialog {...defaultProps} />);
+    render(<TestConnectionPanel {...defaultProps} />);
 
     await user.click(screen.getByRole("radio", { name: "Post" }));
     // Switch content type away from JSON so the body is sent verbatim.
@@ -220,7 +215,7 @@ describe("TestConnectionDialog", () => {
     );
   });
 
-  it("cancels the in-flight request when the dialog closes", async () => {
+  it("cancels the in-flight request when the panel unmounts", async () => {
     const user = userEvent.setup();
     let aborted = false;
     server.use(
@@ -235,16 +230,16 @@ describe("TestConnectionDialog", () => {
         return HttpResponse.json({ statusCode: 200, latencyMs: 1, body: {} });
       }),
     );
-    const { rerender } = render(<TestConnectionDialog {...defaultProps} />);
+    const { unmount } = render(<TestConnectionPanel {...defaultProps} />);
 
     await user.click(screen.getByRole("button", { name: /^test connection$/i }));
-    // Close the dialog while the request is still in flight.
-    rerender(<TestConnectionDialog {...defaultProps} open={false} />);
+    // Unmount (e.g. tab switch / drawer close) while the request is in flight.
+    unmount();
 
     await waitFor(() => expect(aborted).toBe(true));
   });
 
-  it("relabels the footer button to Cancel during a test and cancels on click", async () => {
+  it("shows a Cancel button during a test and aborts on click", async () => {
     const user = userEvent.setup();
     let aborted = false;
     server.use(
@@ -259,26 +254,22 @@ describe("TestConnectionDialog", () => {
         return HttpResponse.json({ statusCode: 200, latencyMs: 1, body: {} });
       }),
     );
-    const { rerender } = render(<TestConnectionDialog {...defaultProps} />);
+    render(<TestConnectionPanel {...defaultProps} />);
 
     await user.click(screen.getByRole("button", { name: /^test connection$/i }));
 
-    // While in flight the footer button stays enabled and reads "Cancel".
+    // While in flight a Cancel button appears; clicking it aborts the request
+    // and returns the panel to its idle state.
     const cancelButton = await screen.findByRole("button", { name: /^cancel$/i });
-    expect(cancelButton).toBeEnabled();
-
     await user.click(cancelButton);
-    // The button requests the close; the parent honors it by flipping `open`,
-    // which aborts the in-flight request via the open→false effect.
-    expect(mockOnOpenChange).toHaveBeenCalledWith(false);
-    rerender(<TestConnectionDialog {...defaultProps} open={false} />);
 
     await waitFor(() => expect(aborted).toBe(true));
+    expect(screen.getByText(/run a test to see the response/i)).toBeInTheDocument();
   });
 
   it("requires a URL before running", async () => {
     const user = userEvent.setup();
-    render(<TestConnectionDialog {...defaultProps} />);
+    render(<TestConnectionPanel {...defaultProps} />);
 
     const urlField = screen.getByLabelText(/^url/i);
     await user.clear(urlField);
@@ -292,7 +283,7 @@ describe("TestConnectionDialog", () => {
 
   it("rejects an invalid URL before running", async () => {
     const user = userEvent.setup();
-    render(<TestConnectionDialog {...defaultProps} />);
+    render(<TestConnectionPanel {...defaultProps} />);
 
     const urlField = screen.getByLabelText(/^url/i);
     await user.clear(urlField);
@@ -307,7 +298,7 @@ describe("TestConnectionDialog", () => {
 
   it("validates JSON in headers field before running", async () => {
     const user = userEvent.setup();
-    render(<TestConnectionDialog {...defaultProps} />);
+    render(<TestConnectionPanel {...defaultProps} />);
 
     const headersField = screen.getByLabelText(/headers/i);
     await user.clear(headersField);
@@ -322,7 +313,7 @@ describe("TestConnectionDialog", () => {
 
   it("validates JSON in body field before running", async () => {
     const user = userEvent.setup();
-    render(<TestConnectionDialog {...defaultProps} />);
+    render(<TestConnectionPanel {...defaultProps} />);
 
     // Body is only available for non-GET methods.
     await user.click(screen.getByRole("radio", { name: "Post" }));
@@ -339,7 +330,7 @@ describe("TestConnectionDialog", () => {
 
   it("renders the URL error inline and marks the field invalid", async () => {
     const user = userEvent.setup();
-    render(<TestConnectionDialog {...defaultProps} />);
+    render(<TestConnectionPanel {...defaultProps} />);
 
     const urlField = screen.getByLabelText(/^url/i);
     await user.clear(urlField);
@@ -353,7 +344,7 @@ describe("TestConnectionDialog", () => {
 
   it("validates a field on blur, before any submit", async () => {
     const user = userEvent.setup();
-    render(<TestConnectionDialog {...defaultProps} />);
+    render(<TestConnectionPanel {...defaultProps} />);
 
     const urlField = screen.getByLabelText(/^url/i);
     await user.clear(urlField);
@@ -367,7 +358,7 @@ describe("TestConnectionDialog", () => {
 
   it("clears a field's error as soon as it is edited", async () => {
     const user = userEvent.setup();
-    render(<TestConnectionDialog {...defaultProps} />);
+    render(<TestConnectionPanel {...defaultProps} />);
 
     const urlField = screen.getByLabelText(/^url/i);
     await user.clear(urlField);
@@ -380,7 +371,7 @@ describe("TestConnectionDialog", () => {
 
   it("flags a scheme/host pasted into the Path field", async () => {
     const user = userEvent.setup();
-    render(<TestConnectionDialog {...defaultProps} />);
+    render(<TestConnectionPanel {...defaultProps} />);
 
     const pathField = screen.getByLabelText(/^path/i);
     await user.type(pathField, "https://evil.com/health");
@@ -393,31 +384,12 @@ describe("TestConnectionDialog", () => {
 
   it("accepts a plain path without a scheme", async () => {
     const user = userEvent.setup();
-    render(<TestConnectionDialog {...defaultProps} />);
+    render(<TestConnectionPanel {...defaultProps} />);
 
     const pathField = screen.getByLabelText(/^path/i);
     await user.type(pathField, "/health");
     await user.tab();
 
     expect(screen.queryByText(/path shouldn't include a scheme or host/i)).not.toBeInTheDocument();
-  });
-
-  it("does not auto-focus the pre-filled URL field on open", () => {
-    render(<TestConnectionDialog {...defaultProps} />);
-
-    // Focus is moved into the dialog (onto the title), not onto the URL input.
-    expect(screen.getByLabelText(/^url/i)).not.toHaveFocus();
-  });
-
-  it("closes dialog when close is clicked", async () => {
-    const user = userEvent.setup();
-    render(<TestConnectionDialog {...defaultProps} />);
-
-    // Two "Close" buttons exist: the footer button and the dialog's built-in X.
-    // The footer button is rendered first in the DOM.
-    const [footerClose] = screen.getAllByRole("button", { name: /^close$/i });
-    await user.click(footerClose);
-
-    expect(mockOnOpenChange).toHaveBeenCalledWith(false);
   });
 });

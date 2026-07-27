@@ -6,7 +6,6 @@ import { Button } from "@/components/ui/button";
 import { MCPServerForm } from "@/components/mcp-servers/MCPServerForm";
 import { ServersTable } from "@/components/servers/ServersTable";
 import { ConfirmDialog } from "@/components/servers/ConfirmDialog";
-import { TestConnectionDialog } from "@/components/servers/TestConnectionDialog";
 import { MCPServerDetailsPanel } from "@/components/servers/MCPServerDetailsPanel";
 import { useQuery } from "@/hooks/useQuery";
 import { ApiError, api } from "@/api/client";
@@ -28,10 +27,8 @@ export function Servers() {
   const [allServers, setAllServers] = useState<MCPServer[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
-  const [testDialogOpen, setTestDialogOpen] = useState(false);
   const [selectedServerId, setSelectedServerId] = useState<string | null>(null);
   const [updateServerId, setUpdateServerId] = useState<string | null>(null);
-  const [testServerId, setTestServerId] = useState<string | null>(null);
   const [toggleError, setToggleError] = useState<string | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
   const [selectedServerIdForDetails, setSelectedServerIdForDetails] = useState<string | null>(null);
@@ -160,11 +157,6 @@ export function Servers() {
     refetch,
     intl,
   ]);
-
-  const handleTest = (id: string) => {
-    setTestServerId(id);
-    setTestDialogOpen(true);
-  };
 
   const handleToggleEnabled = useCallback(
     async (id: string, enabled: boolean) => {
@@ -316,7 +308,6 @@ export function Servers() {
                 isLoading={isLoading}
                 onEdit={handleEdit}
                 onDelete={handleDelete}
-                onTest={handleTest}
                 onViewDetails={handleViewDetails}
                 onToggleEnabled={handleToggleEnabled}
               />
@@ -396,17 +387,6 @@ export function Servers() {
         cancelLabel="Cancel"
         variant="destructive"
         onConfirm={confirmDelete}
-      />
-
-      <TestConnectionDialog
-        open={testDialogOpen}
-        onOpenChange={setTestDialogOpen}
-        serverName={
-          testServerId
-            ? servers.find((s) => s.id === testServerId)?.name || "Unknown Server"
-            : "Unknown Server"
-        }
-        serverUrl={testServerId ? servers.find((s) => s.id === testServerId)?.url || "" : ""}
       />
 
       <MCPServerDetailsPanel
