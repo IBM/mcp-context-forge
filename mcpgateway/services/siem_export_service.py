@@ -17,6 +17,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 import hashlib
+import html
 import hmac
 import logging
 import os
@@ -274,7 +275,7 @@ class SIEMExportService:  # pragma: no cover - covered by targeted unit tests an
         except Exception as exc:
             latency_ms = (time.perf_counter() - start) * 1000.0
             return {
-                "name": destination_name,
+                "name": html.escape(destination_name),
                 "status": "failed",
                 "latency_ms": round(latency_ms, 2),
                 "error": str(exc),
@@ -282,7 +283,7 @@ class SIEMExportService:  # pragma: no cover - covered by targeted unit tests an
 
         latency_ms = (time.perf_counter() - start) * 1000.0
         return {
-            "name": destination_name,
+            "name": html.escape(destination_name),
             "status": "ok",
             "latency_ms": round(latency_ms, 2),
         }
