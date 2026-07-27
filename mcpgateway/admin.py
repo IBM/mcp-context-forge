@@ -16525,6 +16525,7 @@ async def admin_edit_a2a_agent(
             modified_from_ip=mod_metadata["modified_from_ip"],
             modified_via=mod_metadata["modified_via"],
             modified_user_agent=mod_metadata["modified_user_agent"],
+            user_email=user_email,
         )
 
         return ORJSONResponse({"message": "A2A agent updated successfully", "success": True}, status_code=200)
