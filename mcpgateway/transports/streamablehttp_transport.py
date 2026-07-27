@@ -1929,7 +1929,7 @@ async def call_tool(
                     if isinstance(tid, str):
                         user_tenant_id = tid
                 plugin_ctx = GlobalContext(
-                    request_id=uuid.uuid4().hex,
+                    request_id=uuid4().hex,
                     server_id=server_id,
                     tenant_id=user_tenant_id,
                     user=app_user_email,
