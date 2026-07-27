@@ -4,6 +4,72 @@
 
 import { validateInputName, validateUrl } from "./security.js";
 
+const errorClasses = [
+  "border-red-500",
+  "focus:ring-red-500",
+  "dark:border-red-500",
+  "dark:ring-red-500",
+];
+
+function ensureErrorId(field, errorMessageElement) {
+  if (!errorMessageElement) return null;
+  if (!errorMessageElement.id) {
+    const baseId = field.id || field.name || "field";
+    errorMessageElement.id = `${baseId}-error`;
+  }
+  return errorMessageElement.id;
+}
+
+function addDescribedBy(field, id) {
+  if (!id) return;
+  const currentIds = (field.getAttribute("aria-describedby") || "")
+    .split(/\s+/)
+    .filter(Boolean);
+  if (!currentIds.includes(id)) {
+    currentIds.push(id);
+  }
+  field.setAttribute("aria-describedby", currentIds.join(" "));
+}
+
+function removeDescribedBy(field, id) {
+  if (!id) return;
+  const remainingIds = (field.getAttribute("aria-describedby") || "")
+    .split(/\s+/)
+    .filter((currentId) => currentId && currentId !== id);
+  if (remainingIds.length > 0) {
+    field.setAttribute("aria-describedby", remainingIds.join(" "));
+  } else {
+    field.removeAttribute("aria-describedby");
+  }
+}
+
+function showFieldError(field, errorMessageElement, message) {
+  field.setCustomValidity(message);
+  field.setAttribute("aria-invalid", "true");
+  field.classList.add(...errorClasses);
+
+  if (errorMessageElement) {
+    const errorId = ensureErrorId(field, errorMessageElement);
+    errorMessageElement.innerText = message;
+    errorMessageElement.setAttribute("role", "status");
+    errorMessageElement.setAttribute("aria-live", "polite");
+    errorMessageElement.classList.remove("invisible");
+    addDescribedBy(field, errorId);
+  }
+}
+
+function clearFieldError(field, errorMessageElement) {
+  field.setCustomValidity("");
+  field.setAttribute("aria-invalid", "false");
+  field.classList.remove(...errorClasses);
+
+  if (errorMessageElement) {
+    const errorId = ensureErrorId(field, errorMessageElement);
+    errorMessageElement.classList.add("invisible");
+    removeDescribedBy(field, errorId);
+  }
+}
+
 export const setupFormValidation = function () {
   // Add validation to all forms on the page
   const forms = document.querySelectorAll("form");
@@ -38,29 +104,10 @@ export const setupFormValidation = function () {
           inputLabel?.innerText,
         );
         if (!validation.valid) {
-          this.setCustomValidity(validation.error);
-          this.classList.add(
-            "border-red-500",
-            "focus:ring-red-500",
-            "dark:border-red-500",
-            "dark:ring-red-500",
-          );
-          if (errorMessageElement) {
-            errorMessageElement.innerText = validation.error;
-            errorMessageElement.classList.remove("invisible");
-          }
+          showFieldError(this, errorMessageElement, validation.error);
         } else {
-          this.setCustomValidity("");
+          clearFieldError(this, errorMessageElement);
           this.value = validation.value;
-          this.classList.remove(
-            "border-red-500",
-            "focus:ring-red-500",
-            "dark:border-red-500",
-            "dark:ring-red-500",
-          );
-          if (errorMessageElement) {
-            errorMessageElement.classList.add("invisible");
-          }
         }
       });
     });
@@ -73,19 +120,10 @@ export const setupFormValidation = function () {
       field.addEventListener("blur", function () {
         // Skip validation for empty optional URL fields
         if (!this.value && !this.required) {
-          this.setCustomValidity("");
-          this.classList.remove(
-            "border-red-500",
-            "focus:ring-red-500",
-            "dark:border-red-500",
-            "dark:ring-red-500",
-          );
           const errorMessageElement = this.parentNode?.querySelector(
             'p[data-error-message-for="url"]',
           );
-          if (errorMessageElement) {
-            errorMessageElement.classList.add("invisible");
-          }
+          clearFieldError(this, errorMessageElement);
           return;
         }
         const parentNode = this.parentNode;
@@ -100,29 +138,10 @@ export const setupFormValidation = function () {
           inputLabel?.innerText,
         );
         if (!validation.valid) {
-          this.setCustomValidity(validation.error);
-          this.classList.add(
-            "border-red-500",
-            "focus:ring-red-500",
-            "dark:border-red-500",
-            "dark:ring-red-500",
-          );
-          if (errorMessageElement) {
-            errorMessageElement.innerText = validation.error;
-            errorMessageElement.classList.remove("invisible");
-          }
+          showFieldError(this, errorMessageElement, validation.error);
         } else {
-          this.setCustomValidity("");
+          clearFieldError(this, errorMessageElement);
           this.value = validation.value;
-          this.classList.remove(
-            "border-red-500",
-            "focus:ring-red-500",
-            "dark:border-red-500",
-            "dark:ring-red-500",
-          );
-          if (errorMessageElement) {
-            errorMessageElement.classList.add("invisible");
-          }
         }
       });
     });
