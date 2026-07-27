@@ -1008,7 +1008,7 @@ class TestRestIntegrationB2Wiring:
             resp.json = Mock(return_value={"result": "ok"})
             return resp
 
-        async def _get(_url, params=None, headers=None):
+        async def _get(_url, params=None, headers=None, **_kwargs):
             responses.append(headers)
             status = 401 if len(responses) == 1 else 200
             return _make_response(status)

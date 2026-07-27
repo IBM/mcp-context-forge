@@ -7764,7 +7764,7 @@ class TestInvokeToolMcpSessionAffinity:
 
         captured_headers = {}
 
-        async def fake_get(url, params=None, headers=None):
+        async def fake_get(url, params=None, headers=None, **_kwargs):
             captured_headers.update(headers or {})
             return mock_response
 
@@ -7813,7 +7813,7 @@ class TestInvokeToolRestPost:
         mock_response.json = MagicMock(return_value={"data": "ok"})
         mock_response.raise_for_status = MagicMock()
 
-        async def fake_request(method, url, json=None, headers=None):
+        async def fake_request(method, url, json=None, headers=None, **_kwargs):
             return mock_response
 
         with (

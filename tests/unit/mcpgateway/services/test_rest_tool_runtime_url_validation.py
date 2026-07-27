@@ -1,5 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Regression coverage for runtime REST tool URL validation.
+"""Location: ./tests/unit/mcpgateway/services/test_rest_tool_runtime_url_validation.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
+SPDX-License-Identifier: Apache-2.0
+
+Regression coverage for runtime REST tool URL validation.
 
 The tests run against production code with strict outbound URL protection:
 
