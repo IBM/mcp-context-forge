@@ -36,13 +36,6 @@ DOCS_DIR          = docs
 HANDSDOWN_PARAMS  = -o $(DOCS_DIR)/ -n $(PROJECT_NAME) --name "ContextForge" --cleanup
 
 TEST_DOCS_DIR ?= $(DOCS_DIR)/docs/test
-MCP_2025_TEST_DIR ?= tests/compliance/mcp_2025_11_25
-MCP_2025_ARTIFACTS_DIR ?= artifacts/mcp-2025-11-25
-MCP_2025_MARKER ?= mcp20251125
-MCP_2025_PYTEST_ARGS ?=
-MCP_2025_BASE_URL ?=
-MCP_2025_RPC_PATH ?= /mcp/
-MCP_2025_BEARER_TOKEN ?=
 
 # Virtual-environment variables
 VENV_DIR ?= $(CURDIR)/.venv
@@ -808,7 +801,6 @@ clean:
 # help: test-mcp-plugin-parity - MCP plugin parity E2E for current Python or Rust stack
 # help: test-mcp-session-isolation - MCP session/auth isolation tests for Rust public transport
 # help: test-live-gateway    - Run ALL live-gateway tests (mcp + sso + e2e_rust)
-# help: test-live-gateway    - Run ALL live-gateway tests (mcp + sso + protocol_compliance + e2e_rust)
 # help: test-plugin-integration - Self-contained plugin E2E tests (boots gateway; PLUGIN=<name> ENFORCEMENT=static|binding|both)
 # help: test-plugin-secrets-detection  - Plugin E2E: SecretsDetection
 # help: test-plugin-encoded-exfil      - Plugin E2E: EncodedExfil
@@ -833,11 +825,6 @@ clean:
 # help: doctest-check        - Check doctest coverage percentage (fail if < 100%)
 # help: test-db-perf         - Run database performance and N+1 query detection tests
 # help: test-db-perf-verbose - Run database performance tests with full SQL query output
-# help: 2025-11-25        - Run full MCP 2025-11-25 compliance suite (manual)
-# help: 2025-11-25-core   - Run MCP core compliance subset
-# help: 2025-11-25-tasks  - Run MCP tasks compliance subset
-# help: 2025-11-25-auth   - Run MCP authorization compliance subset
-# help: 2025-11-25-report - Run MCP suite and emit JUnit XML + Markdown reports
 # help: dev-query-log        - Run dev server with query logging to file (N+1 detection)
 # help: query-log-tail       - Tail the database query log file
 # help: query-log-analyze    - Analyze query log for N+1 patterns and slow queries
@@ -1132,55 +1119,6 @@ test-db-perf-verbose: uv  ## Run database performance tests with full SQL query 
 	 TEST_DATABASE_URL='sqlite:///:memory:' \
 	 SQLALCHEMY_ECHO=true \
 	 $(UV_BIN) run pytest tests/performance/test_db_query_patterns.py -v -s --tb=short
-
-# Shared env-var prefix for the 2025-11-25 compliance series.
-# Defined as a make variable so each target stays compact while keeping
-# the env identical across subset runs (-core / -tasks / -auth / -report).
-MCP_2025_TEST_ENV := \
-	DATABASE_URL='sqlite:///:memory:' \
-	TEST_DATABASE_URL='sqlite:///:memory:' \
-	ARGON2ID_TIME_COST=1 \
-	ARGON2ID_MEMORY_COST=1024 \
-	MCP_COMPLIANCE_BASE_URL='$(MCP_2025_BASE_URL)' \
-	MCP_COMPLIANCE_RPC_PATH='$(MCP_2025_RPC_PATH)' \
-	MCP_COMPLIANCE_BEARER_TOKEN='$(MCP_2025_BEARER_TOKEN)'
-
-2025-11-25: uv  ## Run full MCP 2025-11-25 compliance suite
-	@echo "🧪 Running MCP 2025-11-25 compliance suite..."
-	@test -d "$(MCP_2025_TEST_DIR)" || { echo "❌ Compliance suite path not found: $(MCP_2025_TEST_DIR)"; echo "   Update MCP_2025_TEST_DIR or add the suite first."; exit 1; }
-	@$(MCP_2025_TEST_ENV) \
-	 $(UV_BIN) run pytest $(MCP_2025_TEST_DIR) -v --maxfail=0 -m "$(MCP_2025_MARKER)" $(MCP_2025_PYTEST_ARGS)
-
-2025-11-25-core: uv  ## Run MCP core compliance subset
-	@echo "🧪 Running MCP 2025-11-25 core compliance subset..."
-	@test -d "$(MCP_2025_TEST_DIR)" || { echo "❌ Compliance suite path not found: $(MCP_2025_TEST_DIR)"; echo "   Update MCP_2025_TEST_DIR or add the suite first."; exit 1; }
-	@$(MCP_2025_TEST_ENV) \
-	 $(UV_BIN) run pytest $(MCP_2025_TEST_DIR) -v --maxfail=0 -m "$(MCP_2025_MARKER) and mcp_core" $(MCP_2025_PYTEST_ARGS)
-
-2025-11-25-tasks: uv  ## Run MCP tasks compliance subset
-	@echo "🧪 Running MCP 2025-11-25 tasks compliance subset..."
-	@test -d "$(MCP_2025_TEST_DIR)" || { echo "❌ Compliance suite path not found: $(MCP_2025_TEST_DIR)"; echo "   Update MCP_2025_TEST_DIR or add the suite first."; exit 1; }
-	@$(MCP_2025_TEST_ENV) \
-	 $(UV_BIN) run pytest $(MCP_2025_TEST_DIR) -v --maxfail=0 -m "$(MCP_2025_MARKER) and mcp_tasks" $(MCP_2025_PYTEST_ARGS)
-
-2025-11-25-auth: uv  ## Run MCP authorization compliance subset
-	@echo "🧪 Running MCP 2025-11-25 authorization compliance subset..."
-	@test -d "$(MCP_2025_TEST_DIR)" || { echo "❌ Compliance suite path not found: $(MCP_2025_TEST_DIR)"; echo "   Update MCP_2025_TEST_DIR or add the suite first."; exit 1; }
-	@$(MCP_2025_TEST_ENV) \
-	 $(UV_BIN) run pytest $(MCP_2025_TEST_DIR) -v --maxfail=0 -m "$(MCP_2025_MARKER) and mcp_auth" $(MCP_2025_PYTEST_ARGS)
-
-2025-11-25-report: uv  ## Run MCP suite and emit JUnit XML + Markdown reports
-	@echo "🧪 Running MCP 2025-11-25 suite with report artifacts..."
-	@test -d "$(MCP_2025_TEST_DIR)" || { echo "❌ Compliance suite path not found: $(MCP_2025_TEST_DIR)"; echo "   Update MCP_2025_TEST_DIR or add the suite first."; exit 1; }
-	@mkdir -p "$(MCP_2025_ARTIFACTS_DIR)"
-	@$(MCP_2025_TEST_ENV) \
-	 $(UV_BIN) run pytest $(MCP_2025_TEST_DIR) -v --maxfail=0 -m "$(MCP_2025_MARKER)" \
-		--junitxml=$(MCP_2025_ARTIFACTS_DIR)/junit.xml \
-		--md-report --md-report-output=$(MCP_2025_ARTIFACTS_DIR)/report.md \
-		$(MCP_2025_PYTEST_ARGS)
-	@echo "✅ Compliance artifacts:"
-	@echo "   - $(MCP_2025_ARTIFACTS_DIR)/junit.xml"
-	@echo "   - $(MCP_2025_ARTIFACTS_DIR)/report.md"
 
 dev-query-log:                   ## Run dev server with query logging to file
 	@echo "📊 Starting dev server with database query logging"
