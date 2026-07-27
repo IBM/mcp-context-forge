@@ -2350,3 +2350,72 @@ class TestGatewayTestUrlValidation:
         assert result["validated_url"] == "https://8.8.8.8/test"
         assert result["hostname"] == "8.8.8.8"
         assert result["resolved_ip"] == "8.8.8.8"
+
+
+class TestOutboundUrlConnectionPinningValidation:
+    """Tests for generic outbound URL validation metadata used by tool invocation."""
+
+    @staticmethod
+    def _settings(**overrides):
+        values = {
+            "ssrf_protection_enabled": True,
+            "ssrf_blocked_networks": ["169.254.0.0/16"],
+            "ssrf_blocked_hosts": [],
+            "ssrf_allow_localhost": False,
+            "ssrf_allow_private_networks": False,
+            "ssrf_allowed_networks": [],
+            "ssrf_dns_fail_closed": True,
+            "gateway_test_dns_timeout": 5.0,
+        }
+        values.update(overrides)
+        return MagicMock(**values)
+
+    @pytest.mark.asyncio
+    async def test_validate_url_for_connection_pinning_preserves_original_url_parts(self, monkeypatch):
+        """The helper returns metadata without rebuilding or dropping query strings."""
+
+        def mock_getaddrinfo(_host, port, family=0, type=0, proto=0, flags=0):
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("8.8.4.4", port or 443))]
+
+        monkeypatch.setattr("mcpgateway.common.validators.socket.getaddrinfo", mock_getaddrinfo)
+
+        with patch("mcpgateway.common.validators.settings", self._settings()):
+            result = await SecurityValidator.validate_url_for_connection_pinning("https://api.example.com:8443/path?sig=abc", "Tool URL")
+
+        assert result == {
+            "validated_url": "https://api.example.com:8443/path?sig=abc",
+            "hostname": "api.example.com",
+            "original_authority": "api.example.com:8443",
+            "resolved_ip": "8.8.4.4",
+        }
+
+    @pytest.mark.asyncio
+    async def test_validate_url_for_connection_pinning_rejects_disallowed_dns_answer(self, monkeypatch):
+        """Every resolved address must satisfy the existing outbound URL policy."""
+
+        def mock_getaddrinfo(_host, port, family=0, type=0, proto=0, flags=0):
+            return [
+                (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("8.8.4.4", port or 443)),
+                (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", port or 443)),
+            ]
+
+        monkeypatch.setattr("mcpgateway.common.validators.socket.getaddrinfo", mock_getaddrinfo)
+
+        with patch("mcpgateway.common.validators.settings", self._settings()):
+            with pytest.raises(ValueError, match="localhost"):
+                await SecurityValidator.validate_url_for_connection_pinning("https://api.example.com/path", "Tool URL")
+
+    @pytest.mark.asyncio
+    async def test_validate_url_for_connection_pinning_allows_private_when_policy_disabled(self, monkeypatch):
+        """Disabling protection preserves local/private dev tool behavior."""
+
+        def mock_getaddrinfo(_host, port, family=0, type=0, proto=0, flags=0):
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", port or 443))]
+
+        monkeypatch.setattr("mcpgateway.common.validators.socket.getaddrinfo", mock_getaddrinfo)
+
+        with patch("mcpgateway.common.validators.settings", self._settings(ssrf_protection_enabled=False)):
+            result = await SecurityValidator.validate_url_for_connection_pinning("http://local-tool.example/path", "Tool URL")
+
+        assert result["resolved_ip"] == "127.0.0.1"
+        assert result["original_authority"] == "local-tool.example"

@@ -1521,6 +1521,114 @@ class SecurityValidator:
                         raise ValueError(f"{field_name} contains private network address which is blocked by SSRF protection")
 
     @classmethod
+    async def validate_url_for_connection_pinning(cls, value: str, field_name: str = "URL") -> Dict[str, Optional[str]]:
+        """Validate an outbound URL and return DNS metadata for connection pinning.
+
+        This helper is intended for async request handlers that validate a URL
+        immediately before outbound I/O. It runs the existing URL validator off
+        the event loop, resolves the hostname off the event loop, checks every
+        resolved address with the existing outbound URL policy, and returns metadata the
+        caller can use to pin the actual connection without rebuilding the URL.
+
+        Args:
+            value: URL to validate.
+            field_name: Human-readable field name for validation errors.
+
+        Returns:
+            Metadata containing ``validated_url``, original ``hostname``,
+            ``original_authority`` from the URL netloc, and an optional safe
+            ``resolved_ip``. ``resolved_ip`` may be ``None`` only when DNS
+            resolution is allowed to fail open.
+
+        Raises:
+            ValueError: If validation fails or the resolved target violates the
+                outbound URL policy.
+
+        Examples:
+            >>> result = await SecurityValidator.validate_url_for_connection_pinning(
+            ...     "https://example.com/path?sig=abc",
+            ...     "Tool URL",
+            ... )  # doctest: +SKIP
+            >>> result["validated_url"]  # doctest: +SKIP
+            'https://example.com/path?sig=abc'
+        """
+        if not value:
+            raise ValueError(f"{field_name} cannot be empty")
+
+        dns_timeout = float(getattr(settings, "gateway_test_dns_timeout", 5.0))
+        loop = asyncio.get_running_loop()
+        try:
+            validated_url = await asyncio.wait_for(
+                loop.run_in_executor(None, lambda: cls.validate_url(value, field_name)),
+                timeout=dns_timeout,
+            )
+        except asyncio.TimeoutError as exc:
+            raise ValueError(f"{field_name} DNS validation timed out") from exc
+
+        try:
+            parsed = urlparse(validated_url)
+            hostname = parsed.hostname
+            if not hostname:
+                raise ValueError(f"{field_name} is not a valid URL")
+            hostname_normalized = cls._normalize_hostname(_unquote_if_needed(hostname))
+        except ValueError:
+            raise
+        except Exception as exc:
+            raise ValueError(f"{field_name} is not a valid URL") from exc
+
+        try:
+            literal_ip = ipaddress.ip_address(hostname_normalized)
+            if literal_ip.version == 6 and literal_ip.ipv4_mapped is not None:
+                literal_ip = literal_ip.ipv4_mapped
+            resolved_ips = [str(literal_ip)]
+        except ValueError:
+            resolved_ips = await cls._resolve_hostname_for_connection_pinning(hostname_normalized, field_name, dns_timeout)
+
+        if settings.ssrf_protection_enabled:
+            for resolved_ip in resolved_ips:
+                cls._validate_ssrf(resolved_ip, field_name)
+
+        return {
+            "validated_url": validated_url,
+            "hostname": hostname,
+            "original_authority": parsed.netloc,
+            "resolved_ip": resolved_ips[0] if resolved_ips else None,
+        }
+
+    @classmethod
+    async def _resolve_hostname_for_connection_pinning(cls, hostname: str, field_name: str, timeout: float) -> List[str]:
+        """Resolve a hostname for outbound pinning without blocking the event loop."""
+        loop = asyncio.get_running_loop()
+        try:
+            addr_info = await asyncio.wait_for(
+                loop.run_in_executor(
+                    None,
+                    lambda: socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM),
+                ),
+                timeout=timeout,
+            )
+        except (TimeoutError, asyncio.TimeoutError, socket.gaierror, socket.herror) as exc:
+            if settings.ssrf_protection_enabled and settings.ssrf_dns_fail_closed:
+                raise ValueError(f"{field_name} DNS resolution failed and SSRF_DNS_FAIL_CLOSED is enabled") from exc
+            return []
+
+        resolved_ips: List[str] = []
+        for _, _, _, _, sockaddr in addr_info:
+            try:
+                resolved_ip = ipaddress.ip_address(sockaddr[0])
+                if resolved_ip.version == 6 and resolved_ip.ipv4_mapped is not None:
+                    resolved_ip = resolved_ip.ipv4_mapped
+                resolved_ip_str = str(resolved_ip)
+                if resolved_ip_str not in resolved_ips:
+                    resolved_ips.append(resolved_ip_str)
+            except ValueError:
+                continue
+
+        if not resolved_ips and settings.ssrf_protection_enabled and settings.ssrf_dns_fail_closed:
+            raise ValueError(f"{field_name} DNS resolution returned no addresses and SSRF_DNS_FAIL_CLOSED is enabled")
+        return resolved_ips
+
+    @classmethod
     async def validate_gateway_test_url(cls, value: str, allowed_hosts: list[str], field_name: str = "URL") -> dict[str, str]:
         """Validate URLs for the /admin/gateways/test endpoint with allowlist enforcement.
 

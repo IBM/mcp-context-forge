@@ -231,6 +231,14 @@ def _sync_meta_traceparent(
     return updated_meta
 
 
+def _pin_url_to_resolved_ip(url: str, resolved_ip: str) -> str:
+    """Return ``url`` with only its network location replaced by ``resolved_ip``."""
+    parsed = urlparse(url)
+    pinned_host = f"[{resolved_ip}]" if ":" in resolved_ip else resolved_ip
+    pinned_netloc = f"{pinned_host}:{parsed.port}" if parsed.port is not None else pinned_host
+    return parsed._replace(netloc=pinned_netloc).geturl()
+
+
 # Initialize performance tracker, structured logger, audit trail, and metrics buffer for tool operations
 perf_tracker = get_performance_tracker()
 structured_logger = get_structured_logger("tool_service")
@@ -5442,13 +5450,43 @@ class ToolService(BaseService):
                             final_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
                             _url_query_params = {k: v[0] for k, v in parse_qs(parsed.query).items()}
 
+                    rest_request_extensions: dict[str, str] = {}
+                    try:
+                        validated_target = await SecurityValidator.validate_url_for_connection_pinning(final_url, "Tool URL")
+                    except ValueError as validation_error:
+                        safe_url = sanitize_url_for_logging(final_url)
+                        logger.warning(
+                            "REST tool outbound URL validation failed for tool %s (%s), url=%s, correlation_id=%s: %s",
+                            SecurityValidator.sanitize_log_message(tool_name_computed),
+                            SecurityValidator.sanitize_log_message(tool_id),
+                            safe_url,
+                            get_correlation_id(),
+                            SecurityValidator.sanitize_log_message(str(validation_error)),
+                        )
+                        raise ToolInvocationError("Outbound URL blocked by URL policy") from validation_error
+
+                    resolved_ip = validated_target.get("resolved_ip")
+                    original_hostname = validated_target.get("hostname")
+                    original_authority = validated_target.get("original_authority")
+                    if resolved_ip and original_hostname and original_authority:
+                        final_url = _pin_url_to_resolved_ip(final_url, resolved_ip)
+                        headers = {hk: hv for hk, hv in headers.items() if hk.lower() != "host"}
+                        headers["Host"] = original_authority
+                        rest_request_extensions["sni_hostname"] = original_hostname
+
                     with create_child_span("tool.gateway_call", {"tool.name": name, "tool.id": tool_id, "tool.integration_type": "REST"}):
                         rest_start_time = time.time()
 
                         async def _send(call_headers: dict) -> Any:
                             """Issue the REST upstream call with the given headers (B2 retry hook)."""
+                            request_options = {"headers": call_headers}
+                            if rest_request_extensions:
+                                request_options["extensions"] = rest_request_extensions
                             if method == "GET":
-                                return await asyncio.wait_for(self._http_client.get(final_url, params=payload, headers=call_headers), timeout=effective_timeout)
+                                return await asyncio.wait_for(
+                                    self._http_client.get(final_url, params=payload, **request_options),
+                                    timeout=effective_timeout,
+                                )
                             if _ct_base == "application/x-www-form-urlencoded":
                                 # NOTE: Intentional asymmetry with the JSON/default path below.
                                 # Form-encoded bodies use params= to keep URL query params on the
@@ -5457,18 +5495,38 @@ class ToolService(BaseService):
                                 # backward compatibility and signed-URL support.
                                 form_payload = {k: self._form_value_to_str(v) for k, v in payload.items()}
                                 return await asyncio.wait_for(
-                                    self._http_client.request(method, final_url, data=form_payload, params=_url_query_params, headers=call_headers), timeout=effective_timeout
+                                    self._http_client.request(
+                                        method,
+                                        final_url,
+                                        data=form_payload,
+                                        params=_url_query_params,
+                                        **request_options,
+                                    ),
+                                    timeout=effective_timeout,
                                 )
                             if _ct_base == "multipart/form-data":
                                 # Strip Content-Type so httpx can set it with the correct boundary parameter.
                                 # URL query params forwarded via params= (same asymmetry as form-urlencoded above).
                                 headers_mp = {k: v for k, v in call_headers.items() if k.lower() != "content-type"}
+                                multipart_request_options = {"headers": headers_mp}
+                                if rest_request_extensions:
+                                    multipart_request_options["extensions"] = rest_request_extensions
                                 files_payload = {k: (None, self._form_value_to_str(v)) for k, v in payload.items()}
                                 return await asyncio.wait_for(
-                                    self._http_client.request(method, final_url, files=files_payload, params=_url_query_params, headers=headers_mp), timeout=effective_timeout
+                                    self._http_client.request(
+                                        method,
+                                        final_url,
+                                        files=files_payload,
+                                        params=_url_query_params,
+                                        **multipart_request_options,
+                                    ),
+                                    timeout=effective_timeout,
                                 )
                             # For POST/PUT/PATCH/DELETE (JSON body, default path)
-                            return await asyncio.wait_for(self._http_client.request(method, final_url, json=payload, headers=call_headers), timeout=effective_timeout)
+                            return await asyncio.wait_for(
+                                self._http_client.request(method, final_url, json=payload, **request_options),
+                                timeout=effective_timeout,
+                            )
 
                         try:
                             if method == "GET":
