@@ -730,7 +730,7 @@ rate(upstream_session_errors{error_category=~"auth_unauthorized|auth_forbidden"}
 
 ```datadog
 # Group upstream errors by category
-source:contextforge component:upstream_session_registry 
+source:contextforge component:upstream_session_registry
 | group by error_category
 ```
 

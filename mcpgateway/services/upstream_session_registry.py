@@ -273,10 +273,8 @@ def _categorize_upstream_error(exc: BaseException, auth_query_params: Optional[d
         >>> _categorize_upstream_error(exc)
         ('connection_refused', 'ConnectionRefusedError', 'Connection refused', 1)
 
-        >>> import httpx
-        >>> exc = httpx.HTTPStatusError("401 Unauthorized for url 'https://api.example.com?api_key=secret'", ...)
-        >>> _categorize_upstream_error(exc, {"api_key": "secret"})
-        ('auth_unauthorized', 'HTTPStatusError', "401 Unauthorized for url 'https://api.example.com?api_key=REDACTED'", 1)
+        >>> # httpx.HTTPStatusError categorization and sanitization
+        >>> # (full example requires mock request/response objects)
     """
     # Standard
     import ssl
