@@ -10,8 +10,8 @@
   "dashboard.home.headline.default": "En funcionamiento...",
   "dashboard.home.card.system": "Sistema",
   "dashboard.home.card.activity": "Feed de actividad",
-  "dashboard.home.card.mcp": "Runtime MCP",
-  "dashboard.home.card.a2a": "Runtime A2A",
+  "dashboard.home.card.mcp": "MCP",
+  "dashboard.home.card.a2a": "A2A",
   "dashboard.home.card.rest": "API REST",
   "dashboard.home.card.grpc": "gRPC",
   "dashboard.home.placeholder.system": "Tarjeta de estado del sistema (próximamente)",
@@ -36,5 +36,11 @@
   "dashboard.home.system.prompts": "Prompts",
   "dashboard.home.system.plugins": "Complementos",
   "dashboard.home.system.activeCount": "{active} de {total}",
-  "dashboard.home.system.activeOfTotal": "{active} de {total} activos"
+  "dashboard.home.system.activeOfTotal": "{active} de {total} activos",
+  "dashboard.home.mcp.healthy": "Correcto",
+  "dashboard.home.mcp.unhealthy": "Con problemas",
+  "dashboard.home.mcp.error": "No se pudo cargar el estado del sistema.",
+  "dashboard.home.mcp.postgres": "PostgreSQL",
+  "dashboard.home.mcp.redis": "Redis",
+  "dashboard.home.mcp.notConfigured": "No configurado"
 }

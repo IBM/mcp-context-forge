@@ -94,7 +94,12 @@ export const HOME_STATES: Record<HomeViewId, HomeStateConfig> = {
     titleId: "dashboard.home.card.activity",
     requiredPermission: "audit:read",
   },
-  mcp: { id: "mcp", titleId: "dashboard.home.card.mcp" },
+  mcp: {
+    id: "mcp",
+    titleId: "dashboard.home.card.mcp",
+    // GET /version enforces admin server-side; admins satisfy this via "*".
+    requiredPermission: "admin.system_config",
+  },
   a2a: { id: "a2a", titleId: "dashboard.home.card.a2a" },
   rest: { id: "rest", titleId: "dashboard.home.card.rest" },
   grpc: { id: "grpc", titleId: "dashboard.home.card.grpc" },
