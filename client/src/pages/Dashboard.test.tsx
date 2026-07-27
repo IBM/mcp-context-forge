@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { screen } from "@testing-library/react";
+import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useQuery } from "@/hooks/useQuery";
 import { renderWithProviders } from "@/test/test-utils";
@@ -122,7 +122,8 @@ describe("Dashboard", () => {
     const user = userEvent.setup();
     renderWithProviders(<Dashboard />);
 
-    await user.click(screen.getAllByRole("button", { name: "+ Connect" })[0]!);
+    const mcpCard = screen.getByTestId("action-card-MCP server");
+    await user.click(within(mcpCard).getByRole("button", { name: /connect/i }));
 
     expect(mockNavigate).toHaveBeenCalledWith("/app/servers?openForm=true");
   });
