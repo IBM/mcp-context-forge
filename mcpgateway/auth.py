@@ -80,6 +80,7 @@ from sqlalchemy.orm import Session
 from starlette.requests import Request
 
 # First-Party
+from mcpgateway.auth_context import normalize_token_teams
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import EmailUser, fresh_db_session, SessionLocal
@@ -565,59 +566,6 @@ async def resolve_session_teams(
         db_teams = await _resolve_teams_from_db(email, user_info)
 
     return _narrow_by_jwt_teams(payload, db_teams)
-
-
-def normalize_token_teams(payload: Dict[str, Any]) -> Optional[List[str]]:
-    """
-    Normalize token teams to a canonical form for consistent security checks.
-
-    SECURITY: This is the single source of truth for token team normalization.
-    All code paths that read token teams should use this function.
-
-    Rules:
-    - "teams" key missing → [] (public-only, secure default)
-    - "teams" is null + is_admin=true → None (admin bypass, sees all)
-    - "teams" is null + is_admin=false → [] (public-only, no bypass for non-admins)
-    - "teams" is [] → [] (explicit public-only)
-    - "teams" is [...] → normalized list of string IDs
-
-    Args:
-        payload: The JWT payload dict
-
-    Returns:
-        None for admin bypass, [] for public-only, or list of normalized team ID strings
-    """
-    # Check if "teams" key exists (distinguishes missing from explicit null)
-    if "teams" not in payload:
-        # Missing teams key → public-only (secure default)
-        return []
-
-    teams = payload.get("teams")
-
-    if teams is None:
-        # Explicit null - only allow admin bypass if is_admin is true
-        # Check BOTH top-level is_admin AND nested user.is_admin
-        is_admin = payload.get("is_admin", False)
-        if not is_admin:
-            user_info = payload.get("user", {})
-            is_admin = user_info.get("is_admin", False) if isinstance(user_info, dict) else False
-        if is_admin:
-            # Admin with explicit null teams → admin bypass (sees all)
-            return None
-        # Non-admin with null teams → public-only (no bypass)
-        return []
-
-    # teams is a list - normalize to string IDs
-    # Handle both dict format [{"id": "team1"}] and string format ["team1"]
-    normalized: List[str] = []
-    for team in teams:
-        if isinstance(team, dict):
-            team_id = team.get("id")
-            if team_id:
-                normalized.append(str(team_id))
-        elif isinstance(team, str):
-            normalized.append(team)
-    return normalized
 
 
 async def get_team_from_token(payload: Dict[str, Any]) -> Optional[str]:
