@@ -14333,6 +14333,7 @@ class TestAdminAdditionalCoverage:
         response = await admin_edit_a2a_agent("agent-1", mock_request, mock_db, user={"email": "user@example.com", "db": mock_db})
         assert response.status_code == 200
         mock_service.update_agent.assert_called_once()
+        assert mock_service.update_agent.call_args.kwargs["user_email"] == "user@example.com"
 
     async def test_admin_edit_a2a_agent_preserves_team_id_when_not_in_form(self, monkeypatch, mock_request, mock_db):
         """Editing an A2A agent without team_id in form should preserve the existing team."""
