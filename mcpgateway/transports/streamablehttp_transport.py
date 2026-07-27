@@ -333,8 +333,8 @@ server_id_var: contextvars.ContextVar[str] = contextvars.ContextVar("server_id",
 # here for backwards-compat: external callers that already do
 # `from mcpgateway.transports.streamablehttp_transport import request_headers_var`
 # keep working.
+from cpex.framework import GlobalContext  # noqa: E402  # pylint: disable=wrong-import-order,wrong-import-position
 from mcpgateway.transports.context import request_headers_var, user_context_var, user_identity_var  # noqa: E402  # pylint: disable=wrong-import-position
-from cpex.framework import GlobalContext  # noqa: E402  # pylint: disable=wrong-import-position
 
 _oauth_checked_var: contextvars.ContextVar[bool] = contextvars.ContextVar("_oauth_checked", default=False)
 
