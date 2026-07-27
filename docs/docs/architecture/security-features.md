@@ -35,24 +35,37 @@ The `jti` (JWT ID) claim is a unique identifier for each JWT token, defined in [
 
 **Token Generation Examples**:
 
+New service-issued tokens use an opaque user identifier in `sub` (`EmailUser.id` when available). Human-readable email
+identity is retained in signed metadata where needed, such as `user.email` on API tokens. Legacy tokens with
+`sub=<email>` continue to authenticate for backward compatibility.
+
 ```python
-# Email auth tokens (always include JTI)
+# Email-auth session tokens (always include JTI; teams/admin are resolved server-side)
 # Location: mcpgateway/routers/email_auth.py
 payload = {
-    "sub": user.email,
+    "sub": str(user.id),
     "jti": str(uuid.uuid4()),  # Unique per token
+    "token_use": "session",
     ...
 }
 
-# Load test tokens (configurable)
-# Location: tests/loadtest/locustfile.py
+# Token-catalog API tokens
+# Location: mcpgateway/services/token_catalog_service.py
 payload = {
-    "sub": JWT_USERNAME,
-    "jti": str(uuid.uuid4()),  # Added for proper cache keying
-    "exp": datetime.now(timezone.utc) + timedelta(hours=JWT_TOKEN_EXPIRY_HOURS),
+    "sub": str(user.id),
+    "jti": str(uuid.uuid4()),
+    "token_use": "api",
+    "user": {
+        "email": user.email,
+        "auth_provider": "api_token",
+        ...
+    },
     ...
 }
 ```
+
+Hand-minted and legacy tokens may still use `sub=<email>`, but new integrations should treat `sub` as opaque and read
+the human identity from signed email metadata when it is present.
 
 **Cache Behavior**:
 
