@@ -1225,6 +1225,16 @@ class TestA2AAgentService:
                 with pytest.raises(PermissionError):
                     await service.update_agent(mock_db, sample_db_agent.id, A2AAgentUpdate(description="x"), user_email="user@example.com")
 
+    async def test_update_agent_null_owner_non_owner_denied(self, service, mock_db, sample_db_agent):
+        """NULL-owner agent must not bypass ownership check for non-owner callers."""
+        sample_db_agent.owner_email = None
+        with patch("mcpgateway.services.a2a_service.get_for_update", return_value=sample_db_agent):
+            with patch("mcpgateway.services.permission_service.PermissionService") as perm_cls:
+                perm = perm_cls.return_value
+                perm.check_resource_ownership = AsyncMock(return_value=False)
+                with pytest.raises(PermissionError):
+                    await service.update_agent(mock_db, sample_db_agent.id, A2AAgentUpdate(description="x"), user_email="attacker@example.com")
+
     async def test_update_agent_permission_allowed(self, service, mock_db, sample_db_agent, monkeypatch):
         """Owner passes PermissionService check and update proceeds."""
         with patch("mcpgateway.services.a2a_service.get_for_update", return_value=sample_db_agent):

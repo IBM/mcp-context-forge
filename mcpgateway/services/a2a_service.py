@@ -1422,7 +1422,7 @@ class A2AAgentService(BaseService):
                 raise A2AAgentNotFoundError(f"A2A Agent not found with ID: {agent_id}")
 
             # Check ownership if user_email provided
-            if user_email and agent.owner_email:
+            if user_email:
                 # First-Party
                 from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
 
