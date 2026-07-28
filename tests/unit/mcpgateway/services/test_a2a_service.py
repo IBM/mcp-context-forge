@@ -506,6 +506,21 @@ class TestA2AAgentService:
             with pytest.raises(A2AAgentNotFoundError):
                 await service.update_agent(mock_db, "non-existent-id", update_data)
 
+    async def test_update_agent_owner_email_not_overwritten(self, service, mock_db, sample_db_agent):
+        """owner_email submitted in an update payload must be silently ignored."""
+        sample_db_agent.version = 1
+        sample_db_agent.owner_email = "original@example.com"
+
+        with patch("mcpgateway.services.a2a_service.get_for_update", return_value=sample_db_agent):
+            mock_db.commit = MagicMock()
+            mock_db.refresh = MagicMock()
+
+            with patch.object(service, "convert_agent_to_read", return_value=MagicMock()):
+                update_data = A2AAgentUpdate.model_construct(owner_email="attacker@example.com")
+                await service.update_agent(mock_db, sample_db_agent.id, update_data)
+
+        assert sample_db_agent.owner_email == "original@example.com"
+
     async def test_set_agent_state_success(self, service, mock_db, sample_db_agent):
         """Test successful agent state change."""
         # Mock database query
