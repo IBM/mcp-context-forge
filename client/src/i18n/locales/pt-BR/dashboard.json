@@ -17,5 +17,16 @@
   "dashboard.home.placeholder.system": "Cartão de status do sistema (em breve)",
   "dashboard.home.placeholder.activity": "Feed de atividades (em breve)",
   "dashboard.home.placeholder.mcp": "Cartão de integridade do MCP (em breve)",
-  "dashboard.home.permissionDenied": "Você não tem permissão para ver isto."
+  "dashboard.home.permissionDenied": "Você não tem permissão para ver isto.",
+  "dashboard.recentActivity.title": "Atividade recente",
+  "dashboard.recentActivity.filters.all": "Todas as atividades",
+  "dashboard.recentActivity.filters.errors": "Erros",
+  "dashboard.recentActivity.filters.warnings": "Avisos",
+  "dashboard.recentActivity.search.placeholder": "Pesquisar...",
+  "dashboard.recentActivity.search.ariaLabel": "Pesquisar atividades",
+  "dashboard.recentActivity.filter.ariaLabel": "Mais filtros",
+  "dashboard.recentActivity.viewMore": "Ver mais",
+  "dashboard.recentActivity.empty": "Nenhuma atividade para mostrar.",
+  "dashboard.recentActivity.error": "Não foi possível carregar a atividade recente.",
+  "dashboard.recentActivity.retry": "Tentar novamente"
 }
