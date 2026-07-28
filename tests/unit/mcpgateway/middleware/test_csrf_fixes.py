@@ -138,7 +138,7 @@ async def test_double_submit_cookie_validation(csrf_middleware, mock_settings):
     mock_request.method = "POST"
     mock_request.url = Mock(path="/api/test")
     mock_request.headers = {"x-csrf-token": wrong_token, "referer": "http://localhost:4444/page"}
-    mock_request.cookies = {"csrf_token": csrf_token}
+    mock_request.cookies = {"jwt_token": "jwt_cookie_token", "csrf_token": csrf_token}
     mock_request.state = Mock(user=Mock(email=user_id), jti=session_id)
 
     # Mock call_next
@@ -167,7 +167,7 @@ async def test_double_submit_cookie_missing(csrf_middleware, mock_settings):
     mock_request.method = "POST"
     mock_request.url = Mock(path="/api/test")
     mock_request.headers = {"x-csrf-token": csrf_token, "referer": "http://localhost:4444/page"}
-    mock_request.cookies = {}  # No cookie
+    mock_request.cookies = {"jwt_token": "jwt_cookie_token"}  # No CSRF cookie, but jwt_token present so CSRF is still exercised
     mock_request.state = Mock(user=Mock(email=user_id), jti=session_id)
 
     # Mock call_next
@@ -229,7 +229,7 @@ async def test_referer_check_fail_closed_missing_header(csrf_middleware, mock_se
     mock_request.method = "POST"
     mock_request.url = Mock(path="/api/test")
     mock_request.headers = {"x-csrf-token": csrf_token}  # No referer
-    mock_request.cookies = {"csrf_token": csrf_token}
+    mock_request.cookies = {"jwt_token": "jwt_cookie_token", "csrf_token": csrf_token}
     mock_request.state = Mock(user=Mock(email=user_id), jti=session_id)
 
     # Mock call_next
@@ -258,7 +258,7 @@ async def test_referer_check_fail_closed_invalid_origin(csrf_middleware, mock_se
     mock_request.method = "POST"
     mock_request.url = Mock(path="/api/test")
     mock_request.headers = {"x-csrf-token": csrf_token, "referer": "http://evil.com/attack"}
-    mock_request.cookies = {"csrf_token": csrf_token}
+    mock_request.cookies = {"jwt_token": "jwt_cookie_token", "csrf_token": csrf_token}
     mock_request.state = Mock(user=Mock(email=user_id), jti=session_id)
 
     # Mock call_next
