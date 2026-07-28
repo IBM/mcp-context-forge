@@ -165,6 +165,54 @@ describe("extractApiError", () => {
   test("uses custom fallback", () => {
     expect(extractApiError({}, "Custom fallback")).toBe("Custom fallback");
   });
+
+  // Nested `detail` object: FastAPI serialises HTTPException(detail={...})
+  // as {"detail": {"message": "...", "success": false}} (issue #4991).
+  test("returns message from nested detail object", () => {
+    const error = {
+      detail: {
+        message:
+          "A resource with this URI already exists in this scope. Resource URIs must be unique; names may repeat.",
+        success: false,
+      },
+    };
+    expect(extractApiError(error, "Failed to add Resource (HTTP 409)")).toBe(
+      "A resource with this URI already exists in this scope. Resource URIs must be unique; names may repeat."
+    );
+  });
+
+  test("returns error from nested detail object when message is absent", () => {
+    const error = { detail: { error: "Conflict detected" } };
+    expect(extractApiError(error, "Oops")).toBe("Conflict detected");
+  });
+
+  test("prefers message over error in nested detail object", () => {
+    const error = { detail: { message: "message wins", error: "error loses" } };
+    expect(extractApiError(error)).toBe("message wins");
+  });
+
+  test("returns fallback for empty nested detail object", () => {
+    // `{}` is falsy for the top-level guard's purposes only when both detail
+    // and message are absent, so this exercises the new branch's fallback.
+    expect(extractApiError({ detail: {} }, "Oops")).toBe("Oops");
+  });
+
+  test("returns fallback for nested detail object without message or error", () => {
+    expect(extractApiError({ detail: { success: false } }, "Oops")).toBe(
+      "Oops"
+    );
+  });
+
+  test("nested detail object does not shadow top-level message", () => {
+    const error = { message: "top wins", detail: { message: "nested loses" } };
+    expect(extractApiError(error)).toBe("top wins");
+  });
+
+  test("nested detail branch does not regress array detail handling", () => {
+    // Arrays are objects too - the array branch must still win.
+    const error = { detail: [{ msg: "field required" }] };
+    expect(extractApiError(error, "Oops")).toBe("field required");
+  });
 });
 
 // ---------------------------------------------------------------------------

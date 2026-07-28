@@ -190,11 +190,17 @@ class ErrorFormatter:
             >>> result['message']
             'A tool with this name already exists'
 
-            >>> # Test UNIQUE constraint on resource URI
+            >>> # Test UNIQUE constraint on resource URI (SQLite)
             >>> mock_error.orig.__str__ = lambda self: "UNIQUE constraint failed: resources.uri"
             >>> result = ErrorFormatter.format_database_error(mock_error)
             >>> result['message']
-            'A resource with this URI already exists'
+            'A resource with this URI already exists in this scope. Resource URIs must be unique; names may repeat.'
+
+            >>> # Test unique constraint on resource URI (PostgreSQL reports the constraint name)
+            >>> mock_error.orig.__str__ = lambda self: 'duplicate key value violates unique constraint "uq_team_owner_gateway_uri_resource"'
+            >>> result = ErrorFormatter.format_database_error(mock_error)
+            >>> result['message']
+            'A resource with this URI already exists in this scope. Resource URIs must be unique; names may repeat.'
 
             >>> # Test UNIQUE constraint on server name
             >>> mock_error.orig.__str__ = lambda self: "UNIQUE constraint failed: servers.name"
@@ -260,9 +266,12 @@ class ErrorFormatter:
                     "message": detail,
                     "success": False,
                 }
-            # PostgreSQL reports constraint names; SQLite reports column paths.
-            if "uq_team_owner_gateway_name_resource" in error_str or "uq_team_owner_name_resource_local" in error_str:
-                return {"message": "A resource with this name already exists", "success": False}
+            # Resource URI uniqueness: check before the generic UNIQUE handler so the specific message
+            # takes priority. PostgreSQL reports the constraint name ("duplicate key value violates
+            # unique constraint \"...\""), which matches none of the SQLite-shaped column-path patterns
+            # below. Only the URI is unique -- resource names are display labels and may repeat.
+            if "uq_team_owner_gateway_uri_resource" in error_str or "uq_team_owner_uri_resource_local" in error_str:
+                return {"message": "A resource with this URI already exists in this scope. Resource URIs must be unique; names may repeat.", "success": False}
             if "UNIQUE constraint failed" in error_str:
                 if "gateways.url" in error_str:
                     return {"message": "A gateway with this URL already exists", "success": False}
@@ -271,9 +280,7 @@ class ErrorFormatter:
                 elif "tools.name" in error_str:
                     return {"message": "A tool with this name already exists", "success": False}
                 elif "resources.uri" in error_str:
-                    return {"message": "A resource with this URI already exists", "success": False}
-                elif "resources.name" in error_str:
-                    return {"message": "A resource with this name already exists", "success": False}
+                    return {"message": "A resource with this URI already exists in this scope. Resource URIs must be unique; names may repeat.", "success": False}
                 elif "servers.name" in error_str:
                     return {"message": "A server with this name already exists", "success": False}
                 elif "prompts.name" in error_str:

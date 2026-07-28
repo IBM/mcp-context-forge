@@ -1,5 +1,6 @@
 import { HEADER_NAME_REGEX } from "./constants";
 import { generateSchema } from "./formFieldHandlers";
+import { FIELD_ERROR_CLASSES } from "./formValidation";
 import { navigateAdmin } from "./navigation";
 import {
   safeParseJsonResponse,
@@ -151,6 +152,73 @@ export const handleGatewayFormSubmit = async function (e) {
   }
 };
 
+/**
+ * Detect whether a server error message describes a resource URI-uniqueness
+ * conflict. Both backend messages ("A resource with this URI already exists
+ * in this scope…" and "<Visibility> resource already exists with URI: …")
+ * mention the URI and the fact that it already exists, so match on that pair
+ * rather than pinning either exact string. ``uri`` is matched on a word
+ * boundary so unrelated messages containing it as a substring (e.g. "during")
+ * do not trip the check.
+ *
+ * @param {string} message - Human-readable server error message
+ * @returns {boolean}
+ */
+function isUriConflictMessage(message) {
+  if (typeof message !== "string") {
+    return false;
+  }
+  return /\buri\b/i.test(message) && /already exists/i.test(message);
+}
+
+/**
+ * Attribute a server error to a specific form field: show the inline
+ * ``p[data-error-message-for="<field>"]`` message, ring the input in red and
+ * focus it. No-ops for fields that do not declare an inline error element.
+ *
+ * @param {HTMLFormElement} form - Form containing the inline error element
+ * @param {string} field - ``data-error-message-for`` value (e.g. "uri")
+ * @param {string} inputId - id of the input to highlight and focus
+ * @param {string} message - Message to render inline
+ */
+function showFieldError(form, field, inputId, message) {
+  const errorElement = form?.querySelector(
+    `p[data-error-message-for="${field}"]`
+  );
+  if (errorElement) {
+    errorElement.textContent = message;
+    errorElement.classList.remove("invisible");
+  }
+  const input = safeGetElement(inputId);
+  if (input) {
+    input.classList.add(...FIELD_ERROR_CLASSES);
+    input.focus();
+  }
+}
+
+/**
+ * Inverse of {@link showFieldError}. Needed because ``modals.js`` only resets
+ * inline field errors for forms inside a modal, and the add-resource panel is
+ * an inline page section - without this a stale conflict message would survive
+ * a resubmit that fails for an unrelated reason.
+ *
+ * @param {HTMLFormElement} form - Form containing the inline error element
+ * @param {string} field - ``data-error-message-for`` value (e.g. "uri")
+ * @param {string} inputId - id of the highlighted input
+ */
+function clearFieldError(form, field, inputId) {
+  const errorElement = form?.querySelector(
+    `p[data-error-message-for="${field}"]`
+  );
+  if (errorElement) {
+    errorElement.classList.add("invisible");
+  }
+  const input = safeGetElement(inputId);
+  if (input) {
+    input.classList.remove(...FIELD_ERROR_CLASSES);
+  }
+}
+
 export const handleResourceFormSubmit = async function (e) {
   e.preventDefault();
   const form = e.target;
@@ -189,6 +257,7 @@ export const handleResourceFormSubmit = async function (e) {
       status.textContent = "";
       status.classList.remove("error-status");
     }
+    clearFieldError(form, "uri", "resource-uri");
 
     const isInactiveCheckedBool = isInactiveChecked("resources");
     formData.append("is_inactive_checked", isInactiveCheckedBool);
@@ -223,6 +292,12 @@ export const handleResourceFormSubmit = async function (e) {
     if (status) {
       status.textContent = error.message || "An error occurred!";
       status.classList.add("error-status");
+    }
+    // A duplicate URI is the one server-side conflict the user can act on, and
+    // it is easy to mistake for a duplicate *name* (names may legitimately
+    // repeat), so point at the offending field in addition to banner + toast.
+    if (isUriConflictMessage(error.message)) {
+      showFieldError(form, "uri", "resource-uri", error.message);
     }
     showErrorMessage(error.message);
   } finally {
