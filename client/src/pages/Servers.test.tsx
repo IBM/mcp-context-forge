@@ -156,6 +156,35 @@ describe("Servers", () => {
     expect(screen.getByText("MCP Servers")).toBeInTheDocument();
   });
 
+  it("filters the loaded servers with the search box", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.get).mockResolvedValueOnce({
+      gateways: createMockServers(0, 3),
+      nextCursor: null,
+    });
+
+    renderWithRouter(<Servers />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Test Server 0")).toBeInTheDocument();
+    });
+    expect(screen.getByText("Test Server 1")).toBeInTheDocument();
+
+    const search = screen.getByRole("searchbox", { name: "Search MCP Servers" });
+    await user.type(search, "Server 0");
+
+    await waitFor(() => {
+      expect(screen.queryByText("Test Server 1")).not.toBeInTheDocument();
+    });
+    expect(screen.getByText("Test Server 0")).toBeInTheDocument();
+
+    await user.clear(search);
+    await user.type(search, "zzz-none");
+    await waitFor(() => {
+      expect(screen.getByText("No matching results.")).toBeInTheDocument();
+    });
+  });
+
   it("renders the empty state Connect MCP server panel when no servers exist", async () => {
     vi.mocked(api.get).mockResolvedValueOnce({
       gateways: [],

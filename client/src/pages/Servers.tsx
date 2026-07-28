@@ -5,10 +5,12 @@ import { MCPIcon } from "@/components/icons/MCPIcon";
 import { Button } from "@/components/ui/button";
 import { MCPServerForm } from "@/components/mcp-servers/MCPServerForm";
 import { ServersTable } from "@/components/servers/ServersTable";
+import { ListSearch } from "@/components/ui/list-search";
 import { ConfirmDialog } from "@/components/servers/ConfirmDialog";
 import { TestConnectionDialog } from "@/components/servers/TestConnectionDialog";
 import { MCPServerDetailsPanel } from "@/components/servers/MCPServerDetailsPanel";
 import { useQuery } from "@/hooks/useQuery";
+import { useLocalSearch } from "@/hooks/useLocalSearch";
 import { ApiError, api } from "@/api/client";
 import { serversApi } from "@/api/servers";
 import { useRouter } from "@/router";
@@ -95,6 +97,12 @@ export function Servers() {
 
   // Derive servers from accumulated list
   const servers = allServers;
+
+  const getServerText = useCallback(
+    (server: MCPServer) => `${server.name} ${server.description ?? ""} ${server.id}`,
+    [],
+  );
+  const { query, setQuery, results: filteredServers } = useLocalSearch(servers, getServerText);
 
   // Convert query error to string for display
   const error = queryError ? queryError.message : null;
@@ -301,18 +309,29 @@ export function Servers() {
                 <h1 className="text-base font-semibold text-foreground">
                   {intl.formatMessage({ id: "mcpServer.title" })}
                 </h1>
-                <Button
-                  variant="default"
-                  className="h-7 rounded-sm px-4"
-                  onClick={() => setIsFormOpen(true)}
-                >
-                  <Plus className="h-4 w-4" />
-                  Connect
-                </Button>
+                <div className="flex items-center gap-3">
+                  <ListSearch
+                    value={query}
+                    onChange={setQuery}
+                    ariaLabel={intl.formatMessage(
+                      { id: "common.searchLabel" },
+                      { entity: intl.formatMessage({ id: "mcpServer.title" }) },
+                    )}
+                    placeholder={intl.formatMessage({ id: "common.search" })}
+                  />
+                  <Button
+                    variant="default"
+                    className="h-7 rounded-sm px-4"
+                    onClick={() => setIsFormOpen(true)}
+                  >
+                    <Plus className="h-4 w-4" />
+                    Connect
+                  </Button>
+                </div>
               </div>
 
               <ServersTable
-                servers={servers}
+                servers={filteredServers}
                 isLoading={isLoading}
                 onEdit={handleEdit}
                 onDelete={handleDelete}
@@ -320,11 +339,16 @@ export function Servers() {
                 onViewDetails={handleViewDetails}
                 onToggleEnabled={handleToggleEnabled}
               />
+              {query.trim() && filteredServers.length === 0 && (
+                <p className="mt-6 text-sm text-muted-foreground">
+                  {intl.formatMessage({ id: "common.search.noResults" })}
+                </p>
+              )}
 
               <div className="flex items-center justify-between mt-6">
                 <div className="flex items-center gap-4">
                   <div className="text-sm text-gray-600 dark:text-gray-400">
-                    Showing {servers.length} server{servers.length !== 1 ? "s" : ""}
+                    Showing {filteredServers.length} server{filteredServers.length !== 1 ? "s" : ""}
                   </div>
                   <div className="flex items-center gap-2">
                     <label
@@ -346,7 +370,7 @@ export function Servers() {
                     </select>
                   </div>
                 </div>
-                {nextCursor && (
+                {!query.trim() && nextCursor && (
                   <Button
                     variant="outline"
                     size="sm"
