@@ -22,6 +22,7 @@
   "common.search.results": "Resultados de búsqueda",
   "common.search.searching": "Buscando...",
   "common.search.startTyping": "Escribe al menos {count} caracteres para buscar.",
+  "common.searchLabel": "Buscar {entity}",
   "common.filter": "Filtrar",
   "common.export": "Exportar",
   "common.import": "Importar",

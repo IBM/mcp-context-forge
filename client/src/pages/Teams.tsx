@@ -3,11 +3,13 @@ import { useIntl } from "react-intl";
 import { toast } from "sonner";
 import { Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { ListSearch } from "@/components/ui/list-search";
 import { TeamsTable } from "@/components/teams/TeamsTable";
 import { TeamForm } from "@/components/teams/TeamForm";
 import { ConfirmDialog } from "@/components/servers/ConfirmDialog";
 import { ManageTeamMembersDialog } from "@/components/teams/ManageTeamMembersDialog";
 import { useQuery } from "@/hooks/useQuery";
+import { useLocalSearch } from "@/hooks/useLocalSearch";
 import { api } from "@/api/client";
 import { deleteTeam } from "@/api/teams";
 import type { Team, TeamsResponse } from "@/types/team";
@@ -47,6 +49,12 @@ export function Teams() {
       setNextCursor(response.nextCursor ?? null);
     }
   }, [response]);
+
+  const getTeamText = useCallback(
+    (team: Team) => `${team.name} ${team.description ?? ""} ${team.id}`,
+    [],
+  );
+  const { query, setQuery, results } = useLocalSearch(allTeams, getTeamText);
 
   const error = queryError ? queryError.message : null;
 
@@ -207,28 +215,44 @@ export function Teams() {
                 <h1 className="text-base font-semibold text-foreground">
                   {intl.formatMessage({ id: "teams.all.title" })}
                 </h1>
-                <Button
-                  variant="default"
-                  className="h-7 rounded-sm px-4"
-                  onClick={() => setCreateFormOpen(true)}
-                >
-                  <Plus className="h-4 w-4" />
-                  {intl.formatMessage({ id: "teams.createTeam" })}
-                </Button>
+                <div className="flex items-center gap-3">
+                  <ListSearch
+                    value={query}
+                    onChange={setQuery}
+                    ariaLabel={intl.formatMessage(
+                      { id: "common.searchLabel" },
+                      { entity: intl.formatMessage({ id: "navigation.teams" }) },
+                    )}
+                    placeholder={intl.formatMessage({ id: "common.search" })}
+                  />
+                  <Button
+                    variant="default"
+                    className="h-7 rounded-sm px-4"
+                    onClick={() => setCreateFormOpen(true)}
+                  >
+                    <Plus className="h-4 w-4" />
+                    {intl.formatMessage({ id: "teams.createTeam" })}
+                  </Button>
+                </div>
               </div>
 
               <TeamsTable
-                teams={allTeams}
+                teams={results}
                 isLoading={false}
                 onEdit={handleEdit}
                 onManageMembers={handleManageMembers}
                 onDelete={handleDelete}
               />
+              {query.trim() && results.length === 0 && (
+                <p className="mt-6 text-sm text-muted-foreground">
+                  {intl.formatMessage({ id: "common.search.noResults" })}
+                </p>
+              )}
 
               <div className="flex items-center justify-between mt-6">
                 <div className="flex items-center gap-4">
                   <div className="text-sm text-gray-600 dark:text-gray-400">
-                    {intl.formatMessage({ id: "teams.showing" }, { count: allTeams.length })}
+                    {intl.formatMessage({ id: "teams.showing" }, { count: results.length })}
                   </div>
                   <div className="flex items-center gap-2">
                     <label
@@ -250,7 +274,7 @@ export function Teams() {
                     </select>
                   </div>
                 </div>
-                {nextCursor && (
+                {!query.trim() && nextCursor && (
                   <Button
                     variant="outline"
                     size="sm"
