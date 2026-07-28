@@ -529,5 +529,5 @@ When posting PR reviews, issue comments, or any public-facing text on GitHub, us
 - `gh` for GitHub operations
 - `make` for build/test automation
 - `uv` for virtual environment management and for `uv tool run` linter invocations
-- Dev-group tools installed in the venv: `pytest`, `mypy`, `bandit`, `pre-commit`, `prospector`, etc. (see `pyproject.toml` `[dependency-groups]`)
+- Dev-group tools installed in the venv: `pytest`, `mypy`, `bandit`, `pre-commit`, etc. (see `pyproject.toml` `[dependency-groups]`)
 - Formatters and linters (`ruff`, `vulture`, `interrogate`, `radon`, `yamllint`, `tomlcheck`) are pinned in the `Makefile` and invoked on demand via `uv tool run`; always prefer the Makefile targets (`make black`, `make ruff`, etc.) over calling the underlying tools directly

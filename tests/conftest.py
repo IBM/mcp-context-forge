@@ -5,6 +5,7 @@ SPDX-License-Identifier: Apache-2.0
 """
 
 # Standard
+import logging
 import os
 import socket
 import sys
@@ -629,6 +630,42 @@ def clear_metrics_cache():
         metrics_cache.invalidate()
     except ImportError:
         pass
+
+
+@pytest.fixture(autouse=True)
+def _restore_logger_state():
+    """Restore root/named logger levels and handlers after every test.
+
+    Several tests (and ``LoggingService.initialize()``/``set_level()``) mutate
+    global ``logging`` module state -- root logger level, root handlers, and
+    individual logger levels -- without symmetric teardown. Under pytest-xdist
+    load-balanced scheduling, whichever test happens to run first on a given
+    worker can leave DEBUG-level logging enabled for the rest of that worker's
+    tests, causing unrelated caplog-based assertions to pick up stray log
+    records. Snapshot and restore the relevant global state around every test
+    so no test can leak logger configuration into another.
+    """
+    root = logging.getLogger()
+    saved_level = root.level
+    saved_handlers = list(root.handlers)
+    saved_handler_levels = [(h, h.level) for h in saved_handlers]
+    saved_logger_levels = {name: logger.level for name, logger in logging.Logger.manager.loggerDict.items() if isinstance(logger, logging.Logger)}
+    saved_logger_propagate = {name: logger.propagate for name, logger in logging.Logger.manager.loggerDict.items() if isinstance(logger, logging.Logger)}
+
+    yield
+
+    root.setLevel(saved_level)
+    root.handlers[:] = saved_handlers
+    for handler, level in saved_handler_levels:
+        handler.setLevel(level)
+    for name, level in saved_logger_levels.items():
+        logger = logging.Logger.manager.loggerDict.get(name)
+        if isinstance(logger, logging.Logger):
+            logger.setLevel(level)
+    for name, propagate in saved_logger_propagate.items():
+        logger = logging.Logger.manager.loggerDict.get(name)
+        if isinstance(logger, logging.Logger):
+            logger.propagate = propagate
 
 
 @pytest.fixture(autouse=True)
