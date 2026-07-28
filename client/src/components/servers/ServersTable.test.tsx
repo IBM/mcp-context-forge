@@ -36,9 +36,7 @@ describe("ServersTable", () => {
   // ── Loading state ────────────────────────────────────────────────────────────
 
   it("renders a loading indicator when isLoading is true", () => {
-    renderTable(
-      <ServersTable servers={[]} isLoading onEdit={noop} onDelete={noop} onTest={noop} />,
-    );
+    renderTable(<ServersTable servers={[]} isLoading onEdit={noop} onDelete={noop} />);
     // The Loading component should be present; the table must not
     expect(screen.queryByRole("table")).not.toBeInTheDocument();
   });
@@ -47,13 +45,7 @@ describe("ServersTable", () => {
 
   it("renders all expected column headers", () => {
     renderTable(
-      <ServersTable
-        servers={[makeServer()]}
-        isLoading={false}
-        onEdit={noop}
-        onDelete={noop}
-        onTest={noop}
-      />,
+      <ServersTable servers={[makeServer()]} isLoading={false} onEdit={noop} onDelete={noop} />,
     );
     expect(screen.getByText("Name")).toBeInTheDocument();
     expect(screen.getByText("Components")).toBeInTheDocument();
@@ -73,7 +65,6 @@ describe("ServersTable", () => {
         isLoading={false}
         onEdit={noop}
         onDelete={noop}
-        onTest={noop}
       />,
     );
     expect(screen.getByText("7 tools")).toBeInTheDocument();
@@ -81,13 +72,7 @@ describe("ServersTable", () => {
 
   it("shows 0 tools when toolCount is absent", () => {
     renderTable(
-      <ServersTable
-        servers={[makeServer({})]}
-        isLoading={false}
-        onEdit={noop}
-        onDelete={noop}
-        onTest={noop}
-      />,
+      <ServersTable servers={[makeServer({})]} isLoading={false} onEdit={noop} onDelete={noop} />,
     );
     expect(screen.getByText("0 tools")).toBeInTheDocument();
   });
@@ -98,13 +83,7 @@ describe("ServersTable", () => {
       promptCount: 2,
     });
     renderTable(
-      <ServersTable
-        servers={[server]}
-        isLoading={false}
-        onEdit={noop}
-        onDelete={noop}
-        onTest={noop}
-      />,
+      <ServersTable servers={[server]} isLoading={false} onEdit={noop} onDelete={noop} />,
     );
     expect(screen.getByText("3 resources")).toBeInTheDocument();
     expect(screen.getByText("2 prompts")).toBeInTheDocument();
@@ -112,13 +91,7 @@ describe("ServersTable", () => {
 
   it("shows 0 resources and 0 prompts when count fields are absent", () => {
     renderTable(
-      <ServersTable
-        servers={[makeServer({})]}
-        isLoading={false}
-        onEdit={noop}
-        onDelete={noop}
-        onTest={noop}
-      />,
+      <ServersTable servers={[makeServer({})]} isLoading={false} onEdit={noop} onDelete={noop} />,
     );
     expect(screen.getByText("0 resources")).toBeInTheDocument();
     expect(screen.getByText("0 prompts")).toBeInTheDocument();
@@ -133,7 +106,6 @@ describe("ServersTable", () => {
         isLoading={false}
         onEdit={noop}
         onDelete={noop}
-        onTest={noop}
       />,
     );
     expect(screen.getByText("Never used")).toBeInTheDocument();
@@ -146,7 +118,6 @@ describe("ServersTable", () => {
         isLoading={false}
         onEdit={noop}
         onDelete={noop}
-        onTest={noop}
       />,
     );
     expect(screen.getByText("Never used")).toBeInTheDocument();
@@ -155,13 +126,7 @@ describe("ServersTable", () => {
   it("formats a valid lastSeen date in ISO-like sv-SE format", () => {
     const server = makeServer({ lastSeen: "2024-06-15T14:05:30Z" });
     renderTable(
-      <ServersTable
-        servers={[server]}
-        isLoading={false}
-        onEdit={noop}
-        onDelete={noop}
-        onTest={noop}
-      />,
+      <ServersTable servers={[server]} isLoading={false} onEdit={noop} onDelete={noop} />,
     );
     // sv-SE locale produces "YYYY-MM-DD HH:MM:SS" which is then converted to "YYYY-MM-DDTHH:MM:SS"
     expect(screen.getByText(/2024-06-15T/)).toBeInTheDocument();
@@ -172,13 +137,7 @@ describe("ServersTable", () => {
   it("renders the server UUID in the UUID cell", () => {
     const server = makeServer({ id: "abc-123-xyz" });
     renderTable(
-      <ServersTable
-        servers={[server]}
-        isLoading={false}
-        onEdit={noop}
-        onDelete={noop}
-        onTest={noop}
-      />,
+      <ServersTable servers={[server]} isLoading={false} onEdit={noop} onDelete={noop} />,
     );
     expect(screen.getByText("abc-123-xyz")).toBeInTheDocument();
   });
@@ -194,13 +153,7 @@ describe("ServersTable", () => {
 
     const server = makeServer({ id: "copy-me-uuid" });
     renderTable(
-      <ServersTable
-        servers={[server]}
-        isLoading={false}
-        onEdit={noop}
-        onDelete={noop}
-        onTest={noop}
-      />,
+      <ServersTable servers={[server]} isLoading={false} onEdit={noop} onDelete={noop} />,
     );
 
     const copyBtn = screen.getByRole("button", { name: /copy uuid for test server/i });
@@ -220,13 +173,7 @@ describe("ServersTable", () => {
 
     const server = makeServer({ id: "copy-timeout" });
     renderTable(
-      <ServersTable
-        servers={[server]}
-        isLoading={false}
-        onEdit={noop}
-        onDelete={noop}
-        onTest={noop}
-      />,
+      <ServersTable servers={[server]} isLoading={false} onEdit={noop} onDelete={noop} />,
     );
 
     const copyBtn = screen.getByRole("button", { name: /copy uuid for test server/i });
@@ -264,13 +211,7 @@ describe("ServersTable", () => {
 
     const server = makeServer({ id: "copy-fail" });
     renderTable(
-      <ServersTable
-        servers={[server]}
-        isLoading={false}
-        onEdit={noop}
-        onDelete={noop}
-        onTest={noop}
-      />,
+      <ServersTable servers={[server]} isLoading={false} onEdit={noop} onDelete={noop} />,
     );
 
     fireEvent.click(screen.getByRole("button", { name: /copy uuid for test server/i }));
@@ -292,7 +233,6 @@ describe("ServersTable", () => {
         isLoading={false}
         onEdit={noop}
         onDelete={noop}
-        onTest={noop}
       />,
     );
     expect(screen.getByText(label)).toBeInTheDocument();
@@ -307,7 +247,6 @@ describe("ServersTable", () => {
         isLoading={false}
         onEdit={noop}
         onDelete={noop}
-        onTest={noop}
       />,
     );
     expect(screen.getByText("Draft")).toBeInTheDocument();
@@ -326,7 +265,6 @@ describe("ServersTable", () => {
         isLoading={false}
         onEdit={noop}
         onDelete={noop}
-        onTest={noop}
       />,
     );
     expect(screen.getByText("Offline")).toBeInTheDocument();
@@ -341,7 +279,6 @@ describe("ServersTable", () => {
         isLoading={false}
         onEdit={noop}
         onDelete={noop}
-        onTest={noop}
       />,
     );
     expect(screen.getByText("Warning")).toBeInTheDocument();
@@ -354,7 +291,6 @@ describe("ServersTable", () => {
         isLoading={false}
         onEdit={noop}
         onDelete={noop}
-        onTest={noop}
       />,
     );
     expect(screen.getByText("Active")).toBeInTheDocument();
@@ -370,7 +306,6 @@ describe("ServersTable", () => {
         isLoading={false}
         onEdit={noop}
         onDelete={noop}
-        onTest={noop}
         onViewDetails={noop}
       />,
     );
@@ -381,13 +316,7 @@ describe("ServersTable", () => {
   it("hides View Details menu item when onViewDetails is not provided", async () => {
     const user = userEvent.setup();
     renderTable(
-      <ServersTable
-        servers={[makeServer()]}
-        isLoading={false}
-        onEdit={noop}
-        onDelete={noop}
-        onTest={noop}
-      />,
+      <ServersTable servers={[makeServer()]} isLoading={false} onEdit={noop} onDelete={noop} />,
     );
     await user.click(screen.getByRole("button", { name: /actions for/i }));
     await screen.findByRole("menuitem", { name: /edit/i });
@@ -403,7 +332,6 @@ describe("ServersTable", () => {
         isLoading={false}
         onEdit={noop}
         onDelete={noop}
-        onTest={noop}
         onViewDetails={onViewDetails}
       />,
     );
@@ -421,15 +349,7 @@ describe("ServersTable", () => {
       makeServer({ id: "s2", name: "Beta" }),
       makeServer({ id: "s3", name: "Gamma" }),
     ];
-    renderTable(
-      <ServersTable
-        servers={servers}
-        isLoading={false}
-        onEdit={noop}
-        onDelete={noop}
-        onTest={noop}
-      />,
-    );
+    renderTable(<ServersTable servers={servers} isLoading={false} onEdit={noop} onDelete={noop} />);
     expect(screen.getByText("Alpha")).toBeInTheDocument();
     expect(screen.getByText("Beta")).toBeInTheDocument();
     expect(screen.getByText("Gamma")).toBeInTheDocument();
