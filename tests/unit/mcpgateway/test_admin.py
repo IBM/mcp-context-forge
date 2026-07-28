@@ -14442,6 +14442,7 @@ class TestAdminAdditionalCoverage:
         response = await admin_edit_a2a_agent("agent-1", mock_request, mock_db, user={"email": "user@example.com", "db": mock_db})
         assert response.status_code == 200
         mock_service.update_agent.assert_called_once()
+        assert mock_service.update_agent.call_args.kwargs["user_email"] == "user@example.com"
 
     async def test_admin_edit_a2a_agent_preserves_team_id_when_not_in_form(self, monkeypatch, mock_request, mock_db):
         """Editing an A2A agent without team_id in form should preserve the existing team."""
@@ -18379,6 +18380,8 @@ async def test_admin_edit_a2a_agent_error_handlers(monkeypatch, mock_db):
     for exc, expected_status in [
         (validation_exc, 422),
         (IntegrityError("stmt", {}, Exception("constraint")), 409),
+        (PermissionError("Only the owner can update this agent"), 403),
+        (A2AAgentNotFoundError("agent-1"), 404),
         (Exception("unknown"), 500),
     ]:
         form_data = FakeForm({"name": "Agent", "endpoint_url": "http://agent.example.com"})
