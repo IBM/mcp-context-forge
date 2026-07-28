@@ -59,6 +59,7 @@ vi.mock("../../../mcpgateway/admin_ui/tokens.js", () => ({
 vi.mock("../../../mcpgateway/admin_ui/utils.js", () => ({
   safeGetElement: vi.fn((id) => document.getElementById(id)),
   showToast: vi.fn(),
+  getCookie: vi.fn(() => ""),
 }));
 
 beforeEach(() => {

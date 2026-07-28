@@ -70,6 +70,33 @@ def test_ratelimiter_redis_url_defaults():
     assert s.ratelimiter_redis_url is None
     assert s.ratelimiter_redis_max_connections == 50
     assert s.ratelimiter_redis_socket_timeout == 2.0
+
+
+def test_csrf_cookie_name_default_matches_env_example():
+    """CSRF_COOKIE_NAME in .env.example must equal config.py's csrf_cookie_name default.
+
+    Operators who copy .env.example (documented first step in README) must get
+    the same cookie name CSRFMiddleware and the Admin UI JS already hardcode
+    (`mcpgateway_csrf_token`). A stale .env.example value silently breaks CSRF
+    validation for every real deployment even though code defaults are correct
+    (see #5739).
+    """
+    import re
+
+    repo_root = os.path.join(os.path.dirname(__file__), "..", "..", "..")
+    env_example_path = os.path.normpath(os.path.join(repo_root, ".env.example"))
+
+    assert os.path.exists(env_example_path), f".env.example not found at {env_example_path}"
+
+    with open(env_example_path, encoding="utf-8") as f:
+        content = f.read()
+
+    match = re.search(r"^CSRF_COOKIE_NAME=(.+)$", content, re.MULTILINE)
+    assert match, "CSRF_COOKIE_NAME not found in .env.example"
+    env_example_value = match.group(1).strip()
+
+    s = Settings(_env_file=None)
+    assert env_example_value == s.csrf_cookie_name, f".env.example CSRF_COOKIE_NAME={env_example_value!r} does not match config.py default={s.csrf_cookie_name!r}"
     assert s.ratelimiter_redis_socket_connect_timeout == 2.0
 
 

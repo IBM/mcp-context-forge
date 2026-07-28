@@ -3390,6 +3390,21 @@ if settings.correlation_id_enabled:
 # Add PasswordChangeEnforcementMiddleware FIRST so it runs AFTER AuthContextMiddleware
 _siem_auth_source_enabled = settings.siem_export_enabled and "auth" in {str(item).lower() for item in getattr(settings, "siem_export_event_sources", [])}
 
+# Add CSRF protection middleware FIRST (runs LAST/innermost due to reverse order)
+# This validates CSRF tokens on state-changing requests to prevent Cross-Site Request Forgery attacks
+# Must be added before AuthContextMiddleware below so it executes AFTER it and request.state.user
+# is available for token validation (adding it later would make it run BEFORE AuthContextMiddleware,
+# leaving request.state.user unset and silently falling back to resolving identity from the raw JWT
+# `sub` claim (EmailUser.id) instead of the email admin.py binds CSRF tokens to).
+if settings.csrf_enabled:
+    # First-Party
+    from mcpgateway.middleware.csrf_middleware import CSRFMiddleware
+
+    app.add_middleware(CSRFMiddleware)
+    logger.info("🛡️  CSRF protection middleware enabled - validating tokens on state-changing requests")
+else:
+    logger.info("🛡️  CSRF protection middleware disabled")
+
 # Add password change enforcement middleware FIRST (runs SECOND due to reverse order)
 # This middleware enforces mandatory password changes for users with password_change_required flag
 # Note: Runs after AuthContextMiddleware (added below) so request.state.user is available
@@ -3413,18 +3428,6 @@ if _auth_context_required:
     logger.info("🔐 Authentication context middleware enabled - capturing authentication security events")
 else:
     logger.info("🔐 Security event logging disabled")
-
-# Add CSRF protection middleware
-# This validates CSRF tokens on state-changing requests to prevent Cross-Site Request Forgery attacks
-# Note: Runs after AuthContextMiddleware so request.state.user is available for token validation
-if settings.csrf_enabled:
-    # First-Party
-    from mcpgateway.middleware.csrf_middleware import CSRFMiddleware
-
-    app.add_middleware(CSRFMiddleware)
-    logger.info("🛡️  CSRF protection middleware enabled - validating tokens on state-changing requests")
-else:
-    logger.info("🛡️  CSRF protection middleware disabled")
 
 # Add token usage logging middleware
 # This tracks API token usage for analytics and security monitoring

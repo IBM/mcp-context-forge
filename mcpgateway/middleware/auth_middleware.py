@@ -179,10 +179,11 @@ class AuthContextMiddleware(BaseHTTPMiddleware):
             credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
             user = await get_current_user(credentials, request=request)
 
-            # Note: EmailUser uses 'email' as primary key, not 'id'
+            # Note: EmailUser.id is the primary key (UUID); .email is used here as the
+            # CSRF/logging identity, matching CSRFMiddleware's binding.
             # User is already detached (created with fresh session that was closed)
             user_email = user.email
-            user_id = user_email  # For EmailUser, email IS the ID
+            user_id = user_email  # CSRF/logging identity is the email, not EmailUser.id
 
             # Store user in request state for downstream use
             request.state.user = user

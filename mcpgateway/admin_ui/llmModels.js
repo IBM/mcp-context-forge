@@ -2,11 +2,34 @@ import { AppState } from "./appState.js";
 import { showCopyableModal } from "./modals.js";
 import { parseErrorResponse } from "./security.js";
 import { getAuthToken } from "./tokens.js";
-import { safeGetElement, showToast } from "./utils.js";
+import { getCookie, safeGetElement, showToast } from "./utils.js";
 
 // ===================================================================
 // LLM SETTINGS FUNCTIONS
 // ===================================================================
+
+/**
+ * Build headers for state-changing LLM settings requests.
+ * - Authorization is only attached when a real bearer token is available
+ *   (session logins use an httponly cookie, so getAuthToken() returns "").
+ * - X-CSRF-Token satisfies both CSRFMiddleware (/llm/*) and
+ *   enforce_admin_csrf (/admin/llm/*), which share the same cookie/header names.
+ */
+async function llmRequestHeaders({ json = true } = {}) {
+  const headers = {};
+  if (json) {
+    headers["Content-Type"] = "application/json";
+  }
+  const token = await getAuthToken();
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+  const csrfToken = getCookie("mcpgateway_csrf_token");
+  if (csrfToken) {
+    headers["X-CSRF-Token"] = csrfToken;
+  }
+  return headers;
+}
 
 /**
  * Switch between LLM Settings tabs (providers/models)
@@ -75,9 +98,7 @@ const loadLLMProviderDefaults = async function () {
     const response = await fetch(
       `${window.ROOT_PATH}/admin/llm/provider-defaults`,
       {
-        headers: {
-          Authorization: `Bearer ${await getAuthToken()}`,
-        },
+        headers: await llmRequestHeaders({ json: false }),
       },
     );
     if (response.ok) {
@@ -184,9 +205,7 @@ const renderProviderSpecificFields = async function (
     const response = await fetch(
       `${window.ROOT_PATH}/admin/llm/provider-configs`,
       {
-        headers: {
-          Authorization: `Bearer ${await getAuthToken()}`,
-        },
+        headers: await llmRequestHeaders({ json: false }),
       },
     );
 
@@ -353,9 +372,7 @@ export const fetchLLMProviderModels = async function (providerId) {
       `${window.ROOT_PATH}/admin/llm/providers/${providerId}/fetch-models`,
       {
         method: "POST",
-        headers: {
-          Authorization: `Bearer ${await getAuthToken()}`,
-        },
+        headers: await llmRequestHeaders({ json: false }),
       },
     );
 
@@ -397,9 +414,7 @@ export const syncLLMProviderModels = async function (providerId) {
       `${window.ROOT_PATH}/admin/llm/providers/${providerId}/sync-models`,
       {
         method: "POST",
-        headers: {
-          Authorization: `Bearer ${await getAuthToken()}`,
-        },
+        headers: await llmRequestHeaders({ json: false }),
       },
     );
 
@@ -437,9 +452,7 @@ export const editLLMProvider = async function (providerId) {
     const response = await fetch(
       `${window.ROOT_PATH}/llm/providers/${providerId}`,
       {
-        headers: {
-          Authorization: `Bearer ${await getAuthToken()}`,
-        },
+        headers: await llmRequestHeaders({ json: false }),
       },
     );
     if (!response.ok) {
@@ -555,10 +568,7 @@ export const saveLLMProvider = async function (event) {
 
     const response = await fetch(url, {
       method,
-      headers: {
-        Authorization: `Bearer ${await getAuthToken()}`,
-        "Content-Type": "application/json",
-      },
+      headers: await llmRequestHeaders(),
       body: JSON.stringify(formData),
     });
 
@@ -601,9 +611,7 @@ export const deleteLLMProvider = async function (providerId, providerName) {
       `${window.ROOT_PATH}/llm/providers/${providerId}`,
       {
         method: "DELETE",
-        headers: {
-          Authorization: `Bearer ${await getAuthToken()}`,
-        },
+        headers: await llmRequestHeaders({ json: false }),
       },
     );
 
@@ -632,9 +640,7 @@ export const toggleLLMProvider = async function (providerId) {
       `${window.ROOT_PATH}/llm/providers/${providerId}/state`,
       {
         method: "POST",
-        headers: {
-          Authorization: `Bearer ${await getAuthToken()}`,
-        },
+        headers: await llmRequestHeaders({ json: false }),
       },
     );
 
@@ -658,9 +664,7 @@ export const checkLLMProviderHealth = async function (providerId) {
       `${window.ROOT_PATH}/admin/llm/providers/${providerId}/health`,
       {
         method: "POST",
-        headers: {
-          Authorization: `Bearer ${await getAuthToken()}`,
-        },
+        headers: await llmRequestHeaders({ json: false }),
       },
     );
 
@@ -730,9 +734,7 @@ export const showAddModelModal = async function () {
 export const populateProviderDropdown = async function () {
   try {
     const response = await fetch(`${window.ROOT_PATH}/llm/providers`, {
-      headers: {
-        Authorization: `Bearer ${await getAuthToken()}`,
-      },
+      headers: await llmRequestHeaders({ json: false }),
     });
     if (!response.ok) {
       throw new Error("Failed to fetch providers");
@@ -808,9 +810,7 @@ export const fetchModelsForModelModal = async function () {
       `${window.ROOT_PATH}/admin/llm/providers/${providerId}/fetch-models`,
       {
         method: "POST",
-        headers: {
-          Authorization: `Bearer ${await getAuthToken()}`,
-        },
+        headers: await llmRequestHeaders({ json: false }),
       },
     );
 
@@ -852,9 +852,7 @@ export const editLLMModel = async function (modelId) {
   llmModelComboboxClose();
   try {
     const response = await fetch(`${window.ROOT_PATH}/llm/models/${modelId}`, {
-      headers: {
-        Authorization: `Bearer ${await getAuthToken()}`,
-      },
+      headers: await llmRequestHeaders({ json: false }),
     });
     if (!response.ok) {
       throw new Error("Failed to fetch model details");
@@ -932,10 +930,7 @@ export const saveLLMModel = async function (event) {
 
     const response = await fetch(url, {
       method,
-      headers: {
-        Authorization: `Bearer ${await getAuthToken()}`,
-        "Content-Type": "application/json",
-      },
+      headers: await llmRequestHeaders(),
       body: JSON.stringify(formData),
     });
 
@@ -970,9 +965,7 @@ export const deleteLLMModel = async function (modelId, modelName) {
   try {
     const response = await fetch(`${window.ROOT_PATH}/llm/models/${modelId}`, {
       method: "DELETE",
-      headers: {
-        Authorization: `Bearer ${await getAuthToken()}`,
-      },
+      headers: await llmRequestHeaders({ json: false }),
     });
 
     if (!response.ok) {
@@ -1000,9 +993,7 @@ export const toggleLLMModel = async function (modelId) {
       `${window.ROOT_PATH}/llm/models/${modelId}/state`,
       {
         method: "POST",
-        headers: {
-          Authorization: `Bearer ${await getAuthToken()}`,
-        },
+        headers: await llmRequestHeaders({ json: false }),
       },
     );
 
@@ -1117,10 +1108,7 @@ export const llmApiInfoApp = function () {
 
         const response = await fetch(`${window.ROOT_PATH}/admin/llm/test`, {
           method: "POST",
-          headers: {
-            Authorization: `Bearer ${await getAuthToken()}`,
-            "Content-Type": "application/json",
-          },
+          headers: await llmRequestHeaders(),
           body: requestBodyStr,
         });
 
