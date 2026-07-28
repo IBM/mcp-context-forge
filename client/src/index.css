@@ -182,5 +182,16 @@
   }
   html {
     @apply font-sans;
+    /* Reserve the scrollbar gutter so pages that gain/lose a document scrollbar
+       don't shift centered content when their height crosses the viewport. */
+    scrollbar-gutter: stable;
+  }
+}
+
+/* Fallback for browsers without scrollbar-gutter (Safari < 18.2): always reserve
+   a classic scrollbar track. No effect where scrollbar-gutter is supported. */
+@supports not (scrollbar-gutter: stable) {
+  html {
+    overflow-y: scroll;
   }
 }
