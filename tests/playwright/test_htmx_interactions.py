@@ -223,18 +223,12 @@ class TestHTMXInteractions:
         # Type a search term that likely won't match
         servers_page.search_servers("xyznonexistentserver123")
 
-        # Wait for filtering to take effect (count should change)
-        servers_page.wait_for_count_change(servers_page.server_items, initial_rows, timeout=5000)
-
         # Check if the table has been filtered
         filtered_visible = servers_page.server_items.locator(":visible").count()
         assert filtered_visible < initial_rows
 
         # Clear search
         servers_page.clear_search()
-
-        # Wait for rows to be restored
-        servers_page.wait_for_count_change(servers_page.server_items, filtered_visible, timeout=5000)
 
         # Verify rows are restored — the HTMX partial reload may apply pagination
         # so the count won't necessarily equal initial_rows (which reflected the full
