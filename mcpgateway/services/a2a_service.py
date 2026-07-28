@@ -1521,6 +1521,9 @@ class A2AAgentService(BaseService):
                     target_team_id = update_data.get("team_id", agent.team_id) if "team_id" in update_data else agent.team_id
                     _validate_a2a_team_assignment(db, user_email, target_team_id)
 
+                if field == "owner_email":
+                    continue  # ownership is set at creation; never overwritten by an update
+
                 if hasattr(agent, field):
                     setattr(agent, field, value)
 

@@ -410,6 +410,109 @@ class TestRBACOwnershipHTTP:
         # Cleanup
         app.dependency_overrides.clear()
 
+    @patch("mcpgateway.main.a2a_service.update_agent", new_callable=AsyncMock)
+    @patch("mcpgateway.middleware.rbac.PermissionService", MockPermissionService)
+    def test_update_a2a_agent_non_owner_returns_403(
+        self,
+        mock_update_agent: AsyncMock,
+        test_db_and_client,
+    ):
+        """Test that non-owner receives HTTP 403 when attempting to update A2A agent."""
+        TestSessionLocal, _ = test_db_and_client
+
+        mock_update_agent.side_effect = PermissionError("Only the owner can update this agent")
+
+        mock_user = MagicMock()
+        mock_user.email = "user-b@example.com"
+
+        app.dependency_overrides[require_auth] = lambda: "user-b@example.com"
+        app.dependency_overrides[get_current_user] = lambda: mock_user
+        app.dependency_overrides[get_current_user_with_permissions] = create_user_context(
+            "user-b@example.com", TestSessionLocal=TestSessionLocal
+        )
+        client = TestClient(app)
+
+        response = client.put(
+            "/a2a/agent-123",
+            json={"name": "updated-agent"},
+            headers={"Authorization": "Bearer test-token"},
+        )
+
+        assert response.status_code == 403
+        assert "Only the owner can update this agent" in response.json()["detail"]
+
+        app.dependency_overrides.clear()
+
+    @patch("mcpgateway.admin.a2a_service.update_agent", new_callable=AsyncMock)
+    @patch("mcpgateway.middleware.rbac.PermissionService", MockPermissionService)
+    def test_admin_edit_a2a_agent_non_owner_returns_403(
+        self,
+        mock_update_agent: AsyncMock,
+        test_db_and_client,
+        monkeypatch,
+    ):
+        """Test that non-owner receives HTTP 403 from the admin edit endpoint.
+
+        POST /admin/a2a/{agent_id}/edit is the endpoint this PR actually changes.
+        The REST PUT /a2a/{id} already enforced ownership; this is the regression
+        test that proves admin_edit_a2a_agent does too.
+        """
+        import mcpgateway.main as main_mod
+        from mcpgateway.config import settings
+
+        TestSessionLocal, _ = test_db_and_client
+
+        # AdminAuthMiddleware validates /admin/* routes against the DB when
+        # auth_required=True; disable it so the test can reach the endpoint.
+        monkeypatch.setattr(settings, "auth_required", False, raising=False)
+
+        # Mount admin routes if not already present (off by default:
+        # mcpgateway_admin_api_enabled=False in config.py).
+        admin_routes = [
+            r for r in app.routes
+            if getattr(r, "path", "").startswith("/admin/")
+            and not getattr(r, "path", "").startswith("/admin/well-known")
+        ]
+        if not admin_routes:
+            from mcpgateway.admin import (  # pylint: disable=import-outside-toplevel
+                admin_router as _admin_router,
+                set_logging_service,
+            )
+            set_logging_service(main_mod.logging_service)
+            app.include_router(_admin_router)
+            # validate_section_permissions is intentionally skipped here:
+            # patch_rbac_decorators() has already replaced require_permission with
+            # a mock that does not set the _required_permission attribute, so
+            # validate_section_permissions would always report mismatches in this
+            # test context. It's a startup consistency check, not a runtime guard.
+
+        # Service raises PermissionError — the ownership check inside update_agent.
+        mock_update_agent.side_effect = PermissionError("Only the owner can update this agent")
+
+        mock_user = MagicMock()
+        mock_user.email = "user-b@example.com"
+
+        app.dependency_overrides[require_auth] = lambda: "user-b@example.com"
+        app.dependency_overrides[get_current_user] = lambda: mock_user
+        app.dependency_overrides[get_current_user_with_permissions] = create_user_context(
+            "user-b@example.com", TestSessionLocal=TestSessionLocal
+        )
+        client = TestClient(app)
+
+        # POST to the admin edit endpoint — not the REST PUT /a2a/{id}.
+        # No jwt_token cookie → CSRF enforcement is skipped (enforce_admin_csrf
+        # returns early when there is no session cookie).
+        response = client.post(
+            "/admin/a2a/agent-123/edit",
+            data={"name": "updated-agent", "endpoint_url": "http://agent.example.com"},
+            headers={"Authorization": "Bearer test-token"},
+        )
+
+        assert response.status_code == 403
+        assert "Only the owner can update this agent" in response.json()["message"]
+
+        app.dependency_overrides.clear()
+
 
 # ============================================================================
 # Tests for team_id fallback from user_context (Issue #2183)

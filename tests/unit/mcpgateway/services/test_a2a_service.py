@@ -506,6 +506,21 @@ class TestA2AAgentService:
             with pytest.raises(A2AAgentNotFoundError):
                 await service.update_agent(mock_db, "non-existent-id", update_data)
 
+    async def test_update_agent_owner_email_not_overwritten(self, service, mock_db, sample_db_agent):
+        """owner_email submitted in an update payload must be silently ignored."""
+        sample_db_agent.version = 1
+        sample_db_agent.owner_email = "original@example.com"
+
+        with patch("mcpgateway.services.a2a_service.get_for_update", return_value=sample_db_agent):
+            mock_db.commit = MagicMock()
+            mock_db.refresh = MagicMock()
+
+            with patch.object(service, "convert_agent_to_read", return_value=MagicMock()):
+                update_data = A2AAgentUpdate.model_construct(owner_email="attacker@example.com")
+                await service.update_agent(mock_db, sample_db_agent.id, update_data)
+
+        assert sample_db_agent.owner_email == "original@example.com"
+
     async def test_set_agent_state_success(self, service, mock_db, sample_db_agent):
         """Test successful agent state change."""
         # Mock database query
@@ -1217,12 +1232,23 @@ class TestA2AAgentService:
 
     async def test_update_agent_permission_denied(self, service, mock_db, sample_db_agent):
         """Test update denied when user is not owner."""
+        sample_db_agent.owner_email = "owner@example.com"
         with patch("mcpgateway.services.a2a_service.get_for_update", return_value=sample_db_agent):
             with patch("mcpgateway.services.permission_service.PermissionService") as perm_cls:
                 perm = perm_cls.return_value
                 perm.check_resource_ownership = AsyncMock(return_value=False)
                 with pytest.raises(PermissionError):
                     await service.update_agent(mock_db, sample_db_agent.id, A2AAgentUpdate(description="x"), user_email="user@example.com")
+
+    async def test_update_agent_null_owner_non_owner_denied(self, service, mock_db, sample_db_agent):
+        """NULL-owner agent must not bypass ownership check for non-owner callers."""
+        sample_db_agent.owner_email = None
+        with patch("mcpgateway.services.a2a_service.get_for_update", return_value=sample_db_agent):
+            with patch("mcpgateway.services.permission_service.PermissionService") as perm_cls:
+                perm = perm_cls.return_value
+                perm.check_resource_ownership = AsyncMock(return_value=False)
+                with pytest.raises(PermissionError):
+                    await service.update_agent(mock_db, sample_db_agent.id, A2AAgentUpdate(description="x"), user_email="attacker@example.com")
 
     async def test_update_agent_permission_allowed(self, service, mock_db, sample_db_agent, monkeypatch):
         """Owner passes PermissionService check and update proceeds."""

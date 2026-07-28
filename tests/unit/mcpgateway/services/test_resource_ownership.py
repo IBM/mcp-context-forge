@@ -421,6 +421,33 @@ class TestUpdateOperationsOwnership:
             with pytest.raises(PermissionError, match="Only the owner can update this gateway"):
                 await gateway_service.update_gateway(mock_db_session, "gateway-1", gateway_update, user_email="other@example.com")
 
+    @pytest.fixture
+    def a2a_service(self):
+        """Create A2A service instance."""
+        return A2AAgentService()
+
+    @pytest.mark.asyncio
+    async def test_update_a2a_agent_non_owner_denied(self, a2a_service, mock_db_session):
+        """Test non-owner cannot update A2A agent."""
+        from mcpgateway.schemas import A2AAgentUpdate
+
+        mock_agent = MagicMock(spec=A2AAgent)
+        mock_agent.id = "agent-1"
+        mock_agent.owner_email = "owner@example.com"
+
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = mock_agent
+        mock_db_session.execute.return_value = mock_result
+
+        agent_update = A2AAgentUpdate(name="updated-name")
+
+        with patch("mcpgateway.services.permission_service.PermissionService") as mock_perm_service_class:
+            mock_perm_service = mock_perm_service_class.return_value
+            mock_perm_service.check_resource_ownership = AsyncMock(return_value=False)
+
+            with pytest.raises(PermissionError, match="Only the owner can update this agent"):
+                await a2a_service.update_agent(mock_db_session, "agent-1", agent_update, user_email="other@example.com")
+
 
 class TestTeamAdminSpecialCase:
     """Test team admin can delete team members' resources."""
