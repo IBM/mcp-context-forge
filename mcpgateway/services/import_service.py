@@ -33,6 +33,7 @@ from mcpgateway.schemas import AuthenticationValues, GatewayCreate, GatewayUpdat
 from mcpgateway.services.gateway_service import GatewayNameConflictError
 from mcpgateway.services.prompt_service import PromptNameConflictError
 from mcpgateway.services.resource_service import ResourceURIConflictError
+from mcpgateway.services.root_service import RootServiceValidationError
 from mcpgateway.services.server_service import ServerNameConflictError
 from mcpgateway.services.tool_service import ToolNameConflictError
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
@@ -268,6 +269,11 @@ class ImportService:
 
                 # Check required fields based on entity type
                 self._validate_entity_fields(entity_type, entity, i)
+                if entity_type == "roots":
+                    try:
+                        self.root_service.validate_root_input(entity["uri"], entity.get("name"))
+                    except RootServiceValidationError as exc:
+                        raise ImportValidationError(f"Entity {i} in 'roots' failed root URI policy: {exc.reason_code}") from exc
 
         logger.debug("Import data validation passed")
 
@@ -1160,15 +1166,19 @@ class ImportService:
             ImportConflictError: If conflict cannot be resolved
         """
         root_uri = root_data["uri"]
+        try:
+            root_uri, root_name = self.root_service.validate_root_input(root_uri, root_data.get("name"))
+        except RootServiceValidationError as exc:
+            raise ImportValidationError(f"Root failed root URI policy: {exc.reason_code}") from exc
 
         if dry_run:
-            status.warnings.append(f"Would import root: {root_uri}")
+            status.warnings.append("Would import root")
             return
 
         try:
-            await self.root_service.add_root(root_uri, root_data.get("name"))
+            await self.root_service.add_root(root_uri, root_name)
             status.created_entities += 1
-            logger.debug("Created root: %s", root_uri)
+            logger.debug("Created root")
 
         except Exception as e:
             if conflict_strategy == ConflictStrategy.SKIP:

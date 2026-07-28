@@ -8,6 +8,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- **Root URI policy now defaults to deny** (GHSA-x39c-q2jx-f325) - Before `helm upgrade`, add matching root policy to `mcpContextForge.config`: set `ROOT_ALLOWED_SCHEMES` for network `DEFAULT_ROOTS`, or set both `ROOT_ALLOW_FILE_SCHEME: "true"` and `ROOT_ALLOWED_FILE_PREFIXES` for `file://` roots. Invalid `DEFAULT_ROOTS` abort gateway startup.
+- **Scoped backup exports must exclude roots** - Unfiltered exports include roots and require unrestricted platform-admin credentials. Configure scoped backup jobs with an explicit roots exclusion, or use unrestricted platform-admin credentials.
+
 ### Changed
 
 #### **🔐 Production-Hardened Default Values** ([#3550](https://github.com/IBM/mcp-context-forge/pull/3550))

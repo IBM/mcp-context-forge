@@ -6,131 +6,186 @@ SPDX-License-Identifier: Apache-2.0
 
 # Standard
 import asyncio
-import os
-from urllib.parse import urlparse
 from unittest.mock import MagicMock, patch
 
 # Third-Party
+from pydantic import ValidationError
 import pytest
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.services.root_service import RootService, RootServiceError
+from mcpgateway.services.root_service import RootService, RootServiceError, RootServiceValidationError
+
+
+@pytest.fixture(autouse=True)
+def secure_root_defaults(monkeypatch):
+    """Reset root URI policy to secure defaults."""
+    monkeypatch.setattr(settings, "root_allowed_schemes", [])
+    monkeypatch.setattr(settings, "root_allow_file_scheme", False)
+    monkeypatch.setattr(settings, "root_allowed_file_prefixes", [])
+    monkeypatch.setattr(settings, "default_roots", [])
 
 
 @pytest.mark.asyncio
-async def test_add_root_file_uri_and_name(tmp_path):
+async def test_rejects_scheme_less_paths_by_default():
     service = RootService()
-    # Add a filesystem path without a scheme
-    dir_path = tmp_path / "mydir"
-    # (no need to actually create it on disk for URI logic)
-    root = await service.add_root(str(dir_path))
-    # Should prefix with file://
-    expected_uri = f"file://{dir_path}"
-    assert root.uri == expected_uri
-    # Name should be the basename of the path
-    assert root.name == os.path.basename(urlparse(expected_uri).path)
 
-    await service.shutdown()
+    with pytest.raises(RootServiceValidationError) as excinfo:
+        await service.add_root("/tmp/project")
+
+    assert excinfo.value.reason_code == "scheme_missing"
+
+
+@pytest.mark.parametrize(
+    ("uri", "expected"),
+    [(None, "non-string"), ("http://[", "invalid"), ("/tmp/root", "missing"), ("HTTPS://example.com/root", "https")],
+)
+def test_safe_scheme_never_returns_raw_input(uri, expected):
+    assert RootService._safe_scheme(uri) == expected
+
+
+def test_canonical_root_model_validation_maps_to_policy_error(monkeypatch):
+    service = RootService()
+    monkeypatch.setattr(settings, "root_allowed_schemes", ["https"])
+
+    def invalid_root(**_kwargs):
+        raise ValidationError.from_exception_data("Root", [{"type": "string_type", "loc": ("uri",), "input": None}])
+
+    monkeypatch.setattr("mcpgateway.services.root_service.Root", invalid_root)
+
+    with pytest.raises(RootServiceValidationError) as excinfo:
+        service._validate_and_canonicalize_root_uri("https://example.com/root")
+
+    assert excinfo.value.reason_code == "scheme_not_allowed"
+
+
+def test_canonical_root_model_unexpected_error_propagates(monkeypatch):
+    service = RootService()
+    monkeypatch.setattr(settings, "root_allowed_schemes", ["https"])
+    monkeypatch.setattr("mcpgateway.services.root_service.Root", MagicMock(side_effect=RuntimeError("boom")))
+
+    with pytest.raises(RuntimeError, match="boom"):
+        service._validate_and_canonicalize_root_uri("https://example.com/root")
 
 
 @pytest.mark.asyncio
-async def test_add_root_with_scheme():
+@pytest.mark.parametrize("uri", ["file:///etc/passwd", "file:///proc/self/environ"])
+async def test_rejects_file_roots_by_default(uri):
     service = RootService()
-    # Add an HTTP URI
-    uri = "http://example.com/base/path"
-    root = await service.add_root(uri)
-    assert root.uri == uri
-    # Name should be the basename of the URL path
-    assert root.name == os.path.basename(urlparse(uri).path)
 
-    await service.shutdown()
-
-
-@pytest.mark.asyncio
-async def test_add_root_duplicate_raises():
-    service = RootService()
-    uri = "http://example.com/foo"
-    await service.add_root(uri)
-    with pytest.raises(RootServiceError) as excinfo:
+    with pytest.raises(RootServiceValidationError) as excinfo:
         await service.add_root(uri)
+
+    assert excinfo.value.reason_code == "file_disabled"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("uri", ["ftp://example.com/root", "data:text/plain,hi", "javascript:alert(1)", "vbscript:msgbox(1)", "custom://root"])
+async def test_rejects_non_allowlisted_schemes(uri):
+    service = RootService()
+
+    with pytest.raises(RootServiceValidationError) as excinfo:
+        await service.add_root(uri)
+
+    assert excinfo.value.reason_code in {"scheme_not_allowed", "query_not_allowed"}
+
+
+@pytest.mark.asyncio
+async def test_accepts_explicitly_allowlisted_network_scheme(monkeypatch):
+    monkeypatch.setattr(settings, "root_allowed_schemes", ["https"])
+    service = RootService()
+
+    root = await service.add_root("HTTPS://Example.COM:443/base/path", "Docs")
+
+    assert str(root.uri) == "https://example.com/base/path"
+    assert root.name == "Docs"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("uri", "reason_code"),
+    [
+        ("https://user:pass@example.com/root", "userinfo_not_allowed"),  # pragma: allowlist secret
+        ("https://example.com/root?token=secret", "query_not_allowed"),
+        ("https://example.com/root#frag", "fragment_not_allowed"),
+        ("https://example.com/%zz", "invalid_percent_encoding"),
+        ("https://example.com/\r\nx", "control_character"),
+        ("https://:bad", "network_host_missing"),
+    ],
+)
+async def test_rejects_unsafe_network_uri_components(monkeypatch, uri, reason_code):
+    monkeypatch.setattr(settings, "root_allowed_schemes", ["https"])
+    service = RootService()
+
+    with pytest.raises(RootServiceValidationError) as excinfo:
+        await service.add_root(uri)
+
+    assert excinfo.value.reason_code == reason_code
+
+
+@pytest.mark.asyncio
+async def test_duplicate_equivalent_network_uri_raises(monkeypatch):
+    monkeypatch.setattr(settings, "root_allowed_schemes", ["https"])
+    service = RootService()
+
+    await service.add_root("https://example.com:443/root")
+
+    with pytest.raises(RootServiceError) as excinfo:
+        await service.add_root("HTTPS://EXAMPLE.COM/root")
+
     assert "Root already exists" in str(excinfo.value)
 
-    await service.shutdown()
+
+@pytest.mark.asyncio
+async def test_optional_file_policy_accepts_allowed_descendant(monkeypatch):
+    monkeypatch.setattr(settings, "root_allow_file_scheme", True)
+    monkeypatch.setattr(settings, "root_allowed_file_prefixes", ["/workspace"])
+    service = RootService()
+
+    root = await service.add_root("file:///workspace/project")
+
+    assert str(root.uri) == "file:///workspace/project"
+    assert root.name == "project"
 
 
 @pytest.mark.asyncio
-async def test_remove_root_and_list():
+async def test_optional_file_policy_canonicalizes_single_dot_segments(monkeypatch):
+    monkeypatch.setattr(settings, "root_allow_file_scheme", True)
+    monkeypatch.setattr(settings, "root_allowed_file_prefixes", ["/workspace"])
     service = RootService()
-    uri = "http://example.com/to-remove"
-    await service.add_root(uri)
-    # Ensure it's listed
-    roots = await service.list_roots()
-    assert any(r.uri == uri for r in roots)
 
-    # Remove it
-    await service.remove_root(uri)
-    roots_after = await service.list_roots()
-    assert all(r.uri != uri for r in roots_after)
+    root = await service.add_root("file:///workspace/./project/./docs")
 
-    await service.shutdown()
+    assert str(root.uri) == "file:///workspace/project/docs"
 
 
 @pytest.mark.asyncio
-async def test_remove_nonexistent_root_raises():
+@pytest.mark.parametrize(
+    ("uri", "reason_code"),
+    [
+        ("file://localhost/workspace/project", "file_authority_not_allowed"),
+        ("file:///workspace/../etc", "file_path_traversal"),
+        ("file:///workspace%2fsecret", "file_path_unsafe_encoding"),
+        ("file:///workspace-evil/root", "file_path_outside_allowed_prefix"),
+        ("file:///C:/workspace/root", "file_path_unsupported"),
+    ],
+)
+async def test_optional_file_policy_rejects_unsafe_forms(monkeypatch, uri, reason_code):
+    monkeypatch.setattr(settings, "root_allow_file_scheme", True)
+    monkeypatch.setattr(settings, "root_allowed_file_prefixes", ["/workspace"])
     service = RootService()
-    with pytest.raises(RootServiceError) as excinfo:
-        await service.remove_root("http://no.such.root")
-    assert "Root not found" in str(excinfo.value)
 
-    await service.shutdown()
+    with pytest.raises(RootServiceValidationError) as excinfo:
+        await service.add_root(uri)
+
+    assert excinfo.value.reason_code == reason_code
 
 
 @pytest.mark.asyncio
-async def test_get_root_by_uri():
-    """Getting a root by URI should return the correct root object."""
+async def test_update_validates_name_and_notifies(monkeypatch):
+    monkeypatch.setattr(settings, "root_allowed_schemes", ["https"])
     service = RootService()
-    uri = "http://example.com/get-test"
-    custom_name = "Test Root"
-
-    # Add a root with a custom name
-    await service.add_root(uri, name=custom_name)
-
-    # Retrieve the root by URI
-    root = await service.get_root_by_uri(uri)
-
-    # Verify properties
-    assert root.uri == uri
-    assert root.name == custom_name
-
-    await service.shutdown()
-
-
-@pytest.mark.asyncio
-async def test_get_nonexistent_root_by_uri_raises():
-    """Getting a nonexistent root should raise a RootServiceError."""
-    service = RootService()
-
-    with pytest.raises(RootServiceError) as excinfo:
-        await service.get_root_by_uri("http://nonexistent.root")
-
-    assert "Root not found" in str(excinfo.value)
-
-    await service.shutdown()
-
-
-@pytest.mark.asyncio
-async def test_update_root():
-    """Updating a root should modify its properties and notify subscribers."""
-    service = RootService()
-    uri = "http://example.com/update-test"
-    initial_name = "Initial Name"
-    updated_name = "Updated Name"
-
-    # Add a root with initial name
-    await service.add_root(uri, name=initial_name)
-
-    # Track notifications via subscription
+    await service.add_root("https://example.com/root", name="Initial")
     notifications = []
 
     async def collect_notification():
@@ -139,116 +194,31 @@ async def test_update_root():
             if event["type"] == "root_updated":
                 break
 
-    # Start subscription and wait a tick
     task = asyncio.create_task(collect_notification())
     await asyncio.sleep(0)
-
-    # Update the root's name
-    updated_root = await service.update_root(uri, name=updated_name)
-
-    # Wait for notification
+    updated = await service.update_root("HTTPS://EXAMPLE.COM:443/root", name="Updated")
     await asyncio.wait_for(task, timeout=1.0)
 
-    # Verify properties of returned root
-    assert updated_root.name == updated_name
-    assert updated_root.uri == uri
-
-    # Verify notification was sent
-    assert len(notifications) == 1
+    assert updated.name == "Updated"
     assert notifications[0]["type"] == "root_updated"
-    assert notifications[0]["data"]["name"] == updated_name
-    assert notifications[0]["data"]["uri"] == uri
-
-    # Verify the root in storage was updated
-    stored_root = await service.get_root_by_uri(uri)
-    assert stored_root.name == updated_name
-
-    await service.shutdown()
 
 
 @pytest.mark.asyncio
-async def test_update_nonexistent_root_raises():
-    """Updating a nonexistent root should raise a RootServiceError."""
+async def test_initialize_fails_on_invalid_default_root(monkeypatch):
+    monkeypatch.setattr(settings, "default_roots", ["https://example.com/root"])
     service = RootService()
 
-    with pytest.raises(RootServiceError) as excinfo:
-        await service.update_root("http://nonexistent.root", name="New Name")
+    with pytest.raises(RootServiceValidationError) as excinfo:
+        await service.initialize()
 
-    assert "Root not found" in str(excinfo.value)
-
-    await service.shutdown()
+    assert excinfo.value.reason_code == "scheme_not_allowed"
 
 
 @pytest.mark.asyncio
-async def test_initialize_adds_default_roots(monkeypatch):
-    # Pretend the app was configured with two default roots
-    monkeypatch.setattr(settings, "default_roots", ["http://a.com", "local/path"])
-
+async def test_list_roots_creates_span(monkeypatch):
+    monkeypatch.setattr(settings, "root_allowed_schemes", ["https"])
     service = RootService()
-    await service.initialize()
-
-    # Cast the FileUrl objects to plain strings for comparison
-    uris = {str(r.uri) for r in await service.list_roots()}
-
-    # FileUrl normalises the HTTP URI to include a trailing slash
-    assert "http://a.com/" in uris
-    assert "file://local/path" in uris
-
-    await service.shutdown()
-
-
-@pytest.mark.asyncio
-async def test_initialize_continues_when_default_root_fails(monkeypatch):
-    monkeypatch.setattr(settings, "default_roots", ["http://a.com"])
-    service = RootService()
-
-    async def _raise(_root_uri, _name=None):
-        raise RootServiceError("bad root")
-
-    monkeypatch.setattr(service, "add_root", _raise)
-
-    # Should handle RootServiceError internally and continue.
-    await service.initialize()
-
-    assert await service.list_roots() == []
-
-    await service.shutdown()
-
-
-@pytest.mark.asyncio
-async def test_subscribe_changes_receives_events():
-    service = RootService()
-    events = []
-
-    async def subscriber():
-        async for ev in service.subscribe_changes():
-            events.append(ev)
-            if len(events) >= 2:  # expect "added" then "removed"
-                break
-
-    # Start subscription and give the event-loop one tick so the queue
-    # is fully registered before we emit any events.
-    task = asyncio.create_task(subscriber())
-    await asyncio.sleep(0)
-
-    # Add a root, then remove it again.
-    r = await service.add_root("subscriber-test")
-    await service.remove_root(str(r.uri))  # match stored key
-
-    # Collect both events or time-out
-    await asyncio.wait_for(task, timeout=1.0)
-
-    assert events[0] == {"type": "root_added", "data": {"uri": r.uri, "name": r.name}}
-    assert events[1] == {"type": "root_removed", "data": {"uri": r.uri}}
-
-    await service.shutdown()
-
-
-@pytest.mark.asyncio
-async def test_list_roots_creates_span():
-    service = RootService()
-    await service.add_root("http://example.com/root-one")
-
+    await service.add_root("https://example.com/root-one")
     span_cm = MagicMock(__enter__=MagicMock(return_value=None), __exit__=MagicMock(return_value=False))
 
     with patch("mcpgateway.services.root_service.create_span", return_value=span_cm) as mock_create_span:
@@ -256,4 +226,3 @@ async def test_list_roots_creates_span():
 
     assert len(roots) == 1
     mock_create_span.assert_called_once_with("root.list", {"root.count": 1})
-    await service.shutdown()

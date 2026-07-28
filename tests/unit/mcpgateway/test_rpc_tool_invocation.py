@@ -187,16 +187,17 @@ class TestRPCToolInvocation:
                         with patch("mcpgateway.main.prompt_service.list_prompts", new_callable=AsyncMock, return_value=([], None)):
                             with patch("mcpgateway.main.gateway_service.list_gateways", new_callable=AsyncMock, return_value=([], None)):
                                 with patch("mcpgateway.main.root_service.list_roots", new_callable=AsyncMock, return_value=[]):
-                                    request_body = {"jsonrpc": "2.0", "method": method, "params": {}, "id": 100}
+                                    with patch("mcpgateway.main.is_unrestricted_platform_admin", new_callable=AsyncMock, return_value=True):
+                                        request_body = {"jsonrpc": "2.0", "method": method, "params": {}, "id": 100}
 
-                                    response = client.post("/rpc", json=request_body)
+                                        response = client.post("/rpc", json=request_body)
 
-                                    assert response.status_code == 200
-                                    result = response.json()
-                                    assert result["jsonrpc"] == "2.0"
-                                    assert "result" in result
-                                    assert expected_result_key in result["result"]
-                                    assert isinstance(result["result"][expected_result_key], list)
+                                        assert response.status_code == 200
+                                        result = response.json()
+                                        assert result["jsonrpc"] == "2.0"
+                                        assert "result" in result
+                                        assert expected_result_key in result["result"]
+                                        assert isinstance(result["result"][expected_result_key], list)
 
     def test_unknown_method_returns_error(self, client, mock_db):
         """Test that unknown methods return an appropriate error."""

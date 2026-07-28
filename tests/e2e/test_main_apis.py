@@ -1518,14 +1518,18 @@ class TestRootAPIs:
 
     """Test root management endpoints."""
 
-    async def test_list_roots_empty(self, client: AsyncClient, mock_auth):
+    async def test_list_roots_empty(self, client: AsyncClient, mock_auth, monkeypatch):
         """Test GET /roots returns empty list initially."""
+        monkeypatch.setattr("mcpgateway.main.is_unrestricted_platform_admin", AsyncMock(return_value=True))
         response = await client.get("/roots", headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
         assert response.json() == []
 
-    async def test_add_root(self, client: AsyncClient, mock_auth):
+    async def test_add_root(self, client: AsyncClient, mock_auth, monkeypatch):
         """Test POST /roots - add filesystem root."""
+        monkeypatch.setattr("mcpgateway.main.is_unrestricted_platform_admin", AsyncMock(return_value=True))
+        monkeypatch.setattr(settings, "root_allow_file_scheme", True, raising=False)
+        monkeypatch.setattr(settings, "root_allowed_file_prefixes", ["/test"], raising=False)
         root_data = {"uri": "file:///test/path", "name": "Test Root"}
 
         response = await client.post("/roots", json=root_data, headers=TEST_AUTH_HEADER)
@@ -1535,8 +1539,11 @@ class TestRootAPIs:
         assert result["uri"] == root_data["uri"]
         assert result["name"] == root_data["name"]
 
-    async def test_list_roots_after_add(self, client: AsyncClient, mock_auth):
+    async def test_list_roots_after_add(self, client: AsyncClient, mock_auth, monkeypatch):
         """Test GET /roots after adding roots."""
+        monkeypatch.setattr("mcpgateway.main.is_unrestricted_platform_admin", AsyncMock(return_value=True))
+        monkeypatch.setattr(settings, "root_allow_file_scheme", True, raising=False)
+        monkeypatch.setattr(settings, "root_allowed_file_prefixes", ["/path1", "/path2"], raising=False)
         # Add multiple roots
         roots = [{"uri": "file:///path1", "name": "Root 1"}, {"uri": "file:///path2", "name": "Root 2"}]
 
@@ -1549,8 +1556,11 @@ class TestRootAPIs:
         result = response.json()
         assert len(result) >= 2
 
-    async def test_remove_root(self, client: AsyncClient, mock_auth):
+    async def test_remove_root(self, client: AsyncClient, mock_auth, monkeypatch):
         """Test DELETE /roots/{uri:path}."""
+        monkeypatch.setattr("mcpgateway.main.is_unrestricted_platform_admin", AsyncMock(return_value=True))
+        monkeypatch.setattr(settings, "root_allow_file_scheme", True, raising=False)
+        monkeypatch.setattr(settings, "root_allowed_file_prefixes", ["/test"], raising=False)
         # Add a root
         root_data = {"uri": "file:///test/delete", "name": "To Delete"}
 

@@ -11,8 +11,13 @@ It handles root registration, validation, and change notifications.
 # Standard
 import asyncio
 import os
+from pathlib import PurePosixPath
+import re
 from typing import AsyncGenerator, Dict, List, Optional
-from urllib.parse import urlparse
+from urllib.parse import quote, unquote_to_bytes, urlsplit, urlunsplit
+
+# Third-Party
+from pydantic import ValidationError
 
 # First-Party
 from mcpgateway.common.models import Root
@@ -24,9 +29,25 @@ from mcpgateway.services.logging_service import LoggingService
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
 
+ROOT_MAX_URI_LENGTH = 2048
+ROOT_MAX_NAME_LENGTH = 255
+_NETWORK_SCHEMES = {"http", "https", "ws", "wss"}
+_DEFAULT_PORTS = {"http": 80, "https": 443, "ws": 80, "wss": 443}
+_PERCENT_PATTERN = re.compile(r"%(?![0-9A-Fa-f]{2})")
+_ENCODED_SEPARATOR_PATTERN = re.compile(r"%(?:2f|5c)", re.IGNORECASE)
+
 
 class RootServiceError(Exception):
     """Base class for root service errors."""
+
+
+class RootServiceValidationError(RootServiceError):
+    """Raised when root input violates root URI policy."""
+
+    def __init__(self, reason_code: str, message: str = "Root URI rejected by policy") -> None:
+        """Initialize validation error with a stable reason code."""
+        self.reason_code = reason_code
+        super().__init__(message)
 
 
 class RootServiceNotFoundError(RootServiceError):
@@ -68,9 +89,10 @@ class RootService:
             Test with default roots configured:
             >>> from unittest.mock import patch
             >>> service = RootService()
-            >>> with patch('mcpgateway.config.settings.default_roots', ['file:///tmp', 'http://example.com']):
-            ...     asyncio.run(service.initialize())
-            >>> len(service._roots)
+            >>> with patch('mcpgateway.config.settings.root_allowed_schemes', ['https']):
+            ...     with patch('mcpgateway.config.settings.default_roots', ['https://example.com/tmp', 'https://example.com/home']):
+            ...         asyncio.run(service.initialize())
+            ...         len(service._roots)
             2
         """
         logger.info("Initializing root service")
@@ -78,8 +100,12 @@ class RootService:
         for root_uri in settings.default_roots:
             try:
                 await self.add_root(root_uri)
+            except RootServiceValidationError as e:
+                logger.error("Rejected configured default root: scheme=%s reason=%s", self._safe_scheme(root_uri), e.reason_code)
+                raise
             except RootServiceError as e:
-                logger.error("Failed to add default root %s: %s", root_uri, e)
+                logger.error("Failed to add configured default root: scheme=%s error=%s", self._safe_scheme(root_uri), type(e).__name__)
+                raise
 
     async def shutdown(self) -> None:
         """Shutdown root service.
@@ -91,14 +117,14 @@ class RootService:
             >>> asyncio.run(service.shutdown())
 
             Test cleanup of roots and subscribers:
-            >>> service = RootService()
-            >>> _ = asyncio.run(service.add_root('file:///tmp'))
-            >>> service._subscribers.append(asyncio.Queue())
-            >>> asyncio.run(service.shutdown())
-            >>> len(service._roots)
-            0
-            >>> len(service._subscribers)
-            0
+            >>> from unittest.mock import patch
+            >>> with patch('mcpgateway.config.settings.root_allowed_schemes', ['https']):
+            ...     service = RootService()
+            ...     _ = asyncio.run(service.add_root('https://example.com/tmp'))
+            ...     service._subscribers.append(asyncio.Queue())
+            ...     asyncio.run(service.shutdown())
+            ...     (len(service._roots), len(service._subscribers))
+            (0, 0)
         """
         logger.info("Shutting down root service")
         # Clear all roots and subscribers
@@ -119,14 +145,14 @@ class RootService:
             []
 
             Test with multiple roots:
-            >>> service = RootService()
-            >>> _ = asyncio.run(service.add_root('file:///tmp'))
-            >>> _ = asyncio.run(service.add_root('file:///home'))
-            >>> roots = asyncio.run(service.list_roots())
-            >>> len(roots)
-            2
-            >>> sorted([str(r.uri) for r in roots])
-            ['file:///home', 'file:///tmp']
+            >>> from unittest.mock import patch
+            >>> with patch('mcpgateway.config.settings.root_allowed_schemes', ['https']):
+            ...     service = RootService()
+            ...     _ = asyncio.run(service.add_root('https://example.com/tmp'))
+            ...     _ = asyncio.run(service.add_root('https://example.com/home'))
+            ...     roots = asyncio.run(service.list_roots())
+            ...     sorted([str(r.uri) for r in roots])
+            ['https://example.com/home', 'https://example.com/tmp']
         """
         with create_span("root.list", {"root.count": len(self._roots)}):
             return list(self._roots.values())
@@ -147,45 +173,44 @@ class RootService:
         Examples:
             >>> from mcpgateway.services.root_service import RootService
             >>> import asyncio
-            >>> service = RootService()
-            >>> root = asyncio.run(service.add_root('file:///tmp'))
-            >>> root.uri == 'file:///tmp'
-            True
+            >>> from unittest.mock import patch
+            >>> with patch('mcpgateway.config.settings.root_allowed_schemes', ['https']):
+            ...     service = RootService()
+            ...     root = asyncio.run(service.add_root('https://example.com/tmp'))
+            ...     str(root.uri)
+            'https://example.com/tmp'
 
             Test with custom name:
-            >>> service = RootService()
-            >>> root = asyncio.run(service.add_root('file:///home/user', 'MyHome'))
-            >>> root.name
+            >>> with patch('mcpgateway.config.settings.root_allowed_schemes', ['https']):
+            ...     service = RootService()
+            ...     root = asyncio.run(service.add_root('https://example.com/home/user', 'MyHome'))
+            ...     root.name
             'MyHome'
 
             Test duplicate root error:
-            >>> service = RootService()
-            >>> _ = asyncio.run(service.add_root('file:///tmp'))
-            >>> try:
-            ...     asyncio.run(service.add_root('file:///tmp'))
-            ... except RootServiceError as e:
-            ...     str(e)
-            'Root already exists: file:///tmp'
-
-            Test invalid URI error:
-            >>> from unittest.mock import patch
-            >>> service = RootService()
-            >>> with patch.object(service, '_make_root_uri', side_effect=ValueError('Bad URI')):
+            >>> with patch('mcpgateway.config.settings.root_allowed_schemes', ['https']):
+            ...     service = RootService()
+            ...     _ = asyncio.run(service.add_root('https://example.com/tmp'))
             ...     try:
-            ...         asyncio.run(service.add_root('bad_uri'))
+            ...         asyncio.run(service.add_root('https://example.com/tmp'))
             ...     except RootServiceError as e:
             ...         str(e)
-            'Invalid root URI: Bad URI'
-        """
-        try:
-            root_uri = self._make_root_uri(uri)
-        except ValueError as e:
-            raise RootServiceError(f"Invalid root URI: {e}")
+            'Root already exists: https://example.com/tmp'
 
-        # Skip any access check; just store the key/value.
+            Test default-deny file policy:
+            >>> from mcpgateway.services.root_service import RootServiceValidationError
+            >>> service = RootService()
+            >>> try:
+            ...     asyncio.run(service.add_root('file:///tmp'))
+            ... except RootServiceValidationError as exc:
+            ...     exc.reason_code
+            'file_disabled'
+        """
+        root_uri, root_name = self.validate_root_input(uri, name)
+
         root_obj = Root(
             uri=root_uri,
-            name=name or os.path.basename(urlparse(root_uri).path) or root_uri,
+            name=root_name or os.path.basename(urlsplit(root_uri).path) or root_uri,
         )
 
         # NORMALIZED URI from the Root object as the dictionary key
@@ -215,22 +240,25 @@ class RootService:
         Examples:
             >>> from mcpgateway.services.root_service import RootService
             >>> import asyncio
-            >>> service = RootService()
-            >>> _ = asyncio.run(service.add_root('file:///tmp'))
-            >>> root = asyncio.run(service.get_root_by_uri('file:///tmp'))
-            >>> root.uri == 'file:///tmp'
-            True
+            >>> from unittest.mock import patch
+            >>> with patch('mcpgateway.config.settings.root_allowed_schemes', ['https']):
+            ...     service = RootService()
+            ...     _ = asyncio.run(service.add_root('https://example.com/tmp'))
+            ...     root = asyncio.run(service.get_root_by_uri('https://example.com/tmp'))
+            ...     str(root.uri)
+            'https://example.com/tmp'
 
             Test root not found error:
-            >>> service = RootService()
-            >>> try:
-            ...     asyncio.run(service.get_root_by_uri('file:///nonexistent'))
-            ... except RootServiceError as e:
-            ...     str(e)
-            'Root not found: file:///nonexistent'
+            >>> with patch('mcpgateway.config.settings.root_allowed_schemes', ['https']):
+            ...     service = RootService()
+            ...     try:
+            ...         asyncio.run(service.get_root_by_uri('https://example.com/nonexistent'))
+            ...     except RootServiceError as e:
+            ...         str(e)
+            'Root not found: https://example.com/nonexistent'
         """
-        # Normalize the URI to match how it was stored
-        normalized_uri = self._make_root_uri(root_uri)
+        # Normalize the URI to match how it was stored.
+        normalized_uri = self._validate_and_canonicalize_root_uri(root_uri)
         if normalized_uri not in self._roots:
             raise RootServiceNotFoundError(f"Root not found: {root_uri}")
         return self._roots[normalized_uri]
@@ -251,22 +279,25 @@ class RootService:
         Examples:
             >>> from mcpgateway.services.root_service import RootService
             >>> import asyncio
-            >>> service = RootService()
-            >>> _ = asyncio.run(service.add_root('file:///tmp', 'Temp'))
-            >>> updated = asyncio.run(service.update_root('file:///tmp', 'Updated Temp'))
-            >>> updated.name
+            >>> from unittest.mock import patch
+            >>> with patch('mcpgateway.config.settings.root_allowed_schemes', ['https']):
+            ...     service = RootService()
+            ...     _ = asyncio.run(service.add_root('https://example.com/tmp', 'Temp'))
+            ...     updated = asyncio.run(service.update_root('https://example.com/tmp', 'Updated Temp'))
+            ...     updated.name
             'Updated Temp'
 
             Test root not found error:
-            >>> service = RootService()
-            >>> try:
-            ...     asyncio.run(service.update_root('file:///nonexistent', 'New Name'))
-            ... except RootServiceError as e:
-            ...     str(e)
-            'Root not found: file:///nonexistent'
+            >>> with patch('mcpgateway.config.settings.root_allowed_schemes', ['https']):
+            ...     service = RootService()
+            ...     try:
+            ...         asyncio.run(service.update_root('https://example.com/nonexistent', 'New Name'))
+            ...     except RootServiceError as e:
+            ...         str(e)
+            'Root not found: https://example.com/nonexistent'
         """
-        # Normalize the URI to match how it was stored
-        normalized_uri = self._make_root_uri(root_uri)
+        # Normalize the URI to match how it was stored.
+        normalized_uri = self._validate_and_canonicalize_root_uri(root_uri)
         if normalized_uri not in self._roots:
             raise RootServiceNotFoundError(f"Root not found: {root_uri}")
 
@@ -274,7 +305,7 @@ class RootService:
 
         # Update name if provided
         if name is not None:
-            root_obj.name = name
+            root_obj.name = self._validate_root_name(name)
 
         # Notify subscribers of the update
         event = {"type": "root_updated", "data": {"uri": root_obj.uri, "name": root_obj.name}}
@@ -295,20 +326,23 @@ class RootService:
         Examples:
             >>> from mcpgateway.services.root_service import RootService
             >>> import asyncio
-            >>> service = RootService()
-            >>> _ = asyncio.run(service.add_root('file:///tmp'))
-            >>> asyncio.run(service.remove_root('file:///tmp'))
+            >>> from unittest.mock import patch
+            >>> with patch('mcpgateway.config.settings.root_allowed_schemes', ['https']):
+            ...     service = RootService()
+            ...     _ = asyncio.run(service.add_root('https://example.com/tmp'))
+            ...     asyncio.run(service.remove_root('https://example.com/tmp'))
 
             Test root not found error:
-            >>> service = RootService()
-            >>> try:
-            ...     asyncio.run(service.remove_root('file:///nonexistent'))
-            ... except RootServiceError as e:
-            ...     str(e)
-            'Root not found: file:///nonexistent'
+            >>> with patch('mcpgateway.config.settings.root_allowed_schemes', ['https']):
+            ...     service = RootService()
+            ...     try:
+            ...         asyncio.run(service.remove_root('https://example.com/nonexistent'))
+            ...     except RootServiceError as e:
+            ...         str(e)
+            'Root not found: https://example.com/nonexistent'
         """
-        # Normalize the URI to match how it was stored
-        normalized_uri = self._make_root_uri(root_uri)
+        # Normalize the URI to match how it was stored.
+        normalized_uri = self._validate_and_canonicalize_root_uri(root_uri)
         if normalized_uri not in self._roots:
             raise RootServiceNotFoundError(f"Root not found: {root_uri}")
         root_obj = self._roots.pop(normalized_uri)
@@ -325,6 +359,7 @@ class RootService:
             This example demonstrates subscription mechanics:
             >>> import asyncio
             >>> from mcpgateway.services.root_service import RootService
+            >>> from unittest.mock import patch
             >>> async def test_subscribe():
             ...     service = RootService()
             ...     events = []
@@ -335,11 +370,12 @@ class RootService:
             ...                 break
             ...     task = asyncio.create_task(collect_events())
             ...     await asyncio.sleep(0)  # Let subscription start
-            ...     await service.add_root('file:///tmp')
-            ...     await service.remove_root('file:///tmp')
+            ...     await service.add_root('https://example.com/tmp')
+            ...     await service.remove_root('https://example.com/tmp')
             ...     await task
             ...     return events
-            >>> events = asyncio.run(test_subscribe())
+            >>> with patch('mcpgateway.config.settings.root_allowed_schemes', ['https']):
+            ...     events = asyncio.run(test_subscribe())
             >>> len(events)
             2
             >>> events[0]['type']
@@ -356,34 +392,134 @@ class RootService:
         finally:
             self._subscribers.remove(queue)
 
-    def _make_root_uri(self, uri: str) -> str:
-        """Convert input to a valid URI.
+    def validate_root_input(self, uri: str, name: Optional[str]) -> tuple[str, Optional[str]]:
+        """Validate root URI/name and return canonical values without mutation."""
+        return self._validate_and_canonicalize_root_uri(uri), self._validate_root_name(name)
 
-        If no scheme is provided, assume a file URI and convert the path to an absolute path.
+    def _validate_and_canonicalize_root_uri(self, uri: str) -> str:
+        """Return canonical URI or raise RootServiceValidationError."""
+        if not isinstance(uri, str) or uri == "":
+            raise RootServiceValidationError("empty_uri")
+        if len(uri) > ROOT_MAX_URI_LENGTH:
+            raise RootServiceValidationError("uri_too_long")
+        if uri != uri.strip():
+            raise RootServiceValidationError("control_character")
+        if self._has_control_character(uri):
+            raise RootServiceValidationError("control_character")
+        if _PERCENT_PATTERN.search(uri):
+            raise RootServiceValidationError("invalid_percent_encoding")
 
-        Args:
-            uri: Input URI or filesystem path
-
-        Returns:
-            A valid URI string
-
-        Examples:
-            >>> service = RootService()
-            >>> service._make_root_uri('/tmp')
-            'file:///tmp'
-            >>> service._make_root_uri('file:///home')
-            'file:///home'
-            >>> service._make_root_uri('http://example.com')
-            'http://example.com'
-            >>> service._make_root_uri('ftp://server/path')
-            'ftp://server/path'
-        """
-        parsed = urlparse(uri)
+        parsed = urlsplit(uri)
         if not parsed.scheme:
-            # No scheme provided; assume a file URI and add file:// prefix
-            return f"file://{uri}"
-        # If a scheme is present (e.g., http, https, ftp, etc.), return the URI as-is.
-        return uri
+            raise RootServiceValidationError("scheme_missing")
+        scheme = parsed.scheme.lower()
+
+        if parsed.query:
+            raise RootServiceValidationError("query_not_allowed")
+        if parsed.fragment:
+            raise RootServiceValidationError("fragment_not_allowed")
+        if parsed.username is not None or parsed.password is not None:
+            raise RootServiceValidationError("userinfo_not_allowed")
+
+        if scheme == "file":
+            canonical_uri = self._canonicalize_file_uri(parsed)
+        elif scheme in _NETWORK_SCHEMES:
+            canonical_uri = self._canonicalize_network_uri(parsed, scheme)
+        else:
+            raise RootServiceValidationError("scheme_not_allowed")
+
+        try:
+            return str(Root(uri=canonical_uri).uri)
+        except ValidationError as exc:
+            raise RootServiceValidationError("scheme_not_allowed") from exc
+
+    def _validate_root_name(self, name: Optional[str]) -> Optional[str]:
+        """Validate optional root display name."""
+        if name is None:
+            return None
+        if len(name) > ROOT_MAX_NAME_LENGTH:
+            raise RootServiceValidationError("name_too_long")
+        if self._has_control_character(name):
+            raise RootServiceValidationError("control_character")
+        return name
+
+    def _canonicalize_network_uri(self, parsed, scheme: str) -> str:
+        """Canonicalize http/https/ws/wss root URI."""
+        if scheme not in settings.root_allowed_schemes:
+            raise RootServiceValidationError("scheme_not_allowed")
+        if not parsed.hostname:
+            raise RootServiceValidationError("network_host_missing")
+        try:
+            port = parsed.port
+        except ValueError as exc:
+            raise RootServiceValidationError("network_port_invalid") from exc
+
+        host = parsed.hostname.lower()
+        netloc = host
+        if port is not None and port != _DEFAULT_PORTS[scheme]:
+            netloc = f"{host}:{port}"
+        path = parsed.path or "/"
+        return urlunsplit((scheme, netloc, path, "", ""))
+
+    def _canonicalize_file_uri(self, parsed) -> str:
+        """Canonicalize supported POSIX file roots."""
+        if not settings.root_allow_file_scheme:
+            raise RootServiceValidationError("file_disabled")
+        if parsed.netloc:
+            raise RootServiceValidationError("file_authority_not_allowed")
+        if not parsed.path or not parsed.path.startswith("/"):
+            raise RootServiceValidationError("file_path_not_absolute")
+        if "\\" in parsed.path or re.match(r"^/[A-Za-z]:", parsed.path):
+            raise RootServiceValidationError("file_path_unsupported")
+        if _ENCODED_SEPARATOR_PATTERN.search(parsed.path):
+            raise RootServiceValidationError("file_path_unsafe_encoding")
+
+        try:
+            decoded_path = unquote_to_bytes(parsed.path).decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise RootServiceValidationError("file_path_unsafe_encoding") from exc
+
+        if self._has_control_character(decoded_path) or "\\" in decoded_path:
+            raise RootServiceValidationError("file_path_unsupported")
+        if unquote_to_bytes(decoded_path).decode("utf-8", errors="ignore") != decoded_path:
+            raise RootServiceValidationError("file_path_unsafe_encoding")
+        if not decoded_path.startswith("/"):
+            raise RootServiceValidationError("file_path_not_absolute")
+
+        raw_parts = PurePosixPath(decoded_path).parts
+        if ".." in raw_parts:
+            raise RootServiceValidationError("file_path_traversal")
+
+        canonical_path = "/" if raw_parts == ("/",) else "/" + "/".join(part for part in raw_parts if part != "/")
+        canonical_parts = PurePosixPath(canonical_path).parts
+        if not self._path_under_allowed_prefix(canonical_parts):
+            raise RootServiceValidationError("file_path_outside_allowed_prefix")
+
+        encoded_path = quote(canonical_path, safe="/")
+        return urlunsplit(("file", "", encoded_path, "", ""))
+
+    def _path_under_allowed_prefix(self, path_parts: tuple[str, ...]) -> bool:
+        """Return whether path parts equal or descend from configured prefixes."""
+        for prefix in settings.root_allowed_file_prefixes:
+            prefix_parts = PurePosixPath(prefix).parts
+            if path_parts == prefix_parts or path_parts[: len(prefix_parts)] == prefix_parts:
+                return True
+        return False
+
+    @staticmethod
+    def _has_control_character(value: str) -> bool:
+        """Return true when value contains ASCII controls or DEL."""
+        return any(ord(ch) < 32 or ord(ch) == 127 for ch in value)
+
+    @staticmethod
+    def _safe_scheme(uri: object) -> str:
+        """Return sanitized scheme context for logs."""
+        if not isinstance(uri, str):
+            return "non-string"
+        try:
+            return (urlsplit(uri).scheme or "missing").lower()
+        except Exception:
+            return "invalid"
 
     async def _notify_root_added(self, root: Root) -> None:
         """Notify subscribers of root addition.

@@ -987,19 +987,22 @@ class TestAdminGatewayAPIs:
 class TestAdminRootAPIs:
     """Test admin root management endpoints."""
 
-    async def test_admin_root_lifecycle(self, client: AsyncClient, mock_settings):
+    async def test_admin_root_lifecycle(self, client: AsyncClient, mock_settings, monkeypatch):
         """Test complete root lifecycle through admin UI."""
+        monkeypatch.setattr("mcpgateway.admin.is_unrestricted_platform_admin", AsyncMock(return_value=True))
+        monkeypatch.setattr(settings, "root_allow_file_scheme", True, raising=False)
+        monkeypatch.setattr(settings, "root_allowed_file_prefixes", ["/test/admin"], raising=False)
         # Add a root
         form_data = {
-            "uri": f"/test/admin/root/{uuid.uuid4().hex[:8]}",
+            "uri": f"file:///test/admin/root/{uuid.uuid4().hex[:8]}",
             "name": "Test Admin Root",
         }
 
         response = await client.post("/admin/roots", data=form_data, headers=TEST_AUTH_HEADER, follow_redirects=False)
         assert response.status_code == 303
 
-        # Delete the root - use the normalized URI with file:// prefix
-        normalized_uri = f"file://{form_data['uri']}"
+        # Delete the root - use the canonical URI.
+        normalized_uri = form_data["uri"]
         encoded_uri = quote(normalized_uri, safe="")
         response = await client.post(f"/admin/roots/{encoded_uri}/delete", headers=TEST_AUTH_HEADER, follow_redirects=False)
         assert response.status_code == 303

@@ -2480,8 +2480,9 @@ class TestTagEndpoints:
 class TestRootEndpoints:
     """Tests for root directory management: registration, listing, changes, etc."""
 
+    @patch("mcpgateway.main.is_unrestricted_platform_admin", new_callable=AsyncMock, return_value=True)
     @patch("mcpgateway.main.root_service.list_roots")
-    def test_list_roots_endpoint(self, mock_list, test_client, auth_headers):
+    def test_list_roots_endpoint(self, mock_list, _mock_root_admin, test_client, auth_headers):
         """Test listing all registered roots."""
         # First-Party
         from mcpgateway.common.models import Root
@@ -2512,6 +2513,14 @@ class TestRootEndpoints:
             app.dependency_overrides.pop(get_current_user_with_permissions, None)
         assert response.status_code == 403
 
+    @patch("mcpgateway.main.is_unrestricted_platform_admin", new_callable=AsyncMock, return_value=False)
+    @patch("mcpgateway.main.root_service.list_roots")
+    def test_list_roots_endpoint_denies_scoped_admin_before_service_access(self, mock_list, _mock_root_admin, test_client, auth_headers):
+        response = test_client.get("/roots/", headers=auth_headers)
+
+        assert response.status_code == 403
+        mock_list.assert_not_called()
+
     @pytest.mark.parametrize(
         ("method", "path", "payload"),
         [
@@ -2519,7 +2528,7 @@ class TestRootEndpoints:
             ("get", "/roots/changes", None),
             ("get", "/roots/file%3A%2F%2F%2Ftest", None),
             ("post", "/roots/", {"uri": "file:///test", "name": "Test Root"}),
-            ("put", "/roots/file%3A%2F%2F%2Ftest", {"uri": "file:///test", "name": "Updated Root"}),
+            ("put", "/roots/file%3A%2F%2F%2Ftest", {"name": "Updated Root"}),
             ("delete", "/roots/file%3A%2F%2F%2Ftest", None),
         ],
     )
@@ -2544,8 +2553,9 @@ class TestRootEndpoints:
 
         assert response.status_code == 403
 
+    @patch("mcpgateway.main.is_unrestricted_platform_admin", new_callable=AsyncMock, return_value=True)
     @patch("mcpgateway.main.root_service.add_root")
-    def test_add_root_endpoint(self, mock_add, test_client, auth_headers):
+    def test_add_root_endpoint(self, mock_add, _mock_root_admin, test_client, auth_headers):
         """Test adding a new root directory."""
         # First-Party
         from mcpgateway.common.models import Root
@@ -2558,35 +2568,51 @@ class TestRootEndpoints:
         assert response.status_code == 200
         mock_add.assert_called_once()
 
+    @patch("mcpgateway.main.is_unrestricted_platform_admin", new_callable=AsyncMock, return_value=False)
+    @patch("mcpgateway.main.root_service.add_root")
+    def test_add_root_endpoint_denies_scoped_admin_before_service_access(self, mock_add, _mock_root_admin, test_client, auth_headers):
+        response = test_client.post("/roots/", json={"uri": "https://example.com/root", "name": "Root"}, headers=auth_headers)
+
+        assert response.status_code == 403
+        mock_add.assert_not_called()
+
+    @patch("mcpgateway.main.is_unrestricted_platform_admin", new_callable=AsyncMock, return_value=True)
     @patch("mcpgateway.main.root_service.remove_root")
-    def test_remove_root_endpoint(self, mock_remove, test_client, auth_headers):
+    def test_remove_root_endpoint(self, mock_remove, _mock_root_admin, test_client, auth_headers):
         """Test removing a root directory."""
         mock_remove.return_value = None
         response = test_client.delete("/roots/%2Ftest", headers=auth_headers)
         assert response.status_code == 200
         assert response.json()["status"] == "success"
+        assert response.json()["message"] == "Root removed"
 
+    @patch("mcpgateway.main.is_unrestricted_platform_admin", new_callable=AsyncMock, return_value=True)
     @patch("mcpgateway.main.root_service.remove_root")
-    def test_remove_root_not_found_error(self, mock_remove, test_client, auth_headers):
+    def test_remove_root_not_found_error(self, mock_remove, _mock_root_admin, test_client, auth_headers):
         """Test DELETE /roots/{uri} returns 404 when RootServiceNotFoundError is raised."""
         from mcpgateway.services.root_service import RootServiceNotFoundError
 
         mock_remove.side_effect = RootServiceNotFoundError("Root not found: /missing")
         response = test_client.delete("/roots/%2Fmissing", headers=auth_headers)
         assert response.status_code == 404
-        assert "Root not found" in response.json()["detail"]
+        assert response.json()["detail"] == "Root not found"
+        assert "/missing" not in response.text
 
+    @patch("mcpgateway.main.is_unrestricted_platform_admin", new_callable=AsyncMock, return_value=True)
     @patch("mcpgateway.main.root_service.remove_root")
-    def test_remove_root_generic_exception(self, mock_remove, test_client, auth_headers):
+    def test_remove_root_generic_exception(self, mock_remove, _mock_root_admin, test_client, auth_headers, caplog):
         """Test DELETE /roots/{uri} returns 500 when generic Exception is raised."""
         mock_remove.side_effect = RuntimeError("Unexpected filesystem error")
         response = test_client.delete("/roots/%2Ferror", headers=auth_headers)
         assert response.status_code == 500
         assert "Internal error" in response.json()["detail"]
+        endpoint_logs = [record.getMessage() for record in caplog.records if record.name == "mcpgateway"]
+        assert endpoint_logs == ["Failed to remove root"]
 
 
+    @patch("mcpgateway.main.is_unrestricted_platform_admin", new_callable=AsyncMock, return_value=True)
     @patch("mcpgateway.main.root_service.subscribe_changes")
-    def test_subscribe_root_changes(self, mock_subscribe, test_client, auth_headers):
+    def test_subscribe_root_changes(self, mock_subscribe, _mock_root_admin, test_client, auth_headers):
         """Test subscribing to root directory changes via SSE."""
 
         async def mock_async_gen():
@@ -2596,6 +2622,14 @@ class TestRootEndpoints:
         response = test_client.get("/roots/changes", headers=auth_headers)
         assert response.status_code == 200
         assert response.headers["content-type"] == "text/event-stream; charset=utf-8"
+
+    @patch("mcpgateway.main.is_unrestricted_platform_admin", new_callable=AsyncMock, return_value=False)
+    @patch("mcpgateway.main.root_service.subscribe_changes")
+    def test_subscribe_root_changes_denies_scoped_admin(self, mock_subscribe, _mock_root_admin, test_client, auth_headers):
+        response = test_client.get("/roots/changes", headers=auth_headers)
+
+        assert response.status_code == 403
+        mock_subscribe.assert_not_called()
 
 
 # ----------------------------------------------------- #
@@ -3039,8 +3073,9 @@ class TestRPCEndpoints:
         body = response.json()["result"]
         assert body["gateways"][0]["id"] == "gateway-1"
 
+    @patch("mcpgateway.main.is_unrestricted_platform_admin", new_callable=AsyncMock, return_value=True)
     @patch("mcpgateway.main.root_service.list_roots", new_callable=AsyncMock)
-    def test_rpc_list_roots(self, mock_list_roots, test_client, auth_headers):
+    def test_rpc_list_roots(self, mock_list_roots, _mock_root_admin, test_client, auth_headers):
         """Test list_roots JSON-RPC method."""
         mock_root = MagicMock()
         mock_root.model_dump.return_value = {"uri": "root://1"}
@@ -3305,8 +3340,9 @@ class TestRPCEndpoints:
         assert response.status_code == 200
         mock_set_level.assert_called_once()
 
+    @patch("mcpgateway.main.is_unrestricted_platform_admin", new_callable=AsyncMock, return_value=True)
     @patch("mcpgateway.main.root_service.list_roots", new_callable=AsyncMock)
-    def test_rpc_roots_list_method(self, mock_list_roots, test_client, auth_headers):
+    def test_rpc_roots_list_method(self, mock_list_roots, _mock_root_admin, test_client, auth_headers):
         """Test roots/list JSON-RPC method."""
         mock_root = MagicMock()
         mock_root.model_dump.return_value = {"uri": "root://2"}
