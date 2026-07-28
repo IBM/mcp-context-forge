@@ -100,7 +100,6 @@ interface ServersTableProps {
   isLoading: boolean;
   onEdit: (id: string) => void;
   onDelete: (id: string) => void;
-  onTest: (id: string) => void;
   onViewDetails?: (id: string) => void;
   onToggleEnabled?: (id: string, enabled: boolean) => void;
 }
@@ -110,7 +109,6 @@ export function ServersTable({
   isLoading,
   onEdit,
   onDelete,
-  onTest,
   onViewDetails,
   onToggleEnabled,
 }: ServersTableProps) {
@@ -265,7 +263,6 @@ export function ServersTable({
                     server={server}
                     onEdit={onEdit}
                     onDelete={onDelete}
-                    onTest={onTest}
                     onViewDetails={onViewDetails}
                     onToggleEnabled={onToggleEnabled}
                   />

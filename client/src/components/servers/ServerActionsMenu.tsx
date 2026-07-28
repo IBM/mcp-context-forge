@@ -12,7 +12,6 @@ interface ServerActionsMenuProps {
   server: MCPServer;
   onEdit: (id: string) => void;
   onDelete: (id: string) => void;
-  onTest: (id: string) => void;
   onViewDetails?: (id: string) => void;
   onToggleEnabled?: (id: string, enabled: boolean) => void;
 }
@@ -21,7 +20,6 @@ export function ServerActionsMenu({
   server,
   onEdit,
   onDelete,
-  onTest,
   onViewDetails,
   onToggleEnabled,
 }: ServerActionsMenuProps) {
@@ -47,9 +45,6 @@ export function ServerActionsMenu({
         )}
         <DropdownMenuItem onClick={() => onEdit(server.id)} role="menuitem">
           Edit
-        </DropdownMenuItem>
-        <DropdownMenuItem onClick={() => onTest(server.id)} role="menuitem">
-          Test Connection
         </DropdownMenuItem>
         {onToggleEnabled && (
           <DropdownMenuItem

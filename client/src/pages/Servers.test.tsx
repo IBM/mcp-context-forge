@@ -554,7 +554,7 @@ describe("Servers", () => {
     });
   });
 
-  it("opens the test connection dialog from the actions menu", async () => {
+  it("no longer offers Test Connection in the actions menu (moved to the details drawer)", async () => {
     const user = userEvent.setup();
 
     vi.mocked(api.get).mockResolvedValueOnce({
@@ -571,11 +571,9 @@ describe("Servers", () => {
     const actionsButtons = screen.getAllByRole("button", { name: /actions for/i });
     await user.click(actionsButtons[0]);
 
-    const testItem = await screen.findByRole("menuitem", { name: /test connection/i });
-    await user.click(testItem);
-
-    const dialog = await screen.findByRole("dialog");
-    expect(within(dialog).getByRole("heading", { name: /test connection/i })).toBeInTheDocument();
+    // Edit still exists; Test Connection has been relocated into the details drawer.
+    await screen.findByRole("menuitem", { name: /edit/i });
+    expect(screen.queryByRole("menuitem", { name: /test connection/i })).not.toBeInTheDocument();
   });
 
   it("optimistically removes server from list immediately on delete confirmation", async () => {

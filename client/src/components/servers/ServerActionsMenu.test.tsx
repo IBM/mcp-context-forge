@@ -20,14 +20,7 @@ const mockServer: MCPServer = {
 
 describe("ServerActionsMenu", () => {
   it("renders actions menu button", () => {
-    render(
-      <ServerActionsMenu
-        server={mockServer}
-        onEdit={vi.fn()}
-        onDelete={vi.fn()}
-        onTest={vi.fn()}
-      />,
-    );
+    render(<ServerActionsMenu server={mockServer} onEdit={vi.fn()} onDelete={vi.fn()} />);
 
     const menuButton = screen.getByRole("button", { name: /actions for test server/i });
     expect(menuButton).toBeInTheDocument();
@@ -41,7 +34,6 @@ describe("ServerActionsMenu", () => {
         server={mockServer}
         onEdit={vi.fn()}
         onDelete={vi.fn()}
-        onTest={vi.fn()}
         onViewDetails={vi.fn()}
       />,
     );
@@ -54,7 +46,6 @@ describe("ServerActionsMenu", () => {
     });
 
     expect(screen.getByRole("menuitem", { name: /edit/i })).toBeInTheDocument();
-    expect(screen.getByRole("menuitem", { name: /test connection/i })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: /delete/i })).toBeInTheDocument();
   });
 
@@ -67,7 +58,6 @@ describe("ServerActionsMenu", () => {
         server={mockServer}
         onEdit={vi.fn()}
         onDelete={vi.fn()}
-        onTest={vi.fn()}
         onViewDetails={onViewDetails}
       />,
     );
@@ -85,14 +75,7 @@ describe("ServerActionsMenu", () => {
   it("does not display View Details when onViewDetails is not provided", async () => {
     const user = userEvent.setup();
 
-    render(
-      <ServerActionsMenu
-        server={mockServer}
-        onEdit={vi.fn()}
-        onDelete={vi.fn()}
-        onTest={vi.fn()}
-      />,
-    );
+    render(<ServerActionsMenu server={mockServer} onEdit={vi.fn()} onDelete={vi.fn()} />);
 
     const menuButton = screen.getByRole("button", { name: /actions for test server/i });
     await user.click(menuButton);
@@ -109,9 +92,7 @@ describe("ServerActionsMenu", () => {
     const user = userEvent.setup();
     const onEdit = vi.fn();
 
-    render(
-      <ServerActionsMenu server={mockServer} onEdit={onEdit} onDelete={vi.fn()} onTest={vi.fn()} />,
-    );
+    render(<ServerActionsMenu server={mockServer} onEdit={onEdit} onDelete={vi.fn()} />);
 
     const menuButton = screen.getByRole("button", { name: /actions for test server/i });
     await user.click(menuButton);
@@ -123,36 +104,11 @@ describe("ServerActionsMenu", () => {
     expect(onEdit).toHaveBeenCalledTimes(1);
   });
 
-  it("calls onTest when Test Connection is clicked", async () => {
-    const user = userEvent.setup();
-    const onTest = vi.fn();
-
-    render(
-      <ServerActionsMenu server={mockServer} onEdit={vi.fn()} onDelete={vi.fn()} onTest={onTest} />,
-    );
-
-    const menuButton = screen.getByRole("button", { name: /actions for test server/i });
-    await user.click(menuButton);
-
-    const testItem = await screen.findByRole("menuitem", { name: /test connection/i });
-    await user.click(testItem);
-
-    expect(onTest).toHaveBeenCalledWith(mockServer.id);
-    expect(onTest).toHaveBeenCalledTimes(1);
-  });
-
   it("calls onDelete when Delete is clicked", async () => {
     const user = userEvent.setup();
     const onDelete = vi.fn();
 
-    render(
-      <ServerActionsMenu
-        server={mockServer}
-        onEdit={vi.fn()}
-        onDelete={onDelete}
-        onTest={vi.fn()}
-      />,
-    );
+    render(<ServerActionsMenu server={mockServer} onEdit={vi.fn()} onDelete={onDelete} />);
 
     const menuButton = screen.getByRole("button", { name: /actions for test server/i });
     await user.click(menuButton);
@@ -172,7 +128,6 @@ describe("ServerActionsMenu", () => {
         server={mockServer}
         onEdit={vi.fn()}
         onDelete={vi.fn()}
-        onTest={vi.fn()}
         onViewDetails={vi.fn()}
       />,
     );
@@ -196,7 +151,6 @@ describe("ServerActionsMenu", () => {
           server={mockServer}
           onEdit={vi.fn()}
           onDelete={vi.fn()}
-          onTest={vi.fn()}
           onToggleEnabled={onToggleEnabled}
         />,
       );
@@ -218,7 +172,6 @@ describe("ServerActionsMenu", () => {
           server={disabledServer}
           onEdit={vi.fn()}
           onDelete={vi.fn()}
-          onTest={vi.fn()}
           onToggleEnabled={onToggleEnabled}
         />,
       );
@@ -239,7 +192,6 @@ describe("ServerActionsMenu", () => {
           server={mockServer}
           onEdit={vi.fn()}
           onDelete={vi.fn()}
-          onTest={vi.fn()}
           onToggleEnabled={onToggleEnabled}
         />,
       );
@@ -264,7 +216,6 @@ describe("ServerActionsMenu", () => {
           server={disabledServer}
           onEdit={vi.fn()}
           onDelete={vi.fn()}
-          onTest={vi.fn()}
           onToggleEnabled={onToggleEnabled}
         />,
       );
@@ -282,14 +233,7 @@ describe("ServerActionsMenu", () => {
     it("does not display toggle options when onToggleEnabled is not provided", async () => {
       const user = userEvent.setup();
 
-      render(
-        <ServerActionsMenu
-          server={mockServer}
-          onEdit={vi.fn()}
-          onDelete={vi.fn()}
-          onTest={vi.fn()}
-        />,
-      );
+      render(<ServerActionsMenu server={mockServer} onEdit={vi.fn()} onDelete={vi.fn()} />);
 
       const menuButton = screen.getByRole("button", { name: /actions for test server/i });
       await user.click(menuButton);

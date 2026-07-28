@@ -23,18 +23,22 @@ import { cn } from "@/lib/utils";
 import type { MCPServer as BaseMCPServer, VirtualServerTag } from "@/types/server";
 import { copyToClipboard } from "@/lib/clipboard";
 import { useQuery } from "@/hooks/useQuery";
+import { TestConnectionPanel } from "./TestConnectionPanel";
 
 interface MCPServer extends BaseMCPServer {
   tags?: Array<string | VirtualServerTag>;
 }
 
 type ComponentTab = "all" | "tools" | "resources" | "prompts";
+// Kept separate from ComponentTab so the component-filtering logic stays typed to real kinds.
+type DrawerTab = ComponentTab | "test";
 
-const TABS: Array<{ value: ComponentTab; label: string }> = [
+const TABS: Array<{ value: DrawerTab; label: string }> = [
   { value: "all", label: "All" },
   { value: "tools", label: "Tools" },
   { value: "resources", label: "Resources" },
   { value: "prompts", label: "Prompts" },
+  { value: "test", label: "Test Connection" },
 ];
 
 interface Tool {
@@ -134,7 +138,7 @@ export function MCPServerDetailsPanel({
    */
   onAddTag?: (serverId: string, tags: string[]) => Promise<void>;
 }) {
-  const [activeTab, setActiveTab] = useState<ComponentTab>("all");
+  const [activeTab, setActiveTab] = useState<DrawerTab>("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [isSearchExpanded, setIsSearchExpanded] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -255,7 +259,7 @@ export function MCPServerDetailsPanel({
   }, []);
 
   const handleTabKeyDown = useCallback(
-    (e: KeyboardEvent<HTMLButtonElement>, currentValue: ComponentTab) => {
+    (e: KeyboardEvent<HTMLButtonElement>, currentValue: DrawerTab) => {
       if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
       e.preventDefault();
       const currentIndex = TABS.findIndex((t) => t.value === currentValue);
@@ -269,6 +273,8 @@ export function MCPServerDetailsPanel({
     },
     [],
   );
+
+  const isTestTab = activeTab === "test";
 
   return (
     <>
@@ -327,8 +333,11 @@ export function MCPServerDetailsPanel({
 
               <div className="my-8 h-px bg-border" />
 
+              {/* Rendered on every tab so the row below doesn't shift when switching. */}
               <div className="flex items-center justify-between gap-4">
-                <h3 className="text-sm font-semibold text-foreground">Components</h3>
+                <h3 className="text-sm font-semibold text-foreground">
+                  {isTestTab ? "Test connection" : "Components"}
+                </h3>
               </div>
 
               <div className="mt-8 flex min-w-0 items-center justify-between gap-6">
@@ -360,35 +369,37 @@ export function MCPServerDetailsPanel({
                   ))}
                 </div>
 
-                <div className="flex items-center gap-2">
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon-xs"
-                    onClick={() => searchInputRef.current?.focus()}
-                    className="size-8 rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-                    aria-label="Search components"
-                  >
-                    <Search className="size-4" />
-                  </Button>
-                  <Input
-                    ref={searchInputRef}
-                    type="search"
-                    aria-label="Search components"
-                    tabIndex={isSearchExpanded || searchQuery.length > 0 ? 0 : -1}
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    onFocus={() => setIsSearchExpanded(true)}
-                    onBlur={() => setIsSearchExpanded(searchQuery.length > 0)}
-                    placeholder={isSearchExpanded || searchQuery.length > 0 ? "Search..." : ""}
-                    className={cn(
-                      "h-8 rounded-md border-border bg-muted/50 text-sm shadow-none transition-[width,padding,color,background-color,border-color] duration-200 ease-out placeholder:text-muted-foreground focus-visible:bg-background",
-                      isSearchExpanded || searchQuery.length > 0
-                        ? "w-48 px-3 text-foreground"
-                        : "w-0 px-0 text-transparent caret-foreground border-transparent",
-                    )}
-                  />
-                </div>
+                {!isTestTab && (
+                  <div className="flex items-center gap-2">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon-xs"
+                      onClick={() => searchInputRef.current?.focus()}
+                      className="size-8 rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                      aria-label="Search components"
+                    >
+                      <Search className="size-4" />
+                    </Button>
+                    <Input
+                      ref={searchInputRef}
+                      type="search"
+                      aria-label="Search components"
+                      tabIndex={isSearchExpanded || searchQuery.length > 0 ? 0 : -1}
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      onFocus={() => setIsSearchExpanded(true)}
+                      onBlur={() => setIsSearchExpanded(searchQuery.length > 0)}
+                      placeholder={isSearchExpanded || searchQuery.length > 0 ? "Search..." : ""}
+                      className={cn(
+                        "h-8 rounded-md border-border bg-muted/50 text-sm shadow-none transition-[width,padding,color,background-color,border-color] duration-200 ease-out placeholder:text-muted-foreground focus-visible:bg-background",
+                        isSearchExpanded || searchQuery.length > 0
+                          ? "w-48 px-3 text-foreground"
+                          : "w-0 px-0 text-transparent caret-foreground border-transparent",
+                      )}
+                    />
+                  </div>
+                )}
               </div>
 
               {error && (
@@ -405,7 +416,9 @@ export function MCPServerDetailsPanel({
                 aria-labelledby={`tab-${activeTab}`}
                 className="mt-5 divide-y divide-transparent"
               >
-                {componentsLoading && (
+                {isTestTab && <TestConnectionPanel key={server.id} serverUrl={server.url} />}
+
+                {!isTestTab && componentsLoading && (
                   <div
                     role="status"
                     aria-live="polite"
@@ -416,13 +429,14 @@ export function MCPServerDetailsPanel({
                   </div>
                 )}
 
-                {!componentsLoading && visibleComponents.length === 0 && (
+                {!isTestTab && !componentsLoading && visibleComponents.length === 0 && (
                   <div className="py-8 text-sm text-muted-foreground">
                     No {activeTab === "all" ? "components" : activeTab} found
                   </div>
                 )}
 
-                {!componentsLoading &&
+                {!isTestTab &&
+                  !componentsLoading &&
                   visibleComponents.map((component) => {
                     const title = component.title;
                     const identifier =
