@@ -49,6 +49,112 @@ test.describe("Prompts page", () => {
     });
   });
 
+  test("shows the add prompt card when no prompts exist", async ({ page }) => {
+    await page.route("**/prompts?*", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify([]),
+      });
+    });
+
+    await page.goto(APP.PROMPTS);
+    await page.waitForLoadState("networkidle");
+
+    await expect(page.getByRole("heading", { name: "Prompts" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Add prompts" })).toBeVisible();
+    await expect(page.getByRole("button", { name: /More options for/ })).toHaveCount(0);
+  });
+
+  test("shows an error state when the prompts API fails", async ({ page }) => {
+    await page.route("**/prompts?*", async (route) => {
+      await route.fulfill({
+        status: 500,
+        contentType: "application/json",
+        body: JSON.stringify({ detail: "Prompt catalog unavailable" }),
+      });
+    });
+
+    await page.goto(APP.PROMPTS);
+    await page.waitForLoadState("networkidle");
+
+    const alert = page.getByRole("alert");
+    await expect(alert).toBeVisible();
+    await expect(alert).toContainText("Error loading prompts");
+  });
+
+  test("groups prompts by gateway and keeps local prompts separate", async ({ page }) => {
+    const prompts = [
+      makePrompt("summarize", "github-server"),
+      makePrompt("translate", "github-server"),
+      makePrompt("local-template", "", {
+        gatewayId: null,
+        gatewaySlug: null,
+      }),
+    ];
+
+    await page.route("**/prompts?*", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(prompts),
+      });
+    });
+
+    await page.goto(APP.PROMPTS);
+    await page.waitForLoadState("networkidle");
+
+    await expect(page.getByText("github-server")).toBeVisible();
+    await expect(page.getByText("REST prompts")).toBeVisible();
+    await expect(page.getByText("summarize")).toBeVisible();
+    await expect(page.getByText("translate")).toBeVisible();
+    await expect(page.getByText("local-template")).toBeVisible();
+  });
+
+  test("caps prompt badges at eight and shows the overflow count", async ({ page }) => {
+    const prompts = Array.from({ length: 10 }, (_, index) =>
+      makePrompt(`prompt_${index + 1}`, "large-gateway"),
+    );
+
+    await page.route("**/prompts?*", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(prompts),
+      });
+    });
+
+    await page.goto(APP.PROMPTS);
+    await page.waitForLoadState("networkidle");
+
+    await expect(page.getByText("prompt_1")).toBeVisible();
+    await expect(page.getByText("prompt_8")).toBeVisible();
+    await expect(page.getByText("prompt_9")).not.toBeVisible();
+    await expect(page.getByText("prompt_10")).not.toBeVisible();
+    await expect(page.getByText("+2")).toBeVisible();
+  });
+
+  test("opens and closes the prompt details panel", async ({ page }) => {
+    await page.route("**/prompts?*", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify([makePrompt("summarize", "github-server")]),
+      });
+    });
+
+    await page.goto(APP.PROMPTS);
+    await page.waitForLoadState("networkidle");
+
+    await page.getByRole("button", { name: "More options for github-server" }).click();
+    await page.getByRole("menuitem", { name: "View details" }).click();
+
+    const panel = page.getByRole("region", { name: /Prompt details:/ });
+    await expect(panel).toBeVisible();
+    await page.getByLabel("Close prompt details").click();
+    await expect(panel).not.toBeVisible();
+  });
+
   test("truncates a long gateway name and keeps the overflow menu visible", async ({ page }) => {
     const longSlug =
       "openzeppelin-stylus-contracts-enterprise-edition-extended-long-server-name-instance";
@@ -387,5 +493,130 @@ test.describe("Prompts page", () => {
     await expect.poll(() => putBody).not.toBeNull();
     expect(putBody!.tags).toEqual(["urgent"]);
     await expect(panel.getByText("urgent")).toBeVisible();
+  });
+
+  test.describe("Delete prompt", () => {
+    async function openDeleteDialog(page: import("@playwright/test").Page) {
+      await page.getByRole("button", { name: "More options for REST prompts" }).click();
+      await page.getByRole("menuitem", { name: "View details" }).click();
+
+      const panel = page.getByRole("region", { name: /Prompt details:/ });
+      await panel.getByRole("tab", { name: "Definition" }).click();
+      await panel.getByRole("button", { name: "More options for summarize" }).click();
+      await page.getByRole("menuitem", { name: "Delete" }).click();
+
+      return {
+        panel,
+        dialog: page.getByRole("dialog", { name: "Delete prompt" }),
+      };
+    }
+
+    test("cancelling confirmation keeps the prompt visible", async ({ page }) => {
+      const prompt = makePrompt("summarize", "", {
+        gatewayId: null,
+        gatewaySlug: null,
+      });
+
+      await page.route("**/prompts?*", async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify([prompt]),
+        });
+      });
+
+      await page.goto(APP.PROMPTS);
+      await page.waitForLoadState("networkidle");
+
+      const { panel, dialog } = await openDeleteDialog(page);
+      await expect(dialog).toBeVisible();
+      await expect(dialog).toContainText('Are you sure you want to delete "summarize"');
+      await dialog.getByRole("button", { name: "Cancel" }).click();
+
+      await expect(dialog).not.toBeVisible();
+      await expect(panel.getByText("summarize").first()).toBeVisible();
+    });
+
+    test("deletes a prompt and removes its empty group", async ({ page }) => {
+      const prompt = makePrompt("summarize", "", {
+        gatewayId: null,
+        gatewaySlug: null,
+      });
+      let deleted = false;
+
+      await page.route("**/prompts?*", async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify(deleted ? [] : [prompt]),
+        });
+      });
+      await page.route(`**/prompts/${prompt.id}`, async (route) => {
+        if (route.request().method() === "DELETE") {
+          deleted = true;
+          await route.fulfill({ status: 204 });
+        } else {
+          await route.fallback();
+        }
+      });
+
+      await page.goto(APP.PROMPTS);
+      await page.waitForLoadState("networkidle");
+
+      const { panel, dialog } = await openDeleteDialog(page);
+      await dialog.getByRole("button", { name: "Delete" }).click();
+
+      await expect.poll(() => deleted).toBe(true);
+      await expect(panel).not.toBeVisible();
+      await expect(page.getByRole("button", { name: "More options for REST prompts" })).toHaveCount(
+        0,
+      );
+      await expect(
+        page.locator("[data-sonner-toast]").filter({ hasText: /summarize.*deleted/i }),
+      ).toBeVisible();
+    });
+
+    test("reconciles the prompt and shows the backend error when deletion fails", async ({
+      page,
+    }) => {
+      const prompt = makePrompt("summarize", "", {
+        gatewayId: null,
+        gatewaySlug: null,
+      });
+      let deleteRequestCount = 0;
+
+      await page.route("**/prompts?*", async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify([prompt]),
+        });
+      });
+      await page.route(`**/prompts/${prompt.id}`, async (route) => {
+        if (route.request().method() === "DELETE") {
+          deleteRequestCount += 1;
+          await route.fulfill({
+            status: 403,
+            contentType: "application/json",
+            body: JSON.stringify({ detail: "Prompt deletion forbidden" }),
+          });
+        } else {
+          await route.fallback();
+        }
+      });
+
+      await page.goto(APP.PROMPTS);
+      await page.waitForLoadState("networkidle");
+
+      const { panel, dialog } = await openDeleteDialog(page);
+      await dialog.getByRole("button", { name: "Delete" }).click();
+
+      await expect.poll(() => deleteRequestCount).toBe(1);
+      await expect(
+        page.locator("[data-sonner-toast]").filter({ hasText: "Prompt deletion forbidden" }),
+      ).toBeVisible();
+      await expect(panel).toBeVisible();
+      await expect(panel.getByText("summarize").first()).toBeVisible();
+    });
   });
 });
