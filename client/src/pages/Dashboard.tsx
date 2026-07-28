@@ -9,6 +9,7 @@ import { ClearControl } from "@/components/dashboard/ClearControl";
 import { EmptyStatePlaceholder } from "@/components/dashboard/EmptyStatePlaceholder";
 import { MiniCard } from "@/components/dashboard/MiniCard";
 import { PermissionDenied } from "@/components/dashboard/PermissionDenied";
+import { RecentActivity } from "@/components/dashboard/RecentActivity";
 import { StatusHeadline } from "@/components/dashboard/StatusHeadline";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/auth/useAuth";
@@ -171,7 +172,7 @@ function NonDefaultState({ active }: { active: HomeViewId }) {
         {gated && permissionsLoading ? (
           <Skeleton className="h-40 w-full rounded-lg" />
         ) : allowed ? (
-          <EmptyStatePlaceholder messageId={PLACEHOLDER_MESSAGE[active]} />
+          <MainContent active={active} />
         ) : (
           <PermissionDenied />
         )}
@@ -183,6 +184,15 @@ function NonDefaultState({ active }: { active: HomeViewId }) {
       </aside>
     </div>
   );
+}
+
+/**
+ * Main content per view. Real cards swap in here as they land; the rest render a
+ * labeled placeholder. This is the per-view swap point the card PRs target.
+ */
+function MainContent({ active }: { active: HomeViewId }) {
+  if (active === "activity") return <RecentActivity />;
+  return <EmptyStatePlaceholder messageId={PLACEHOLDER_MESSAGE[active]} />;
 }
 
 /** Placeholder copy per view until the real card lands. */

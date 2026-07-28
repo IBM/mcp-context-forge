@@ -17,5 +17,16 @@
   "dashboard.home.placeholder.system": "System status card (coming soon)",
   "dashboard.home.placeholder.activity": "Activity feed (coming soon)",
   "dashboard.home.placeholder.mcp": "MCP health card (coming soon)",
-  "dashboard.home.permissionDenied": "You do not have permission to view this."
+  "dashboard.home.permissionDenied": "You do not have permission to view this.",
+  "dashboard.recentActivity.title": "Recent activity",
+  "dashboard.recentActivity.filters.all": "All activity",
+  "dashboard.recentActivity.filters.errors": "Errors",
+  "dashboard.recentActivity.filters.warnings": "Warnings",
+  "dashboard.recentActivity.search.placeholder": "Search...",
+  "dashboard.recentActivity.search.ariaLabel": "Search activity",
+  "dashboard.recentActivity.filter.ariaLabel": "More filters",
+  "dashboard.recentActivity.viewMore": "View more",
+  "dashboard.recentActivity.empty": "No activity to show.",
+  "dashboard.recentActivity.error": "Couldn't load recent activity.",
+  "dashboard.recentActivity.retry": "Retry"
 }
