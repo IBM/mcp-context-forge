@@ -17,6 +17,7 @@ import json
 import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, call, MagicMock, patch
+from urllib.parse import urlparse
 
 # Third-Party
 import jsonschema
@@ -93,8 +94,20 @@ def reset_tool_lookup_cache():
 
 
 @pytest.fixture
-def tool_service():
+def tool_service(monkeypatch):
     """Create a tool service instance with a mocked HTTP client."""
+
+    async def validate_without_pinning(value: str, _field_name: str = "URL"):
+        parsed = urlparse(value)
+        return {
+            "validated_url": value,
+            "hostname": parsed.hostname,
+            "original_authority": parsed.netloc,
+            "resolved_ip": None,
+        }
+
+    monkeypatch.setattr("mcpgateway.services.tool_service.SecurityValidator.validate_url_for_connection_pinning", validate_without_pinning)
+    monkeypatch.setattr("mcpgateway.services.tool_service.settings.ssrf_protection_enabled", False)
     service = ToolService()
     service._http_client = AsyncMock()
     return service
@@ -7768,6 +7781,8 @@ class TestInvokeToolMcpSessionAffinity:
             captured_headers.update(headers or {})
             return mock_response
 
+        pinned_client = SimpleNamespace(get=fake_get, request=AsyncMock(), aclose=AsyncMock())
+
         with (
             _setup_cache_for_invoke(tp),
             patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
@@ -7776,6 +7791,18 @@ class TestInvokeToolMcpSessionAffinity:
             patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
             patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={"MCP-Session-Id": "session-abc123def456"}),
+            patch(
+                "mcpgateway.services.tool_service.SecurityValidator.validate_url_for_connection_pinning",
+                AsyncMock(
+                    return_value={
+                        "validated_url": tp["url"],
+                        "hostname": "backend",
+                        "original_authority": "backend:8000",
+                        "resolved_ip": "8.8.4.4",
+                    }
+                ),
+            ),
+            patch("mcpgateway.services.tool_service._build_pinned_rest_http_client", return_value=pinned_client),
         ):
             mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
             mock_trace.get = MagicMock(return_value=None)
@@ -7794,6 +7821,7 @@ class TestInvokeToolMcpSessionAffinity:
             )
         assert "x-mcp-session-id" in captured_headers
         assert captured_headers["x-mcp-session-id"] == "session-abc123def456"
+        pinned_client.aclose.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------
@@ -7816,6 +7844,8 @@ class TestInvokeToolRestPost:
         async def fake_request(method, url, json=None, headers=None, **_kwargs):
             return mock_response
 
+        pinned_client = SimpleNamespace(request=fake_request, get=AsyncMock(), aclose=AsyncMock())
+
         with (
             _setup_cache_for_invoke(tp),
             patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
@@ -7824,6 +7854,18 @@ class TestInvokeToolRestPost:
             patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
             patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
+            patch(
+                "mcpgateway.services.tool_service.SecurityValidator.validate_url_for_connection_pinning",
+                AsyncMock(
+                    return_value={
+                        "validated_url": tp["url"],
+                        "hostname": "backend",
+                        "original_authority": "backend:8000",
+                        "resolved_ip": "8.8.4.4",
+                    }
+                ),
+            ),
+            patch("mcpgateway.services.tool_service._build_pinned_rest_http_client", return_value=pinned_client),
         ):
             mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
             mock_trace.get = MagicMock(return_value=None)
@@ -7837,6 +7879,7 @@ class TestInvokeToolRestPost:
             result = await tool_service.invoke_tool(db, "test_tool", {"key": "val"})
         assert result is not None
         assert result.is_error is not True
+        pinned_client.aclose.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------

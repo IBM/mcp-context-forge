@@ -1541,8 +1541,8 @@ class SecurityValidator:
         Returns:
             Metadata containing ``validated_url``, original ``hostname``,
             ``original_authority`` from the URL netloc, and an optional safe
-            ``resolved_ip``. ``resolved_ip`` may be ``None`` only when DNS
-            resolution is allowed to fail open.
+            ``resolved_ip``. ``resolved_ip`` may be ``None`` only when SSRF
+            protection is disabled and DNS resolution is allowed to fail open.
 
         Raises:
             ValueError: If validation fails or the resolved target violates the
@@ -1616,8 +1616,8 @@ class SecurityValidator:
                 timeout=timeout,
             )
         except (TimeoutError, asyncio.TimeoutError, socket.gaierror, socket.herror) as exc:
-            if settings.ssrf_protection_enabled and settings.ssrf_dns_fail_closed:
-                raise ValueError(f"{field_name} DNS resolution failed and SSRF_DNS_FAIL_CLOSED is enabled") from exc
+            if settings.ssrf_protection_enabled:
+                raise ValueError(f"{field_name} DNS resolution failed and connection pinning requires a resolved address") from exc
             return []
 
         resolved_ips: List[str] = []
@@ -1632,8 +1632,8 @@ class SecurityValidator:
             except ValueError:
                 continue
 
-        if not resolved_ips and settings.ssrf_protection_enabled and settings.ssrf_dns_fail_closed:
-            raise ValueError(f"{field_name} DNS resolution returned no addresses and SSRF_DNS_FAIL_CLOSED is enabled")
+        if not resolved_ips and settings.ssrf_protection_enabled:
+            raise ValueError(f"{field_name} DNS resolution returned no addresses and connection pinning requires a resolved address")
         return resolved_ips
 
     @classmethod

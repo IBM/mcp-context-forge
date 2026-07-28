@@ -239,6 +239,18 @@ def _pin_url_to_resolved_ip(url: str, resolved_ip: str) -> str:
     return parsed._replace(netloc=pinned_netloc).geturl()
 
 
+def _build_pinned_rest_http_client() -> ResilientHttpClient:
+    """Build an isolated client for IP-pinned REST requests."""
+    return ResilientHttpClient(
+        client_args={
+            "timeout": settings.federation_timeout,
+            "verify": not settings.skip_ssl_verify,
+            "limits": httpx.Limits(max_connections=1, max_keepalive_connections=0),
+            "cookies": {},
+        }
+    )
+
+
 # Initialize performance tracker, structured logger, audit trail, and metrics buffer for tool operations
 perf_tracker = get_performance_tracker()
 structured_logger = get_structured_logger("tool_service")
@@ -5451,6 +5463,8 @@ class ToolService(BaseService):
                             _url_query_params = {k: v[0] for k, v in parse_qs(parsed.query).items()}
 
                     rest_request_extensions: dict[str, str] = {}
+                    rest_http_client = self._http_client
+                    pinned_rest_http_client: Optional[ResilientHttpClient] = None
                     try:
                         validated_target = await SecurityValidator.validate_url_for_connection_pinning(final_url, "Tool URL")
                     except ValueError as validation_error:
@@ -5468,11 +5482,23 @@ class ToolService(BaseService):
                     resolved_ip = validated_target.get("resolved_ip")
                     original_hostname = validated_target.get("hostname")
                     original_authority = validated_target.get("original_authority")
+                    if settings.ssrf_protection_enabled and not (resolved_ip and original_hostname and original_authority):
+                        safe_url = sanitize_url_for_logging(final_url)
+                        logger.warning(
+                            "REST tool outbound URL validation did not return a pinned target for tool %s (%s), url=%s, correlation_id=%s",
+                            SecurityValidator.sanitize_log_message(tool_name_computed),
+                            SecurityValidator.sanitize_log_message(tool_id),
+                            safe_url,
+                            get_correlation_id(),
+                        )
+                        raise ToolInvocationError("Outbound URL blocked by URL policy")
                     if resolved_ip and original_hostname and original_authority:
                         final_url = _pin_url_to_resolved_ip(final_url, resolved_ip)
                         headers = {hk: hv for hk, hv in headers.items() if hk.lower() != "host"}
                         headers["Host"] = original_authority
                         rest_request_extensions["sni_hostname"] = original_hostname
+                        pinned_rest_http_client = _build_pinned_rest_http_client()
+                        rest_http_client = pinned_rest_http_client
 
                     with create_child_span("tool.gateway_call", {"tool.name": name, "tool.id": tool_id, "tool.integration_type": "REST"}):
                         rest_start_time = time.time()
@@ -5484,7 +5510,7 @@ class ToolService(BaseService):
                                 request_options["extensions"] = rest_request_extensions
                             if method == "GET":
                                 return await asyncio.wait_for(
-                                    self._http_client.get(final_url, params=payload, **request_options),
+                                    rest_http_client.get(final_url, params=payload, **request_options),
                                     timeout=effective_timeout,
                                 )
                             if _ct_base == "application/x-www-form-urlencoded":
@@ -5495,7 +5521,7 @@ class ToolService(BaseService):
                                 # backward compatibility and signed-URL support.
                                 form_payload = {k: self._form_value_to_str(v) for k, v in payload.items()}
                                 return await asyncio.wait_for(
-                                    self._http_client.request(
+                                    rest_http_client.request(
                                         method,
                                         final_url,
                                         data=form_payload,
@@ -5513,7 +5539,7 @@ class ToolService(BaseService):
                                     multipart_request_options["extensions"] = rest_request_extensions
                                 files_payload = {k: (None, self._form_value_to_str(v)) for k, v in payload.items()}
                                 return await asyncio.wait_for(
-                                    self._http_client.request(
+                                    rest_http_client.request(
                                         method,
                                         final_url,
                                         files=files_payload,
@@ -5524,7 +5550,7 @@ class ToolService(BaseService):
                                 )
                             # For POST/PUT/PATCH/DELETE (JSON body, default path)
                             return await asyncio.wait_for(
-                                self._http_client.request(method, final_url, json=payload, **request_options),
+                                rest_http_client.request(method, final_url, json=payload, **request_options),
                                 timeout=effective_timeout,
                             )
 
@@ -5553,18 +5579,22 @@ class ToolService(BaseService):
                             # else: No mappings (None or empty) - preserve query params in URL for signed URL support
                             # (Azure SAS, AWS presigned URLs, webhook signatures, etc.)
 
-                            response = await self._send_with_token_exchange_retry(
-                                _send,
-                                headers,
-                                gateway_oauth_config if (has_gateway and gateway_grant_type == "token-exchange") else None,
-                                gateway_id_str,
-                                gateway_name,
-                                app_user_email,
-                                request_headers or {},
-                                ca_certificate=gateway_ca_cert,
-                                client_cert=gateway_client_cert,
-                                client_key=gateway_client_key,
-                            )
+                            try:
+                                response = await self._send_with_token_exchange_retry(
+                                    _send,
+                                    headers,
+                                    gateway_oauth_config if (has_gateway and gateway_grant_type == "token-exchange") else None,
+                                    gateway_id_str,
+                                    gateway_name,
+                                    app_user_email,
+                                    request_headers or {},
+                                    ca_certificate=gateway_ca_cert,
+                                    client_cert=gateway_client_cert,
+                                    client_key=gateway_client_key,
+                                )
+                            finally:
+                                if pinned_rest_http_client is not None:
+                                    await pinned_rest_http_client.aclose()
                         except (asyncio.TimeoutError, httpx.TimeoutException):
                             rest_elapsed_ms = (time.time() - rest_start_time) * 1000
                             structured_logger.log(
