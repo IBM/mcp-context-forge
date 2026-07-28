@@ -86,7 +86,7 @@ async def test_csrf_token_bound_to_user_id_fails_middleware_validation():
 
         response = await middleware.dispatch(request, call_next)
 
-    assert response.status_code == 403
+    assert response.status_code == 403, response.body
     assert b"CSRF_TOKEN_INVALID" in response.body
     call_next.assert_not_awaited()
 
@@ -127,7 +127,7 @@ async def test_csrf_token_bound_to_email_passes_middleware_validation():
 
         response = await middleware.dispatch(request, call_next)
 
-    assert response.status_code == 200
+    assert response.status_code == 200, response.body
     call_next.assert_awaited_once_with(request)
 
 
@@ -320,6 +320,92 @@ def test_admin_login_csrf_token_validates_llm_provider_write(e2e_client):
     assert create_resp.status_code != 403, create_resp.text
     assert "CSRF_TOKEN_INVALID" not in create_resp.text
     assert create_resp.status_code == status.HTTP_201_CREATED, create_resp.text
+
+
+def test_csrf_middleware_runs_after_auth_context_middleware():
+    """Regression guard for the middleware registration-order bug fixed
+    alongside #5739: ``CSRFMiddleware`` must be registered *before*
+    ``AuthContextMiddleware`` in ``main.py`` so that, per Starlette's
+    reverse-registration-order execution, it actually runs *after*
+    ``AuthContextMiddleware`` has populated ``request.state.user``.
+
+    Getting this backwards makes CSRFMiddleware silently fall back to
+    resolving identity from the raw JWT `sub` claim (EmailUser.id) instead
+    of the email admin.py binds CSRF tokens to — reintroducing #5739 even
+    though the HMAC-binding fix itself is correct.
+    """
+    # First-Party
+    from mcpgateway.main import app
+    from mcpgateway.middleware.auth_middleware import AuthContextMiddleware
+    from mcpgateway.middleware.csrf_middleware import CSRFMiddleware
+
+    middleware_classes = [m.cls for m in app.user_middleware]
+    assert AuthContextMiddleware in middleware_classes, "AuthContextMiddleware must be registered for this regression guard to be meaningful"
+    assert CSRFMiddleware in middleware_classes, "CSRFMiddleware must be registered for this regression guard to be meaningful"
+
+    auth_index = middleware_classes.index(AuthContextMiddleware)
+    csrf_index = middleware_classes.index(CSRFMiddleware)
+
+    # Starlette executes app.user_middleware in list order on the way in, so
+    # a lower index runs FIRST. AuthContextMiddleware must run before
+    # CSRFMiddleware so request.state.user is populated by the time
+    # CSRFMiddleware reads it.
+    assert auth_index < csrf_index, f"AuthContextMiddleware (index {auth_index}) must run before CSRFMiddleware (index {csrf_index}) so request.state.user is populated for CSRF identity resolution"
+
+
+@pytest.mark.asyncio
+async def test_csrf_fallback_preserves_existing_user_id():
+    """Regression guard: when ``request.state.user`` already resolved
+    ``user_id`` from the email but ``request.state.jti`` is unset (e.g. a
+    local/session login where no JWT `jti` is minted), the JWT-decode
+    fallback must fill in ONLY the missing ``session_id`` — it must NOT
+    also re-resolve ``user_id`` from the JWT `sub` claim (EmailUser.id) and
+    clobber the already-correct email.
+
+    Before the fix, the fallback unconditionally overwrote both fields
+    whenever either was missing, so this exact case (user_id present,
+    session_id absent) would have silently rebound the CSRF identity to
+    EmailUser.id and failed validation even with everything else correct.
+    """
+    csrf_service = CSRFService(secret="test-csrf-secret-3", expiry=3600)  # pragma: allowlist secret
+
+    # Token bound to the email + session id that request.state should end up
+    # resolving to.
+    csrf_token = csrf_service.generate_csrf_token(USER_EMAIL, SESSION_ID)
+
+    # A JWT whose `sub` is the (different) user id — if the fallback
+    # incorrectly overwrote user_id, it would pick this up instead of the
+    # already-resolved email and the token would fail validation.
+    jwt_payload = {"sub": USER_ID, "email": USER_EMAIL, "jti": SESSION_ID}
+
+    middleware = CSRFMiddleware(app=AsyncMock())
+    call_next = AsyncMock(return_value=Response("ok", status_code=200))
+
+    request = MagicMock(spec=Request)
+    request.method = "POST"
+    request.url.path = "/llm/providers"
+    request.headers = {"X-CSRF-Token": csrf_token, "origin": "http://localhost:4444"}
+    request.state = MagicMock()
+    request.state.user = MagicMock(email=USER_EMAIL)  # user_id already resolvable from here
+    request.state.jti = None  # session_id NOT resolvable from request.state — must fall back
+    request.cookies = {"jwt_token": "admin-session-jwt", "mcpgateway_csrf_token": csrf_token}
+
+    with (
+        patch("mcpgateway.middleware.csrf_middleware.settings") as mock_settings,
+        patch("mcpgateway.middleware.csrf_middleware.get_csrf_service", return_value=csrf_service),
+        patch("mcpgateway.middleware.csrf_middleware.verify_jwt_token_cached", AsyncMock(return_value=jwt_payload)),
+    ):
+        mock_settings.csrf_enabled = True
+        mock_settings.auth_required = True
+        mock_settings.csrf_exempt_paths = []
+        mock_settings.csrf_token_name = "X-CSRF-Token"
+        mock_settings.csrf_cookie_name = "mcpgateway_csrf_token"
+        mock_settings.csrf_check_referer = False
+
+        response = await middleware.dispatch(request, call_next)
+
+    assert response.status_code == 200, response.body
+    call_next.assert_awaited_once_with(request)
 
 
 def test_admin_login_csrf_token_rejected_without_header(e2e_client):
