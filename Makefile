@@ -7380,7 +7380,6 @@ test-full: coverage test-js test-ui-report
 
 # help: pyupgrade           - Upgrade Python syntax to newer versions
 # help: interrogate         - Check docstring coverage
-# help: prospector          - Comprehensive Python code analysis
 # help: pip-audit           - Audit Python dependencies for published CVEs
 # help: detect-secrets-scan    - detect-secrets scan for secrets in repository using baseline file .secrets.baseline
 # help: detect-secrets-audit   - detect-secrets audit for unverified secrets detected in baseline file .secrets.baseline
@@ -7388,7 +7387,7 @@ test-full: coverage test-js test-ui-report
 # help: devskim             - Run DevSkim static analysis for security anti-patterns
 
 # List of security tools to run with security-all
-SECURITY_TOOLS := semgrep dodgy detect-secrets-scan interrogate prospector pip-audit devskim
+SECURITY_TOOLS := semgrep dodgy detect-secrets-scan interrogate pip-audit devskim
 
 .PHONY: security-all security-report security-fix $(SECURITY_TOOLS) pyupgrade devskim-install-dotnet devskim
 
@@ -7437,13 +7436,6 @@ pyupgrade:                          ## ⬆️  Upgrade Python syntax
 interrogate: uv                     ## 📝 Docstring coverage
 	@echo "📝  interrogate - checking docstring coverage..."
 	@$(UV_BIN) tool run interrogate==$(INTERROGATE_VERSION) -vv mcpgateway || true
-
-prospector:                         ## 🔬 Comprehensive code analysis
-	@echo "🔬  prospector - running comprehensive analysis..."
-	@test -d "$(VENV_DIR)" || $(MAKE) venv
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		$(UV_BIN) pip install -q prospector[with_everything] && \
-		$(VENV_DIR)/bin/prospector mcpgateway || true"
 
 pip-audit:                          ## 🔒 Audit Python dependencies for CVEs
 	@echo "🔒  pip-audit vulnerability scan..."
