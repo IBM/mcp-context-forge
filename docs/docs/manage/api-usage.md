@@ -902,6 +902,25 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" \
   $BASE_URL/resources | jq '.'
 ```
 
+!!! note "Resource URI uniqueness"
+    `uri` is the resource identifier and must be unique within the scope the resource is created in; `name` is a human-readable display label and **may repeat**. Registering a resource whose URI already exists in that scope returns `409 Conflict`. The scope depends on `visibility` — see [Resource URI uniqueness](../architecture/multitenancy.md#resource-uri-uniqueness) for the exact keys.
+
+**Error responses:**
+
+| Status | Condition |
+|--------|-----------|
+| `409 Conflict` | A resource with this URI already exists in the target scope. |
+| `422 Unprocessable Entity` | Payload failed schema or resource validation. |
+| `400 Bad Request` | Other resource errors (for example, `visibility=team` without a `team_id`). |
+
+`409` bodies use the standard FastAPI shape:
+
+```json
+{
+  "detail": "Public resource already exists with URI: file:///etc/config.json — resource URIs must be unique within this scope (names may repeat)."
+}
+```
+
 ### Get Resource Details
 
 ```bash
@@ -957,6 +976,16 @@ curl -s -X PUT -H "Authorization: Bearer $TOKEN" \
   }' \
   $BASE_URL/resources/$RESOURCE_ID | jq '.'
 ```
+
+**Error responses:**
+
+| Status | Condition |
+|--------|-----------|
+| `409 Conflict` | The new `uri` collides with an existing resource in the target scope, or a database uniqueness constraint was violated. |
+| `422 Unprocessable Entity` | Payload failed schema or resource validation. |
+| `413 Payload Too Large` | Resource content exceeded the configured size limit. |
+| `415 Unsupported Media Type` | MIME type is not in the allowed list. |
+| `400 Bad Request` | Other resource errors, including a concurrent-update lock conflict. |
 
 ### Enable/Disable Resource
 
@@ -1729,6 +1758,16 @@ echo "=== E2E Test Complete ==="
 ```
 
 **Solution**: Verify the resource ID exists using the list endpoint.
+
+#### 409 Conflict
+
+```json
+{
+  "detail": "Public resource already exists with URI: file:///etc/config.json — resource URIs must be unique within this scope (names may repeat)."
+}
+```
+
+**Solution**: The identifier already exists in the scope you are writing to. For resources the identifier is `uri` (not `name` — names may repeat); for gateways it is the URL or name. Choose a different identifier, or update the existing record instead of creating a new one.
 
 #### 422 Validation Error
 

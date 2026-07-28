@@ -4252,6 +4252,50 @@ class TestCrudEndpoints:
         assert excinfo.value.status_code == 409
 
     @pytest.mark.asyncio
+    async def test_update_resource_validation_error_maps_to_422(self, monkeypatch, allow_permission):
+        """ResourceValidationError on update must map to 422, matching create_resource (issue #4991)."""
+        request = _make_request("/resources/res-1")
+        monkeypatch.setattr(
+            "mcpgateway.main.MetadataCapture.extract_modification_metadata",
+            lambda *_args, **_kwargs: {
+                "modified_by": "user",
+                "modified_from_ip": "127.0.0.1",
+                "modified_via": "api",
+                "modified_user_agent": "test",
+            },
+        )
+        # First-Party
+        from mcpgateway.services.resource_service import ResourceValidationError
+
+        monkeypatch.setattr("mcpgateway.main.resource_service.update_resource", AsyncMock(side_effect=ResourceValidationError("Cannot create a team-scoped resource without a team_id")))
+        with pytest.raises(HTTPException) as excinfo:
+            await update_resource("res-1", ResourceUpdate(name="Res Updated"), request, db=MagicMock(), user={"email": "user@example.com"})
+        assert excinfo.value.status_code == 422
+        assert excinfo.value.detail == "Cannot create a team-scoped resource without a team_id"
+
+    @pytest.mark.asyncio
+    async def test_update_resource_resource_error_maps_to_400(self, monkeypatch, allow_permission):
+        """A plain ResourceError on update must map to 400 rather than escaping as a 500 (issue #4991)."""
+        request = _make_request("/resources/res-1")
+        monkeypatch.setattr(
+            "mcpgateway.main.MetadataCapture.extract_modification_metadata",
+            lambda *_args, **_kwargs: {
+                "modified_by": "user",
+                "modified_from_ip": "127.0.0.1",
+                "modified_via": "api",
+                "modified_user_agent": "test",
+            },
+        )
+        # First-Party
+        from mcpgateway.services.resource_service import ResourceError
+
+        monkeypatch.setattr("mcpgateway.main.resource_service.update_resource", AsyncMock(side_effect=ResourceError("resource update failed")))
+        with pytest.raises(HTTPException) as excinfo:
+            await update_resource("res-1", ResourceUpdate(name="Res Updated"), request, db=MagicMock(), user={"email": "user@example.com"})
+        assert excinfo.value.status_code == 400
+        assert excinfo.value.detail == "resource update failed"
+
+    @pytest.mark.asyncio
     async def test_update_resource_mcp_apps_validation_error_maps_to_422(self, monkeypatch, allow_permission):
         request = _make_request("/resources/res-1")
         monkeypatch.setattr(
