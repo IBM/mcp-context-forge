@@ -18272,6 +18272,7 @@ async def test_admin_edit_a2a_agent_error_handlers(monkeypatch, mock_db):
         (validation_exc, 422),
         (IntegrityError("stmt", {}, Exception("constraint")), 409),
         (PermissionError("Only the owner can update this agent"), 403),
+        (A2AAgentNotFoundError("agent-1"), 404),
         (Exception("unknown"), 500),
     ]:
         form_data = FakeForm({"name": "Agent", "endpoint_url": "http://agent.example.com"})
