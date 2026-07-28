@@ -38,7 +38,7 @@ GATEWAY_URL="http://${GATEWAY_HOST}:${GATEWAY_PORT}"
 # A strong random secret is generated per run when none is supplied: the config
 # validator rejects known-weak/default values in every environment, and both the
 # gateway and pytest legs inherit the same value so tokens stay consistent.
-JWT_SECRET="${JWT_SECRET_KEY:-$(openssl rand -base64 48 | tr -d '\n')}"
+JWT_SECRET="${JWT_SECRET_KEY:-$(openssl rand -base64 48 | tr -d '\n')}"  # pragma: allowlist secret
 REDIS_HOST="${REDIS_HOST:-127.0.0.1}"
 REDIS_PORT="${REDIS_PORT:-6379}"
 VENV_DIR="${VENV_DIR:-${PROJECT_ROOT}/.venv}"
