@@ -4161,7 +4161,7 @@ async def admin_ui(
     grpc_services = []
     try:
         if "grpc-services" not in hidden_sections and GRPC_AVAILABLE and grpc_service_mgr and settings.mcpgateway_grpc_enabled:
-            grpc_services_raw = await grpc_service_mgr.list_services(
+            grpc_services_raw, _ = await grpc_service_mgr.list_services(
                 db,
                 include_inactive=include_inactive,
                 user_email=user_email,
