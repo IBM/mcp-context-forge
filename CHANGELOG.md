@@ -12,6 +12,11 @@
 
 - **Unconditional weak-secret rejection** - `JWT_SECRET_KEY` and `AUTH_ENCRYPTION_SECRET` placeholder and known-weak values now cause `SecurityConfigurationError` at startup in **every** environment, including development. The previous `env != "development"` carve-out and `changeme` → `__REPLACE_ME__` default are both closed. `BASIC_AUTH_PASSWORD` is also patched to a strong value by `make setup` / `make init-secrets-patch-env`. Run `make setup` (fresh checkout) or `make init-secrets-patch-env` (existing `.env`) to provision real secrets.
 
+- **Root URI policy now defaults to deny** (GHSA-x39c-q2jx-f325) - Set `ROOT_ALLOWED_SCHEMES` before restart for every network scheme used by `DEFAULT_ROOTS` or new root registrations. `file://` roots additionally require `ROOT_ALLOW_FILE_SCHEME=true` and non-empty `ROOT_ALLOWED_FILE_PREFIXES`. Invalid `DEFAULT_ROOTS` abort gateway startup; configure policy before upgrading, not after.
+	- **Root management API payloads are strict** - `POST /roots` rejects unknown fields. `PUT /roots/{root_uri}` accepts only optional `name`; existing full-root PUT payloads containing `uri`, `_meta`, or custom fields now return HTTP 422.
+	- **Root-inclusive exports require unrestricted platform administration** - Unfiltered export includes roots and returns HTTP 403 for team-scoped administrators. Run backup exports with unrestricted platform-admin credentials, or explicitly exclude roots when a scoped export is intended.
+	- **Root registrations are runtime state** - Roots are held in memory and are not database-persisted. Manual registrations do not survive process restart; configure `DEFAULT_ROOTS` together with matching root policy when persistent startup roots are required.
+
 ### Fixed
 
 - Fixed RBAC seeder race condition that produced HTTP 500 under concurrent bootstrap: added partial unique indexes on `roles(name, scope) WHERE is_active` and `user_roles` equivalent columns, plus savepoint/retry in `RoleService.create_role()` and `assign_role_to_user()`. The migration (`d21698ae4a19`) now also remaps `user_roles.role_id` from duplicate roles to the kept role before deactivating the duplicates (so `list_user_roles()` joins remain intact), and prefers unexpired / most-recently-granted assignments when deduplicating user-role rows (#4636)

@@ -663,6 +663,52 @@ def get_rpc_filter_context(request: Request, user) -> tuple[Optional[str], Optio
     return user_email, token_teams, is_admin
 
 
+async def is_unrestricted_platform_admin(request: Request, user: Any, db: Session) -> bool:
+    """Return whether request has unrestricted platform-admin authority."""
+    if request is None or not hasattr(request, "state"):
+        return False
+    user_email, token_teams, _token_is_admin = get_rpc_filter_context(request, user)
+    if not user_email or token_teams is not None:
+        return False
+
+    # First-Party
+    from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
+
+    return await PermissionService(db).check_platform_admin_permission(user_email, token_teams=None)
+
+
+def configuration_export_includes_roots(include_types: Optional[List[str]], exclude_types: Optional[List[str]]) -> bool:
+    """Return whether full export selection includes roots."""
+    normalized_include = {item.strip().lower() for item in include_types or [] if item and item.strip()}
+    normalized_exclude = {item.strip().lower() for item in exclude_types or [] if item and item.strip()}
+    if normalized_include:
+        return "roots" in normalized_include
+    return "roots" not in normalized_exclude
+
+
+def selective_selection_includes_roots(entity_selections: Any) -> bool:
+    """Return whether selective export/import selection includes roots."""
+    if not isinstance(entity_selections, dict) or "roots" not in entity_selections:
+        return False
+    roots_selection = entity_selections.get("roots")
+    return roots_selection is None or (isinstance(roots_selection, list) and bool(roots_selection))
+
+
+def import_envelope_includes_roots(import_data: Any, selected_entities: Any = None) -> bool:
+    """Return whether import data and selection would touch roots."""
+    if not isinstance(import_data, dict):
+        return False
+    entities = import_data.get("entities")
+    if not isinstance(entities, dict) or "roots" not in entities:
+        return False
+    roots = entities.get("roots")
+    if not isinstance(roots, list) or not roots:
+        return False
+    if selected_entities is None:
+        return True
+    return selective_selection_includes_roots(selected_entities)
+
+
 def _has_verified_jwt_payload(request: Request) -> bool:
     """Return whether request has a verified JWT payload cached in request state.
 

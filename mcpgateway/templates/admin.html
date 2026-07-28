@@ -1071,6 +1071,7 @@
                             >Resources</span
                           >
                         </label>
+                        {% if 'roots' not in hidden_sections %}
                         <label class="flex items-center">
                           <input
                             type="checkbox"
@@ -1079,9 +1080,10 @@
                             class="mr-2"
                           />
                           <span class="text-sm text-gray-600 dark:text-gray-300"
-                            >Roots</span
+                          >Roots</span
                           >
                         </label>
+                        {% endif %}
                       </div>
                     </div>
 

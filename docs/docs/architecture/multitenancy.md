@@ -15,6 +15,12 @@ The multi-tenancy system is built around **teams as the primary organizational u
 5. **Role-Based Access**: Users have roles (Owner, Member) within teams that determine their capabilities
 6. **Platform Administration**: Separate platform-level administration for system management
 
+### Global Root Configuration
+
+MCP roots are global, process-local platform configuration. They are not team-owned resources in this release: team-scoped identities cannot read or mutate roots, even when a role grants `admin.system_config`. Team-owned roots and `team_id` filtering are intentionally deferred.
+
+Root registration is disabled by default because `ROOT_ALLOWED_SCHEMES` defaults to an empty list. Operators must explicitly allow supported schemes. `file://` roots additionally require `ROOT_ALLOW_FILE_SCHEME=true` and configured allowed file prefixes. Invalid `DEFAULT_ROOTS` fail startup; deployments using defaults must configure matching root policy before upgrade or restart.
+
 ---
 
 ## User Lifecycle & Authentication

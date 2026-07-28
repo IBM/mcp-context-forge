@@ -4271,6 +4271,23 @@ class EventMessage(BaseModelWithConfigDict):
         return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+class RootCreate(BaseModelWithConfigDict):
+    """Management-only schema for root creation."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    uri: str = Field(..., min_length=1, max_length=2048)
+    name: Optional[str] = Field(default=None, max_length=255)
+
+
+class RootUpdate(BaseModelWithConfigDict):
+    """Management-only schema for root updates."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: Optional[str] = Field(default=None, max_length=255)
+
+
 class AdminToolCreate(BaseModelWithConfigDict):
     """Schema for creating tools via admin UI.
 

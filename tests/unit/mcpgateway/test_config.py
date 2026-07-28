@@ -28,6 +28,18 @@ from mcpgateway.config import (
 )
 
 
+def test_root_policy_configuration_validation():
+    with pytest.raises(ValidationError):
+        Settings(root_allow_file_scheme=True, root_allowed_file_prefixes=[], _env_file=None)
+    with pytest.raises(ValidationError):
+        Settings(root_allowed_schemes=["file"], _env_file=None)
+    with pytest.raises(ValidationError):
+        Settings(root_allowed_file_prefixes=["/workspace/../secret"], _env_file=None)
+
+    settings = Settings(root_allowed_schemes=["HTTPS"], _env_file=None)
+    assert settings.root_allowed_schemes == ["https"]
+
+
 # --------------------------------------------------------------------------- #
 #                          Settings field parsers                             #
 # --------------------------------------------------------------------------- #

@@ -382,6 +382,7 @@ def allow_permission(monkeypatch):
     mock_perm_service.check_permission = AsyncMock(return_value=True)
     monkeypatch.setattr("mcpgateway.middleware.rbac.PermissionService", lambda db: mock_perm_service)
     monkeypatch.setattr("mcpgateway.admin.PermissionService", lambda db: mock_perm_service)
+    monkeypatch.setattr("mcpgateway.admin.is_unrestricted_platform_admin", AsyncMock(return_value=True))
     monkeypatch.setattr("mcpgateway.plugins.get_plugin_manager", AsyncMock(return_value=None))
     return mock_perm_service
 
@@ -3651,6 +3652,10 @@ class TestAdminGatewayRoutes:
 class TestAdminRootRoutes:
     """Test admin routes for root management with enhanced coverage."""
 
+    @pytest.fixture(autouse=True)
+    def _allow_root_admin(self, monkeypatch):
+        monkeypatch.setattr("mcpgateway.admin.is_unrestricted_platform_admin", AsyncMock(return_value=True))
+
     @patch("mcpgateway.admin.root_service.add_root", new_callable=AsyncMock)
     async def test_admin_add_root_with_special_characters(self, mock_add_root, mock_request):
         """Test adding root with special characters in URI."""
@@ -5073,6 +5078,7 @@ class TestAdminUIRoute:
         )
         monkeypatch.setattr(settings, "mcpgateway_a2a_enabled", True, raising=False)
         monkeypatch.setattr(settings, "mcpgateway_grpc_enabled", True, raising=False)
+        monkeypatch.setattr("mcpgateway.admin.is_unrestricted_platform_admin", AsyncMock(return_value=True))
 
         team_service_ctor = MagicMock()
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", team_service_ctor)
@@ -13779,6 +13785,19 @@ async def test_admin_search_roots_denies_without_system_config_permission(monkey
         await admin_search_roots(q="tmp", limit=10, user={"email": "dev@example.com", "db": mock_db})
 
     assert exc_info.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_admin_search_roots_denies_scoped_admin_before_service_access(monkeypatch, allow_permission, mock_db):
+    root_service = MagicMock(list_roots=AsyncMock())
+    monkeypatch.setattr("mcpgateway.admin.root_service", root_service)
+    monkeypatch.setattr("mcpgateway.admin.is_unrestricted_platform_admin", AsyncMock(return_value=False))
+
+    with pytest.raises(HTTPException) as exc_info:
+        await admin_search_roots(q="tmp", limit=10, db=mock_db, user={"email": "admin@example.com"})
+
+    assert exc_info.value.status_code == 403
+    root_service.list_roots.assert_not_awaited()
 
 
 def test_admin_search_roots_disables_admin_bypass():

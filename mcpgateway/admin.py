@@ -66,7 +66,15 @@ from mcpgateway import version as version_module
 from mcpgateway.auth import get_current_user, get_user_team_roles
 
 # Re-export canonical get_user_email from auth_context for backward compatibility.
-from mcpgateway.auth_context import get_scoped_resource_access_context, get_token_teams_from_request, get_user_email
+from mcpgateway.auth_context import (
+    configuration_export_includes_roots,
+    get_scoped_resource_access_context,
+    get_token_teams_from_request,
+    get_user_email,
+    import_envelope_includes_roots,
+    is_unrestricted_platform_admin,
+    selective_selection_includes_roots,
+)
 from mcpgateway.cache.a2a_stats_cache import a2a_stats_cache
 from mcpgateway.cache.global_config_cache import global_config_cache
 from mcpgateway.common.models import LogLevel
@@ -177,7 +185,7 @@ from mcpgateway.services.permission_service import PermissionService
 from mcpgateway.services.plugin_service import get_plugin_service
 from mcpgateway.services.prompt_service import PromptArgumentsJSONError, PromptNameConflictError, PromptNotFoundError, PromptService
 from mcpgateway.services.resource_service import ResourceNotFoundError, ResourceService, ResourceURIConflictError, ResourceValidationError
-from mcpgateway.services.root_service import RootService, RootServiceError, RootServiceNotFoundError
+from mcpgateway.services.root_service import RootService, RootServiceError, RootServiceNotFoundError, RootServiceValidationError
 from mcpgateway.services.server_service import ServerError, ServerLockConflictError, ServerNameConflictError, ServerNotFoundError, ServerService
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.tag_service import TagService
@@ -3795,6 +3803,10 @@ async def admin_ui(
         # Merge permission-based hiding with query-param and static config
         hidden_sections = hidden_sections | permission_hidden_sections
 
+    can_manage_roots = await is_unrestricted_platform_admin(request, user, db)
+    if not can_manage_roots:
+        hidden_sections.add("roots")
+
     # --------------------------------------------------------------------------------
     # Get user action permissions for UI button visibility
     # Only check permissions when email auth is enabled (same as section hiding)
@@ -4143,8 +4155,10 @@ async def admin_ui(
     # If gateways need team filtering as dicts too, apply _to_dict_and_filter similarly:
     gateways = _to_dict_and_filter(gateways_raw) if isinstance(gateways_raw, (list, tuple)) else gateways
 
-    # roots
-    roots = [root.model_dump(by_alias=True) for root in await root_service.list_roots()]
+    # roots are global platform configuration; scoped admins see dashboard without root data.
+    roots = []
+    if can_manage_roots:
+        roots = [root.model_dump(by_alias=True) for root in await root_service.list_roots()]
 
     # Load A2A agents if enabled
     a2a_agents = []
@@ -11479,6 +11493,7 @@ async def admin_search_a2a_agents(
 
 async def perform_unified_search(
     *,
+    request: Optional[Request] = None,
     q: str,
     tags: Optional[str],
     entity_types: Optional[str],
@@ -11501,6 +11516,7 @@ async def perform_unified_search(
     and optionally users (when the caller has ``admin.user_management`` permission).
 
     Args:
+        request: Current request object.
         q (str): Free-text search query.
         tags (Optional[str]): Tag filter expression (comma=OR, plus=AND).
         entity_types (Optional[str]): Optional comma-separated entity type list.
@@ -11722,8 +11738,10 @@ async def perform_unified_search(
         roots_result = await _safe_entity_search(
             admin_search_roots,
             "roots",
+            request=request,
             q=search_query,
             limit=effective_limit,
+            db=db,
             user=user,
         )
         grouped_results["roots"] = typing_cast(list[dict[str, Any]], roots_result.get("roots", roots_result.get("items", [])))
@@ -11754,6 +11772,7 @@ async def perform_unified_search(
 @admin_router.get("/search", response_class=JSONResponse)
 @require_permission("admin.dashboard", allow_admin_bypass=False)
 async def admin_unified_search(
+    request: Request = None,
     q: str = Query("", max_length=500, description="Search query"),
     tags: QueryTagsFilter = None,
     entity_types: QueryEntityTypes = None,
@@ -11776,6 +11795,7 @@ async def admin_unified_search(
     to :func:`perform_unified_search`.
 
     Args:
+        request: Current request object.
         q (str): Free-text search query.
         tags (Optional[str]): Tag filter expression (comma=OR, plus=AND).
         entity_types (Optional[str]): Optional comma-separated entity type list.
@@ -11793,6 +11813,7 @@ async def admin_unified_search(
         dict[str, Any]: Grouped and flattened search results with metadata.
     """
     return await perform_unified_search(
+        request=request,
         q=q,
         tags=tags,
         entity_types=entity_types,
@@ -14095,11 +14116,19 @@ async def admin_set_prompt_state(
     return RedirectResponse(redirect_url, status_code=303)
 
 
+async def _require_unrestricted_root_admin(request: Optional[Request], user: Any, db: Session) -> None:
+    """Require unrestricted platform-admin authority for global roots."""
+    if not await is_unrestricted_platform_admin(request, user, db):
+        raise HTTPException(status_code=403, detail=_ACCESS_DENIED_MSG)
+
+
 @admin_router.get("/roots/search", response_class=JSONResponse)
 @require_permission("admin.system_config", allow_admin_bypass=False)
 async def admin_search_roots(
+    request: Request = None,
     q: str = Query("", max_length=500, description="Search query"),
     limit: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Maximum number of results to return"),
+    db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> dict:
     """Search roots by name or URI.
@@ -14111,8 +14140,10 @@ async def admin_search_roots(
     :meth:`~mcpgateway.services.root_service.RootService.list_roots`.
 
     Args:
+        request: Current request object.
         q (str): Free-text search query matched against root name and URI.
         limit (int): Maximum number of results to return.
+        db: Database session.
         user: Authenticated user context.
 
     Returns:
@@ -14124,6 +14155,7 @@ async def admin_search_roots(
         >>> admin_search_roots.__name__
         'admin_search_roots'
     """
+    await _require_unrestricted_root_admin(request, user, db)
     search_query = _normalize_search_query(q)
     # Defense-in-depth clamp: FastAPI validates ge/le at the HTTP layer, but direct
     # Python calls (e.g. from admin_unified_search) bypass that validation.
@@ -14147,6 +14179,8 @@ async def admin_search_roots(
 @require_permission("admin.system_config", allow_admin_bypass=False)
 async def admin_export_root(
     uri: str,
+    request: Request = None,
+    db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
     """
@@ -14154,6 +14188,8 @@ async def admin_export_root(
 
     Args:
         uri: Root URI to export (query parameter)
+        request: Current request object.
+        db: Database session.
         user: Authenticated user
 
     Returns:
@@ -14163,7 +14199,8 @@ async def admin_export_root(
         HTTPException: If root not found or export fails
     """
     try:
-        LOGGER.info(f"Admin user {get_user_email(user)} requested root export for URI: {uri}")
+        await _require_unrestricted_root_admin(request, user, db)
+        LOGGER.info("Admin user %s requested root export", get_user_email(user))
 
         # Get the root by URI
         root = await root_service.get_root_by_uri(uri)
@@ -14202,6 +14239,10 @@ async def admin_export_root(
     except RootServiceNotFoundError as e:
         LOGGER.error(f"Root not found for export by user {get_user_email(user)}: {str(e)}")
         raise HTTPException(status_code=404, detail=str(e))
+    except RootServiceValidationError as e:
+        raise HTTPException(status_code=400, detail={"message": "Root URI rejected by policy", "reason_code": e.reason_code}) from e
+    except HTTPException:
+        raise
     except Exception as e:
         LOGGER.error(f"Unexpected root export error for user {get_user_email(user)}: {str(e)}")
         raise HTTPException(status_code=500, detail="Root export failed")
@@ -14209,7 +14250,7 @@ async def admin_export_root(
 
 @admin_router.get("/roots/{uri:path}")
 @require_permission("admin.system_config", allow_admin_bypass=False)
-async def admin_get_root(uri: str, user=Depends(get_current_user_with_permissions)) -> dict:
+async def admin_get_root(uri: str, request: Request = None, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> dict:
     """Get a specific root by URI via the admin UI.
 
     This endpoint retrieves details for a specific root URI from the system.
@@ -14217,6 +14258,8 @@ async def admin_get_root(uri: str, user=Depends(get_current_user_with_permission
 
     Args:
         uri (str): The URI of the root to retrieve.
+        request: Current request object.
+        db: Database session.
         user: Authenticated user dependency.
 
     Returns:
@@ -14232,12 +14275,15 @@ async def admin_get_root(uri: str, user=Depends(get_current_user_with_permission
         >>> admin_get_root.__name__
         'admin_get_root'
     """
-    LOGGER.debug(f"User {get_user_email(user)} is retrieving root URI {uri}")
+    await _require_unrestricted_root_admin(request, user, db)
+    LOGGER.debug("User %s is retrieving root", get_user_email(user))
     try:
         root = await root_service.get_root_by_uri(uri)
         return root.model_dump(by_alias=True)
     except RootServiceNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    except RootServiceValidationError as e:
+        raise HTTPException(status_code=400, detail={"message": "Root URI rejected by policy", "reason_code": e.reason_code}) from e
     except Exception as e:
         LOGGER.error(f"Error getting root {uri}: {e}")
         raise e
@@ -14245,7 +14291,7 @@ async def admin_get_root(uri: str, user=Depends(get_current_user_with_permission
 
 @admin_router.post("/roots")
 @require_permission("admin.system_config", allow_admin_bypass=False)
-async def admin_add_root(request: Request, user=Depends(get_current_user_with_permissions), _db: Session = Depends(get_db)) -> RedirectResponse:
+async def admin_add_root(request: Request, user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)) -> RedirectResponse:
     """Add a new root via the admin UI.
 
     Expects form fields:
@@ -14255,7 +14301,7 @@ async def admin_add_root(request: Request, user=Depends(get_current_user_with_pe
     Args:
         request: FastAPI request containing form data.
         user: Authenticated user.
-        _db: Database session for permission checks.
+        db: Database session for permission checks.
 
     Returns:
         RedirectResponse: A redirect response to the admin dashboard.
@@ -14267,6 +14313,7 @@ async def admin_add_root(request: Request, user=Depends(get_current_user_with_pe
         'admin_add_root'
     """
     error_message = None
+    await _require_unrestricted_root_admin(request, user, db)
     user_email = get_user_email(user)
     LOGGER.debug(f"User {user_email} is adding a new root")
 
@@ -14282,8 +14329,11 @@ async def admin_add_root(request: Request, user=Depends(get_current_user_with_pe
             raise ValueError("URI is required")
         await root_service.add_root(str(uri), name)
 
-    except RootServiceError as e:
-        LOGGER.warning(f"Failed to add root for user {user_email}: {e}")
+    except RootServiceValidationError as e:
+        LOGGER.warning("Failed to add root for user %s: reason=%s", user_email, e.reason_code)
+        error_message = "Failed to add root. Please check the URI format."
+    except RootServiceError:
+        LOGGER.warning("Failed to add root for user %s", user_email)
         error_message = "Failed to add root. Please check the URI format."
     except ValueError as e:
         LOGGER.warning(f"Invalid input from user {user_email}: {e}")
@@ -14300,7 +14350,7 @@ async def admin_add_root(request: Request, user=Depends(get_current_user_with_pe
 
 @admin_router.post("/roots/{uri:path}/update")
 @require_permission("admin.system_config", allow_admin_bypass=False)
-async def admin_update_root(uri: str, request: Request, user=Depends(get_current_user_with_permissions)) -> RedirectResponse:
+async def admin_update_root(uri: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> RedirectResponse:
     """Update a root via the admin UI.
 
     This endpoint updates an existing root URI in the system. It expects form
@@ -14313,6 +14363,7 @@ async def admin_update_root(uri: str, request: Request, user=Depends(get_current
     Args:
         uri (str): The URI of the root to update.
         request (Request): FastAPI request object containing form data.
+        db: Database session.
         user: Authenticated user dependency.
 
     Returns:
@@ -14329,7 +14380,8 @@ async def admin_update_root(uri: str, request: Request, user=Depends(get_current
         >>> admin_update_root.__name__
         'admin_update_root'
     """
-    LOGGER.debug(f"User {get_user_email(user)} is updating root URI {uri}")
+    await _require_unrestricted_root_admin(request, user, db)
+    LOGGER.debug("User %s is updating root", get_user_email(user))
 
     try:
         form = await request.form()
@@ -14349,6 +14401,9 @@ async def admin_update_root(uri: str, request: Request, user=Depends(get_current
 
     except RootServiceNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    except RootServiceValidationError:
+        root_path = _resolve_root_path(request)
+        return RedirectResponse(_build_admin_redirect(root_path, "roots", error="Failed to update root. Please check the URI format."), status_code=303)
     except Exception as e:
         LOGGER.error(f"Error updating root {uri}: {e}")
         raise e
@@ -14356,7 +14411,7 @@ async def admin_update_root(uri: str, request: Request, user=Depends(get_current
 
 @admin_router.post("/roots/{uri:path}/delete")
 @require_permission("admin.system_config", allow_admin_bypass=False)
-async def admin_delete_root(uri: str, request: Request, user=Depends(get_current_user_with_permissions), _db: Session = Depends(get_db)) -> RedirectResponse:
+async def admin_delete_root(uri: str, request: Request, user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)) -> RedirectResponse:
     """
     Delete a root via the admin UI.
 
@@ -14368,7 +14423,7 @@ async def admin_delete_root(uri: str, request: Request, user=Depends(get_current
         uri (str): The URI of the root to delete.
         request (Request): FastAPI request object (not used directly but required by the route signature).
         user (str): Authenticated user dependency.
-        _db: Database session for permission checks.
+        db: Database session for permission checks.
 
     Returns:
         RedirectResponse: A redirect response to the roots section of the admin
@@ -14380,12 +14435,17 @@ async def admin_delete_root(uri: str, request: Request, user=Depends(get_current
         >>> admin_delete_root.__name__
         'admin_delete_root'
     """
-    LOGGER.debug(f"User {get_user_email(user)} is deleting root URI {uri}")
-    await root_service.remove_root(uri)
+    await _require_unrestricted_root_admin(request, user, db)
+    LOGGER.debug("User %s is deleting root", get_user_email(user))
     form = await request.form()
     root_path = _resolve_root_path(request)
     is_inactive_checked: str = str(form.get("is_inactive_checked", "false"))
     team_id = str(form.get("team_id", "") or "")
+    try:
+        await root_service.remove_root(uri)
+    except RootServiceValidationError:
+        redirect_url = _build_admin_redirect(root_path, "roots", error="Failed to delete root. Please check the URI format.", include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
+        return RedirectResponse(redirect_url, status_code=303)
     redirect_url = _build_admin_redirect(root_path, "roots", include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
     return RedirectResponse(redirect_url, status_code=303)
 
@@ -15593,6 +15653,9 @@ async def admin_export_configuration(
         if tags:
             tags_list = [t.strip() for t in tags.split(",") if t.strip()]
 
+        if configuration_export_includes_roots(include_types, exclude_types_list):
+            await _require_unrestricted_root_admin(request, user, db)
+
         # Extract username from user (which could be string or dict with token)
         username = user if isinstance(user, str) else user.get("username", "unknown")
 
@@ -15628,6 +15691,8 @@ async def admin_export_configuration(
     except ExportError as e:
         LOGGER.error(f"Admin export failed for user {user}: {str(e)}")
         raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
         LOGGER.error(f"Unexpected admin export error for user {user}: {str(e)}")
         raise HTTPException(status_code=500, detail="Export failed")
@@ -15666,6 +15731,9 @@ async def admin_export_selective(request: Request, db: Session = Depends(get_db)
         entity_selections = body.get("entity_selections", {})
         include_dependencies = body.get("include_dependencies", True)
 
+        if selective_selection_includes_roots(entity_selections):
+            await _require_unrestricted_root_admin(request, user, db)
+
         # Extract username from user (which could be string or dict with token)
         username = user if isinstance(user, str) else user.get("username", "unknown")
 
@@ -15692,6 +15760,8 @@ async def admin_export_selective(request: Request, db: Session = Depends(get_db)
     except ExportError as e:
         LOGGER.error(f"Admin selective export failed for user {user}: {str(e)}")
         raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
         LOGGER.error(f"Unexpected admin selective export error for user {user}: {str(e)}")
         raise HTTPException(status_code=500, detail="Export failed")
@@ -15733,6 +15803,9 @@ async def admin_import_preview(request: Request, db: Session = Depends(get_db), 
         import_data = data.get("data")
         if not import_data:
             raise HTTPException(status_code=400, detail="Missing 'data' field with import content")
+
+        if import_envelope_includes_roots(import_data):
+            await _require_unrestricted_root_admin(request, user, db)
 
         # Validate user permissions for import preview
         username = user if isinstance(user, str) else user.get("username", "unknown")
@@ -15791,6 +15864,9 @@ async def admin_import_configuration(request: Request, db: Session = Depends(get
         dry_run = body.get("dry_run", False)
         rekey_secret = body.get("rekey_secret")
         selected_entities = body.get("selected_entities")
+
+        if import_envelope_includes_roots(import_data, selected_entities):
+            await _require_unrestricted_root_admin(request, user, db)
 
         # Validate conflict strategy
         try:
