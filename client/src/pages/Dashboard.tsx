@@ -10,6 +10,8 @@ import { EmptyStatePlaceholder } from "@/components/dashboard/EmptyStatePlacehol
 import { MiniCard } from "@/components/dashboard/MiniCard";
 import { PermissionDenied } from "@/components/dashboard/PermissionDenied";
 import { StatusHeadline } from "@/components/dashboard/StatusHeadline";
+import { SystemStatsCardConnected } from "@/components/dashboard/SystemStatsCardConnected";
+import { SystemView } from "@/components/dashboard/SystemView";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/auth/useAuth";
 import {
@@ -124,15 +126,13 @@ export function Dashboard() {
 
 /**
  * Default (resting) state: status summary with the activity-feed entry point,
- * the system status card, and the inline source cards. No right column.
- * Card content (#5841) lands behind the placeholder.
+ * the all-time system stats card, and the inline source cards. No right column.
  */
 function DefaultState() {
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-6">
       <StatusHeadline action={<ActivityFeedButton />} />
-      {/* #5841 SystemStatusCard swaps in here. */}
-      <EmptyStatePlaceholder messageId="dashboard.home.placeholder.system" />
+      <SystemStatsCardConnected />
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         {DEFAULT_SOURCE_CARDS.map((id) => (
           <MiniCard key={id} id={id} />
@@ -171,7 +171,11 @@ function NonDefaultState({ active }: { active: HomeViewId }) {
         {gated && permissionsLoading ? (
           <Skeleton className="h-40 w-full rounded-lg" />
         ) : allowed ? (
-          <EmptyStatePlaceholder messageId={PLACEHOLDER_MESSAGE[active]} />
+          active === "system" ? (
+            <SystemView />
+          ) : (
+            <EmptyStatePlaceholder messageId={PLACEHOLDER_MESSAGE[active]} />
+          )
         ) : (
           <PermissionDenied />
         )}
