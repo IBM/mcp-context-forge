@@ -457,8 +457,8 @@ Before running the demo agent, ensure the following configuration:
 
   The script creates a JWT signed with your instance's secret. The token identity must resolve to a user in the
   database. The helper commands below pass your `PLATFORM_ADMIN_EMAIL` as a legacy email subject; service-issued tokens
-  may instead use an opaque UUID subject with signed email metadata. See the "Running the Demo" section below for the
-  actual commands.
+  now use opaque UUID subjects for token-catalog API tokens platform-wide and carry the human email in signed metadata
+  such as `user.email`. See the "Running the Demo" section below for the actual commands.
 
 #### Running the Demo
 

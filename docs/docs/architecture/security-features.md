@@ -35,9 +35,10 @@ The `jti` (JWT ID) claim is a unique identifier for each JWT token, defined in [
 
 **Token Generation Examples**:
 
-New service-issued tokens use an opaque user identifier in `sub` (`EmailUser.id` when available). Human-readable email
-identity is retained in signed metadata where needed, such as `user.email` on API tokens. Legacy tokens with
-`sub=<email>` continue to authenticate for backward compatibility.
+New session tokens and token-catalog API tokens issued through normal user-backed flows use an opaque user identifier in
+`sub` (`EmailUser.id`). This applies to API tokens platform-wide, not only tokens used with the Rust dataplane.
+Human-readable email identity is retained in signed metadata where needed, such as `user.email` on API tokens. Legacy
+tokens with `sub=<email>` continue to authenticate for backward compatibility.
 
 ```python
 # Email-auth session tokens (always include JTI; teams/admin are resolved server-side)
@@ -64,8 +65,8 @@ payload = {
 }
 ```
 
-Hand-minted and legacy tokens may still use `sub=<email>`, but new integrations should treat `sub` as opaque and read
-the human identity from signed email metadata when it is present.
+Hand-minted, no-user-record fallback, and legacy tokens may still use `sub=<email>`, but new integrations should treat
+`sub` as opaque and read the human identity from signed email metadata when it is present.
 
 **Cache Behavior**:
 
