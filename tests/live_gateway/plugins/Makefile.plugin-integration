@@ -81,5 +81,5 @@ test-plugin-pii-filter:  ## Plugin E2E: PIIFilterPlugin (both paths)
 	@$(MAKE) test-plugin-integration PLUGIN=PIIFilterPlugin ENFORCEMENT=$(ENFORCEMENT)
 
 .PHONY: test-plugin-sql-sanitizer
-test-plugin-sql-sanitizer:  ## Plugin E2E: SQLSanitizer (both paths, native plugin)
+test-plugin-sql-sanitizer:  ## Plugin E2E: SQLSanitizer (both paths)
 	@$(MAKE) test-plugin-integration PLUGIN=SQLSanitizer ENFORCEMENT=$(ENFORCEMENT)
