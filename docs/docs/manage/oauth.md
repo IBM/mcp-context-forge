@@ -164,6 +164,81 @@ The `audience` parameter:
 - Your provider must whitelist the full redirect URI, e.g. `https://gateway.example.com/oauth/callback`
 - The gateway handles exchanging the authorization code for an access token and applies it as `Authorization: Bearer <token>` when contacting the MCP server
 
+### Popup OAuth Flow (React UI)
+
+The React UI can initiate OAuth in a popup window instead of a full-page redirect:
+
+**Endpoint**: `GET /oauth/authorize/{gateway_id}?popup=true`
+
+**Behavior**:
+- Opens OAuth provider in a popup window
+- Callback responds with `postMessage` instead of HTML page
+- Parent window receives result and closes popup automatically
+
+**postMessage Payload Structure**:
+
+Success:
+```javascript
+{
+  type: "oauth_callback",
+  status: "success",
+  gatewayId: "gateway-uuid",
+  gatewayName: "Gateway Name"
+}
+```
+
+Error:
+```javascript
+{
+  type: "oauth_callback",
+  status: "error",
+  error: "error_code",
+  errorDescription: "Human-readable description"
+}
+```
+
+**Error Codes**:
+- `access_denied` - User denied authorization at provider
+- `missing_code` - Authorization code missing from callback
+- `invalid_state` - State parameter invalid or expired
+- `oauth_error` - OAuth protocol error (see errorDescription)
+- `server_error` - Unexpected server error
+
+**React Integration Pattern**:
+
+```javascript
+// Open popup
+const authWindow = window.open(
+  `/oauth/authorize/${gatewayId}?popup=true`,
+  'oauth-popup',
+  'width=600,height=700'
+);
+
+// Listen for result
+window.addEventListener('message', (event) => {
+  // Security: Validate event.source matches popup
+  if (event.source !== authWindow) return;
+
+  const { type, status, error, errorDescription } = event.data;
+
+  if (type === 'oauth_callback') {
+    if (status === 'success') {
+      // Handle success
+      console.log('OAuth successful');
+    } else {
+      // Handle error
+      console.error(`OAuth failed: ${error} - ${errorDescription}`);
+    }
+  }
+});
+```
+
+**Security Notes**:
+- Callback uses `postMessage(..., '*')` for cross-origin compatibility
+- Receiver MUST validate `event.source === authWindow` (exact popup reference)
+- State token includes `popup.` prefix for callback mode detection
+- CSP nonce is embedded in callback script for strict CSP compliance
+
 Sequence (Authorization Code):
 
 ```mermaid
