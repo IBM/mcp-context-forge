@@ -259,15 +259,16 @@ class TestTokenCatalogService:
         with patch("mcpgateway.services.token_catalog_service.create_jwt_token", new_callable=AsyncMock) as mock_create_jwt:
             mock_create_jwt.return_value = "jwt_token_123"
             jti = str(uuid.uuid4())
-            token = await token_service._generate_token("user@example.com", jti)
+            user_email = "user@example.com"
+            token = await token_service._generate_token(user_email, jti)
 
             assert token == "jwt_token_123"
             mock_create_jwt.assert_called_once()
             # Access keyword arguments from the call
             call_kwargs = mock_create_jwt.call_args.kwargs
-            assert call_kwargs["data"]["sub"] == "user@example.com"
+            assert call_kwargs["data"]["sub"] == user_email
             assert call_kwargs["data"]["jti"] == jti
-            assert call_kwargs["user_data"]["email"] == "user@example.com"
+            assert call_kwargs["user_data"]["email"] == user_email
             assert call_kwargs["user_data"]["is_admin"] is False
 
     @pytest.mark.asyncio
