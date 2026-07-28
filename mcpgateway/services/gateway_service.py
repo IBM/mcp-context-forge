@@ -2306,10 +2306,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             await tool_lookup_cache.invalidate_gateway(str(gateway.id))
 
             # Invalidate negative cache entries for restored tools (Bug #4915 fix)
-            if catalog_sync.restored_tool_names:
-                for tool_name in catalog_sync.restored_tool_names:
-                    await tool_lookup_cache.invalidate(tool_name, gateway_id=gateway.id)
-                logger.debug(f"Invalidated cache for {len(catalog_sync.restored_tool_names)} restored tools: {catalog_sync.restored_tool_names}")
+            await self._invalidate_restored_tool_caches(catalog_sync=catalog_sync, gateway_id=gateway.id)
             # Also invalidate tags cache since tool/resource tags may have changed
             # First-Party
             from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
@@ -3041,6 +3038,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 # if url_changed:
                 # Initialize empty lists in case initialization fails
                 reinit_succeeded = False
+                catalog_sync: Optional[GatewayCatalogSyncResult] = None  # Track restored tools for cache invalidation
 
                 # Connection-affecting fields already written to `gateway` above; compare
                 # against the pre-update snapshot to decide whether a failed re-init must
@@ -3170,10 +3168,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 await tool_lookup_cache.invalidate_gateway(str(gateway.id))
 
                 # Invalidate negative cache entries for restored tools (Bug #4915 fix)
-                if reinit_succeeded and catalog_sync.restored_tool_names:
-                    for tool_name in catalog_sync.restored_tool_names:
-                        await tool_lookup_cache.invalidate(tool_name, gateway_id=str(gateway.id))
-                    logger.debug(f"Invalidated cache for {len(catalog_sync.restored_tool_names)} restored tools: {catalog_sync.restored_tool_names}")
+                if reinit_succeeded:
+                    await self._invalidate_restored_tool_caches(catalog_sync=catalog_sync, gateway_id=gateway.id)
                 # Also invalidate tags cache since gateway tags may have changed
                 # First-Party
                 from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
@@ -3543,7 +3539,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 gateway.enabled = activate
                 gateway.reachable = reachable
                 gateway.updated_at = datetime.now(timezone.utc)
-                catalog_sync = None  # Initialize to track restored tools for cache invalidation
+                catalog_sync: Optional[GatewayCatalogSyncResult] = None  # Track restored tools for cache invalidation
                 # Update tracking
                 if activate and reachable:
                     self._active_gateways.add(gateway.url)
@@ -3621,33 +3617,10 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 else:
                     self._active_gateways.discard(gateway.url)
 
-                db.commit()
-                db.refresh(gateway)
-
-                # Invalidate cache after status change
-                cache = _get_registry_cache()
-                await cache.invalidate_gateways()
-
-                # Invalidate negative cache entries for restored tools (Bug #4915 fix)
-                if activate and reachable and catalog_sync and catalog_sync.restored_tool_names:
-                    tool_lookup_cache = _get_tool_lookup_cache()
-                    for tool_name in catalog_sync.restored_tool_names:
-                        await tool_lookup_cache.invalidate(tool_name, gateway_id=str(gateway.id))
-                    logger.debug(f"Invalidated cache for {len(catalog_sync.restored_tool_names)} restored tools: {catalog_sync.restored_tool_names}")
-
-                # Notify Subscribers
-                if not gateway.enabled:
-                    # Inactive
-                    await self._notify_gateway_deactivated(gateway)
-                elif gateway.enabled and not gateway.reachable:
-                    # Offline (Enabled but Unreachable)
-                    await self._notify_gateway_offline(gateway)
-                else:
-                    # Active (Enabled and Reachable)
-                    await self._notify_gateway_activated(gateway)
-
                 # Bulk update tools - single UPDATE statement instead of N FOR UPDATE locks
                 # This prevents lock contention under high concurrent load
+                # IMPORTANT: Must happen BEFORE gateway commit to avoid race condition where
+                # gateway.reachable=True but tools still have old reachability flags
                 now = datetime.now(timezone.utc)
                 if only_update_reachable:
                     # Only update reachable status, keep enabled as-is
@@ -3662,15 +3635,33 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     )
                 tools_updated = tools_result.rowcount
 
-                # Commit tool updates
-                if tools_updated > 0:
-                    db.commit()
+                db.commit()
+                db.refresh(gateway)
+
+                # Invalidate cache after status change
+                cache = _get_registry_cache()
+                await cache.invalidate_gateways()
 
                 # Invalidate tools cache once after bulk update
                 if tools_updated > 0:
                     await cache.invalidate_tools()
                     tool_lookup_cache = _get_tool_lookup_cache()
                     await tool_lookup_cache.invalidate_gateway(str(gateway.id))
+
+                # Invalidate negative cache entries for restored tools (Bug #4915 fix)
+                if activate and reachable:
+                    await self._invalidate_restored_tool_caches(catalog_sync=catalog_sync, gateway_id=gateway.id)
+
+                # Notify Subscribers
+                if not gateway.enabled:
+                    # Inactive
+                    await self._notify_gateway_deactivated(gateway)
+                elif gateway.enabled and not gateway.reachable:
+                    # Offline (Enabled but Unreachable)
+                    await self._notify_gateway_offline(gateway)
+                else:
+                    # Active (Enabled and Reachable)
+                    await self._notify_gateway_activated(gateway)
 
                 # Bulk update prompts when gateway is deactivated/activated (skip for reachability-only updates)
                 prompts_updated = 0
@@ -5749,7 +5740,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     db_tool.gateway = gateway
                     tools_to_add.append(db_tool)
                     logger.debug("Created new tool: %s", tool.name)
-            except Exception as e:
+            except (ValidationError, ValueError, KeyError, AttributeError) as e:
                 logger.warning("Failed to process tool %s: %s", getattr(tool, "name", "unknown"), e)
                 continue
 
@@ -5951,6 +5942,36 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 continue
 
         return prompts_to_add
+
+    async def _invalidate_restored_tool_caches(
+        self,
+        *,
+        catalog_sync: Optional[GatewayCatalogSyncResult],
+        gateway_id: Union[int, str],
+    ) -> None:
+        """
+        Invalidate negative cache entries for restored tools.
+
+        When tools transition from unreachable→reachable, their negative cache entries
+        must be invalidated so they become immediately invokable without waiting for TTL.
+
+        Args:
+            catalog_sync: Result of catalog sync containing restored tool names
+            gateway_id: Gateway ID (int or str)
+        """
+        if not catalog_sync or not catalog_sync.restored_tool_names:
+            return
+
+        tool_lookup_cache = _get_tool_lookup_cache()
+        for tool_name in catalog_sync.restored_tool_names:
+            try:
+                await tool_lookup_cache.invalidate(tool_name, gateway_id=str(gateway_id))
+            except Exception as e:
+                logger.warning(f"Failed to invalidate cache for tool {tool_name}: {e}")
+        logger.debug(
+            f"Invalidated cache for {len(catalog_sync.restored_tool_names)} restored tools: "
+            f"{catalog_sync.restored_tool_names}"
+        )
 
     async def _sync_gateway_catalog(
         self,
@@ -6324,11 +6345,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             result["prompts_updated"] = len({obj for obj in db.dirty if isinstance(obj, DbPrompt)} - pending_prompts_before)
 
             # Invalidate negative cache entries for restored tools (Bug #4915 fix)
-            if catalog_sync.restored_tool_names:
-                tool_lookup_cache = _get_tool_lookup_cache()
-                for tool_name in catalog_sync.restored_tool_names:
-                    await tool_lookup_cache.invalidate(tool_name, gateway_id=gateway_id)
-                logger.debug(f"Invalidated cache for {len(catalog_sync.restored_tool_names)} restored tools: {catalog_sync.restored_tool_names}")
+            await self._invalidate_restored_tool_caches(catalog_sync=catalog_sync, gateway_id=gateway_id)
 
             # Only delete MCP-discovered items (not user-created entries)
             # Excludes "api", "ui", None (legacy/user-created) to preserve user entries

@@ -21,6 +21,7 @@ import asyncio
 import os
 import tempfile
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from typing import Any, Dict
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -198,21 +199,27 @@ class TestGatewayToolRecoveryIntegration:
         # Simulate gateway recovery via set_gateway_state
         with patch.object(gateway_service, "_initialize_gateway", new_callable=AsyncMock) as mock_init:
             # Mock successful initialization returning the same tools
-            # Create mock tools with proper attributes
-            # Use a simple object to avoid MagicMock attribute access issues
-            class MockTool:
-                def __init__(self, name, description):
-                    self.name = name
-                    self.description = description
-                    self.inputSchema = {}
-                    self.input_schema = {}  # Both camelCase and snake_case
-                    self.headers = None
-                    self.output_schema = None
-                    self.jsonpath_filter = ""  # Default from Tool model
-                    self.request_type = "SSE"  # Default from Tool model
-
-            mock_tool1 = MockTool("test-tool-1", "Test tool 1")
-            mock_tool2 = MockTool("test-tool-2", "Test tool 2")
+            # Create mock tools with proper attributes using SimpleNamespace
+            mock_tool1 = SimpleNamespace(
+                name="test-tool-1",
+                description="Test tool 1",
+                inputSchema={},
+                input_schema={},
+                headers=None,
+                output_schema=None,
+                jsonpath_filter="",
+                request_type="SSE",
+            )
+            mock_tool2 = SimpleNamespace(
+                name="test-tool-2",
+                description="Test tool 2",
+                inputSchema={},
+                input_schema={},
+                headers=None,
+                output_schema=None,
+                jsonpath_filter="",
+                request_type="SSE",
+            )
 
             mock_init.return_value = (
                 {},  # capabilities
@@ -289,19 +296,17 @@ class TestGatewayToolRecoveryIntegration:
 
         # Trigger recovery
         with patch.object(gateway_service, "_initialize_gateway", new_callable=AsyncMock) as mock_init:
-            # Create mock tool with proper attributes
-            class MockTool:
-                def __init__(self, name, description):
-                    self.name = name
-                    self.description = description
-                    self.inputSchema = {}
-                    self.input_schema = {}
-                    self.headers = None
-                    self.output_schema = None
-                    self.jsonpath_filter = ""
-                    self.request_type = "SSE"
-
-            mock_tool = MockTool("test-tool-3", "Test tool 3")
+            # Create mock tool with proper attributes using SimpleNamespace
+            mock_tool = SimpleNamespace(
+                name="test-tool-3",
+                description="Test tool 3",
+                inputSchema={},
+                input_schema={},
+                headers=None,
+                output_schema=None,
+                jsonpath_filter="",
+                request_type="SSE",
+            )
 
             mock_init.return_value = (
                 {},
@@ -368,19 +373,17 @@ class TestGatewayToolRecoveryIntegration:
 
         # Trigger recovery
         with patch.object(gateway_service, "_initialize_gateway", new_callable=AsyncMock) as mock_init:
-            # Create mock tool with proper attributes
-            class MockTool:
-                def __init__(self, name, description):
-                    self.name = name
-                    self.description = description
-                    self.inputSchema = {}
-                    self.input_schema = {}
-                    self.headers = None
-                    self.output_schema = None
-                    self.jsonpath_filter = ""
-                    self.request_type = "SSE"
-
-            mock_tool = MockTool("test-tool-4", "Test tool 4")
+            # Create mock tool with proper attributes using SimpleNamespace
+            mock_tool = SimpleNamespace(
+                name="test-tool-4",
+                description="Test tool 4",
+                inputSchema={},
+                input_schema={},
+                headers=None,
+                output_schema=None,
+                jsonpath_filter="",
+                request_type="SSE",
+            )
 
             mock_init.return_value = (
                 {},
@@ -450,21 +453,20 @@ class TestGatewayToolRecoveryIntegration:
 
         # Simulate health check recovery
         with patch.object(gateway_service, "_initialize_gateway", new_callable=AsyncMock) as mock_init:
-            # Create mock tools with proper attributes
-            class MockTool:
-                def __init__(self, name, description):
-                    self.name = name
-                    self.description = description
-                    self.inputSchema = {}
-                    self.input_schema = {}
-                    self.headers = None
-                    self.output_schema = None
-                    self.jsonpath_filter = ""
-                    self.request_type = "SSE"
-
-            mock_tools = []
-            for i in range(5, 8):
-                mock_tools.append(MockTool(f"test-tool-{i}", f"Test tool {i}"))
+            # Create mock tools with proper attributes using SimpleNamespace
+            mock_tools = [
+                SimpleNamespace(
+                    name=f"test-tool-{i}",
+                    description=f"Test tool {i}",
+                    inputSchema={},
+                    input_schema={},
+                    headers=None,
+                    output_schema=None,
+                    jsonpath_filter="",
+                    request_type="SSE",
+                )
+                for i in range(5, 8)
+            ]
 
             mock_init.return_value = (
                 {},
