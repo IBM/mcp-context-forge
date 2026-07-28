@@ -2893,7 +2893,7 @@ class TestAdminResourceUriConflictMessage:
         assert second.status_code == 409
         assert body["success"] is False
         assert "Unable to complete the operation" not in body["message"]
-        assert "Resource already exists with URI" in body["message"]
+        assert "resource already exists with URI" in body["message"]
         assert "file://dup.txt" in body["message"]
         assert "resource URIs must be unique within this scope (names may repeat)." in body["message"]
 

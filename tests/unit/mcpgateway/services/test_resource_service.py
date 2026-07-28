@@ -313,7 +313,7 @@ class TestResourceRegistration:
         with pytest.raises(ResourceURIConflictError) as exc_info:
             await resource_service.register_resource(mock_db, sample_resource_create)
 
-        assert "Public Resource already exists with URI" in str(exc_info.value)
+        assert "Public resource already exists with URI" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_register_resource_uri_conflict_inactive(self, resource_service, mock_db, sample_resource_create, mock_inactive_resource):
@@ -325,7 +325,7 @@ class TestResourceRegistration:
         with pytest.raises(ResourceURIConflictError) as exc_info:
             await resource_service.register_resource(mock_db, sample_resource_create)
 
-        assert "Resource already exists with URI" in str(exc_info.value)
+        assert "resource already exists with URI" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_register_resource_team_without_team_id_raises_validation_error(self, resource_service, mock_db, sample_resource_create):
@@ -5179,7 +5179,7 @@ class TestResourceServiceCoverageEdges:
 
         with pytest.raises(ResourceURIConflictError) as exc_info:
             await resource_service.register_resource(mock_db, sample_resource_create, visibility="team", team_id="team-1")
-        assert "Team Resource already exists with URI" in str(exc_info.value)
+        assert "Team resource already exists with URI" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_register_resources_bulk_unknown_conflict_strategy_does_nothing(self, resource_service, mock_db):
@@ -8706,7 +8706,7 @@ class TestResourceUriUniquenessScope:
             await service.register_resource(db, self._create("file://dup.txt", "Second"), **kwargs)
 
         message = str(exc_info.value)
-        assert "Resource already exists with URI" in message
+        assert "resource already exists with URI" in message
         assert "file://dup.txt" in message
         assert "resource URIs must be unique within this scope (names may repeat)." in message
 

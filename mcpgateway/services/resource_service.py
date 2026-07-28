@@ -168,7 +168,7 @@ class ResourceURIConflictError(ResourceError):
         self.uri = uri
         self.enabled = enabled
         self.resource_id = resource_id
-        message = f"{visibility.capitalize()} Resource already exists with URI: {uri} — resource URIs must be unique within this scope (names may repeat)."
+        message = f"{visibility.capitalize()} resource already exists with URI: {uri} — resource URIs must be unique within this scope (names may repeat)."
         if not enabled:
             message += f" (currently inactive, ID: {resource_id})"
         super().__init__(message)

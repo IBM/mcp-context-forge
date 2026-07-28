@@ -236,7 +236,7 @@ describe("handleResourceFormSubmit", () => {
     `);
 
     const conflictMessage =
-      "Public Resource already exists with URI: resource://test — resource URIs must be unique within this scope (names may repeat).";
+      "Public resource already exists with URI: resource://test — resource URIs must be unique within this scope (names may repeat).";
 
     vi.spyOn(globalThis, "fetch").mockResolvedValue({ ok: false, status: 409 });
     // safeParseJsonResponse throws for non-OK responses (see security.js).

@@ -155,7 +155,7 @@ export const handleGatewayFormSubmit = async function (e) {
 /**
  * Detect whether a server error message describes a resource URI-uniqueness
  * conflict. Both backend messages ("A resource with this URI already exists
- * in this scope…" and "<Visibility> Resource already exists with URI: …")
+ * in this scope…" and "<Visibility> resource already exists with URI: …")
  * mention the URI and the fact that it already exists, so match on that pair
  * rather than pinning either exact string. ``uri`` is matched on a word
  * boundary so unrelated messages containing it as a substring (e.g. "during")
