@@ -300,6 +300,19 @@ def _categorize_upstream_error(exc: BaseException, auth_query_params: Optional[d
     exception_message = str(root_cause)
     error_category = "unknown"
 
+    # Helper to check the full exception chain (__cause__, __context__) for a specific type
+    def _find_in_chain(start_exc: BaseException, target_type: type) -> Optional[BaseException]:
+        """Walk __cause__ and __context__ to find an exception of target_type."""
+        current = start_exc
+        seen = set()
+        while current is not None and id(current) not in seen:
+            seen.add(id(current))
+            if isinstance(current, target_type):
+                return current
+            # Check __cause__ first (explicit chaining via 'raise ... from'), then __context__
+            current = getattr(current, "__cause__", None) or getattr(current, "__context__", None)
+        return None
+
     # Categorize common failure modes to help users identify the root cause.
     # Order matters: more specific checks first (e.g., httpx.ConnectTimeout before TimeoutError).
 
@@ -308,8 +321,14 @@ def _categorize_upstream_error(exc: BaseException, auth_query_params: Optional[d
         # httpx.TimeoutException is the base for ConnectTimeout, ReadTimeout, WriteTimeout, PoolTimeout
         error_category = "timeout"
     elif isinstance(root_cause, httpx.ConnectError):
-        # httpx.ConnectError wraps connection failures. Check message for specifics.
-        if "refused" in exception_message.lower():
+        # httpx.ConnectError wraps connection failures. Real refused connections
+        # produce httpx.ConnectError("All connection attempts failed") with
+        # ConnectionRefusedError deeper in __context__/__cause__. Check chain first.
+        refused = _find_in_chain(root_cause, ConnectionRefusedError)
+        if refused is not None:
+            error_category = "connection_refused"
+        elif "refused" in exception_message.lower():
+            # Fallback: message substring match for edge cases
             error_category = "connection_refused"
         else:
             error_category = "connection_error"
@@ -333,11 +352,7 @@ def _categorize_upstream_error(exc: BaseException, auth_query_params: Optional[d
         error_category = "mcp_protocol_error"
     elif isinstance(root_cause, ssl.SSLError):
         # SSL/TLS errors (certificate verification, handshake failures)
-        # Check instance first, then message content for tighter match
-        if "certificate" in exception_message.lower():
-            error_category = "ssl_tls"
-        else:
-            error_category = "ssl_tls"
+        error_category = "ssl_tls"
     elif isinstance(root_cause, ConnectionRefusedError):
         error_category = "connection_refused"
     elif isinstance(root_cause, TimeoutError):
@@ -354,6 +369,12 @@ def _categorize_upstream_error(exc: BaseException, auth_query_params: Optional[d
             error_category = "dns_resolution"
         else:
             error_category = "network_error"
+    else:
+        # Not a type we recognize directly — check the exception chain for ssl.SSLError
+        # (handles cases where httpx.ConnectError wraps SSLError)
+        ssl_err = _find_in_chain(root_cause, ssl.SSLError)
+        if ssl_err is not None:
+            error_category = "ssl_tls"
 
     # Sanitize exception message to prevent credential disclosure.
     # httpx.HTTPStatusError.__str__ embeds the full request URL, which may
@@ -504,8 +525,10 @@ async def _default_session_factory(req: SessionCreateRequest) -> tuple[ClientSes
             log_level = "ERROR" if not ready.done() else "WARNING"
             safe_url = sanitize_url_for_logging(req.url)
 
-            # Log with full traceback for debugging. Include the exception type name so
-            # operators can quickly identify connection failures, SSL issues, timeouts, etc.
+            # Log the categorized error. Do NOT pass exc_info=exc — that would
+            # render the raw, unsanitized exception via Python's traceback formatter,
+            # reintroducing credential disclosure for HTTPStatusError and others.
+            # The categorized message already contains the actionable diagnostic info.
             if log_level == "ERROR":
                 logger.error(
                     "Failed to create upstream MCP session for %s: [%s] %s: %s%s",
@@ -514,7 +537,6 @@ async def _default_session_factory(req: SessionCreateRequest) -> tuple[ClientSes
                     exception_type,
                     sanitized_message,
                     f" ({exception_count} exceptions in group)" if exception_count > 1 else "",
-                    exc_info=exc,  # Full traceback for deep diagnosis
                 )
             else:
                 logger.warning(
@@ -524,7 +546,6 @@ async def _default_session_factory(req: SessionCreateRequest) -> tuple[ClientSes
                     exception_type,
                     sanitized_message,
                     f" ({exception_count} exceptions in group)" if exception_count > 1 else "",
-                    exc_info=exc,
                 )
 
             # Structured logging for log aggregation systems (DataDog, Splunk, etc.)
@@ -595,6 +616,56 @@ async def _default_session_factory(req: SessionCreateRequest) -> tuple[ClientSes
     try:
         session, transport_ctx_ref = await asyncio.wait_for(ready, timeout=req.timeout_seconds)
         success = True
+    except asyncio.TimeoutError as timeout_exc:
+        # asyncio.wait_for timeout path: the owner task hangs (TCP accepted but
+        # never responds) and we timeout waiting for the ready future. The owner
+        # task never hits its `except Exception` handler (it receives CancelledError
+        # instead, which is a BaseException and deliberately excluded). So we must
+        # categorize, sanitize, and log here to ensure timeout failures are diagnosable.
+        safe_url = sanitize_url_for_logging(req.url)
+
+        # Categorize as timeout (no credentials in TimeoutError message, but
+        # sanitize_exception_message is safe to call on any exception text)
+        from mcpgateway.utils.url_auth import sanitize_exception_message
+        timeout_msg = str(timeout_exc) if str(timeout_exc) else f"Timeout after {req.timeout_seconds}s waiting for upstream session"
+        sanitized_timeout_msg = sanitize_exception_message(timeout_msg, auth_query_params=None)
+
+        logger.error(
+            "Failed to create upstream MCP session for %s: [timeout] TimeoutError: %s",
+            safe_url,
+            sanitized_timeout_msg,
+        )
+
+        # Structured logging for timeout path (mirrors the owner-task structured log)
+        try:
+            from mcpgateway.services.structured_logger import get_structured_logger
+            from mcpgateway.utils.correlation_id import get_correlation_id
+
+            structured_logger = get_structured_logger()
+            correlation_id = get_correlation_id()
+            structured_logger.log(
+                level="ERROR",
+                message="Upstream MCP session creation failed",
+                component="upstream_session_registry",
+                correlation_id=correlation_id,
+                error_details={
+                    "error_type": "TimeoutError",
+                    "error_message": sanitized_timeout_msg,
+                    "error_category": "timeout",
+                    "exception_count": 1,
+                },
+                metadata={
+                    "url": safe_url,
+                    "downstream_session_id": req.downstream_session_id,
+                    "gateway_id": req.gateway_id or "none",
+                    "transport_type": req.transport_type.value,
+                },
+            )
+        except Exception as log_exc:  # noqa: BLE001 — don't let logging failure break error flow
+            logger.debug("Structured logging failed for upstream session timeout: %s", log_exc, exc_info=True)
+
+        # Re-wrap as RuntimeError with categorized message for the caller
+        raise RuntimeError(f"Failed to create upstream MCP session for {safe_url}: [timeout] TimeoutError: {sanitized_timeout_msg}") from timeout_exc
     finally:
         if not success:
             shutdown_event.set()

@@ -1412,11 +1412,12 @@ async def test_default_session_factory_sse_with_httpx_client_factory(monkeypatch
 
 @pytest.mark.asyncio
 async def test_default_session_factory_cancelled_path_runs_on_ready_timeout(monkeypatch):
-    """When ready times out, the finally clause cancels the owner task and `await task` sees CancelledError.
+    """When ready times out, the factory wraps TimeoutError in RuntimeError with categorization.
 
-    Covers upstream_session_registry.py:385-387. The sibling `except Exception`
-    branch (388-393) is defensive — the owner's own `except Exception` catches
-    all Exception subclasses, so a regular Exception cannot escape `await task`.
+    Validates fix for blocking issue #2: asyncio.wait_for timeout path now
+    categorizes as 'timeout', sanitizes the message, logs to structured logger,
+    and wraps in RuntimeError with the categorized message (instead of raising
+    a bare empty TimeoutError).
     """
     # First-Party
     from mcpgateway.services import upstream_session_registry as usr
@@ -1434,12 +1435,15 @@ async def test_default_session_factory_cancelled_path_runs_on_ready_timeout(monk
     monkeypatch.setattr(usr, "ClientSession", _FakeClientSessionCM)
 
     req = _make_request(timeout_seconds=0.05)
-    with pytest.raises((asyncio.TimeoutError, TimeoutError)):
+    with pytest.raises(RuntimeError) as exc_info:
         await usr._default_session_factory(req)  # pylint: disable=protected-access
 
-    # The important property: the factory surfaced the TimeoutError cleanly —
-    # meaning the finally-clause cleanup completed, which requires the
-    # CancelledError branch to have swallowed the cancellation of the hung owner.
+    # Verify the timeout was categorized and wrapped in RuntimeError
+    error_msg = str(exc_info.value)
+    assert "[timeout]" in error_msg, f"Timeout should be categorized, got: {error_msg}"
+    assert "TimeoutError" in error_msg
+    # Message must not be empty (bare asyncio.TimeoutError('') before fix)
+    assert len(error_msg) > 50, f"Timeout error message should be descriptive, got: {error_msg}"
 
 
 @pytest.mark.asyncio

@@ -456,8 +456,14 @@ async def test_structured_logger_exception_handling(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_logger_error_call_with_exc_info(monkeypatch, caplog):
-    """Verify that logger.error is called with exc_info=exc for tracebacks."""
+async def test_logger_error_call_without_exc_info(monkeypatch, caplog):
+    """Verify that logger.error is called WITHOUT exc_info to prevent credential leaks.
+
+    Regression test for blocking issue #3: logger.error(..., exc_info=exc) renders
+    the raw exception's __str__ via Python's traceback formatter, bypassing the
+    sanitized message string. The fix removes exc_info so no raw exception details
+    (which could contain credentials) leak into the log traceback.
+    """
     # First-Party
     from mcpgateway.services import upstream_session_registry as usr
 
@@ -480,11 +486,12 @@ async def test_logger_error_call_with_exc_info(monkeypatch, caplog):
         for record in caplog.records
     ), "Logger should have recorded the categorized error"
 
-    # Verify exc_info was included (provides traceback for debugging)
-    assert any(
-        record.exc_info is not None
+    # Verify exc_info was NOT included (prevents credential leakage via traceback)
+    assert all(
+        record.exc_info is None
         for record in caplog.records
-    ), "Logger should have included exc_info for traceback"
+        if "connection_refused" in record.message
+    ), "Logger should NOT include exc_info to prevent credential leaks in tracebacks"
 
 
 @pytest.mark.asyncio
