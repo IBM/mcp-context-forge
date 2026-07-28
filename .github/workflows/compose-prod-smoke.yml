@@ -63,6 +63,26 @@ jobs:
       - name: Build production image
         run: make docker-prod
 
+      # Compose targets validate against .env (compose-up → compose-validate),
+      # which aborts if the file is missing. `make setup` would create it, but
+      # that path runs `uv run` and this Docker-only job has no Python/uv
+      # toolchain. Seed .env from .env.example directly and patch in strong
+      # secrets so the gateway starts (it refuses the __REPLACE_ME__
+      # placeholders shipped in .env.example).
+      - name: Prepare .env
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp .env.example .env
+          # base64 (not hex) so Shannon entropy clears the >= 3.5 floor that
+          # Settings.validate_security_combinations() enforces at startup; hex
+          # tops out at 4 bits/char and occasionally dips below it. base64's
+          # alphabet has no '|' or '&', so it is safe with the sed delimiter.
+          jwt_secret="$(openssl rand -base64 32)"  # pragma: allowlist secret
+          enc_secret="$(openssl rand -base64 32)"  # pragma: allowlist secret
+          sed -i "s|^JWT_SECRET_KEY=.*|JWT_SECRET_KEY=${jwt_secret}|" .env
+          sed -i "s|^AUTH_ENCRYPTION_SECRET=.*|AUTH_ENCRYPTION_SECRET=${enc_secret}|" .env
+
       # ── Default compose stack ──────────────────────────────────
       # Start the stack, wait up to 3 min for nginx to proxy
       # /health, then verify the admin login page renders and
