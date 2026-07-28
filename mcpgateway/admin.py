@@ -16501,7 +16501,6 @@ async def admin_edit_a2a_agent(
             oauth_config=oauth_config,
             visibility=visibility,
             team_id=team_id,
-            owner_email=user_email,
             capabilities=capabilities,  # Optional, not editable via UI
             config=config,  # Optional, not editable via UI
             # UAID generation fields (only applies if agent doesn't have UAID yet)
@@ -16534,10 +16533,24 @@ async def admin_edit_a2a_agent(
         return ORJSONResponse({"message": str(ve), "success": False}, status_code=422)
     except IntegrityError as ie:
         return ORJSONResponse({"message": str(ie), "success": False}, status_code=409)
+    except PermissionError as e:
+        LOGGER.warning(
+            "Permission denied for user %s editing A2A agent %s: %s",
+            SecurityValidator.sanitize_log_message(get_user_email(user)),
+            SecurityValidator.sanitize_log_message(agent_id),
+            e,
+        )
+        return ORJSONResponse({"message": str(e), "success": False}, status_code=403)
+    except A2AAgentNotFoundError:
+        return ORJSONResponse({"message": "A2A agent not found.", "success": False}, status_code=404)
     except HTTPException:
         raise
     except Exception as e:
-        return ORJSONResponse({"message": str(e), "success": False}, status_code=500)
+        LOGGER.exception("Unexpected error in admin_edit_a2a_agent: %s", e)
+        return ORJSONResponse(
+            {"message": "An unexpected error occurred. Please try again or contact support.", "success": False},
+            status_code=500,
+        )
 
 
 @admin_router.post("/a2a/{agent_id}/state")

@@ -410,6 +410,39 @@ class TestRBACOwnershipHTTP:
         # Cleanup
         app.dependency_overrides.clear()
 
+    @patch("mcpgateway.main.a2a_service.update_agent", new_callable=AsyncMock)
+    @patch("mcpgateway.middleware.rbac.PermissionService", MockPermissionService)
+    def test_update_a2a_agent_non_owner_returns_403(
+        self,
+        mock_update_agent: AsyncMock,
+        test_db_and_client,
+    ):
+        """Test that non-owner receives HTTP 403 when attempting to update A2A agent."""
+        TestSessionLocal, _ = test_db_and_client
+
+        mock_update_agent.side_effect = PermissionError("Only the owner can update this agent")
+
+        mock_user = MagicMock()
+        mock_user.email = "user-b@example.com"
+
+        app.dependency_overrides[require_auth] = lambda: "user-b@example.com"
+        app.dependency_overrides[get_current_user] = lambda: mock_user
+        app.dependency_overrides[get_current_user_with_permissions] = create_user_context(
+            "user-b@example.com", TestSessionLocal=TestSessionLocal
+        )
+        client = TestClient(app)
+
+        response = client.put(
+            "/a2a/agent-123",
+            json={"name": "updated-agent"},
+            headers={"Authorization": "Bearer test-token"},
+        )
+
+        assert response.status_code == 403
+        assert "Only the owner can update this agent" in response.json()["detail"]
+
+        app.dependency_overrides.clear()
+
 
 # ============================================================================
 # Tests for team_id fallback from user_context (Issue #2183)

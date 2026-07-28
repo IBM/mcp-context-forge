@@ -1217,6 +1217,7 @@ class TestA2AAgentService:
 
     async def test_update_agent_permission_denied(self, service, mock_db, sample_db_agent):
         """Test update denied when user is not owner."""
+        sample_db_agent.owner_email = "owner@example.com"
         with patch("mcpgateway.services.a2a_service.get_for_update", return_value=sample_db_agent):
             with patch("mcpgateway.services.permission_service.PermissionService") as perm_cls:
                 perm = perm_cls.return_value
