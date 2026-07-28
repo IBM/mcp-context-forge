@@ -314,6 +314,8 @@ async def test_list_gateways_populates_capability_counts(monkeypatch):
     gateways, _ = await service.list_gateways(db)
 
     assert captured["tool_count"] == 3
+    assert captured["prompt_count"] == 2
+    assert captured["resource_count"] == 1
 
 
 @pytest.mark.asyncio
