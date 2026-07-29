@@ -181,6 +181,7 @@ ContextForge implements a **two-layer security model**:
   - Layer 1: token scoping controls what a caller can see.
   - Layer 2: RBAC controls what a caller can do.
 - Do not re-implement token team interpretation logic; use `normalize_token_teams()` for API/legacy tokens and `resolve_session_teams()` for session tokens (both in `mcpgateway/auth.py`).
+- Do not re-implement Layer 1 token scope semantics; use `token_scope_grants()` in `mcpgateway/middleware/rbac.py`, the single policy point shared by the RBAC decorators and `TokenScopingMiddleware`. Empty token scopes mean "inherit from RBAC at runtime" (what `TokenCatalogService._generate_token()` emits for tokens created without an explicit scope) and must never be treated as deny-all; `*` grants everything and `<category>.*` grants that category.
 - Do not accept inbound client auth tokens via URL query parameters.
 - Legacy `INSECURE_ALLOW_QUERYPARAM_AUTH` is interop-only for outbound peer auth and must remain opt-in and host-restricted.
 - High-risk transports must be feature-flagged and disabled by default.

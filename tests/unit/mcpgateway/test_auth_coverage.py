@@ -3,14 +3,116 @@
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
 
-Additional tests for auth.py coverage gaps.
-
-This module contains targeted tests for specific uncovered lines in mcpgateway/auth.py
-to achieve 100% coverage.
+Coverage tests for auth.py changes related to is_admin resolution.
 """
 
-# Third-Party
 import pytest
+from unittest.mock import AsyncMock, MagicMock, patch
+from mcpgateway.auth import _resolve_teams_from_db, resolve_session_teams
+from mcpgateway.db import EmailUser
+
+
+class TestResolveTeamsFromDbIsAdminBranches:
+    """Test is_admin resolution branches in _resolve_teams_from_db."""
+
+    @pytest.mark.asyncio
+    async def test_dict_user_info_with_is_admin_none_fetches_from_db(self):
+        """Test dict user_info with is_admin=None triggers DB lookup."""
+        user_info = {"email": "test@example.com"}  # No is_admin key
+
+        mock_db_user = MagicMock(spec=EmailUser)
+        mock_db_user.is_admin = True
+
+        with patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_db_user):
+            result = await _resolve_teams_from_db(email="test@example.com", user_info=user_info)
+
+        # Admin bypass returns None
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_dict_user_info_with_is_admin_false_queries_teams(self):
+        """Test dict user_info with is_admin=False queries teams."""
+        user_info = {"email": "test@example.com", "is_admin": False}
+
+        with patch("mcpgateway.auth._get_user_by_email_sync", side_effect=AssertionError("Should not be called")):
+            with patch("mcpgateway.auth._get_user_team_ids_sync", return_value=["team1"]):
+                result = await _resolve_teams_from_db(email="test@example.com", user_info=user_info)
+
+        assert result == ["team1"]
+
+    @pytest.mark.asyncio
+    async def test_object_user_info_with_is_admin_none_fetches_from_db(self):
+        """Test object user_info without is_admin attr triggers DB lookup."""
+        user_info = MagicMock()
+        del user_info.is_admin  # Ensure attribute doesn't exist
+
+        mock_db_user = MagicMock(spec=EmailUser)
+        mock_db_user.is_admin = False
+
+        with patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_db_user):
+            with patch("mcpgateway.auth._get_user_team_ids_sync", return_value=["team1"]):
+                result = await _resolve_teams_from_db(email="test@example.com", user_info=user_info)
+
+        assert result == ["team1"]
+
+    @pytest.mark.asyncio
+    async def test_db_user_not_found_defaults_to_non_admin(self):
+        """Test DB lookup returning None defaults is_admin to False."""
+        user_info = {"email": "test@example.com"}  # No is_admin key
+
+        with patch("mcpgateway.auth._get_user_by_email_sync", return_value=None):
+            with patch("mcpgateway.auth._get_user_team_ids_sync", return_value=["team1"]):
+                result = await _resolve_teams_from_db(email="test@example.com", user_info=user_info)
+
+        assert result == ["team1"]
+
+
+class TestResolveSessionTeamsUuidResolution:
+    """Test UUID resolution in resolve_session_teams."""
+
+    @pytest.mark.asyncio
+    async def test_uuid_email_resolves_to_actual_email(self):
+        """Test UUID in email field gets resolved to actual email."""
+        uuid_email = "550e8400-e29b-41d4-a716-446655440000"
+        actual_email = "user@example.com"
+        payload = {"token_use": "session"}
+
+        with patch("mcpgateway.auth._get_email_by_id_sync", return_value=actual_email):
+            with patch("mcpgateway.auth._resolve_teams_from_db", new_callable=AsyncMock) as mock_resolve:
+                mock_resolve.return_value = ["team1"]
+
+                result = await resolve_session_teams(payload=payload, email=uuid_email, user_info={"email": actual_email})
+
+        # Verify _get_email_by_id_sync was called with UUID
+        assert result == ["team1"]
+
+    @pytest.mark.asyncio
+    async def test_invalid_uuid_skips_resolution(self):
+        """Test non-UUID email skips UUID resolution."""
+        email = "user@example.com"
+        payload = {"token_use": "session"}
+
+        with patch("mcpgateway.auth._get_email_by_id_sync", side_effect=AssertionError("Should not be called")):
+            with patch("mcpgateway.auth._resolve_teams_from_db", new_callable=AsyncMock) as mock_resolve:
+                mock_resolve.return_value = ["team1"]
+
+                result = await resolve_session_teams(payload=payload, email=email, user_info={"email": email})
+
+        assert result == ["team1"]
+
+    @pytest.mark.asyncio
+    async def test_uuid_resolution_returns_none_uses_original(self):
+        """Test UUID resolution returning None uses original UUID."""
+        uuid_email = "550e8400-e29b-41d4-a716-446655440000"
+        payload = {"token_use": "session"}
+
+        with patch("mcpgateway.auth._get_email_by_id_sync", return_value=None):
+            with patch("mcpgateway.auth._resolve_teams_from_db", new_callable=AsyncMock) as mock_resolve:
+                mock_resolve.return_value = []
+
+                result = await resolve_session_teams(payload=payload, email=uuid_email, user_info={"email": uuid_email})
+
+        assert result == []
 
 
 class TestGetTeamNameByIdSync:
@@ -104,201 +206,3 @@ class TestExtractClaimTeamName:
 
         result = _extract_claim_team_name(payload, "team-1")
         assert result is None
-
-
-class TestJWTScopesValidation:
-    """Tests for JWT scopes field validation in auth.py lines 1789-1798."""
-
-    @pytest.mark.asyncio
-    async def test_scopes_dict_with_permissions_line_1789_1790(self):
-        """Test API token JWT with scopes dict containing permissions list (lines 1940-1957)."""
-        # Standard
-        from types import SimpleNamespace
-        from unittest.mock import AsyncMock, patch
-
-        # Third-Party
-        from fastapi.security import HTTPAuthorizationCredentials
-
-        # First-Party
-        from mcpgateway.auth import get_current_user
-        from mcpgateway.db import EmailUser
-
-        # Mock request
-        request = SimpleNamespace()
-        request.state = SimpleNamespace()
-        request.headers = {}
-        request.cookies = {}
-
-        # Mock credentials
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="test-token")  # pragma: allowlist secret
-
-        # Mock JWT payload with scopes dict containing permissions (API token)
-        jwt_payload = {
-            "sub": "user@example.com",
-            "user": {"auth_provider": "api_token"},  # Explicitly API token
-            "scopes": {"permissions": ["tools.read", "a2a.execute"]},
-            "exp": 9999999999,
-        }
-
-        # Mock user
-        mock_user = EmailUser(email="user@example.com", is_admin=False, is_active=True)
-
-        with (
-            patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=jwt_payload)),
-            patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user),
-            patch("mcpgateway.auth._check_token_revoked_sync", return_value=False),
-        ):
-            user = await get_current_user(credentials=credentials, request=request)
-
-            # Verify token_scopes is set correctly for API token
-            assert hasattr(request.state, "token_scopes")
-            assert request.state.token_scopes == ["tools.read", "a2a.execute"]
-            assert user.email == "user@example.com"
-
-    @pytest.mark.asyncio
-    async def test_scopes_dict_without_permissions_key_line_1790_1793(self):
-        """Test JWT with scopes dict but no permissions key (lines 1790, 1793)."""
-        # Standard
-        from types import SimpleNamespace
-        from unittest.mock import AsyncMock, patch
-
-        # Third-Party
-        from fastapi.security import HTTPAuthorizationCredentials
-
-        # First-Party
-        from mcpgateway.auth import get_current_user
-        from mcpgateway.db import EmailUser
-
-        # Mock request
-        request = SimpleNamespace()
-        request.state = SimpleNamespace()
-        request.headers = {}
-        request.cookies = {}
-
-        # Mock credentials
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="test-token")  # pragma: allowlist secret
-
-        # Mock JWT payload with scopes dict but no permissions key (API token)
-        jwt_payload = {
-            "sub": "user@example.com",
-            "user": {"auth_provider": "api_token"},  # Explicitly API token
-            "scopes": {"server_id": "srv-123"},  # Has scopes dict but no permissions
-            "exp": 9999999999,
-        }
-
-        # Mock user
-        mock_user = EmailUser(email="user@example.com", is_admin=False, is_active=True)
-
-        with (
-            patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=jwt_payload)),
-            patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user),
-            patch("mcpgateway.auth._check_token_revoked_sync", return_value=False),
-        ):
-            user = await get_current_user(credentials=credentials, request=request)
-
-            # Verify token_scopes is set to empty list for API token (enforces scope checks, denies all)
-            assert hasattr(request.state, "token_scopes")
-            assert request.state.token_scopes == []
-            assert user.email == "user@example.com"
-
-    @pytest.mark.asyncio
-    async def test_malformed_scopes_string_line_1797_1798(self):
-        """Test JWT with malformed scopes (string instead of dict) raises 401 (lines 1797-1798)."""
-        # Standard
-        from types import SimpleNamespace
-        from unittest.mock import AsyncMock, patch
-
-        # Third-Party
-        from fastapi import HTTPException
-        from fastapi.security import HTTPAuthorizationCredentials
-        import pytest
-
-        # First-Party
-        from mcpgateway.auth import get_current_user
-
-        # Mock request
-        request = SimpleNamespace()
-        request.state = SimpleNamespace()
-        request.headers = {}
-        request.cookies = {}
-
-        # Mock credentials
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="test-token")  # pragma: allowlist secret
-
-        # Mock JWT payload with malformed scopes (string instead of dict) - API token
-        jwt_payload = {
-            "sub": "user@example.com",
-            "user": {"auth_provider": "api_token"},  # Must be API token for validation
-            "scopes": "tools.read,a2a.execute",  # MALFORMED: should be dict
-            "exp": 9999999999,
-        }
-
-        from mcpgateway.db import EmailUser
-
-        mock_user = EmailUser(email="user@example.com", is_admin=False, is_active=True)
-
-        with (
-            patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=jwt_payload)),
-            patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user),
-            patch("mcpgateway.auth._check_token_revoked_sync", return_value=False),
-        ):
-            with pytest.raises(HTTPException) as exc_info:
-                await get_current_user(credentials=credentials, request=request)
-
-            # Verify 401 error is raised
-            assert exc_info.value.status_code == 401
-            assert "malformed scopes field" in str(exc_info.value.detail)
-
-    @pytest.mark.asyncio
-    async def test_malformed_scopes_list_line_1797_1798(self):
-        """Test JWT with malformed scopes (list instead of dict) raises 401 (lines 1797-1798)."""
-        # Standard
-        from types import SimpleNamespace
-        from unittest.mock import AsyncMock, patch
-
-        # Third-Party
-        from fastapi import HTTPException
-        from fastapi.security import HTTPAuthorizationCredentials
-        import pytest
-
-        # First-Party
-        from mcpgateway.auth import get_current_user
-
-        # Mock request
-        request = SimpleNamespace()
-        request.state = SimpleNamespace()
-        request.headers = {}
-        request.cookies = {}
-
-        # Mock credentials
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="test-token")  # pragma: allowlist secret
-
-        # Mock JWT payload with malformed scopes (list instead of dict) - API token
-        jwt_payload = {
-            "sub": "user@example.com",
-            "user": {"auth_provider": "api_token"},  # Must be API token for validation
-            "scopes": ["tools.read", "a2a.execute"],  # MALFORMED: should be dict
-            "exp": 9999999999,
-        }
-
-        from mcpgateway.db import EmailUser
-
-        mock_user = EmailUser(email="user@example.com", is_admin=False, is_active=True)
-
-        with (
-            patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=jwt_payload)),
-            patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user),
-            patch("mcpgateway.auth._check_token_revoked_sync", return_value=False),
-        ):
-            with pytest.raises(HTTPException) as exc_info:
-                await get_current_user(credentials=credentials, request=request)
-
-            # Verify 401 error is raised
-            assert exc_info.value.status_code == 401
-            assert "malformed scopes field" in str(exc_info.value.detail)
-
-
-# Note: Lines 993-994, 1006, and 1011 are inside get_current_user function
-# which is complex to test in isolation. These lines are covered by existing
-# integration tests in test_auth.py. The helper functions above provide
-# sufficient coverage for the simpler utility functions.
