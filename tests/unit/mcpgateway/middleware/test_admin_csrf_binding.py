@@ -48,6 +48,7 @@ from mcpgateway.services.csrf_service import CSRFService
 USER_ID = "3f9c9b8e-8a3a-4a4a-9d3c-1b2c3d4e5f60"
 USER_EMAIL = "admin@example.com"
 SESSION_ID = "session-jti-1"
+SESSION_ID_2 = "session-jti-2"
 
 
 @pytest.mark.asyncio
@@ -131,6 +132,48 @@ async def test_csrf_token_bound_to_email_passes_middleware_validation():
     call_next.assert_awaited_once_with(request)
 
 
+@pytest.mark.asyncio
+async def test_csrf_token_bound_to_wrong_session_id_fails_validation():
+    """Proves CSRF validation fails when the session_id does not match: a token
+    bound to the correct email but a different `jti` (session_id) does NOT
+    validate against CSRFMiddleware, which derives session_id from
+    request.state.jti.
+    """
+    csrf_service = CSRFService(secret="test-csrf-secret", expiry=3600)  # pragma: allowlist secret
+
+    # Token generation bound to the correct email but SESSION_ID.
+    csrf_token = csrf_service.generate_csrf_token(USER_EMAIL, SESSION_ID)
+
+    middleware = CSRFMiddleware(app=AsyncMock())
+    call_next = AsyncMock(return_value=Response("ok", status_code=200))
+
+    request = MagicMock(spec=Request)
+    request.method = "POST"
+    request.url.path = "/llm/providers"
+    request.headers = {"X-CSRF-Token": csrf_token, "origin": "http://localhost:4444"}
+    request.state = MagicMock()
+    request.state.user = MagicMock(email=USER_EMAIL)  # CSRFMiddleware uses .email
+    request.state.jti = SESSION_ID_2  # But the session_id is different — the bug
+    request.cookies = {"jwt_token": "admin-session-jwt", "mcpgateway_csrf_token": csrf_token}
+
+    with (
+        patch("mcpgateway.middleware.csrf_middleware.settings") as mock_settings,
+        patch("mcpgateway.middleware.csrf_middleware.get_csrf_service", return_value=csrf_service),
+    ):
+        mock_settings.csrf_enabled = True
+        mock_settings.auth_required = True
+        mock_settings.csrf_exempt_paths = []
+        mock_settings.csrf_token_name = "X-CSRF-Token"
+        mock_settings.csrf_cookie_name = "mcpgateway_csrf_token"
+        mock_settings.csrf_check_referer = False
+
+        response = await middleware.dispatch(request, call_next)
+
+    assert response.status_code == 403, response.body
+    assert b"CSRF_TOKEN_INVALID" in response.body
+    call_next.assert_not_awaited()
+
+
 def test_validate_csrf_token_id_vs_email_binding_differ():
     """Focused unit check on CSRFService: binding to .id and binding to
     .email produce tokens that validate against different user_id values —
@@ -150,6 +193,26 @@ def test_validate_csrf_token_id_vs_email_binding_differ():
     # The email-bound token validates against the email CSRFMiddleware uses.
     assert csrf_service.validate_csrf_token(token_bound_to_email, USER_EMAIL, SESSION_ID) is True
     assert csrf_service.validate_csrf_token(token_bound_to_email, USER_ID, SESSION_ID) is False
+
+
+def test_validate_csrf_token_session_id_binding_differs():
+    """Focused unit check on CSRFService: a token bound to one session_id
+    does NOT validate against a different session_id — ensuring the
+    session_id is part of the HMAC binding.
+    """
+    csrf_service = CSRFService(secret="test-csrf-secret-3", expiry=3600)  # pragma: allowlist secret
+
+    token_bound_to_session_1 = csrf_service.generate_csrf_token(USER_EMAIL, SESSION_ID)
+    token_bound_to_session_2 = csrf_service.generate_csrf_token(USER_EMAIL, SESSION_ID_2)
+
+    # The session-1 bound token only validates against session-1, never
+    # against session-2.
+    assert csrf_service.validate_csrf_token(token_bound_to_session_1, USER_EMAIL, SESSION_ID) is True
+    assert csrf_service.validate_csrf_token(token_bound_to_session_1, USER_EMAIL, SESSION_ID_2) is False
+
+    # The session-2 bound token validates only against session-2.
+    assert csrf_service.validate_csrf_token(token_bound_to_session_2, USER_EMAIL, SESSION_ID_2) is True
+    assert csrf_service.validate_csrf_token(token_bound_to_session_2, USER_EMAIL, SESSION_ID) is False
 
 
 def test_admin_login_binds_csrf_to_email_not_sub_claim():
