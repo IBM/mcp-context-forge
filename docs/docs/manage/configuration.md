@@ -610,7 +610,7 @@ ContextForge implements **OAuth 2.0 Dynamic Client Registration (RFC 7591)** and
 
 ### CSRF Protection
 
-ContextForge provides Cross-Site Request Forgery (CSRF) protection through two independent implementations optimized for different request paths. Understanding the distinctions is critical for configuration.
+ContextForge provides Cross-Site Request Forgery (CSRF) protection through three independent implementations optimized for different request paths. Understanding the distinctions is critical for configuration.
 
 | Setting                   | Description                    | Default                                        | Options    |
 | ------------------------- | ------------------------------ | ---------------------------------------------- | ---------- |
@@ -627,14 +627,15 @@ ContextForge provides Cross-Site Request Forgery (CSRF) protection through two i
 | `CSRF_TRUSTED_ORIGINS`    | Additional trusted origins for CSRF validation (code default is `[]`; `.env.example` overrides with localhost) | `[]`                              | JSON array |
 | `CSRF_EXEMPT_PATHS`       | Paths exempt from CSRF middleware (admin routes use per-route enforcement instead) | See below | JSON array |
 
-**Two Independent CSRF Implementations:**
+**Three Independent CSRF Implementations:**
 
-ContextForge implements CSRF protection in two distinct paths:
+ContextForge implements CSRF protection in three distinct paths:
 
 1. **`CSRFMiddleware` (global protection)**: Applies to non-exempt routes (e.g., `/llm/*`, `/v1/mcp/*`) and also to versioned admin routes (`/v1/admin/*`)
 2. **`enforce_admin_csrf` (per-route dependency)**: Applies to admin routes at both the legacy (`/admin/*`, `/admin/llm/*`) and versioned (`/v1/admin/*`, `/v1/admin/llm/*`) mounts
+3. **`enforce_fetch_tools_csrf` (per-route dependency, `mcpgateway/routers/oauth_router.py`)**: Applies only to `POST /oauth/fetch-tools/{gateway_id}` — the reason that path is in `CSRF_EXEMPT_PATHS` rather than relying on `CSRFMiddleware`. It duplicates its own module-level `ADMIN_CSRF_COOKIE_NAME`/`ADMIN_CSRF_HEADER_NAME` constants (not imported from `admin.py`) and its own Origin/Referer same-origin check, independent of both `CSRFMiddleware`'s and `enforce_admin_csrf`'s origin-check logic.
 
-The five settings marked as "middleware-path-only" in the table above govern only the first path; the admin dependency uses hardcoded equivalents for all cookie and header attributes:
+The five settings marked as "middleware-path-only" in the table above govern only the first path; the other two dependencies use hardcoded equivalents for all cookie and header attributes:
 
 | Attribute | `CSRFMiddleware` (Middleware) | `enforce_admin_csrf` (Admin Routes) |
 | --- | --- | --- |
@@ -653,7 +654,7 @@ The five settings marked as "middleware-path-only" in the table above govern onl
 ```
 
 !!! warning "CSRF_COOKIE_NAME Synchronization Risk"
-    The `CSRF_COOKIE_NAME` setting governs `CSRFMiddleware` only. Three other places hardcode the cookie name independently and do **not** read the setting: `mcpgateway/admin.py:1647` (module constant `ADMIN_CSRF_COOKIE_NAME`), `mcpgateway/routers/oauth_router.py:52` (its own `ADMIN_CSRF_COOKIE_NAME` copy, used by the OAuth fetch-tools CSRF check), and the Admin UI JavaScript (`llmModels.js`). Changing `CSRF_COOKIE_NAME` causes the middleware and these three hardcoded copies to look for *different cookies*, breaking admin panel writes. If you migrated from an older ContextForge version, verify your `.env` uses `mcpgateway_csrf_token` (not `csrf_token` from a pre-#5780 template).
+    The `CSRF_COOKIE_NAME` setting governs `CSRFMiddleware` only. Every other CSRF consumer — `enforce_admin_csrf` (`mcpgateway/admin.py`), `enforce_fetch_tools_csrf` (`mcpgateway/routers/oauth_router.py`), the Admin UI JavaScript, and the server-rendered login/password/admin templates — hardcodes `mcpgateway_csrf_token` independently rather than reading the setting. There is no complete, stable list of these consumers to enumerate here; treat the name as effectively fixed. Changing `CSRF_COOKIE_NAME` desynchronizes the middleware from everything else, breaking login, password reset, and admin panel writes. If you migrated from an older ContextForge version, verify your `.env` uses `mcpgateway_csrf_token` (not `csrf_token` from a pre-#5780 template).
 
 !!! warning "CSRF_COOKIE_HTTPONLY Must Stay False"
     The browser JavaScript must read the CSRF cookie to echo it in the `X-CSRF-Token` header (double-submit pattern). Setting `CSRF_COOKIE_HTTPONLY=true` makes the cookie unreadable to JavaScript, breaking every CSRF-protected write. The cookie is safe: the middleware's HMAC token is bound to user + session identity, preventing CSRF abuse.

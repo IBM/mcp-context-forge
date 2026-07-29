@@ -1187,7 +1187,7 @@ The Admin UI itself calls the unprefixed `/admin/llm/*` form, not `/v1/admin/llm
 
 ### CSRF Protection Detail
 
-The two route families use independent CSRF implementations:
+The two LLM route families use independent CSRF implementations (a third, `enforce_fetch_tools_csrf`, exists in `mcpgateway/routers/oauth_router.py` for the unrelated `/oauth/fetch-tools` endpoint — see [CSRF Protection](configuration.md#csrf-protection) in the configuration reference for the full picture):
 
 | Aspect | `/v1/llm/*` (CSRFMiddleware) | `/v1/admin/llm/*` (enforce_admin_csrf) |
 |--------|------------------------------|----------------------------------------|
