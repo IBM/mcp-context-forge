@@ -18,7 +18,7 @@ from mcpgateway.auth_context import get_scoped_resource_access_context
 from mcpgateway.config import settings
 from mcpgateway.db import get_db
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
-from mcpgateway.schemas import CatalogListRequest, CatalogListResponse
+from mcpgateway.schemas import CatalogListRequest, CatalogListResponse, CatalogServerRegisterBody, CatalogServerRegisterRequest, CatalogServerRegisterResponse
 from mcpgateway.services.catalog_service import catalog_service
 
 router = APIRouter(prefix="/catalog", tags=["Catalog"])
@@ -79,3 +79,37 @@ async def list_catalog_servers(
     )
 
     return await catalog_service.get_catalog_servers(catalog_request, db, user_email=user_email, token_teams=token_teams)
+
+
+@router.post("/{catalog_id}/register", response_model=CatalogServerRegisterResponse)
+@require_permission("servers.create")
+async def register_catalog_server(
+    catalog_id: str,
+    body: Optional[CatalogServerRegisterBody] = None,
+    db: Session = Depends(get_db),
+    _user=Depends(get_current_user_with_permissions),
+) -> CatalogServerRegisterResponse:
+    """Register a catalog server as a gateway for the authenticated API caller.
+
+    Business failures (unknown catalog id, already registered, unreachable
+    server) are returned as an HTTP 200 envelope with ``success=False`` and a
+    mapped message, matching the admin registration endpoint.
+
+    Args:
+        catalog_id: Catalog server ID to register.
+        body: Optional overrides (custom name, API key).
+        db: Database session.
+        _user: Authenticated user.
+
+    Returns:
+        Registration result envelope.
+
+    Raises:
+        HTTPException: If the catalog feature is disabled.
+    """
+    if not settings.mcpgateway_catalog_enabled:
+        raise HTTPException(status_code=404, detail="Catalog feature is disabled")
+
+    request = CatalogServerRegisterRequest(server_id=catalog_id, name=body.name, api_key=body.api_key) if body else None
+
+    return await catalog_service.register_catalog_server(catalog_id=catalog_id, request=request, db=db)
