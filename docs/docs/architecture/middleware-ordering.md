@@ -69,7 +69,7 @@ Rows 18–20 (`CSRFMiddleware`, `PasswordChangeEnforcementMiddleware`, `AuthCont
 
 **Key point:** `DeprecationHeadersMiddleware` is registered **outside the main middleware block**, after `app.include_router(legacy_router)` (line ~12882). Because it is registered last, it runs **outermost** — ahead of everything in the main 3265–3501 registration block, including `CORSMiddleware`.
 
-If you are adding middleware that depends on early request processing (e.g., extracting headers or setting flags), remember that `DeprecationHeadersMiddleware` may already have run if `legacy_api_enabled=true`. Conversely, if you add middleware after `DeprecationHeadersMiddleware`, it will run *before* `DeprecationHeadersMiddleware`, which is usually not desired.
+If you are adding middleware that depends on early request processing (e.g., extracting headers or setting flags), `DeprecationHeadersMiddleware` may already have run if `legacy_api_enabled=true`. If you add middleware after `DeprecationHeadersMiddleware`, it will run *before* `DeprecationHeadersMiddleware`, which is usually not desired.
 
 ## State Dependencies: The CSRF + Auth Middleware Ordering Bug
 
@@ -137,7 +137,7 @@ If you add another middleware that reads `request.state` values set by `AuthCont
        assert auth_index < my_index
    ```
 
-4. **Consider the reverse-registration rule.** When reading the code, remember that `add_middleware()` calls at the *end* register middleware that runs *first* on requests. When adding new middleware, reference this page (`docs/docs/architecture/middleware-ordering.md`) in the code comment next to your `app.add_middleware()` call to document your ordering rationale.
+4. **Consider the reverse-registration rule.** `add_middleware()` calls at the *end* register middleware that runs *first* on requests. When adding new middleware, reference this page (`docs/docs/architecture/middleware-ordering.md`) in the code comment next to your `app.add_middleware()` call to document your ordering rationale.
 
 5. **Avoid brittle line-number references.** When documenting middleware order in code or docs, reference the middleware class name and its high-level purpose (e.g., "registered before AuthContextMiddleware") rather than specific line numbers, since the codebase evolves.
 
