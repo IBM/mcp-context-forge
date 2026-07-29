@@ -608,6 +608,62 @@ ContextForge implements **OAuth 2.0 Dynamic Client Registration (RFC 7591)** and
     - `X_FRAME_OPTIONS="ALLOW-ALL"`: Allows embedding from all sources
     - `X_FRAME_OPTIONS=null` or `none`: Completely removes iframe restrictions
 
+### CSRF Protection
+
+ContextForge provides Cross-Site Request Forgery (CSRF) protection through two independent implementations optimized for different request paths. Understanding the distinctions is critical for configuration.
+
+| Setting                   | Description                    | Default                                        | Options    |
+| ------------------------- | ------------------------------ | ---------------------------------------------- | ---------- |
+| `CSRF_ENABLED`            | Enable CSRF protection for state-changing operations | `true`                                   | bool       |
+| `CSRF_SECRET_KEY`         | Secret key for CSRF token generation (falls back to `JWT_SECRET_KEY` if empty) | `""`                              | string     |
+| `CSRF_TOKEN_NAME`         | HTTP header name for CSRF token | `X-CSRF-Token`                                 | string     |
+| `CSRF_COOKIE_NAME`        | Cookie name for CSRF token (middleware-path-only; hardcoded in admin routes) | `mcpgateway_csrf_token`            | string     |
+| `CSRF_TOKEN_EXPIRY`       | CSRF token expiration time in seconds (middleware-path-only; different calculation in admin routes) | `3600`                            | int        |
+| `CSRF_COOKIE_SECURE`      | Set Secure flag on CSRF cookie (middleware-path-only; production-aware in admin routes) | `true`                            | bool       |
+| `CSRF_COOKIE_SAMESITE`    | SameSite attribute for CSRF cookie (middleware-path-only; hardcoded `strict` in admin routes) | `Strict`                          | `Strict`/`Lax`/`None` |
+| `CSRF_COOKIE_HTTPONLY`    | Set HttpOnly flag on CSRF cookie (middleware-path-only; hardcoded `false` in admin routes) | `false`                           | bool       |
+| `CSRF_CHECK_REFERER`      | Validate Referer header for CSRF protection | `true`                                 | bool       |
+| `CSRF_ROTATE_ON_LOGIN`    | Rotate CSRF token on user login for enhanced security | `true`                                 | bool       |
+| `CSRF_TRUSTED_ORIGINS`    | Additional trusted origins for CSRF validation (code default is `[]`; `.env.example` overrides with localhost) | `[]`                              | JSON array |
+| `CSRF_EXEMPT_PATHS`       | Paths exempt from CSRF middleware (admin routes use per-route enforcement instead) | See below | JSON array |
+
+**Two Independent CSRF Implementations:**
+
+ContextForge implements CSRF protection in two distinct paths:
+
+1. **`CSRFMiddleware` (global protection)**: Applies to non-exempt routes (e.g., `/llm/*`, `/v1/mcp/*`) and also to versioned admin routes (`/v1/admin/*`)
+2. **`enforce_admin_csrf` (per-route dependency)**: Applies to the legacy admin mount (`/admin/*` and `/admin/llm/*`)
+
+The five settings marked as "middleware-path-only" in the table above govern only the first path; the admin dependency uses hardcoded equivalents for all cookie and header attributes:
+
+| Attribute | `CSRFMiddleware` (Middleware) | `enforce_admin_csrf` (Admin Routes) |
+| --- | --- | --- |
+| Cookie name | `CSRF_COOKIE_NAME` setting | hardcoded `mcpgateway_csrf_token` |
+| Header name | `CSRF_TOKEN_NAME` setting | hardcoded `x-csrf-token` |
+| SameSite | `CSRF_COOKIE_SAMESITE` setting | hardcoded `strict` |
+| Secure flag | `CSRF_COOKIE_SECURE` setting | `true` in production, else `SECURE_COOKIES` setting |
+| HttpOnly flag | `CSRF_COOKIE_HTTPONLY` setting | hardcoded `false` |
+| Max age | `CSRF_TOKEN_EXPIRY` setting | `max(300, TOKEN_EXPIRY * 60)` |
+| Token scheme | HMAC over `user_id:session_id:window` | plain double-submit with `secrets.compare_digest()` |
+| Origin check | `CSRF_CHECK_REFERER` setting + `CSRF_TRUSTED_ORIGINS` | always via `_request_origin_matches()` |
+
+**Default Exempt Paths** (middleware only; see `mcpgateway/config.py` for complete list):
+```json
+["/health", "/auth/login", "/auth/logout", "/auth/refresh", "/admin", "/admin/login", "/oauth/fetch-tools", "/docs", "/redoc", "/openapi.json", "/metrics", "/mcp/", "/sse", "/message", "/rpc", "/api/metrics/", "/toolops/", "/tokens", "/teams/", "/llmchat/", "/api/logs/", "/_internal/mcp/"]
+```
+
+!!! warning "CSRF_COOKIE_NAME Synchronization Risk"
+    The cookie name is hardcoded in three places: the middleware respects the `CSRF_COOKIE_NAME` setting, the admin dependency reads a module constant `ADMIN_CSRF_COOKIE_NAME` (`admin.py:1647`), and the Admin UI JavaScript hardcodes `mcpgateway_csrf_token`. Changing `CSRF_COOKIE_NAME` causes the middleware and admin dependency to look for *different cookies*, breaking admin panel writes. If you migrated from an older ContextForge version, verify your `.env` uses `mcpgateway_csrf_token` (not `csrf_token` from a pre-#5780 template).
+
+!!! warning "CSRF_COOKIE_HTTPONLY Must Stay False"
+    The browser JavaScript must read the CSRF cookie to echo it in the `X-CSRF-Token` header (double-submit pattern). Setting `CSRF_COOKIE_HTTPONLY=true` makes the cookie unreadable to JavaScript, breaking every CSRF-protected write. The cookie is safe: the middleware's HMAC token is bound to user + session identity, preventing CSRF abuse.
+
+!!! info "CSRF_TRUSTED_ORIGINS: Code Default vs. Template"
+    The code default is an empty list `[]`, meaning no additional origins beyond same-site are trusted. However, `.env.example` overrides this with localhost origins (`http://localhost:3000`, `http://localhost:8080`, etc.) for development convenience. Production deployments should verify the code default and explicitly configure `CSRF_TRUSTED_ORIGINS` to match your frontend origin(s).
+
+!!! info "CSRF_EXEMPT_PATHS and Versioned Route Interaction"
+    The middleware exemption uses prefix matching on the raw request path (e.g., `/admin` matches `/admin/llm/*` but not `/v1/admin/llm/*`). This means versioned admin routes at `/v1/admin/*` are validated by both the middleware and the per-route `enforce_admin_csrf` dependency (double validation), while legacy routes at `/admin/*` use only the per-route dependency (exempt from middleware). Cross-validate your paths against both implementations. See [Middleware Ordering and Stacking](../architecture/middleware-ordering.md) for details on how CSRF middleware interacts with other middleware and per-route dependencies.
+
 ### Identity Propagation
 
 MCP Gateway can **propagate end-user identity** to upstream MCP servers when proxying requests. This enables upstream services to make authorization decisions based on the original caller's identity, and supports audit trails that track the full delegation chain.
