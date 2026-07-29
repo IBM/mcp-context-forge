@@ -1161,6 +1161,295 @@ curl -s -X DELETE -H "Authorization: Bearer $TOKEN" \
   $BASE_URL/prompts/$PROMPT_ID | jq '.'
 ```
 
+## LLM Settings Management
+
+LLM Settings Management endpoints configure language model providers and models. The feature is available only when `LLMCHAT_ENABLED=true`; otherwise, all LLM routes return `404 Not Found`. These endpoints are exposed through two route families that use different CSRF protection schemes:
+
+- **`/v1/llm/providers`, `/v1/llm/models`** — Read and write operations protected by `CSRFMiddleware` (HMAC-based tokens). The canonical prefix is `/v1/`; unprefixed legacy aliases (`/llm/providers`, `/llm/models`) also resolve when `LEGACY_API_ENABLED=true`, but are hidden from `/openapi.json`.
+- **`/v1/admin/llm/*`** — Write operations for the Admin UI, protected by `enforce_admin_csrf` dependency (double-submit with plain token comparison). These routes are validated by **both** CSRF schemes (the `/admin` prefix does not exempt `/v1/admin/*` paths from `CSRFMiddleware`).
+
+### CSRF Protection Detail
+
+The two route families use independent CSRF implementations:
+
+| Aspect | `/v1/llm/*` (CSRFMiddleware) | `/v1/admin/llm/*` (enforce_admin_csrf) |
+|--------|------------------------------|----------------------------------------|
+| Cookie name | `settings.csrf_cookie_name` (configurable) | `mcpgateway_csrf_token` (hardcoded) |
+| Header name | `settings.csrf_token_name` (configurable, default `X-CSRF-Token`) | `x-csrf-token` (hardcoded) |
+| Token scheme | HMAC over `user_id:session_id:window` | Plain double-submit: `compare_digest(header, cookie)` |
+| Origin check | Via `settings.allowed_origins` | Always, via `Origin`/`Referer` header validation |
+| Bearer-token bypass | Yes — middleware skips token check for `Authorization: Bearer` | Yes — dependency returns early when no `jwt_token` cookie is present |
+| Form field fallback | Not supported | `csrf_token` form field (for form-encoded requests) |
+
+**Bearer-token API callers** do not need CSRF tokens on either family. Form-encoded POST requests to `/v1/admin/llm/*` may carry the token in the `csrf_token` form field instead of a header.
+
+### List LLM Providers
+
+```bash
+# Bearer-token auth (CSRF not required)
+curl -s -H "Authorization: Bearer $TOKEN" \
+  $BASE_URL/v1/llm/providers | jq '.'
+
+# Cookie + X-CSRF-Token auth (browser form)
+curl -s -b "jwt_token=$JWT_COOKIE; mcpgateway_csrf_token=$CSRF_COOKIE" \
+  -H "X-CSRF-Token: $CSRF_COOKIE" \
+  -H "Origin: http://localhost:8000" \
+  $BASE_URL/v1/llm/providers | jq '.'
+```
+
+**Response:**
+```json
+{
+  "providers": [
+    {
+      "id": "provider-123",
+      "name": "openai",
+      "slug": "openai",
+      "provider_type": "openai",
+      "api_base": "https://api.openai.com/v1",
+      "enabled": true,
+      "health_status": "healthy",
+      "model_count": 8
+    }
+  ]
+}
+```
+
+### List LLM Models
+
+```bash
+# Bearer-token auth
+curl -s -H "Authorization: Bearer $TOKEN" \
+  $BASE_URL/v1/llm/models | jq '.'
+
+# Cookie + CSRF token auth
+curl -s -b "jwt_token=$JWT_COOKIE; mcpgateway_csrf_token=$CSRF_COOKIE" \
+  -H "X-CSRF-Token: $CSRF_COOKIE" \
+  -H "Origin: http://localhost:8000" \
+  $BASE_URL/v1/llm/models | jq '.'
+```
+
+**Response:**
+```json
+{
+  "models": [
+    {
+      "id": "model-456",
+      "model_id": "gpt-4",
+      "model_name": "GPT-4",
+      "provider_id": "provider-123",
+      "provider_name": "openai",
+      "supports_chat": true,
+      "supports_streaming": true,
+      "enabled": true
+    }
+  ]
+}
+```
+
+### Update Provider State
+
+Toggle a provider's enabled status.
+
+```bash
+# Bearer-token auth (CSRF not required)
+curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+  $BASE_URL/v1/admin/llm/providers/provider-123/state | jq '.'
+
+# Cookie + CSRF token auth (Admin UI form)
+# Note: enforce_admin_csrf requires Origin or Referer header
+curl -s -X POST \
+  -b "jwt_token=$JWT_COOKIE; mcpgateway_csrf_token=$CSRF_COOKIE" \
+  -H "X-CSRF-Token: $CSRF_COOKIE" \
+  -H "Origin: http://localhost:8000" \
+  $BASE_URL/v1/admin/llm/providers/provider-123/state | jq '.'
+```
+
+### Check Provider Health
+
+Verify provider API connectivity and response time.
+
+```bash
+# Bearer-token auth
+curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+  $BASE_URL/v1/admin/llm/providers/provider-123/health | jq '.'
+
+# Cookie + CSRF token auth
+curl -s -X POST \
+  -b "jwt_token=$JWT_COOKIE; mcpgateway_csrf_token=$CSRF_COOKIE" \
+  -H "X-CSRF-Token: $CSRF_COOKIE" \
+  -H "Origin: http://localhost:8000" \
+  $BASE_URL/v1/admin/llm/providers/provider-123/health | jq '.'
+```
+
+**Response:**
+```json
+{
+  "status": "healthy",
+  "provider_id": "provider-123",
+  "latency_ms": 245,
+  "error": null
+}
+```
+
+### Delete Provider
+
+Remove a provider and all associated models.
+
+```bash
+# Bearer-token auth
+curl -s -X DELETE -H "Authorization: Bearer $TOKEN" \
+  $BASE_URL/v1/admin/llm/providers/provider-123 | jq '.'
+
+# Cookie + CSRF token auth
+curl -s -X DELETE \
+  -b "jwt_token=$JWT_COOKIE; mcpgateway_csrf_token=$CSRF_COOKIE" \
+  -H "X-CSRF-Token: $CSRF_COOKIE" \
+  -H "Origin: http://localhost:8000" \
+  $BASE_URL/v1/admin/llm/providers/provider-123 | jq '.'
+```
+
+### Update Model State
+
+Toggle a model's enabled status.
+
+```bash
+# Bearer-token auth
+curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+  $BASE_URL/v1/admin/llm/models/model-456/state | jq '.'
+
+# Cookie + CSRF token auth
+curl -s -X POST \
+  -b "jwt_token=$JWT_COOKIE; mcpgateway_csrf_token=$CSRF_COOKIE" \
+  -H "X-CSRF-Token: $CSRF_COOKIE" \
+  -H "Origin: http://localhost:8000" \
+  $BASE_URL/v1/admin/llm/models/model-456/state | jq '.'
+```
+
+### Delete Model
+
+Remove a model.
+
+```bash
+# Bearer-token auth
+curl -s -X DELETE -H "Authorization: Bearer $TOKEN" \
+  $BASE_URL/v1/admin/llm/models/model-456 | jq '.'
+
+# Cookie + CSRF token auth
+curl -s -X DELETE \
+  -b "jwt_token=$JWT_COOKIE; mcpgateway_csrf_token=$CSRF_COOKIE" \
+  -H "X-CSRF-Token: $CSRF_COOKIE" \
+  -H "Origin: http://localhost:8000" \
+  $BASE_URL/v1/admin/llm/models/model-456 | jq '.'
+```
+
+### Test LLM Provider
+
+Test a provider's API connectivity and LLM response.
+
+```bash
+# Bearer-token auth
+curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "test_type": "models"
+  }' \
+  $BASE_URL/v1/admin/llm/test | jq '.'
+
+# Cookie + CSRF token auth (form-encoded submission)
+curl -s -X POST \
+  -b "jwt_token=$JWT_COOKIE; mcpgateway_csrf_token=$CSRF_COOKIE" \
+  -H "Origin: http://localhost:8000" \
+  -d "test_type=models&csrf_token=$CSRF_COOKIE" \
+  $BASE_URL/v1/admin/llm/test | jq '.'
+```
+
+**Response (models list):**
+```json
+{
+  "success": true,
+  "test_type": "models",
+  "data": {
+    "object": "list",
+    "data": [
+      {"id": "gpt-4", "owned_by": "openai"},
+      {"id": "gpt-4-turbo", "owned_by": "openai"}
+    ]
+  },
+  "metrics": {
+    "duration": 125,
+    "modelCount": 2
+  }
+}
+```
+
+### Fetch Models from Provider
+
+Retrieve available models from a provider's API.
+
+```bash
+# Bearer-token auth
+curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+  $BASE_URL/v1/admin/llm/providers/provider-123/fetch-models | jq '.'
+
+# Cookie + CSRF token auth
+curl -s -X POST \
+  -b "jwt_token=$JWT_COOKIE; mcpgateway_csrf_token=$CSRF_COOKIE" \
+  -H "X-CSRF-Token: $CSRF_COOKIE" \
+  -H "Origin: http://localhost:8000" \
+  $BASE_URL/v1/admin/llm/providers/provider-123/fetch-models | jq '.'
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "models": [
+    {
+      "id": "gpt-4",
+      "name": "GPT-4",
+      "owned_by": "openai",
+      "created": 1687882411
+    },
+    {
+      "id": "gpt-4-turbo",
+      "name": "GPT-4 Turbo",
+      "owned_by": "openai",
+      "created": 1694767999
+    }
+  ],
+  "count": 2
+}
+```
+
+### Sync Models to Database
+
+Import models from a provider's API into the database.
+
+```bash
+# Bearer-token auth
+curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+  $BASE_URL/v1/admin/llm/providers/provider-123/sync-models | jq '.'
+
+# Cookie + CSRF token auth
+curl -s -X POST \
+  -b "jwt_token=$JWT_COOKIE; mcpgateway_csrf_token=$CSRF_COOKIE" \
+  -H "X-CSRF-Token: $CSRF_COOKIE" \
+  -H "Origin: http://localhost:8000" \
+  $BASE_URL/v1/admin/llm/providers/provider-123/sync-models | jq '.'
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Synced models: 2 added, 5 skipped",
+  "added": 2,
+  "skipped": 5,
+  "total": 7
+}
+```
+
 ## Tag Management
 
 Tags organize and categorize gateway resources.
