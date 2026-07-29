@@ -1133,8 +1133,10 @@ def _build_admin_redirect(
         except ValueError:
             pass
     query = urllib.parse.urlencode(params, quote_via=urllib.parse.quote) if params else ""
-    sep = "/?" if query else ""
-    return f"{root_path}/admin{sep}{query}#{fragment}"
+    sep = "?" if query else ""
+    # Always target "/admin/" (the registered admin home route) to avoid a
+    # 307 trailing-slash redirect (issue #1588).
+    return f"{root_path}/admin/{sep}{query}#{fragment}"
 
 
 def get_client_ip(request: Request) -> str:
@@ -4410,7 +4412,7 @@ async def admin_login_page(request: Request) -> Response:
     # Check if email auth is enabled
     if not getattr(settings, "email_auth_enabled", False):
         root_path = _resolve_root_path(request)
-        return RedirectResponse(url=f"{root_path}/admin", status_code=303)
+        return RedirectResponse(url=f"{root_path}/admin/", status_code=303)
 
     root_path = settings.app_root_path
 
@@ -4432,7 +4434,7 @@ async def admin_login_page(request: Request) -> Response:
                 if token_teams is not None and len(token_teams) == 0:
                     pass  # Render login page; do not redirect to /admin
                 elif auth_user.is_admin:
-                    return RedirectResponse(url=f"{root_path}/admin", status_code=303)
+                    return RedirectResponse(url=f"{root_path}/admin/", status_code=303)
                 else:
                     # Non-admin with valid token: check RBAC admin permission
                     with SessionLocal() as db:
@@ -4443,7 +4445,7 @@ async def admin_login_page(request: Request) -> Response:
                             token_teams=token_teams,
                         )
                         if has_admin_access:
-                            return RedirectResponse(url=f"{root_path}/admin", status_code=303)
+                            return RedirectResponse(url=f"{root_path}/admin/", status_code=303)
                         # else: render login page; token is valid but lacks admin access
             except Exception:
                 clear_invalid_cookies = True
@@ -4526,7 +4528,7 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
     root_path = _resolve_root_path(request)
 
     if not getattr(settings, "email_auth_enabled", False):
-        return RedirectResponse(url=f"{root_path}/admin", status_code=303)
+        return RedirectResponse(url=f"{root_path}/admin/", status_code=303)
 
     try:
         form = await request.form()
@@ -4620,7 +4622,7 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
             token, _ = await create_access_token(user)  # expires_seconds not needed here
 
             # Create redirect response
-            response = RedirectResponse(url=f"{root_path}/admin", status_code=303)
+            response = RedirectResponse(url=f"{root_path}/admin/", status_code=303)
 
             # Set JWT token as secure cookie
             try:
@@ -5116,7 +5118,7 @@ async def change_password_required_page(request: Request) -> HTMLResponse:
     """
     if not getattr(settings, "email_auth_enabled", False):
         root_path = _resolve_root_path(request)
-        return RedirectResponse(url=f"{root_path}/admin", status_code=303)
+        return RedirectResponse(url=f"{root_path}/admin/", status_code=303)
 
     # Get root path for template
     root_path = _resolve_root_path(request)
@@ -5198,7 +5200,7 @@ async def change_password_required_handler(request: Request, db: Session = Depen
     root_path = _resolve_root_path(request)
 
     if not getattr(settings, "email_auth_enabled", False):
-        return RedirectResponse(url=f"{root_path}/admin", status_code=303)
+        return RedirectResponse(url=f"{root_path}/admin/", status_code=303)
 
     try:
         form = await request.form()
@@ -5264,7 +5266,7 @@ async def change_password_required_handler(request: Request, db: Session = Depen
                 token, _ = await create_access_token(current_user)
 
                 # Create redirect response to admin panel
-                response = RedirectResponse(url=f"{root_path}/admin", status_code=303)
+                response = RedirectResponse(url=f"{root_path}/admin/", status_code=303)
 
                 # Update JWT token cookie
                 try:
@@ -16581,7 +16583,7 @@ async def admin_set_a2a_agent_state(
     """
     if not a2a_service or not settings.mcpgateway_a2a_enabled:
         root_path = _resolve_root_path(request)
-        return RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)
+        return RedirectResponse(f"{root_path}/admin/#a2a-agents", status_code=303)
 
     user_email = get_user_email(user)
     error_message = None
@@ -16635,7 +16637,7 @@ async def admin_delete_a2a_agent(
     """
     if not a2a_service or not settings.mcpgateway_a2a_enabled:
         root_path = _resolve_root_path(request)
-        return RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)
+        return RedirectResponse(f"{root_path}/admin/#a2a-agents", status_code=303)
 
     error_message = None
     is_inactive_checked = "false"
