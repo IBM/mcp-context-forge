@@ -12,6 +12,7 @@ import { MiniCard } from "@/components/dashboard/MiniCard";
 import { MiniCardStatusIndicator } from "@/components/dashboard/MiniCardStatusIndicator";
 import type { MiniCardStatus } from "@/components/dashboard/miniCardStatus";
 import { PermissionDenied } from "@/components/dashboard/PermissionDenied";
+import type { HeadlineCondition } from "@/components/dashboard/resolveHeadline";
 import { useMiniCardStatuses } from "@/hooks/useMiniCardStatuses";
 import { StatusHeadline } from "@/components/dashboard/StatusHeadline";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -57,7 +58,7 @@ export function Dashboard() {
 
   // Resolved once at the page level (which stays mounted across ?view= changes)
   // so switching states does not remount the queries and flash stale statuses.
-  const miniCardStatuses = useMiniCardStatuses();
+  const { statuses: miniCardStatuses, headlineCondition } = useMiniCardStatuses();
 
   const actionCards: ActionCard[] = useMemo(
     () => [
@@ -126,7 +127,7 @@ export function Dashboard() {
   return (
     <div className="p-6">
       {activeView === "default" ? (
-        <DefaultState statuses={miniCardStatuses} />
+        <DefaultState statuses={miniCardStatuses} headlineCondition={headlineCondition} />
       ) : (
         <NonDefaultState active={activeView} statuses={miniCardStatuses} />
       )}
@@ -139,10 +140,16 @@ export function Dashboard() {
  * the system status card, and the inline source cards. No right column.
  * Card content (#5841) lands behind the placeholder.
  */
-function DefaultState({ statuses }: { statuses: Record<MiniCardId, MiniCardStatus> }) {
+function DefaultState({
+  statuses,
+  headlineCondition,
+}: {
+  statuses: Record<MiniCardId, MiniCardStatus>;
+  headlineCondition: HeadlineCondition;
+}) {
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-6">
-      <StatusHeadline action={<ActivityFeedButton />} />
+      <StatusHeadline condition={headlineCondition} action={<ActivityFeedButton />} />
       {/* #5841 SystemStatusCard swaps in here. */}
       <EmptyStatePlaceholder messageId="dashboard.home.placeholder.system" />
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
