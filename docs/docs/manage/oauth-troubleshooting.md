@@ -77,9 +77,11 @@ state_data = {
 | `/oauth/callback` | GET | Handles OAuth callback, exchanges code for tokens |
 | `/oauth/status/{gateway_id}` | GET | Returns OAuth configuration status |
 | `/oauth/fetch-tools/{gateway_id}` | POST | Fetches tools from MCP server after OAuth completion |
-| `/oauth/registered-clients` | GET | Lists all DCR-registered OAuth clients |
-| `/oauth/registered-clients/{gateway_id}` | GET | Gets registered client for specific gateway |
-| `/oauth/registered-clients/{client_id}` | DELETE | Deletes a registered OAuth client |
+| `/oauth/registered-clients` | GET | Lists all DCR-registered OAuth clients. Requires un-narrowed platform admin access |
+| `/oauth/registered-clients/{gateway_id}` | GET | Gets registered client for specific gateway. Requires un-narrowed platform admin access |
+| `/oauth/registered-clients/{client_id}` | DELETE | Deletes a registered OAuth client. Requires un-narrowed platform admin access |
+
+> **Note**: The three `/oauth/registered-clients*` endpoints manage DCR client records that are stored globally, with no team association. Because there is no team scope to narrow into, these endpoints require an un-narrowed admin token — an admin API/legacy token carrying a `token_teams` narrowing claim (or a public-only admin token) receives `403 Forbidden` with `"OAuth client management requires un-narrowed admin access"`. Admin session tokens (e.g. the interactive Admin UI) resolve their teams from the database and cannot be narrowed, so this does not change UI behavior.
 
 ---
 
@@ -623,8 +625,8 @@ grep DCR .env
 # Look for DCR-related logs
 grep -E "(DCR|Dynamic Client)" logs/mcpgateway.log
 
-# Check registered clients
-curl -s http://localhost:4444/oauth/registered-clients | jq
+# Check registered clients (requires an un-narrowed admin bearer token)
+curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/oauth/registered-clients | jq
 
 # Common DCR errors:
 # - "DCR failed" - AS doesn't support RFC 7591
