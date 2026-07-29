@@ -2210,6 +2210,7 @@ async def _resolve_jwt_user_email_for_streamable(payload: dict[str, Any]) -> str
     from mcpgateway.auth_context import resolve_jwt_user_email_from_payload  # pylint: disable=import-outside-toplevel
 
     async def resolve_uuid_subject(user_id: str) -> str | None:
+        """Resolve a UUID subject to the owning user's email."""
         return await asyncio.to_thread(_get_email_by_id_sync, user_id)
 
     return await resolve_jwt_user_email_from_payload(payload, uuid_email_resolver=resolve_uuid_subject)
