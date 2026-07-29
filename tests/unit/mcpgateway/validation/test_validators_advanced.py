@@ -1539,6 +1539,15 @@ class TestValidateSsrf:
         with patch("mcpgateway.common.validators.settings", ssrf_settings):
             SecurityValidator._validate_ssrf("10.1.2.3", "URL")  # Should not raise
 
+    def test_cgnat_blocked_even_when_private_networks_allowed(self, ssrf_settings):
+        """RFC 6598 shared address space is blocked even though ipaddress does not mark it private."""
+        ssrf_settings.ssrf_blocked_networks = []
+        ssrf_settings.ssrf_allow_localhost = True
+        ssrf_settings.ssrf_allow_private_networks = True
+        with patch("mcpgateway.common.validators.settings", ssrf_settings):
+            with pytest.raises(ValueError, match="shared address space"):
+                SecurityValidator._validate_ssrf("100.64.0.1", "URL")
+
     def test_dns_fail_closed(self, ssrf_settings):
         with patch("mcpgateway.common.validators.settings", ssrf_settings):
             with patch("socket.getaddrinfo", side_effect=socket.gaierror):
@@ -1925,6 +1934,20 @@ class TestGatewayTestUrlValidation:
                     "https://169.254.169.254/",
                     ["169.254.169.254"],
                     "Gateway URL"
+                )
+
+    @pytest.mark.asyncio
+    async def test_cgnat_blocked_when_ssrf_enabled(self):
+        """Gateway-test validation blocks RFC 6598 shared address space."""
+        with patch("mcpgateway.common.validators.settings") as mock_settings:
+            mock_settings.ssrf_protection_enabled = True
+            mock_settings.gateway_test_dns_timeout = 5.0
+
+            with pytest.raises(ValueError, match="is not allowed"):
+                await SecurityValidator.validate_gateway_test_url(
+                    "https://100.64.0.1/",
+                    ["100.64.0.1"],
+                    "Gateway URL",
                 )
 
     @pytest.mark.asyncio
@@ -2498,6 +2521,19 @@ class TestOutboundUrlConnectionPinningValidation:
 
         with patch("mcpgateway.common.validators.settings", self._settings()):
             with pytest.raises(ValueError, match="localhost"):
+                await SecurityValidator.validate_url_for_connection_pinning("https://api.example.com/path", "Tool URL")
+
+    @pytest.mark.asyncio
+    async def test_validate_url_for_connection_pinning_rejects_cgnat_dns_answer(self, monkeypatch):
+        """REST tool pinning rejects RFC 6598 shared address space."""
+
+        def mock_getaddrinfo(_host, port, family=0, type=0, proto=0, flags=0):
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("100.64.0.1", port or 443))]
+
+        monkeypatch.setattr("mcpgateway.common.validators.socket.getaddrinfo", mock_getaddrinfo)
+
+        with patch("mcpgateway.common.validators.settings", self._settings(ssrf_allow_private_networks=True, ssrf_blocked_networks=[])):
+            with pytest.raises(ValueError, match="shared address space"):
                 await SecurityValidator.validate_url_for_connection_pinning("https://api.example.com/path", "Tool URL")
 
     @pytest.mark.asyncio

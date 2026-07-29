@@ -267,6 +267,33 @@ def _parse_ip_network_cached(network_str: str) -> "ipaddress._BaseNetwork":
     return ipaddress.ip_network(network_str, strict=False)
 
 
+_CGNAT_IPV4_NETWORK = ipaddress.IPv4Network("100.64.0.0/10")
+
+
+def _is_cgnat_ip(ip_addr: ipaddress._BaseAddress) -> bool:
+    """Return whether an IP belongs to RFC 6598 shared address space."""
+    return isinstance(ip_addr, ipaddress.IPv4Address) and ip_addr in _CGNAT_IPV4_NETWORK
+
+
+def _classify_restricted_outbound_ip(ip_addr: ipaddress._BaseAddress) -> Optional[str]:
+    """Classify non-public outbound IP ranges shared by URL validators."""
+    if _is_cgnat_ip(ip_addr):
+        return "cgnat"
+    if ip_addr.is_loopback:
+        return "loopback"
+    if ip_addr.is_link_local:
+        return "link-local"
+    if ip_addr.is_unspecified:
+        return "unspecified"
+    if ip_addr.is_multicast:
+        return "multicast"
+    if ip_addr.is_reserved:
+        return "reserved"
+    if ip_addr.is_private:
+        return "private"
+    return None
+
+
 # ============================================================================
 # HTML Tag Stripper with Character Preservation
 # ============================================================================
@@ -1501,6 +1528,10 @@ class SecurityValidator:
                 if ip_addr in network:
                     raise ValueError(f"{field_name} contains IP address blocked by SSRF protection (network: {network_str})")
 
+            restricted_ip_kind = _classify_restricted_outbound_ip(ip_addr)
+            if restricted_ip_kind == "cgnat":
+                raise ValueError(f"{field_name} contains shared address space which is blocked by SSRF protection")
+
             # Check localhost/loopback (if not allowed)
             if not settings.ssrf_allow_localhost:
                 if ip_addr.is_loopback or hostname_normalized in ("localhost", "localhost.localdomain"):
@@ -1769,12 +1800,6 @@ class SecurityValidator:
             if ip_addr.version == 6 and ip_addr.ipv4_mapped is not None:
                 ip_addr = ip_addr.ipv4_mapped
 
-            # Check for carrier-grade NAT (100.64.0.0/10) - not covered by is_private
-            is_cgnat = False
-            if ip_addr.version == 4:
-                cgnat_network = ipaddress.IPv4Network("100.64.0.0/10")
-                is_cgnat = ip_addr in cgnat_network
-
             # Block private IPs (RFC 1918: 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16)
             # Block loopback (127.0.0.0/8, ::1)
             # Block link-local (169.254.0.0/16, fe80::/10)
@@ -1782,7 +1807,8 @@ class SecurityValidator:
             # Block multicast (224.0.0.0/4, ff00::/8)
             # Block reserved (240.0.0.0/4)
             # Block carrier-grade NAT (100.64.0.0/10)
-            if ip_addr.is_private or ip_addr.is_loopback or ip_addr.is_link_local or ip_addr.is_unspecified or ip_addr.is_multicast or ip_addr.is_reserved or is_cgnat:
+            restricted_ip_kind = _classify_restricted_outbound_ip(ip_addr)
+            if restricted_ip_kind:
                 if settings.ssrf_protection_enabled:
                     # Block private IPs, loopback, and link-local addresses
                     # This prevents testing internal services regardless of allowlist
@@ -1792,7 +1818,7 @@ class SecurityValidator:
                 logger.warning(
                     "Gateway test URL validation: SSRF protection bypass - private/internal IP allowed (ssrf_protection_enabled=false). target=%s ip_type=%s",
                     hostname_normalized,
-                    "private" if ip_addr.is_private else "loopback" if ip_addr.is_loopback else "link-local" if ip_addr.is_link_local else "cgnat",
+                    restricted_ip_kind,
                 )
         except ValueError as e:
             # Re-raise if it's our security error, otherwise it's not a valid IP (continue to hostname check)
@@ -1819,18 +1845,10 @@ class SecurityValidator:
                     if resolved_ip.version == 6 and resolved_ip.ipv4_mapped is not None:
                         resolved_ip = resolved_ip.ipv4_mapped
 
-                    # Check for carrier-grade NAT (100.64.0.0/10)
-                    is_cgnat = False
-                    if resolved_ip.version == 4:
-                        cgnat_network = ipaddress.IPv4Network("100.64.0.0/10")
-                        is_cgnat = resolved_ip in cgnat_network
-
                     # Check for dangerous network ranges
-                    is_dangerous = (
-                        resolved_ip.is_private or resolved_ip.is_loopback or resolved_ip.is_link_local or resolved_ip.is_unspecified or resolved_ip.is_multicast or resolved_ip.is_reserved or is_cgnat
-                    )
+                    restricted_ip_kind = _classify_restricted_outbound_ip(resolved_ip)
 
-                    if is_dangerous:
+                    if restricted_ip_kind:
                         if settings.ssrf_protection_enabled:
                             # Apply SSRF checks to resolved IPs only when protection is enabled
                             raise ValueError(f"{field_name} is not allowed")
@@ -1840,7 +1858,7 @@ class SecurityValidator:
                             "Gateway test URL validation: SSRF protection bypass - hostname resolves to private/internal IP (ssrf_protection_enabled=false). hostname=%s resolved_ip=%s ip_type=%s",
                             hostname_normalized,
                             str(resolved_ip),
-                            "private" if resolved_ip.is_private else "loopback" if resolved_ip.is_loopback else "link-local" if resolved_ip.is_link_local else "cgnat",
+                            restricted_ip_kind,
                         )
 
                     resolved_ips.append(str(resolved_ip))

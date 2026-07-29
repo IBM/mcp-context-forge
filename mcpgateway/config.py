@@ -703,6 +703,8 @@ class Settings(BaseSettings):
             # Link-local (often used for cloud metadata)
             "169.254.0.0/16",  # Full link-local IPv4 range
             "fe80::/10",  # IPv6 link-local
+            # Shared/internal address space not classified as private by ipaddress
+            "100.64.0.0/10",  # RFC 6598 carrier-grade NAT
         ],
         description=(
             "CIDR ranges to block for SSRF protection. These are ALWAYS blocked regardless of other settings. Default blocks cloud metadata endpoints. Add private ranges for stricter security."
