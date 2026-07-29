@@ -330,3 +330,31 @@ async def test_root_path_is_stripped_from_path_for_csp_skip_check():
         assert response.status_code == 200
     finally:
         mock.stop()
+
+
+@pytest.mark.asyncio
+async def test_root_path_fallback_to_app_root_path_for_csp_skip_check():
+    """Empty scope root_path falls back to settings.app_root_path for the CSP skip check."""
+    mock, settings = _mock_settings()
+    try:
+        middleware = SecurityHeadersMiddleware(app=None)
+        request = Request(
+            {
+                "type": "http",
+                "method": "GET",
+                "path": "/app/docs",
+                "root_path": "",
+                "scheme": "https",
+                "headers": [],
+            }
+        )
+
+        with patch("mcpgateway.utils.paths.settings.app_root_path", "/app"):
+            response = await middleware.dispatch(request, _call_next)
+
+        # The fallback root path "/app" must be stripped so the route-only
+        # path "/docs" triggers the CSP skip (no CSP header on docs pages).
+        assert response.status_code == 200
+        assert "Content-Security-Policy" not in response.headers
+    finally:
+        mock.stop()

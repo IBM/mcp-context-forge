@@ -18823,6 +18823,7 @@ class TestAuthLogin:
         result = await admin_login_page(request)
         assert isinstance(result, RedirectResponse)
         assert result.status_code == 303
+        assert result.headers["location"].endswith("/admin/")
 
     @pytest.mark.asyncio
     async def test_admin_login_page_email_auth_enabled(self, monkeypatch):
@@ -18971,6 +18972,7 @@ class TestAuthLogin:
         result = await admin_login_handler(request, mock_db)
         assert isinstance(result, RedirectResponse)
         assert result.status_code == 303
+        assert result.headers["location"].endswith("/admin/")
 
     @pytest.mark.asyncio
     async def test_admin_login_page_access_token_cookie_valid_redirects(self, monkeypatch):
@@ -19403,6 +19405,7 @@ class TestAuthLogin:
         result = await change_password_required_page(request)
         assert isinstance(result, RedirectResponse)
         assert result.status_code == 303
+        assert result.headers["location"].endswith("/admin/")
 
     @pytest.mark.asyncio
     async def test_change_password_required_page_enabled(self, monkeypatch):
