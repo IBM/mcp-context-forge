@@ -267,6 +267,33 @@ def _parse_ip_network_cached(network_str: str) -> "ipaddress._BaseNetwork":
     return ipaddress.ip_network(network_str, strict=False)
 
 
+_CGNAT_IPV4_NETWORK = ipaddress.IPv4Network("100.64.0.0/10")
+
+
+def _is_cgnat_ip(ip_addr: ipaddress._BaseAddress) -> bool:
+    """Return whether an IP belongs to RFC 6598 shared address space."""
+    return isinstance(ip_addr, ipaddress.IPv4Address) and ip_addr in _CGNAT_IPV4_NETWORK
+
+
+def _classify_restricted_outbound_ip(ip_addr: ipaddress._BaseAddress) -> Optional[str]:
+    """Classify non-public outbound IP ranges shared by URL validators."""
+    if _is_cgnat_ip(ip_addr):
+        return "cgnat"
+    if ip_addr.is_loopback:
+        return "loopback"
+    if ip_addr.is_link_local:
+        return "link-local"
+    if ip_addr.is_unspecified:
+        return "unspecified"
+    if ip_addr.is_multicast:
+        return "multicast"
+    if ip_addr.is_reserved:
+        return "reserved"
+    if ip_addr.is_private:
+        return "private"
+    return None
+
+
 # ============================================================================
 # HTML Tag Stripper with Character Preservation
 # ============================================================================
@@ -995,7 +1022,7 @@ class SecurityValidator:
         return text
 
     @classmethod
-    def validate_url(cls, value: str, field_name: str = "URL") -> str:
+    def validate_url(cls, value: str, field_name: str = "URL", *, skip_ssrf: bool = False) -> str:
         """Validate URLs for allowed schemes and safe display.
 
         Validation is performed on a percent-decoded copy of the URL to block
@@ -1008,6 +1035,9 @@ class SecurityValidator:
         Args:
             value (str): Value to validate
             field_name (str): Name of field being validated
+            skip_ssrf (bool): Skip DNS-based SSRF checks. Intended only for
+                callers that immediately resolve, validate, and pin the same
+                outbound connection target.
 
         Returns:
             str: The ORIGINAL (percent-encoded) URL if acceptable. Downstream
@@ -1284,7 +1314,7 @@ class SecurityValidator:
                 if decoded_hostname == "0.0.0.0":  # nosec B104 - blocked for security
                     raise ValueError(f"{field_name} contains invalid IP address (0.0.0.0)")
 
-                if settings.ssrf_protection_enabled:
+                if settings.ssrf_protection_enabled and not skip_ssrf:
                     cls._validate_ssrf(decoded_hostname, field_name)
 
             # Validate port number
@@ -1385,6 +1415,19 @@ class SecurityValidator:
         raise ValueError(f"Invalid hostname: {hostname}")
 
     @classmethod
+    def _validate_ssrf_blocked_hostname(cls, hostname: str, field_name: str) -> str:
+        """Normalize a hostname and enforce hostname-only SSRF block rules."""
+        hostname = _unquote_if_needed(hostname)
+        hostname_normalized = cls._normalize_hostname(hostname)
+
+        for blocked_host in settings.ssrf_blocked_hosts:
+            blocked_normalized = cls._normalize_hostname(blocked_host)
+            if hostname_normalized == blocked_normalized:
+                raise ValueError(f"{field_name} contains blocked hostname '{hostname}' (SSRF protection)")
+
+        return hostname_normalized
+
+    @classmethod
     def _validate_ssrf(cls, hostname: str, field_name: str) -> None:
         """Validate hostname/IP against SSRF protection rules.
 
@@ -1442,19 +1485,7 @@ class SecurityValidator:
             >>> with patch('mcpgateway.common.validators.settings', mock_settings):
             ...     SecurityValidator._validate_ssrf('8.8.8.8', 'URL')  # Should not raise
         """
-        # Defensive idempotent decode: percent-encoded hostnames (e.g.
-        # %31%32%37%2E%30%2E%30%2E%31 = 127.0.0.1) must be normalized for
-        # callers other than validate_url() which already decodes.
-        hostname = _unquote_if_needed(hostname)
-
-        # Normalize hostname: lowercase, strip trailing dots, IDN conversion
-        hostname_normalized = cls._normalize_hostname(hostname)
-
-        # Check blocked hostnames (case-insensitive, normalized)
-        for blocked_host in settings.ssrf_blocked_hosts:
-            blocked_normalized = cls._normalize_hostname(blocked_host)
-            if hostname_normalized == blocked_normalized:
-                raise ValueError(f"{field_name} contains blocked hostname '{hostname}' (SSRF protection)")
+        hostname_normalized = cls._validate_ssrf_blocked_hostname(hostname, field_name)
 
         # Resolve hostname to IP for network-based checks
         # Uses getaddrinfo to check ALL resolved addresses (A and AAAA records)
@@ -1497,6 +1528,10 @@ class SecurityValidator:
                 if ip_addr in network:
                     raise ValueError(f"{field_name} contains IP address blocked by SSRF protection (network: {network_str})")
 
+            restricted_ip_kind = _classify_restricted_outbound_ip(ip_addr)
+            if restricted_ip_kind == "cgnat":
+                raise ValueError(f"{field_name} contains shared address space which is blocked by SSRF protection")
+
             # Check localhost/loopback (if not allowed)
             if not settings.ssrf_allow_localhost:
                 if ip_addr.is_loopback or hostname_normalized in ("localhost", "localhost.localdomain"):
@@ -1519,6 +1554,118 @@ class SecurityValidator:
 
                     if not allowed_private:
                         raise ValueError(f"{field_name} contains private network address which is blocked by SSRF protection")
+
+    @classmethod
+    async def validate_url_for_connection_pinning(cls, value: str, field_name: str = "URL") -> Dict[str, Optional[str]]:
+        """Validate an outbound URL and return DNS metadata for connection pinning.
+
+        This helper is intended for async request handlers that validate a URL
+        immediately before outbound I/O. It runs the existing URL validator off
+        the event loop, resolves the hostname off the event loop, checks every
+        resolved address with the existing outbound URL policy, and returns metadata the
+        caller can use to pin the actual connection without rebuilding the URL.
+
+        Args:
+            value: URL to validate.
+            field_name: Human-readable field name for validation errors.
+
+        Returns:
+            Metadata containing ``validated_url``, original ``hostname``,
+            ``original_authority`` from the URL netloc, and an optional safe
+            ``resolved_ip``. ``resolved_ip`` may be ``None`` only when SSRF
+            protection is disabled and DNS resolution is allowed to fail open.
+
+        Raises:
+            ValueError: If validation fails or the resolved target violates the
+                outbound URL policy.
+
+        Examples:
+            >>> result = await SecurityValidator.validate_url_for_connection_pinning(
+            ...     "https://example.com/path?sig=abc",
+            ...     "Tool URL",
+            ... )  # doctest: +SKIP
+            >>> result["validated_url"]  # doctest: +SKIP
+            'https://example.com/path?sig=abc'
+        """
+        if not value:
+            raise ValueError(f"{field_name} cannot be empty")
+
+        dns_timeout = float(getattr(settings, "gateway_test_dns_timeout", 5.0))
+        loop = asyncio.get_running_loop()
+        try:
+            validated_url = await asyncio.wait_for(
+                loop.run_in_executor(None, lambda: cls.validate_url(value, field_name, skip_ssrf=True)),
+                timeout=dns_timeout,
+            )
+        except asyncio.TimeoutError as exc:
+            raise ValueError(f"{field_name} URL validation timed out") from exc
+
+        try:
+            parsed = urlparse(validated_url)
+            hostname = parsed.hostname
+            if not hostname:
+                raise ValueError(f"{field_name} is not a valid URL")
+            hostname_normalized = _unquote_if_needed(hostname)
+            if settings.ssrf_protection_enabled:
+                hostname_normalized = cls._validate_ssrf_blocked_hostname(hostname_normalized, field_name)
+            else:
+                hostname_normalized = cls._normalize_hostname(hostname_normalized)
+        except ValueError:
+            raise
+        except Exception as exc:
+            raise ValueError(f"{field_name} is not a valid URL") from exc
+
+        try:
+            literal_ip = ipaddress.ip_address(hostname_normalized)
+            if literal_ip.version == 6 and literal_ip.ipv4_mapped is not None:
+                literal_ip = literal_ip.ipv4_mapped
+            resolved_ips = [str(literal_ip)]
+        except ValueError:
+            resolved_ips = await cls._resolve_hostname_for_connection_pinning(hostname_normalized, field_name, dns_timeout)
+
+        if settings.ssrf_protection_enabled:
+            for resolved_ip in resolved_ips:
+                cls._validate_ssrf(resolved_ip, field_name)
+
+        return {
+            "validated_url": validated_url,
+            "hostname": hostname,
+            "original_authority": parsed.netloc,
+            "resolved_ip": resolved_ips[0] if resolved_ips else None,
+        }
+
+    @classmethod
+    async def _resolve_hostname_for_connection_pinning(cls, hostname: str, field_name: str, timeout: float) -> List[str]:
+        """Resolve a hostname for outbound pinning without blocking the event loop."""
+        loop = asyncio.get_running_loop()
+        try:
+            addr_info = await asyncio.wait_for(
+                loop.run_in_executor(
+                    None,
+                    lambda: socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM),
+                ),
+                timeout=timeout,
+            )
+        except (TimeoutError, asyncio.TimeoutError, socket.gaierror, socket.herror) as exc:
+            if settings.ssrf_protection_enabled:
+                raise ValueError(f"{field_name} DNS resolution failed and connection pinning requires a resolved address") from exc
+            return []
+
+        resolved_ips: List[str] = []
+        for _, _, _, _, sockaddr in addr_info:
+            try:
+                resolved_ip = ipaddress.ip_address(sockaddr[0])
+                if resolved_ip.version == 6 and resolved_ip.ipv4_mapped is not None:
+                    resolved_ip = resolved_ip.ipv4_mapped
+                resolved_ip_str = str(resolved_ip)
+                if resolved_ip_str not in resolved_ips:
+                    resolved_ips.append(resolved_ip_str)
+            except ValueError:
+                continue
+
+        if not resolved_ips and settings.ssrf_protection_enabled:
+            raise ValueError(f"{field_name} DNS resolution returned no addresses and connection pinning requires a resolved address")
+        return resolved_ips
 
     @classmethod
     async def validate_gateway_test_url(cls, value: str, allowed_hosts: list[str], field_name: str = "URL") -> dict[str, str]:
@@ -1653,12 +1800,6 @@ class SecurityValidator:
             if ip_addr.version == 6 and ip_addr.ipv4_mapped is not None:
                 ip_addr = ip_addr.ipv4_mapped
 
-            # Check for carrier-grade NAT (100.64.0.0/10) - not covered by is_private
-            is_cgnat = False
-            if ip_addr.version == 4:
-                cgnat_network = ipaddress.IPv4Network("100.64.0.0/10")
-                is_cgnat = ip_addr in cgnat_network
-
             # Block private IPs (RFC 1918: 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16)
             # Block loopback (127.0.0.0/8, ::1)
             # Block link-local (169.254.0.0/16, fe80::/10)
@@ -1666,7 +1807,8 @@ class SecurityValidator:
             # Block multicast (224.0.0.0/4, ff00::/8)
             # Block reserved (240.0.0.0/4)
             # Block carrier-grade NAT (100.64.0.0/10)
-            if ip_addr.is_private or ip_addr.is_loopback or ip_addr.is_link_local or ip_addr.is_unspecified or ip_addr.is_multicast or ip_addr.is_reserved or is_cgnat:
+            restricted_ip_kind = _classify_restricted_outbound_ip(ip_addr)
+            if restricted_ip_kind:
                 if settings.ssrf_protection_enabled:
                     # Block private IPs, loopback, and link-local addresses
                     # This prevents testing internal services regardless of allowlist
@@ -1676,7 +1818,7 @@ class SecurityValidator:
                 logger.warning(
                     "Gateway test URL validation: SSRF protection bypass - private/internal IP allowed (ssrf_protection_enabled=false). target=%s ip_type=%s",
                     hostname_normalized,
-                    "private" if ip_addr.is_private else "loopback" if ip_addr.is_loopback else "link-local" if ip_addr.is_link_local else "cgnat",
+                    restricted_ip_kind,
                 )
         except ValueError as e:
             # Re-raise if it's our security error, otherwise it's not a valid IP (continue to hostname check)
@@ -1703,18 +1845,10 @@ class SecurityValidator:
                     if resolved_ip.version == 6 and resolved_ip.ipv4_mapped is not None:
                         resolved_ip = resolved_ip.ipv4_mapped
 
-                    # Check for carrier-grade NAT (100.64.0.0/10)
-                    is_cgnat = False
-                    if resolved_ip.version == 4:
-                        cgnat_network = ipaddress.IPv4Network("100.64.0.0/10")
-                        is_cgnat = resolved_ip in cgnat_network
-
                     # Check for dangerous network ranges
-                    is_dangerous = (
-                        resolved_ip.is_private or resolved_ip.is_loopback or resolved_ip.is_link_local or resolved_ip.is_unspecified or resolved_ip.is_multicast or resolved_ip.is_reserved or is_cgnat
-                    )
+                    restricted_ip_kind = _classify_restricted_outbound_ip(resolved_ip)
 
-                    if is_dangerous:
+                    if restricted_ip_kind:
                         if settings.ssrf_protection_enabled:
                             # Apply SSRF checks to resolved IPs only when protection is enabled
                             raise ValueError(f"{field_name} is not allowed")
@@ -1724,7 +1858,7 @@ class SecurityValidator:
                             "Gateway test URL validation: SSRF protection bypass - hostname resolves to private/internal IP (ssrf_protection_enabled=false). hostname=%s resolved_ip=%s ip_type=%s",
                             hostname_normalized,
                             str(resolved_ip),
-                            "private" if resolved_ip.is_private else "loopback" if resolved_ip.is_loopback else "link-local" if resolved_ip.is_link_local else "cgnat",
+                            restricted_ip_kind,
                         )
 
                     resolved_ips.append(str(resolved_ip))

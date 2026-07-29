@@ -60,7 +60,7 @@ Chain under test (Phases A + B, this branch):
      validated attributes -- this is the concrete "issue verified locally" gate.
 
 Only the outbound HTTP call to the (fictitious) upstream REST tool backend is
-mocked (``tool_service._http_client.request``) -- there is no real 3rd-party
+mocked through the REST client factory -- there is no real 3rd-party
 server for a hermetic test to call. Everything else -- auth, tool
 registration, RPC dispatch, plugin execution, trace propagation, observability
 persistence and the query endpoint -- runs the real gateway code.
@@ -99,6 +99,7 @@ from contextlib import asynccontextmanager
 import os
 from pathlib import Path
 import secrets
+from types import SimpleNamespace
 from typing import Optional
 from unittest.mock import AsyncMock
 
@@ -175,7 +176,6 @@ from mcpgateway.plugins import (  # noqa: E402
 from mcpgateway.plugins.policy import HOOK_PAYLOAD_POLICIES  # noqa: E402
 from mcpgateway.routers.observability import router as observability_router  # noqa: E402
 from mcpgateway.services.observability_service import ObservabilityService  # noqa: E402
-from mcpgateway.services.tool_service import tool_service  # noqa: E402
 from mcpgateway.utils.create_jwt_token import get_jwt_token  # noqa: E402
 from mcpgateway.utils.verify_credentials import require_admin_auth, require_auth  # noqa: E402
 
@@ -224,6 +224,15 @@ RESOURCE_REPUTATION_URI = "https://benign.e2e-fixture.invalid/report"
 
 RATE_LIMITER_TOOL_NAME = "rate_limiter_probe_echo_tool"
 RATE_LIMITER_UPSTREAM_TOOL_URL = "https://internal.e2e-fixture.invalid/rate-limiter-echo"
+
+
+def _mock_outbound_rest_request(monkeypatch, mock_request: AsyncMock) -> None:
+    """Route mocked upstream sends through the REST tool invocation client."""
+
+    def build_client():
+        return SimpleNamespace(request=mock_request, get=AsyncMock(), aclose=AsyncMock())
+
+    monkeypatch.setattr("mcpgateway.services.tool_service._build_pinned_rest_http_client", build_client)
 
 
 def _new_traceparent() -> tuple[str, str]:
@@ -388,7 +397,7 @@ async def traced_app(monkeypatch, tmp_path):
         request=httpx.Request("POST", UPSTREAM_TOOL_URL),
     )
     mock_request = AsyncMock(return_value=upstream_response)
-    monkeypatch.setattr(tool_service._http_client, "request", mock_request)
+    _mock_outbound_rest_request(monkeypatch, mock_request)
 
     transport = ASGITransport(app=test_app)
     async with AsyncClient(transport=transport, base_url="http://e2e-test") as client:
@@ -541,7 +550,7 @@ async def traced_app_secrets_detection(monkeypatch, tmp_path):
         request=httpx.Request("POST", SECRETS_UPSTREAM_TOOL_URL),
     )
     mock_request = AsyncMock(return_value=upstream_response)
-    monkeypatch.setattr(tool_service._http_client, "request", mock_request)
+    _mock_outbound_rest_request(monkeypatch, mock_request)
 
     transport = ASGITransport(app=test_app)
     async with AsyncClient(transport=transport, base_url="http://e2e-test") as client:
@@ -688,7 +697,7 @@ async def _build_traced_app(monkeypatch, tmp_path, *, app_title: str, plugin_nam
         request=httpx.Request("POST", mock_upstream_url),
     )
     mock_request = AsyncMock(return_value=upstream_response)
-    monkeypatch.setattr(tool_service._http_client, "request", mock_request)
+    _mock_outbound_rest_request(monkeypatch, mock_request)
 
     transport = ASGITransport(app=test_app)
     async with AsyncClient(transport=transport, base_url="http://e2e-test") as client:

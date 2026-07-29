@@ -1008,21 +1008,39 @@ class TestRestIntegrationB2Wiring:
             resp.json = Mock(return_value={"result": "ok"})
             return resp
 
-        async def _get(_url, params=None, headers=None):
+        async def _get(_url, params=None, headers=None, **_kwargs):
             responses.append(headers)
             status = 401 if len(responses) == 1 else 200
             return _make_response(status)
 
-        svc._http_client.get = AsyncMock(side_effect=_get)
+        pinned_client = MagicMock()
+        pinned_client.get = AsyncMock(side_effect=_get)
+        pinned_client.request = AsyncMock()
+        pinned_client.aclose = AsyncMock()
 
         mock_metrics_buffer = Mock()
         mock_metrics_buffer.record_tool_metric = Mock()
-        with patch("mcpgateway.services.tool_service.metrics_buffer", mock_metrics_buffer):
+        with (
+            patch("mcpgateway.services.tool_service.metrics_buffer", mock_metrics_buffer),
+            patch(
+                "mcpgateway.services.tool_service.SecurityValidator.validate_url_for_connection_pinning",
+                AsyncMock(
+                    return_value={
+                        "validated_url": mock_tool.url,
+                        "hostname": "example.com",
+                        "original_authority": "example.com",
+                        "resolved_ip": "93.184.216.34",
+                    }
+                ),
+            ),
+            patch("mcpgateway.services.tool_service._build_pinned_rest_http_client", return_value=pinned_client),
+        ):
             result = await svc.invoke_tool(test_db, "test_tool", {}, request_headers={"authorization": "Bearer inbound"}, app_user_email="u@e")
 
         assert result.content[0].text == '{\n  "result": "ok"\n}'
         assert len(responses) == 2  # exactly one retry
         # Second attempt carried the freshly re-exchanged Authorization header.
         assert responses[1].get("Authorization") == "Bearer fresh-tok"
+        pinned_client.aclose.assert_awaited_once()
         svc._token_exchange_cache.invalidate.assert_awaited_once()
         svc._resolve_token_exchange_header.assert_awaited_once()

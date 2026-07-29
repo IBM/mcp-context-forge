@@ -10,6 +10,7 @@ server_id filtering paths in prompt_service, resource_service, and tool_service.
 
 # Standard
 from contextlib import contextmanager
+from types import SimpleNamespace
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 # Third-Party
@@ -250,6 +251,8 @@ class TestToolServiceMetricsException:
         async def fake_get(*a, **kw):
             return mock_response
 
+        pinned_client = SimpleNamespace(get=fake_get, request=AsyncMock(), aclose=AsyncMock())
+
         with (
             _setup_cache_for_invoke(tp),
             patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
@@ -259,14 +262,12 @@ class TestToolServiceMetricsException:
             patch("mcpgateway.services.tool_service.metrics_buffer", mock_metrics_buffer),
             patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
             patch("mcpgateway.services.tool_service.logger") as mock_logger,
+            patch("mcpgateway.services.tool_service._build_pinned_rest_http_client", return_value=pinned_client),
         ):
             mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
             mock_trace.get = MagicMock(return_value=None)
             mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
             mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
-
-            tool_service._http_client = AsyncMock()
-            tool_service._http_client.get = fake_get
 
             # Call invoke_tool with server_id to trigger server metrics recording
             result = await tool_service.invoke_tool(db, "test_tool", {}, server_id="test-server-id")
@@ -276,3 +277,4 @@ class TestToolServiceMetricsException:
 
         # Verify tool invocation still succeeded
         assert result is not None
+        pinned_client.aclose.assert_awaited_once()

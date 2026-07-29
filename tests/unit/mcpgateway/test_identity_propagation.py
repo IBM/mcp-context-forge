@@ -1978,7 +1978,9 @@ class TestToolServiceIdentityPropagationCoverage:
         response.status_code = 200
         response.json.return_value = {"ok": True}
         response.raise_for_status = MagicMock()
-        service._http_client.request = AsyncMock(return_value=response)
+        pinned_client = MagicMock()
+        pinned_client.request = AsyncMock(return_value=response)
+        pinned_client.aclose = AsyncMock()
         service._get_plugin_manager = AsyncMock(return_value=None)
         service._check_tool_access = AsyncMock(return_value=True)
         db = MagicMock()
@@ -2015,6 +2017,7 @@ class TestToolServiceIdentityPropagationCoverage:
             patch("mcpgateway.services.tool_service.create_child_span", return_value=mock_span),
             patch("mcpgateway.services.tool_service.is_input_capture_enabled", return_value=False),
             patch("mcpgateway.services.tool_service.extract_using_jq", return_value={"ok": True}),
+            patch("mcpgateway.services.tool_service._build_pinned_rest_http_client", return_value=pinned_client),
         ):
             await service.invoke_tool(
                 db,
@@ -2024,7 +2027,8 @@ class TestToolServiceIdentityPropagationCoverage:
             )
 
         mock_build_headers.assert_called_once_with(plugin_global_context.user_context)
-        assert service._http_client.request.call_args.kwargs["headers"]["X-Identity"] == "1"
+        assert pinned_client.request.call_args.kwargs["headers"]["X-Identity"] == "1"
+        pinned_client.aclose.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_invoke_tool_mcp_updates_headers_and_meta_from_global_context(self):
