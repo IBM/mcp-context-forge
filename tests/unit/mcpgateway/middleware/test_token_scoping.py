@@ -350,6 +350,24 @@ class TestTokenScopingMiddleware:
         assert result is False, "POST /catalog/{id} without the /register suffix must stay default-denied"
 
     @pytest.mark.asyncio
+    async def test_activity_feed_endpoint_requires_audit_read(self, middleware):
+        """GET /api/logs/activity must be mapped to audit:read, not default-denied.
+
+        _check_permission_restrictions default-denies unmapped paths, so a scoped token
+        holding audit:read would be rejected before reaching the handler without an
+        explicit _PERMISSION_PATTERNS entry. security:read alone must not open the route:
+        security events are an additive section of the feed, not its entry gate.
+        """
+        result = middleware._check_permission_restrictions("/api/logs/activity", "GET", [Permissions.AUDIT_READ])
+        assert result is True, "GET /api/logs/activity should be allowed when token has audit:read"
+
+        result = middleware._check_permission_restrictions("/api/logs/activity", "GET", ["*"])
+        assert result is True, "GET /api/logs/activity should be allowed with wildcard permission"
+
+        result = middleware._check_permission_restrictions("/api/logs/activity", "GET", [Permissions.SECURITY_READ])
+        assert result is False, "GET /api/logs/activity should be denied when token has only security:read"
+
+    @pytest.mark.asyncio
     async def test_sse_endpoint_allowed_with_servers_use_permission(self, middleware):
         """GET /sse must be reachable for tokens that carry servers.use.
 

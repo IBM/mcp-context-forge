@@ -135,6 +135,8 @@ _PERMISSION_PATTERNS: List[Tuple[str, Pattern[str], str]] = [
     # MCP registry catalog (v1 prefix stripped by middleware before matching)
     ("GET", re.compile(r"^/catalog(?:$|/)"), Permissions.SERVERS_READ),
     ("POST", re.compile(r"^/catalog/[^/]+/register(?:$|/)"), Permissions.SERVERS_CREATE),
+    # Recent activity feed (unversioned /api prefix; not subject to /v1 stripping)
+    ("GET", re.compile(r"^/api/logs/activity(?:$|/)"), Permissions.AUDIT_READ),
     # Metrics permissions
     ("GET", re.compile(r"^/metrics(?:$|/)"), Permissions.ADMIN_METRICS),
     ("POST", re.compile(r"^/metrics/reset(?:$|/)"), Permissions.ADMIN_METRICS),
