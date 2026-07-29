@@ -130,6 +130,8 @@ _PERMISSION_PATTERNS: List[Tuple[str, Pattern[str], str]] = [
     ("DELETE", re.compile(r"^/gateways/[^/]+(?:$|/)"), Permissions.GATEWAYS_DELETE),
     # MCP Servers REST API (v1 prefix stripped by middleware before matching)
     ("POST", re.compile(r"^/mcp-servers/test(?:$|/)"), Permissions.GATEWAYS_READ),
+    # Recent activity feed (unversioned /api prefix; not subject to /v1 stripping)
+    ("GET", re.compile(r"^/api/logs/activity(?:$|/)"), Permissions.AUDIT_READ),
     # Metrics permissions
     ("GET", re.compile(r"^/metrics(?:$|/)"), Permissions.ADMIN_METRICS),
     ("POST", re.compile(r"^/metrics/reset(?:$|/)"), Permissions.ADMIN_METRICS),
