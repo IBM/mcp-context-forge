@@ -471,9 +471,8 @@ def _build_internal_mcp_auth_context_for_rpc(request: Request, user: Any) -> Dic
     Returns:
         Encodable auth-context dict for ``encode_internal_mcp_auth_context``.
     """
-    # Layer-1 exception: this builds an auth context to forward, it does not derive
-    # visibility scope. It needs the raw pre-rule triple (including is_admin) rather
-    # than the post-rule (user_email, token_teams) from get_scoped_resource_access_context.
+    # Layer-1 exception: forwards an auth context, does not derive visibility scope.
+    # Needs the raw is_admin flag.
     email, token_teams, is_admin = get_rpc_filter_context(request, user)
     # Genuine anonymous / MCP_REQUIRE_AUTH=false public-only callers have no email.
     is_authenticated = email is not None
@@ -1022,9 +1021,8 @@ async def _authorize_run_cancellation(request: Request, user, request_id: str, *
         JSONRPCError: When ``as_jsonrpc_error`` is True and cancellation is not authorized.
         HTTPException: When ``as_jsonrpc_error`` is False and cancellation is not authorized.
     """
-    # Layer-1 exception: run-cancellation authorization compares the requester against the
-    # run owner. It needs the raw token teams and is_admin flag, not the post-rule visibility
-    # scope, so the admin-bypass normalization in get_scoped_resource_access_context does not apply.
+    # Layer-1 exception: compares requester against run owner, so it needs the raw
+    # token teams and is_admin flag rather than the normalized visibility scope.
     requester_email, requester_token_teams, requester_is_admin = get_rpc_filter_context(request, user)
     requester_teams = [] if requester_token_teams is None else list(requester_token_teams)
     run_status = await cancellation_service.get_status(request_id)
@@ -10350,9 +10348,8 @@ async def _execute_rpc_tools_call(
     if not name:
         raise JSONRPCError(-32602, "Missing tool name in parameters", params)
 
-    # Layer-1 exception: run ownership (run_owner_email / run_owner_team_ids) must be captured
-    # from the raw pre-rule context before the admin-bypass normalization is applied, so this
-    # site cannot collapse to get_scoped_resource_access_context.
+    # Layer-1 exception: run ownership is captured below from the raw context,
+    # before admin-bypass normalization is applied.
     auth_user_email, auth_token_teams, auth_is_admin = get_rpc_filter_context(request, user)
     run_owner_email = auth_user_email
     run_owner_team_ids = [] if auth_token_teams is None else list(auth_token_teams)
@@ -10468,10 +10465,8 @@ async def create_mcp_app_session(request: Request, db: Session = Depends(get_db)
     server_id = body.get("serverId") or body.get("server_id") or request.headers.get("x-contextforge-server-id")
     if not server_id or not isinstance(server_id, str):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="serverId is required for MCP Apps sessions")
-    # Layer-1 exception: this site keeps user_email and the resource-scope email as separate
-    # values (resource_user_email is nulled for admin bypass while user_email is retained for
-    # the session record), which is not the single-value contract of
-    # get_scoped_resource_access_context. See the tool-execution follow-up noted in issue #4451.
+    # Layer-1 exception: keeps the resource-scope email separate from user_email,
+    # which the single-value helper contract cannot express.
     user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
     if is_admin and token_teams is None:
         resource_user_email = None
@@ -10948,9 +10943,8 @@ async def handle_internal_mcp_tools_call_resolve(request: Request):
         if (get_internal_mcp_auth_context(request) or {}).get("is_authenticated", True) is True:
             await _ensure_rpc_permission(user, db, "tools.execute", "tools/call", request=request)
 
-        # Layer-1 exception: tool-execution authorization, not resource visibility. Migrating this
-        # to get_scoped_resource_access_context would widen admin execution scope to the admin's own
-        # private tools, which is a behavior change outside the scope of issue #4451.
+        # Layer-1 exception: tool-execution authorization, not resource visibility.
+        # Centralizing here would widen admin execution scope to their own private tools.
         auth_user_email, auth_token_teams, auth_is_admin = get_rpc_filter_context(request, user)
         if auth_is_admin and auth_token_teams is None:
             auth_user_email = None
@@ -11715,8 +11709,8 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
             await _ensure_rpc_permission(user, db, "tools.execute", method, request=request)
 
             # Get authorization context (same as tools/call)
-            # Layer-1 exception: tool-execution authorization, not resource visibility. Kept in sync
-            # with _execute_rpc_tools_call / handle_internal_mcp_tools_call_resolve; see issue #4451.
+            # Layer-1 exception: tool-execution authorization, not resource visibility.
+            # Kept in sync with _execute_rpc_tools_call.
             auth_user_email, auth_token_teams, auth_is_admin = get_rpc_filter_context(request, user)
             if auth_is_admin and auth_token_teams is None:
                 auth_user_email = None

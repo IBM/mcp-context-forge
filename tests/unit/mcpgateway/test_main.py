@@ -2392,8 +2392,8 @@ class TestTagEndpoints:
     def test_list_tags_admin_bypass_passes_unrestricted_scope(self, mock_get_tags, mock_filter_context, test_client, auth_headers):
         """Explicit admin bypass token should pass unrestricted scope to tag service.
 
-        Issue #4694: admin bypass keeps user_email set so the service can still match the
-        admin's own private rows. The endpoint passes the scoped context through verbatim.
+        Admin bypass keeps user_email set so the service can still match the admin's own
+        private rows. The endpoint passes the scoped context through verbatim.
         """
         mock_filter_context.return_value = ("admin@example.com", None)
         mock_get_tags.return_value = []
@@ -2432,8 +2432,8 @@ class TestTagEndpoints:
     def test_get_entities_by_tag_admin_bypass_passes_unrestricted_scope(self, mock_get_entities, mock_filter_context, test_client, auth_headers):
         """Admin bypass context should pass unrestricted scope to tag entity lookup.
 
-        Issue #4694: admin bypass keeps user_email set so the service can still match the
-        admin's own private rows. The endpoint passes the scoped context through verbatim.
+        Admin bypass keeps user_email set so the service can still match the admin's own
+        private rows. The endpoint passes the scoped context through verbatim.
         """
         mock_filter_context.return_value = ("admin@example.com", None)
         mock_get_entities.return_value = []
@@ -2712,7 +2712,7 @@ class TestRPCEndpoints:
         (basic-auth / dev-mode context), so ``get_scoped_resource_access_context`` grants Layer-1
         admin bypass and passes ``token_teams=None``. The superseded inline derivation only
         inspected the JWT ``is_admin`` claim and incorrectly narrowed this caller to public-only
-        (``token_teams=[]``) - see issue #4451.
+        (``token_teams=[]``).
         """
         mock_get_prompt.return_value = {
             "messages": [{"role": "user", "content": {"type": "text", "text": "Rendered prompt"}}],
@@ -3264,8 +3264,8 @@ class TestRPCEndpoints:
     def test_rpc_completion_complete_admin_bypass(self, mock_completion, mock_filter_context, test_client, auth_headers):
         """RPC completion should preserve explicit admin bypass context.
 
-        Issue #4694: admin bypass keeps user_email set so the service can still match the
-        admin's own private rows. The dispatcher passes the scoped context through verbatim.
+        Admin bypass keeps user_email set so the service can still match the admin's own
+        private rows. The dispatcher passes the scoped context through verbatim.
         """
         mock_filter_context.return_value = ("admin@example.com", None)
         mock_completion.return_value = {"result": "done"}
@@ -6081,7 +6081,7 @@ class TestA2AInvokeBodyEndpoint:
     def test_invoke_admin_bypass_no_team_restrictions(self, mock_context, mock_service, test_client, auth_headers):
         """Test admin bypass when teams=None. Covers: main.py lines 5173-5174"""
         mock_service.invoke_agent = AsyncMock(return_value={"ok": True})
-        # Issue #4694: admin bypass keeps user_email set for owner matching on own private rows
+        # Admin bypass keeps user_email set for owner matching on own private rows
         mock_context.return_value = ("admin@example.com", None)
         response = test_client.post("/a2a/invoke", json={"agent_id": "test-agent", "parameters": {}}, headers=auth_headers)
         assert response.status_code in [200, 404]

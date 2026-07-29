@@ -13603,8 +13603,8 @@ async def test_protocol_completion_endpoint_direct_non_admin_none_teams_becomes_
 async def test_handle_rpc_completion_direct_admin_null_teams_preserves_bypass(monkeypatch):
     """RPC completion direct path should preserve admin bypass context.
 
-    Issue #4694: admin bypass keeps user_email set so the completion service can still match
-    the admin's own private rows. The dispatcher passes the scoped context through verbatim.
+    Admin bypass keeps user_email set so the completion service can still match the admin's
+    own private rows. The dispatcher passes the scoped context through verbatim.
     """
     # First-Party
     import mcpgateway.main as main_mod
