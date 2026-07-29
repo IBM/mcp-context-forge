@@ -42,5 +42,10 @@
   "dashboard.home.mcp.error": "No se pudo cargar el estado del sistema.",
   "dashboard.home.mcp.postgres": "PostgreSQL",
   "dashboard.home.mcp.redis": "Redis",
-  "dashboard.home.mcp.notConfigured": "No configurado"
+  "dashboard.home.mcp.notConfigured": "No configurado",
+  "dashboard.home.status.running": "En ejecución",
+  "dashboard.home.status.healthy": "Correcto",
+  "dashboard.home.status.unhealthy": "Con problemas",
+  "dashboard.home.status.notConfigured": "No configurado",
+  "dashboard.home.status.activity": "{errors} errores · {warnings} advertencias"
 }

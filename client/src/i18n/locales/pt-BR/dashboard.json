@@ -42,5 +42,10 @@
   "dashboard.home.mcp.error": "Não foi possível carregar a integridade do sistema.",
   "dashboard.home.mcp.postgres": "PostgreSQL",
   "dashboard.home.mcp.redis": "Redis",
-  "dashboard.home.mcp.notConfigured": "Não configurado"
+  "dashboard.home.mcp.notConfigured": "Não configurado",
+  "dashboard.home.status.running": "Em execução",
+  "dashboard.home.status.healthy": "Íntegro",
+  "dashboard.home.status.unhealthy": "Com problemas",
+  "dashboard.home.status.notConfigured": "Não configurado",
+  "dashboard.home.status.activity": "{errors} erros · {warnings} avisos"
 }

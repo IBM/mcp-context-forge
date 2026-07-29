@@ -9,7 +9,10 @@ import { ClearControl } from "@/components/dashboard/ClearControl";
 import { EmptyStatePlaceholder } from "@/components/dashboard/EmptyStatePlaceholder";
 import { McpHealthCard } from "@/components/dashboard/McpHealthCard";
 import { MiniCard } from "@/components/dashboard/MiniCard";
+import { MiniCardStatusIndicator } from "@/components/dashboard/MiniCardStatusIndicator";
+import type { MiniCardStatus } from "@/components/dashboard/miniCardStatus";
 import { PermissionDenied } from "@/components/dashboard/PermissionDenied";
+import { useMiniCardStatuses } from "@/hooks/useMiniCardStatuses";
 import { StatusHeadline } from "@/components/dashboard/StatusHeadline";
 import { SystemStatsCardConnected } from "@/components/dashboard/SystemStatsCardConnected";
 import { SystemView } from "@/components/dashboard/SystemView";
@@ -53,6 +56,10 @@ export function Dashboard() {
     error: mcpServersError,
     isLoading: mcpServersLoading,
   } = useQuery<MCPServersResponse>(MCP_SERVERS_QUERY_PATH);
+
+  // Resolved once at the page level (which stays mounted across ?view= changes)
+  // so switching states does not remount the queries and flash stale statuses.
+  const miniCardStatuses = useMiniCardStatuses();
 
   const actionCards: ActionCard[] = useMemo(
     () => [
@@ -120,7 +127,11 @@ export function Dashboard() {
 
   return (
     <div className="p-6">
-      {activeView === "default" ? <DefaultState /> : <NonDefaultState active={activeView} />}
+      {activeView === "default" ? (
+        <DefaultState statuses={miniCardStatuses} />
+      ) : (
+        <NonDefaultState active={activeView} statuses={miniCardStatuses} />
+      )}
     </div>
   );
 }
@@ -129,14 +140,18 @@ export function Dashboard() {
  * Default (resting) state: status summary with the activity-feed entry point,
  * the all-time system stats card, and the inline source cards. No right column.
  */
-function DefaultState() {
+function DefaultState({ statuses }: { statuses: Record<MiniCardId, MiniCardStatus> }) {
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-6">
       <StatusHeadline action={<ActivityFeedButton />} />
       <SystemStatsCardConnected />
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         {DEFAULT_SOURCE_CARDS.map((id) => (
-          <MiniCard key={id} id={id} />
+          <MiniCard
+            key={id}
+            id={id}
+            status={statuses[id] ? <MiniCardStatusIndicator status={statuses[id]} /> : undefined}
+          />
         ))}
       </div>
     </div>
@@ -148,7 +163,13 @@ function DefaultState() {
  * content, a placeholder for now) plus the right-column mini-card stack (the six
  * cards minus the active one).
  */
-function NonDefaultState({ active }: { active: HomeViewId }) {
+function NonDefaultState({
+  active,
+  statuses,
+}: {
+  active: HomeViewId;
+  statuses: Record<MiniCardId, MiniCardStatus>;
+}) {
   const intl = useIntl();
   const { hasPermission, permissionsLoading } = useAuth();
   const state = HOME_STATES[active];
@@ -179,7 +200,11 @@ function NonDefaultState({ active }: { active: HomeViewId }) {
       </div>
       <aside className="flex flex-col gap-3">
         {rightColumnCards.map((id) => (
-          <MiniCard key={id} id={id} />
+          <MiniCard
+            key={id}
+            id={id}
+            status={statuses[id] ? <MiniCardStatusIndicator status={statuses[id]} /> : undefined}
+          />
         ))}
       </aside>
     </div>
