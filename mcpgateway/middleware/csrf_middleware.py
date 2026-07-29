@@ -21,6 +21,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 # First-Party
+from mcpgateway.auth_context import get_jwt_user_email_from_payload
 from mcpgateway.config import settings
 from mcpgateway.services.csrf_service import get_csrf_service
 from mcpgateway.utils.verify_credentials import get_auth_header_value, is_proxy_auth_trust_active, verify_jwt_token_cached
@@ -166,7 +167,7 @@ class CSRFMiddleware(BaseHTTPMiddleware):
                 try:
                     payload = await verify_jwt_token_cached(raw_token, request)
                     if not user_id:
-                        user_id = payload.get("email") or payload.get("user", {}).get("email") or payload.get("sub")
+                        user_id = get_jwt_user_email_from_payload(payload)
                     if not session_id:
                         session_id = payload.get("jti")
                 except Exception as exc:

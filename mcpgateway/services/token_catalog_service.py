@@ -228,7 +228,7 @@ class TokenCatalogService:
         and expiration. The token follows ContextForge JWT structure.
 
         Args:
-            user_email: User's email address for the token subject
+            user_email: User's email address for token metadata and DB lookups
             jti: JWT ID for token uniqueness
             team_id: Optional team ID for team-scoped tokens
             expires_at: Optional expiration datetime
@@ -267,6 +267,7 @@ class TokenCatalogService:
             "is_admin": user.is_admin if user else False,
             "auth_provider": "api_token",
         }
+        subject = str(getattr(user, "id", None) or user_email)
 
         # Build teams list — None means "all teams" (admin bypass when is_admin=true),
         # [] means "public-only" (see normalize_token_teams() in auth.py)
@@ -301,7 +302,7 @@ class TokenCatalogService:
         # Generate JWT token using the centralized token creation utility
         # Pass structured data to the enhanced create_jwt_token function
         return await create_jwt_token(
-            data={"sub": user_email, "jti": jti, "token_use": "api"},  # nosec B105 - token type marker, not a password
+            data={"sub": subject, "jti": jti, "token_use": "api"},  # nosec B105 - token type marker, not a password
             expires_in_minutes=expires_in_minutes,
             user_data=user_data,
             teams=teams,

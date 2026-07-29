@@ -252,17 +252,17 @@ class TestGetCurrentUser:
         assert user.email == "resolved@example.com"
 
     @pytest.mark.asyncio
-    async def test_jwt_uuid_sub_not_found_keeps_uuid_as_email(self, monkeypatch):
-        """UUID sub not found in DB: email stays as UUID (resolved is None path, line 1489)."""
+    async def test_jwt_uuid_sub_with_signed_email_uses_email_metadata(self, monkeypatch):
+        """UUID sub with signed user.email should not need UUID-to-email DB resolution."""
         import uuid as _uuid
 
         user_uuid = str(_uuid.uuid4())
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="uuid_sub_token")  # pragma: allowlist secret
-        jwt_payload = {"sub": user_uuid, "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp()}
+        jwt_payload = {"sub": user_uuid, "user": {"email": "signed@example.com"}, "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp()}
         mock_user = EmailUser(
-            email=user_uuid,
+            email="signed@example.com",
             password_hash="hash",
-            full_name="UUID User",
+            full_name="Signed User",
             is_admin=False,
             is_active=True,
             email_verified_at=datetime.now(timezone.utc),
@@ -272,14 +272,43 @@ class TestGetCurrentUser:
         monkeypatch.setattr(settings, "auth_cache_enabled", False)
         monkeypatch.setattr(settings, "auth_cache_batch_queries", False)
 
-        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=jwt_payload)):
-            with patch("mcpgateway.auth._get_email_by_id_sync", return_value=None):
-                with patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user):
-                    with patch("mcpgateway.auth._get_personal_team_sync", return_value=None):
-                        with patch("mcpgateway.auth._check_token_revoked_sync", return_value=False):
-                            user = await get_current_user(credentials=credentials)
+        with (
+            patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=jwt_payload)),
+            patch("mcpgateway.auth._get_email_by_id_sync", return_value=None) as mock_resolve_id,
+            patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user) as mock_resolve_email,
+            patch("mcpgateway.auth._get_personal_team_sync", return_value=None),
+            patch("mcpgateway.auth._check_token_revoked_sync", return_value=False),
+        ):
+            user = await get_current_user(credentials=credentials)
 
-        assert user.email == user_uuid
+        assert user.email == "signed@example.com"
+        mock_resolve_id.assert_not_called()
+        mock_resolve_email.assert_called_with("signed@example.com")
+
+    @pytest.mark.asyncio
+    async def test_jwt_unknown_uuid_sub_rejected(self, monkeypatch):
+        """UUID sub not found in DB should fail closed instead of using UUID as email."""
+        import uuid as _uuid
+
+        user_uuid = str(_uuid.uuid4())
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="uuid_sub_token")  # pragma: allowlist secret
+        jwt_payload = {"sub": user_uuid, "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp()}
+        monkeypatch.setattr(settings, "auth_cache_enabled", False)
+        monkeypatch.setattr(settings, "auth_cache_batch_queries", False)
+
+        with (
+            patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=jwt_payload)),
+            patch("mcpgateway.auth._get_email_by_id_sync", return_value=None),
+            patch("mcpgateway.auth._get_user_by_email_sync") as mock_resolve_email,
+            patch("mcpgateway.auth._get_personal_team_sync", return_value=None),
+            patch("mcpgateway.auth._check_token_revoked_sync", return_value=False),
+        ):
+            with pytest.raises(HTTPException) as exc_info:
+                await get_current_user(credentials=credentials)
+
+        assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
+        assert exc_info.value.detail == "Invalid token"
+        mock_resolve_email.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_jwt_without_email_or_sub_raises_401(self):
@@ -4154,7 +4183,7 @@ class TestTenantIdPropagation:
         auth_module._inject_userinfo_instate(request=request, user=user)
         auth_module._propagate_tenant_id(request)
 
-        assert request.state.plugin_global_context.tenant_id == "team-acme", "_propagate_tenant_id must propagate request.state.team_id into " "global_context.tenant_id for single-team tokens"
+        assert request.state.plugin_global_context.tenant_id == "team-acme", "_propagate_tenant_id must propagate request.state.team_id into global_context.tenant_id for single-team tokens"
 
     def test_no_team_id_leaves_tenant_id_none(self):
         """P1: when request.state.team_id is None (multi-team or no team), tenant_id stays None.
@@ -4173,7 +4202,7 @@ class TestTenantIdPropagation:
         auth_module._inject_userinfo_instate(request=request, user=user)
         auth_module._propagate_tenant_id(request)
 
-        assert request.state.plugin_global_context.tenant_id is None, "When team_id is None (multi-team or no-team token), " "tenant_id must remain None — no fake 'default' tenant should be invented"
+        assert request.state.plugin_global_context.tenant_id is None, "When team_id is None (multi-team or no-team token), tenant_id must remain None — no fake 'default' tenant should be invented"
 
     def test_existing_tenant_id_is_not_overwritten(self):
         """P1: if global_context.tenant_id is already set (e.g. by an auth plugin), do not overwrite it.
@@ -4230,7 +4259,7 @@ class TestTenantIdPropagation:
         call_kwargs = mock_pm.invoke_hook.call_args
         global_context = call_kwargs.kwargs.get("global_context")
         assert global_context is not None
-        assert global_context.tenant_id == "team-acme", "get_current_user() fallback must propagate request.state.team_id " "into GlobalContext.tenant_id for by_tenant rate limiting"
+        assert global_context.tenant_id == "team-acme", "get_current_user() fallback must propagate request.state.team_id into GlobalContext.tenant_id for by_tenant rate limiting"
 
     @pytest.mark.asyncio
     async def test_get_current_user_fallback_tenant_id_none_when_no_team(self):
@@ -4268,7 +4297,7 @@ class TestTenantIdPropagation:
         call_kwargs = mock_pm.invoke_hook.call_args
         global_context = call_kwargs.kwargs.get("global_context")
         assert global_context is not None
-        assert global_context.tenant_id is None, "When team_id is None, GlobalContext.tenant_id must be None — " "no phantom tenant should be invented"
+        assert global_context.tenant_id is None, "When team_id is None, GlobalContext.tenant_id must be None — no phantom tenant should be invented"
 
     def test_propagate_tenant_id_on_middleware_seeded_context(self):
         """_propagate_tenant_id must work when middleware has already created GlobalContext.
@@ -4289,7 +4318,7 @@ class TestTenantIdPropagation:
         auth_module._propagate_tenant_id(request)
 
         assert request.state.plugin_global_context.tenant_id == "team-acme", (
-            "_propagate_tenant_id must fill tenant_id even when middleware " "has already created plugin_global_context with tenant_id=None"
+            "_propagate_tenant_id must fill tenant_id even when middleware has already created plugin_global_context with tenant_id=None"
         )
 
     def test_propagate_tenant_id_no_overwrite(self):

@@ -453,9 +453,12 @@ Before running the demo agent, ensure the following configuration:
 
   Restart ContextForge after adding this. The default blocks loopback addresses as an SSRF safeguard. This is intentional for production, but must be opted into locally.
 
-2. **Pass your admin email at runtime**
+2. **Pass an admin identity at runtime**
 
-  The script creates a JWT signed with your instance's secret. The token subject must match a user in the database (typically your `PLATFORM_ADMIN_EMAIL`). See the "Running the Demo" section below for the actual commands.
+  The script creates a JWT signed with your instance's secret. The token identity must resolve to a user in the
+  database. The helper commands below pass your `PLATFORM_ADMIN_EMAIL` as a legacy email subject; service-issued tokens
+  now use opaque UUID subjects for token-catalog API tokens platform-wide and carry the human email in signed metadata
+  such as `user.email`. See the "Running the Demo" section below for the actual commands.
 
 #### Running the Demo
 
@@ -464,7 +467,7 @@ Before running the demo agent, ensure the following configuration:
 make dev
 
 # Terminal 2: Start the demo agent (auto-registers with ContextForge)
-# Override the token subject if your admin email differs from the default:
+# Override the admin email if it differs from the default:
 #   export PLATFORM_ADMIN_EMAIL=you@example.com
 uv run python scripts/demo_a2a_agent.py
 
