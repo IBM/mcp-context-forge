@@ -22,7 +22,7 @@ This document describes how the Admin UI initiates OAuth 2.0 Authorization Code 
 ### Implemented today
 
 - Admin UI exposes OAuth configuration fields for gateways and an "Authorize" action.
-- Authorization Code flow uses PKCE (S256) and an HMAC-signed state value with a 300-second TTL.
+- Authorization Code flow uses PKCE (S256) and an opaque random state token with server-side 300-second TTL and single-use enforcement.
 - OAuth state is stored in Redis when `CACHE_TYPE=redis`, in the database when `CACHE_TYPE=database`, and in memory otherwise.
 - Tokens are stored per gateway and app user (email) in `oauth_tokens`, encrypted with `AUTH_ENCRYPTION_SECRET`.
 - Refresh tokens are used when access tokens are near expiry; invalid refresh tokens are cleared.
@@ -174,6 +174,71 @@ sequenceDiagram
     OAuthMgr->>TokenStore: Store tokens for app_user_email
     TokenStore->>DB: Upsert oauth_tokens
     Gateway-->>Admin: Success page
+```
+
+### Popup OAuth Flow (React UI)
+
+The React UI supports initiating OAuth in a popup window for better UX:
+
+**Endpoint**: `GET /oauth/authorize/{gateway_id}?popup=true`
+
+**Flow Differences**:
+1. **State Token**: When `popup=true`, the OAuth Manager prefixes the state token with `popup.` (e.g., `popup.abc123...`)
+2. **Callback Response**: The callback endpoint detects the `popup.` prefix and responds with `postMessage` instead of HTML
+3. **Window Closure**: The popup closes automatically after posting the result to the parent window
+
+**postMessage Contract**:
+
+Success payload:
+```javascript
+{
+  type: "oauth_callback",
+  status: "success",
+  gatewayId: "gateway-uuid",
+  gatewayName: "Gateway Name"
+}
+```
+
+Error payload:
+```javascript
+{
+  type: "oauth_callback",
+  status: "error",
+  error: "error_code",        // One of: access_denied, missing_code, invalid_state, oauth_error, server_error
+  errorDescription: "Human-readable error message"
+}
+```
+
+**Security Model**:
+- Callback uses `postMessage(..., '*')` for cross-origin compatibility (API and React app may be on different origins)
+- Parent window MUST validate `event.source === authWindow` (exact popup reference) before processing
+- State token is opaque random value with server-side 300-second TTL and single-use enforcement to prevent replay attacks
+- CSP nonce is embedded in the inline script for strict CSP compliance
+
+**Implementation Notes**:
+- State prefix detection: `oauth_router.py:605` checks `state.startswith("popup.")`
+- State generation: `oauth_manager.py:1033` adds prefix when `popup=True`
+- Callback script: `oauth_router.py:189-221` (`_popup_notification_script`)
+- CSP nonce extraction: `oauth_router.py:605` (`get_csp_nonce_from_request`)
+
+```mermaid
+sequenceDiagram
+    participant React as React UI
+    participant Popup as OAuth Popup
+    participant Gateway as OAuth Router
+    participant Provider as OAuth Provider
+
+    React->>Popup: window.open(/oauth/authorize/{id}?popup=true)
+    Popup->>Gateway: GET with popup=true
+    Gateway->>Gateway: Generate state with "popup." prefix
+    Gateway-->>Popup: Redirect to provider
+    Popup->>Provider: User authenticates
+    Provider-->>Gateway: Callback with code & popup-prefixed state
+    Gateway->>Gateway: Detect popup prefix, prepare postMessage
+    Gateway-->>Popup: HTML with postMessage script
+    Popup->>React: postMessage({type: "oauth_callback", status: "success", ...}, '*')
+    React->>React: Validate event.source === Popup
+    Popup->>Popup: window.close()
 ```
 
 ### Tool invocation using stored tokens

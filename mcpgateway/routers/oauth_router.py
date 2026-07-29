@@ -186,6 +186,60 @@ async def _persist_learned_audience(gateway: Gateway, oauth_result: Dict[str, An
     logger.info("Learned OAuth audience from IdP token for gateway %s; persisted as resource", gateway.name)
 
 
+def _popup_notification_script(nonce: str, payload: dict) -> str:
+    """Build an inline script that posts the OAuth result to window.opener and closes the popup.
+
+    When the callback page is opened inside a React UI popup, this script communicates
+    the OAuth result to the parent window via postMessage and then closes the popup.
+    When opened via direct navigation (no opener), the script is a no-op and the
+    surrounding HTML page is shown as a fallback.
+
+    Args:
+        nonce: CSP nonce for the inline script tag.
+        payload: Dict to send as the postMessage data.  Values are JSON-encoded
+            with ``<``, ``>``, and ``&`` Unicode-escaped to prevent script injection.
+
+    Returns:
+        HTML ``<script>`` tag string safe for embedding in an HTML body.
+    """
+    safe_payload = (
+        json.dumps(payload)
+        .replace("<", "\\u003c")
+        .replace(">", "\\u003e")
+        .replace("&", "\\u0026")
+        .replace("\u2028", "\\\\u2028")  # U+2028 LINE SEPARATOR
+        .replace("\u2029", "\\\\u2029")  # U+2029 PARAGRAPH SEPARATOR
+    )
+    safe_nonce = escape(nonce, quote=True)
+    # targetOrigin is "*" rather than window.location.origin because in production
+    # the API server and the React app may run on different origins (e.g.
+    # api.company.com vs app.company.com).  Using window.location.origin would
+    # cause the browser to silently drop the message.  The receiver mitigates the
+    # reduced targetOrigin restriction by validating event.source === authWindow
+    # (the exact popup reference), so only the window that initiated the flow can
+    # act on the result.
+    return f"<script nonce=\"{safe_nonce}\">(function(){{if(window.opener&&!window.opener.closed){{window.opener.postMessage({safe_payload},'*');window.close();}}}})()</script>"
+
+
+def _popup_callback_response(nonce: str, payload: dict, status_code: int = 200, extra_body: str = "") -> HTMLResponse:
+    """Build the full HTML page wrapping the popup postMessage script for an OAuth callback result.
+
+    Args:
+        nonce: CSP nonce for the inline script tag.
+        payload: Dict to send as the postMessage data (see ``_popup_notification_script``).
+        status_code: HTTP status code for the response.
+        extra_body: Optional extra HTML appended after the script tag (e.g. a visible message).
+
+    Returns:
+        HTMLResponse containing the postMessage script for the popup window.
+    """
+    title = "OAuth Authorization Successful" if payload.get("status") == "success" else "OAuth Authorization Failed"
+    return HTMLResponse(
+        content=(f"<!DOCTYPE html><html><head><title>{title}</title></head><body>" + _popup_notification_script(nonce, payload) + extra_body + "</body></html>"),
+        status_code=status_code,
+    )
+
+
 oauth_router = APIRouter(prefix="/oauth", tags=["oauth"])
 
 
@@ -201,6 +255,27 @@ def _require_admin_user(current_user: EmailUserResponse) -> None:
     is_admin = current_user.is_admin if hasattr(current_user, "is_admin") else current_user.get("is_admin", False)
     if not is_admin:
         raise HTTPException(status_code=403, detail="Admin permissions required")
+
+
+def _require_unnarrowed_admin(request: Request, current_user: EmailUserResponse) -> None:
+    """Require un-narrowed platform admin for DCR management endpoints.
+
+    Registered OAuth clients are stored globally with no team column, so a
+    team-narrowed admin token has no coherent scope over them. Narrowed and
+    public-only admin sessions are rejected rather than silently granted
+    global visibility.
+
+    Args:
+        request: Incoming request carrying token-scoping state.
+        current_user: Authenticated user context.
+
+    Raises:
+        HTTPException: If the requester is not an admin, or is a narrowed or
+            public-only admin.
+    """
+    _require_admin_user(current_user)
+    if _resolve_token_teams_for_scope_check(request, current_user) is not None:
+        raise HTTPException(status_code=403, detail="OAuth client management requires un-narrowed admin access")
 
 
 def _resolve_token_teams_for_scope_check(request: Request, current_user: EmailUserResponse) -> list[str] | None:
@@ -228,7 +303,9 @@ def _resolve_token_teams_for_scope_check(request: Request, current_user: EmailUs
             if payload:
                 token_teams = normalize_token_teams(payload)
                 is_admin = bool(payload.get("is_admin", False) or payload.get("user", {}).get("is_admin", False))
-        # Fail closed when request.state contains an unexpected token_teams value.
+        # An unexpected token_teams value falls through to the _not_set branch below,
+        # which fails closed (empty scope) for non-admins but is treated as un-narrowed
+        # for admins.
         if token_teams is not _not_set and not (token_teams is None or isinstance(token_teams, list)):
             token_teams = _not_set
 
@@ -347,7 +424,16 @@ async def _enforce_gateway_access(
 
 
 @oauth_router.get("/authorize/{gateway_id}")
-async def initiate_oauth_flow(gateway_id: str, request: Request, current_user: EmailUserResponse = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)) -> RedirectResponse:  # noqa: ARG001
+async def initiate_oauth_flow(
+    gateway_id: str,
+    request: Request,
+    current_user: EmailUserResponse = Depends(get_current_user_with_permissions),
+    db: Session = Depends(get_db),
+    popup: bool = Query(
+        default=False,
+        description="Set by the React UI when opening OAuth in a popup window; encodes a popup. prefix in the state token so the callback responds with postMessage instead of a full HTML page",
+    ),
+) -> RedirectResponse:  # noqa: ARG001
     """Initiates the OAuth 2.0 Authorization Code flow for a specified gateway.
 
     This endpoint retrieves the OAuth configuration for the given gateway, validates that
@@ -485,7 +571,7 @@ async def initiate_oauth_flow(gateway_id: str, request: Request, current_user: E
         if requester_email == "unknown":
             requester_email = None
         oauth_manager = OAuthManager(token_storage=TokenStorageService(db))
-        auth_data = await oauth_manager.initiate_authorization_code_flow(gateway_id, oauth_config, app_user_email=requester_email)
+        auth_data = await oauth_manager.initiate_authorization_code_flow(gateway_id, oauth_config, app_user_email=requester_email, popup=popup)
 
         logger.info(f"Initiated OAuth flow for gateway {SecurityValidator.sanitize_log_message(gateway_id)} by user {SecurityValidator.sanitize_log_message(requester_email)}")
 
@@ -543,6 +629,12 @@ async def oauth_callback(
         True
     """
 
+    # Determine early whether this callback was initiated from the React UI popup.
+    # The authorize endpoint prefixes the state token with "popup." when popup=True,
+    # so we can detect it here without any additional storage lookups.
+    is_popup = bool(state and isinstance(state, str) and state.startswith("popup."))
+    csp_nonce = get_csp_nonce_from_request(request)
+
     try:
         # Get root path for URL construction
         root_path = resolve_root_path(request) if request else ""
@@ -554,6 +646,12 @@ async def oauth_callback(
             description_text = escape(error_description or "OAuth provider returned an authorization error.")
             # Sanitize untrusted query parameters before logging to prevent log injection
             logger.warning(f"OAuth provider returned error callback: error={sanitize_for_log(error)}, description={sanitize_for_log(error_description)}")
+            if is_popup:
+                return _popup_callback_response(
+                    csp_nonce,
+                    {"type": "oauth_callback", "status": "error", "error": error, "errorDescription": error_description or "OAuth provider returned an authorization error."},
+                    status_code=400,
+                )
             return HTMLResponse(
                 content=f"""
                 <!DOCTYPE html>
@@ -572,6 +670,10 @@ async def oauth_callback(
 
         if not code:
             logger.warning("OAuth callback missing authorization code")
+            if is_popup:
+                return _popup_callback_response(
+                    csp_nonce, {"type": "oauth_callback", "status": "error", "error": "missing_code", "errorDescription": "Missing authorization code in callback response."}, status_code=400
+                )
             return HTMLResponse(
                 content=f"""
                 <!DOCTYPE html>
@@ -593,6 +695,10 @@ async def oauth_callback(
             Returns:
                 HTMLResponse: A 400 error page describing the invalid state.
             """
+            if is_popup:
+                return _popup_callback_response(
+                    csp_nonce, {"type": "oauth_callback", "status": "error", "error": "invalid_state", "errorDescription": "Invalid OAuth state parameter."}, status_code=400
+                )
             return HTMLResponse(
                 content=f"""
                 <!DOCTYPE html>
@@ -651,10 +757,15 @@ async def oauth_callback(
 
         logger.info(f"Completed OAuth flow for gateway {SecurityValidator.sanitize_log_message(gateway_id)}, user {SecurityValidator.sanitize_log_message(str(result.get('user_id')))}")
 
-        # Return success page with option to return to admin
-        # Get CSP nonce for inline script
-        csp_nonce = get_csp_nonce_from_request(request)
+        # React UI popup: post result to parent window and close.
+        if is_popup:
+            return _popup_callback_response(
+                csp_nonce,
+                {"type": "oauth_callback", "status": "success", "gatewayId": str(gateway_id), "gatewayName": str(gateway.name)},
+                extra_body="<p>Authorization successful. This window will close automatically.</p>",
+            )
 
+        # Legacy admin UI: return full page with fetch-tools button.
         # Generate CSRF token early so it can be embedded in the JS literal
         csrf_token = request.cookies.get(ADMIN_CSRF_COOKIE_NAME, "")
         if not isinstance(csrf_token, str) or not re.match(r"^[A-Za-z0-9_=-]{32,}$", csrf_token):
@@ -782,6 +893,8 @@ async def oauth_callback(
 
     except OAuthError as e:
         logger.error(f"OAuth callback failed: {str(e)}")
+        if is_popup:
+            return _popup_callback_response(csp_nonce, {"type": "oauth_callback", "status": "error", "error": "oauth_error", "errorDescription": str(e)}, status_code=400)
         return HTMLResponse(
             content=f"""
         <!DOCTYPE html>
@@ -816,6 +929,10 @@ async def oauth_callback(
 
     except Exception as e:
         logger.error(f"Unexpected error in OAuth callback: {str(e)}")
+        if is_popup:
+            return _popup_callback_response(
+                csp_nonce, {"type": "oauth_callback", "status": "error", "error": "server_error", "errorDescription": "An unexpected error occurred during authorization."}, status_code=500
+            )
         return HTMLResponse(
             content=f"""
         <!DOCTYPE html>
@@ -977,13 +1094,14 @@ async def fetch_tools_after_oauth(
 
 
 @oauth_router.get("/registered-clients")
-async def list_registered_oauth_clients(current_user: EmailUserResponse = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)) -> Dict[str, Any]:  # noqa: ARG001
+async def list_registered_oauth_clients(request: Request, current_user: EmailUserResponse = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)) -> Dict[str, Any]:  # noqa: ARG001
     """List all registered OAuth clients (created via DCR).
 
     This endpoint shows OAuth clients that were dynamically registered with external
     Authorization Servers using RFC 7591 Dynamic Client Registration.
 
     Args:
+        request: The FastAPI request object.
         current_user: The authenticated user (admin access required)
         db: Database session
 
@@ -993,7 +1111,7 @@ async def list_registered_oauth_clients(current_user: EmailUserResponse = Depend
     Raises:
         HTTPException: If user lacks permissions or database error occurs
     """
-    _require_admin_user(current_user)
+    _require_unnarrowed_admin(request, current_user)
 
     try:
         # First-Party
@@ -1031,6 +1149,7 @@ async def list_registered_oauth_clients(current_user: EmailUserResponse = Depend
 @oauth_router.get("/registered-clients/{gateway_id}")
 async def get_registered_client_for_gateway(
     gateway_id: str,
+    request: Request,
     current_user: EmailUserResponse = Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),  # noqa: ARG001
 ) -> Dict[str, Any]:
@@ -1038,6 +1157,7 @@ async def get_registered_client_for_gateway(
 
     Args:
         gateway_id: The gateway ID to lookup
+        request: The FastAPI request object.
         current_user: The authenticated user
         db: Database session
 
@@ -1047,7 +1167,7 @@ async def get_registered_client_for_gateway(
     Raises:
         HTTPException: If gateway or registered client not found
     """
-    _require_admin_user(current_user)
+    _require_unnarrowed_admin(request, current_user)
 
     try:
         # First-Party
@@ -1082,7 +1202,7 @@ async def get_registered_client_for_gateway(
 
 
 @oauth_router.delete("/registered-clients/{client_id}")
-async def delete_registered_client(client_id: str, current_user: EmailUserResponse = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)) -> Dict[str, Any]:  # noqa: ARG001
+async def delete_registered_client(client_id: str, request: Request, current_user: EmailUserResponse = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)) -> Dict[str, Any]:  # noqa: ARG001
     """Delete a registered OAuth client.
 
     This will revoke the client registration locally. Note: This does not automatically
@@ -1091,6 +1211,7 @@ async def delete_registered_client(client_id: str, current_user: EmailUserRespon
 
     Args:
         client_id: The registered client ID to delete
+        request: The FastAPI request object.
         current_user: The authenticated user (admin access required)
         db: Database session
 
@@ -1100,7 +1221,7 @@ async def delete_registered_client(client_id: str, current_user: EmailUserRespon
     Raises:
         HTTPException: If client not found or deletion fails
     """
-    _require_admin_user(current_user)
+    _require_unnarrowed_admin(request, current_user)
 
     try:
         # First-Party

@@ -12,6 +12,15 @@
 
 - **Unconditional weak-secret rejection** - `JWT_SECRET_KEY` and `AUTH_ENCRYPTION_SECRET` placeholder and known-weak values now cause `SecurityConfigurationError` at startup in **every** environment, including development. The previous `env != "development"` carve-out and `changeme` → `__REPLACE_ME__` default are both closed. `BASIC_AUTH_PASSWORD` is also patched to a strong value by `make setup` / `make init-secrets-patch-env`. Run `make setup` (fresh checkout) or `make init-secrets-patch-env` (existing `.env`) to provision real secrets.
 
+- **Root URI policy now defaults to deny** (GHSA-x39c-q2jx-f325) - Set `ROOT_ALLOWED_SCHEMES` before restart for every network scheme used by `DEFAULT_ROOTS` or new root registrations. `file://` roots additionally require `ROOT_ALLOW_FILE_SCHEME=true` and non-empty `ROOT_ALLOWED_FILE_PREFIXES`. Invalid `DEFAULT_ROOTS` abort gateway startup; configure policy before upgrading, not after.
+    - **Root management API payloads are strict** - `POST /roots` rejects unknown fields. `PUT /roots/{root_uri}` accepts only optional `name`; existing full-root PUT payloads containing `uri`, `_meta`, or custom fields now return HTTP 422.
+    - **Root-inclusive exports require unrestricted platform administration** - Unfiltered export includes roots and returns HTTP 403 for team-scoped administrators. Run backup exports with unrestricted platform-admin credentials, or explicitly exclude roots when a scoped export is intended.
+    - **Root registrations are runtime state** - Roots are held in memory and are not database-persisted. Manual registrations do not survive process restart; configure `DEFAULT_ROOTS` together with matching root policy when persistent startup roots are required.
+
+### Security
+
+- **OAuth DCR endpoints now enforce un-narrowed admin scope** (GHSA-gj7g-7r6g-jc8v) - `GET /oauth/registered-clients`, `GET /oauth/registered-clients/{gateway_id}`, and `DELETE /oauth/registered-clients/{client_id}` previously gated only on the `is_admin` flag and ignored `token_teams` narrowing carried by scoped API tokens, letting a team-narrowed admin API token list, read, and delete globally-stored registered OAuth client records outside its intended team scope. These endpoints now reject narrowed and public-only admin tokens with `403 Forbidden`. Admin session tokens resolve their teams from the database and cannot be narrowed, so interactive Admin UI users are unaffected.
+
 ### Fixed
 
 - Fixed RBAC seeder race condition that produced HTTP 500 under concurrent bootstrap: added partial unique indexes on `roles(name, scope) WHERE is_active` and `user_roles` equivalent columns, plus savepoint/retry in `RoleService.create_role()` and `assign_role_to_user()`. The migration (`d21698ae4a19`) now also remaps `user_roles.role_id` from duplicate roles to the kept role before deactivating the duplicates (so `list_user_roles()` joins remain intact), and prefers unexpired / most-recently-granted assignments when deduplicating user-role rows (#4636)
@@ -25,6 +34,7 @@
 - **`make setup`** - For fresh checkouts: copies `.env.example` → `.env` and runs `init-secrets-patch-env` to provision real secrets before first use.
 - **`mcpgateway/scripts/init_secrets.py`** - Script backing both Makefile targets; generates secrets using `secrets.token_hex(32)` and rewrites the relevant lines in `.env` without touching unrelated configuration.
 - **`mcpgateway/scripts/validate_env.py`** - Startup validation script invoked by the container entrypoint and `make check-env` that enforces the secret strength policy and surfaces clear remediation guidance.
+- **Popup-Based OAuth Authorization Flow** ([#5660](https://github.com/IBM/mcp-context-forge/issues/5660)) - `GET /oauth/authorize/{gateway_id}` accepts an optional `popup` query parameter that prefixes the generated state token with `popup.`. `GET /oauth/callback` detects the prefix and, for both success and every error path (provider error, missing code, invalid state, `OAuthError`, unexpected exception), responds with a minimal CSP-nonce'd `postMessage` script instead of the full HTML admin page, so a React UI can drive the flow in a popup window without a parent-page navigation. Non-popup flows keep the existing full HTML response unchanged.
 
 ### Removed
 

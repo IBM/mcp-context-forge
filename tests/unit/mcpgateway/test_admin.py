@@ -382,6 +382,7 @@ def allow_permission(monkeypatch):
     mock_perm_service.check_permission = AsyncMock(return_value=True)
     monkeypatch.setattr("mcpgateway.middleware.rbac.PermissionService", lambda db: mock_perm_service)
     monkeypatch.setattr("mcpgateway.admin.PermissionService", lambda db: mock_perm_service)
+    monkeypatch.setattr("mcpgateway.admin.is_unrestricted_platform_admin", AsyncMock(return_value=True))
     monkeypatch.setattr("mcpgateway.plugins.get_plugin_manager", AsyncMock(return_value=None))
     return mock_perm_service
 
@@ -2798,6 +2799,115 @@ class TestAdminResourceRoutes:
         resp = await admin_add_resource(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
         assert resp.status_code == 409
 
+    @patch.object(ResourceService, "register_resource")
+    async def test_admin_add_resource_postgres_uri_constraint_message_is_specific(self, mock_register_resource, mock_request, mock_db, monkeypatch):
+        """Postgres URI-constraint IntegrityError must yield the specific message, not the generic fallback (issue #4991)."""
+        team_service = MagicMock()
+        team_service.verify_team_for_user = AsyncMock(return_value=None)
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+        monkeypatch.setattr(
+            "mcpgateway.admin.MetadataCapture.extract_creation_metadata",
+            lambda *_args, **_kwargs: {"created_by": "u", "created_from_ip": None, "created_via": "ui", "created_user_agent": None, "import_batch_id": None, "federation_source": None},
+        )
+
+        for constraint in ("uq_team_owner_gateway_uri_resource", "uq_team_owner_uri_resource_local"):
+            orig = Exception(f'duplicate key value violates unique constraint "{constraint}"')
+            mock_register_resource.side_effect = IntegrityError("insert into resources", params={}, orig=orig)
+
+            resp = await admin_add_resource(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+            body = json.loads(resp.body)
+
+            assert resp.status_code == 409
+            assert body["message"] == "A resource with this URI already exists in this scope. Resource URIs must be unique; names may repeat."
+            assert body["success"] is False
+            assert "Unable to complete the operation" not in body["message"]
+
+
+class TestAdminResourceUriConflictMessage:
+    """POST /admin/resources duplicate-URI messaging (issue #4991).
+
+    Exercises the real ResourceService against an in-memory SQLite session so the
+    409 body is produced by the same code path the Admin UI hits.
+    """
+
+    @pytest.fixture
+    def real_db(self):
+        """Create a real in-memory SQLite session with the full schema."""
+        # Third-Party
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+        from sqlalchemy.pool import StaticPool
+
+        # First-Party
+        from mcpgateway.db import Base
+
+        engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+        Base.metadata.create_all(bind=engine)
+        session = sessionmaker(bind=engine)()
+        try:
+            yield session
+        finally:
+            session.close()
+            engine.dispose()
+
+    @pytest.fixture(autouse=True)
+    def _stub_admin_deps(self, monkeypatch):
+        """Stub team resolution, metadata capture and resource notifications."""
+        team_service = MagicMock()
+        team_service.verify_team_for_user = AsyncMock(side_effect=lambda _email, team_id: team_id or "team-1")
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+        monkeypatch.setattr(
+            "mcpgateway.admin.MetadataCapture.extract_creation_metadata",
+            lambda *_args, **_kwargs: {"created_by": "owner@example.com", "created_from_ip": None, "created_via": "ui", "created_user_agent": None, "import_batch_id": None, "federation_source": None},
+        )
+        monkeypatch.setattr(ResourceService, "_notify_resource_added", AsyncMock())
+
+    @staticmethod
+    def _request(uri, name, visibility):
+        """Build a mock admin request carrying add-resource form data.
+
+        Args:
+            uri: Resource URI form value.
+            name: Resource name form value.
+            visibility: Visibility form value.
+
+        Returns:
+            MagicMock: A Request stand-in whose ``form()`` returns the data.
+        """
+        request = MagicMock(spec=Request)
+        request.scope = {"root_path": ""}
+        request.form = AsyncMock(return_value=FakeForm({"uri": uri, "name": name, "content": "body", "mimeType": "text/plain", "visibility": visibility, "team_id": "team-1"}))
+        return request
+
+    @pytest.mark.parametrize("visibility", ["public", "team", "private"])
+    async def test_duplicate_uri_returns_specific_409_message(self, real_db, visibility):
+        """A duplicate URI must return 409 with the URI-specific message for every visibility."""
+        user = {"email": "owner@example.com", "db": real_db}
+
+        first = await admin_add_resource(self._request("file://dup.txt", "First", visibility), real_db, user=user)
+        assert first.status_code == 200
+
+        second = await admin_add_resource(self._request("file://dup.txt", "Second", visibility), real_db, user=user)
+        body = json.loads(second.body)
+
+        assert second.status_code == 409
+        assert body["success"] is False
+        assert "Unable to complete the operation" not in body["message"]
+        assert "resource already exists with URI" in body["message"]
+        assert "file://dup.txt" in body["message"]
+        assert "resource URIs must be unique within this scope (names may repeat)." in body["message"]
+
+    @pytest.mark.parametrize("visibility", ["public", "team", "private"])
+    async def test_duplicate_name_with_distinct_uri_returns_200(self, real_db, visibility):
+        """Duplicate names remain legal -- regression guard for the reverted PR #5158/#5664."""
+        user = {"email": "owner@example.com", "db": real_db}
+
+        first = await admin_add_resource(self._request("file://one.txt", "Same Label", visibility), real_db, user=user)
+        second = await admin_add_resource(self._request("file://two.txt", "Same Label", visibility), real_db, user=user)
+
+        assert first.status_code == 200
+        assert second.status_code == 200
+
     @patch.object(ResourceService, "update_resource")
     async def test_admin_edit_resource_special_uri_characters(self, mock_update_resource, mock_request, mock_db):
         """Test editing resource with special characters in URI."""
@@ -3650,6 +3760,10 @@ class TestAdminGatewayRoutes:
 
 class TestAdminRootRoutes:
     """Test admin routes for root management with enhanced coverage."""
+
+    @pytest.fixture(autouse=True)
+    def _allow_root_admin(self, monkeypatch):
+        monkeypatch.setattr("mcpgateway.admin.is_unrestricted_platform_admin", AsyncMock(return_value=True))
 
     @patch("mcpgateway.admin.root_service.add_root", new_callable=AsyncMock)
     async def test_admin_add_root_with_special_characters(self, mock_add_root, mock_request):
@@ -5073,6 +5187,7 @@ class TestAdminUIRoute:
         )
         monkeypatch.setattr(settings, "mcpgateway_a2a_enabled", True, raising=False)
         monkeypatch.setattr(settings, "mcpgateway_grpc_enabled", True, raising=False)
+        monkeypatch.setattr("mcpgateway.admin.is_unrestricted_platform_admin", AsyncMock(return_value=True))
 
         team_service_ctor = MagicMock()
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", team_service_ctor)
@@ -13781,6 +13896,19 @@ async def test_admin_search_roots_denies_without_system_config_permission(monkey
     assert exc_info.value.status_code == 403
 
 
+@pytest.mark.asyncio
+async def test_admin_search_roots_denies_scoped_admin_before_service_access(monkeypatch, allow_permission, mock_db):
+    root_service = MagicMock(list_roots=AsyncMock())
+    monkeypatch.setattr("mcpgateway.admin.root_service", root_service)
+    monkeypatch.setattr("mcpgateway.admin.is_unrestricted_platform_admin", AsyncMock(return_value=False))
+
+    with pytest.raises(HTTPException) as exc_info:
+        await admin_search_roots(q="tmp", limit=10, db=mock_db, user={"email": "admin@example.com"})
+
+    assert exc_info.value.status_code == 403
+    root_service.list_roots.assert_not_awaited()
+
+
 def test_admin_search_roots_disables_admin_bypass():
     """The decorator must enforce admin.system_config even for platform admins.
 
@@ -14314,6 +14442,7 @@ class TestAdminAdditionalCoverage:
         response = await admin_edit_a2a_agent("agent-1", mock_request, mock_db, user={"email": "user@example.com", "db": mock_db})
         assert response.status_code == 200
         mock_service.update_agent.assert_called_once()
+        assert mock_service.update_agent.call_args.kwargs["user_email"] == "user@example.com"
 
     async def test_admin_edit_a2a_agent_preserves_team_id_when_not_in_form(self, monkeypatch, mock_request, mock_db):
         """Editing an A2A agent without team_id in form should preserve the existing team."""
@@ -18251,6 +18380,8 @@ async def test_admin_edit_a2a_agent_error_handlers(monkeypatch, mock_db):
     for exc, expected_status in [
         (validation_exc, 422),
         (IntegrityError("stmt", {}, Exception("constraint")), 409),
+        (PermissionError("Only the owner can update this agent"), 403),
+        (A2AAgentNotFoundError("agent-1"), 404),
         (Exception("unknown"), 500),
     ]:
         form_data = FakeForm({"name": "Agent", "endpoint_url": "http://agent.example.com"})

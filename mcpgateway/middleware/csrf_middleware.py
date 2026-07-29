@@ -21,9 +21,10 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 # First-Party
+from mcpgateway.auth_context import get_jwt_user_email_from_payload
 from mcpgateway.config import settings
 from mcpgateway.services.csrf_service import get_csrf_service
-from mcpgateway.utils.verify_credentials import get_auth_header_value, verify_jwt_token_cached
+from mcpgateway.utils.verify_credentials import get_auth_header_value, is_proxy_auth_trust_active, verify_jwt_token_cached
 
 logger = logging.getLogger(__name__)
 
@@ -114,6 +115,19 @@ class CSRFMiddleware(BaseHTTPMiddleware):
         if _extract_bearer_token(auth_header):
             return await call_next(request)
 
+        # 4b. Skip requests that carry no credentials at all. CSRF only defends against
+        # ambient cookie-borne credentials; a request with no Authorization header and no
+        # auth cookie has nothing for CSRF to protect. Let the auth layer produce the
+        # correct 401 instead of a misleading 403 CSRF error.
+        #
+        # Exception: trusted-proxy-header auth is still ambient (the identity comes from
+        # the proxy's own session cookie, injected as a header) so it must not fall
+        # through here.
+        has_auth_cookie = bool(request.cookies.get("jwt_token") or request.cookies.get("access_token"))
+        has_proxy_identity = is_proxy_auth_trust_active(settings) and bool(request.headers.get(settings.proxy_user_header))
+        if not auth_header and not has_auth_cookie and not has_proxy_identity:
+            return await call_next(request)
+
         # 5. Extract CSRF token from header. Do not consume form bodies here:
         # BaseHTTPMiddleware cannot safely replay request bodies for downstream handlers.
         csrf_token = request.headers.get(settings.csrf_token_name)
@@ -135,8 +149,14 @@ class CSRFMiddleware(BaseHTTPMiddleware):
         # Bind CSRF tokens to the verified JWT session (jti) when available
         session_id = getattr(request.state, "jti", None)
 
-        # Fallback: derive user/session from a verified JWT when request.state
-        # was not populated yet (middleware ordering or disabled auth-context).
+        # Fallback: derive whichever of user_id/session_id request.state didn't
+        # already populate (middleware ordering, disabled auth-context, or a
+        # local/session login for which request.state.jti is never set — see
+        # auth.py's _set_auth_method_from_payload). Only fill in the missing
+        # piece; never clobber a user_id already resolved from
+        # request.state.user.email above, or every session-cookie request
+        # would silently re-resolve identity to the JWT `sub` (EmailUser.id)
+        # instead of the email CSRFMiddleware is supposed to bind to.
         if not user_id or not session_id:
             raw_token = request.cookies.get("jwt_token") or request.cookies.get("access_token")
             if not raw_token:
@@ -146,8 +166,10 @@ class CSRFMiddleware(BaseHTTPMiddleware):
             if raw_token:
                 try:
                     payload = await verify_jwt_token_cached(raw_token, request)
-                    user_id = payload.get("sub") or payload.get("email") or payload.get("user", {}).get("email")
-                    session_id = payload.get("jti")
+                    if not user_id:
+                        user_id = get_jwt_user_email_from_payload(payload)
+                    if not session_id:
+                        session_id = payload.get("jti")
                 except Exception as exc:
                     logger.warning("CSRF fallback JWT verification failed for %s %s: %s", request.method, request.url.path, exc)
 

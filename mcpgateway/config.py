@@ -52,7 +52,7 @@ from importlib.resources import files
 import logging
 import math
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import re
 import sys
 from typing import Annotated, Any, ClassVar, Dict, List, Literal, NotRequired, Optional, Self, Set, TypedDict
@@ -101,6 +101,8 @@ def _normalize_env_list_vars() -> None:
         "SIEM_EXPORT_EVENT_SOURCES",
         "SIEM_EXPORT_URL_ALLOWLIST",
         "SIEM_EXPORT_REDACT_FIELDS",
+        "ROOT_ALLOWED_SCHEMES",
+        "ROOT_ALLOWED_FILE_PREFIXES",
     ]
     for key in keys:
         raw = os.environ.get(key)
@@ -2635,6 +2637,9 @@ class Settings(BaseSettings):
 
     # Default Roots
     default_roots: List[str] = []
+    root_allowed_schemes: List[str] = []
+    root_allow_file_scheme: bool = False
+    root_allowed_file_prefixes: List[str] = []
 
     # Database
     db_driver: str = "postgresql+psycopg"
@@ -3070,6 +3075,8 @@ Disallow: /
         "mcpgateway_ui_hide_sections_admin",
         "mcpgateway_ui_hide_header_items_admin",
         "tool_description_forbidden_patterns",
+        "root_allowed_schemes",
+        "root_allowed_file_prefixes",
         mode="before",
     )
     @classmethod
@@ -3105,6 +3112,59 @@ Disallow: /
             # CSV fallback
             return [item.strip() for item in s.split(",") if item.strip()]
         raise ValueError("Invalid type for list field")
+
+    @field_validator("root_allowed_schemes", mode="after")
+    @classmethod
+    def _validate_root_allowed_schemes(cls, value: list[str]) -> list[str]:
+        """Validate root URI schemes supported by root policy."""
+        supported_schemes = {"http", "https", "ws", "wss"}
+        scheme_pattern = re.compile(r"^[a-z][a-z0-9+.-]*$")
+        normalized: list[str] = []
+        for raw_scheme in value:
+            if not isinstance(raw_scheme, str):
+                raise ValueError("ROOT_ALLOWED_SCHEMES entries must be strings")
+            scheme = raw_scheme.lower()
+            if scheme != raw_scheme.strip().lower() or not scheme_pattern.fullmatch(scheme):
+                raise ValueError("ROOT_ALLOWED_SCHEMES entries must be lowercase URI scheme names without whitespace, ':' or '/'")
+            if scheme == "file":
+                raise ValueError("ROOT_ALLOWED_SCHEMES must not include file; use ROOT_ALLOW_FILE_SCHEME")
+            if scheme not in supported_schemes:
+                raise ValueError(f"Unsupported ROOT_ALLOWED_SCHEMES entry: {scheme}")
+            if scheme not in normalized:
+                normalized.append(scheme)
+        return normalized
+
+    @field_validator("root_allowed_file_prefixes", mode="after")
+    @classmethod
+    def _validate_root_allowed_file_prefixes(cls, value: list[str]) -> list[str]:
+        """Validate POSIX file-root prefixes."""
+        normalized: list[str] = []
+        for raw_prefix in value:
+            if not isinstance(raw_prefix, str):
+                raise ValueError("ROOT_ALLOWED_FILE_PREFIXES entries must be strings")
+            if not raw_prefix:
+                raise ValueError("ROOT_ALLOWED_FILE_PREFIXES entries must not be empty")
+            if any(ord(ch) < 32 or ord(ch) == 127 for ch in raw_prefix) or "\x00" in raw_prefix:
+                raise ValueError("ROOT_ALLOWED_FILE_PREFIXES entries must not contain control characters")
+            parsed = urlparse(raw_prefix)
+            if parsed.scheme or parsed.netloc or parsed.query or parsed.fragment:
+                raise ValueError("ROOT_ALLOWED_FILE_PREFIXES entries must be absolute POSIX paths without URI components")
+            if "\\" in raw_prefix or not raw_prefix.startswith("/"):
+                raise ValueError("ROOT_ALLOWED_FILE_PREFIXES entries must be absolute POSIX paths")
+            parts = PurePosixPath(raw_prefix).parts
+            if "." in parts or ".." in parts:
+                raise ValueError("ROOT_ALLOWED_FILE_PREFIXES entries must not contain '.' or '..' segments")
+            prefix = "/" if parts == ("/",) else "/" + "/".join(part for part in parts if part != "/")
+            if prefix not in normalized:
+                normalized.append(prefix)
+        return normalized
+
+    @model_validator(mode="after")
+    def _validate_root_file_policy(self) -> "Settings":
+        """Validate cross-field root file policy consistency."""
+        if self.root_allow_file_scheme and not self.root_allowed_file_prefixes:
+            raise ValueError("ROOT_ALLOW_FILE_SCHEME=true requires ROOT_ALLOWED_FILE_PREFIXES")
+        return self
 
     @field_validator("tool_description_forbidden_patterns", mode="after")
     @classmethod
