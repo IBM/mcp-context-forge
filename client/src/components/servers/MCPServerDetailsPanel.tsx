@@ -24,22 +24,25 @@ import type { MCPServer as BaseMCPServer, VirtualServerTag } from "@/types/serve
 import { copyToClipboard } from "@/lib/clipboard";
 import { useQuery } from "@/hooks/useQuery";
 import { TestConnectionPanel } from "./TestConnectionPanel";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 interface MCPServer extends BaseMCPServer {
   tags?: Array<string | VirtualServerTag>;
 }
 
 type ComponentTab = "all" | "tools" | "resources" | "prompts";
-// Kept separate from ComponentTab so the component-filtering logic stays typed to real kinds.
-type DrawerTab = ComponentTab | "test";
+type TopTab = "tryit" | "components";
 
-const TABS: Array<{ value: DrawerTab; label: string }> = [
+const TABS: Array<{ value: ComponentTab; label: string }> = [
   { value: "all", label: "All" },
   { value: "tools", label: "Tools" },
   { value: "resources", label: "Resources" },
   { value: "prompts", label: "Prompts" },
-  { value: "test", label: "Test Connection" },
 ];
+
+// Segmented-control styling for the Try it / Components tab triggers.
+const SEGMENTED_TRIGGER_CLASS =
+  "rounded-md px-3 py-1 font-medium data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm";
 
 interface Tool {
   id: string;
@@ -138,7 +141,8 @@ export function MCPServerDetailsPanel({
    */
   onAddTag?: (serverId: string, tags: string[]) => Promise<void>;
 }) {
-  const [activeTab, setActiveTab] = useState<DrawerTab>("all");
+  const [topTab, setTopTab] = useState<TopTab>("components");
+  const [activeTab, setActiveTab] = useState<ComponentTab>("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [isSearchExpanded, setIsSearchExpanded] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -148,6 +152,7 @@ export function MCPServerDetailsPanel({
 
   // Reset tab and search when server changes
   useEffect(() => {
+    setTopTab("components");
     setActiveTab("all");
     setSearchQuery("");
     setIsSearchExpanded(false);
@@ -259,7 +264,7 @@ export function MCPServerDetailsPanel({
   }, []);
 
   const handleTabKeyDown = useCallback(
-    (e: KeyboardEvent<HTMLButtonElement>, currentValue: DrawerTab) => {
+    (e: KeyboardEvent<HTMLButtonElement>, currentValue: ComponentTab) => {
       if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
       e.preventDefault();
       const currentIndex = TABS.findIndex((t) => t.value === currentValue);
@@ -273,8 +278,6 @@ export function MCPServerDetailsPanel({
     },
     [],
   );
-
-  const isTestTab = activeTab === "test";
 
   return (
     <>
@@ -333,168 +336,175 @@ export function MCPServerDetailsPanel({
 
               <div className="my-8 h-px bg-border" />
 
-              {/* Rendered on every tab so the row below doesn't shift when switching. */}
-              <div className="flex items-center justify-between gap-4">
-                <h3 className="text-sm font-semibold text-foreground">
-                  {isTestTab ? "Test connection" : "Components"}
-                </h3>
-              </div>
+              <Tabs value={topTab} onValueChange={(v) => setTopTab(v as TopTab)}>
+                <TabsList className="inline-flex h-9 w-fit items-center gap-1 rounded-lg bg-muted p-1">
+                  <TabsTrigger value="tryit" className={SEGMENTED_TRIGGER_CLASS}>
+                    Try it
+                  </TabsTrigger>
+                  <TabsTrigger value="components" className={SEGMENTED_TRIGGER_CLASS}>
+                    Components
+                  </TabsTrigger>
+                </TabsList>
 
-              <div className="mt-8 flex min-w-0 items-center justify-between gap-6">
-                <div
-                  role="tablist"
-                  aria-label="Filter components"
-                  className="flex min-w-0 items-center gap-6"
-                >
-                  {TABS.map((tab) => (
-                    <Button
-                      key={tab.value}
-                      id={`tab-${tab.value}`}
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      role="tab"
-                      aria-selected={activeTab === tab.value}
-                      tabIndex={activeTab === tab.value ? 0 : -1}
-                      className={`text-sm font-semibold transition-colors ${
-                        activeTab === tab.value
-                          ? "text-foreground"
-                          : "text-muted-foreground hover:text-foreground"
-                      }`}
-                      onClick={() => setActiveTab(tab.value)}
-                      onKeyDown={(e) => handleTabKeyDown(e, tab.value)}
+                <TabsContent value="components" className="mt-8">
+                  <div className="flex min-w-0 items-center justify-between gap-6">
+                    <div
+                      role="tablist"
+                      aria-label="Filter components"
+                      className="flex min-w-0 items-center gap-6"
                     >
-                      {tab.label}
-                    </Button>
-                  ))}
-                </div>
-
-                {!isTestTab && (
-                  <div className="flex items-center gap-2">
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon-xs"
-                      onClick={() => searchInputRef.current?.focus()}
-                      className="size-8 rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-                      aria-label="Search components"
-                    >
-                      <Search className="size-4" />
-                    </Button>
-                    <Input
-                      ref={searchInputRef}
-                      type="search"
-                      aria-label="Search components"
-                      tabIndex={isSearchExpanded || searchQuery.length > 0 ? 0 : -1}
-                      value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
-                      onFocus={() => setIsSearchExpanded(true)}
-                      onBlur={() => setIsSearchExpanded(searchQuery.length > 0)}
-                      placeholder={isSearchExpanded || searchQuery.length > 0 ? "Search..." : ""}
-                      className={cn(
-                        "h-8 rounded-md border-border bg-muted/50 text-sm shadow-none transition-[width,padding,color,background-color,border-color] duration-200 ease-out placeholder:text-muted-foreground focus-visible:bg-background",
-                        isSearchExpanded || searchQuery.length > 0
-                          ? "w-48 px-3 text-foreground"
-                          : "w-0 px-0 text-transparent caret-foreground border-transparent",
-                      )}
-                    />
-                  </div>
-                )}
-              </div>
-
-              {error && (
-                <div
-                  role="alert"
-                  className="mt-6 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive"
-                >
-                  {error.message}
-                </div>
-              )}
-
-              <div
-                role="tabpanel"
-                aria-labelledby={`tab-${activeTab}`}
-                className="mt-5 divide-y divide-transparent"
-              >
-                {isTestTab && <TestConnectionPanel key={server.id} serverUrl={server.url} />}
-
-                {!isTestTab && componentsLoading && (
-                  <div
-                    role="status"
-                    aria-live="polite"
-                    className="flex items-center gap-2 py-8 text-muted-foreground"
-                  >
-                    <Loader2 className="size-4 animate-spin" aria-hidden="true" />
-                    <span>Loading components...</span>
-                  </div>
-                )}
-
-                {!isTestTab && !componentsLoading && visibleComponents.length === 0 && (
-                  <div className="py-8 text-sm text-muted-foreground">
-                    No {activeTab === "all" ? "components" : activeTab} found
-                  </div>
-                )}
-
-                {!isTestTab &&
-                  !componentsLoading &&
-                  visibleComponents.map((component) => {
-                    const title = component.title;
-                    const identifier =
-                      component.type === "resources" ? component.uri : component.originalName;
-
-                    return (
-                      <div
-                        key={`${component.type}-${component.id}`}
-                        className="grid min-h-10 grid-cols-[128px_minmax(0,1fr)_minmax(180px,0.9fr)] items-center gap-4 py-1 text-sm"
-                      >
-                        <Badge
-                          variant="draft"
-                          className="w-fit rounded-md px-2 py-0.5 text-[12px] font-medium text-muted-foreground"
+                      {TABS.map((tab) => (
+                        <Button
+                          key={tab.value}
+                          id={`tab-${tab.value}`}
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          role="tab"
+                          aria-selected={activeTab === tab.value}
+                          tabIndex={activeTab === tab.value ? 0 : -1}
+                          className={`text-sm font-semibold transition-colors ${
+                            activeTab === tab.value
+                              ? "text-foreground"
+                              : "text-muted-foreground hover:text-foreground"
+                          }`}
+                          onClick={() => setActiveTab(tab.value)}
+                          onKeyDown={(e) => handleTabKeyDown(e, tab.value)}
                         >
-                          <span className="mr-1.5 inline-flex">
-                            {getComponentIcon(component.type)}
-                          </span>
-                          {component.type.slice(0, -1)}
-                        </Badge>
-                        {title ? (
-                          <>
-                            <span className="min-w-0 truncate text-muted-foreground">{title}</span>
-                            <span className="flex min-w-0 items-center gap-2 font-mono text-[13px] text-muted-foreground">
-                              <span className="truncate">{identifier}</span>
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="icon-xs"
-                                aria-label={`Copy ${title}`}
-                                className="size-5 text-muted-foreground"
-                                onClick={() => copyToClipboard(identifier)}
-                              >
-                                <Copy className="size-3.5" />
-                              </Button>
-                            </span>
-                          </>
-                        ) : (
-                          <>
-                            <span className="flex min-w-0 items-center gap-2 font-mono text-[13px] text-muted-foreground">
-                              <span className="truncate">{identifier}</span>
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="icon-xs"
-                                aria-label={`Copy ${identifier}`}
-                                className="size-5 text-muted-foreground"
-                                onClick={() => copyToClipboard(identifier)}
-                              >
-                                <Copy className="size-3.5" />
-                              </Button>
-                            </span>
-                            <span aria-hidden="true" />
-                          </>
+                          {tab.label}
+                        </Button>
+                      ))}
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon-xs"
+                        onClick={() => searchInputRef.current?.focus()}
+                        className="size-8 rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                        aria-label="Search components"
+                      >
+                        <Search className="size-4" />
+                      </Button>
+                      <Input
+                        ref={searchInputRef}
+                        type="search"
+                        aria-label="Search components"
+                        tabIndex={isSearchExpanded || searchQuery.length > 0 ? 0 : -1}
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        onFocus={() => setIsSearchExpanded(true)}
+                        onBlur={() => setIsSearchExpanded(searchQuery.length > 0)}
+                        placeholder={isSearchExpanded || searchQuery.length > 0 ? "Search..." : ""}
+                        className={cn(
+                          "h-8 rounded-md border-border bg-muted/50 text-sm shadow-none transition-[width,padding,color,background-color,border-color] duration-200 ease-out placeholder:text-muted-foreground focus-visible:bg-background",
+                          isSearchExpanded || searchQuery.length > 0
+                            ? "w-48 px-3 text-foreground"
+                            : "w-0 px-0 text-transparent caret-foreground border-transparent",
                         )}
+                      />
+                    </div>
+                  </div>
+
+                  {error && (
+                    <div
+                      role="alert"
+                      className="mt-6 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+                    >
+                      {error.message}
+                    </div>
+                  )}
+
+                  <div
+                    role="tabpanel"
+                    aria-labelledby={`tab-${activeTab}`}
+                    className="mt-5 divide-y divide-transparent"
+                  >
+                    {componentsLoading && (
+                      <div
+                        role="status"
+                        aria-live="polite"
+                        className="flex items-center gap-2 py-8 text-muted-foreground"
+                      >
+                        <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                        <span>Loading components...</span>
                       </div>
-                    );
-                  })}
-              </div>
+                    )}
+
+                    {!componentsLoading && visibleComponents.length === 0 && (
+                      <div className="py-8 text-sm text-muted-foreground">
+                        No {activeTab === "all" ? "components" : activeTab} found
+                      </div>
+                    )}
+
+                    {!componentsLoading &&
+                      visibleComponents.map((component) => {
+                        const title = component.title;
+                        const identifier =
+                          component.type === "resources" ? component.uri : component.originalName;
+
+                        return (
+                          <div
+                            key={`${component.type}-${component.id}`}
+                            className="grid min-h-10 grid-cols-[128px_minmax(0,1fr)_minmax(180px,0.9fr)] items-center gap-4 py-1 text-sm"
+                          >
+                            <Badge
+                              variant="draft"
+                              className="w-fit rounded-md px-2 py-0.5 text-[12px] font-medium text-muted-foreground"
+                            >
+                              <span className="mr-1.5 inline-flex">
+                                {getComponentIcon(component.type)}
+                              </span>
+                              {component.type.slice(0, -1)}
+                            </Badge>
+                            {title ? (
+                              <>
+                                <span className="min-w-0 truncate text-muted-foreground">
+                                  {title}
+                                </span>
+                                <span className="flex min-w-0 items-center gap-2 font-mono text-[13px] text-muted-foreground">
+                                  <span className="truncate">{identifier}</span>
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="icon-xs"
+                                    aria-label={`Copy ${title}`}
+                                    className="size-5 text-muted-foreground"
+                                    onClick={() => copyToClipboard(identifier)}
+                                  >
+                                    <Copy className="size-3.5" />
+                                  </Button>
+                                </span>
+                              </>
+                            ) : (
+                              <>
+                                <span className="flex min-w-0 items-center gap-2 font-mono text-[13px] text-muted-foreground">
+                                  <span className="truncate">{identifier}</span>
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="icon-xs"
+                                    aria-label={`Copy ${identifier}`}
+                                    className="size-5 text-muted-foreground"
+                                    onClick={() => copyToClipboard(identifier)}
+                                  >
+                                    <Copy className="size-3.5" />
+                                  </Button>
+                                </span>
+                                <span aria-hidden="true" />
+                              </>
+                            )}
+                          </div>
+                        );
+                      })}
+                  </div>
+                </TabsContent>
+
+                <TabsContent value="tryit" className="mt-8">
+                  <TestConnectionPanel key={server.id} serverUrl={server.url} />
+                </TabsContent>
+              </Tabs>
             </div>
 
             <aside className="relative border-t border-border bg-background lg:border-l lg:border-t-0">

@@ -124,13 +124,13 @@ describe("MCPServerDetailsPanel", () => {
     expect(region).toHaveAttribute("aria-hidden", "false");
   });
 
-  it("shows the Test Connection tab with the server URL prefilled", async () => {
+  it("opens the Try it tab with the test form and the server URL prefilled", async () => {
     const user = userEvent.setup();
     renderWithProviders(
       <MCPServerDetailsPanel server={mockServer} error={null} open={true} onClose={() => {}} />,
     );
 
-    await user.click(screen.getByRole("tab", { name: /test connection/i }));
+    await user.click(screen.getByRole("tab", { name: "Try it" }));
     expect(screen.getByDisplayValue("http://test.example.com")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^test connection$/i })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /search components/i })).not.toBeInTheDocument();
