@@ -124,14 +124,14 @@ If you add another middleware that reads `request.state` values set by `AuthCont
        from mcpgateway.main import app
        from mcpgateway.middleware.auth_middleware import AuthContextMiddleware
        from mcpgateway.middleware.my_new_middleware import MyNewMiddleware
-       
+
        middleware_classes = [m.cls for m in app.user_middleware]
        assert AuthContextMiddleware in middleware_classes
        assert MyNewMiddleware in middleware_classes
-       
+
        auth_index = middleware_classes.index(AuthContextMiddleware)
        my_index = middleware_classes.index(MyNewMiddleware)
-       
+
        # AuthContextMiddleware must run BEFORE MyNewMiddleware
        # (lower index means earlier in request processing)
        assert auth_index < my_index
