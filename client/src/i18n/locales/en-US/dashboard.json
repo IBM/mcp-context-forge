@@ -23,5 +23,10 @@
   "dashboard.home.mcp.error": "Couldn't load system health.",
   "dashboard.home.mcp.postgres": "PostgreSQL",
   "dashboard.home.mcp.redis": "Redis",
-  "dashboard.home.mcp.notConfigured": "Not configured"
+  "dashboard.home.mcp.notConfigured": "Not configured",
+  "dashboard.home.status.running": "Running",
+  "dashboard.home.status.healthy": "Healthy",
+  "dashboard.home.status.unhealthy": "Unhealthy",
+  "dashboard.home.status.notConfigured": "Not configured",
+  "dashboard.home.status.activity": "{errors} errors · {warnings} warnings"
 }
