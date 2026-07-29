@@ -8,6 +8,8 @@
   "dashboard.home.clear": "Clear",
   "dashboard.home.emptyState": "Empty state (to add)",
   "dashboard.home.headline.default": "Up and running...",
+  "dashboard.home.headline.degraded": "Running with reduced health...",
+  "dashboard.home.headline.unreachable": "System status unavailable...",
   "dashboard.home.card.system": "System",
   "dashboard.home.card.activity": "Activity feed",
   "dashboard.home.card.mcp": "MCP",

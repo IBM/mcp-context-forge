@@ -12,6 +12,7 @@ import { MiniCard } from "@/components/dashboard/MiniCard";
 import { MiniCardStatusIndicator } from "@/components/dashboard/MiniCardStatusIndicator";
 import type { MiniCardStatus } from "@/components/dashboard/miniCardStatus";
 import { PermissionDenied } from "@/components/dashboard/PermissionDenied";
+import type { HeadlineCondition } from "@/components/dashboard/resolveHeadline";
 import { useMiniCardStatuses } from "@/hooks/useMiniCardStatuses";
 import { StatusHeadline } from "@/components/dashboard/StatusHeadline";
 import { SystemStatsCardConnected } from "@/components/dashboard/SystemStatsCardConnected";
@@ -59,7 +60,7 @@ export function Dashboard() {
 
   // Resolved once at the page level (which stays mounted across ?view= changes)
   // so switching states does not remount the queries and flash stale statuses.
-  const miniCardStatuses = useMiniCardStatuses();
+  const { statuses: miniCardStatuses, headlineCondition } = useMiniCardStatuses();
 
   const actionCards: ActionCard[] = useMemo(
     () => [
@@ -128,7 +129,7 @@ export function Dashboard() {
   return (
     <div className="p-6">
       {activeView === "default" ? (
-        <DefaultState statuses={miniCardStatuses} />
+        <DefaultState statuses={miniCardStatuses} headlineCondition={headlineCondition} />
       ) : (
         <NonDefaultState active={activeView} statuses={miniCardStatuses} />
       )}
@@ -140,10 +141,16 @@ export function Dashboard() {
  * Default (resting) state: status summary with the activity-feed entry point,
  * the all-time system stats card, and the inline source cards. No right column.
  */
-function DefaultState({ statuses }: { statuses: Record<MiniCardId, MiniCardStatus> }) {
+function DefaultState({
+  statuses,
+  headlineCondition,
+}: {
+  statuses: Record<MiniCardId, MiniCardStatus>;
+  headlineCondition: HeadlineCondition;
+}) {
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-6">
-      <StatusHeadline action={<ActivityFeedButton />} />
+      <StatusHeadline condition={headlineCondition} action={<ActivityFeedButton />} />
       <SystemStatsCardConnected />
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         {DEFAULT_SOURCE_CARDS.map((id) => (
