@@ -696,3 +696,35 @@ describe("missing CSRF cookie", () => {
     }
   );
 });
+
+// ---------------------------------------------------------------------------
+// Cookie-name literal pin (#5959)
+//
+// llmModels.js reads the CSRF token via getCookie("mcpgateway_csrf_token")
+// (a hardcoded literal, not derived from any shared config). This pins that
+// literal against the documented default (settings.csrf_cookie_name /
+// config.py, asserted equal to .env.example by
+// test_csrf_cookie_name_default_matches_env_example in test_config.py) so a
+// rename of the JS literal fails loudly here instead of silently breaking
+// LLM Settings writes the way #5739 did. Only the CSRF cookie is present --
+// no other cookie name would satisfy this -- and the header is checked
+// against the exact value set, not just "is present".
+// ---------------------------------------------------------------------------
+describe("CSRF cookie name literal pin", () => {
+  test("setting only the mcpgateway_csrf_token cookie populates X-CSRF-Token with its exact value", async () => {
+    clearCookies();
+    document.cookie = "mcpgateway_csrf_token=pinned-literal-value";
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+    });
+    const container = document.createElement("div");
+    container.id = "llm-providers-container";
+    document.body.appendChild(container);
+
+    await toggleLLMProvider("provider-1");
+
+    const [, options] = fetchSpy.mock.calls[0];
+    expect(options.headers["X-CSRF-Token"]).toBe("pinned-literal-value");
+  });
+});
