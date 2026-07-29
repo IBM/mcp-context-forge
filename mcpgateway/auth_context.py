@@ -61,6 +61,9 @@ The names below are the **module's public API**. Callers in ``main.py``,
 
     Identity resolution
         get_user_email(user) -> str
+        jwt_subject_is_uuid(payload) -> bool
+        get_jwt_user_email_from_payload(payload) -> str | None
+        resolve_jwt_user_email_from_payload(payload, uuid_email_resolver=None) -> str | None
 
     Trust-layer headers forwarded from the Rust MCP runtime
         decode_internal_mcp_auth_context(header_value) -> dict
@@ -94,7 +97,7 @@ See ``AGENTS.md`` section "Authentication & RBAC Overview" for the full
 policy. The key invariants that this module enforces:
 
 1. ``get_token_teams_from_request`` respects the secure-first semantics of
-   ``auth.normalize_token_teams``: missing ``teams`` claim means public-only,
+   ``normalize_token_teams``: missing ``teams`` claim means public-only,
    not admin bypass.
 2. ``get_rpc_filter_context`` derives ``is_admin`` from the verified JWT
    payload or the trusted internal MCP auth context - NOT from the DB user -
@@ -110,13 +113,14 @@ policy. The key invariants that this module enforces:
 """
 
 # Standard
-import asyncio
 import base64
+from collections.abc import Awaitable, Callable
 from functools import lru_cache
 import hashlib
 import hmac
 import logging
 from typing import Any, Dict, List, Optional
+import uuid
 
 # Third-Party
 from fastapi import Request
@@ -124,8 +128,8 @@ import orjson
 from sqlalchemy.orm import Session
 
 # First-Party
-from mcpgateway.auth import normalize_token_teams
 from mcpgateway.config import settings
+from mcpgateway.db import EmailUser
 
 # Module-level logger
 logger = logging.getLogger(__name__)
@@ -205,6 +209,124 @@ def get_user_email(user: Any) -> str:
         return "unknown"
     # Fallback to string conversion for other types
     return str(user) if user else "unknown"
+
+
+def _is_uuid_string(value: str) -> bool:
+    """Return True when *value* is a syntactically valid UUID string."""
+    try:
+        uuid.UUID(value)
+    except ValueError:
+        return False
+    return True
+
+
+def jwt_subject_is_uuid(payload: dict[str, Any]) -> bool:
+    """Return True when the JWT subject claim is a syntactically valid UUID."""
+    subject = payload.get("sub")
+    if not isinstance(subject, str):
+        return False
+    subject = subject.strip()
+    return bool(subject) and _is_uuid_string(subject)
+
+
+def _non_uuid_identity(value: Any) -> str | None:
+    """Return a non-empty string identity unless it is a UUID."""
+    if not isinstance(value, str):
+        return None
+    value = value.strip()
+    if not value or _is_uuid_string(value):
+        return None
+    return value
+
+
+def normalize_token_teams(payload: Dict[str, Any]) -> Optional[List[str]]:
+    """
+    Normalize token teams to a canonical form for consistent security checks.
+
+    SECURITY: This is the single source of truth for token team normalization.
+    All code paths that read token teams should use this function.
+
+    Rules:
+    - "teams" key missing -> [] (public-only, secure default)
+    - "teams" is null + is_admin=true -> None (admin bypass, sees all)
+    - "teams" is null + is_admin=false -> [] (public-only, no bypass for non-admins)
+    - "teams" is [] -> [] (explicit public-only)
+    - "teams" is [...] -> normalized list of string IDs
+
+    Args:
+        payload: The JWT payload dict
+
+    Returns:
+        None for admin bypass, [] for public-only, or list of normalized team ID strings
+    """
+    if "teams" not in payload:
+        return []
+
+    teams = payload.get("teams")
+
+    if teams is None:
+        is_admin = payload.get("is_admin", False)
+        if not is_admin:
+            user_info = payload.get("user", {})
+            is_admin = user_info.get("is_admin", False) if isinstance(user_info, dict) else False
+        if is_admin:
+            return None
+        return []
+
+    normalized: List[str] = []
+    for team in teams:
+        if isinstance(team, dict):
+            team_id = team.get("id")
+            if team_id:
+                normalized.append(str(team_id))
+        elif isinstance(team, str):
+            normalized.append(team)
+    return normalized
+
+
+def get_jwt_user_email_from_payload(payload: dict[str, Any]) -> str | None:
+    """Extract a human email identity from signed JWT claims without DB lookup.
+
+    The dataplane JWT subject may be an opaque UUID. This helper intentionally
+    never returns that UUID as a user email; callers that need UUID fallback can
+    use :func:`resolve_jwt_user_email_from_payload` with an injected resolver.
+    """
+    user_info = payload.get("user")
+    if isinstance(user_info, dict):
+        user_email = _non_uuid_identity(user_info.get("email"))
+        if user_email is not None:
+            return user_email
+
+    user_email = _non_uuid_identity(payload.get("email"))
+    if user_email is not None:
+        return user_email
+
+    return _non_uuid_identity(payload.get("sub"))
+
+
+async def resolve_jwt_user_email_from_payload(
+    payload: dict[str, Any],
+    *,
+    uuid_email_resolver: Callable[[str], Awaitable[str | None]] | None = None,
+) -> str | None:
+    """Resolve the human email identity from verified JWT claims.
+
+    Signed email metadata is used first and does not touch the database. Only
+    UUID-sub tokens without email metadata use the optional resolver callback.
+    """
+    user_email = get_jwt_user_email_from_payload(payload)
+    if user_email is not None:
+        return user_email
+
+    subject = payload.get("sub")
+    if not isinstance(subject, str):
+        return None
+    subject = subject.strip()
+    if not subject or not _is_uuid_string(subject) or uuid_email_resolver is None:
+        return None
+
+    resolved = await uuid_email_resolver(subject)
+    return _non_uuid_identity(resolved)
 
 
 def get_internal_mcp_auth_context(request: Request) -> Optional[Dict[str, Any]]:
@@ -638,7 +760,7 @@ def get_rpc_filter_context(request: Request, user) -> tuple[Optional[str], Optio
         db_user_is_admin = None
         if user_email:
             # First-Party
-            from mcpgateway.db import EmailUser, SessionLocal  # lazy import — avoids cycle
+            from mcpgateway.db import SessionLocal  # pylint: disable=import-outside-toplevel
 
             _db = SessionLocal()
             try:
@@ -865,7 +987,8 @@ async def set_user_context_from_token(request: Request, payload: dict, db: Sessi
 
     Resolves user ID to email and caches on request.state for performance.
     This helper supports the token migration from email-based to user-ID-based
-    tokens by using get_user_email_from_token() which handles both formats.
+    tokens by using signed email metadata first, then resolving UUID subjects
+    through the provided database session.
 
     Args:
         request: FastAPI request object
@@ -896,13 +1019,21 @@ async def set_user_context_from_token(request: Request, payload: dict, db: Sessi
         >>> request.state.user_id  # doctest: +SKIP
         'user@example.com'
     """
-    # First-Party
-    from mcpgateway.auth import _get_user_by_email_sync  # pylint: disable=import-outside-toplevel
-    from mcpgateway.auth import get_user_email_from_token
+    user_email = get_jwt_user_email_from_payload(payload)
+    db_user = None
 
-    user_email = await get_user_email_from_token(payload, db)
+    if user_email is None:
+        subject = payload.get("sub")
+        if isinstance(subject, str):
+            subject = subject.strip()
+            if subject and _is_uuid_string(subject):
+                db_user = db.query(EmailUser).filter(EmailUser.id == subject).first()
+                user_email = db_user.email if db_user else None
+
+    if user_email and db_user is None:
+        db_user = db.query(EmailUser).filter(EmailUser.email == user_email).first()
+
     request.state.user_email = user_email
     request.state.user_id = payload.get("sub")
-    db_user = await asyncio.to_thread(_get_user_by_email_sync, user_email) if user_email else None
     request.state.is_admin = db_user.is_admin if db_user else False
     request.state.auth_provider = payload.get("auth_provider", "local")
