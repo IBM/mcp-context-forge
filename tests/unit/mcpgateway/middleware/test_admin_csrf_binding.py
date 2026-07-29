@@ -660,6 +660,29 @@ def test_enforce_admin_csrf_rejects_bad_origin(e2e_client):
     assert resp.json()["detail"] == "CSRF origin validation failed"
 
 
+def test_enforce_admin_csrf_rejects_wrong_origin(e2e_client):
+    """Present but non-matching Origin -> 403 'CSRF origin validation failed'.
+
+    ``test_enforce_admin_csrf_rejects_bad_origin`` above only covers a
+    *missing* Origin/Referer, which ``_request_origin_matches`` short-circuits
+    on before ever reaching its ``settings.allowed_origins`` fallback branch
+    (admin.py ~line 1685). A present-but-wrong Origin exercises that fallback
+    branch instead: the exact-same-origin comparison against the request's
+    forwarded scheme/host fails, and the candidate origin is also absent from
+    ``settings.allowed_origins``, so the request is rejected the same way but
+    via different code than the missing-header case.
+    """
+    csrf_token = _login_and_prime_admin_session(e2e_client)
+
+    resp = e2e_client.post(
+        LLM_ADMIN_STATE_PATH,
+        headers={"x-csrf-token": csrf_token, "origin": "https://evil.example"},
+    )
+
+    assert resp.status_code == 403, resp.text
+    assert resp.json()["detail"] == "CSRF origin validation failed"
+
+
 def test_enforce_admin_csrf_allows_form_encoded_csrf_token_field(e2e_client):
     """Form-encoded body with a csrf_token field, no header -> not 403.
 
@@ -769,6 +792,7 @@ def test_admin_llm_write_diverges_between_mounts_immediately_after_login(e2e_cli
     happens below. This is a real behavioral gap worth a follow-up fix; this
     test pins the current (divergent) behavior rather than asserting the two
     mounts agree, so a fix — or a further regression — shows up here.
+    Tracked at https://github.com/IBM/mcp-context-forge/issues/5978.
     """
     login_resp = e2e_client.post(
         "/admin/login",

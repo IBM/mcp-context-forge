@@ -653,16 +653,18 @@ The five settings marked as "middleware-path-only" in the table above govern onl
 ```
 
 !!! warning "CSRF_COOKIE_NAME Synchronization Risk"
-    The cookie name is hardcoded in three places: the middleware respects the `CSRF_COOKIE_NAME` setting, the admin dependency reads a module constant `ADMIN_CSRF_COOKIE_NAME` (`admin.py:1647`), and the Admin UI JavaScript hardcodes `mcpgateway_csrf_token`. Changing `CSRF_COOKIE_NAME` causes the middleware and admin dependency to look for *different cookies*, breaking admin panel writes. If you migrated from an older ContextForge version, verify your `.env` uses `mcpgateway_csrf_token` (not `csrf_token` from a pre-#5780 template).
+    The `CSRF_COOKIE_NAME` setting governs `CSRFMiddleware` only. Three other places hardcode the cookie name independently and do **not** read the setting: `mcpgateway/admin.py:1647` (module constant `ADMIN_CSRF_COOKIE_NAME`), `mcpgateway/routers/oauth_router.py:52` (its own `ADMIN_CSRF_COOKIE_NAME` copy, used by the OAuth fetch-tools CSRF check), and the Admin UI JavaScript (`llmModels.js`). Changing `CSRF_COOKIE_NAME` causes the middleware and these three hardcoded copies to look for *different cookies*, breaking admin panel writes. If you migrated from an older ContextForge version, verify your `.env` uses `mcpgateway_csrf_token` (not `csrf_token` from a pre-#5780 template).
 
 !!! warning "CSRF_COOKIE_HTTPONLY Must Stay False"
     The browser JavaScript must read the CSRF cookie to echo it in the `X-CSRF-Token` header (double-submit pattern). Setting `CSRF_COOKIE_HTTPONLY=true` makes the cookie unreadable to JavaScript, breaking every CSRF-protected write. The cookie is safe: the middleware's HMAC token is bound to user + session identity, preventing CSRF abuse.
 
 !!! info "CSRF_TRUSTED_ORIGINS: Code Default vs. Template"
-    The code default is an empty list `[]`, meaning no additional origins beyond same-site are trusted. However, `.env.example` overrides this with localhost origins (`http://localhost:3000`, `http://localhost:8080`, etc.) for development convenience. Production deployments should verify the code default and explicitly configure `CSRF_TRUSTED_ORIGINS` to match your frontend origin(s).
+    The code default is an empty list `[]`, meaning no additional origins beyond same-site are trusted. However, `.env.example` overrides this with `["http://localhost:4444","http://localhost:8080"]` for development convenience. Production deployments should verify the code default and explicitly configure `CSRF_TRUSTED_ORIGINS` to match your frontend origin(s).
 
 !!! info "CSRF_EXEMPT_PATHS and Versioned Route Interaction"
     The middleware exemption uses prefix matching on the raw request path (e.g., `/admin` matches `/admin/llm/*` but not `/v1/admin/llm/*`). This means versioned admin routes at `/v1/admin/*` are validated by both the middleware and the per-route `enforce_admin_csrf` dependency (double validation), while legacy routes at `/admin/*` use only the per-route dependency (exempt from middleware). Cross-validate your paths against both implementations. See [Middleware Ordering and Stacking](../architecture/middleware-ordering.md) for details on how CSRF middleware interacts with other middleware and per-route dependencies.
+
+    This double-validation is also where a known timing gap surfaces: in the window between `/admin/login` and the first dashboard load, the versioned mount's extra `CSRFMiddleware` pass can reject a write that the legacy mount's `enforce_admin_csrf`-only path accepts, because the CSRF cookie has not yet rotated from its opaque pre-login value to its HMAC-bound one. See [IBM/mcp-context-forge#5978](https://github.com/IBM/mcp-context-forge/issues/5978).
 
 ### Identity Propagation
 

@@ -1178,7 +1178,12 @@ The middleware's exemption for the `/admin` prefix is prefix-matched on the raw 
 | `/admin/llm/*` (legacy) | Exempt | Applied | 1 (admin only) |
 | `/v1/admin/llm/*` (versioned) | Applied | Applied | 2 (double validation) |
 
-**Consequence**: Versioned admin routes at `/v1/admin/llm/*` validate against both CSRF schemes simultaneously. Legacy routes at `/admin/llm/*` use only the admin dependency's double-submit scheme. For new code, prefer the versioned `/v1/` prefix; the legacy mount is hidden from `/openapi.json` and exists for backward compatibility only.
+**Consequence**: Versioned admin routes at `/v1/admin/llm/*` validate against both CSRF schemes simultaneously. Legacy routes at `/admin/llm/*` use only the admin dependency's double-submit scheme. The legacy mount is hidden from `/openapi.json` and exists for backward compatibility; do not assume the versioned `/v1/` prefix is strictly safer to prefer — see the known issue below before choosing between them for new code.
+
+!!! warning "Known Issue: mounts disagree right after login (#5978)"
+    The intended contract is that `/admin/llm/*` and `/v1/admin/llm/*` behave identically for CSRF purposes — the extra `CSRFMiddleware` pass on the versioned mount is meant to be redundant with `enforce_admin_csrf`, not stricter. In practice, there is a narrow window where they disagree: `admin_login_handler` sets the CSRF cookie as an opaque, non-HMAC token, and only the first dashboard load (`GET /admin/`) rotates it to its real HMAC-bound value. A write issued between login and that first dashboard load presents the opaque cookie, which satisfies `enforce_admin_csrf`'s plain double-submit comparison but fails `CSRFMiddleware`'s HMAC validation. The result: the identical request is accepted at `/admin/llm/*` and rejected with `CSRF_TOKEN_INVALID` at `/v1/admin/llm/*`. Tracked at [IBM/mcp-context-forge#5978](https://github.com/IBM/mcp-context-forge/issues/5978); until it is fixed, do not rely on either mount being strictly more permissive or more correct than the other in this window.
+
+The Admin UI itself calls the unprefixed `/admin/llm/*` form, not `/v1/admin/llm/*` — which is why this divergence has gone unnoticed in practice; only direct callers of the versioned mount are affected.
 
 ### CSRF Protection Detail
 

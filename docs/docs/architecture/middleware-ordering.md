@@ -29,39 +29,41 @@ This reverse-registration rule is a Starlette/FastAPI design decision. When a mi
 
 ## Current Middleware Stack
 
-The middleware stack in `mcpgateway/main.py` (lines ~3265–3501) includes ~26 middleware, plus one outlier registered after route setup. The table below shows them in **registration order** (top = registered first, bottom = registered last):
+The middleware stack in `mcpgateway/main.py` (lines ~3265–3501) includes ~26 middleware, plus one outlier registered after route setup. The table below shows them in **registration order** (top = registered first, bottom = registered last). Per the [Reverse Registration Rule](#reverse-registration-rule) above, execution order on the request path is the *reverse* of this table — deriving an exact per-row execution rank by hand is error-prone (several rows are conditionally registered, which shifts everyone after them), so it is intentionally omitted here; see the prose sections below the table (state dependencies, the outlier) for the orderings that actually matter in practice, worked out and verified against `main.py` directly:
 
-| Registration Order | Middleware | Execution Order | Purpose | Conditional |
-|---|---|---|---|---|
-| 1 | `CORSMiddleware` | Outermost | Handles CORS preflight and cross-origin policy | Always |
-| 2 | `SSEAwareCompressMiddleware` | ... | Compresses responses (Brotli/Zstd/GZip), excludes SSE/MCP streams | `compression_enabled` |
-| 3 | `SecurityHeadersMiddleware` | ... | Adds CSP, X-Frame-Options, HSTS, strips Server headers | Always |
-| 4 | `HeaderSizeMiddleware` | ... | Validates request header count/size (RFC 6585 §5) | `header_size_validation_enabled` |
-| 5 | `RateLimitMiddleware` | ... | Rate-limiting enforcement per IP/user tier | `rate_limiting_enabled` |
-| 6 | `ValidationMiddleware` | ... | Input validation and output sanitization | `validation_middleware_enabled` |
-| 7 | `MCPProtocolVersionMiddleware` | ... | Validates `MCP-Protocol-Version` header on MCP routes | Always |
-| 8 | `BaseHTTPMiddleware` (token scoping) | ... | Applies token scoping for email-auth users (data filtering) | `email_auth_enabled` |
-| 9 | `MCPPathRewriteMiddleware` (token scoped) | ... | Streamable HTTP for MCP routes with token scoping | `email_auth_enabled` |
-| 10 | `MCPPathRewriteMiddleware` | ... | Streamable HTTP for MCP routes (no scoping) | `NOT email_auth_enabled` |
-| 11 | `HttpAuthMiddleware` | ... | Plugin hook for HTTP auth (e.g., OAuth/OIDC) | Always |
-| 12 | `RequestLoggingMiddleware` | ... | Gateway boundary and detailed request/response logging | Always |
-| 13 | `DocsAuthMiddleware` | ... | Restricts `/docs` and `/redoc` to authenticated users | Always |
-| 14 | `AdminAuthMiddleware` | ... | Requires admin privilege for `/admin/*` routes | Always |
-| 15 | `ForwardedHostMiddleware` | ... | Rewrites `Host` from `X-Forwarded-Host` (proxy support) | Always |
-| 16 | `ProxyHeadersMiddleware` | ... | Trusts `X-Forwarded-*` headers (scheme, IP) | Always |
-| 17 | `CorrelationIDMiddleware` | ... | Attaches request correlation ID for tracing | `correlation_id_enabled` |
-| 18 | `CSRFMiddleware` | ... | CSRF token validation (state-changing requests) | `csrf_enabled` |
-| 19 | `PasswordChangeEnforcementMiddleware` | ... | Redirects users requiring password change (admin-only) | `password_change_enforcement_enabled` |
-| 20 | `AuthContextMiddleware` | Innermost* | Extracts and validates JWT/session, sets `request.state.user` | `security_logging_enabled` OR `siem_export_enabled` with "auth" events OR `mcpgateway_admin_api_enabled` OR `password_change_enforcement_enabled` |
-| 21 | `TokenUsageMiddleware` | (varies) | Logs token usage for analytics/audit | `token_usage_logging_enabled` |
-| 22 | `ObservabilityMiddleware` | (varies) | Traces request spans for observability | `observability_enabled` |
-| 23 | `OpenTelemetryRequestMiddleware` | (varies) | OTEL request root span | `otel_tracing_enabled()` |
-| 24 | `BaggageMiddleware` | (varies) | OTEL baggage extraction from headers | `otel_baggage_enabled` AND `otel_tracing_enabled()` |
-| 25 | `DBQueryLoggingMiddleware` | (varies) | Logs database queries for N+1 detection | `db_query_log_enabled` |
-| 26 | `ClientDisconnectMiddleware` | (varies) | Cancels in-flight handlers on client disconnect | `client_disconnect_middleware_enabled` |
-| **27 (outlier)** | **`DeprecationHeadersMiddleware`** | **Outermost** | **Adds RFC 8594 Sunset/Link headers to legacy routes** | **`legacy_api_enabled`** |
+| Registration Order | Middleware | Purpose | Conditional |
+|---|---|---|---|
+| 1 | `CORSMiddleware` | Handles CORS preflight and cross-origin policy | Always |
+| 2 | `SSEAwareCompressMiddleware` | Compresses responses (Brotli/Zstd/GZip), excludes SSE/MCP streams | `compression_enabled` |
+| 3 | `SecurityHeadersMiddleware` | Adds CSP, X-Frame-Options, HSTS, strips Server headers | Always |
+| 4 | `HeaderSizeMiddleware` | Validates request header count/size (RFC 6585 §5) | `header_size_validation_enabled` |
+| 5 | `RateLimitMiddleware` | Rate-limiting enforcement per IP/user tier | `rate_limiting_enabled` |
+| 6 | `ValidationMiddleware` | Input validation and output sanitization | `validation_middleware_enabled` |
+| 7 | `MCPProtocolVersionMiddleware` | Validates `MCP-Protocol-Version` header on MCP routes | Always |
+| 8 | `BaseHTTPMiddleware` (token scoping) | Applies token scoping for email-auth users (data filtering) | `email_auth_enabled` |
+| 9 | `MCPPathRewriteMiddleware` (token scoped) | Streamable HTTP for MCP routes with token scoping | `email_auth_enabled` |
+| 10 | `MCPPathRewriteMiddleware` | Streamable HTTP for MCP routes (no scoping) | `NOT email_auth_enabled` |
+| 11 | `HttpAuthMiddleware` | Plugin hook for HTTP auth (e.g., OAuth/OIDC) | Always |
+| 12 | `RequestLoggingMiddleware` | Gateway boundary and detailed request/response logging | Always |
+| 13 | `DocsAuthMiddleware` | Restricts `/docs` and `/redoc` to authenticated users | Always |
+| 14 | `AdminAuthMiddleware` | Requires admin privilege for `/admin/*` routes | Always |
+| 15 | `ForwardedHostMiddleware` | Rewrites `Host` from `X-Forwarded-Host` (proxy support) | Always |
+| 16 | `ProxyHeadersMiddleware` | Trusts `X-Forwarded-*` headers (scheme, IP) | Always |
+| 17 | `CorrelationIDMiddleware` | Attaches request correlation ID for tracing | `correlation_id_enabled` |
+| 18 | `CSRFMiddleware` | CSRF token validation (state-changing requests) | `csrf_enabled` |
+| 19 | `PasswordChangeEnforcementMiddleware` | Redirects users requiring password change (admin-only) | `password_change_enforcement_enabled` |
+| 20 | `AuthContextMiddleware` | Extracts and validates JWT/session, sets `request.state.user` | `security_logging_enabled` OR `siem_export_enabled` with "auth" events OR `mcpgateway_admin_api_enabled` OR `password_change_enforcement_enabled` |
+| 21 | `TokenUsageMiddleware` | Logs token usage for analytics/audit | `token_usage_logging_enabled` |
+| 22 | `ObservabilityMiddleware` | Traces request spans for observability | `observability_enabled` |
+| 23 | `OpenTelemetryRequestMiddleware` | OTEL request root span | `otel_tracing_enabled()` |
+| 24 | `BaggageMiddleware` | OTEL baggage extraction from headers | `otel_baggage_enabled` AND `otel_tracing_enabled()` |
+| 25 | `DBQueryLoggingMiddleware` | Logs database queries for N+1 detection | `db_query_log_enabled` |
+| 26 | `ClientDisconnectMiddleware` | Cancels in-flight handlers on client disconnect | `client_disconnect_middleware_enabled` |
+| **27 (outlier)** | **`DeprecationHeadersMiddleware`** | **Adds RFC 8594 Sunset/Link headers to legacy routes** | **`legacy_api_enabled`** |
 
-\* *`AuthContextMiddleware` is registered when certain conditions are met (security logging enabled, SIEM export with "auth" events enabled, admin API enabled, or password change enforcement enabled). When registered, it is registered LAST in the main block, making it the innermost of the three auth-related middleware (rows 18–20) but not necessarily innermost overall if other middleware (rows 21–26) are enabled.*
+Row 27 is the one row whose execution position is unambiguous and worth calling out here: it is registered *after* everything else (see [The Outlier](#the-outlier-deprecationheadersmiddleware) below), which per the reverse-registration rule makes it the **outermost** middleware in the stack — it runs first on the request path, ahead of even `CORSMiddleware` (row 1).
+
+Rows 18–20 (`CSRFMiddleware`, `PasswordChangeEnforcementMiddleware`, `AuthContextMiddleware`) are registered in that order, so among just those three, `AuthContextMiddleware` — registered *last* of the three — is the **outermost of the three** and runs *first* among them on the request path, populating `request.state.user` before `CSRFMiddleware` or `PasswordChangeEnforcementMiddleware` execute. That is the intended, correct behavior; see [State Dependencies](#state-dependencies-the-csrf--auth-middleware-ordering-bug) below. Note that `AuthContextMiddleware` is *not* registered last in the main block overall — `TokenUsageMiddleware`, `ObservabilityMiddleware`, `OpenTelemetryRequestMiddleware`, `BaggageMiddleware`, `DBQueryLoggingMiddleware`, and `ClientDisconnectMiddleware` (rows 21–26) are all registered after it, so it is not the innermost middleware overall either.
 
 ### The Outlier: `DeprecationHeadersMiddleware`
 
@@ -135,7 +137,7 @@ If you add another middleware that reads `request.state` values set by `AuthCont
        assert auth_index < my_index
    ```
 
-4. **Consider the reverse-registration rule.** When reading the code, remember that `add_middleware()` calls at the *end* register middleware that runs *first* on requests. Use this link to this page ([../architecture/middleware-ordering.md](middleware-ordering.md)) to document your ordering rationale in comments.
+4. **Consider the reverse-registration rule.** When reading the code, remember that `add_middleware()` calls at the *end* register middleware that runs *first* on requests. When adding new middleware, reference this page (`docs/docs/architecture/middleware-ordering.md`) in the code comment next to your `app.add_middleware()` call to document your ordering rationale.
 
 5. **Avoid brittle line-number references.** When documenting middleware order in code or docs, reference the middleware class name and its high-level purpose (e.g., "registered before AuthContextMiddleware") rather than specific line numbers, since the codebase evolves.
 
