@@ -1165,8 +1165,20 @@ curl -s -X DELETE -H "Authorization: Bearer $TOKEN" \
 
 LLM Settings Management endpoints configure language model providers and models. The feature is available only when `LLMCHAT_ENABLED=true`; otherwise, all LLM routes return `404 Not Found`. These endpoints are exposed through two route families that use different CSRF protection schemes:
 
-- **`/v1/llm/providers`, `/v1/llm/models`** — Read and write operations protected by `CSRFMiddleware` (HMAC-based tokens). The canonical prefix is `/v1/`; unprefixed legacy aliases (`/llm/providers`, `/llm/models`) also resolve when `LEGACY_API_ENABLED=true`, but are hidden from `/openapi.json`.
+- **`/v1/llm/providers`, `/v1/llm/models`** — Write operations protected by `CSRFMiddleware` (HMAC-based tokens); read operations (GET/HEAD/OPTIONS) are safe methods and skip CSRF validation. The canonical prefix is `/v1/`; unprefixed legacy aliases (`/llm/providers`, `/llm/models`) also resolve when `LEGACY_API_ENABLED=true`, but are hidden from `/openapi.json`.
 - **`/v1/admin/llm/*`** — Write operations for the Admin UI, protected by `enforce_admin_csrf` dependency (double-submit with plain token comparison). These routes are validated by **both** CSRF schemes (the `/admin` prefix does not exempt `/v1/admin/*` paths from `CSRFMiddleware`).
+- **`/admin/llm/*` (legacy)**  — Legacy unprefixed aliases of the admin routes, also protected by `enforce_admin_csrf` but **exempt from `CSRFMiddleware`** due to the `/admin` prefix exemption. Only the `enforce_admin_csrf` dependency is applied.
+
+### Path-Based CSRF Validation Matrix
+
+The middleware's exemption for the `/admin` prefix is prefix-matched on the raw request path, affecting which CSRF schemes apply:
+
+| Request Path | CSRFMiddleware | enforce_admin_csrf | Total Schemes |
+|---|---|---|---|
+| `/admin/llm/*` (legacy) | Exempt | Applied | 1 (admin only) |
+| `/v1/admin/llm/*` (versioned) | Applied | Applied | 2 (double validation) |
+
+**Consequence**: Versioned admin routes at `/v1/admin/llm/*` validate against both CSRF schemes simultaneously. Legacy routes at `/admin/llm/*` use only the admin dependency's double-submit scheme. For new code, prefer the versioned `/v1/` prefix; the legacy mount is hidden from `/openapi.json` and exists for backward compatibility only.
 
 ### CSRF Protection Detail
 
@@ -1177,7 +1189,7 @@ The two route families use independent CSRF implementations:
 | Cookie name | `settings.csrf_cookie_name` (configurable) | `mcpgateway_csrf_token` (hardcoded) |
 | Header name | `settings.csrf_token_name` (configurable, default `X-CSRF-Token`) | `x-csrf-token` (hardcoded) |
 | Token scheme | HMAC over `user_id:session_id:window` | Plain double-submit: `compare_digest(header, cookie)` |
-| Origin check | Via `settings.allowed_origins` | Always, via `Origin`/`Referer` header validation |
+| Origin check | Via `CSRF_CHECK_REFERER` setting + `CSRF_TRUSTED_ORIGINS` | Always, via `Origin`/`Referer` header validation |
 | Bearer-token bypass | Yes — middleware skips token check for `Authorization: Bearer` | Yes — dependency returns early when no `jwt_token` cookie is present |
 | Form field fallback | Not supported | `csrf_token` form field (for form-encoded requests) |
 
@@ -1186,14 +1198,8 @@ The two route families use independent CSRF implementations:
 ### List LLM Providers
 
 ```bash
-# Bearer-token auth (CSRF not required)
+# Bearer-token auth (CSRF not required for GET requests)
 curl -s -H "Authorization: Bearer $TOKEN" \
-  $BASE_URL/v1/llm/providers | jq '.'
-
-# Cookie + X-CSRF-Token auth (browser form)
-curl -s -b "jwt_token=$JWT_COOKIE; mcpgateway_csrf_token=$CSRF_COOKIE" \
-  -H "X-CSRF-Token: $CSRF_COOKIE" \
-  -H "Origin: http://localhost:8000" \
   $BASE_URL/v1/llm/providers | jq '.'
 ```
 
@@ -1218,14 +1224,8 @@ curl -s -b "jwt_token=$JWT_COOKIE; mcpgateway_csrf_token=$CSRF_COOKIE" \
 ### List LLM Models
 
 ```bash
-# Bearer-token auth
+# Bearer-token auth (CSRF not required for GET requests)
 curl -s -H "Authorization: Bearer $TOKEN" \
-  $BASE_URL/v1/llm/models | jq '.'
-
-# Cookie + CSRF token auth
-curl -s -b "jwt_token=$JWT_COOKIE; mcpgateway_csrf_token=$CSRF_COOKIE" \
-  -H "X-CSRF-Token: $CSRF_COOKIE" \
-  -H "Origin: http://localhost:8000" \
   $BASE_URL/v1/llm/models | jq '.'
 ```
 
@@ -1249,12 +1249,12 @@ curl -s -b "jwt_token=$JWT_COOKIE; mcpgateway_csrf_token=$CSRF_COOKIE" \
 
 ### Update Provider State
 
-Toggle a provider's enabled status.
+Toggle a provider's enabled status. Returns an HTML fragment of the updated provider row for HTMX.
 
 ```bash
 # Bearer-token auth (CSRF not required)
 curl -s -X POST -H "Authorization: Bearer $TOKEN" \
-  $BASE_URL/v1/admin/llm/providers/provider-123/state | jq '.'
+  $BASE_URL/v1/admin/llm/providers/provider-123/state
 
 # Cookie + CSRF token auth (Admin UI form)
 # Note: enforce_admin_csrf requires Origin or Referer header
@@ -1262,7 +1262,7 @@ curl -s -X POST \
   -b "jwt_token=$JWT_COOKIE; mcpgateway_csrf_token=$CSRF_COOKIE" \
   -H "X-CSRF-Token: $CSRF_COOKIE" \
   -H "Origin: http://localhost:8000" \
-  $BASE_URL/v1/admin/llm/providers/provider-123/state | jq '.'
+  $BASE_URL/v1/admin/llm/providers/provider-123/state
 ```
 
 ### Check Provider Health
@@ -1294,58 +1294,58 @@ curl -s -X POST \
 
 ### Delete Provider
 
-Remove a provider and all associated models.
+Remove a provider and all associated models. Returns HTTP 200 with an empty body for HTMX row removal.
 
 ```bash
 # Bearer-token auth
 curl -s -X DELETE -H "Authorization: Bearer $TOKEN" \
-  $BASE_URL/v1/admin/llm/providers/provider-123 | jq '.'
+  $BASE_URL/v1/admin/llm/providers/provider-123
 
 # Cookie + CSRF token auth
 curl -s -X DELETE \
   -b "jwt_token=$JWT_COOKIE; mcpgateway_csrf_token=$CSRF_COOKIE" \
   -H "X-CSRF-Token: $CSRF_COOKIE" \
   -H "Origin: http://localhost:8000" \
-  $BASE_URL/v1/admin/llm/providers/provider-123 | jq '.'
+  $BASE_URL/v1/admin/llm/providers/provider-123
 ```
 
 ### Update Model State
 
-Toggle a model's enabled status.
+Toggle a model's enabled status. Returns an HTML fragment of the updated model row for HTMX.
 
 ```bash
 # Bearer-token auth
 curl -s -X POST -H "Authorization: Bearer $TOKEN" \
-  $BASE_URL/v1/admin/llm/models/model-456/state | jq '.'
+  $BASE_URL/v1/admin/llm/models/model-456/state
 
 # Cookie + CSRF token auth
 curl -s -X POST \
   -b "jwt_token=$JWT_COOKIE; mcpgateway_csrf_token=$CSRF_COOKIE" \
   -H "X-CSRF-Token: $CSRF_COOKIE" \
   -H "Origin: http://localhost:8000" \
-  $BASE_URL/v1/admin/llm/models/model-456/state | jq '.'
+  $BASE_URL/v1/admin/llm/models/model-456/state
 ```
 
 ### Delete Model
 
-Remove a model.
+Remove a model. Returns HTTP 200 with an empty body for HTMX row removal.
 
 ```bash
 # Bearer-token auth
 curl -s -X DELETE -H "Authorization: Bearer $TOKEN" \
-  $BASE_URL/v1/admin/llm/models/model-456 | jq '.'
+  $BASE_URL/v1/admin/llm/models/model-456
 
 # Cookie + CSRF token auth
 curl -s -X DELETE \
   -b "jwt_token=$JWT_COOKIE; mcpgateway_csrf_token=$CSRF_COOKIE" \
   -H "X-CSRF-Token: $CSRF_COOKIE" \
   -H "Origin: http://localhost:8000" \
-  $BASE_URL/v1/admin/llm/models/model-456 | jq '.'
+  $BASE_URL/v1/admin/llm/models/model-456
 ```
 
 ### Test LLM Provider
 
-Test a provider's API connectivity and LLM response.
+Test a provider's API connectivity and LLM response. Accepts JSON request bodies only.
 
 ```bash
 # Bearer-token auth
@@ -1356,11 +1356,15 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" \
   }' \
   $BASE_URL/v1/admin/llm/test | jq '.'
 
-# Cookie + CSRF token auth (form-encoded submission)
+# Cookie + CSRF token auth (JSON submission)
 curl -s -X POST \
   -b "jwt_token=$JWT_COOKIE; mcpgateway_csrf_token=$CSRF_COOKIE" \
+  -H "X-CSRF-Token: $CSRF_COOKIE" \
   -H "Origin: http://localhost:8000" \
-  -d "test_type=models&csrf_token=$CSRF_COOKIE" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "test_type": "models"
+  }' \
   $BASE_URL/v1/admin/llm/test | jq '.'
 ```
 
