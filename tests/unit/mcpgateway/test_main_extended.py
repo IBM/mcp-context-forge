@@ -3647,7 +3647,7 @@ class TestServerEndpointCoverage:
         tool = MagicMock()
         tool.model_dump.return_value = {"id": "tool-1"}
 
-        monkeypatch.setattr("mcpgateway.main.get_scoped_resource_access_context", lambda _req, _user: (None, None))
+        monkeypatch.setattr("mcpgateway.main.get_scoped_resource_access_context", lambda _req, _user: ("user@example.com", None))
         list_tools = AsyncMock(return_value=[tool])
         monkeypatch.setattr("mcpgateway.main.tool_service.list_server_tools", list_tools)
 
@@ -4728,7 +4728,7 @@ class TestToolListEndpointCoverage:
         list_tools_mock = AsyncMock(return_value=([], None))
         monkeypatch.setattr(main_mod.tool_service, "list_tools", list_tools_mock)
 
-        monkeypatch.setattr(main_mod, "get_scoped_resource_access_context", lambda _req, _user: (None, None))
+        monkeypatch.setattr(main_mod, "get_scoped_resource_access_context", lambda _req, _user: ("user@example.com", None))
         await main_mod.list_tools(
             request,
             cursor=None,
@@ -12518,7 +12518,7 @@ class TestRemainingCoverageGaps:
 
         monkeypatch.setattr(main_mod.resource_service, "list_resource_templates", AsyncMock(return_value=[]))
 
-        monkeypatch.setattr(main_mod, "get_scoped_resource_access_context", lambda _req, _user: (None, None))
+        monkeypatch.setattr(main_mod, "get_scoped_resource_access_context", lambda _req, _user: ("u", None))
         result = await main_mod.list_resource_templates.__wrapped__(request, db=MagicMock(), include_inactive=False, tags="a, b", visibility=None, user={"email": "u"})
         assert result.resource_templates == []
 
@@ -12536,7 +12536,7 @@ class TestRemainingCoverageGaps:
         list_prompts = AsyncMock(return_value=([], None))
         monkeypatch.setattr(main_mod.prompt_service, "list_prompts", list_prompts)
 
-        monkeypatch.setattr(main_mod, "get_scoped_resource_access_context", lambda _req, _user: (None, None))
+        monkeypatch.setattr(main_mod, "get_scoped_resource_access_context", lambda _req, _user: ("u", None))
         await main_mod.list_prompts.__wrapped__(
             request,
             cursor=None,
@@ -12583,7 +12583,7 @@ class TestRemainingCoverageGaps:
         prompt.model_dump.return_value = {"id": "p1"}
         monkeypatch.setattr(main_mod.prompt_service, "list_server_prompts", AsyncMock(return_value=[prompt]))
 
-        monkeypatch.setattr(main_mod, "get_scoped_resource_access_context", lambda _req, _user: (None, None))
+        monkeypatch.setattr(main_mod, "get_scoped_resource_access_context", lambda _req, _user: ("u", None))
         result = await main_mod.server_get_resources.__wrapped__(request, "srv", include_inactive=False, db=MagicMock(), user={"email": "u"})
         assert result == [{"id": "r1"}]
 
@@ -13563,7 +13563,7 @@ async def test_protocol_completion_endpoint_direct_admin_null_teams_preserves_by
     db = object()
 
     monkeypatch.setattr(main_mod, "_read_request_json", AsyncMock(return_value=payload))
-    monkeypatch.setattr(main_mod, "get_scoped_resource_access_context", lambda _req, _user: (None, None))
+    monkeypatch.setattr(main_mod, "get_scoped_resource_access_context", lambda _req, _user: ("admin@example.com", None))
     completion_mock = AsyncMock(return_value={"result": "ok"})
     monkeypatch.setattr(main_mod.completion_service, "handle_completion", completion_mock)
 
@@ -13601,7 +13601,11 @@ async def test_protocol_completion_endpoint_direct_non_admin_none_teams_becomes_
 
 @pytest.mark.asyncio
 async def test_handle_rpc_completion_direct_admin_null_teams_preserves_bypass(monkeypatch):
-    """RPC completion direct path should preserve admin bypass context."""
+    """RPC completion direct path should preserve admin bypass context.
+
+    Issue #4694: admin bypass keeps user_email set so the completion service can still match
+    the admin's own private rows. The dispatcher passes the scoped context through verbatim.
+    """
     # First-Party
     import mcpgateway.main as main_mod
 
@@ -13612,7 +13616,7 @@ async def test_handle_rpc_completion_direct_admin_null_teams_preserves_bypass(mo
     db = MagicMock()
 
     monkeypatch.setattr(main_mod.settings, "mcpgateway_session_affinity_enabled", False)
-    monkeypatch.setattr(main_mod, "get_scoped_resource_access_context", lambda _req, _user: (None, None))
+    monkeypatch.setattr(main_mod, "get_scoped_resource_access_context", lambda _req, _user: ("admin@example.com", None))
     completion_mock = AsyncMock(return_value={"done": True})
     monkeypatch.setattr(main_mod.completion_service, "handle_completion", completion_mock)
 
@@ -13620,7 +13624,7 @@ async def test_handle_rpc_completion_direct_admin_null_teams_preserves_bypass(mo
     assert result["jsonrpc"] == "2.0"
     assert result["id"] == "rpc-id"
     assert result["result"] == {"done": True}
-    assert completion_mock.await_args.kwargs["user_email"] is None
+    assert completion_mock.await_args.kwargs["user_email"] == "admin@example.com"
     assert completion_mock.await_args.kwargs["token_teams"] is None
 
 

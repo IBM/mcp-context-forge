@@ -784,7 +784,9 @@ def get_rpc_filter_context(request: Request, user) -> tuple[Optional[str], Optio
     cached = getattr(request.state, "_jwt_verified_payload", None)
     if cached and isinstance(cached, tuple) and len(cached) == 2:
         _, payload = cached
-        if payload:
+        # A malformed (non-dict) cached payload carries no usable admin claim; fall through
+        # with is_admin unchanged so the caller defers to RBAC instead of raising.
+        if isinstance(payload, dict):
             # Session tokens ignore JWT is_admin claim — DB is the authority.
             # An old/stale session JWT carrying is_admin=true must not influence
             # the boolean admin decision; only DB-resolved token_teams=None can

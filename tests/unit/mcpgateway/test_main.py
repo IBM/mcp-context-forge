@@ -2390,8 +2390,12 @@ class TestTagEndpoints:
     @patch("mcpgateway.main.get_scoped_resource_access_context")
     @patch("mcpgateway.main.tag_service.get_all_tags", new_callable=AsyncMock)
     def test_list_tags_admin_bypass_passes_unrestricted_scope(self, mock_get_tags, mock_filter_context, test_client, auth_headers):
-        """Explicit admin bypass token should pass unrestricted scope to tag service."""
-        mock_filter_context.return_value = (None, None)
+        """Explicit admin bypass token should pass unrestricted scope to tag service.
+
+        Issue #4694: admin bypass keeps user_email set so the service can still match the
+        admin's own private rows. The endpoint passes the scoped context through verbatim.
+        """
+        mock_filter_context.return_value = ("admin@example.com", None)
         mock_get_tags.return_value = []
 
         response = test_client.get("/tags", headers=auth_headers)
@@ -2401,7 +2405,7 @@ class TestTagEndpoints:
             ANY,
             entity_types=None,
             include_entities=False,
-            user_email=None,
+            user_email="admin@example.com",
             token_teams=None,
         )
 
@@ -2426,8 +2430,12 @@ class TestTagEndpoints:
     @patch("mcpgateway.main.get_scoped_resource_access_context")
     @patch("mcpgateway.main.tag_service.get_entities_by_tag", new_callable=AsyncMock)
     def test_get_entities_by_tag_admin_bypass_passes_unrestricted_scope(self, mock_get_entities, mock_filter_context, test_client, auth_headers):
-        """Admin bypass context should pass unrestricted scope to tag entity lookup."""
-        mock_filter_context.return_value = (None, None)
+        """Admin bypass context should pass unrestricted scope to tag entity lookup.
+
+        Issue #4694: admin bypass keeps user_email set so the service can still match the
+        admin's own private rows. The endpoint passes the scoped context through verbatim.
+        """
+        mock_filter_context.return_value = ("admin@example.com", None)
         mock_get_entities.return_value = []
 
         response = test_client.get("/tags/test/entities", headers=auth_headers)
@@ -2437,7 +2445,7 @@ class TestTagEndpoints:
             ANY,
             tag_name="test",
             entity_types=None,
-            user_email=None,
+            user_email="admin@example.com",
             token_teams=None,
         )
 
@@ -2698,7 +2706,14 @@ class TestRPCEndpoints:
     @patch("mcpgateway.main.prompt_service.get_prompt")
     # @patch("mcpgateway.main.validate_request")
     def test_rpc_prompt_get(self, mock_get_prompt, test_client, auth_headers):
-        """Test prompt retrieval via JSON-RPC."""
+        """Test prompt retrieval via JSON-RPC.
+
+        The ``test_client`` fixture authenticates as an admin without a verified JWT payload
+        (basic-auth / dev-mode context), so ``get_scoped_resource_access_context`` grants Layer-1
+        admin bypass and passes ``token_teams=None``. The superseded inline derivation only
+        inspected the JWT ``is_admin`` claim and incorrectly narrowed this caller to public-only
+        (``token_teams=[]``) - see issue #4451.
+        """
         mock_get_prompt.return_value = {
             "messages": [{"role": "user", "content": {"type": "text", "text": "Rendered prompt"}}],
             "description": "A test prompt",
@@ -2721,7 +2736,7 @@ class TestRPCEndpoints:
             {"param": "value"},  # arguments
             user="test_user@example.com",
             server_id=None,
-            token_teams=[],
+            token_teams=None,
             plugin_context_table=None,
             plugin_global_context=ANY,
             _meta_data=None,
@@ -3247,8 +3262,12 @@ class TestRPCEndpoints:
     @patch("mcpgateway.main.get_scoped_resource_access_context")
     @patch("mcpgateway.main.completion_service.handle_completion", new_callable=AsyncMock)
     def test_rpc_completion_complete_admin_bypass(self, mock_completion, mock_filter_context, test_client, auth_headers):
-        """RPC completion should preserve explicit admin bypass context."""
-        mock_filter_context.return_value = (None, None)
+        """RPC completion should preserve explicit admin bypass context.
+
+        Issue #4694: admin bypass keeps user_email set so the service can still match the
+        admin's own private rows. The dispatcher passes the scoped context through verbatim.
+        """
+        mock_filter_context.return_value = ("admin@example.com", None)
         mock_completion.return_value = {"result": "done"}
         req = {"jsonrpc": "2.0", "id": "test-id", "method": "completion/complete", "params": {"ref": {"type": "ref/prompt", "name": "p1"}}}
 
@@ -3256,7 +3275,7 @@ class TestRPCEndpoints:
 
         assert response.status_code == 200
         assert response.json()["result"]["result"] == "done"
-        mock_completion.assert_awaited_once_with(ANY, req["params"], user_email=None, token_teams=None)
+        mock_completion.assert_awaited_once_with(ANY, req["params"], user_email="admin@example.com", token_teams=None)
 
     @patch("mcpgateway.main.get_scoped_resource_access_context")
     @patch("mcpgateway.main.completion_service.handle_completion", new_callable=AsyncMock)
@@ -6058,21 +6077,22 @@ class TestA2AInvokeBodyEndpoint:
         assert response.status_code in [200, 404]
 
     @patch("mcpgateway.main.a2a_service")
-    @patch("mcpgateway.main.get_rpc_filter_context")
+    @patch("mcpgateway.main.get_scoped_resource_access_context")
     def test_invoke_admin_bypass_no_team_restrictions(self, mock_context, mock_service, test_client, auth_headers):
         """Test admin bypass when teams=None. Covers: main.py lines 5173-5174"""
         mock_service.invoke_agent = AsyncMock(return_value={"ok": True})
-        mock_context.return_value = ("admin@example.com", None, True)
+        # Issue #4694: admin bypass keeps user_email set for owner matching on own private rows
+        mock_context.return_value = ("admin@example.com", None)
         response = test_client.post("/a2a/invoke", json={"agent_id": "test-agent", "parameters": {}}, headers=auth_headers)
         assert response.status_code in [200, 404]
         assert mock_context.called
 
     @patch("mcpgateway.main.a2a_service")
-    @patch("mcpgateway.main.get_rpc_filter_context")
+    @patch("mcpgateway.main.get_scoped_resource_access_context")
     def test_invoke_non_admin_no_teams_public_only(self, mock_context, mock_service, test_client, auth_headers):
         """Test non-admin gets public-only access. Covers: main.py lines 5175-5176"""
         mock_service.invoke_agent = AsyncMock(return_value={"ok": True})
-        mock_context.return_value = ("user@example.com", None, False)
+        mock_context.return_value = ("user@example.com", [])
         response = test_client.post("/a2a/invoke", json={"agent_id": "test-agent", "parameters": {}}, headers=auth_headers)
         assert response.status_code in [200, 404]
         assert mock_context.called
@@ -6105,11 +6125,11 @@ class TestA2AInvokeBodyEndpoint:
         assert response.status_code in [200, 404]
 
     @patch("mcpgateway.main.a2a_service")
-    @patch("mcpgateway.main.get_rpc_filter_context")
+    @patch("mcpgateway.main.get_scoped_resource_access_context")
     def test_invoke_rpc_filter_context_extraction(self, mock_context, mock_service, test_client, auth_headers):
-        """Test RPC filter context extraction. Covers: main.py line 5170"""
+        """Test scoped resource access context extraction. Covers: main.py line 5170"""
         mock_service.invoke_agent = AsyncMock(return_value={"ok": True})
-        mock_context.return_value = ("user@example.com", ["team-1"], False)
+        mock_context.return_value = ("user@example.com", ["team-1"])
         response = test_client.post("/a2a/invoke", json={"agent_id": "test-agent", "parameters": {}}, headers=auth_headers)
         assert mock_context.called
         assert response.status_code in [200, 404]
@@ -6135,22 +6155,22 @@ class TestA2AInvokeBodyEndpoint:
         assert "Invalid configuration" in response.json()["detail"]
 
     @patch("mcpgateway.main.a2a_service")
-    @patch("mcpgateway.main.get_rpc_filter_context")
+    @patch("mcpgateway.main.get_scoped_resource_access_context")
     def test_invoke_user_id_from_non_dict_user(self, mock_context, mock_service, test_client, auth_headers):
         """Test user_id extraction when user is not a dict. Covers: main.py line 5182"""
         mock_service.invoke_agent = AsyncMock(return_value={"ok": True})
         # Return a string user instead of dict
-        mock_context.return_value = ("user@example.com", ["string-user-id"], False)
+        mock_context.return_value = ("user@example.com", ["string-user-id"])
         response = test_client.post("/a2a/invoke", json={"agent_id": "test-agent", "parameters": {}}, headers=auth_headers)
         assert response.status_code in [200, 404]
         assert mock_context.called
 
     @patch("mcpgateway.main.a2a_service")
-    @patch("mcpgateway.main.get_rpc_filter_context")
+    @patch("mcpgateway.main.get_scoped_resource_access_context")
     def test_invoke_by_id_user_id_from_non_dict_user(self, mock_context, mock_service, test_client, auth_headers):
         """Test user_id extraction when user is not a dict for /a2a/{agent_id}/invoke."""
         mock_service.invoke_agent = AsyncMock(return_value={"ok": True})
-        mock_context.return_value = ("user@example.com", "string-user-id", False)
+        mock_context.return_value = ("user@example.com", "string-user-id")
         response = test_client.post("/a2a/agent-1/invoke", json={"parameters": {}, "interaction_type": "query"}, headers=auth_headers)
         assert response.status_code in [200, 404]
         assert mock_context.called

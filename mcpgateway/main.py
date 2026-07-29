@@ -471,6 +471,9 @@ def _build_internal_mcp_auth_context_for_rpc(request: Request, user: Any) -> Dic
     Returns:
         Encodable auth-context dict for ``encode_internal_mcp_auth_context``.
     """
+    # Layer-1 exception: this builds an auth context to forward, it does not derive
+    # visibility scope. It needs the raw pre-rule triple (including is_admin) rather
+    # than the post-rule (user_email, token_teams) from get_scoped_resource_access_context.
     email, token_teams, is_admin = get_rpc_filter_context(request, user)
     # Genuine anonymous / MCP_REQUIRE_AUTH=false public-only callers have no email.
     is_authenticated = email is not None
@@ -1019,6 +1022,9 @@ async def _authorize_run_cancellation(request: Request, user, request_id: str, *
         JSONRPCError: When ``as_jsonrpc_error`` is True and cancellation is not authorized.
         HTTPException: When ``as_jsonrpc_error`` is False and cancellation is not authorized.
     """
+    # Layer-1 exception: run-cancellation authorization compares the requester against the
+    # run owner. It needs the raw token teams and is_admin flag, not the post-rule visibility
+    # scope, so the admin-bypass normalization in get_scoped_resource_access_context does not apply.
     requester_email, requester_token_teams, requester_is_admin = get_rpc_filter_context(request, user)
     requester_teams = [] if requester_token_teams is None else list(requester_token_teams)
     run_status = await cancellation_service.get_status(request_id)
@@ -4876,13 +4882,7 @@ async def get_a2a_agent(
             raise HTTPException(status_code=503, detail="A2A service not available")
 
         # Get filtering context from token (respects token scope)
-        user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
-
-        # Admin bypass - only when token has NO team restrictions
-        if is_admin and token_teams is None:
-            token_teams = None  # Admin unrestricted
-        elif token_teams is None:
-            token_teams = []  # Non-admin without teams = public-only
+        user_email, token_teams = get_scoped_resource_access_context(request, user)
 
         return await a2a_service.get_agent(
             db,
@@ -5188,13 +5188,7 @@ def _extract_a2a_request_context(
         - request_headers: Dict[str, str]
     """
     # Get filtering context from token (respects token scope)
-    user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
-
-    # Admin bypass - only when token has NO team restrictions
-    if is_admin and token_teams is None:
-        token_teams = None  # Admin unrestricted
-    elif token_teams is None:
-        token_teams = []  # Non-admin without teams = public-only
+    user_email, token_teams = get_scoped_resource_access_context(request, user)
 
     # Extract user ID
     user_id = None
@@ -8534,11 +8528,7 @@ async def handle_internal_mcp_resources_read(request: Request):
                 },
             )
 
-        auth_user_email, auth_token_teams, auth_is_admin = get_rpc_filter_context(request, user)
-        if auth_is_admin and auth_token_teams is None:
-            auth_user_email = None
-        elif auth_token_teams is None:
-            auth_token_teams = []
+        auth_user_email, auth_token_teams = get_scoped_resource_access_context(request, user)
 
         plugin_context_table = getattr(request.state, "plugin_context_table", None)
         plugin_global_context = getattr(request.state, "plugin_global_context", None)
@@ -9331,11 +9321,7 @@ async def handle_internal_mcp_prompts_get(request: Request):
                 },
             )
 
-        auth_user_email, auth_token_teams, auth_is_admin = get_rpc_filter_context(request, user)
-        if auth_is_admin and auth_token_teams is None:
-            auth_user_email = None
-        elif auth_token_teams is None:
-            auth_token_teams = []
+        auth_user_email, auth_token_teams = get_scoped_resource_access_context(request, user)
 
         plugin_context_table = getattr(request.state, "plugin_context_table", None)
         plugin_global_context = getattr(request.state, "plugin_global_context", None)
@@ -9652,13 +9638,7 @@ async def _authorize_internal_a2a_method(
 def _get_internal_a2a_scope_context(request: Request) -> tuple[Optional[str], Optional[List[str]]]:
     """Return scoped visibility context for trusted internal A2A requests."""
     user = _build_internal_mcp_forwarded_user(request)
-    user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
-
-    if is_admin and token_teams is None:
-        return user_email, None
-    if token_teams is None:
-        return user_email, []
-    return user_email, token_teams
+    return get_scoped_resource_access_context(request, user)
 
 
 @utility_router.post("/_internal/a2a/invoke/authz/")
@@ -10267,9 +10247,7 @@ async def _mcp_apps_initialize_authorized(request: Request, db: Session, user, s
     if not server_id:
         return True
 
-    user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
-    if not (is_admin and token_teams is None) and token_teams is None:
-        token_teams = []
+    user_email, token_teams = get_scoped_resource_access_context(request, user)
 
     try:
         await server_service.get_server(db, server_id, user_email=user_email, token_teams=token_teams)
@@ -10372,6 +10350,9 @@ async def _execute_rpc_tools_call(
     if not name:
         raise JSONRPCError(-32602, "Missing tool name in parameters", params)
 
+    # Layer-1 exception: run ownership (run_owner_email / run_owner_team_ids) must be captured
+    # from the raw pre-rule context before the admin-bypass normalization is applied, so this
+    # site cannot collapse to get_scoped_resource_access_context.
     auth_user_email, auth_token_teams, auth_is_admin = get_rpc_filter_context(request, user)
     run_owner_email = auth_user_email
     run_owner_team_ids = [] if auth_token_teams is None else list(auth_token_teams)
@@ -10487,6 +10468,10 @@ async def create_mcp_app_session(request: Request, db: Session = Depends(get_db)
     server_id = body.get("serverId") or body.get("server_id") or request.headers.get("x-contextforge-server-id")
     if not server_id or not isinstance(server_id, str):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="serverId is required for MCP Apps sessions")
+    # Layer-1 exception: this site keeps user_email and the resource-scope email as separate
+    # values (resource_user_email is nulled for admin bypass while user_email is retained for
+    # the session record), which is not the single-value contract of
+    # get_scoped_resource_access_context. See the tool-execution follow-up noted in issue #4451.
     user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
     if is_admin and token_teams is None:
         resource_user_email = None
@@ -10963,6 +10948,9 @@ async def handle_internal_mcp_tools_call_resolve(request: Request):
         if (get_internal_mcp_auth_context(request) or {}).get("is_authenticated", True) is True:
             await _ensure_rpc_permission(user, db, "tools.execute", "tools/call", request=request)
 
+        # Layer-1 exception: tool-execution authorization, not resource visibility. Migrating this
+        # to get_scoped_resource_access_context would widen admin execution scope to the admin's own
+        # private tools, which is a behavior change outside the scope of issue #4451.
         auth_user_email, auth_token_teams, auth_is_admin = get_rpc_filter_context(request, user)
         if auth_is_admin and auth_token_teams is None:
             auth_user_email = None
@@ -11169,16 +11157,9 @@ async def _handle_tools_list_rpc(
     Raises:
         HTTPException: If permission check fails
     """
-    user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
-    _req_email, _req_is_admin = user_email, is_admin
+    user_email, token_teams = get_scoped_resource_access_context(request, user)
+    _req_email, _req_is_admin = get_request_identity(request, user)
     _req_team_roles = get_user_team_roles(db, _req_email) if _req_email and not _req_is_admin else None
-
-    # Admin bypass - only when token has NO team restrictions
-    if is_admin and token_teams is None:
-        # user_email stays as-is (not None) for owner matching (PR #4341 / issue #4694)
-        token_teams = None  # Admin unrestricted
-    elif token_teams is None:
-        token_teams = []  # Non-admin without teams = public-only (secure default)
 
     if server_id:
         tools = await tool_svc.list_server_tools(
@@ -11419,12 +11400,7 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
                 raise JSONRPCError(-32602, "Missing resource URI in parameters", params)
 
             # Get authorization context (same as resources/list)
-            auth_user_email, auth_token_teams, auth_is_admin = get_rpc_filter_context(request, user)
-            if auth_is_admin and auth_token_teams is None:
-                # Keep auth_user_email set for owner matching on the admin's own private rows (PR #4341 / issue #4694)
-                pass  # auth_token_teams stays None (unrestricted)
-            elif auth_token_teams is None:
-                auth_token_teams = []  # Non-admin without teams = public-only
+            auth_user_email, auth_token_teams = get_scoped_resource_access_context(request, user)
 
             # Get user email for OAuth token selection
             oauth_user_email = get_user_email(user)
@@ -11510,12 +11486,7 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
                 raise JSONRPCError(-32602, "Missing prompt name in parameters", params)
 
             # Get authorization context (same as prompts/list)
-            auth_user_email, auth_token_teams, auth_is_admin = get_rpc_filter_context(request, user)
-            if auth_is_admin and auth_token_teams is None:
-                # Keep auth_user_email set for owner matching on the admin's own private rows (PR #4341 / issue #4694)
-                pass  # auth_token_teams stays None (unrestricted)
-            elif auth_token_teams is None:
-                auth_token_teams = []  # Non-admin without teams = public-only
+            auth_user_email, auth_token_teams = get_scoped_resource_access_context(request, user)
 
             # Get plugin contexts from request.state for cross-hook sharing
             plugin_context_table = getattr(request.state, "plugin_context_table", None)
@@ -11744,6 +11715,8 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
             await _ensure_rpc_permission(user, db, "tools.execute", method, request=request)
 
             # Get authorization context (same as tools/call)
+            # Layer-1 exception: tool-execution authorization, not resource visibility. Kept in sync
+            # with _execute_rpc_tools_call / handle_internal_mcp_tools_call_resolve; see issue #4451.
             auth_user_email, auth_token_teams, auth_is_admin = get_rpc_filter_context(request, user)
             if auth_is_admin and auth_token_teams is None:
                 auth_user_email = None
