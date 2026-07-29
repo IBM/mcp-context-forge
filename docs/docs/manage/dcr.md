@@ -218,7 +218,7 @@ Note: No `client_secret` - PKCE provides security.
 
 ## Database Schema
 
-DCR uses two new tables:
+DCR uses three tables:
 
 ### `registered_oauth_clients`
 
@@ -258,6 +258,34 @@ CREATE TABLE oauth_states (
     expires_at TIMESTAMP
 );
 ```
+
+### `oauth_tokens`
+
+Stores per-user delegated OAuth tokens used after DCR registration and authorization:
+
+```sql
+CREATE TABLE oauth_tokens (
+    id VARCHAR(36) PRIMARY KEY,
+    gateway_id VARCHAR(36) NOT NULL,
+    user_id VARCHAR(255) NOT NULL,              -- OAuth provider identity
+    app_user_email VARCHAR(255) NOT NULL,       -- ContextForge user identity
+    access_token TEXT NOT NULL,
+    refresh_token TEXT,
+    token_type VARCHAR(50),
+    expires_at TIMESTAMP,
+    scopes JSON,
+    created_at TIMESTAMP,
+    updated_at TIMESTAMP,
+    CONSTRAINT uq_oauth_gateway_user UNIQUE (gateway_id, app_user_email),
+    FOREIGN KEY (gateway_id) REFERENCES gateways(id) ON DELETE CASCADE,
+    FOREIGN KEY (app_user_email) REFERENCES email_users(email) ON DELETE CASCADE
+);
+
+CREATE UNIQUE INDEX idx_oauth_gateway_user
+    ON oauth_tokens (gateway_id, app_user_email);
+```
+
+Historical note: older deployments used `unique_gateway_user` on `(gateway_id, user_id)`. That constraint was removed because multiple ContextForge users can legitimately map to the same upstream OAuth provider `user_id`.
 
 ---
 

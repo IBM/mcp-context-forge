@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/alembic/versions/7ab59991e017_fix_oauth_tokens_unique_constraint.py
-Copyright 2026
+Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
-Authors: mcp-contextforge-team
 
 fix_oauth_tokens_unique_constraint
 
@@ -16,11 +15,12 @@ multiple ContextForge users from storing tokens for the same OAuth provider user
 This migration:
 1. Drops the old UniqueConstraint 'unique_gateway_user' on (gateway_id, user_id)
 2. Creates the new UniqueConstraint 'uq_oauth_gateway_user' on (gateway_id, app_user_email)
-3. Keeps idx_oauth_gateway_user as a regular index for query performance
+3. Keeps idx_oauth_gateway_user for query performance
 
     Revision ID: 7ab59991e017
-    Revises: b6c7d8e9f0a1
-    Create Date: 2026-06-12 10:18:32.623237"""
+    Revises: d21698ae4a19
+    Create Date: 2026-06-12 10:18:32.623237
+"""
 
 # Standard
 from typing import Sequence, Union
@@ -31,7 +31,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = "7ab59991e017"
-down_revision: Union[str, Sequence[str], None] = "b6c7d8e9f0a1" #pragma: allowlist secret
+down_revision: Union[str, Sequence[str], None] = "d21698ae4a19" #pragma: allowlist secret
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
@@ -97,9 +97,7 @@ def upgrade() -> None:
         else:
             print("New UniqueConstraint 'uq_oauth_gateway_user' already exists")
 
-    # Note: idx_oauth_gateway_user remains as a regular index for query performance
-    # It was created in migration 14ac971cee42 as a unique index, but the constraint
-    # provides the actual uniqueness enforcement
+    # Note: idx_oauth_gateway_user remains in place for query performance.
 
 
 def downgrade() -> None:
