@@ -16,6 +16,7 @@ import logging
 import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, call, MagicMock, Mock, patch
+from urllib.parse import urlparse
 
 # Third-Party
 from cpex.framework import PluginManager, PluginMode
@@ -34,12 +35,14 @@ from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.schemas import AuthenticationValues, ToolCreate, ToolRead, ToolUpdate
 from mcpgateway.services.tool_service import (
+    _build_pinned_rest_http_client,
     _build_retry_policy_config,
     _decrypt_tool_header_value,
     _decrypt_tool_headers_for_runtime,
     _encrypt_tool_header_value,
     _get_validator_class_and_check,
     _is_sensitive_tool_header_name,
+    _pin_url_to_resolved_ip,
     _protect_tool_headers_for_storage,
     _sync_meta_traceparent,
     _validate_header_mapping_targets,
@@ -414,8 +417,20 @@ class TestToolServiceHelpersExtended:
 
 
 @pytest.fixture
-def tool_service():
+def tool_service(monkeypatch):
     """Create a tool service instance."""
+
+    async def validate_without_pinning(value: str, _field_name: str = "URL"):
+        parsed = urlparse(value)
+        return {
+            "validated_url": value,
+            "hostname": parsed.hostname,
+            "original_authority": parsed.netloc,
+            "resolved_ip": None,
+        }
+
+    monkeypatch.setattr("mcpgateway.services.tool_service.SecurityValidator.validate_url_for_connection_pinning", validate_without_pinning)
+    monkeypatch.setattr("mcpgateway.services.tool_service.settings.ssrf_protection_enabled", False)
     service = ToolService()
     service._http_client = AsyncMock()
     service.get_plugin_manager = AsyncMock()
@@ -2286,6 +2301,217 @@ class TestToolService:
             assert call_kwargs["error_message"] is None
 
     @pytest.mark.asyncio
+    async def test_invoke_tool_rest_rejects_disallowed_target_before_outbound(self, tool_service, mock_tool, mock_global_config_obj, test_db, monkeypatch):
+        """Runtime URL validation should block unsafe REST targets before HTTP I/O."""
+
+        async def reject_url(_value: str, _field_name: str = "URL"):
+            raise ValueError("Tool URL contains a disallowed address")
+
+        monkeypatch.setattr("mcpgateway.services.tool_service.SecurityValidator.validate_url_for_connection_pinning", reject_url)
+
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "POST"
+        mock_tool.jsonpath_filter = ""
+        mock_tool.auth_value = None
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        mock_metrics_buffer = Mock()
+        mock_metrics_buffer.record_tool_metric = Mock()
+        with (
+            patch("mcpgateway.services.tool_service.metrics_buffer", mock_metrics_buffer),
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={}),
+        ):
+            with pytest.raises(ToolInvocationError, match="Outbound URL blocked by URL policy"):
+                await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None)
+
+        tool_service._http_client.request.assert_not_called()
+        tool_service._http_client.get.assert_not_called()
+        mock_metrics_buffer.record_tool_metric.assert_called_once()
+        call_kwargs = mock_metrics_buffer.record_tool_metric.call_args[1]
+        assert call_kwargs["success"] is False
+        assert "Outbound URL blocked by URL policy" in call_kwargs["error_message"]
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_rest_rejects_missing_pin_when_protection_enabled(self, tool_service, mock_tool, mock_global_config_obj, test_db, monkeypatch):
+        """SSRF-protected REST calls must not proceed with the original hostname unpinned."""
+        monkeypatch.setattr("mcpgateway.services.tool_service.settings.ssrf_protection_enabled", True)
+
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "POST"
+        mock_tool.jsonpath_filter = ""
+        mock_tool.auth_value = None
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        mock_metrics_buffer = Mock()
+        mock_metrics_buffer.record_tool_metric = Mock()
+        with (
+            patch("mcpgateway.services.tool_service.metrics_buffer", mock_metrics_buffer),
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={}),
+        ):
+            with pytest.raises(ToolInvocationError, match="Outbound URL blocked by URL policy"):
+                await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None)
+
+        tool_service._http_client.request.assert_not_called()
+        tool_service._http_client.get.assert_not_called()
+        mock_metrics_buffer.record_tool_metric.assert_called_once()
+        call_kwargs = mock_metrics_buffer.record_tool_metric.call_args[1]
+        assert call_kwargs["success"] is False
+        assert "Outbound URL blocked by URL policy" in call_kwargs["error_message"]
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_rest_post_pins_url_preserves_signed_query_and_forces_host(self, tool_service, mock_tool, mock_global_config_obj, test_db, monkeypatch):
+        """JSON REST calls should pin only the netloc and preserve signed query strings."""
+
+        async def validate_pinned(value: str, _field_name: str = "URL"):
+            return {
+                "validated_url": value,
+                "hostname": "api.example.com",
+                "original_authority": "api.example.com:8443",
+                "resolved_ip": "8.8.8.8",
+            }
+
+        monkeypatch.setattr("mcpgateway.services.tool_service.SecurityValidator.validate_url_for_connection_pinning", validate_pinned)
+
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "POST"
+        mock_tool.url = "https://api.example.com:8443/search?sig=abc&expires=123"
+        mock_tool.headers = {"Content-Type": "application/json", "host": "mapped.example"}
+        mock_tool.jsonpath_filter = ""
+        mock_tool.auth_value = None
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        mock_response = AsyncMock()
+        mock_response.raise_for_status = Mock()
+        mock_response.status_code = 200
+        mock_response.json = Mock(return_value={"ok": True})
+        pinned_client = SimpleNamespace(request=AsyncMock(return_value=mock_response), get=AsyncMock(), aclose=AsyncMock())
+
+        with (
+            patch("mcpgateway.services.tool_service.metrics_buffer", Mock(record_tool_metric=Mock())),
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={}),
+            patch("mcpgateway.services.tool_service._build_pinned_rest_http_client", return_value=pinned_client) as build_pinned_client,
+        ):
+            await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None)
+
+        build_pinned_client.assert_called_once()
+        pinned_client.request.assert_called_once_with(
+            "POST",
+            "https://8.8.8.8:8443/search?sig=abc&expires=123",
+            json={"param": "value"},
+            headers={"Content-Type": "application/json", "Host": "api.example.com:8443"},
+            extensions={"sni_hostname": "api.example.com"},
+        )
+        pinned_client.aclose.assert_awaited_once()
+        tool_service._http_client.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_rest_get_pins_url_and_forwards_sni_extensions(self, tool_service, mock_tool, mock_global_config_obj, test_db, monkeypatch):
+        """GET REST calls should keep query extraction behavior after netloc pinning."""
+
+        async def validate_pinned(value: str, _field_name: str = "URL"):
+            return {
+                "validated_url": value,
+                "hostname": "api.example.com",
+                "original_authority": "api.example.com",
+                "resolved_ip": "8.8.4.4",
+            }
+
+        monkeypatch.setattr("mcpgateway.services.tool_service.SecurityValidator.validate_url_for_connection_pinning", validate_pinned)
+
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "GET"
+        mock_tool.url = "https://api.example.com/search?from=url"
+        mock_tool.jsonpath_filter = ""
+        mock_tool.auth_value = None
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        mock_response = AsyncMock()
+        mock_response.raise_for_status = Mock()
+        mock_response.status_code = 200
+        mock_response.json = Mock(return_value={"ok": True})
+        pinned_client = SimpleNamespace(request=AsyncMock(), get=AsyncMock(return_value=mock_response), aclose=AsyncMock())
+
+        with (
+            patch("mcpgateway.services.tool_service.metrics_buffer", Mock(record_tool_metric=Mock())),
+            patch("mcpgateway.services.tool_service._build_pinned_rest_http_client", return_value=pinned_client) as build_pinned_client,
+        ):
+            await tool_service.invoke_tool(test_db, "test_tool", {"arg": "value"}, request_headers=None)
+
+        build_pinned_client.assert_called_once()
+        pinned_client.get.assert_called_once_with(
+            "https://8.8.4.4/search",
+            params={"arg": "value", "from": "url"},
+            headers={**mock_tool.headers, "Host": "api.example.com"},
+            extensions={"sni_hostname": "api.example.com"},
+        )
+        pinned_client.aclose.assert_awaited_once()
+        tool_service._http_client.get.assert_not_called()
+
+    def test_pin_url_to_resolved_ip_brackets_ipv6_and_preserves_query(self):
+        """Pinned IPv6 netlocs must be bracketed without losing URL parts."""
+        assert _pin_url_to_resolved_ip("https://api.example.com:8443/path?sig=abc", "2001:4860:4860::8888") == "https://[2001:4860:4860::8888]:8443/path?sig=abc"
+
+    @pytest.mark.asyncio
+    async def test_build_pinned_rest_http_client_disables_connection_reuse(self):
+        """Pinned REST calls use an isolated client with keepalive disabled."""
+        client = _build_pinned_rest_http_client()
+        try:
+            limits = client.client_args["limits"]
+            assert limits.max_connections == 1
+            assert limits.max_keepalive_connections == 0
+            assert client.client_args["cookies"] == {}
+        finally:
+            await client.aclose()
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_rest_multipart_pins_url_and_forwards_sni_extensions(self, tool_service, mock_tool, mock_global_config_obj, test_db, monkeypatch):
+        """Multipart REST calls should keep connection metadata after stripping Content-Type."""
+
+        async def validate_pinned(value: str, _field_name: str = "URL"):
+            return {
+                "validated_url": value,
+                "hostname": "upload.example.com",
+                "original_authority": "upload.example.com",
+                "resolved_ip": "8.8.4.4",
+            }
+
+        monkeypatch.setattr("mcpgateway.services.tool_service.SecurityValidator.validate_url_for_connection_pinning", validate_pinned)
+
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "POST"
+        mock_tool.url = "https://upload.example.com/files"
+        mock_tool.jsonpath_filter = ""
+        mock_tool.auth_value = None
+        mock_tool.headers = {"Content-Type": "multipart/form-data", "X-Custom": "custom-value"}
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        mock_response = AsyncMock()
+        mock_response.raise_for_status = Mock()
+        mock_response.status_code = 200
+        mock_response.json = Mock(return_value={"result": "multipart response"})
+        pinned_client = SimpleNamespace(request=AsyncMock(return_value=mock_response), get=AsyncMock(), aclose=AsyncMock())
+
+        with (
+            patch("mcpgateway.services.tool_service.metrics_buffer", Mock(record_tool_metric=Mock())),
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={}),
+            patch("mcpgateway.services.tool_service.extract_using_jq", return_value={"result": "multipart response"}),
+            patch("mcpgateway.services.tool_service._build_pinned_rest_http_client", return_value=pinned_client) as build_pinned_client,
+        ):
+            await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None)
+
+        build_pinned_client.assert_called_once()
+        pinned_client.request.assert_called_once_with(
+            "POST",
+            "https://8.8.4.4/files",
+            files={"param": (None, "value")},
+            params={},
+            headers={"X-Custom": "custom-value", "Host": "upload.example.com"},
+            extensions={"sni_hostname": "upload.example.com"},
+        )
+        pinned_client.aclose.assert_awaited_once()
+        tool_service._http_client.request.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_invoke_tool_rest_post_form_urlencoded(self, tool_service, mock_tool, mock_global_config_obj, test_db):
         """REST tool with Content-Type: application/x-www-form-urlencoded should use data= encoding."""
         mock_tool.integration_type = "REST"
@@ -3779,7 +4005,6 @@ class TestToolService:
 
             # Return an object whose scalar_one_or_none() returns the real value
             class Result:
-
                 def scalar_one_or_none(self_inner):
                     return value
 
@@ -6539,7 +6764,11 @@ class TestToolAccessAuthorization:
         # User without access tries to get the tool
         with pytest.raises(ToolNotFoundError, match="Tool not found: private-tool-1"):
             await tool_service.get_tool(
-                mock_db, "private-tool-1", requesting_user_email="other@test.com", requesting_user_is_admin=False, requesting_user_team_roles={"team-2": ["viewer"]}  # Different team
+                mock_db,
+                "private-tool-1",
+                requesting_user_email="other@test.com",
+                requesting_user_is_admin=False,
+                requesting_user_team_roles={"team-2": ["viewer"]},  # Different team
             )
 
 
