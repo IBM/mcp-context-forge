@@ -58,6 +58,15 @@ def mock_request_popup():
     request.state = SimpleNamespace(token_teams=["team-1"], csp_nonce="test-nonce-popup", is_popup=True)
     return request
 
+
+@pytest.fixture
+def mock_admin_request():
+    """Create an un-narrowed admin request (token_teams=None) for DCR management tests."""
+    request = Mock(spec=Request)
+    request.state = SimpleNamespace(token_teams=None)
+    return request
+
+
 @pytest.fixture
 def mock_gateway():
     """Create mock gateway with OAuth config."""
@@ -2012,7 +2021,9 @@ class TestOAuthRouterAdditionalCoverage:
         assert exc_info.value.status_code == 403
 
     @pytest.mark.asyncio
-    async def test_list_registered_oauth_clients(self, mock_db):
+    async def test_list_registered_oauth_clients(self, mock_db, mock_admin_request):
+        """Un-narrowed admin can list registered OAuth clients."""
+
         class _Client:
             id = "c1"
             gateway_id = "g1"
@@ -2031,25 +2042,28 @@ class TestOAuthRouterAdditionalCoverage:
         # First-Party
         from mcpgateway.routers.oauth_router import list_registered_oauth_clients
 
-        result = await list_registered_oauth_clients(current_user={"email": "admin", "is_admin": True}, db=mock_db)
+        result = await list_registered_oauth_clients(mock_admin_request, current_user={"email": "admin", "is_admin": True}, db=mock_db)
 
         assert result["total"] == 1
         assert result["clients"][0]["gateway_id"] == "g1"
         assert result["clients"][0]["redirect_uris"] == ["https://cb1", "https://cb2"]
 
     @pytest.mark.asyncio
-    async def test_list_registered_oauth_clients_error(self, mock_db):
+    async def test_list_registered_oauth_clients_error(self, mock_db, mock_admin_request):
+        """Un-narrowed admin sees a 500 when the database lookup fails."""
         mock_db.execute.side_effect = Exception("boom")
 
         from mcpgateway.routers.oauth_router import list_registered_oauth_clients
 
         with pytest.raises(HTTPException) as exc_info:
-            await list_registered_oauth_clients(current_user={"email": "admin", "is_admin": True}, db=mock_db)
+            await list_registered_oauth_clients(mock_admin_request, current_user={"email": "admin", "is_admin": True}, db=mock_db)
 
         assert exc_info.value.status_code == 500
 
     @pytest.mark.asyncio
-    async def test_get_registered_client_for_gateway_success(self, mock_db):
+    async def test_get_registered_client_for_gateway_success(self, mock_db, mock_admin_request):
+        """Un-narrowed admin can fetch the registered client for a gateway."""
+
         class _Client:
             id = "c1"
             gateway_id = "g1"
@@ -2068,7 +2082,7 @@ class TestOAuthRouterAdditionalCoverage:
 
         from mcpgateway.routers.oauth_router import get_registered_client_for_gateway
 
-        result = await get_registered_client_for_gateway("gateway123", {"email": "admin", "is_admin": True}, mock_db)
+        result = await get_registered_client_for_gateway("gateway123", mock_admin_request, {"email": "admin", "is_admin": True}, mock_db)
 
         assert result["id"] == "c1"
         assert result["gateway_id"] == "g1"
@@ -2076,30 +2090,33 @@ class TestOAuthRouterAdditionalCoverage:
         assert result["grant_types"] == ["authorization_code"]
 
     @pytest.mark.asyncio
-    async def test_get_registered_client_for_gateway_not_found(self, mock_db):
+    async def test_get_registered_client_for_gateway_not_found(self, mock_db, mock_admin_request):
+        """Un-narrowed admin gets a 404 when no client is registered for the gateway."""
         mock_db.execute.return_value.scalar_one_or_none.return_value = None
 
         # First-Party
         from mcpgateway.routers.oauth_router import get_registered_client_for_gateway
 
         with pytest.raises(HTTPException) as exc_info:
-            await get_registered_client_for_gateway("gateway123", {"email": "admin", "is_admin": True}, mock_db)
+            await get_registered_client_for_gateway("gateway123", mock_admin_request, {"email": "admin", "is_admin": True}, mock_db)
 
         assert exc_info.value.status_code == 404
 
     @pytest.mark.asyncio
-    async def test_get_registered_client_for_gateway_error(self, mock_db):
+    async def test_get_registered_client_for_gateway_error(self, mock_db, mock_admin_request):
+        """Un-narrowed admin sees a 500 when the database lookup fails."""
         mock_db.execute.side_effect = Exception("boom")
 
         from mcpgateway.routers.oauth_router import get_registered_client_for_gateway
 
         with pytest.raises(HTTPException) as exc_info:
-            await get_registered_client_for_gateway("gateway123", {"email": "admin", "is_admin": True}, mock_db)
+            await get_registered_client_for_gateway("gateway123", mock_admin_request, {"email": "admin", "is_admin": True}, mock_db)
 
         assert exc_info.value.status_code == 500
 
     @pytest.mark.asyncio
-    async def test_delete_registered_client_success(self, mock_db):
+    async def test_delete_registered_client_success(self, mock_db, mock_admin_request):
+        """Un-narrowed admin can delete a registered OAuth client."""
         client = Mock()
         client.id = "c1"
         client.issuer = "https://issuer"
@@ -2109,25 +2126,27 @@ class TestOAuthRouterAdditionalCoverage:
         # First-Party
         from mcpgateway.routers.oauth_router import delete_registered_client
 
-        result = await delete_registered_client("c1", {"email": "admin", "is_admin": True}, mock_db)
+        result = await delete_registered_client("c1", mock_admin_request, {"email": "admin", "is_admin": True}, mock_db)
 
         assert result["success"] is True
         mock_db.delete.assert_called_once_with(client)
         mock_db.commit.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_delete_registered_client_not_found(self, mock_db):
+    async def test_delete_registered_client_not_found(self, mock_db, mock_admin_request):
+        """Un-narrowed admin gets a 404 when deleting a client that does not exist."""
         mock_db.execute.return_value.scalar_one_or_none.return_value = None
 
         from mcpgateway.routers.oauth_router import delete_registered_client
 
         with pytest.raises(HTTPException) as exc_info:
-            await delete_registered_client("missing", {"email": "admin", "is_admin": True}, mock_db)
+            await delete_registered_client("missing", mock_admin_request, {"email": "admin", "is_admin": True}, mock_db)
 
         assert exc_info.value.status_code == 404
 
     @pytest.mark.asyncio
-    async def test_delete_registered_client_error(self, mock_db):
+    async def test_delete_registered_client_error(self, mock_db, mock_admin_request):
+        """Un-narrowed admin sees a 500 and rollback when the delete commit fails."""
         client = Mock()
         client.id = "c1"
         client.issuer = "https://issuer"
@@ -2138,25 +2157,26 @@ class TestOAuthRouterAdditionalCoverage:
         from mcpgateway.routers.oauth_router import delete_registered_client
 
         with pytest.raises(HTTPException) as exc_info:
-            await delete_registered_client("c1", {"email": "admin", "is_admin": True}, mock_db)
+            await delete_registered_client("c1", mock_admin_request, {"email": "admin", "is_admin": True}, mock_db)
 
         assert exc_info.value.status_code == 500
         mock_db.rollback.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_registered_oauth_client_endpoints_require_admin(self, mock_db):
+    async def test_registered_oauth_client_endpoints_require_admin(self, mock_db, mock_admin_request):
+        """Non-admin callers are rejected with 403 on all three DCR management routes."""
         from mcpgateway.routers.oauth_router import delete_registered_client, get_registered_client_for_gateway, list_registered_oauth_clients
 
         with pytest.raises(HTTPException) as exc_info:
-            await list_registered_oauth_clients(current_user={"email": "user@example.com", "is_admin": False}, db=mock_db)
+            await list_registered_oauth_clients(mock_admin_request, current_user={"email": "user@example.com", "is_admin": False}, db=mock_db)
         assert exc_info.value.status_code == 403
 
         with pytest.raises(HTTPException) as exc_info:
-            await get_registered_client_for_gateway("gateway123", {"email": "user@example.com", "is_admin": False}, mock_db)
+            await get_registered_client_for_gateway("gateway123", mock_admin_request, {"email": "user@example.com", "is_admin": False}, mock_db)
         assert exc_info.value.status_code == 403
 
         with pytest.raises(HTTPException) as exc_info:
-            await delete_registered_client("client123", {"email": "user@example.com", "is_admin": False}, mock_db)
+            await delete_registered_client("client123", mock_admin_request, {"email": "user@example.com", "is_admin": False}, mock_db)
         assert exc_info.value.status_code == 403
 
     @pytest.mark.asyncio
@@ -3106,3 +3126,146 @@ class TestOAuthRouterPopupQueryResolution:
         assert response.status_code == 307
         call_kwargs = mock_oauth_manager.initiate_authorization_code_flow.call_args.kwargs
         assert call_kwargs["popup"] is False
+
+
+class TestOAuthClientManagementScopeGuard:
+    """Regression tests for GHSA-gj7g-7r6g-jc8v: DCR management routes must reject any
+    admin whose token is team-narrowed or public-only, since registered OAuth clients
+    are stored globally with no team column to scope against.
+    """
+
+    @pytest.mark.asyncio
+    async def test_narrowed_admin_denied_all_routes(self, mock_db):
+        """A team-narrowed admin token is rejected on all three DCR management routes."""
+        from mcpgateway.routers.oauth_router import delete_registered_client, get_registered_client_for_gateway, list_registered_oauth_clients
+
+        request = Mock(spec=Request)
+        request.state = SimpleNamespace(token_teams=["team-1"])
+        admin_user = {"email": "admin@example.com", "is_admin": True}
+
+        with pytest.raises(HTTPException) as exc_info:
+            await list_registered_oauth_clients(request, current_user=admin_user, db=mock_db)
+        assert exc_info.value.status_code == 403
+
+        with pytest.raises(HTTPException) as exc_info:
+            await get_registered_client_for_gateway("gateway123", request, admin_user, mock_db)
+        assert exc_info.value.status_code == 403
+
+        with pytest.raises(HTTPException) as exc_info:
+            await delete_registered_client("client123", request, admin_user, mock_db)
+        assert exc_info.value.status_code == 403
+        mock_db.delete.assert_not_called()
+        mock_db.commit.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_public_only_admin_denied_all_routes(self, mock_db):
+        """A public-only admin token (empty team list) is rejected on all three DCR routes."""
+        from mcpgateway.routers.oauth_router import delete_registered_client, get_registered_client_for_gateway, list_registered_oauth_clients
+
+        request = Mock(spec=Request)
+        request.state = SimpleNamespace(token_teams=[])
+        admin_user = {"email": "admin@example.com", "is_admin": True}
+
+        with pytest.raises(HTTPException) as exc_info:
+            await list_registered_oauth_clients(request, current_user=admin_user, db=mock_db)
+        assert exc_info.value.status_code == 403
+
+        with pytest.raises(HTTPException) as exc_info:
+            await get_registered_client_for_gateway("gateway123", request, admin_user, mock_db)
+        assert exc_info.value.status_code == 403
+
+        with pytest.raises(HTTPException) as exc_info:
+            await delete_registered_client("client123", request, admin_user, mock_db)
+        assert exc_info.value.status_code == 403
+        mock_db.delete.assert_not_called()
+        mock_db.commit.assert_not_called()
+
+    def test_malformed_token_teams_non_admin_denied(self):
+        """A non-admin caller is rejected before token-team shape is even considered."""
+        from mcpgateway.routers.oauth_router import _require_unnarrowed_admin
+
+        request = Mock(spec=Request)
+        request.state = SimpleNamespace(token_teams="team-1")
+        non_admin_user = {"email": "user@example.com", "is_admin": False}
+
+        with pytest.raises(HTTPException) as exc_info:
+            _require_unnarrowed_admin(request, non_admin_user)
+        assert exc_info.value.status_code == 403
+
+    def test_malformed_token_teams_admin_allowed_characterization(self):
+        """Characterization test: a malformed (non-list, non-None) ``token_teams`` value
+        with no cached JWT payload to fall back on currently resets to the sentinel and
+        is treated as un-narrowed for an admin, so access is ALLOWED rather than denied.
+
+        This is a known inherited gap in ``_resolve_token_teams_for_scope_check`` (not
+        introduced by this guard). Asserted explicitly so a future tightening of that
+        helper fails this test loudly instead of silently changing behavior.
+        """
+        from mcpgateway.routers.oauth_router import _require_unnarrowed_admin
+
+        request = Mock(spec=Request)
+        request.state = SimpleNamespace(token_teams="team-1")
+        admin_user = {"email": "admin@example.com", "is_admin": True}
+
+        assert _require_unnarrowed_admin(request, admin_user) is None
+
+    def test_missing_token_teams_admin_allowed_characterization(self):
+        """Characterization test: a request state with no ``token_teams`` attribute at
+        all, and no cached JWT payload to re-derive from, falls back to un-narrowed
+        scope for an admin, so access is ALLOWED.
+
+        This is a known inherited gap in ``_resolve_token_teams_for_scope_check`` (not
+        introduced by this guard). Asserted explicitly so a future tightening of that
+        helper fails this test loudly instead of silently changing behavior.
+        """
+        from mcpgateway.routers.oauth_router import _require_unnarrowed_admin
+
+        request = Mock(spec=Request)
+        request.state = SimpleNamespace()  # no token_teams, no _jwt_verified_payload
+        admin_user = {"email": "admin@example.com", "is_admin": True}
+
+        assert _require_unnarrowed_admin(request, admin_user) is None
+
+    def test_narrowing_recovered_from_cached_jwt_payload_denied(self):
+        """When ``token_teams`` is absent but a cached verified JWT payload is present,
+        the guard re-derives team scoping from the payload via ``normalize_token_teams``
+        and still denies a team-narrowed admin.
+        """
+        from mcpgateway.routers.oauth_router import _require_unnarrowed_admin
+
+        request = Mock(spec=Request)
+        request.state = SimpleNamespace(_jwt_verified_payload=("tok", {"teams": ["team-1"], "is_admin": True}))
+        admin_user = {"email": "admin@example.com", "is_admin": True}
+
+        with pytest.raises(HTTPException) as exc_info:
+            _require_unnarrowed_admin(request, admin_user)
+        assert exc_info.value.status_code == 403
+
+    @pytest.mark.parametrize(
+        "state_kwargs,expect_denied",
+        [
+            ({"token_teams": None}, False),
+            ({"token_teams": ["team-1"]}, True),
+            ({"token_teams": []}, True),
+            ({}, False),
+        ],
+        ids=["unnarrowed-none", "narrowed-list", "public-only-empty", "absent-attribute"],
+    )
+    def test_require_unnarrowed_admin_team_shapes(self, state_kwargs, expect_denied):
+        """Direct unit test of ``_require_unnarrowed_admin`` across every ``token_teams``
+        shape an admin request can carry: ``None`` (un-narrowed, allowed), a non-empty
+        list (narrowed, denied), an empty list (public-only, denied), and the attribute
+        being entirely absent with no cached payload (falls back to allowed for admins).
+        """
+        from mcpgateway.routers.oauth_router import _require_unnarrowed_admin
+
+        request = Mock(spec=Request)
+        request.state = SimpleNamespace(**state_kwargs)
+        admin_user = {"email": "admin@example.com", "is_admin": True}
+
+        if expect_denied:
+            with pytest.raises(HTTPException) as exc_info:
+                _require_unnarrowed_admin(request, admin_user)
+            assert exc_info.value.status_code == 403
+        else:
+            assert _require_unnarrowed_admin(request, admin_user) is None

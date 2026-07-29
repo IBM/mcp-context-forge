@@ -17,6 +17,10 @@
     - **Root-inclusive exports require unrestricted platform administration** - Unfiltered export includes roots and returns HTTP 403 for team-scoped administrators. Run backup exports with unrestricted platform-admin credentials, or explicitly exclude roots when a scoped export is intended.
     - **Root registrations are runtime state** - Roots are held in memory and are not database-persisted. Manual registrations do not survive process restart; configure `DEFAULT_ROOTS` together with matching root policy when persistent startup roots are required.
 
+### Security
+
+- **OAuth DCR endpoints now enforce un-narrowed admin scope** (GHSA-gj7g-7r6g-jc8v) - `GET /oauth/registered-clients`, `GET /oauth/registered-clients/{gateway_id}`, and `DELETE /oauth/registered-clients/{client_id}` previously gated only on the `is_admin` flag and ignored `token_teams` narrowing carried by scoped API tokens, letting a team-narrowed admin API token list, read, and delete globally-stored registered OAuth client records outside its intended team scope. These endpoints now reject narrowed and public-only admin tokens with `403 Forbidden`. Admin session tokens resolve their teams from the database and cannot be narrowed, so interactive Admin UI users are unaffected.
+
 ### Fixed
 
 - Fixed RBAC seeder race condition that produced HTTP 500 under concurrent bootstrap: added partial unique indexes on `roles(name, scope) WHERE is_active` and `user_roles` equivalent columns, plus savepoint/retry in `RoleService.create_role()` and `assign_role_to_user()`. The migration (`d21698ae4a19`) now also remaps `user_roles.role_id` from duplicate roles to the kept role before deactivating the duplicates (so `list_user_roles()` joins remain intact), and prefers unexpired / most-recently-granted assignments when deduplicating user-role rows (#4636)

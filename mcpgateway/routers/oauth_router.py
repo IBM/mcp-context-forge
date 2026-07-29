@@ -257,6 +257,27 @@ def _require_admin_user(current_user: EmailUserResponse) -> None:
         raise HTTPException(status_code=403, detail="Admin permissions required")
 
 
+def _require_unnarrowed_admin(request: Request, current_user: EmailUserResponse) -> None:
+    """Require un-narrowed platform admin for DCR management endpoints.
+
+    Registered OAuth clients are stored globally with no team column, so a
+    team-narrowed admin token has no coherent scope over them. Narrowed and
+    public-only admin sessions are rejected rather than silently granted
+    global visibility.
+
+    Args:
+        request: Incoming request carrying token-scoping state.
+        current_user: Authenticated user context.
+
+    Raises:
+        HTTPException: If the requester is not an admin, or is a narrowed or
+            public-only admin.
+    """
+    _require_admin_user(current_user)
+    if _resolve_token_teams_for_scope_check(request, current_user) is not None:
+        raise HTTPException(status_code=403, detail="OAuth client management requires un-narrowed admin access")
+
+
 def _resolve_token_teams_for_scope_check(request: Request, current_user: EmailUserResponse) -> list[str] | None:
     """Resolve token teams for scoped ownership checks using normalized token semantics.
 
@@ -282,7 +303,9 @@ def _resolve_token_teams_for_scope_check(request: Request, current_user: EmailUs
             if payload:
                 token_teams = normalize_token_teams(payload)
                 is_admin = bool(payload.get("is_admin", False) or payload.get("user", {}).get("is_admin", False))
-        # Fail closed when request.state contains an unexpected token_teams value.
+        # An unexpected token_teams value falls through to the _not_set branch below,
+        # which fails closed (empty scope) for non-admins but is treated as un-narrowed
+        # for admins.
         if token_teams is not _not_set and not (token_teams is None or isinstance(token_teams, list)):
             token_teams = _not_set
 
@@ -1071,13 +1094,14 @@ async def fetch_tools_after_oauth(
 
 
 @oauth_router.get("/registered-clients")
-async def list_registered_oauth_clients(current_user: EmailUserResponse = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)) -> Dict[str, Any]:  # noqa: ARG001
+async def list_registered_oauth_clients(request: Request, current_user: EmailUserResponse = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)) -> Dict[str, Any]:  # noqa: ARG001
     """List all registered OAuth clients (created via DCR).
 
     This endpoint shows OAuth clients that were dynamically registered with external
     Authorization Servers using RFC 7591 Dynamic Client Registration.
 
     Args:
+        request: The FastAPI request object.
         current_user: The authenticated user (admin access required)
         db: Database session
 
@@ -1087,7 +1111,7 @@ async def list_registered_oauth_clients(current_user: EmailUserResponse = Depend
     Raises:
         HTTPException: If user lacks permissions or database error occurs
     """
-    _require_admin_user(current_user)
+    _require_unnarrowed_admin(request, current_user)
 
     try:
         # First-Party
@@ -1125,6 +1149,7 @@ async def list_registered_oauth_clients(current_user: EmailUserResponse = Depend
 @oauth_router.get("/registered-clients/{gateway_id}")
 async def get_registered_client_for_gateway(
     gateway_id: str,
+    request: Request,
     current_user: EmailUserResponse = Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),  # noqa: ARG001
 ) -> Dict[str, Any]:
@@ -1132,6 +1157,7 @@ async def get_registered_client_for_gateway(
 
     Args:
         gateway_id: The gateway ID to lookup
+        request: The FastAPI request object.
         current_user: The authenticated user
         db: Database session
 
@@ -1141,7 +1167,7 @@ async def get_registered_client_for_gateway(
     Raises:
         HTTPException: If gateway or registered client not found
     """
-    _require_admin_user(current_user)
+    _require_unnarrowed_admin(request, current_user)
 
     try:
         # First-Party
@@ -1176,7 +1202,7 @@ async def get_registered_client_for_gateway(
 
 
 @oauth_router.delete("/registered-clients/{client_id}")
-async def delete_registered_client(client_id: str, current_user: EmailUserResponse = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)) -> Dict[str, Any]:  # noqa: ARG001
+async def delete_registered_client(client_id: str, request: Request, current_user: EmailUserResponse = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)) -> Dict[str, Any]:  # noqa: ARG001
     """Delete a registered OAuth client.
 
     This will revoke the client registration locally. Note: This does not automatically
@@ -1185,6 +1211,7 @@ async def delete_registered_client(client_id: str, current_user: EmailUserRespon
 
     Args:
         client_id: The registered client ID to delete
+        request: The FastAPI request object.
         current_user: The authenticated user (admin access required)
         db: Database session
 
@@ -1194,7 +1221,7 @@ async def delete_registered_client(client_id: str, current_user: EmailUserRespon
     Raises:
         HTTPException: If client not found or deletion fails
     """
-    _require_admin_user(current_user)
+    _require_unnarrowed_admin(request, current_user)
 
     try:
         # First-Party
