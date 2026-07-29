@@ -10809,6 +10809,17 @@ async def handle_mcp_app_session_rpc(app_session_id: str, request: Request, db: 
         return {"jsonrpc": "2.0", "result": {}, "id": req_id}
 
     if method == "notifications/message":
+        if "id" in body:
+            # JSON-RPC decides notification vs request on the *presence* of the id member, not
+            # its value: "id": null still makes this a request, which must not go unanswered.
+            # The MCP Apps lifecycle defines notifications/message as terminating at the host
+            # with no reply, so the request form is rejected rather than silently acknowledged
+            # with an empty body the caller is still waiting on.
+            return {
+                "jsonrpc": "2.0",
+                "error": {"code": -32600, "message": "notifications/message must be sent as a JSON-RPC notification, without an 'id' member"},
+                "id": req_id,
+            }
         _record_app_bridge_log(app_session, params)
         # A JSON-RPC notification carries no id and MUST NOT receive a JSON-RPC response, so
         # this is acknowledged at the transport level only: 202 Accepted with an empty body,

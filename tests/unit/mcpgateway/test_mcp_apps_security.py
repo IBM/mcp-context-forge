@@ -852,8 +852,9 @@ class TestAppBridgeEndpoints:
         from mcpgateway import main as main_mod
 
         monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", True)
+        # A JSON-RPC notification omits the id member entirely.
         request = FakeRequest(
-            {"jsonrpc": "2.0", "id": None, "method": "notifications/message", "params": {"level": "info", "logger": "widget", "data": "hello"}},
+            {"jsonrpc": "2.0", "method": "notifications/message", "params": {"level": "info", "logger": "widget", "data": "hello"}},
             headers={"mcp-session-id": "mcp-session-123"},
         )
 
@@ -872,6 +873,41 @@ class TestAppBridgeEndpoints:
         # bare transport-level acknowledgement instead.
         assert result.status_code == 202
         assert result.body == b""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("req_id", [None, "1", 7])
+    async def test_rpc_log_notification_with_an_id_is_rejected_as_a_request(self, monkeypatch, mock_db, valid_app_session, req_id):
+        """An id-bearing notifications/message is a request, so it must not be answered with a bare 202.
+
+        JSON-RPC decides notification vs request on the presence of the id member, not its
+        value, so ``"id": null`` counts as a request too. notifications/message is defined as
+        notification-only, so the request form is rejected instead of silently discarding a
+        response the caller is waiting on.
+        """
+        # First-Party
+        from mcpgateway import main as main_mod
+
+        monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", True)
+        request = FakeRequest(
+            {"jsonrpc": "2.0", "id": req_id, "method": "notifications/message", "params": {"level": "info", "logger": "widget", "data": "hello"}},
+            headers={"mcp-session-id": "mcp-session-123"},
+        )
+
+        with (
+            patch.object(main_mod, "_assert_session_owner_or_admin", new=AsyncMock()),
+            patch.object(main_mod, "get_request_identity", return_value=("user@example.com", False)),
+            patch.object(main_mod.mcp_app_session_service, "get_valid_session", return_value=valid_app_session),
+            patch.object(main_mod.tool_service, "invoke_tool", new=AsyncMock()) as invoke_mock,
+            patch.object(main_mod.resource_service, "read_resource", new=AsyncMock()) as read_mock,
+        ):
+            result = await main_mod.handle_mcp_app_session_rpc.__wrapped__("test-session-id", request=request, db=mock_db, user={"email": "user@example.com"})
+            invoke_mock.assert_not_awaited()
+            read_mock.assert_not_awaited()
+
+        assert result["jsonrpc"] == "2.0"
+        assert result["id"] == req_id
+        assert result["error"]["code"] == -32600
+        assert "without an 'id' member" in result["error"]["message"]
 
     @pytest.mark.asyncio
     async def test_rpc_resources_read_is_scoped_to_the_bound_session(self, monkeypatch, mock_db, valid_app_session):

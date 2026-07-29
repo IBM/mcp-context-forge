@@ -340,6 +340,13 @@ transport level with `202 Accepted` and an empty body, matching the Streamable
 HTTP rule for notification-only input. The other three methods are requests and
 return a normal JSON-RPC result or error with the request `id` echoed back.
 
+JSON-RPC distinguishes a notification from a request by the *presence* of the
+`id` member, not by its value, so `"id": null` still makes the message a request
+that requires a response. Because `notifications/message` is defined as
+notification-only, an `id`-bearing form is rejected with `-32600 Invalid Request`
+rather than acknowledged with an empty `202` that would leave the caller waiting
+on a response it will never receive.
+
 Being a core MCP method does not make a method reachable over AppBridge: the
 allowlist is explicit, so `tools/list`, `resources/list`, `prompts/list`, and
 `resources/subscribe` remain rejected.
