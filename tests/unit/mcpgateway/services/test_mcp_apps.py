@@ -255,6 +255,42 @@ def test_merge_mcp_protocol_meta_does_not_log_full_flat_resource_uri(caplog) -> 
     assert "truncated" in logged
 
 
+@pytest.mark.parametrize(
+    "legacy_uri",
+    [
+        "https://user:pa?ss@example.com/widget.html",  # pragma: allowlist secret
+        "https://user:pa#ss@example.com/widget.html",  # pragma: allowlist secret
+        "mailto:user:pa@example.com",  # pragma: allowlist secret
+    ],
+)
+def test_merge_mcp_protocol_meta_redacts_credentials_split_by_a_stray_delimiter(caplog, legacy_uri) -> None:
+    """An unencoded delimiter inside userinfo must not leave a credential prefix in the logs."""
+    payload = {"_meta": {LEGACY_RESOURCE_URI_META_KEY: legacy_uri}}
+
+    with caplog.at_level(logging.WARNING, logger="mcpgateway.services.mcp_apps"):
+        merge_mcp_protocol_meta(payload)
+
+    logged = caplog.text
+    assert "extensionMetadata" not in payload
+    # "pa" is the part of the credential that survives if the query/fragment is stripped
+    # before the userinfo is, so its absence is what pins the ordering-independence.
+    assert "user" not in logged
+    assert "pa" not in logged
+
+
+def test_merge_mcp_protocol_meta_logs_an_unparseable_uri_without_its_contents(caplog) -> None:
+    """A URI that cannot be parsed at all is reported by length only."""
+    legacy_uri = "http://[::1-s3cret"  # pragma: allowlist secret
+    payload = {"_meta": {LEGACY_RESOURCE_URI_META_KEY: legacy_uri}}
+
+    with caplog.at_level(logging.WARNING, logger="mcpgateway.services.mcp_apps"):
+        merge_mcp_protocol_meta(payload)
+
+    assert "extensionMetadata" not in payload
+    assert "s3cret" not in caplog.text
+    assert "unparseable" in caplog.text
+
+
 def test_merge_mcp_protocol_meta_does_not_mutate_source_meta() -> None:
     """Normalizing the deprecated key must not rewrite the caller's _meta payload."""
     meta = {"ui": {"visibility": ["app"]}, LEGACY_RESOURCE_URI_META_KEY: "ui://widgets/legacy"}
