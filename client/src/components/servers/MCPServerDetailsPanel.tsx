@@ -128,12 +128,15 @@ export function MCPServerDetailsPanel({
   error,
   open,
   onClose,
+  initialTab = "tryit",
   onAddTag,
 }: {
   server: MCPServer | null;
   error: { message: string } | null;
   open: boolean;
   onClose: () => void;
+  /** Tab to select each time the panel opens. Defaults to "tryit". */
+  initialTab?: TopTab;
   /**
    * Persists the server's full tag list after an inline add. Receives the server
    * (gateway) ID and the new complete list of tag labels. When omitted, the tag
@@ -141,7 +144,7 @@ export function MCPServerDetailsPanel({
    */
   onAddTag?: (serverId: string, tags: string[]) => Promise<void>;
 }) {
-  const [topTab, setTopTab] = useState<TopTab>("components");
+  const [topTab, setTopTab] = useState<TopTab>(initialTab);
   const [activeTab, setActiveTab] = useState<ComponentTab>("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [isSearchExpanded, setIsSearchExpanded] = useState(false);
@@ -152,11 +155,18 @@ export function MCPServerDetailsPanel({
 
   // Reset tab and search when server changes
   useEffect(() => {
-    setTopTab("components");
+    setTopTab(initialTab);
     setActiveTab("all");
     setSearchQuery("");
     setIsSearchExpanded(false);
-  }, [server?.id]);
+  }, [server?.id, initialTab]);
+
+  // Land on `initialTab` (default "Try it") each time the panel opens, regardless
+  // of which tab was active when it was last closed. Keyed on `open` only so a
+  // data refetch while the panel is open doesn't yank the user off their tab.
+  useEffect(() => {
+    if (open) setTopTab(initialTab);
+  }, [open, initialTab]);
 
   // Focus close on open; restore focus on close/unmount.
   useEffect(() => {
