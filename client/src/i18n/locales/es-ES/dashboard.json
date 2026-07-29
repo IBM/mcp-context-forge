@@ -8,6 +8,8 @@
   "dashboard.home.clear": "Limpiar",
   "dashboard.home.emptyState": "Estado vacío (por añadir)",
   "dashboard.home.headline.default": "En funcionamiento...",
+  "dashboard.home.headline.degraded": "En funcionamiento con salud reducida...",
+  "dashboard.home.headline.unreachable": "Estado del sistema no disponible...",
   "dashboard.home.card.system": "Sistema",
   "dashboard.home.card.activity": "Feed de actividad",
   "dashboard.home.card.mcp": "MCP",

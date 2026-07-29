@@ -7,7 +7,7 @@
  * `action` are slots the fuller #5847 / default-state content fills in.
  */
 
-import { Activity, AlertCircle, AlertTriangle, Info } from "lucide-react";
+import { Activity, AlertTriangle, Info } from "lucide-react";
 import type { ComponentType, ReactNode } from "react";
 import { useIntl } from "react-intl";
 
@@ -19,7 +19,7 @@ const SEVERITY_ICON: Record<Severity, ComponentType<{ className?: string }>> = {
   success: Activity,
   info: Info,
   warning: AlertTriangle,
-  error: AlertCircle,
+  error: AlertTriangle,
 };
 
 const SEVERITY_ICON_CLASS: Record<Severity, string> = {
