@@ -2721,6 +2721,44 @@ class TestOAuthRouterPopupMode:
         assert '"><script>alert' not in result
 
     @pytest.mark.asyncio
+    async def test_build_callback_response_popup(self):
+        """Test _build_callback_response returns the postMessage script for popup flows."""
+        from mcpgateway.routers.oauth_router import _build_callback_response
+
+        payload = {"type": "oauth_callback", "status": "error", "error": "invalid_state", "errorDescription": "Invalid OAuth state parameter."}
+
+        response = _build_callback_response(True, "test-nonce", payload, "<html><body>legacy page</body></html>", status_code=400)
+
+        assert response.status_code == 400
+        body = response.body.decode()
+        assert "postMessage" in body
+        assert "window.opener" in body
+        assert "legacy page" not in body
+
+    @pytest.mark.asyncio
+    async def test_build_callback_response_legacy(self):
+        """Test _build_callback_response returns the HTML page for legacy admin-UI flows."""
+        from mcpgateway.routers.oauth_router import _build_callback_response
+
+        payload = {"type": "oauth_callback", "status": "error", "error": "invalid_state", "errorDescription": "Invalid OAuth state parameter."}
+
+        response = _build_callback_response(False, "test-nonce", payload, "<html><body>legacy page</body></html>", status_code=400)
+
+        assert response.status_code == 400
+        body = response.body.decode()
+        assert "legacy page" in body
+        assert "postMessage" not in body
+
+    @pytest.mark.asyncio
+    async def test_popup_state_prefix_matches_manager_constant(self):
+        """Test the router and OAuth manager share the same popup state prefix."""
+        from mcpgateway.routers.oauth_router import POPUP_STATE_PREFIX as router_prefix
+        from mcpgateway.services.oauth_manager import POPUP_STATE_PREFIX as manager_prefix
+
+        assert router_prefix is manager_prefix
+        assert manager_prefix == "popup."
+
+    @pytest.mark.asyncio
     async def test_oauth_callback_with_popup_state_success(self, mock_db):
         """Test oauth_callback returns postMessage response when state starts with 'popup.'"""
         from mcpgateway.routers.oauth_router import oauth_callback
