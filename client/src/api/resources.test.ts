@@ -116,6 +116,59 @@ describe("resourcesApi", () => {
     });
   });
 
+  describe("setState", () => {
+    it("POSTs /resources/:id/state?activate=true and returns the canonical resource", async () => {
+      const body = {
+        status: "success",
+        message: "Resource res-1 activated",
+        resource: { id: "res-1", enabled: true },
+      };
+      mockFetch.mockResolvedValueOnce(okJson(body));
+
+      const result = await resourcesApi.setState("res-1", true);
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining("/resources/res-1/state?activate=true"),
+        expect.objectContaining({ method: "POST" }),
+      );
+      expect(result).toEqual(body);
+    });
+
+    it("POSTs /resources/:id/state?activate=false", async () => {
+      mockFetch.mockResolvedValueOnce(
+        okJson({
+          status: "success",
+          message: "deactivated",
+          resource: { id: "res-1", enabled: false },
+        }),
+      );
+
+      await resourcesApi.setState("res-1", false);
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining("/resources/res-1/state?activate=false"),
+        expect.objectContaining({ method: "POST" }),
+      );
+    });
+
+    it("throws synchronously for an invalid ID", () => {
+      expect(() => resourcesApi.setState("../etc/passwd", true)).toThrow(
+        "Invalid resource ID format",
+      );
+    });
+
+    it("throws ApiError on a non-2xx response", async () => {
+      mockFetch.mockResolvedValueOnce(
+        new Response(JSON.stringify({ detail: "Not found" }), {
+          status: 404,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+
+      await expect(resourcesApi.setState("res-1", true)).rejects.toThrow("HTTP 404");
+    });
+  });
+
   describe("validateResourceId (via delete)", () => {
     it("rejects an empty id", () => {
       expect(() => resourcesApi.delete("")).toThrow(/^Invalid resource ID$/);
