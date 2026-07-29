@@ -627,6 +627,7 @@ async def _default_session_factory(req: SessionCreateRequest) -> tuple[ClientSes
         # Categorize as timeout (no credentials in TimeoutError message, but
         # sanitize_exception_message is safe to call on any exception text)
         from mcpgateway.utils.url_auth import sanitize_exception_message
+
         timeout_msg = str(timeout_exc) if str(timeout_exc) else f"Timeout after {req.timeout_seconds}s waiting for upstream session"
         sanitized_timeout_msg = sanitize_exception_message(timeout_msg, auth_query_params=None)
 
