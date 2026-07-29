@@ -632,7 +632,7 @@ ContextForge provides Cross-Site Request Forgery (CSRF) protection through two i
 ContextForge implements CSRF protection in two distinct paths:
 
 1. **`CSRFMiddleware` (global protection)**: Applies to non-exempt routes (e.g., `/llm/*`, `/v1/mcp/*`) and also to versioned admin routes (`/v1/admin/*`)
-2. **`enforce_admin_csrf` (per-route dependency)**: Applies to the legacy admin mount (`/admin/*` and `/admin/llm/*`)
+2. **`enforce_admin_csrf` (per-route dependency)**: Applies to admin routes at both the legacy (`/admin/*`, `/admin/llm/*`) and versioned (`/v1/admin/*`, `/v1/admin/llm/*`) mounts
 
 The five settings marked as "middleware-path-only" in the table above govern only the first path; the admin dependency uses hardcoded equivalents for all cookie and header attributes:
 
@@ -647,9 +647,9 @@ The five settings marked as "middleware-path-only" in the table above govern onl
 | Token scheme | HMAC over `user_id:session_id:window` | plain double-submit with `secrets.compare_digest()` |
 | Origin check | `CSRF_CHECK_REFERER` setting + `CSRF_TRUSTED_ORIGINS` | always via `_request_origin_matches()` |
 
-**Default Exempt Paths** (middleware only; see `mcpgateway/config.py` for complete list):
+**Default Exempt Paths** (middleware only):
 ```json
-["/health", "/auth/login", "/auth/logout", "/auth/refresh", "/admin", "/admin/login", "/oauth/fetch-tools", "/docs", "/redoc", "/openapi.json", "/metrics", "/mcp/", "/sse", "/message", "/rpc", "/api/metrics/", "/toolops/", "/tokens", "/teams/", "/llmchat/", "/api/logs/", "/_internal/mcp/"]
+["/health", "/auth/login", "/auth/logout", "/auth/refresh", "/auth/email/login", "/auth/email/register", "/auth/email/forgot-password", "/auth/email/reset-password", "/admin", "/admin/login", "/admin/forgot-password", "/admin/reset-password", "/oauth/fetch-tools", "/docs", "/redoc", "/openapi.json", "/metrics", "/mcp/", "/sse", "/message", "/rpc", "/api/metrics/", "/toolops/", "/tokens", "/teams/", "/llmchat/", "/api/logs/", "/_internal/mcp/"]
 ```
 
 !!! warning "CSRF_COOKIE_NAME Synchronization Risk"
