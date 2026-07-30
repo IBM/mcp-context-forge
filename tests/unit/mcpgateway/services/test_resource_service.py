@@ -1934,13 +1934,14 @@ class TestResourceTemplates:
             assert "Failed to process template" in str(exc_info.value)
 
     @pytest.mark.asyncio
-    async def test_read_template_resource_binary_not_supported(self):
-        """Test that binary template raises ResourceError with wrapped message."""
+    async def test_read_template_resource_non_text_mime_returns_placeholder(self):
+        """Non-text/* templates return a concrete URI placeholder for gateway proxy (#5883)."""
         # Third-Party
         from sqlalchemy.orm import Session
 
         # First-Party
-        from mcpgateway.services.resource_service import ResourceError, ResourceService
+        from mcpgateway.common.models import ResourceContent
+        from mcpgateway.services.resource_service import ResourceService
 
         # Arrange
         db = MagicMock(spec=Session)
@@ -1951,7 +1952,7 @@ class TestResourceTemplates:
         service = ResourceService()
         uri = "test://template/123"
 
-        # Binary MIME template
+        # Non-text MIME template (e.g. application/json federation templates)
         template = MagicMock()
         template.id = "39334ce0ed2644d79ede8913a66930c9"  # pragma: allowlist secret
         template.uri_template = "test://template/{id}"
@@ -1961,11 +1962,13 @@ class TestResourceTemplates:
         service._template_cache = {"binary": template}
 
         with patch.object(service, "_uri_matches_template", return_value=True), patch.object(service, "_extract_template_params", return_value={"id": "123"}):
-            with pytest.raises(ResourceError) as exc_info:
-                await service._read_template_resource(db, uri)
+            out = await service._read_template_resource(db, uri)
 
-            msg = str(exc_info.value)
-            assert "Failed to process template: Binary resource templates not yet supported" in msg
+        assert isinstance(out, ResourceContent)
+        assert out.id == template.id
+        assert out.uri == template.uri_template
+        assert out.mime_type == "application/octet-stream"
+        assert out.text == "test://template/123"
 
 
 # --------------------------------------------------------------------------- #
@@ -5981,6 +5984,53 @@ class TestReadResourceCoverageEdges:
         list_templates.assert_not_awaited()
         assert out.id == "cached-tmpl"
         assert out.text == '{"user_id":"7","name":"Cached User"}'
+
+    @pytest.mark.asyncio
+    async def test_read_resource_non_text_template_proxies_to_upstream(self):
+        """application/json resource templates resolve via gateway proxy (#5883)."""
+        # First-Party
+        from mcpgateway.common.models import ResourceTemplate
+        from mcpgateway.services.resource_service import ResourceService
+
+        svc = ResourceService()
+        json_template = ResourceTemplate(
+            id="json-tmpl",
+            uriTemplate="reference://users/{user_id}",
+            name="users",
+            description=None,
+            mime_type="application/json",
+        )
+        svc._template_cache = {"users": json_template}
+
+        db = MagicMock()
+        db.commit = MagicMock()
+
+        template_db = MagicMock()
+        template_db.id = "json-tmpl"
+        template_db.uri = "reference://users/{user_id}"
+        template_db.uri_template = "reference://users/{user_id}"
+        template_db.enabled = True
+        template_db.visibility = "public"
+        template_db.owner_email = None
+        template_db.team_id = None
+        template_db.gateway_id = "gateway-1"
+
+        # 1) URI lookup miss, 2) inactivity check miss, 3) template inactivity miss, 4) template access-check fetch
+        db.execute.return_value.scalar_one_or_none.side_effect = [None, None, None, template_db]
+        upstream_payload = '{"user_id":"7","name":"User 7"}'
+
+        with (
+            patch.object(svc, "_check_resource_access", new_callable=AsyncMock, return_value=True),
+            patch.object(svc, "invoke_resource", new_callable=AsyncMock, return_value=upstream_payload) as invoke,
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=MagicMock()),
+        ):
+            out = await svc.read_resource(db, resource_uri="reference://users/7")
+
+        assert out.id == "json-tmpl"
+        assert out.mime_type == "application/json"
+        assert out.text == upstream_payload
+        invoke.assert_awaited_once()
+        assert invoke.await_args.kwargs["resource_template_uri"] == "reference://users/7"
 
     @pytest.mark.asyncio
     async def test_read_resource_template_proxy_none_response_raises(self):
