@@ -38,8 +38,13 @@ Health info is also published to `/metrics` in Prometheus format.
 
 - ✅ Federated topologies can eject bad nodes quickly and re-accept them later
 - ✅ Local health can be used by Kubernetes probes, HAProxy, etc.
+- ✅ Tool cache entries automatically invalidated when gateways recover, ensuring tools immediately available
 - 🔄 Gateways that go offline briefly won't be removed immediately (tunable)
 - 🔍 Metrics include last check time, RTT, and result status
+
+**Cache Invalidation on Recovery:**
+
+When health checks detect gateway recovery (offline → online transition), negative cache entries for the gateway's tools are automatically invalidated. This ensures that tools become immediately invokable after gateway recovery without waiting for cache TTL expiration. See ADR-033 for details on tool lookup caching.
 
 ## Alternatives Considered
 

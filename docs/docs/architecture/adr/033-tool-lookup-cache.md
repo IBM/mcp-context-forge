@@ -80,6 +80,30 @@ Default prefix: `mcpgw:` → `mcpgw:tool_lookup:my_tool`
 
 **Expected improvement**: 80-95% reduction in DB traffic for repeated tool invocations.
 
+## Cache Invalidation on Recovery
+
+When tools transition from unreachable→reachable during gateway recovery, negative cache entries are explicitly invalidated to ensure tools become immediately invokable without waiting for TTL expiration.
+
+**Recovery paths that invalidate negative cache entries:**
+
+1. `fetch_tools_after_oauth` - OAuth flow completion
+2. `update_gateway` - Gateway configuration updates that trigger re-initialization
+3. `set_gateway_state` - Manual gateway activation or health check recovery
+4. `_refresh_gateway_tools_resources_prompts` - Periodic refresh operations
+
+**Implementation:**
+
+- Each recovery path tracks "restored tools" (tools transitioning unreachable→reachable)
+- After successful recovery, negative cache entries for restored tools are invalidated via `_invalidate_restored_tool_caches()`
+- Invalidation happens automatically during gateway recovery without requiring manual intervention
+- Tools become immediately invokable after recovery without waiting for negative cache TTL
+
+**Example flow:**
+
+1. Gateway goes offline → tools marked unreachable → negative cache entries created
+2. Gateway recovers → tools marked reachable → negative cache entries invalidated
+3. Tool invocations immediately succeed (no cache miss delay)
+
 ## Consequences
 
 ### Positive
@@ -87,6 +111,8 @@ Default prefix: `mcpgw:` → `mcpgw:tool_lookup:my_tool`
 - Removes hot-path DB lookups for repeat tool invocations
 - Reduces connection pool pressure under high concurrency
 - Redis L2 provides cross-worker cache reuse
+- Negative cache entries automatically invalidated during recovery
+- Tools immediately invokable after gateway recovery
 
 ### Negative
 
