@@ -758,9 +758,10 @@ async def check_permission_inline(
         ...         pass
         ...     async def check_permission(self, **kwargs):
         ...         return True
-        >>> from unittest.mock import patch
-        >>> with patch('mcpgateway.middleware.rbac.PermissionService', DummyPS):
-        ...     asyncio.run(check_permission_inline({"email": "u"}, "tools.read", db=object()))
+        >>> from unittest.mock import AsyncMock, patch
+        >>> with patch('mcpgateway.plugins.get_plugin_manager', AsyncMock(return_value=None)):
+        ...     with patch('mcpgateway.middleware.rbac.PermissionService', DummyPS):
+        ...         asyncio.run(check_permission_inline({"email": "u"}, "tools.read", db=object()))
         True
 
         Malformed context is denied rather than raising:

@@ -221,6 +221,34 @@ async def test_since_excludes_row_exactly_at_boundary(db_session, grant_permissi
 
 
 @pytest.mark.asyncio
+async def test_audit_timestamp_ties_at_limit_resolve_by_id(db_session, grant_permissions, scope):
+    """Rows sharing a timestamp survive the SQL LIMIT by id, not DB row order."""
+    grant_permissions()
+    scope("admin@example.com", None)
+    # Insertion order is deliberately not id order: without the SQL tiebreak SQLite
+    # returns these ties in reverse-insertion order, which would keep tie-a instead.
+    for suffix in ("b", "c", "a"):
+        make_audit(db_session, offset_seconds=0, id=f"tie-{suffix}")
+
+    response = await call_feed(db_session, limit=2)
+
+    assert [i.id for i in response.items] == ["audit:tie-c", "audit:tie-b"]
+
+
+@pytest.mark.asyncio
+async def test_security_timestamp_ties_at_limit_resolve_by_id(db_session, grant_permissions, scope):
+    """The security source has the same deterministic (timestamp, id) boundary."""
+    grant_permissions()
+    scope("admin@example.com", None)
+    for suffix in ("b", "c", "a"):
+        make_security(db_session, offset_seconds=0, id=f"tie-{suffix}")
+
+    response = await call_feed(db_session, limit=2)
+
+    assert [i.id for i in response.items] == ["security:tie-c", "security:tie-b"]
+
+
+@pytest.mark.asyncio
 async def test_feed_narrows_to_audit_only_without_security_read(db_session, grant_permissions, scope):
     """Missing security:read omits security rows instead of rejecting the request."""
     grant_permissions(denied={"security:read"})
