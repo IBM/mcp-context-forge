@@ -965,6 +965,93 @@ class GatewaysPage(BasePage):
         visibility_badge = gateway_row.locator(f'span:has-text("{expected_visibility}")')
         expect(visibility_badge).to_be_visible()
 
+    # ==================== Async Lifecycle Elements (Issue #5127) ====================
+
+    @property
+    def polling_indicator(self) -> Locator:
+        """Polling indicator shown when async lifecycle polling is active."""
+        return self.page.locator("#gateway-polling-indicator")
+
+    @property
+    def retry_info_header(self) -> Locator:
+        """Retry Info column header visible when async lifecycle is enabled."""
+        return self.page.locator("#gateways-table th:has-text('Retry Info')")
+
+    def get_status_badge_data_attribute(self, gateway_index: int) -> str | None:
+        """Get the ``data-gateway-status`` attribute value from a status badge.
+
+        Args:
+            gateway_index: Index of the gateway row
+
+        Returns:
+            The ``data-gateway-status`` attribute value, or None if badge not found
+        """
+        gateway_row = self.gateway_rows.nth(gateway_index)
+        status_cell = gateway_row.locator("td").nth(6)
+        badge = status_cell.locator("[data-gateway-status]")
+        if badge.count() == 0:
+            return None
+        return badge.get_attribute("data-gateway-status")
+
+    def is_action_menu_item_disabled(self, gateway_index: int, item_text: str) -> bool:
+        """Check whether an action menu item is disabled for a gateway row.
+
+        Args:
+            gateway_index: Index of the gateway row
+            item_text: The text of the menu item (e.g. 'Edit', 'Delete')
+
+        Returns:
+            True if the menu item has a ``disabled`` attribute
+        """
+        gateway_row = self.gateway_rows.nth(gateway_index)
+        self._open_action_dropdown(gateway_row)
+        item = gateway_row.locator(f'button[role="menuitem"]:has-text("{item_text}")')
+        disabled = item.get_attribute("disabled")
+        return disabled is not None
+
+    def get_delete_button_text(self, gateway_index: int) -> str:
+        """Get the text of the delete button (may show 'Cancel' for pending gateways).
+
+        Args:
+            gateway_index: Index of the gateway row
+
+        Returns:
+            The button text content
+        """
+        gateway_row = self.gateway_rows.nth(gateway_index)
+        self._open_action_dropdown(gateway_row)
+        delete_btn = gateway_row.locator('form[action*="/delete"] button[type="submit"]')
+        return delete_btn.text_content().strip()
+
+    def has_polling_trigger_on_table(self) -> bool:
+        """Check if the gateways table has an HTMX polling trigger.
+
+        The async lifecycle table uses ``hx-trigger`` with ``every 10s``
+        combined with a data-attribute condition.
+
+        Returns:
+            True if a polling trigger is present
+        """
+        table = self.page.locator("#gateways-table")
+        trigger = table.get_attribute("hx-trigger")
+        if trigger is None:
+            return False
+        return "every 10s" in trigger and "data-gateway-status" in trigger
+
+    def get_retry_info_text(self, gateway_index: int) -> str:
+        """Get the Retry Info cell content for a gateway row.
+
+        Args:
+            gateway_index: Index of the gateway row
+
+        Returns:
+            Text content of the Retry Info cell, or empty string if not found
+        """
+        gateway_row = self.gateway_rows.nth(gateway_index)
+        # When async lifecycle is enabled, Retry Info is the 8th column (0-indexed: 7)
+        retry_cell = gateway_row.locator("td").nth(7)
+        return retry_cell.text_content().strip()
+
     # ==================== Test Gateway Modal Elements ====================
 
     @property
