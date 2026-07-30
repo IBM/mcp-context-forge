@@ -1163,7 +1163,7 @@ curl -s -X DELETE -H "Authorization: Bearer $TOKEN" \
 
 ## LLM Settings Management
 
-LLM Settings Management endpoints configure language model providers and models. The feature is available only when `LLMCHAT_ENABLED=true`; otherwise, all LLM routes return `404 Not Found`. These endpoints are exposed through two route families that use different CSRF protection schemes:
+LLM Settings Management endpoints configure language model providers and models. The feature is available only when `LLMCHAT_ENABLED=true`; when it is `false`, the LLM routers are never mounted (`api/v1/__init__.py`'s `_assemble_routers` skips them entirely), so every LLM route path is simply absent and any request to it gets the framework's default `404 Not Found` — not a feature-gate check that returns 404 from within a handler. These endpoints are exposed through two route families that use different CSRF protection schemes:
 
 - **`/v1/llm/providers`, `/v1/llm/models`** — Write operations protected by `CSRFMiddleware` (HMAC-based tokens); read operations (GET/HEAD/OPTIONS) are safe methods and skip CSRF validation. The canonical prefix is `/v1/`; unprefixed legacy aliases (`/llm/providers`, `/llm/models`) also resolve when `LEGACY_API_ENABLED=true`, but are hidden from `/openapi.json`.
 - **`/v1/admin/llm/*`** — Write operations for the Admin UI, protected by `enforce_admin_csrf` dependency (double-submit with plain token comparison). These routes are validated by **both** CSRF schemes (the `/admin` prefix does not exempt `/v1/admin/*` paths from `CSRFMiddleware`).
@@ -1222,7 +1222,10 @@ curl -s -H "Authorization: Bearer $TOKEN" \
       "health_status": "healthy",
       "model_count": 8
     }
-  ]
+  ],
+  "total": 1,
+  "page": 1,
+  "page_size": 50
 }
 ```
 
@@ -1248,7 +1251,10 @@ curl -s -H "Authorization: Bearer $TOKEN" \
       "supports_streaming": true,
       "enabled": true
     }
-  ]
+  ],
+  "total": 1,
+  "page": 1,
+  "page_size": 50
 }
 ```
 
