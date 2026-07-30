@@ -3878,13 +3878,22 @@ class GatewayRead(BaseModelWithConfigDict):
     _normalize_visibility = field_validator("visibility", mode="before")(classmethod(lambda cls, v: _coerce_visibility(v)))
 
     # Tool count (populated from the tools relationship; 0 when not loaded)
-    tool_count: int = Field(default=0, description="Number of tools registered for this gateway")
+    tool_count: int = Field(
+        default=0,
+        description="Total tools registered for this gateway, including disabled ones. Not filtered per-tool by caller visibility. 0 may mean none registered or the field wasn't populated on this response path.",
+    )
 
     # Prompt count (populated from the prompts relationship; 0 when not loaded)
-    prompt_count: int = Field(default=0, description="Number of prompts registered for this gateway")
+    prompt_count: int = Field(
+        default=0,
+        description="Total prompts registered for this gateway, including disabled ones. Not filtered per-prompt by caller visibility. 0 may mean none registered or the field wasn't populated on this response path.",
+    )
 
     # Resource count (populated from the resources relationship; 0 when not loaded)
-    resource_count: int = Field(default=0, description="Number of resources registered for this gateway")
+    resource_count: int = Field(
+        default=0,
+        description="Total resources registered for this gateway, including disabled ones. Not filtered per-resource by caller visibility. 0 may mean none registered or the field wasn't populated on this response path.",
+    )
 
     # Tools skipped during gateway import due to validation errors (transient, not persisted)
     skipped_tools: List[str] = Field(default_factory=list, description="Tools skipped during gateway import due to validation errors")

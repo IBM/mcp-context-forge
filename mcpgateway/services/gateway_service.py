@@ -235,6 +235,21 @@ def _validated_resource_extension_metadata(resource_uri: str, mime_type: Optiona
     return extension_metadata
 
 
+def gateway_capability_loaders() -> tuple:
+    """Eager-load options for GatewayRead capability counts (id-only, no BLOBs/credentials).
+
+    Loads only the primary key of each child collection so len() works without
+    materializing full rows (tool input_schema/auth_value, resource binary/text content, etc).
+    The returned objects must only be counted, never have other attributes touched -
+    unloaded columns trigger a per-row lazy-load SELECT (N+1) if accessed.
+    """
+    return (
+        selectinload(DbGateway.tools).load_only(DbTool.id),
+        selectinload(DbGateway.prompts).load_only(DbPrompt.id),
+        selectinload(DbGateway.resources).load_only(DbResource.id),
+    )
+
+
 # Initialize logging service first
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
@@ -2416,9 +2431,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             select(DbGateway)
             .options(
                 joinedload(DbGateway.email_team),
-                selectinload(DbGateway.tools),
-                selectinload(DbGateway.prompts),
-                selectinload(DbGateway.resources),
+                *gateway_capability_loaders(),
             )
             .order_by(desc(DbGateway.created_at), desc(DbGateway.id))
         )
@@ -2456,7 +2469,10 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             # Cursor-based: pag_result is a tuple
             gateways_db, next_cursor = pag_result
 
-        db.commit()  # Release transaction to avoid idle-in-transaction
+        # Release transaction to avoid idle-in-transaction. Capability counts below survive this
+        # commit only because SessionLocal sets expire_on_commit=False (db.py) - with the SQLAlchemy
+        # default, commit would expire gateways_db and every count would silently read back as 0.
+        db.commit()
 
         # Convert to GatewayRead (common for both pagination types)
         result = []
@@ -2520,9 +2536,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         # Use joinedload/selectinload to eager load relationships for capability counts (avoids N+1 queries)
         query = select(DbGateway).options(
             joinedload(DbGateway.email_team),
-            selectinload(DbGateway.tools),
-            selectinload(DbGateway.prompts),
-            selectinload(DbGateway.resources),
+            *gateway_capability_loaders(),
         )
 
         # Apply active/inactive filter
@@ -2568,7 +2582,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
         gateways = db.execute(query).scalars().all()
 
-        db.commit()  # Release transaction to avoid idle-in-transaction
+        # Release transaction to avoid idle-in-transaction. Relies on SessionLocal's
+        # expire_on_commit=False so capability counts below don't read back as 0.
+        db.commit()
 
         # Team names are loaded via joinedload(DbGateway.email_team)
         result = []
@@ -3447,9 +3463,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             >>> asyncio.run(service._http_client.aclose())
         """
         lookup_query = select(DbGateway).options(
-            selectinload(DbGateway.tools),
-            selectinload(DbGateway.resources),
-            selectinload(DbGateway.prompts),
+            *gateway_capability_loaders(),
             joinedload(DbGateway.email_team),
         )
 

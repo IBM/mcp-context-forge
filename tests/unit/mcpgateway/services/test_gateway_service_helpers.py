@@ -278,6 +278,42 @@ async def test_list_gateways_for_user_populates_capability_counts(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_list_gateways_eager_loads_capability_relationships():
+    """list_gateways' query must eager-load tools/prompts/resources - a MagicMock db can't
+    catch a deleted selectinload() since it fabricates .tools/.prompts/.resources regardless,
+    so this pins the query itself rather than the resulting counts."""
+    service = GatewayService()
+
+    db = MagicMock()
+    db.execute.return_value.scalars.return_value.all.return_value = []
+
+    await service.list_gateways(db)
+
+    query = db.execute.call_args[0][0]
+    eager_loaded = {opt.path.path[-2].key for opt in query._with_options}
+    assert {"tools", "prompts", "resources"} <= eager_loaded
+
+
+@pytest.mark.asyncio
+async def test_list_gateways_for_user_eager_loads_capability_relationships():
+    """list_gateways_for_user's query must eager-load tools/prompts/resources - see
+    test_list_gateways_eager_loads_capability_relationships for why a MagicMock db
+    can't catch a deleted selectinload() via the resulting counts alone."""
+    service = GatewayService()
+
+    db = MagicMock()
+    db.execute.return_value.scalars.return_value.all.return_value = []
+
+    with patch("mcpgateway.services.gateway_service.TeamManagementService") as MockTeamService:
+        MockTeamService.return_value.get_user_teams = AsyncMock(return_value=[])
+        await service.list_gateways_for_user(db, user_email="user@example.com")
+
+    query = db.execute.call_args[0][0]
+    eager_loaded = {opt.path.path[-2].key for opt in query._with_options}
+    assert {"tools", "prompts", "resources"} <= eager_loaded
+
+
+@pytest.mark.asyncio
 async def test_list_gateways_populates_capability_counts(monkeypatch):
     """list_gateways eager-loads relationships so capability counts are non-zero."""
     service = GatewayService()
