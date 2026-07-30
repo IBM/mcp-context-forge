@@ -281,6 +281,14 @@ def _require_unnarrowed_admin(request: Request, current_user: EmailUserResponse)
 def _resolve_token_teams_for_scope_check(request: Request, current_user: EmailUserResponse) -> list[str] | None:
     """Resolve token teams for scoped ownership checks using normalized token semantics.
 
+    SECURITY: This function must never promote indeterminate scope (missing or
+    malformed ``token_teams``) to unrestricted admin scope.  Only explicitly
+    resolved ``token_teams=None`` from a trusted source (``request.state``,
+    cached JWT payload) may produce unrestricted scope for eligible admins.
+    When no trusted source is available, the function fails closed to
+    public-only (``[]``), matching ``get_token_teams_from_request`` semantics
+    in ``auth_context.py``.
+
     Args:
         request: Incoming request with token scoping state.
         current_user: Authenticated user context.
@@ -288,29 +296,44 @@ def _resolve_token_teams_for_scope_check(request: Request, current_user: EmailUs
     Returns:
         ``None`` for unrestricted admin scope, or a normalized team list for scoped access.
     """
-    is_admin = False
-    if hasattr(current_user, "is_admin"):
-        is_admin = bool(getattr(current_user, "is_admin", False))
-    elif isinstance(current_user, dict):
-        is_admin = bool(current_user.get("is_admin", False) or current_user.get("user", {}).get("is_admin", False))
+    is_admin = _extract_is_admin(current_user)
 
     _not_set = object()
     token_teams = getattr(request.state, "token_teams", _not_set)
-    if token_teams is _not_set or not (token_teams is None or isinstance(token_teams, list)):
+
+    # Fast path: token_teams is already a well-typed value set by auth.py.
+    if token_teams is not _not_set and (token_teams is None or isinstance(token_teams, list)):
+        # Resolved from the primary trusted source — proceed to final checks.
+        pass
+    else:
+        # token_teams is missing (_not_set) or malformed (wrong type).
+        is_malformed = token_teams is not _not_set
+        if is_malformed:
+            logger.warning(
+                "_resolve_token_teams_for_scope_check: malformed token_teams type=%s; "
+                "attempting recovery from cached JWT payload",
+                type(token_teams).__name__,
+            )
+
+        # Attempt recovery from the cached verified JWT payload.
         cached = getattr(request.state, "_jwt_verified_payload", None)
         if cached and isinstance(cached, tuple) and len(cached) == 2:
             _, payload = cached
             if payload:
                 token_teams = normalize_token_teams(payload)
-                is_admin = bool(payload.get("is_admin", False) or payload.get("user", {}).get("is_admin", False))
-        # An unexpected token_teams value falls through to the _not_set branch below,
-        # which fails closed (empty scope) for non-admins but is treated as un-narrowed
-        # for admins.
-        if token_teams is not _not_set and not (token_teams is None or isinstance(token_teams, list)):
-            token_teams = _not_set
-
-    if token_teams is _not_set:
-        token_teams = None if is_admin else []
+                is_admin = bool(
+                    payload.get("is_admin", False) or payload.get("user", {}).get("is_admin", False)
+                )
+        else:
+            # No cached payload available — fail closed to public-only regardless
+            # of admin status.  Unrestricted scope requires an explicit signal from
+            # a trusted source, not an absence of any signal.
+            if is_malformed:
+                logger.warning(
+                    "_resolve_token_teams_for_scope_check: malformed token_teams with no "
+                    "cached JWT payload; failing closed to public-only scope",
+                )
+            token_teams = []
 
     # Empty-team scoped tokens are public-only and must never receive admin bypass.
     if isinstance(token_teams, list) and len(token_teams) == 0:

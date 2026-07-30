@@ -1371,7 +1371,10 @@ class TestOAuthRouter:
 
         assert exc_info.value.status_code == 403
 
-    def test_resolve_token_teams_for_scope_check_admin_attribute_fallback(self):
+    def test_resolve_token_teams_for_scope_check_admin_missing_state_fails_closed(self):
+        """Admin with missing token_teams attribute and no cached JWT payload
+        must fail closed to public-only scope, not unrestricted.
+        """
         request = Mock(spec=Request)
         request.state = SimpleNamespace()
         current_user = SimpleNamespace(email="admin@example.com", is_admin=True)
@@ -1379,6 +1382,220 @@ class TestOAuthRouter:
         from mcpgateway.routers.oauth_router import _resolve_token_teams_for_scope_check
 
         result = _resolve_token_teams_for_scope_check(request, current_user)
+        assert result == []
+
+
+
+class TestResolveTokenTeamsForScopeCheck:
+    """Comprehensive tests for ``_resolve_token_teams_for_scope_check`` covering all
+    acceptance criteria from issue #460: explicit None, empty list, non-empty list,
+    missing state, malformed state, and cached-payload recovery.
+    """
+
+    def test_explicit_none_admin_unrestricted(self):
+        """Explicit ``token_teams=None`` remains unrestricted for eligible admins."""
+        from mcpgateway.routers.oauth_router import _resolve_token_teams_for_scope_check
+
+        request = Mock(spec=Request)
+        request.state = SimpleNamespace(token_teams=None)
+        result = _resolve_token_teams_for_scope_check(request, {"email": "admin@example.com", "is_admin": True})
+        assert result is None
+
+    def test_explicit_none_non_admin_passes_through(self):
+        """Explicit ``token_teams=None`` for a non-admin passes through as ``None``.
+
+        The function does not downgrade non-admin ``None`` to ``[]`` — that is
+        the responsibility of callers (e.g. ``_enforce_gateway_access`` line 392-395).
+        This preserves the pre-existing contract where the function resolves state
+        and callers apply policy.
+        """
+        from mcpgateway.routers.oauth_router import _resolve_token_teams_for_scope_check
+
+        request = Mock(spec=Request)
+        request.state = SimpleNamespace(token_teams=None)
+        result = _resolve_token_teams_for_scope_check(request, {"email": "user@example.com", "is_admin": False})
+        assert result is None
+
+    def test_empty_list_admin_public_only(self):
+        """Empty team list means public-only; admin bypass must NOT apply."""
+        from mcpgateway.routers.oauth_router import _resolve_token_teams_for_scope_check
+
+        request = Mock(spec=Request)
+        request.state = SimpleNamespace(token_teams=[])
+        result = _resolve_token_teams_for_scope_check(request, {"email": "admin@example.com", "is_admin": True})
+        assert result == []
+
+    def test_non_empty_list_preserved(self):
+        """Non-empty team list is returned as-is."""
+        from mcpgateway.routers.oauth_router import _resolve_token_teams_for_scope_check
+
+        request = Mock(spec=Request)
+        request.state = SimpleNamespace(token_teams=["team-a", "team-b"])
+        result = _resolve_token_teams_for_scope_check(request, {"email": "user@example.com", "is_admin": False})
+        assert result == ["team-a", "team-b"]
+
+    def test_non_empty_list_admin_narrowed(self):
+        """Admin with non-empty team list is narrowed, not unrestricted."""
+        from mcpgateway.routers.oauth_router import _resolve_token_teams_for_scope_check
+
+        request = Mock(spec=Request)
+        request.state = SimpleNamespace(token_teams=["team-a"])
+        result = _resolve_token_teams_for_scope_check(request, {"email": "admin@example.com", "is_admin": True})
+        assert result == ["team-a"]
+
+    def test_missing_state_admin_fails_closed(self):
+        """Missing ``token_teams`` attribute with no cached payload fails closed
+        to public-only even for admins — indeterminate scope must not become
+        unrestricted.
+        """
+        from mcpgateway.routers.oauth_router import _resolve_token_teams_for_scope_check
+
+        request = Mock(spec=Request)
+        request.state = SimpleNamespace()  # no token_teams, no _jwt_verified_payload
+        result = _resolve_token_teams_for_scope_check(request, {"email": "admin@example.com", "is_admin": True})
+        assert result == []
+
+    def test_missing_state_non_admin_fails_closed(self):
+        """Missing ``token_teams`` for non-admin also fails closed to public-only."""
+        from mcpgateway.routers.oauth_router import _resolve_token_teams_for_scope_check
+
+        request = Mock(spec=Request)
+        request.state = SimpleNamespace()
+        result = _resolve_token_teams_for_scope_check(request, {"email": "user@example.com", "is_admin": False})
+        assert result == []
+
+    def test_malformed_state_string_admin_fails_closed(self):
+        """Malformed ``token_teams`` (string instead of list) with no cached payload
+        fails closed for admins.
+        """
+        from mcpgateway.routers.oauth_router import _resolve_token_teams_for_scope_check
+
+        request = Mock(spec=Request)
+        request.state = SimpleNamespace(token_teams="team-1")
+        result = _resolve_token_teams_for_scope_check(request, {"email": "admin@example.com", "is_admin": True})
+        assert result == []
+
+    def test_malformed_state_int_fails_closed(self):
+        """Malformed ``token_teams`` (integer) fails closed."""
+        from mcpgateway.routers.oauth_router import _resolve_token_teams_for_scope_check
+
+        request = Mock(spec=Request)
+        request.state = SimpleNamespace(token_teams=42)
+        result = _resolve_token_teams_for_scope_check(request, {"email": "admin@example.com", "is_admin": True})
+        assert result == []
+
+    def test_malformed_state_dict_fails_closed(self):
+        """Malformed ``token_teams`` (dict) fails closed."""
+        from mcpgateway.routers.oauth_router import _resolve_token_teams_for_scope_check
+
+        request = Mock(spec=Request)
+        request.state = SimpleNamespace(token_teams={"teams": ["t1"]})
+        result = _resolve_token_teams_for_scope_check(request, {"email": "admin@example.com", "is_admin": True})
+        assert result == []
+
+    def test_malformed_state_bool_fails_closed(self):
+        """Malformed ``token_teams`` (bool True) fails closed."""
+        from mcpgateway.routers.oauth_router import _resolve_token_teams_for_scope_check
+
+        request = Mock(spec=Request)
+        request.state = SimpleNamespace(token_teams=True)
+        result = _resolve_token_teams_for_scope_check(request, {"email": "admin@example.com", "is_admin": True})
+        assert result == []
+
+    def test_missing_state_recovered_from_cached_jwt_admin(self):
+        """Missing ``token_teams`` with cached JWT payload recovers correctly for admin."""
+        from mcpgateway.routers.oauth_router import _resolve_token_teams_for_scope_check
+
+        request = Mock(spec=Request)
+        request.state = SimpleNamespace(
+            _jwt_verified_payload=("token", {"teams": None, "is_admin": True}),
+        )
+        result = _resolve_token_teams_for_scope_check(request, {"email": "admin@example.com", "is_admin": True})
+        assert result is None
+
+    def test_missing_state_recovered_from_cached_jwt_narrowed(self):
+        """Missing ``token_teams`` with cached JWT payload recovers team narrowing."""
+        from mcpgateway.routers.oauth_router import _resolve_token_teams_for_scope_check
+
+        request = Mock(spec=Request)
+        request.state = SimpleNamespace(
+            _jwt_verified_payload=("token", {"teams": ["team-x"], "is_admin": True}),
+        )
+        result = _resolve_token_teams_for_scope_check(request, {"email": "admin@example.com", "is_admin": True})
+        assert result == ["team-x"]
+
+    def test_malformed_state_recovered_from_cached_jwt(self):
+        """Malformed ``token_teams`` with available cached JWT payload recovers."""
+        from mcpgateway.routers.oauth_router import _resolve_token_teams_for_scope_check
+
+        request = Mock(spec=Request)
+        request.state = SimpleNamespace(
+            token_teams="bad-value",
+            _jwt_verified_payload=("token", {"teams": ["team-1"], "is_admin": False}),
+        )
+        result = _resolve_token_teams_for_scope_check(request, {"email": "user@example.com", "is_admin": False})
+        assert result == ["team-1"]
+
+    def test_malformed_state_recovered_admin_unrestricted_from_cached_jwt(self):
+        """Malformed ``token_teams`` recovers admin bypass from cached JWT payload."""
+        from mcpgateway.routers.oauth_router import _resolve_token_teams_for_scope_check
+
+        request = Mock(spec=Request)
+        request.state = SimpleNamespace(
+            token_teams="bad",
+            _jwt_verified_payload=("token", {"teams": None, "is_admin": True}),
+        )
+        result = _resolve_token_teams_for_scope_check(request, {"email": "admin@example.com", "is_admin": True})
+        assert result is None
+
+    def test_cached_jwt_public_only_admin_stays_scoped(self):
+        """Cached JWT with ``teams=[]`` and ``is_admin=True`` stays public-only."""
+        from mcpgateway.routers.oauth_router import _resolve_token_teams_for_scope_check
+
+        request = Mock(spec=Request)
+        request.state = SimpleNamespace(
+            _jwt_verified_payload=("token", {"teams": [], "is_admin": True}),
+        )
+        result = _resolve_token_teams_for_scope_check(request, {"email": "admin@example.com", "is_admin": True})
+        assert result == []
+
+    def test_cached_jwt_overrides_current_user_admin_flag(self):
+        """When recovering from cached JWT, the ``is_admin`` from the payload takes
+        precedence over the ``current_user`` flag, since the token is the authority.
+        """
+        from mcpgateway.routers.oauth_router import _resolve_token_teams_for_scope_check
+
+        request = Mock(spec=Request)
+        # current_user claims admin, but JWT payload says no
+        request.state = SimpleNamespace(
+            _jwt_verified_payload=("token", {"teams": None, "is_admin": False}),
+        )
+        result = _resolve_token_teams_for_scope_check(request, {"email": "admin@example.com", "is_admin": True})
+        # normalize_token_teams with teams=None and is_admin=False -> []
+        assert result == []
+
+    def test_legitimate_admin_with_explicit_unrestricted_token_teams(self):
+        """Legitimate platform-admin with explicitly set ``token_teams=None`` still works."""
+        from mcpgateway.routers.oauth_router import _resolve_token_teams_for_scope_check
+
+        request = Mock(spec=Request)
+        request.state = SimpleNamespace(token_teams=None)
+        # Both dict and attribute-based user contexts
+        for current_user in [
+            {"email": "admin@example.com", "is_admin": True},
+            SimpleNamespace(email="admin@example.com", is_admin=True),
+        ]:
+            result = _resolve_token_teams_for_scope_check(request, current_user)
+            assert result is None, f"Failed for user type {type(current_user).__name__}"
+
+    def test_uses_extract_is_admin_helper(self):
+        """Delegates admin flag extraction to ``_extract_is_admin`` for consistency."""
+        from mcpgateway.routers.oauth_router import _resolve_token_teams_for_scope_check
+
+        request = Mock(spec=Request)
+        request.state = SimpleNamespace(token_teams=None)
+        # nested dict with user.is_admin
+        result = _resolve_token_teams_for_scope_check(request, {"user": {"is_admin": True}})
         assert result is None
 
 
@@ -3192,14 +3409,10 @@ class TestOAuthClientManagementScopeGuard:
             _require_unnarrowed_admin(request, non_admin_user)
         assert exc_info.value.status_code == 403
 
-    def test_malformed_token_teams_admin_allowed_characterization(self):
-        """Characterization test: a malformed (non-list, non-None) ``token_teams`` value
-        with no cached JWT payload to fall back on currently resets to the sentinel and
-        is treated as un-narrowed for an admin, so access is ALLOWED rather than denied.
-
-        This is a known inherited gap in ``_resolve_token_teams_for_scope_check`` (not
-        introduced by this guard). Asserted explicitly so a future tightening of that
-        helper fails this test loudly instead of silently changing behavior.
+    def test_malformed_token_teams_admin_denied(self):
+        """A malformed (non-list, non-None) ``token_teams`` value with no cached JWT
+        payload to fall back on now fails closed to public-only scope and denies
+        un-narrowed admin access.
         """
         from mcpgateway.routers.oauth_router import _require_unnarrowed_admin
 
@@ -3207,16 +3420,13 @@ class TestOAuthClientManagementScopeGuard:
         request.state = SimpleNamespace(token_teams="team-1")
         admin_user = {"email": "admin@example.com", "is_admin": True}
 
-        assert _require_unnarrowed_admin(request, admin_user) is None
+        with pytest.raises(HTTPException) as exc_info:
+            _require_unnarrowed_admin(request, admin_user)
+        assert exc_info.value.status_code == 403
 
-    def test_missing_token_teams_admin_allowed_characterization(self):
-        """Characterization test: a request state with no ``token_teams`` attribute at
-        all, and no cached JWT payload to re-derive from, falls back to un-narrowed
-        scope for an admin, so access is ALLOWED.
-
-        This is a known inherited gap in ``_resolve_token_teams_for_scope_check`` (not
-        introduced by this guard). Asserted explicitly so a future tightening of that
-        helper fails this test loudly instead of silently changing behavior.
+    def test_missing_token_teams_admin_denied(self):
+        """A request state with no ``token_teams`` attribute and no cached JWT payload
+        now fails closed to public-only scope and denies un-narrowed admin access.
         """
         from mcpgateway.routers.oauth_router import _require_unnarrowed_admin
 
@@ -3224,7 +3434,9 @@ class TestOAuthClientManagementScopeGuard:
         request.state = SimpleNamespace()  # no token_teams, no _jwt_verified_payload
         admin_user = {"email": "admin@example.com", "is_admin": True}
 
-        assert _require_unnarrowed_admin(request, admin_user) is None
+        with pytest.raises(HTTPException) as exc_info:
+            _require_unnarrowed_admin(request, admin_user)
+        assert exc_info.value.status_code == 403
 
     def test_narrowing_recovered_from_cached_jwt_payload_denied(self):
         """When ``token_teams`` is absent but a cached verified JWT payload is present,
@@ -3247,7 +3459,7 @@ class TestOAuthClientManagementScopeGuard:
             ({"token_teams": None}, False),
             ({"token_teams": ["team-1"]}, True),
             ({"token_teams": []}, True),
-            ({}, False),
+            ({}, True),
         ],
         ids=["unnarrowed-none", "narrowed-list", "public-only-empty", "absent-attribute"],
     )
@@ -3255,7 +3467,7 @@ class TestOAuthClientManagementScopeGuard:
         """Direct unit test of ``_require_unnarrowed_admin`` across every ``token_teams``
         shape an admin request can carry: ``None`` (un-narrowed, allowed), a non-empty
         list (narrowed, denied), an empty list (public-only, denied), and the attribute
-        being entirely absent with no cached payload (falls back to allowed for admins).
+        being entirely absent with no cached payload (fails closed to public-only, denied).
         """
         from mcpgateway.routers.oauth_router import _require_unnarrowed_admin
 
