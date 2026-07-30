@@ -2,8 +2,8 @@
  * StatusHeadline — the status-summary region (#5847 shell).
  *
  * Renders the message resolved by the rules mapping (`resolveHeadline`) with a
- * severity icon from a lookup table. The UI maps severity -> icon here; it does
- * not derive presentation strings (server-owns-presentation). `summary` and
+ * severity icon from a lookup table. The UI maps severity -> icon shape here; it
+ * does not derive presentation strings (server-owns-presentation). `summary` and
  * `action` are slots the fuller #5847 / default-state content fills in.
  */
 
@@ -22,12 +22,9 @@ const SEVERITY_ICON: Record<Severity, ComponentType<{ className?: string }>> = {
   error: AlertCircle,
 };
 
-const SEVERITY_ICON_CLASS: Record<Severity, string> = {
-  success: "text-primary",
-  info: "text-muted-foreground",
-  warning: "text-yellow-600 dark:text-yellow-400",
-  error: "text-destructive",
-};
+// Severity is conveyed by the icon shape and the message, not by colour: the
+// status icon is always the brand-cyan accent (--status-icon / #70f9ff).
+const STATUS_ICON_CLASS = "text-status-icon";
 
 interface StatusHeadlineProps {
   condition?: HeadlineCondition;
@@ -47,7 +44,7 @@ export function StatusHeadline({ condition, summary, action, className }: Status
     <div className={cn("space-y-2", className)}>
       <div className="flex items-start justify-between gap-4">
         <div className="flex items-center gap-2">
-          <Icon className={cn("size-5 shrink-0", SEVERITY_ICON_CLASS[severity])} />
+          <Icon className={cn("size-5 shrink-0", STATUS_ICON_CLASS)} />
           <h1 className="font-heading text-lg font-medium text-foreground">
             {intl.formatMessage({ id: messageId })}
           </h1>
