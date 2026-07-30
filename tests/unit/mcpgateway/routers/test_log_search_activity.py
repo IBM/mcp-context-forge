@@ -361,7 +361,18 @@ class TestAuditMapper:
 
     def test_failed_create_carries_error_message(self):
         """A failed action is an error item whose description includes the error."""
-        row = AuditTrail(id="2", timestamp=BASE_TIME, action="create", resource_type="mcp_server", resource_name="github", user_id="u", user_email="u@x.com", success=False, requires_review=False, error_message="Connection refused")
+        row = AuditTrail(
+            id="2",
+            timestamp=BASE_TIME,
+            action="create",
+            resource_type="mcp_server",
+            resource_name="github",
+            user_id="u",
+            user_email="u@x.com",
+            success=False,
+            requires_review=False,
+            error_message="Connection refused",
+        )
 
         item = log_search._audit_to_activity(row)
 
