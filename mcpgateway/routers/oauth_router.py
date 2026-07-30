@@ -294,7 +294,8 @@ def _resolve_token_teams_for_scope_check(request: Request, current_user: EmailUs
         current_user: Authenticated user context.
 
     Returns:
-        ``None`` for unrestricted admin scope, or a normalized team list for scoped access.
+        ``None`` for explicitly un-scoped requests (which callers must downgrade for non-admins),
+        or a normalized team list for scoped access.
     """
     is_admin = _extract_is_admin(current_user)
 
@@ -321,7 +322,9 @@ def _resolve_token_teams_for_scope_check(request: Request, current_user: EmailUs
             _, payload = cached
             if isinstance(payload, dict) and payload:
                 token_teams = normalize_token_teams(payload)
-                is_admin = _extract_is_admin(payload)
+                user_claim = payload.get("user", {})
+                user_is_admin = user_claim.get("is_admin", False) if isinstance(user_claim, dict) else False
+                is_admin = bool(payload.get("is_admin", False) or user_is_admin)
                 recovered = True
 
         if not recovered:
@@ -355,7 +358,9 @@ def _extract_is_admin(current_user: EmailUserResponse | dict) -> bool:
     if hasattr(current_user, "is_admin"):
         return bool(getattr(current_user, "is_admin", False))
     if isinstance(current_user, dict):
-        return bool(current_user.get("is_admin", False) or current_user.get("user", {}).get("is_admin", False))
+        user_claim = current_user.get("user", {})
+        user_is_admin = user_claim.get("is_admin", False) if isinstance(user_claim, dict) else False
+        return bool(current_user.get("is_admin", False) or user_is_admin)
     return False
 
 

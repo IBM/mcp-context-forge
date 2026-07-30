@@ -1574,6 +1574,20 @@ class TestResolveTokenTeamsForScopeCheck:
         # normalize_token_teams with teams=None and is_admin=False -> []
         assert result == []
 
+    def test_cached_jwt_user_claim_as_string_fails_closed(self):
+        """If the cached JWT payload contains a 'user' claim that is a string instead of a dict,
+        it should not raise an AttributeError and should safely fail closed to public-only scope.
+        """
+        from mcpgateway.routers.oauth_router import _resolve_token_teams_for_scope_check
+
+        request = Mock(spec=Request)
+        request.state = SimpleNamespace(
+            token_teams="bad",
+            _jwt_verified_payload=("token", {"teams": None, "user": "string_not_dict"}),
+        )
+        result = _resolve_token_teams_for_scope_check(request, {"email": "admin@example.com", "is_admin": True})
+        assert result == []
+
     def test_cached_jwt_empty_dict_payload_fails_closed(self):
         """Cached JWT tuple with an empty dict payload is treated as untrusted
         and fails closed to public-only scope.
