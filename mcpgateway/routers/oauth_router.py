@@ -310,28 +310,27 @@ def _resolve_token_teams_for_scope_check(request: Request, current_user: EmailUs
         is_malformed = token_teams is not _not_set
         if is_malformed:
             logger.warning(
-                "_resolve_token_teams_for_scope_check: malformed token_teams type=%s; "
-                "attempting recovery from cached JWT payload",
+                "_resolve_token_teams_for_scope_check: malformed token_teams type=%s; attempting recovery from cached JWT payload",
                 type(token_teams).__name__,
             )
 
         # Attempt recovery from the cached verified JWT payload.
         cached = getattr(request.state, "_jwt_verified_payload", None)
+        recovered = False
         if cached and isinstance(cached, tuple) and len(cached) == 2:
             _, payload = cached
-            if payload:
+            if isinstance(payload, dict) and payload:
                 token_teams = normalize_token_teams(payload)
-                is_admin = bool(
-                    payload.get("is_admin", False) or payload.get("user", {}).get("is_admin", False)
-                )
-        else:
-            # No cached payload available — fail closed to public-only regardless
+                is_admin = _extract_is_admin(payload)
+                recovered = True
+
+        if not recovered:
+            # No usable cached payload — fail closed to public-only regardless
             # of admin status.  Unrestricted scope requires an explicit signal from
             # a trusted source, not an absence of any signal.
             if is_malformed:
                 logger.warning(
-                    "_resolve_token_teams_for_scope_check: malformed token_teams with no "
-                    "cached JWT payload; failing closed to public-only scope",
+                    "_resolve_token_teams_for_scope_check: malformed token_teams with no cached JWT payload; failing closed to public-only scope",
                 )
             token_teams = []
 

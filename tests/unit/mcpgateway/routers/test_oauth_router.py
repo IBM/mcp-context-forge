@@ -1388,7 +1388,7 @@ class TestOAuthRouter:
 
 class TestResolveTokenTeamsForScopeCheck:
     """Comprehensive tests for ``_resolve_token_teams_for_scope_check`` covering all
-    acceptance criteria from issue #460: explicit None, empty list, non-empty list,
+    acceptance criteria from issue #5980: explicit None, empty list, non-empty list,
     missing state, malformed state, and cached-payload recovery.
     """
 
@@ -1572,6 +1572,44 @@ class TestResolveTokenTeamsForScopeCheck:
         )
         result = _resolve_token_teams_for_scope_check(request, {"email": "admin@example.com", "is_admin": True})
         # normalize_token_teams with teams=None and is_admin=False -> []
+        assert result == []
+
+    def test_cached_jwt_empty_dict_payload_fails_closed(self):
+        """Cached JWT tuple with an empty dict payload is treated as untrusted
+        and fails closed to public-only scope.
+        """
+        from mcpgateway.routers.oauth_router import _resolve_token_teams_for_scope_check
+
+        request = Mock(spec=Request)
+        # token_teams missing, cached payload is empty dict — not usable
+        request.state = SimpleNamespace(
+            _jwt_verified_payload=("token", {}),
+        )
+        result = _resolve_token_teams_for_scope_check(request, {"email": "admin@example.com", "is_admin": True})
+        assert result == []
+
+    def test_cached_jwt_non_dict_payload_fails_closed(self):
+        """Cached JWT tuple with a non-dict payload (e.g. a string) is treated
+        as untrusted and fails closed to public-only scope.
+        """
+        from mcpgateway.routers.oauth_router import _resolve_token_teams_for_scope_check
+
+        request = Mock(spec=Request)
+        request.state = SimpleNamespace(
+            _jwt_verified_payload=("token", "not-a-dict"),
+        )
+        result = _resolve_token_teams_for_scope_check(request, {"email": "admin@example.com", "is_admin": True})
+        assert result == []
+
+    def test_cached_jwt_none_payload_in_tuple_fails_closed(self):
+        """Cached JWT tuple with ``None`` as payload fails closed to public-only scope."""
+        from mcpgateway.routers.oauth_router import _resolve_token_teams_for_scope_check
+
+        request = Mock(spec=Request)
+        request.state = SimpleNamespace(
+            _jwt_verified_payload=("token", None),
+        )
+        result = _resolve_token_teams_for_scope_check(request, {"email": "admin@example.com", "is_admin": True})
         assert result == []
 
     def test_legitimate_admin_with_explicit_unrestricted_token_teams(self):
