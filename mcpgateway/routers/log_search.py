@@ -867,6 +867,9 @@ async def get_activity_feed(
             # Filtered in SQL so restricted-row counts are not observable to non-admins.
             # The IS NULL arm is required: a bare != silently drops NULL-classified rows.
             conditions.append(or_(AuditTrail.data_classification.is_(None), AuditTrail.data_classification != "restricted"))
+            # AuditTrail has no owner_email/visibility columns, so scoping is team-based
+            # (public NULL-team rows + own teams) rather than the usual
+            # get_scoped_resource_access_context public+team+own-private shape.
             if token_teams:
                 conditions.append(or_(AuditTrail.team_id.is_(None), AuditTrail.team_id.in_(token_teams)))
             else:
@@ -875,7 +878,7 @@ async def get_activity_feed(
         stmt = select(AuditTrail)
         if conditions:
             stmt = stmt.where(and_(*conditions))
-        audit_rows = db.execute(stmt.order_by(desc(AuditTrail.timestamp)).limit(limit)).scalars().all()
+        audit_rows = db.execute(stmt.order_by(desc(AuditTrail.timestamp), desc(AuditTrail.id)).limit(limit)).scalars().all()
 
         security_rows = []
         if await check_permission_inline(user, Permissions.SECURITY_READ, db=db, request=request):
@@ -889,9 +892,10 @@ async def get_activity_feed(
                 sstmt = select(SecurityEvent)
                 if sec_conditions:
                     sstmt = sstmt.where(and_(*sec_conditions))
-                security_rows = db.execute(sstmt.order_by(desc(SecurityEvent.timestamp)).limit(limit)).scalars().all()
+                security_rows = db.execute(sstmt.order_by(desc(SecurityEvent.timestamp), desc(SecurityEvent.id)).limit(limit)).scalars().all()
 
-        # Each source over-fetches at most `limit`, so the merged top-`limit` is exact.
+        # Each source over-fetches at most `limit`, so the merged top-`limit` is exact;
+        # the id tiebreak (also in each source's ORDER BY) keeps timestamp ties deterministic.
         items = [_audit_to_activity(row) for row in audit_rows] + [_security_to_activity(row) for row in security_rows]
         items.sort(key=lambda i: (i.timestamp, i.id), reverse=True)
 
