@@ -34,9 +34,6 @@ on:
             - "pyproject.toml"
             - "uv.lock"
             - "plugins/config.yaml"
-            # SQL Sanitizer is a native plugin (not a cpex wheel), so its source
-            # lives in the repo and must retrigger the suite when it changes.
-            - "plugins/sql_sanitizer/**"
             - "tests/live_gateway/plugins/**"
             - ".github/workflows/plugin-integration.yml"
     workflow_dispatch:
@@ -136,7 +133,6 @@ jobs:
                       plugin_name: PIIFilterPlugin
                       tests: tests/live_gateway/plugins/test_pii_filter_e2e.py
                       enforcement: binding
-                    # SQL Sanitizer is a native plugin (not a cpex wheel)
                     - name: sql-sanitizer
                       plugin_name: SQLSanitizer
                       tests: tests/live_gateway/plugins/test_sql_sanitizer_e2e.py

@@ -820,7 +820,7 @@ clean:
 # help: test-plugin-rate-limiter       - Plugin E2E: RateLimiter (needs Redis)
 # help: test-plugin-retry-with-backoff - Plugin E2E: RetryWithBackoff (needs Redis)
 # help: test-plugin-pii-filter         - Plugin E2E: PIIFilter
-# help: test-plugin-sql-sanitizer      - Plugin E2E: SQLSanitizer (native plugin)
+# help: test-plugin-sql-sanitizer      - Plugin E2E: SQLSanitizer
 # help: test                 - Run unit tests with pytest
 # help: test-verbose         - Run tests sequentially with real-time test name output
 # help: test-profile         - Run tests and show slowest 20 tests (durations >= 1s)

@@ -7,7 +7,7 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "0001-01-01T00:00:00Z" # This has no effect and is included for backwards compatibility when using relative exclude-newer values.
+exclude-newer = "2026-07-18T13:49:56.983756072Z"
 exclude-newer-span = "P10D"
 
 [options.exclude-newer-package]
@@ -19,14 +19,15 @@ cpex-retry-with-backoff = "2026-07-27T23:59:59Z"
 cpex-pii-filter = "2026-07-27T23:59:59Z"
 cpex-url-reputation = "2026-07-27T23:59:59Z"
 cpex-rate-limiter = "2026-07-27T23:59:59Z"
-starlette-compress = "2026-07-27T23:59:59Z"
+cpex-sql-sanitizer = "2026-07-21T23:59:59Z"
 langchain-openai = "2026-07-27T23:59:59Z"
+starlette-compress = "2026-07-27T23:59:59Z"
 langsmith = "2026-07-27T23:59:59Z"
 fastapi = "2026-07-27T23:59:59Z"
 grpcio-reflection = "2026-07-27T23:59:59Z"
 prometheus-fastapi-instrumentator = "2026-07-27T23:59:59Z"
-cpex-secrets-detection = "2026-07-27T23:59:59Z"
 grpcio = "2026-07-27T23:59:59Z"
+cpex-secrets-detection = "2026-07-27T23:59:59Z"
 langgraph = "2026-05-12T23:59:59Z"
 filelock = "2026-07-27T23:59:59Z"
 prometheus-client = "2026-07-27T23:59:59Z"
@@ -161,9 +162,9 @@ name = "aiologic"
 version = "0.17.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "sniffio" },
-    { name = "typing-extensions" },
-    { name = "wrapt" },
+    { name = "sniffio", marker = "python_full_version < '3.13'" },
+    { name = "typing-extensions", marker = "python_full_version < '3.13'" },
+    { name = "wrapt", marker = "python_full_version < '3.13'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/f1/7a/d51f2fde1e8ae8a83431f8e97b7a71e9358cdb1d4d2ce6be387fa44d68de/aiologic-0.17.1.tar.gz", hash = "sha256:2e1b93b9e88ced318c2a63ad7b382688f40cbfe40e3d42258d49dc9c5aea179d", size = 252354, upload-time = "2026-06-27T20:41:33.25Z" }
 wheels = [
@@ -1051,6 +1052,23 @@ wheels = [
 ]
 
 [[package]]
+name = "cpex-sql-sanitizer"
+version = "0.1.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "cpex" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/bd/60/64d15f14178fa6c7c352ea2332f499ef553a93eed936f72409e06691c5c2/cpex_sql_sanitizer-0.1.0.tar.gz", hash = "sha256:c8d8272f8352dee76e5b852cbae9e0b52da26e376c1e51b12552758c7153e32a", size = 114423, upload-time = "2026-07-21T13:14:53.944Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/0f/71/42163410b3526be992c2bf6413aaa413b0aaee3131f5700e9c4ccb838634/cpex_sql_sanitizer-0.1.0-cp311-abi3-macosx_11_0_arm64.whl", hash = "sha256:4b152579754ed659bbc0432716e2882a95f9b666a8fca5729f8ed73a4011ebcd", size = 693150, upload-time = "2026-07-21T13:14:44.244Z" },
+    { url = "https://files.pythonhosted.org/packages/9a/44/a57c1557a6df750905ea580a5f7de7563a7c2dde7e77bfb0f7497be291f5/cpex_sql_sanitizer-0.1.0-cp311-abi3-manylinux_2_34_aarch64.whl", hash = "sha256:849187585f9f023bce5536445c9ffc37c1d2ba410ff714afac6e0d9e8a359cac", size = 738430, upload-time = "2026-07-21T13:14:46.058Z" },
+    { url = "https://files.pythonhosted.org/packages/00/dd/3f4fc23ef061302975ebc558eb5372a5c2ec983d4767093b7a299140d368/cpex_sql_sanitizer-0.1.0-cp311-abi3-manylinux_2_34_ppc64le.whl", hash = "sha256:9c96cb5b9938dfabf3ae582f6141d0f82be4908d01c403f3406b7757d5057d8d", size = 806349, upload-time = "2026-07-21T13:14:47.798Z" },
+    { url = "https://files.pythonhosted.org/packages/19/50/81917715d6ae9d7ff0c28630bbb3d28ca1e5f67d49cc5bc2de1e9b48118c/cpex_sql_sanitizer-0.1.0-cp311-abi3-manylinux_2_34_s390x.whl", hash = "sha256:10319a4715a48bc90f36b2ff8ce4f24dfa282801b693c886e53e83b1d4da9745", size = 819345, upload-time = "2026-07-21T13:14:49.413Z" },
+    { url = "https://files.pythonhosted.org/packages/c7/9e/47941e2f2af925d3655e4e24aaaa98e813ca870f960c957ed40b0dabda8a/cpex_sql_sanitizer-0.1.0-cp311-abi3-manylinux_2_34_x86_64.whl", hash = "sha256:a8b9cd39fec82f1df09af76aaadebaf391d6fa91e4b10694e7013f179edddac3", size = 784583, upload-time = "2026-07-21T13:14:50.887Z" },
+    { url = "https://files.pythonhosted.org/packages/f4/f7/57e489606d808708dd5f2284662fdfaaeef23d433f40b6981ad03de4c0f8/cpex_sql_sanitizer-0.1.0-cp311-abi3-win_amd64.whl", hash = "sha256:7aa0c086091622a658d1d9b276224a5a74954544800963baee54cfe7487afbef", size = 707041, upload-time = "2026-07-21T13:14:52.41Z" },
+]
+
+[[package]]
 name = "cpex-url-reputation"
 version = "0.3.5"
 source = { registry = "https://pypi.org/simple" }
@@ -1116,8 +1134,8 @@ name = "culsans"
 version = "0.11.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "aiologic" },
-    { name = "typing-extensions" },
+    { name = "aiologic", marker = "python_full_version < '3.13'" },
+    { name = "typing-extensions", marker = "python_full_version < '3.13'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/d9/e3/49afa1bc180e0d28008ec6bcdf82a4072d1c7a41032b5b759b60814ca4b0/culsans-0.11.0.tar.gz", hash = "sha256:0b43d0d05dce6106293d114c86e3fb4bfc63088cfe8ff08ed3fe36891447fe33", size = 107546, upload-time = "2025-12-31T23:15:38.196Z" }
 wheels = [
@@ -3046,6 +3064,7 @@ dev-all = [
     { name = "cpex-rate-limiter" },
     { name = "cpex-retry-with-backoff" },
     { name = "cpex-secrets-detection" },
+    { name = "cpex-sql-sanitizer" },
     { name = "cpex-url-reputation" },
     { name = "redis", extra = ["hiredis"] },
 ]
@@ -3075,6 +3094,7 @@ plugins = [
     { name = "cpex-rate-limiter" },
     { name = "cpex-retry-with-backoff" },
     { name = "cpex-secrets-detection" },
+    { name = "cpex-sql-sanitizer" },
     { name = "cpex-url-reputation" },
 ]
 postgres = [
@@ -3188,6 +3208,7 @@ requires-dist = [
     { name = "cpex-rate-limiter", marker = "extra == 'plugins'", specifier = ">=0.1.7" },
     { name = "cpex-retry-with-backoff", marker = "extra == 'plugins'", specifier = ">=0.3.7" },
     { name = "cpex-secrets-detection", marker = "extra == 'plugins'", specifier = ">=0.3.10" },
+    { name = "cpex-sql-sanitizer", marker = "extra == 'plugins'", specifier = ">=0.1.0" },
     { name = "cpex-url-reputation", marker = "extra == 'plugins'", specifier = ">=0.3.5" },
     { name = "cryptography", specifier = ">=49.0.0" },
     { name = "fastapi", specifier = ">=0.140.0" },

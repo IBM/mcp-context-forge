@@ -617,7 +617,7 @@ plugins:
 
   # SQL Sanitizer - detect dangerous SQL patterns in inputs
   - name: "SQLSanitizer"
-    kind: "plugins.sql_sanitizer.sql_sanitizer.SQLSanitizerPlugin"
+    kind: "cpex_sql_sanitizer.sql_sanitizer.SQLSanitizerPlugin"
     description: "Detects risky SQL and optionally strips comments or blocks"
     version: "0.1.0"
     author: "ContextForge"
