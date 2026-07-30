@@ -100,6 +100,40 @@ def test_csrf_cookie_name_default_matches_env_example():
     assert s.ratelimiter_redis_socket_connect_timeout == 2.0
 
 
+def test_admin_csrf_cookie_name_matches_config_default():
+    """ADMIN_CSRF_COOKIE_NAME in admin.py must equal config.py's csrf_cookie_name default.
+
+    admin.py reads and writes the CSRF cookie via a module-level constant
+    instead of settings.csrf_cookie_name, so it does not track operator
+    overrides of CSRF_COOKIE_NAME -- it only happens to work today because the
+    constant and the settings default are both "mcpgateway_csrf_token". This
+    pins that coincidence so any future drift between them (the exact class of
+    bug behind #5739 and #4712) fails a test instead of silently breaking the
+    admin CSRF flow.
+    """
+    # First-Party
+    from mcpgateway import admin
+
+    s = Settings(_env_file=None)
+    assert admin.ADMIN_CSRF_COOKIE_NAME == s.csrf_cookie_name, f"admin.ADMIN_CSRF_COOKIE_NAME={admin.ADMIN_CSRF_COOKIE_NAME!r} does not match config.py default={s.csrf_cookie_name!r}"
+
+
+def test_oauth_router_csrf_cookie_name_matches_config_default():
+    """ADMIN_CSRF_COOKIE_NAME in routers/oauth_router.py must equal config.py's csrf_cookie_name default.
+
+    oauth_router.py independently duplicates the same constant as admin.py
+    (see test_admin_csrf_cookie_name_matches_config_default) rather than
+    reading settings.csrf_cookie_name. Both copies must stay pinned to the
+    settings default to avoid the class of drift that produced #5739 and
+    #4712.
+    """
+    # First-Party
+    from mcpgateway.routers import oauth_router
+
+    s = Settings(_env_file=None)
+    assert oauth_router.ADMIN_CSRF_COOKIE_NAME == s.csrf_cookie_name, f"oauth_router.ADMIN_CSRF_COOKIE_NAME={oauth_router.ADMIN_CSRF_COOKIE_NAME!r} does not match config.py default={s.csrf_cookie_name!r}"
+
+
 def test_ratelimiter_redis_url_set():
     """Test rate limiter Redis URL can be configured."""
     s = Settings(

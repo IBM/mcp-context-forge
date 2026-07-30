@@ -214,4 +214,5 @@ These features remain aspirational until the associated PRs merge. Expect the do
 - **Configuration reference:** `.env.example` and `README.md` cover every toggle in more depth.
 - **Security policy:** `SECURITY.md` documents vulnerability disclosure expectations.
 - **Multi-tenancy details:** `docs/docs/architecture/multitenancy.md` digs deeper into RBAC and team scoping.
+- **Middleware ordering:** `docs/docs/architecture/middleware-ordering.md` explains the ASGI middleware execution order and the CSRF-vs-auth constraint that prevents Admin UI failures.
 - **Deployment guidance:** `docs/docs/deployment/helm.md` and `Containerfile` showcase hardened deployment patterns.

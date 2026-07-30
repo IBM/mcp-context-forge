@@ -914,6 +914,59 @@ async def test_admin_bound_csrf_token_from_page_load_passes_hmac_validation():
 
 
 @pytest.mark.asyncio
+async def test_two_windows_old_token_returns_403():
+    """A CSRF token generated two expiry windows ago is rejected end-to-end.
+
+    validate_csrf_token() accepts the current window and the one immediately
+    before it (see mcpgateway/services/csrf_service.py), so a token that is
+    two windows old must fail with the same 403 CSRF_TOKEN_INVALID response
+    used for any other invalid token. Uses deterministic, mid-window
+    timestamps (rather than offsets from "now") so the window distance
+    between generation and validation is unambiguous.
+    """
+    middleware = CSRFMiddleware(app=AsyncMock())
+    call_next = AsyncMock(return_value=Response("ok", status_code=200))
+    csrf_service = CSRFService(secret="test-csrf-secret", expiry=3600)  # pragma: allowlist secret
+
+    expiry = 3600
+    generation_time = expiry * 10 + expiry // 2  # mid-window, deterministic
+
+    with patch("time.time", return_value=float(generation_time)):
+        csrf_token = csrf_service.generate_csrf_token("admin@example.com", "session-jti-1")
+
+    request = MagicMock(spec=Request)
+    request.method = "POST"
+    request.url.path = "/prompts/prompt-1"
+    request.headers = {"X-CSRF-Token": csrf_token}
+    request.state = MagicMock()
+    request.state.user = None
+    request.state.jti = None
+    request.cookies = {"jwt_token": "admin-session-jwt", "mcpgateway_csrf_token": csrf_token}
+
+    with (
+        patch("mcpgateway.middleware.csrf_middleware.settings") as mock_settings,
+        patch("mcpgateway.middleware.csrf_middleware.get_csrf_service", return_value=csrf_service),
+        patch(
+            "mcpgateway.middleware.csrf_middleware.verify_jwt_token_cached",
+            AsyncMock(return_value={"sub": "admin@example.com", "jti": "session-jti-1"}),
+        ),
+        patch("time.time", return_value=float(generation_time + 2 * expiry)),
+    ):
+        mock_settings.csrf_enabled = True
+        mock_settings.auth_required = True
+        mock_settings.csrf_exempt_paths = []
+        mock_settings.csrf_token_name = "X-CSRF-Token"
+        mock_settings.csrf_cookie_name = "mcpgateway_csrf_token"
+        mock_settings.csrf_check_referer = False
+
+        response = await middleware.dispatch(request, call_next)
+
+    assert response.status_code == 403
+    assert response.body == b'{"detail":"CSRF validation failed","code":"CSRF_TOKEN_INVALID"}'
+    call_next.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_csrf_fallback_jwt_verification_failure_returns_403():
     """Missing state context plus invalid JWT should fail closed."""
     middleware = CSRFMiddleware(app=AsyncMock())

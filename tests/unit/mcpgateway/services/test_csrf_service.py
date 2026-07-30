@@ -166,6 +166,26 @@ class TestValidateCSRFToken:
         result = validate_csrf_token(uppercase_token, "user@example.com", "session123", "secret", 3600)
         assert result is False
 
+    def test_two_windows_old_token_returns_false(self):
+        """Test that a token generated two windows ago is rejected.
+
+        validate_csrf_token only accepts the current window and the one
+        immediately before it (see docstring). Uses deterministic, mid-window
+        timestamps rather than offsets from "now" -- windows are computed as
+        floor(t / expiry) * expiry, so a relative offset near a boundary would
+        leave the actual window distance ambiguous.
+        """
+        expiry = 3600
+        generation_time = expiry * 10 + expiry // 2  # mid-window, deterministic
+
+        with patch("time.time", return_value=float(generation_time)):
+            token = generate_csrf_token("user@example.com", "session123", "secret", expiry)
+
+        with patch("time.time", return_value=float(generation_time + 2 * expiry)):
+            result = validate_csrf_token(token, "user@example.com", "session123", "secret", expiry)
+
+        assert result is False
+
     def test_previous_window_compare_digest_path_returns_true(self):
         """Test that a previous-window match is accepted."""
         token = "a" * 64
@@ -211,8 +231,8 @@ class TestSetCSRFCookie:
         assert call_kwargs["max_age"] == 3600
         assert call_kwargs["path"] == "/"
 
-    def test_httponly_always_false(self):
-        """Test that httponly is always False (CSRF tokens must be readable by JS)."""
+    def test_httponly_false_setting_is_honored(self):
+        """Test that httponly=False in settings is passed through (CSRF tokens readable by JS)."""
         response = Mock()
         settings = Mock(
             csrf_cookie_name="csrf_token",
@@ -227,6 +247,23 @@ class TestSetCSRFCookie:
 
         call_kwargs = response.set_cookie.call_args[1]
         assert call_kwargs["httponly"] is False
+
+    def test_httponly_true_setting_is_honored(self):
+        """Test that httponly=True in settings is genuinely passed through, not hardcoded False."""
+        response = Mock()
+        settings = Mock(
+            csrf_cookie_name="csrf_token",
+            csrf_cookie_secure=False,
+            csrf_cookie_samesite="Lax",
+            csrf_token_expiry=7200,
+            csrf_cookie_httponly=True,
+        )
+        token = "e" * 64
+
+        set_csrf_cookie(response, token, settings)
+
+        call_kwargs = response.set_cookie.call_args[1]
+        assert call_kwargs["httponly"] is True
 
     def test_respects_settings_secure_flag(self):
         """Test that secure flag comes from settings."""
