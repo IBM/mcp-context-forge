@@ -11,6 +11,7 @@ import time
 from typing import Any, Optional
 
 # Third-Party
+import jwt
 import httpx
 
 # First-Party
@@ -37,6 +38,7 @@ class IcaMeteringExporterPlugin(Plugin):
         self.telemetry_config = config.config
         self.http_client: Optional[httpx.AsyncClient] = None
         self.env_model_name: Optional[str] = None
+        self._jwt_secret: Optional[str] = config.config.get("jwt_secret")
 
         # Parse gateway-level defaults from plugin config
         self._gateway_configs: dict[str, dict] = {}
@@ -71,6 +73,17 @@ class IcaMeteringExporterPlugin(Plugin):
         model_name = headers.get("x-openwebui-model-id") or headers.get("X-OpenWebUI-Model-Id")
         if model_name:
             context.state["ica_metering_model_name"] = model_name
+        app_id = headers.get("x-app-id") or headers.get("X-App-Id")
+        if app_id:
+            context.state["ica_app_id"] = app_id
+        user_agent = (
+            headers.get("x-forwarded-user-agent")
+            or headers.get("X-Forwarded-User-Agent")
+            or headers.get("user-agent")
+            or headers.get("User-Agent")
+        )
+        if user_agent:
+            context.state["ica_user_agent"] = user_agent
         logger.debug("ICA metering: Pre-invoke for tool %s", payload.name)
         return ToolPreInvokeResult(continue_processing=True)
 
@@ -119,14 +132,16 @@ class IcaMeteringExporterPlugin(Plugin):
             "retryAttempt": context.state.get("retry_count", 0),
             "modelName": model_name,
             "traceId": context.global_context.request_id,
-            "tokenInput": tokens.get("input"),
-            "tokenOutput": tokens.get("output"),
+            "tokenInput": self._coerce_int(tokens.get("input")),
+            "tokenOutput": self._coerce_int(tokens.get("output")),
             "source": "ContextForge",
         }
 
         metering_payload: dict[str, Any] = {
             "userEmail": context.global_context.user or "unknown",
             "teamName": context.global_context.tenant_id or "unknown",
+            "appId": context.state.get("ica_app_id"),
+            "userAgent": context.state.get("ica_user_agent"),
             "toolDetails": tool_details,
         }
 
@@ -196,6 +211,26 @@ class IcaMeteringExporterPlugin(Plugin):
         return None, "unknown"
 
     @staticmethod
+    def _coerce_int(value: Any) -> int | None:
+        """Coerce a value to int or return None if not possible."""
+        if value is None:
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _get_service_jwt(secret: str) -> str:
+        now = int(time.time())
+        payload = {
+            "sub": "contextforge-metering",
+            "iat": now,
+            "exp": now + 86400,
+        }
+        return jwt.encode(payload, secret, algorithm="HS256")
+
+    @staticmethod
     def _is_error(result: Any) -> bool:
         """Check if result indicates an error."""
         if result is None:
@@ -230,15 +265,23 @@ class IcaMeteringExporterPlugin(Plugin):
         metering_url = self.telemetry_config.get("metering_url")
         metering_token = self.telemetry_config.get("metering_token")
 
-        if not metering_url or not metering_token:
-            logger.warning("ICA metering URL or token not configured")
+        if not metering_url:
+            logger.warning("ICA metering URL not configured")
+            return
+
+        if self._jwt_secret:
+            headers = {"Authorization": f"Bearer {self._get_service_jwt(self._jwt_secret)}"}
+        elif metering_token:
+            headers = {"X-MCP-Metering-Token": metering_token}
+        else:
+            logger.warning("ICA metering: neither jwt_secret nor metering_token configured")
             return
 
         try:
             response = await self.http_client.post(
                 metering_url,
                 json=payload,
-                headers={"X-MCP-Metering-Token": metering_token},
+                headers=headers,
             )
             if response.status_code != 202:
                 logger.warning(

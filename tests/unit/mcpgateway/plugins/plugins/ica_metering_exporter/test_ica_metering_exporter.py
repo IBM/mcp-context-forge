@@ -102,6 +102,87 @@ class TestIcaMeteringExporterPlugin:
         )
         assert result.continue_processing is True
 
+    # ── App ID and User Agent extraction tests ───────────────────
+
+    @pytest.mark.asyncio
+    async def test_pre_invoke_extracts_app_id_from_headers(self):
+        """Pre-invoke should extract appId from X-App-Id header."""
+        plugin = _create_plugin()
+        context = _create_context()
+        await plugin.tool_pre_invoke(
+            ToolPreInvokePayload(
+                name="tool", args={},
+                headers={"X-App-Id": "coding-agent:research"},
+            ),
+            context,
+        )
+        assert context.state.get("ica_app_id") == "coding-agent:research"
+
+    @pytest.mark.asyncio
+    async def test_pre_invoke_extracts_user_agent_from_headers(self):
+        """Pre-invoke should extract user agent from User-Agent header."""
+        plugin = _create_plugin()
+        context = _create_context()
+        await plugin.tool_pre_invoke(
+            ToolPreInvokePayload(
+                name="tool", args={},
+                headers={"User-Agent": "ClaudeCode/1.2.3"},
+            ),
+            context,
+        )
+        assert context.state.get("ica_user_agent") == "ClaudeCode/1.2.3"
+
+    @pytest.mark.asyncio
+    async def test_pre_invoke_forwarded_user_agent_takes_priority(self):
+        """X-Forwarded-User-Agent should take priority over User-Agent."""
+        plugin = _create_plugin()
+        context = _create_context()
+        await plugin.tool_pre_invoke(
+            ToolPreInvokePayload(
+                name="tool", args={},
+                headers={
+                    "User-Agent": "JavaHttpClient/4.0",
+                    "X-Forwarded-User-Agent": "ClaudeCode/1.2.3",
+                },
+            ),
+            context,
+        )
+        assert context.state.get("ica_user_agent") == "ClaudeCode/1.2.3"
+
+    @pytest.mark.asyncio
+    async def test_post_invoke_includes_app_id_and_user_agent(self):
+        """Post-invoke payload should include appId and userAgent from state."""
+        plugin = _create_plugin()
+        context = _create_context()
+        context.state["ica_app_id"] = "coding-agent:research"
+        context.state["ica_user_agent"] = "ClaudeCode/1.2.3"
+        await plugin.tool_pre_invoke(
+            ToolPreInvokePayload(name="tool", args={}, headers=None),
+            context,
+        )
+        payload = ToolPostInvokePayload(name="tool", result={"content": [], "isError": False})
+        await plugin.tool_post_invoke(payload, context)
+
+        sent_payload = plugin._send_to_ica.await_args.args[0]
+        assert sent_payload["appId"] == "coding-agent:research"
+        assert sent_payload["userAgent"] == "ClaudeCode/1.2.3"
+
+    @pytest.mark.asyncio
+    async def test_post_invoke_app_id_is_none_when_not_set(self):
+        """appId should be None in payload when no X-App-Id header was present."""
+        plugin = _create_plugin()
+        context = _create_context()
+        await plugin.tool_pre_invoke(
+            ToolPreInvokePayload(name="tool", args={}, headers={}),
+            context,
+        )
+        payload = ToolPostInvokePayload(name="tool", result={"content": [], "isError": False})
+        await plugin.tool_post_invoke(payload, context)
+
+        sent_payload = plugin._send_to_ica.await_args.args[0]
+        assert sent_payload["appId"] is None
+        assert sent_payload["userAgent"] is None
+
     # ── Post-invoke latency tests ────────────────────────────────
 
     @pytest.mark.asyncio
@@ -779,3 +860,175 @@ class TestIcaMeteringExporterPlugin:
         assert IcaMeteringExporterPlugin._extract_tokens(None) == {}
         assert IcaMeteringExporterPlugin._extract_tokens("string") == {}
         assert IcaMeteringExporterPlugin._extract_tokens({"meta": "not-dict"}) == {}
+
+    # ── _coerce_int tests ─────────────────────────────────────────
+
+    @pytest.mark.parametrize("value,expected", [
+        (None, None),
+        (42, 42),
+        (42.0, 42),
+        (42.7, 42),
+        ("42", 42),
+        ("abc", None),
+        ([], None),
+        ({}, None),
+    ])
+    def test_coerce_int(self, value, expected):
+        """_coerce_int should safely convert values or return None."""
+        assert IcaMeteringExporterPlugin._coerce_int(value) == expected
+
+    # ── JWT service token tests ───────────────────────────────────
+
+    def test_get_service_jwt_returns_token(self):
+        """_get_service_jwt should return a valid JWT string."""
+        token = IcaMeteringExporterPlugin._get_service_jwt("test-secret-key-for-jwt-generation-test")
+        assert isinstance(token, str)
+        assert len(token) > 20
+        assert token.count(".") == 2
+
+    def test_get_service_jwt_uses_contextforge_metering_subject(self):
+        """JWT should contain 'contextforge-metering' as subject."""
+        import jwt as pyjwt
+        token = IcaMeteringExporterPlugin._get_service_jwt("test-secret-key-for-jwt-generation-test")
+        decoded = pyjwt.decode(token, "test-secret-key-for-jwt-generation-test", algorithms=["HS256"])
+        assert decoded["sub"] == "contextforge-metering"
+
+    def test_get_service_jwt_expires_in_future(self):
+        """JWT exp should be ~24h from now."""
+        import jwt as pyjwt
+        import time
+        token = IcaMeteringExporterPlugin._get_service_jwt("test-secret-key-for-jwt-generation-test")
+        decoded = pyjwt.decode(token, "test-secret-key-for-jwt-generation-test", algorithms=["HS256"])
+        assert decoded["exp"] > time.time() + 86000  # ~23.9h
+        assert decoded["exp"] < time.time() + 86500  # ~24.0h
+
+    @pytest.mark.asyncio
+    async def test_send_to_ica_uses_jwt_when_configured(self):
+        """_send_to_ica should send Authorization: Bearer when jwt_secret is set."""
+        plugin = _create_plugin({
+            "enabled": True,
+            "metering_url": "http://localhost:8080/event",
+            "jwt_secret": "test-secret-key-for-jwt-generation-test",
+        }, mock_send=False)
+        assert plugin.http_client is not None
+        plugin.http_client.post = AsyncMock(return_value=MagicMock(status_code=202))
+
+        await plugin._send_to_ica({"key": "value"})
+
+        call_kwargs = plugin.http_client.post.await_args.kwargs
+        headers = call_kwargs["headers"]
+        assert "Authorization" in headers
+        assert headers["Authorization"].startswith("Bearer ")
+
+    @pytest.mark.asyncio
+    async def test_send_to_ica_uses_shared_secret_when_no_jwt(self):
+        """_send_to_ica should fall back to X-MCP-Metering-Token when jwt_secret is absent."""
+        plugin = _create_plugin(mock_send=False)
+        assert plugin.http_client is not None
+        plugin.http_client.post = AsyncMock(return_value=MagicMock(status_code=202))
+
+        await plugin._send_to_ica({"key": "value"})
+
+        call_kwargs = plugin.http_client.post.await_args.kwargs
+        headers = call_kwargs["headers"]
+        assert "X-MCP-Metering-Token" in headers
+        assert headers["X-MCP-Metering-Token"] == "test-token"
+
+    @pytest.mark.asyncio
+    async def test_send_to_ica_skips_when_no_auth_configured(self):
+        """_send_to_ica should warn and skip when neither jwt_secret nor metering_token is set."""
+        plugin = _create_plugin({
+            "enabled": True,
+            "metering_url": "http://localhost:8080/event",
+        }, mock_send=False)
+        assert plugin.http_client is not None
+        plugin.http_client.post = AsyncMock()
+
+        await plugin._send_to_ica({"key": "value"})
+
+        plugin.http_client.post.assert_not_called()
+
+    # ── End-to-end integration test ───────────────────────────────
+
+    @pytest.mark.asyncio
+    async def test_e2e_metering_payload_via_http(self):
+        """Plugin sends correct JSON payload through real HTTP to metering endpoint."""
+        from httpx import MockTransport
+
+        captured_body = None
+
+        def transport_handler(request):
+            nonlocal captured_body
+            captured_body = request
+            return httpx.Response(202)
+
+        plugin = _create_plugin(mock_send=False)
+        plugin.http_client = httpx.AsyncClient(transport=MockTransport(transport_handler))
+
+        context = _create_context()
+        context.state["ica_app_id"] = "coding-agent:research"
+        context.state["ica_user_agent"] = "ClaudeCode/1.2.3"
+        await plugin.tool_pre_invoke(
+            ToolPreInvokePayload(name="echo", args={"msg": "hello"}, headers=None),
+            context,
+        )
+        payload = ToolPostInvokePayload(
+            name="echo",
+            result={
+                "content": [{"type": "text", "text": "hello world"}],
+                "isError": False,
+                "meta": {"tokens": {"input": 10, "output": 20}},
+            },
+        )
+        await plugin.tool_post_invoke(payload, context)
+
+        import json
+        body = json.loads(captured_body.content)
+        assert body["userEmail"] == "user@ibm.com"
+        assert body["teamName"] == "team-1"
+        assert body["appId"] == "coding-agent:research"
+        assert body["userAgent"] == "ClaudeCode/1.2.3"
+        assert body["toolDetails"]["toolName"] == "echo"
+        assert body["toolDetails"]["tokenInput"] == 10
+        assert body["toolDetails"]["tokenOutput"] == 20
+        assert body["toolDetails"]["source"] == "ContextForge"
+        assert body["toolDetails"]["latencyMs"] >= 0
+        assert body["toolDetails"]["hasError"] is False
+        assert captured_body.headers["x-mcp-metering-token"] == "test-token"
+
+    @pytest.mark.asyncio
+    async def test_e2e_metering_payload_coerces_token_types(self):
+        """Token values as float/string are coerced to int in HTTP payload."""
+        from httpx import MockTransport
+
+        captured_body = None
+
+        def transport_handler(request):
+            nonlocal captured_body
+            captured_body = request
+            return httpx.Response(202)
+
+        plugin = _create_plugin(mock_send=False)
+        plugin.http_client = httpx.AsyncClient(transport=MockTransport(transport_handler))
+
+        context = _create_context()
+        await plugin.tool_pre_invoke(
+            ToolPreInvokePayload(name="echo", args={}, headers=None),
+            context,
+        )
+        payload = ToolPostInvokePayload(
+            name="echo",
+            result={
+                "content": [{"type": "text", "text": "hello"}],
+                "isError": False,
+                "meta": {"tokens": {"input": 10.0, "output": "20"}},
+            },
+        )
+        await plugin.tool_post_invoke(payload, context)
+
+        import json
+        body = json.loads(captured_body.content)
+        assert body["toolDetails"]["tokenInput"] == 10
+        assert body["toolDetails"]["tokenOutput"] == 20
+        assert isinstance(body["toolDetails"]["tokenInput"], int)
+        assert isinstance(body["toolDetails"]["tokenOutput"], int)
