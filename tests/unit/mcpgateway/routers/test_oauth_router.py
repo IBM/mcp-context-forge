@@ -1405,7 +1405,7 @@ class TestResolveTokenTeamsForScopeCheck:
         """Explicit ``token_teams=None`` for a non-admin passes through as ``None``.
 
         The function does not downgrade non-admin ``None`` to ``[]`` — that is
-        the responsibility of callers (e.g. ``_enforce_gateway_access`` line 392-395).
+        the responsibility of callers (e.g. ``_enforce_gateway_access``).
         This preserves the pre-existing contract where the function resolves state
         and callers apply policy.
         """
