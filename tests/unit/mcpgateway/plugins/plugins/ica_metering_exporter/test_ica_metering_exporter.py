@@ -893,6 +893,16 @@ class TestIcaMeteringExporterPlugin:
         decoded = pyjwt.decode(token, "test-secret-key-for-jwt-generation-test", algorithms=["HS256"])
         assert decoded["sub"] == "contextforge-metering"
 
+    def test_get_service_jwt_has_service_attribution(self):
+        """JWT should contain service, instance, and scope claims."""
+        import jwt as pyjwt
+        token = IcaMeteringExporterPlugin._get_service_jwt("test-secret-key-for-jwt-generation-test")
+        decoded = pyjwt.decode(token, "test-secret-key-for-jwt-generation-test", algorithms=["HS256"])
+        assert decoded["service"] == "mcp-context-forge"
+        assert isinstance(decoded["instance"], str)
+        assert len(decoded["instance"]) > 0
+        assert decoded["scope"] == "metering:write"
+
     def test_get_service_jwt_expires_in_future(self):
         """JWT exp should be ~24h from now."""
         import jwt as pyjwt

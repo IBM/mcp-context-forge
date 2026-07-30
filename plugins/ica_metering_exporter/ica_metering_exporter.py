@@ -225,6 +225,9 @@ class IcaMeteringExporterPlugin(Plugin):
         now = int(time.time())
         payload = {
             "sub": "contextforge-metering",
+            "service": "mcp-context-forge",
+            "instance": os.getenv("HOSTNAME", "unknown"),
+            "scope": "metering:write",
             "iat": now,
             "exp": now + 86400,
         }
