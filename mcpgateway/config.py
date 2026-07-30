@@ -963,8 +963,6 @@ class Settings(BaseSettings):
     # OAuth Discovery (RFC 8414)
     # ===================================
 
-    oauth_discovery_enabled: bool = Field(default=True, description="Enable OAuth AS metadata discovery (RFC 8414)")
-
     oauth_preferred_code_challenge_method: str = Field(default="S256", description="Preferred PKCE code challenge method (S256 or plain)")
 
     # Email-Based Authentication
@@ -1123,10 +1121,8 @@ class Settings(BaseSettings):
 
     # gRPC Support Configuration (EXPERIMENTAL - disabled by default)
     mcpgateway_grpc_enabled: bool = Field(default=False, description="Enable gRPC to MCP translation support (experimental feature)")
-    mcpgateway_grpc_reflection_enabled: bool = Field(default=True, description="Enable gRPC server reflection by default")
     mcpgateway_grpc_max_message_size: int = Field(default=4194304, description="Maximum gRPC message size in bytes (4MB)")
     mcpgateway_grpc_timeout: int = Field(default=30, description="Default gRPC call timeout in seconds")
-    mcpgateway_grpc_tls_enabled: bool = Field(default=False, description="Enable TLS for gRPC connections by default")
 
     # Direct Proxy Configuration (disabled by default)
     mcpgateway_direct_proxy_enabled: bool = Field(default=False, description="Enable direct_proxy gateway mode for pass-through MCP operations")
@@ -1147,7 +1143,6 @@ class Settings(BaseSettings):
     # MCP Server Catalog Configuration
     mcpgateway_catalog_enabled: bool = Field(default=True, description="Enable MCP server catalog feature")
     mcpgateway_catalog_file: str = Field(default="mcp-catalog.yml", description="Path to catalog configuration file")
-    mcpgateway_catalog_auto_health_check: bool = Field(default=True, description="Automatically health check catalog servers")
     mcpgateway_catalog_cache_ttl: int = Field(default=3600, description="Catalog cache TTL in seconds")
     mcpgateway_catalog_page_size: int = Field(default=100, description="Number of catalog servers per page")
 
@@ -1990,7 +1985,6 @@ class Settings(BaseSettings):
     structured_logging_external_enabled: bool = Field(default=False, description="Send logs to external systems")
 
     # Performance Tracking Configuration
-    performance_tracking_enabled: bool = Field(default=True, description="Enable performance tracking and metrics")
     performance_threshold_database_query_ms: float = Field(default=100.0, description="Alert threshold for database queries (ms)")
     performance_threshold_tool_invocation_ms: float = Field(default=2000.0, description="Alert threshold for tool invocations (ms)")
     performance_threshold_resource_read_ms: float = Field(default=1000.0, description="Alert threshold for resource reads (ms)")

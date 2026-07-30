@@ -245,7 +245,6 @@ For user authentication and RBAC configuration, see [RBAC Configuration](../mana
 | `DCR_METADATA_CACHE_TTL` | `3600` | Cache TTL for AS metadata discovery |
 | `DCR_CLIENT_NAME_TEMPLATE` | `ContextForge ({gateway_name})` | DCR client_name template |
 | `DCR_REQUEST_REFRESH_TOKEN_WHEN_UNSUPPORTED` | `false` | Request refresh token even if AS metadata omits support |
-| `OAUTH_DISCOVERY_ENABLED` | `true` | Enable RFC 8414 discovery |
 | `OAUTH_PREFERRED_CODE_CHALLENGE_METHOD` | `S256` | Defined but currently unused; PKCE is always S256 |
 
 ## Validation Checklist
