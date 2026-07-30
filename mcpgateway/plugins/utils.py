@@ -11,7 +11,7 @@ import itertools
 import logging
 import math
 import re
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 # Third-Party
 from cpex.framework.extensions import Extensions, RequestExtension
@@ -432,12 +432,207 @@ def build_request_extensions() -> Optional[Extensions]:
         return None
 
 
-def apply_attribute_mapping(attributes: dict[str, Any], mapping: dict[str, str]) -> dict[str, Any]:
+# ---------------------------------------------------------------------------
+# Wildcard-aware attribute policy helpers
+# ---------------------------------------------------------------------------
+#
+# Rules:
+#   - Exact keys (no ``*``) take precedence over wildcard rules.
+#   - ``*`` matches exactly one dot-delimited path segment.
+#   - No arbitrary user-supplied regular expressions (no catastrophic backtracking).
+#   - Mappings into reserved ``otel.*`` names are rejected at compile time.
+#   - Empty source / destination keys are rejected at compile time.
+#   - Rules are compiled once at startup (``_compile_wildcard_rule``), not per invocation.
+
+# Pre-compiled sentinel: a plain [^.]+ pattern replacing one ``*`` segment.
+_SEGMENT_PATTERN = r"[^.]+"
+
+
+def _compile_wildcard_rule(src: str) -> "re.Pattern[str]":
+    r"""Compile a single wildcard rule source key into a regex Pattern.
+
+    Only ``*`` is treated specially — it maps to ``[^.]+`` (one dot-delimited
+    segment).  All other regex metacharacters in the source key are escaped, so
+    there is no possibility of catastrophic backtracking from user-supplied
+    patterns.
+
+    Args:
+        src: Source attribute key with zero or more ``*`` segments
+             (e.g. ``"cpex.control.results.*.result.reason"``).
+
+    Returns:
+        A compiled regex that matches the full attribute key when the ``*``
+        positions contain exactly one non-dot segment.
+
+    Example:
+        >>> import re
+        >>> p = _compile_wildcard_rule("cpex.control.results.*.result.reason")
+        >>> bool(p.fullmatch("cpex.control.results.pii-guard.result.reason"))
+        True
+        >>> bool(p.fullmatch("cpex.control.results.a.b.result.reason"))
+        False
+    """
+    # Split on literal ``*``, escape surrounding parts, join with segment pattern.
+    parts = src.split("*")
+    regex = _SEGMENT_PATTERN.join(re.escape(p) for p in parts)
+    return re.compile(r"\A" + regex + r"\Z")
+
+
+def compile_attribute_policy(
+    mapping: Dict[str, str],
+    removals: List[str],
+) -> "Tuple[List[Tuple[bool, Any, str, str]], List[Tuple[bool, Any, str]]]":
+    """Compile attribute mapping and removal rules for efficient per-invocation use.
+
+    Rules are compiled **once** at startup (e.g. inside a plugin ``__init__``).
+    Calling this per-invocation is unnecessary and wasteful.
+
+    Rule precedence:
+    - Exact rules (no ``*``) take precedence over wildcard rules.
+    - Among wildcard rules, the first matching rule wins.
+    - Removal is evaluated after rename.
+
+    Safety:
+    - ``otel.*`` destination names are rejected.
+    - Empty source or destination keys are rejected.
+    - No user-supplied regular expressions (``*`` only).
+
+    Args:
+        mapping: Rename rules ``{source_key: dest_key}``.
+        removals: List of source keys to drop from attributes.
+
+    Returns:
+        A 2-tuple ``(compiled_mappings, compiled_removals)``.
+
+        Each mapping entry is a 4-tuple
+        ``(is_exact: bool, pattern: Optional[re.Pattern], src: str, dst: str)``.
+
+        Each removal entry is a 3-tuple
+        ``(is_exact: bool, pattern: Optional[re.Pattern], src: str)``.
+
+    Raises:
+        ValueError: On empty keys, reserved destinations, or invalid patterns.
+
+    Example:
+        >>> mappings, removals = compile_attribute_policy(
+        ...     {"cpex.control.result.allowed": "controls.result.allow"},
+        ...     ["cpex.control.config.keys"],
+        ... )
+        >>> len(mappings)
+        1
+        >>> len(removals)
+        1
+    """
+    compiled_mappings: List[Tuple[bool, Any, str, str]] = []
+    compiled_removals: List[Tuple[bool, Any, str]] = []
+
+    for src, dst in mapping.items():
+        if not src or not dst:
+            raise ValueError(f"Attribute mapping keys must be non-empty: {src!r} -> {dst!r}")
+        if dst.startswith("otel."):
+            raise ValueError(f"Mapping into reserved 'otel.*' namespace is not allowed: {dst!r}")
+        if len(src) > 256 or len(dst) > 256:
+            raise ValueError(f"Attribute mapping key exceeds 256 characters: {src!r} -> {dst!r}")
+        if "*" in src:
+            pattern = _compile_wildcard_rule(src)
+            compiled_mappings.append((False, pattern, src, dst))
+        else:
+            compiled_mappings.append((True, None, src, dst))
+
+    for src in removals:
+        if not src:
+            continue
+        if len(src) > 256:
+            raise ValueError(f"Remove-attribute key exceeds 256 characters: {src!r}")
+        if "*" in src:
+            pattern = _compile_wildcard_rule(src)
+            compiled_removals.append((False, pattern, src))
+        else:
+            compiled_removals.append((True, None, src))
+
+    return compiled_mappings, compiled_removals
+
+
+def _apply_one_mapping_rename(
+    key: str,
+    compiled_mappings: "List[Tuple[bool, Any, str, str]]",
+) -> str:
+    """Return the renamed key after applying compiled mapping rules.
+
+    Exact rules take precedence over wildcard rules.  The first matching
+    wildcard rule wins.  If no rule matches, the key is returned unchanged.
+
+    ``*`` captured segments are substituted into the destination template at
+    the same position.
+
+    Args:
+        key: Original attribute key.
+        compiled_mappings: Output of ``compile_attribute_policy``.
+
+    Returns:
+        Renamed key, or the original key when no rule matches.
+    """
+    # Pass 1: exact rules (is_exact=True)
+    for is_exact, _pattern, src, dst in compiled_mappings:
+        if is_exact and src == key:
+            return dst
+
+    # Pass 2: wildcard rules (is_exact=False)
+    for is_exact, pattern, src, dst in compiled_mappings:
+        if is_exact:
+            continue
+        m = pattern.fullmatch(key) if pattern else None
+        if m:
+            # Reconstruct destination by replacing ``*`` placeholders with the
+            # captured segments.  The number of ``*`` in src and dst must match;
+            # if they differ, skip silently (misconfiguration — already warned at
+            # compile time ideally; here we are defensive).
+            src_parts = src.split("*")
+            dst_parts = dst.split("*")
+            if len(src_parts) != len(dst_parts):
+                continue
+            # Extract captured segments: they are the substrings of key that
+            # correspond to the ``*`` slots.
+            key_remainder = key
+            captured: List[str] = []
+            for i, prefix in enumerate(src_parts[:-1]):
+                if not key_remainder.startswith(re.escape(prefix)):
+                    # Safety: let the regex result guide us but strip literal prefixes
+                    idx = len(prefix)
+                else:
+                    idx = len(prefix)
+                key_remainder = key_remainder[idx:]
+                # Find the end of the captured segment (next ``re.escape(src_parts[i+1])``)
+                suffix = src_parts[i + 1]
+                if suffix:
+                    cap_end = key_remainder.find(suffix)
+                    if cap_end < 0:
+                        break
+                    captured.append(key_remainder[:cap_end])
+                    key_remainder = key_remainder[cap_end:]
+                else:
+                    captured.append(key_remainder)
+                    key_remainder = ""
+            else:
+                # Build destination by interleaving dst_parts and captured
+                if len(captured) == len(dst_parts) - 1:
+                    result = dst_parts[0]
+                    for seg, dpart in zip(captured, dst_parts[1:]):
+                        result += seg + dpart
+                    return result
+    return key
+
+
+def apply_attribute_mapping(attributes: dict, mapping: dict) -> dict:
     """Apply attribute name mapping (renaming) to a dictionary of attributes.
+
+    Supports both exact key renames and single-``*`` wildcard renames.
+    Exact rules take precedence over wildcard rules.
 
     Args:
         attributes: Dictionary of attributes to rename.
         mapping: Dictionary mapping old attribute names to new names.
+                 Wildcard rules use ``*`` to match one dot-delimited segment.
 
     Returns:
         New dictionary with renamed attributes.
@@ -447,13 +642,26 @@ def apply_attribute_mapping(attributes: dict[str, Any], mapping: dict[str, str])
         >>> mapping = {"tool.name": "controls.artifact.name"}
         >>> apply_attribute_mapping(attrs, mapping)
         {'controls.artifact.name': 'weather', 'tool.version': '1.0'}
+
+        >>> attrs2 = {"cpex.control.results.pii.result.allowed": True}
+        >>> mapping2 = {"cpex.control.results.*.result.allowed": "controls.results.*.result.allowed"}
+        >>> result2 = apply_attribute_mapping(attrs2, mapping2)
+        >>> "controls.results.pii.result.allowed" in result2
+        True
     """
     if not mapping:
         return dict(attributes)
 
-    renamed_attributes = {}
+    try:
+        compiled_mappings, _ = compile_attribute_policy(mapping, [])
+    except ValueError:
+        # Misconfigured mapping at runtime — fall back to exact-only behaviour
+        logger.debug("apply_attribute_mapping: compile_attribute_policy failed; falling back to exact match", exc_info=True)
+        compiled_mappings = [(True, None, src, dst) for src, dst in mapping.items()]
+
+    renamed_attributes: dict = {}
     for old_name, value in attributes.items():
-        new_name = mapping.get(old_name, old_name)
+        new_name = _apply_one_mapping_rename(old_name, compiled_mappings)
         renamed_attributes[new_name] = value
 
     logger.debug("Applied %d attribute name mappings", len(mapping))

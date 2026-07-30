@@ -72,6 +72,7 @@ from mcpgateway.db import get_for_update, server_tool_association
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import ToolMetric, ToolMetricsHourly
 from mcpgateway.observability import create_child_span, create_span, inject_trace_context_headers, otel_context_active, set_span_attribute, set_span_error
+from mcpgateway.plugins.control_telemetry import ControlTelemetryAccumulator, record_control_telemetry
 from mcpgateway.plugins.utils import build_request_extensions, record_plugin_metrics
 from mcpgateway.schemas import AuthenticationValues, ToolCreate, ToolMetrics, ToolRead, ToolUpdate, TopPerformer
 from mcpgateway.services.a2a_protocol import prepare_a2a_invocation
@@ -5253,6 +5254,11 @@ class ToolService(BaseService):
             content_type = request_headers.get("content-type") if request_headers else None
             global_context = GlobalContext(request_id=request_id, server_id=context_server_id, tenant_id=payload_tenant_id, user=app_user_email, content_type=content_type)
 
+        # Per-invocation accumulator for CPEX control-execution telemetry.
+        # Declared here (before the try/with block) so it survives into the
+        # exception handlers and the finally block for partial pre-deny telemetry.
+        _ctl_acc = ControlTelemetryAccumulator()
+
         start_time = time.monotonic()
         success = False
         error_message = None
@@ -5386,6 +5392,7 @@ class ToolService(BaseService):
                             extensions=build_request_extensions(),
                         )
                         record_plugin_metrics(current_trace_id.get(), pre_result.metadata)
+                        _ctl_acc.add(pre_result, hook="pre")
                         _log_tool_pre_invoke_result(name, arguments, pre_invoke_headers, pre_result)
                         if pre_result.modified_payload:
                             payload = pre_result.modified_payload
@@ -6297,6 +6304,7 @@ class ToolService(BaseService):
                             extensions=build_request_extensions(),
                         )
                         record_plugin_metrics(current_trace_id.get(), pre_result.metadata)
+                        _ctl_acc.add(pre_result, hook="pre")
                         _log_tool_pre_invoke_result(name, arguments, pre_invoke_headers, pre_result)
                         if pre_result.modified_payload:
                             payload = pre_result.modified_payload
@@ -6383,6 +6391,7 @@ class ToolService(BaseService):
                             extensions=build_request_extensions(),
                         )
                         record_plugin_metrics(current_trace_id.get(), pre_result.metadata)
+                        _ctl_acc.add(pre_result, hook="pre")
                         _log_tool_pre_invoke_result(name, arguments, pre_invoke_headers, pre_result)
                         if pre_result.modified_payload:
                             payload = pre_result.modified_payload
@@ -6507,6 +6516,7 @@ class ToolService(BaseService):
                             extensions=build_request_extensions(),
                         )
                         record_plugin_metrics(current_trace_id.get(), post_result.metadata)
+                        _ctl_acc.add(post_result, hook="post")
                         # Use modified payload if provided
                         if post_result.modified_payload:
                             # Reconstruct ToolResult from modified result
@@ -6549,12 +6559,39 @@ class ToolService(BaseService):
                             path_label="success",
                         )
 
+                # Emit CPEX control-execution telemetry for this invocation (best-effort).
+                # Placed here on the normal-return path so both pre and post records are
+                # accumulated before emitting.  The PluginViolationError re-raise below
+                # also calls this so partial pre-deny telemetry is not lost.
+                record_control_telemetry(
+                    trace_id=current_trace_id.get(),
+                    accumulator=_ctl_acc,
+                    tool_name=name,
+                    agent_id=app_user_email or user_email or "",
+                    binding_name=gateway_name or server_id or "",
+                )
                 return tool_result
             except (PluginError, PluginViolationError):
+                # Emit partial telemetry even on pre-invoke deny (tool never executed).
+                record_control_telemetry(
+                    trace_id=current_trace_id.get(),
+                    accumulator=_ctl_acc,
+                    tool_name=name,
+                    agent_id=app_user_email or user_email or "",
+                    binding_name=gateway_name or server_id or "",
+                )
                 raise
             except ToolTimeoutError as e:
                 # ToolTimeoutError is raised by timeout handlers which already called tool_post_invoke.
                 # Do NOT call post_invoke again — the retry_delay_ms signal is carried on the exception.
+                # Emit partial telemetry before retrying or re-raising so timeout records are not lost.
+                record_control_telemetry(
+                    trace_id=current_trace_id.get(),
+                    accumulator=_ctl_acc,
+                    tool_name=name,
+                    agent_id=app_user_email or user_email or "",
+                    binding_name=gateway_name or server_id or "",
+                )
                 error_message = str(e)
                 if span:
                     set_span_error(span, error_message)
@@ -6617,8 +6654,18 @@ class ToolService(BaseService):
                             extensions=build_request_extensions(),
                         )
                         record_plugin_metrics(current_trace_id.get(), exc_post_result.metadata if exc_post_result else None)
+                        _ctl_acc.add(exc_post_result, hook="post")
                     except Exception as plugin_exc:
                         logger.debug("Failed to invoke post-invoke plugins on exception: %s", plugin_exc)
+
+                # Emit partial telemetry for unhandled exceptions (post-hook records already added above).
+                record_control_telemetry(
+                    trace_id=current_trace_id.get(),
+                    accumulator=_ctl_acc,
+                    tool_name=name,
+                    agent_id=app_user_email or user_email or "",
+                    binding_name=gateway_name or server_id or "",
+                )
 
                 # Retry if the plugin requested a delayed retry and we haven't hit the ceiling.
                 # Same counting convention as the success path: retry_attempt is 0-based,

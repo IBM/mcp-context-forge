@@ -31,6 +31,13 @@
 
 ### Added
 
+- **CPEX Control-Execution Telemetry** - Structured per-plugin enforcement observability on every tool invocation. Requires CPEX ≥ 0.1.2; silent no-op on older builds. Two new span types are written to `observability_spans` (and OTel when active):
+  - `cpex.control.summary` — one per tool call; aggregate counts (`invocation_count`, `matched_count`, `applied_count`, `error_count`, `timeout_count`, `duration`), effective `result.allowed`, `enforcement_point`, and calling identity (`tool.name`, `agent.id`, `binding.name`).
+  - `cpex.control.result` — one per plugin evaluated; per-plugin `name`, `hook_name`, `mode`, `status`, `result.allowed`, `duration`, and optional `result.reason`, `result.error_code`, `config.keys`.
+  - Wildcard-aware attribute rename/drop policy (`cpex.control.results.*.result.reason` etc.) via `compile_attribute_policy()` for use by `SpanAttributeCustomizerPlugin`.
+  - New config flags: `CPEX_CONTROL_TELEMETRY_ENABLED` (default `true`), `CPEX_CONTROL_TELEMETRY_DB_ENABLED` (default `true`), `CPEX_CONTROL_TELEMETRY_FLATTEN_RESULTS` (default `false`), `CPEX_CONTROL_TELEMETRY_MAX_RESULTS` (default `32`), `CPEX_CONTROL_TELEMETRY_MAX_ATTRIBUTES` (default `256`, informational).
+  - `pyproject.toml` minimum `cpex` version bumped to `>=0.1.2`; `uv.lock` updated accordingly.
+
 - **`make init-secrets-patch-env`** - Generates cryptographically strong values for `JWT_SECRET_KEY`, `AUTH_ENCRYPTION_SECRET`, and `BASIC_AUTH_PASSWORD` and patches them into an existing `.env` file in-place.
 - **`make setup`** - For fresh checkouts: copies `.env.example` → `.env` and runs `init-secrets-patch-env` to provision real secrets before first use.
 - **`mcpgateway/scripts/init_secrets.py`** - Script backing both Makefile targets; generates secrets using `secrets.token_hex(32)` and rewrites the relevant lines in `.env` without touching unrelated configuration.
