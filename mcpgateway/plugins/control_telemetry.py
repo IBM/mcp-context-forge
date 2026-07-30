@@ -46,9 +46,9 @@ from mcpgateway.plugins.utils import _IDENTIFIER_RE  # re-use the same identifie
 logger = logging.getLogger(__name__)
 
 # ── Bounds (mirrors _MAX_PLUGIN_KEYS / _MAX_PLUGINS_PER_CALL in utils.py) ──────
-_MAX_RECORDS_PER_HOOK = 64   # max ControlExecutionRecords consumed per invoke_hook call
+_MAX_RECORDS_PER_HOOK = 64  # max ControlExecutionRecords consumed per invoke_hook call
 _MAX_RECORDS_PER_CALL = 128  # cap across pre + post combined
-_MAX_REASON_LEN = 256        # CPEX already bounds this; enforce again defensively
+_MAX_REASON_LEN = 256  # CPEX already bounds this; enforce again defensively
 _MAX_ERROR_CODE_LEN = 256
 _MAX_CONFIG_KEYS = 64
 
@@ -197,7 +197,7 @@ class ControlTelemetryAccumulator:
             "cpex.control.matched_count": matched_count,
             "cpex.control.applied_count": applied_count,
             "cpex.control.results_count": len(self._records),
-            "cpex.control.duration": duration_ns,   # nanoseconds
+            "cpex.control.duration": duration_ns,  # nanoseconds
             "cpex.control.result.allowed": self.effective_allowed,
             "cpex.control.error_count": error_count,
             "cpex.control.timeout_count": timeout_count,
