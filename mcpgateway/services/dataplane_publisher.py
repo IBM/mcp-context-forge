@@ -64,6 +64,8 @@ class BackendConfig(TypedDict):
     url: str
     transport: str
     passthrough_headers: list[str]
+    add_headers: dict[str, str]
+    remove_headers: list[str]
     capabilities: dict[str, Any]
     allowed_tool_names: list[str]
     allowed_resource_names: list[str]
@@ -236,6 +238,8 @@ class DataplanePublisherService:
                     "url": gateway["url"],
                     "transport": gateway["transport"],
                     "passthrough_headers": gateway["passthrough_headers"] or [],
+                    "add_headers": gateway.get("add_headers") or {},
+                    "remove_headers": gateway.get("remove_headers") or [],
                     "capabilities": gateway.get("capabilities") or {},
                 }
                 for gateway in gateways
@@ -309,6 +313,8 @@ class DataplanePublisherService:
                         DbGateway.url,
                         DbGateway.transport,
                         DbGateway.passthrough_headers,
+                        DbGateway.add_headers,
+                        DbGateway.remove_headers,
                         DbGateway.capabilities,
                         DbGateway.owner_email,
                         DbGateway.team_id,
@@ -375,6 +381,8 @@ class DataplanePublisherService:
                     "url": gateway.url,
                     "transport": gateway.transport,
                     "passthrough_headers": gateway.passthrough_headers,
+                    "add_headers": gateway.add_headers or {},
+                    "remove_headers": gateway.remove_headers or [],
                     "capabilities": gateway.capabilities or {},
                 }
                 for gateway in gateway_rows

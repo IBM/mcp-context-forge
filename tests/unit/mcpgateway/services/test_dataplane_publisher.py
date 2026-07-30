@@ -185,6 +185,8 @@ async def test_full_payload_generation_with_mock_db():
     gateway1.url = "http://localhost:9000"
     gateway1.transport = "STREAMABLEHTTP"
     gateway1.passthrough_headers = ["Authorization"]
+    gateway1.add_headers = {"X-Tenant": "acme"}
+    gateway1.remove_headers = ["Cookie"]
     gateway1.capabilities = {"resources": {"subscribe": True}}
     gateway1.owner_email = "user1@example.com"
     gateway1.team_id = "team1"
@@ -283,11 +285,21 @@ async def test_full_payload_generation_with_mock_db():
         assert backend["url"] == "http://localhost:9000"
         assert backend["transport"] == "STREAMABLEHTTP"
         assert backend["passthrough_headers"] == ["Authorization"]
+        assert backend["add_headers"] == {"X-Tenant": "acme"}
+        assert backend["remove_headers"] == ["Cookie"]
         assert backend["capabilities"] == {"resources": {"subscribe": True}}
         assert backend["allowed_tool_names"] == ["public_tool", "private_tool"]
         assert backend["allowed_resource_names"] == ["Resource 1"]
         assert backend["allowed_resource_uris"] == ["resource://one"]
         assert backend["allowed_prompt_names"] == ["Prompt 1"]
+
+        # Verify the gateway SELECT projection actually includes the new columns
+        # (guards against getattr-on-Row silently returning None when columns are missing from SELECT)
+        gateway_execute_call = mock_db.execute.call_args_list[3]
+        stmt = gateway_execute_call[0][0]
+        selected_keys = {col.key for col in stmt.selected_columns}
+        assert "add_headers" in selected_keys, "Gateway SELECT must include add_headers"
+        assert "remove_headers" in selected_keys, "Gateway SELECT must include remove_headers"
 
         # Verify user2 sees public server but not private server from user1
         user2_config = payload[USER2_ID]
@@ -450,6 +462,8 @@ def test_create_payload_normalizes_null_passthrough_headers():
 
     backend = result[USER1_ID]["virtual_hosts"]["server1"]["backends"]["gateway1"]
     assert backend["passthrough_headers"] == []
+    assert backend["add_headers"] == {}
+    assert backend["remove_headers"] == []
     assert backend["capabilities"] == {}
 
 

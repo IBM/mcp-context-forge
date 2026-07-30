@@ -4727,6 +4727,8 @@ class Gateway(Base):
 
     # Header passthrough configuration
     passthrough_headers: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True)  # Store list of strings as JSON array
+    add_headers: Mapped[Optional[Dict[str, str]]] = mapped_column(JSON, nullable=True, default=None)  # Static headers injected onto upstream connection
+    remove_headers: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True, default=None)  # Header names stripped from upstream connection
 
     # CA certificate
     ca_certificate: Mapped[Optional[bytes]] = mapped_column(Text, nullable=True)
