@@ -26,6 +26,7 @@ export interface PromptDefinitionTableProps {
   onSelectPrompt: (prompt: NonNullable<PromptRead>) => void;
   onEdit?: (prompt: NonNullable<PromptRead>) => void;
   onDelete?: (prompt: NonNullable<PromptRead>) => void;
+  onTogglePrompt?: (id: string, currentState: boolean) => void;
 }
 
 /**
@@ -45,6 +46,7 @@ export function PromptDefinitionTable({
   onSelectPrompt,
   onEdit,
   onDelete,
+  onTogglePrompt,
 }: PromptDefinitionTableProps) {
   const intl = useIntl();
 
@@ -108,7 +110,7 @@ export function PromptDefinitionTable({
             </TableCell>
 
             <TableCell className="px-4 py-3 text-center">
-              {(onEdit || onDelete) && (
+              {(onEdit || onDelete || onTogglePrompt) && (
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <Button
@@ -138,6 +140,30 @@ export function PromptDefinitionTable({
                         {intl.formatMessage({ id: "prompts.details.action.edit" })}
                       </DropdownMenuItem>
                     )}
+                    {onTogglePrompt &&
+                      (() => {
+                        const enabled = prompt.enabled ?? true;
+                        return (
+                          <DropdownMenuItem
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onTogglePrompt(prompt.id, enabled);
+                            }}
+                            aria-label={intl.formatMessage(
+                              {
+                                id: enabled
+                                  ? "prompts.details.deactivateAriaLabel"
+                                  : "prompts.details.activateAriaLabel",
+                              },
+                              { name: prompt.displayName || prompt.name },
+                            )}
+                          >
+                            {enabled
+                              ? intl.formatMessage({ id: "prompts.details.action.deactivate" })
+                              : intl.formatMessage({ id: "prompts.details.action.activate" })}
+                          </DropdownMenuItem>
+                        );
+                      })()}
                     {onDelete && (
                       <DropdownMenuItem
                         onClick={(e) => {

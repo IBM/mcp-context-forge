@@ -8,6 +8,10 @@
   "prompts.card.moreOptionsFor": "Mais opções para {name}",
   "prompts.card.viewDetails": "Ver detalhes",
   "prompts.card.morePromptsTitle": "{count, plural, one {mais # prompt} other {mais # prompts}}",
+  "prompts.card.activate": "Ativar",
+  "prompts.card.deactivate": "Desativar",
+  "prompts.card.activateAriaLabel": "Ativar {name}",
+  "prompts.card.deactivateAriaLabel": "Desativar {name}",
   "prompts.details.code.args.heading": "Argumentos",
   "prompts.details.code.args.required": "Obrigatório",
   "prompts.details.code.tab.curl": "curl",
@@ -28,6 +32,10 @@
   "prompts.details.moreOptionsFor": "Mais opções para {name}",
   "prompts.details.action.edit": "Editar",
   "prompts.details.action.delete": "Excluir",
+  "prompts.details.action.activate": "Ativar",
+  "prompts.details.action.deactivate": "Desativar",
+  "prompts.details.activateAriaLabel": "Ativar {name}",
+  "prompts.details.deactivateAriaLabel": "Desativar {name}",
   "prompts.details.srHeading": "Detalhes do prompt: {title}",
   "prompts.details.selectPrompt": "Selecionar prompt",
   "prompts.details.close": "Fechar detalhes do prompt",
@@ -91,5 +99,9 @@
   "prompts.delete.confirm.description": "Tem certeza de que deseja excluir \"{name}\"? Esta ação não pode ser desfeita.",
   "prompts.delete.confirm.button": "Excluir",
   "prompts.delete.success": "Prompt \"{name}\" excluído com sucesso",
-  "prompts.delete.error": "Falha ao excluir o prompt"
+  "prompts.delete.error": "Falha ao excluir o prompt",
+  "prompts.toast.activateSuccess": "Prompt \"{name}\" ativado com sucesso",
+  "prompts.toast.deactivateSuccess": "Prompt \"{name}\" desativado com sucesso",
+  "prompts.toast.activateError": "Falha ao ativar o prompt",
+  "prompts.toast.deactivateError": "Falha ao desativar o prompt"
 }

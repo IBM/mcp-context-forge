@@ -8,6 +8,10 @@
   "prompts.card.moreOptionsFor": "More options for {name}",
   "prompts.card.viewDetails": "View details",
   "prompts.card.morePromptsTitle": "{count, plural, one {# more prompt} other {# more prompts}}",
+  "prompts.card.activate": "Activate",
+  "prompts.card.deactivate": "Deactivate",
+  "prompts.card.activateAriaLabel": "Activate {name}",
+  "prompts.card.deactivateAriaLabel": "Deactivate {name}",
   "prompts.details.code.args.heading": "Arguments",
   "prompts.details.code.args.required": "Required",
   "prompts.details.code.tab.curl": "curl",
@@ -28,6 +32,10 @@
   "prompts.details.moreOptionsFor": "More options for {name}",
   "prompts.details.action.edit": "Edit",
   "prompts.details.action.delete": "Delete",
+  "prompts.details.action.activate": "Activate",
+  "prompts.details.action.deactivate": "Deactivate",
+  "prompts.details.activateAriaLabel": "Activate {name}",
+  "prompts.details.deactivateAriaLabel": "Deactivate {name}",
   "prompts.details.srHeading": "Prompt details: {title}",
   "prompts.details.selectPrompt": "Select prompt",
   "prompts.details.close": "Close prompt details",
@@ -91,5 +99,9 @@
   "prompts.delete.confirm.description": "Are you sure you want to delete \"{name}\"? This action cannot be undone.",
   "prompts.delete.confirm.button": "Delete",
   "prompts.delete.success": "Prompt \"{name}\" deleted successfully",
-  "prompts.delete.error": "Failed to delete prompt"
+  "prompts.delete.error": "Failed to delete prompt",
+  "prompts.toast.activateSuccess": "Prompt \"{name}\" activated successfully",
+  "prompts.toast.deactivateSuccess": "Prompt \"{name}\" deactivated successfully",
+  "prompts.toast.activateError": "Failed to activate prompt",
+  "prompts.toast.deactivateError": "Failed to deactivate prompt"
 }

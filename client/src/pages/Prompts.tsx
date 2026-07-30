@@ -78,9 +78,11 @@ function buildPromptGroups(
 function PromptGroupCard({
   group,
   onViewDetails,
+  onTogglePrompt,
 }: {
   group: PromptGroup<NonNullable<PromptRead>>;
   onViewDetails: (group: PromptGroup<NonNullable<PromptRead>>) => void;
+  onTogglePrompt?: (id: string, currentState: boolean) => void;
 }) {
   const intl = useIntl();
   const visiblePrompts = group.prompts.slice(0, MAX_VISIBLE_PROMPTS);
@@ -122,6 +124,26 @@ function PromptGroupCard({
               <DropdownMenuItem onSelect={() => onViewDetails(group)}>
                 {intl.formatMessage({ id: "prompts.card.viewDetails" })}
               </DropdownMenuItem>
+              {onTogglePrompt && group.prompts.length === 1 && (
+                <DropdownMenuItem
+                  onClick={() => {
+                    const prompt = group.prompts[0];
+                    onTogglePrompt(prompt.id, prompt.enabled ?? true);
+                  }}
+                  aria-label={intl.formatMessage(
+                    {
+                      id: group.prompts[0].enabled
+                        ? "prompts.card.deactivateAriaLabel"
+                        : "prompts.card.activateAriaLabel",
+                    },
+                    { name: getPromptLabel(group.prompts[0]) },
+                  )}
+                >
+                  {group.prompts[0].enabled
+                    ? intl.formatMessage({ id: "prompts.card.deactivate" })
+                    : intl.formatMessage({ id: "prompts.card.activate" })}
+                </DropdownMenuItem>
+              )}
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
@@ -244,6 +266,61 @@ export function Prompts() {
       }
     },
     [setPromptsData, intl],
+  );
+
+  const handleTogglePrompt = useCallback(
+    async (id: string, currentState: boolean) => {
+      const newState = !currentState;
+      const prompts = getPromptItems(promptsData);
+      const prompt = prompts.find((p) => p.id === id);
+      const promptName = prompt ? getPromptLabel(prompt) : id;
+
+      // Optimistic update
+      setPromptsData((prev) => {
+        if (!prev) return prev;
+        const replace = (list: (PromptRead | null)[]) =>
+          list.map((p) => (p && p.id === id ? { ...p, enabled: newState } : p));
+        return Array.isArray(prev) ? replace(prev) : { ...prev, prompts: replace(prev.prompts) };
+      });
+
+      try {
+        await promptsApi.setState(id, newState);
+        toast.success(
+          intl.formatMessage(
+            {
+              id: newState ? "prompts.toast.activateSuccess" : "prompts.toast.deactivateSuccess",
+            },
+            { name: promptName },
+          ),
+        );
+
+        try {
+          await refetch();
+        } catch (refreshErr) {
+          console.error(
+            "Failed to refresh prompts after toggling state:",
+            sanitizeError(refreshErr),
+          );
+        }
+      } catch (err) {
+        // Revert optimistic update
+        setPromptsData((prev) => {
+          if (!prev) return prev;
+          const replace = (list: (PromptRead | null)[]) =>
+            list.map((p) => (p && p.id === id ? { ...p, enabled: currentState } : p));
+          return Array.isArray(prev) ? replace(prev) : { ...prev, prompts: replace(prev.prompts) };
+        });
+
+        const detail = err instanceof ApiError ? extractApiErrorDetail(err.body) : null;
+        toast.error(
+          detail ||
+            intl.formatMessage({
+              id: newState ? "prompts.toast.activateError" : "prompts.toast.deactivateError",
+            }),
+        );
+      }
+    },
+    [promptsData, setPromptsData, refetch, intl],
   );
 
   const restPromptsLabel = intl.formatMessage({ id: "prompts.restPromptsGroup" });
@@ -427,6 +504,7 @@ export function Prompts() {
                     key={group.key}
                     group={group}
                     onViewDetails={handleViewDetails}
+                    onTogglePrompt={handleTogglePrompt}
                   />
                 ))}
               </div>
@@ -456,6 +534,7 @@ export function Prompts() {
         onAddTag={handleAddPromptTag}
         onEdit={handleEditPrompt}
         onDelete={handleDeletePrompt}
+        onTogglePrompt={handleTogglePrompt}
       />
 
       <ConfirmDialog
