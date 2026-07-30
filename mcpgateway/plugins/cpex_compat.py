@@ -45,7 +45,8 @@ def execution_records_supported() -> bool:
     global _EXECUTION_RECORDS_SUPPORTED  # pylint: disable=global-statement
     if _EXECUTION_RECORDS_SUPPORTED is None:
         try:
-            from cpex.framework import ControlExecutionRecord, ControlExecutionStatus  # noqa: F401  # pylint: disable=import-outside-toplevel
+            from cpex.framework import ControlExecutionRecord, ControlExecutionStatus  # noqa: F401  # pylint: disable=import-outside-toplevel,unused-import
+
             _EXECUTION_RECORDS_SUPPORTED = True
         except ImportError:
             _EXECUTION_RECORDS_SUPPORTED = False
