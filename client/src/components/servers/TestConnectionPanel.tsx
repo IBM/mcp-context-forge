@@ -392,8 +392,11 @@ export function TestConnectionPanel({ serverUrl }: TestConnectionPanelProps) {
         </div>
 
         {/* Right column — action button + response panel */}
-        <div className="flex flex-col gap-3">
-          <div className="flex justify-end gap-3">
+        <div className="flex flex-col gap-2">
+          {/* Mirror the left column's label row: a fixed label-height band so the
+              response panel below lines up with the URL input. The button is taller
+              than the band and overflows it upward instead of pushing the panel down. */}
+          <div className="flex h-5 items-end justify-end gap-3">
             {isTesting && (
               <Button variant="ghost" onClick={handleCancel}>
                 Cancel
@@ -413,7 +416,7 @@ export function TestConnectionPanel({ serverUrl }: TestConnectionPanelProps) {
             </Button>
           </div>
 
-          <div className="flex min-h-[300px] flex-col overflow-hidden rounded-md border border-input bg-transparent">
+          <div className="flex min-h-[200px] flex-1 flex-col overflow-hidden rounded-md border border-input bg-transparent">
             {status === "idle" && (
               <div className="flex flex-1 items-center justify-center p-6 text-center">
                 <p className="text-sm text-muted-foreground">
@@ -441,7 +444,7 @@ export function TestConnectionPanel({ serverUrl }: TestConnectionPanelProps) {
                     variant="ghost"
                     size="icon-xs"
                     aria-label="Copy response body"
-                    className="absolute right-2 top-2 size-6 bg-neutral-800/80 text-neutral-400 hover:bg-neutral-700 hover:text-neutral-100"
+                    className="absolute right-2 top-2 size-6 bg-background/80 text-muted-foreground backdrop-blur-sm hover:bg-muted hover:text-foreground"
                     onClick={() => copyToClipboard(responseBodyText)}
                   >
                     <Copy className="size-3.5" />
