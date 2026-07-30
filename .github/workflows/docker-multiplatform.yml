@@ -266,7 +266,6 @@ jobs:
             runner: ubuntu-24.04
             suffix: amd64
             cache_mode: max
-            qemu: false
             build_on_pr: true
             build_on_merge_group: true
             build_on_push: true
@@ -274,7 +273,6 @@ jobs:
             runner: ubuntu-24.04-arm
             suffix: arm64
             cache_mode: max
-            qemu: false
             build_on_pr: false
             build_on_merge_group: true
             build_on_push: true
@@ -282,7 +280,6 @@ jobs:
             runner: ubuntu-24.04-s390x
             suffix: s390x
             cache_mode: max
-            qemu: false
             build_on_pr: false
             build_on_merge_group: false   # not merge queue
             build_on_push: false          # runner capacity — workflow_dispatch only
@@ -290,7 +287,6 @@ jobs:
             runner: ubuntu-24.04-ppc64le
             suffix: ppc64le
             cache_mode: max
-            qemu: false
             build_on_pr: false
             build_on_merge_group: false   # not merge queue
             build_on_push: false          # runner capacity — workflow_dispatch only
@@ -342,14 +338,6 @@ jobs:
         run: |
           IMAGE_NAME_LC=$(echo "${{ env.IMAGE_NAME }}" | tr '[:upper:]' '[:lower:]')
           echo "IMAGE_NAME_LC=${IMAGE_NAME_LC}" >> "${GITHUB_ENV}"
-
-      # QEMU is not currently triggered (native runners are used for all platforms)
-      # but is retained so it can be re-enabled via matrix.qemu if needed.
-      - name: Set up QEMU
-        if: matrix.qemu && steps.gate.outputs.build == 'true'
-        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
-        with:
-          platforms: ${{ matrix.platform }}
 
       - name: Set up Docker Buildx
         if: steps.gate.outputs.build == 'true'
