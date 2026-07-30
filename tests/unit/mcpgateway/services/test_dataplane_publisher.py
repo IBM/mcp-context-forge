@@ -293,6 +293,14 @@ async def test_full_payload_generation_with_mock_db():
         assert backend["allowed_resource_uris"] == ["resource://one"]
         assert backend["allowed_prompt_names"] == ["Prompt 1"]
 
+        # Verify the gateway SELECT projection actually includes the new columns
+        # (guards against getattr-on-Row silently returning None when columns are missing from SELECT)
+        gateway_execute_call = mock_db.execute.call_args_list[3]
+        stmt = gateway_execute_call[0][0]
+        selected_keys = {col.key for col in stmt.selected_columns}
+        assert "add_headers" in selected_keys, "Gateway SELECT must include add_headers"
+        assert "remove_headers" in selected_keys, "Gateway SELECT must include remove_headers"
+
         # Verify user2 sees public server but not private server from user1
         user2_config = payload[USER2_ID]
         assert "s1" in user2_config["virtual_hosts"]  # public

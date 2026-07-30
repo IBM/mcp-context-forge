@@ -313,6 +313,8 @@ class DataplanePublisherService:
                         DbGateway.url,
                         DbGateway.transport,
                         DbGateway.passthrough_headers,
+                        DbGateway.add_headers,
+                        DbGateway.remove_headers,
                         DbGateway.capabilities,
                         DbGateway.owner_email,
                         DbGateway.team_id,
@@ -379,10 +381,8 @@ class DataplanePublisherService:
                     "url": gateway.url,
                     "transport": gateway.transport,
                     "passthrough_headers": gateway.passthrough_headers,
-                    # DB columns not yet present; getattr keeps the diff in this file and
-                    # emits the Rust-side defaults ({} / []) until the columns land.
-                    "add_headers": getattr(gateway, "add_headers", None) or {},
-                    "remove_headers": getattr(gateway, "remove_headers", None) or [],
+                    "add_headers": gateway.add_headers or {},
+                    "remove_headers": gateway.remove_headers or [],
                     "capabilities": gateway.capabilities or {},
                 }
                 for gateway in gateway_rows
