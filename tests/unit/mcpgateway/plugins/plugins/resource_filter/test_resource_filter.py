@@ -298,3 +298,169 @@ class TestResourceFilterPlugin:
 
             if expected_protocol in ["http", "https", "test"]:
                 assert result.modified_payload.metadata["protocol"] == expected_protocol
+
+    # Regression: the blocklist must be decided over the connected host, not the authority.
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "uri,expected_host",
+        [
+            pytest.param("http://good.com@evil.com/data", "evil.com", id="userinfo"),
+            pytest.param("http://user:pw@evil.com/data", "evil.com", id="userinfo_with_password"),  # pragma: allowlist secret
+            pytest.param("http://evil.com:8080/data", "evil.com", id="port"),
+            pytest.param("http://user:pw@evil.com:8080/data", "evil.com", id="userinfo_and_port"),  # pragma: allowlist secret
+            pytest.param("http://evil.com./data", "evil.com", id="trailing_dot"),
+            pytest.param("http://good.com@evil.com.:443/data", "evil.com", id="userinfo_port_and_trailing_dot"),
+            pytest.param("https://subdomain.evil.com/data", "subdomain.evil.com", id="subdomain"),
+        ],
+    )
+    async def test_blocked_domain_not_bypassed_by_authority(self, plugin, context, uri, expected_host):
+        """Blocked domains stay blocked regardless of userinfo, port, or trailing dot."""
+        payload = ResourcePreFetchPayload(uri=uri, metadata={})
+        result = await plugin.resource_pre_fetch(payload, context)
+
+        assert result.continue_processing is False, f"{uri} bypassed the domain blocklist"
+        assert result.violation is not None
+        assert result.violation.code == "DOMAIN_BLOCKED"
+        # The violation must name the evaluated host, not the raw authority.
+        assert result.violation.details["domain"] == expected_host
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "uri",
+        [
+            pytest.param("https://good.com/data", id="unrelated_host"),
+            pytest.param("https://notevil.com/data", id="suffix_confusion"),
+            pytest.param("https://evil.com.attacker.net/data", id="blocked_domain_as_prefix_label"),
+        ],
+    )
+    async def test_host_matching_does_not_overblock(self, plugin, context, uri):
+        """Hosts that merely contain a blocked domain as a substring stay allowed."""
+        payload = ResourcePreFetchPayload(uri=uri, metadata={})
+        result = await plugin.resource_pre_fetch(payload, context)
+
+        assert result.continue_processing is True
+        assert result.violation is None
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "uri,expected_host",
+        [
+            pytest.param("http://evil%2ecom/data", "evil.com", id="percent_encoded_dot"),
+            pytest.param("http://ev%69l.com/data", "evil.com", id="percent_encoded_letter"),
+            pytest.param("http://EVIL.COM./data", "evil.com", id="uppercase_and_trailing_dot"),
+        ],
+    )
+    async def test_encoded_host_spellings_are_blocked(self, plugin, context, uri, expected_host):
+        """Alternative spellings of a blocked host canonicalize to the same entry."""
+        payload = ResourcePreFetchPayload(uri=uri, metadata={})
+        result = await plugin.resource_pre_fetch(payload, context)
+
+        assert result.continue_processing is False, f"{uri} bypassed the domain blocklist"
+        assert result.violation.code == "DOMAIN_BLOCKED"
+        assert result.violation.details["domain"] == expected_host
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "configured,uri",
+        [
+            pytest.param("[::1]", "http://[::1]/data", id="bracketed_config_bracketed_uri"),
+            pytest.param("::1", "http://[::1]/data", id="bare_config_bracketed_uri"),
+            pytest.param("0:0:0:0:0:0:0:1", "http://[::1]/data", id="expanded_config_compressed_uri"),
+        ],
+    )
+    async def test_ipv6_literals_match_regardless_of_spelling(self, plugin_config, context, configured, uri):
+        """A bracketed IPv6 entry keeps blocking: matching on hostname strips the brackets."""
+        ipv6_config = plugin_config.model_copy(update={"config": {**plugin_config.config, "blocked_domains": [configured]}})
+        ipv6_plugin = ResourceFilterPlugin(ipv6_config)
+
+        result = await ipv6_plugin.resource_pre_fetch(ResourcePreFetchPayload(uri=uri, metadata={}), context)
+
+        assert result.continue_processing is False, f"config {configured!r} failed to block {uri}"
+        assert result.violation.code == "DOMAIN_BLOCKED"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "uri",
+        [
+            pytest.param("http://2130706433/data", id="decimal_integer"),
+            pytest.param("http://0x7f000001/data", id="hexadecimal"),
+            pytest.param("http://0177.0.0.1/data", id="octal"),
+            pytest.param("http://127.1/data", id="shortened_dotted"),
+            pytest.param("http://127.0.0.1/data", id="canonical"),
+            pytest.param("http://[::ffff:127.0.0.1]/data", id="ipv4_mapped_ipv6_dotted"),
+            pytest.param("http://[::ffff:7f00:1]/data", id="ipv4_mapped_ipv6_hex"),
+        ],
+    )
+    async def test_legacy_ipv4_spellings_are_blocked(self, plugin_config, context, uri):
+        """Legacy IPv4 forms the resolver accepts must match a canonical blocked entry."""
+        ip_config = plugin_config.model_copy(update={"config": {**plugin_config.config, "blocked_domains": ["127.0.0.1"]}})
+        ip_plugin = ResourceFilterPlugin(ip_config)
+
+        result = await ip_plugin.resource_pre_fetch(ResourcePreFetchPayload(uri=uri, metadata={}), context)
+
+        assert result.continue_processing is False, f"{uri} bypassed the IP blocklist"
+        assert result.violation.code == "DOMAIN_BLOCKED"
+        assert result.violation.details["domain"] == "127.0.0.1"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "configured,uri",
+        [
+            pytest.param("evil.com:8443", "https://evil.com:8443/data", id="host_port_entry_same_port"),
+            pytest.param("evil.com:8443", "https://evil.com/data", id="host_port_entry_becomes_host_wide"),
+            pytest.param("[::1]:8443", "http://[::1]:8443/data", id="bracketed_ipv6_port_entry"),
+            pytest.param("[::1]:8443", "http://[::1]/data", id="bracketed_ipv6_port_entry_no_port"),
+        ],
+    )
+    async def test_port_bearing_config_entries_still_enforce(self, plugin_config, context, configured, uri):
+        """An entry written as host:port degrades to a host-wide block rather than matching nothing."""
+        port_config = plugin_config.model_copy(update={"config": {**plugin_config.config, "blocked_domains": [configured]}})
+        port_plugin = ResourceFilterPlugin(port_config)
+
+        result = await port_plugin.resource_pre_fetch(ResourcePreFetchPayload(uri=uri, metadata={}), context)
+
+        assert result.continue_processing is False, f"config {configured!r} failed to block {uri}"
+        assert result.violation.code == "DOMAIN_BLOCKED"
+
+    @pytest.mark.asyncio
+    async def test_port_bearing_config_entry_does_not_overblock(self, plugin_config, context):
+        """Reducing host:port to the host must not start matching unrelated hosts."""
+        port_config = plugin_config.model_copy(update={"config": {**plugin_config.config, "blocked_domains": ["evil.com:8443"]}})
+        port_plugin = ResourceFilterPlugin(port_config)
+
+        result = await port_plugin.resource_pre_fetch(ResourcePreFetchPayload(uri="https://good.com:8443/data", metadata={}), context)
+
+        assert result.continue_processing is True
+        assert result.violation is None
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "configured,uri",
+        [
+            pytest.param("münchen.de", "http://xn--mnchen-3ya.de/data", id="unicode_config_punycode_uri"),
+            pytest.param("xn--mnchen-3ya.de", "http://münchen.de/data", id="punycode_config_unicode_uri"),
+        ],
+    )
+    async def test_idn_matches_in_both_directions(self, plugin_config, context, configured, uri):
+        """Unicode and punycode spell the same domain, so either config form blocks either URI form."""
+        idn_config = plugin_config.model_copy(update={"config": {**plugin_config.config, "blocked_domains": [configured]}})
+        idn_plugin = ResourceFilterPlugin(idn_config)
+
+        result = await idn_plugin.resource_pre_fetch(ResourcePreFetchPayload(uri=uri, metadata={}), context)
+
+        assert result.continue_processing is False, f"config {configured!r} failed to block {uri}"
+        assert result.violation.code == "DOMAIN_BLOCKED"
+
+    @pytest.mark.asyncio
+    async def test_transform_mode_records_authority_bypass(self, plugin_config, context):
+        """In transform mode a disguised blocked domain is recorded but not blocked."""
+        transform_config = plugin_config.model_copy(update={"mode": PluginMode.TRANSFORM})
+        transform_plugin = ResourceFilterPlugin(transform_config)
+
+        payload = ResourcePreFetchPayload(uri="http://good.com@evil.com/data", metadata={})
+        result = await transform_plugin.resource_pre_fetch(payload, context)
+
+        assert result.continue_processing is True
+        assert result.violation is not None
+        assert result.violation.code == "DOMAIN_BLOCKED"
