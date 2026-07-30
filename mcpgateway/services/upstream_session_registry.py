@@ -248,6 +248,142 @@ def _mcp_transport_is_broken(session: ClientSession) -> bool:
     return False
 
 
+def _categorize_upstream_error(exc: BaseException, auth_query_params: Optional[dict[str, str]] = None) -> tuple[str, str, str, int]:
+    """Categorize an upstream MCP session creation error.
+
+    Unwraps BaseExceptionGroup, classifies the root cause into semantic
+    categories for alerting/filtering, and sanitizes exception messages to
+    prevent credential disclosure.
+
+    Args:
+        exc: The caught exception (may be BaseExceptionGroup).
+        auth_query_params: Optional dict of {param_name: decrypted_value} for
+            credential redaction (e.g., the gateway's configured auth query params).
+            If None, uses static sensitive param names as fallback.
+
+    Returns:
+        Tuple of (error_category, exception_type, sanitized_message, exception_count):
+            - error_category: Semantic category (e.g., "connection_refused", "timeout")
+            - exception_type: Root exception's __name__ (e.g., "ConnectionRefusedError")
+            - sanitized_message: str(root_cause) with URLs/credentials redacted
+            - exception_count: Number of exceptions in the group (1 if not a group)
+
+    Example:
+        >>> exc = ConnectionRefusedError("Connection refused")
+        >>> _categorize_upstream_error(exc)
+        ('connection_refused', 'ConnectionRefusedError', 'Connection refused', 1)
+
+        >>> # httpx.HTTPStatusError categorization and sanitization
+        >>> # (full example requires mock request/response objects)
+    """
+    # Standard
+    import ssl
+
+    # First-Party
+    from mcpgateway.utils.url_auth import sanitize_exception_message
+
+    # Unwrap BaseExceptionGroup to get the actual root cause. MCP SDK uses
+    # TaskGroup which wraps exceptions in BaseExceptionGroup. Without unwrapping,
+    # the error message surfaces as "unhandled errors in a TaskGroup" which is
+    # unhelpful for ops/debugging.
+    root_cause: Exception = exc  # type: ignore[assignment]
+    exception_count = 1
+
+    if isinstance(exc, BaseExceptionGroup):
+        exception_count = len(exc.exceptions)
+        # Iteratively unwrap until we reach a non-group exception
+        while isinstance(root_cause, BaseExceptionGroup) and root_cause.exceptions:
+            root_cause = root_cause.exceptions[0]  # type: ignore[assignment]
+
+    # Get exception metadata before sanitization (for categorization)
+    exception_type = type(root_cause).__name__
+    exception_message = str(root_cause)
+    error_category = "unknown"
+
+    # Helper to check the full exception chain (__cause__, __context__) for a specific type
+    def _find_in_chain(start_exc: BaseException, target_type: type) -> Optional[BaseException]:
+        """Walk __cause__ and __context__ to find an exception of target_type."""
+        current = start_exc
+        seen = set()
+        while current is not None and id(current) not in seen:
+            seen.add(id(current))
+            if isinstance(current, target_type):
+                return current
+            # Check __cause__ first (explicit chaining via 'raise ... from'), then __context__
+            current = getattr(current, "__cause__", None) or getattr(current, "__context__", None)
+        return None
+
+    # Categorize common failure modes to help users identify the root cause.
+    # Order matters: more specific checks first (e.g., httpx.ConnectTimeout before TimeoutError).
+
+    # Check httpx-specific exception types first (these are the types actually raised by transports)
+    if isinstance(root_cause, httpx.TimeoutException):
+        # httpx.TimeoutException is the base for ConnectTimeout, ReadTimeout, WriteTimeout, PoolTimeout
+        error_category = "timeout"
+    elif isinstance(root_cause, httpx.ConnectError):
+        # httpx.ConnectError wraps connection failures. Real refused connections
+        # produce httpx.ConnectError("All connection attempts failed") with
+        # ConnectionRefusedError deeper in __context__/__cause__. Check chain first.
+        refused = _find_in_chain(root_cause, ConnectionRefusedError)
+        if refused is not None:
+            error_category = "connection_refused"
+        elif "refused" in exception_message.lower():
+            # Fallback: message substring match for edge cases
+            error_category = "connection_refused"
+        else:
+            error_category = "connection_error"
+    elif isinstance(root_cause, httpx.HTTPStatusError):
+        status_code = getattr(root_cause.response, "status_code", None)
+        if status_code is not None:
+            if status_code == 401:
+                error_category = "auth_unauthorized"
+            elif status_code == 403:
+                error_category = "auth_forbidden"
+            elif status_code == 404:
+                error_category = "not_found"
+            elif 500 <= status_code < 600:
+                error_category = "upstream_server_error"
+            else:
+                error_category = "http_error"
+        else:
+            error_category = "http_error"
+    elif isinstance(root_cause, McpError):
+        # MCP protocol-level errors (failed session.initialize(), etc.)
+        error_category = "mcp_protocol_error"
+    elif isinstance(root_cause, ssl.SSLError):
+        # SSL/TLS errors (certificate verification, handshake failures)
+        error_category = "ssl_tls"
+    elif isinstance(root_cause, ConnectionRefusedError):
+        error_category = "connection_refused"
+    elif isinstance(root_cause, TimeoutError):
+        # Built-in TimeoutError (asyncio.TimeoutError is an alias in 3.11+)
+        error_category = "timeout"
+    elif isinstance(root_cause, OSError):
+        # OSError is a broad category; check message for specifics
+        msg_lower = exception_message.lower()
+        if "refused" in msg_lower:
+            error_category = "connection_refused"
+        elif "reset" in msg_lower:
+            error_category = "connection_reset"
+        elif "name or service not known" in msg_lower:
+            error_category = "dns_resolution"
+        else:
+            error_category = "network_error"
+    else:
+        # Not a type we recognize directly — check the exception chain for ssl.SSLError
+        # (handles cases where httpx.ConnectError wraps SSLError)
+        ssl_err = _find_in_chain(root_cause, ssl.SSLError)
+        if ssl_err is not None:
+            error_category = "ssl_tls"
+
+    # Sanitize exception message to prevent credential disclosure.
+    # httpx.HTTPStatusError.__str__ embeds the full request URL, which may
+    # contain secrets in query params (e.g., "401 Unauthorized for url 'https://api.example.com?apiKey=secret'").
+    sanitized_message = sanitize_exception_message(exception_message, auth_query_params)
+
+    return error_category, exception_type, sanitized_message, exception_count
+
+
 @dataclass
 class UpstreamSession:
     """A single upstream MCP session bound to one downstream session.
@@ -375,8 +511,89 @@ async def _default_session_factory(req: SessionCreateRequest) -> tuple[ClientSes
             # classes we cannot enumerate. BaseException is deliberately NOT
             # caught — SystemExit / KeyboardInterrupt / CancelledError must
             # propagate so the task exits promptly during shutdown.
+
+            # Categorize error using the pure function (unwraps ExceptionGroup, sanitizes credentials).
+            # auth_query_params=None is acceptable here: sanitize_exception_message() falls back to
+            # static sensitive param names (api_key, token, password, etc.) which covers common cases.
+            # For gateway-specific param names, credential sanitization would require threading the
+            # decrypted auth_query_params through SessionCreateRequest, but the static fallback
+            # already prevents the most common leaks (Bearer tokens in headers, generic API keys).
+            error_category, exception_type, sanitized_message, exception_count = _categorize_upstream_error(exc, auth_query_params=None)
+
+            # Log level: ERROR for pre-ready failures (blocks session creation),
+            # WARNING for post-ready teardown races (session was already established).
+            log_level = "ERROR" if not ready.done() else "WARNING"
+            safe_url = sanitize_url_for_logging(req.url)
+
+            # Log the categorized error. Do NOT pass exc_info=exc — that would
+            # render the raw, unsanitized exception via Python's traceback formatter,
+            # reintroducing credential disclosure for HTTPStatusError and others.
+            # The categorized message already contains the actionable diagnostic info.
+            if log_level == "ERROR":
+                logger.error(
+                    "Failed to create upstream MCP session for %s: [%s] %s: %s%s",
+                    safe_url,
+                    error_category,
+                    exception_type,
+                    sanitized_message,
+                    f" ({exception_count} exceptions in group)" if exception_count > 1 else "",
+                )
+            else:
+                logger.warning(
+                    "Upstream MCP session owner task for %s exited post-ready: [%s] %s: %s%s",
+                    safe_url,
+                    error_category,
+                    exception_type,
+                    sanitized_message,
+                    f" ({exception_count} exceptions in group)" if exception_count > 1 else "",
+                )
+
+            # Structured logging for log aggregation systems (DataDog, Splunk, etc.)
+            # Enables filtering/alerting on specific exception types and correlation
+            # across downstream sessions, gateways, and transports.
+            # Only log at ERROR level (not WARNING for post-ready teardown) to avoid
+            # alert noise on ordinary shutdown races.
+            if log_level == "ERROR":
+                try:
+                    # First-Party
+                    from mcpgateway.services.structured_logger import get_structured_logger
+                    from mcpgateway.utils.correlation_id import get_correlation_id
+
+                    structured_logger = get_structured_logger()
+                    correlation_id = get_correlation_id()
+                    structured_logger.log(
+                        level="ERROR",
+                        message="Upstream MCP session creation failed",
+                        component="upstream_session_registry",
+                        correlation_id=correlation_id,
+                        error_details={
+                            "error_type": exception_type,
+                            "error_message": sanitized_message,
+                            "error_category": error_category,
+                            "exception_count": exception_count,
+                        },
+                        metadata={
+                            "url": safe_url,
+                            "downstream_session_id": req.downstream_session_id,
+                            "gateway_id": req.gateway_id or "none",
+                            "transport_type": req.transport_type.value,
+                        },
+                    )
+                except Exception as log_exc:  # noqa: BLE001 — don't let logging failure break error flow
+                    # Structured logger might not be initialized in tests or early startup.
+                    # Log the failure at debug level so it's visible but doesn't flood logs.
+                    logger.debug("Structured logging failed for upstream session error: %s", log_exc, exc_info=True)
+
             if not ready.done():
-                ready.set_exception(RuntimeError(f"Failed to create upstream MCP session for {req.url}: {exc}"))
+                # Include exception type and category in the RuntimeError message so it surfaces
+                # to the tool invocation layer and ultimately to the client. This makes the error
+                # actionable without requiring log access. Users can now differentiate between:
+                # - Expired/invalid tokens (401/403)
+                # - SSL certificate issues
+                # - Network connectivity problems
+                # - Upstream server errors
+                # - DNS resolution failures
+                ready.set_exception(RuntimeError(f"Failed to create upstream MCP session for {safe_url}: [{error_category}] {exception_type}: {sanitized_message}"))
 
     task = asyncio.create_task(owner(), name=f"upstream-session-{sanitize_url_for_logging(req.url)}")
 
@@ -399,6 +616,57 @@ async def _default_session_factory(req: SessionCreateRequest) -> tuple[ClientSes
     try:
         session, transport_ctx_ref = await asyncio.wait_for(ready, timeout=req.timeout_seconds)
         success = True
+    except asyncio.TimeoutError as timeout_exc:
+        # asyncio.wait_for timeout path: the owner task hangs (TCP accepted but
+        # never responds) and we timeout waiting for the ready future. The owner
+        # task never hits its `except Exception` handler (it receives CancelledError
+        # instead, which is a BaseException and deliberately excluded). So we must
+        # categorize, sanitize, and log here to ensure timeout failures are diagnosable.
+        safe_url = sanitize_url_for_logging(req.url)
+
+        # Categorize as timeout (no credentials in TimeoutError message, but
+        # sanitize_exception_message is safe to call on any exception text)
+        from mcpgateway.utils.url_auth import sanitize_exception_message
+
+        timeout_msg = str(timeout_exc) if str(timeout_exc) else f"Timeout after {req.timeout_seconds}s waiting for upstream session"
+        sanitized_timeout_msg = sanitize_exception_message(timeout_msg, auth_query_params=None)
+
+        logger.error(
+            "Failed to create upstream MCP session for %s: [timeout] TimeoutError: %s",
+            safe_url,
+            sanitized_timeout_msg,
+        )
+
+        # Structured logging for timeout path (mirrors the owner-task structured log)
+        try:
+            from mcpgateway.services.structured_logger import get_structured_logger
+            from mcpgateway.utils.correlation_id import get_correlation_id
+
+            structured_logger = get_structured_logger()
+            correlation_id = get_correlation_id()
+            structured_logger.log(
+                level="ERROR",
+                message="Upstream MCP session creation failed",
+                component="upstream_session_registry",
+                correlation_id=correlation_id,
+                error_details={
+                    "error_type": "TimeoutError",
+                    "error_message": sanitized_timeout_msg,
+                    "error_category": "timeout",
+                    "exception_count": 1,
+                },
+                metadata={
+                    "url": safe_url,
+                    "downstream_session_id": req.downstream_session_id,
+                    "gateway_id": req.gateway_id or "none",
+                    "transport_type": req.transport_type.value,
+                },
+            )
+        except Exception as log_exc:  # noqa: BLE001 — don't let logging failure break error flow
+            logger.debug("Structured logging failed for upstream session timeout: %s", log_exc, exc_info=True)
+
+        # Re-wrap as RuntimeError with categorized message for the caller
+        raise RuntimeError(f"Failed to create upstream MCP session for {safe_url}: [timeout] TimeoutError: {sanitized_timeout_msg}") from timeout_exc
     finally:
         if not success:
             shutdown_event.set()

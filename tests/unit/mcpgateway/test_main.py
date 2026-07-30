@@ -2602,11 +2602,13 @@ class TestRootEndpoints:
     @patch("mcpgateway.main.root_service.remove_root")
     def test_remove_root_generic_exception(self, mock_remove, _mock_root_admin, test_client, auth_headers, caplog):
         """Test DELETE /roots/{uri} returns 500 when generic Exception is raised."""
+        import logging
+
         mock_remove.side_effect = RuntimeError("Unexpected filesystem error")
         response = test_client.delete("/roots/%2Ferror", headers=auth_headers)
         assert response.status_code == 500
         assert "Internal error" in response.json()["detail"]
-        endpoint_logs = [record.getMessage() for record in caplog.records if record.name == "mcpgateway"]
+        endpoint_logs = [record.getMessage() for record in caplog.records if record.name == "mcpgateway" and record.levelno >= logging.ERROR]
         assert endpoint_logs == ["Failed to remove root"]
 
 
