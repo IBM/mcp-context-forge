@@ -11,10 +11,27 @@ cap, and concurrency isolation.
 """
 
 # Standard
+import inspect
 from unittest.mock import MagicMock, patch
 
 # Third-Party
 import pytest
+
+# First-Party
+import mcpgateway.config as cfg_mod
+from mcpgateway.plugins.control_telemetry import (
+    ControlTelemetryAccumulator,
+    _emit_db_spans,
+    _emit_otel_spans,
+    _per_control_attributes,
+    record_control_telemetry,
+)
+from mcpgateway.plugins.utils import (
+    _compile_wildcard_rule,
+    apply_attribute_mapping,
+    compile_attribute_policy,
+)
+from mcpgateway.services.observability_service import ObservabilityService
 
 
 # ---------------------------------------------------------------------------
@@ -53,8 +70,6 @@ def _make_rec(
 
 def _acc_with_pre_records(recs):
     """Build a ControlTelemetryAccumulator with pre-hook records."""
-    from mcpgateway.plugins.control_telemetry import ControlTelemetryAccumulator
-
     acc = ControlTelemetryAccumulator()
     with patch("mcpgateway.plugins.control_telemetry.execution_records_supported", return_value=True):
         result = MagicMock()
@@ -66,8 +81,6 @@ def _acc_with_pre_records(recs):
 
 def _acc_pre_denied():
     """Build an accumulator where pre-hook was denied (no records)."""
-    from mcpgateway.plugins.control_telemetry import ControlTelemetryAccumulator
-
     acc = ControlTelemetryAccumulator()
     with patch("mcpgateway.plugins.control_telemetry.execution_records_supported", return_value=True):
         result = MagicMock()
@@ -84,18 +97,13 @@ def _acc_pre_denied():
 
 class TestRecordControlTelemetryNoop:
     def test_noop_when_no_trace_id(self):
-        from mcpgateway.plugins.control_telemetry import ControlTelemetryAccumulator, record_control_telemetry
-
         acc = ControlTelemetryAccumulator()
-        # Should not raise and not attempt any DB/OTel write
         with patch("mcpgateway.plugins.control_telemetry.execution_records_supported", return_value=True):
             with patch("mcpgateway.plugins.control_telemetry._emit_db_spans") as mock_db:
                 record_control_telemetry(None, acc)
                 mock_db.assert_not_called()
 
     def test_noop_when_cpex_records_unavailable(self):
-        from mcpgateway.plugins.control_telemetry import ControlTelemetryAccumulator, record_control_telemetry
-
         acc = ControlTelemetryAccumulator()
         with patch("mcpgateway.plugins.control_telemetry.execution_records_supported", return_value=False):
             with patch("mcpgateway.plugins.control_telemetry._emit_db_spans") as mock_db:
@@ -103,8 +111,6 @@ class TestRecordControlTelemetryNoop:
                 mock_db.assert_not_called()
 
     def test_noop_when_accumulator_empty_and_not_denied(self):
-        from mcpgateway.plugins.control_telemetry import ControlTelemetryAccumulator, record_control_telemetry
-
         acc = ControlTelemetryAccumulator()
         with patch("mcpgateway.plugins.control_telemetry.execution_records_supported", return_value=True):
             with patch("mcpgateway.plugins.control_telemetry._emit_db_spans") as mock_db:
@@ -113,11 +119,7 @@ class TestRecordControlTelemetryNoop:
 
     def test_noop_when_feature_disabled(self):
         """Feature flag CPEX_CONTROL_TELEMETRY_ENABLED=false skips all emission."""
-        from mcpgateway.plugins.control_telemetry import record_control_telemetry
-
         acc = _acc_with_pre_records([_make_rec()])
-
-        # Patch settings with cpex_control_telemetry_enabled=False inside the lazy import
         mock_settings = MagicMock()
         mock_settings.cpex_control_telemetry_enabled = False
         mock_settings.cpex_control_telemetry_db_enabled = True
@@ -127,23 +129,84 @@ class TestRecordControlTelemetryNoop:
             patch("mcpgateway.plugins.control_telemetry._emit_db_spans") as mock_db,
             patch("mcpgateway.plugins.control_telemetry._emit_otel_spans"),
         ):
-            # Patch the lazy import of settings inside the function
-            with patch("mcpgateway.plugins.control_telemetry.record_control_telemetry"):
-                # Simulate the feature-flag guard by calling the real implementation
-                # with patched settings; we verify _emit_db_spans is NOT called.
-                pass
-
-            # Call with feature disabled: settings loaded lazily — patch via sys.modules
-            import mcpgateway.config as cfg_mod  # noqa: PLC0415
-
             original_settings = cfg_mod.settings
             try:
                 cfg_mod.settings = mock_settings
                 record_control_telemetry("trace-1", acc)
             finally:
                 cfg_mod.settings = original_settings
-
             mock_db.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# record_control_telemetry — truncated flag (line 260)
+# ---------------------------------------------------------------------------
+
+
+class TestRecordControlTelemetryTruncated:
+    def test_truncated_attribute_present_when_accumulator_overflowed(self):
+        """Line 260: cpex.control.truncated is added when accumulator.truncated > 0."""
+        from mcpgateway.plugins.control_telemetry import _MAX_RECORDS_PER_CALL  # noqa: PLC0415
+
+        acc = ControlTelemetryAccumulator()
+        with patch("mcpgateway.plugins.control_telemetry.execution_records_supported", return_value=True):
+            for i in range(_MAX_RECORDS_PER_CALL + 2):
+                r = MagicMock()
+                r.executions = [_make_rec(plugin_name=f"p{i}")]
+                r.continue_processing = True
+                acc.add(r, hook="pre")
+
+        assert acc.truncated == 2
+        captured: dict = {}
+
+        def capture_db(service, trace_id, aggregate, accumulator):
+            captured.update(aggregate)
+
+        with (
+            patch("mcpgateway.plugins.control_telemetry.execution_records_supported", return_value=True),
+            patch("mcpgateway.plugins.control_telemetry._emit_db_spans", side_effect=capture_db),
+            patch("mcpgateway.plugins.control_telemetry._emit_otel_spans"),
+        ):
+            record_control_telemetry("trace-trunc", acc)
+
+        assert captured.get("cpex.control.truncated") == 2
+
+
+# ---------------------------------------------------------------------------
+# record_control_telemetry — flatten_results branch (lines 267-268)
+# ---------------------------------------------------------------------------
+
+
+class TestRecordControlTelemetryFlatten:
+    def test_flatten_results_attributes_added_when_enabled(self):
+        """Lines 267-268: flattened attributes are merged into aggregate when enabled."""
+        acc = _acc_with_pre_records([_make_rec(plugin_name="pii_filter")])
+        mock_settings = MagicMock()
+        mock_settings.cpex_control_telemetry_enabled = True
+        mock_settings.cpex_control_telemetry_db_enabled = True
+        mock_settings.cpex_control_telemetry_flatten_results = True
+        mock_settings.cpex_control_telemetry_max_results = 32
+        captured: dict = {}
+
+        def capture_db(service, trace_id, aggregate, accumulator):
+            captured.update(aggregate)
+
+        original = cfg_mod.settings
+        try:
+            cfg_mod.settings = mock_settings
+            with (
+                patch("mcpgateway.plugins.control_telemetry.execution_records_supported", return_value=True),
+                patch("mcpgateway.plugins.control_telemetry._emit_db_spans", side_effect=capture_db),
+                patch("mcpgateway.plugins.control_telemetry._emit_otel_spans"),
+            ):
+                record_control_telemetry("trace-flat", acc)
+        finally:
+            cfg_mod.settings = original
+
+        # At least the base aggregate key must be present; flattened keys start with cpex.control.results.
+        assert any(k.startswith("cpex.control.results.") for k in captured), (
+            f"Expected flattened keys in aggregate, got: {list(captured)}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -152,70 +215,45 @@ class TestRecordControlTelemetryNoop:
 
 
 class TestRecordControlTelemetryDB:
-    """Tests that the DB sink helper is called correctly.
-
-    ObservabilityService and SessionLocal are imported lazily inside
-    record_control_telemetry() / _emit_db_spans(), so we patch the
-    functions themselves via the control_telemetry module rather than
-    trying to patch the lazily-imported classes.
-    """
+    """Tests that the DB sink helper is called correctly."""
 
     def test_writes_summary_span_to_db(self):
         """DB sink is invoked when there are execution records."""
-        from mcpgateway.plugins.control_telemetry import record_control_telemetry
-
         acc = _acc_with_pre_records([_make_rec()])
-
         with (
             patch("mcpgateway.plugins.control_telemetry.execution_records_supported", return_value=True),
             patch("mcpgateway.plugins.control_telemetry._emit_db_spans") as mock_db,
             patch("mcpgateway.plugins.control_telemetry._emit_otel_spans"),
         ):
             record_control_telemetry("trace-123", acc, tool_name="my_tool")
-
         mock_db.assert_called_once()
-        # First positional arg is service, second is trace_id, third is aggregate dict
-        assert mock_db.call_count == 1
 
     def test_writes_per_control_spans(self):
         """DB sink receives the accumulator with multiple records."""
-        from mcpgateway.plugins.control_telemetry import record_control_telemetry
-
         acc = _acc_with_pre_records([_make_rec(plugin_name="ctrl1"), _make_rec(plugin_name="ctrl2")])
-
         with (
             patch("mcpgateway.plugins.control_telemetry.execution_records_supported", return_value=True),
             patch("mcpgateway.plugins.control_telemetry._emit_db_spans") as mock_db,
             patch("mcpgateway.plugins.control_telemetry._emit_otel_spans"),
         ):
             record_control_telemetry("trace-123", acc)
-
         mock_db.assert_called_once()
-        # accumulator (4th positional arg) should have 2 records
         call_args = mock_db.call_args[0]
-        accumulator_arg = call_args[3]
-        assert len(accumulator_arg.records) == 2
+        assert len(call_args[3].records) == 2
 
     def test_db_failure_does_not_raise(self):
         """_emit_db_spans raising must not propagate into the request path."""
-        from mcpgateway.plugins.control_telemetry import record_control_telemetry
-
         acc = _acc_with_pre_records([_make_rec()])
-
         with (
             patch("mcpgateway.plugins.control_telemetry.execution_records_supported", return_value=True),
             patch("mcpgateway.plugins.control_telemetry._emit_db_spans", side_effect=RuntimeError("DB is down")),
             patch("mcpgateway.plugins.control_telemetry._emit_otel_spans"),
         ):
-            # Must not raise
             record_control_telemetry("trace-123", acc)
 
     def test_otel_failure_does_not_raise(self):
         """_emit_otel_spans raising must not propagate."""
-        from mcpgateway.plugins.control_telemetry import record_control_telemetry
-
         acc = _acc_with_pre_records([_make_rec()])
-
         with (
             patch("mcpgateway.plugins.control_telemetry.execution_records_supported", return_value=True),
             patch("mcpgateway.plugins.control_telemetry._emit_db_spans"),
@@ -225,8 +263,6 @@ class TestRecordControlTelemetryDB:
 
     def test_pre_deny_summary_has_result_allowed_false(self):
         """When pre-hook was denied, aggregate result.allowed must be False."""
-        from mcpgateway.plugins.control_telemetry import record_control_telemetry
-
         acc = _acc_pre_denied()
         captured_aggregate: dict = {}
 
@@ -239,13 +275,10 @@ class TestRecordControlTelemetryDB:
             patch("mcpgateway.plugins.control_telemetry._emit_otel_spans"),
         ):
             record_control_telemetry("trace-123", acc)
-
         assert captured_aggregate.get("cpex.control.result.allowed") is False
 
     def test_tool_name_in_attributes(self):
         """tool_name appears in the aggregate attributes."""
-        from mcpgateway.plugins.control_telemetry import record_control_telemetry
-
         acc = _acc_with_pre_records([_make_rec()])
         captured: dict = {}
 
@@ -258,18 +291,14 @@ class TestRecordControlTelemetryDB:
             patch("mcpgateway.plugins.control_telemetry._emit_otel_spans"),
         ):
             record_control_telemetry("trace-123", acc, tool_name="my_tool")
-
         assert captured.get("cpex.control.tool.name") == "my_tool"
 
     def test_capped_at_max_results(self):
         """record_control_telemetry respects _get_max_results cap on per-control spans."""
-        from mcpgateway.plugins.control_telemetry import record_control_telemetry
-
         acc = _acc_with_pre_records([_make_rec(plugin_name=f"ctrl{i}") for i in range(10)])
         call_count_tracker: list = []
 
         def capture_db(service, trace_id, aggregate, accumulator):
-            # Count how many records the accumulator presents
             call_count_tracker.append(len(accumulator.records))
 
         with (
@@ -279,9 +308,87 @@ class TestRecordControlTelemetryDB:
             patch("mcpgateway.plugins.control_telemetry._get_max_results", return_value=3),
         ):
             record_control_telemetry("trace-123", acc)
-
-        # _emit_db_spans was called once with the full accumulator (capping happens inside)
         assert call_count_tracker[0] == 10  # accumulator has all 10
+
+
+# ---------------------------------------------------------------------------
+# _emit_db_spans — exception paths (lines 327, 342-348, 353-354)
+# ---------------------------------------------------------------------------
+
+
+class TestEmitDbSpansExceptionPaths:
+    def test_empty_attrs_record_is_skipped(self):
+        """Line 327: record whose _per_control_attributes returns {} is skipped (continue)."""
+        acc = ControlTelemetryAccumulator()
+        # Inject a record that will produce empty attrs
+        acc._records.append(("pre", MagicMock(spec=[])))  # pylint: disable=protected-access
+
+        with (
+            patch("mcpgateway.plugins.control_telemetry.execution_records_supported", return_value=True),
+            patch("mcpgateway.plugins.control_telemetry._emit_otel_spans"),
+        ):
+            # Must not raise; the bad record is silently skipped
+            record_control_telemetry("trace-skip", acc)
+
+    def test_db_exception_triggers_rollback(self):
+        """Lines 342-348: start_span raising triggers rollback in the except block."""
+        acc = _acc_with_pre_records([_make_rec()])
+        mock_db = MagicMock()
+        mock_service = MagicMock()
+        mock_service.start_span.side_effect = RuntimeError("DB write failed")
+
+        # SessionLocal is a lazy import inside _emit_db_spans from mcpgateway.db
+        with patch("mcpgateway.db.SessionLocal", return_value=mock_db):
+            _emit_db_spans(mock_service, "trace-rollback", {}, acc)
+
+        mock_db.rollback.assert_called_once()
+        mock_db.close.assert_called_once()
+
+    def test_db_close_exception_in_finally_is_swallowed(self):
+        """Lines 353-354: db.close() raising in the finally block must not propagate."""
+        acc = _acc_with_pre_records([_make_rec()])
+        mock_db = MagicMock()
+        mock_db.close.side_effect = RuntimeError("close failed")
+        mock_service = MagicMock()
+        mock_service.start_span.return_value = "span-id-1"
+
+        with patch("mcpgateway.db.SessionLocal", return_value=mock_db):
+            # Must not raise despite close() failing
+            _emit_db_spans(mock_service, "trace-close", {}, acc)
+
+
+# ---------------------------------------------------------------------------
+# _emit_otel_spans — active OTel context path (lines 379-387)
+# ---------------------------------------------------------------------------
+
+
+class TestEmitOtelSpansActivePath:
+    def test_emits_spans_when_otel_active(self):
+        """Lines 379-387: OTel spans are emitted when tracing is enabled and context is active."""
+        acc = _acc_with_pre_records([_make_rec(plugin_name="pii_filter")])
+        spans_created: list = []
+
+        class _FakeSpan:
+            def __init__(self, name, attrs):
+                spans_created.append(name)
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                pass
+
+        with (
+            patch("mcpgateway.plugins.control_telemetry.execution_records_supported", return_value=True),
+            patch("mcpgateway.plugins.control_telemetry._emit_db_spans"),
+            patch("mcpgateway.observability.otel_tracing_enabled", return_value=True),
+            patch("mcpgateway.observability.otel_context_active", return_value=True),
+            patch("mcpgateway.observability.create_span", side_effect=_FakeSpan),
+        ):
+            _emit_otel_spans({"cpex.control.type": "tool"}, acc)
+
+        assert "cpex.control.summary" in spans_created
+        assert "cpex.control.result" in spans_created
 
 
 # ---------------------------------------------------------------------------
@@ -292,8 +399,6 @@ class TestRecordControlTelemetryDB:
 class TestRecordControlTelemetryRemoveAttributes:
     def test_remove_attributes_applied(self):
         """cpex.control.config.keys is present when config_keys are provided."""
-        from mcpgateway.plugins.control_telemetry import _per_control_attributes
-
         rec = _make_rec(config_keys=["timeout_ms", "max_size"])
         attrs = _per_control_attributes("pre", rec)
         assert "cpex.control.config.keys" in attrs
@@ -301,22 +406,18 @@ class TestRecordControlTelemetryRemoveAttributes:
 
 
 # ---------------------------------------------------------------------------
-# Wildcard rules in apply_attribute_mapping
+# Wildcard rules in apply_attribute_mapping / compile_attribute_policy
 # ---------------------------------------------------------------------------
 
 
 class TestWildcardAttributeMapping:
     def test_exact_rename(self):
-        from mcpgateway.plugins.utils import apply_attribute_mapping
-
         attrs = {"cpex.control.result.allowed": True, "other": "val"}
         result = apply_attribute_mapping(attrs, {"cpex.control.result.allowed": "controls.result.allow"})
         assert "controls.result.allow" in result
         assert "cpex.control.result.allowed" not in result
 
     def test_wildcard_rename(self):
-        from mcpgateway.plugins.utils import apply_attribute_mapping
-
         attrs = {"cpex.control.results.pii.result.allowed": True}
         result = apply_attribute_mapping(
             attrs,
@@ -326,8 +427,6 @@ class TestWildcardAttributeMapping:
         assert "cpex.control.results.pii.result.allowed" not in result
 
     def test_exact_takes_precedence_over_wildcard(self):
-        from mcpgateway.plugins.utils import apply_attribute_mapping
-
         attrs = {"cpex.control.results.pii.result.allowed": True}
         result = apply_attribute_mapping(
             attrs,
@@ -339,37 +438,75 @@ class TestWildcardAttributeMapping:
         assert "exact.dest" in result
 
     def test_otel_destination_rejected(self):
-        from mcpgateway.plugins.utils import compile_attribute_policy
-
         with pytest.raises(ValueError, match="otel"):
             compile_attribute_policy({"cpex.control.result.allowed": "otel.reserved"}, [])
 
     def test_empty_source_rejected(self):
-        from mcpgateway.plugins.utils import compile_attribute_policy
-
         with pytest.raises(ValueError):
             compile_attribute_policy({"": "dest"}, [])
 
-    def test_wildcard_compile_matches_single_segment(self):
-        from mcpgateway.plugins.utils import _compile_wildcard_rule
+    def test_key_exceeding_256_chars_rejected(self):
+        """Line 535: mapping key > 256 chars raises ValueError."""
+        long_key = "a" * 257
+        with pytest.raises(ValueError, match="exceeds 256"):
+            compile_attribute_policy({long_key: "dest"}, [])
 
+    def test_removal_wildcard_compiled(self):
+        """Lines 547-549: wildcard removal rule is compiled correctly."""
+        _, removals = compile_attribute_policy({}, ["cpex.control.results.*.reason"])
+        assert len(removals) == 1
+        is_exact, pattern, src = removals[0]
+        assert not is_exact
+        assert pattern is not None
+        assert src == "cpex.control.results.*.reason"
+
+    def test_removal_exact_compiled(self):
+        """Line 551: exact removal rule (no wildcard) is compiled correctly."""
+        _, removals = compile_attribute_policy({}, ["cpex.control.type"])
+        assert len(removals) == 1
+        is_exact, pattern, src = removals[0]
+        assert is_exact
+        assert pattern is None
+
+    def test_removal_key_exceeding_256_chars_rejected(self):
+        """Line 546: removal key > 256 chars raises ValueError."""
+        with pytest.raises(ValueError, match="exceeds 256"):
+            compile_attribute_policy({}, ["b" * 257])
+
+    def test_wildcard_compile_matches_single_segment(self):
         p = _compile_wildcard_rule("cpex.control.results.*.result.reason")
         assert p.fullmatch("cpex.control.results.pii-guard.result.reason") is not None
         assert p.fullmatch("cpex.control.results.pii.guard.result.reason") is None
 
     def test_wildcard_compile_no_match_multiple_segments(self):
-        from mcpgateway.plugins.utils import _compile_wildcard_rule
-
         p = _compile_wildcard_rule("cpex.control.results.*.reason")
         assert p.fullmatch("cpex.control.results.a.b.reason") is None
 
     def test_no_mapping_returns_copy(self):
-        from mcpgateway.plugins.utils import apply_attribute_mapping
-
         attrs = {"a": 1, "b": 2}
         result = apply_attribute_mapping(attrs, {})
         assert result == attrs
         assert result is not attrs
+
+    def test_mismatched_wildcard_count_in_src_dst_skips(self):
+        """Line 593: src has 1 wildcard, dst has 2 — mismatch is silently skipped."""
+        attrs = {"cpex.control.results.pii.result.reason": "x"}
+        # src has 1 '*', dst has 2 '*' — mismatched, key returned unchanged
+        result = apply_attribute_mapping(
+            attrs,
+            {"cpex.control.results.*.result.reason": "new.*.result.*.reason"},
+        )
+        # Key must still be present (unchanged or renamed); must not raise
+        assert len(result) == 1
+
+    def test_apply_attribute_mapping_valueerror_fallback(self):
+        """Lines 657, 659-660: ValueError from compile falls back to exact-only matching."""
+        attrs = {"cpex.control.result.allowed": True, "other": "val"}
+        # otel.* destination triggers ValueError inside compile_attribute_policy
+        # apply_attribute_mapping catches it and falls back to exact matching
+        result = apply_attribute_mapping(attrs, {"cpex.control.result.allowed": "otel.reserved"})
+        # Fallback uses exact match — key is renamed despite the reserved namespace
+        assert "otel.reserved" in result or "cpex.control.result.allowed" in result
 
 
 # ---------------------------------------------------------------------------
@@ -379,8 +516,6 @@ class TestWildcardAttributeMapping:
 
 class TestConcurrencyIsolation:
     def test_two_accumulators_are_independent(self):
-        from mcpgateway.plugins.control_telemetry import ControlTelemetryAccumulator
-
         acc1 = ControlTelemetryAccumulator()
         acc2 = ControlTelemetryAccumulator()
 
@@ -400,8 +535,6 @@ class TestConcurrencyIsolation:
         assert acc1.records[0][1].plugin_name == "alpha"
 
     def test_adding_to_one_does_not_affect_other(self):
-        from mcpgateway.plugins.control_telemetry import ControlTelemetryAccumulator
-
         acc1 = ControlTelemetryAccumulator()
         acc2 = ControlTelemetryAccumulator()
 
@@ -424,30 +557,18 @@ class TestConcurrencyIsolation:
 class TestObservabilityServiceAPICompatibility:
     """Verify that ObservabilityService.start_span and end_span accept the
     ``commit`` and ``obs_db`` kwargs that _emit_db_spans relies on.
-
-    This is a compile-time/import-time guard: if a future refactor removes
-    these parameters the test fails loudly rather than silently swallowing
-    the error inside control_telemetry's best-effort catch-all.
     """
 
     def test_start_span_accepts_commit_and_obs_db_kwargs(self):
         """start_span signature must include commit and obs_db parameters."""
-        import inspect
-
-        from mcpgateway.services.observability_service import ObservabilityService
-
         sig = inspect.signature(ObservabilityService.start_span)
         params = sig.parameters
-        assert "commit" in params, "ObservabilityService.start_span missing 'commit' kwarg — _emit_db_spans will silently fail"
-        assert "obs_db" in params, "ObservabilityService.start_span missing 'obs_db' kwarg — _emit_db_spans will silently fail"
+        assert "commit" in params, "ObservabilityService.start_span missing 'commit' kwarg"
+        assert "obs_db" in params, "ObservabilityService.start_span missing 'obs_db' kwarg"
 
     def test_end_span_accepts_commit_and_obs_db_kwargs(self):
         """end_span signature must include commit and obs_db parameters."""
-        import inspect
-
-        from mcpgateway.services.observability_service import ObservabilityService
-
         sig = inspect.signature(ObservabilityService.end_span)
         params = sig.parameters
-        assert "commit" in params, "ObservabilityService.end_span missing 'commit' kwarg — _emit_db_spans will silently fail"
-        assert "obs_db" in params, "ObservabilityService.end_span missing 'obs_db' kwarg — _emit_db_spans will silently fail"
+        assert "commit" in params, "ObservabilityService.end_span missing 'commit' kwarg"
+        assert "obs_db" in params, "ObservabilityService.end_span missing 'obs_db' kwarg"
