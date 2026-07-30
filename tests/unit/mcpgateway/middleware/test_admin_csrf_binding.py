@@ -14,32 +14,36 @@ These tests prove the binding mismatch directly against ``CSRFService`` /
 ``CSRFMiddleware`` (the same pattern used by
 ``test_admin_random_csrf_token_fails_hmac_validation`` /
 ``test_admin_bound_csrf_token_from_page_load_passes_hmac_validation`` in
-``test_csrf_middleware.py``), and additionally assert that ``admin.py``'s
-login handler source binds ``csrf_user_id`` to the email, not the id/sub.
+``test_csrf_middleware.py``), assert that ``admin.py``'s login handler source
+binds ``csrf_user_id`` to the email, pin the middleware registration order
+via ``mcpgateway.middleware.auth_context_stack.register_auth_context_middleware``, and unit-test
+``enforce_admin_csrf`` by direct call.
+
+This file intentionally contains no full-stack tests. Earlier revisions drove
+real ``/admin/login`` -> dashboard -> ``/llm/*`` flows through a TestClient
+wired to the shared ``mcpgateway.main.app`` singleton; those passed in
+isolation but failed under the full suite because middleware registration is
+import-time and settings-dependent (``AuthContextMiddleware`` is absent when
+``MCPGATEWAY_ADMIN_API_ENABLED=false`` at first import, and xdist workers
+import ``mcpgateway.main`` during collection). End-to-end CSRF coverage lives
+in the Playwright suite (``tests/playwright/security/``), where a real
+assembled gateway exists.
 """
 
 # Standard
-import datetime
-from datetime import timezone
+import contextlib
 import inspect
-import os
-from typing import Generator
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
 import pytest
-from fastapi import Depends, status
-from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
+from fastapi import HTTPException
+from starlette.datastructures import URL
 from starlette.requests import Request
 from starlette.responses import Response
 
 # First-Party
-import mcpgateway.db
 from mcpgateway.config import settings as settings_wrapper
-from mcpgateway.db import Base, EmailUser, get_db
 from mcpgateway.middleware.csrf_middleware import CSRFMiddleware
 from mcpgateway.services.csrf_service import CSRFService
 
@@ -49,6 +53,32 @@ USER_ID = "3f9c9b8e-8a3a-4a4a-9d3c-1b2c3d4e5f60"
 USER_EMAIL = "admin@example.com"
 SESSION_ID = "session-jti-1"
 SESSION_ID_2 = "session-jti-2"
+
+
+@contextlib.contextmanager
+def _shadow_settings(**overrides):
+    """Temporarily shadow LazySettingsWrapper attributes via instance ``__dict__``.
+
+    ``monkeypatch.setattr`` is unreliable on ``LazySettingsWrapper``: because
+    ``__getattr__`` resolves every key, monkeypatch records a pre-existing
+    value and restores it via ``setattr`` at teardown, permanently shadowing
+    the wrapper. Direct ``__dict__`` manipulation with explicit restore
+    avoids that leak.
+
+    Args:
+        **overrides: Setting names and the values to shadow them with.
+    """
+    sentinel = object()
+    saved = {key: settings_wrapper.__dict__.get(key, sentinel) for key in overrides}
+    settings_wrapper.__dict__.update(overrides)
+    try:
+        yield
+    finally:
+        for key, value in saved.items():
+            if value is sentinel:
+                settings_wrapper.__dict__.pop(key, None)
+            else:
+                settings_wrapper.__dict__[key] = value
 
 
 @pytest.mark.asyncio
@@ -231,196 +261,21 @@ def test_admin_login_binds_csrf_to_email_not_sub_claim():
 
 
 # ---------------------------------------------------------------------------
-# End-to-end regression: real /admin/login -> real /llm/providers write
+# Middleware registration order (issue #5739 companion fix)
+#
+# These tests exercise ``mcpgateway.middleware.auth_context_stack``'s
+# against a bare FastAPI app. They replace a previous guard that inspected
+# the shared ``mcpgateway.main.app`` singleton: that version was hostage to
+# which settings were in effect when some other module first imported
+# ``mcpgateway.main`` (middleware registration is import-time), so it failed
+# under the full xdist suite while passing in isolation.
 # ---------------------------------------------------------------------------
-
-ADMIN_PASSWORD = "AdminPass123!"  # pragma: allowlist secret
-
-
-@pytest.fixture
-def _e2e_db_engine():
-    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
-    Base.metadata.create_all(engine)
-    return engine
-
-
-@pytest.fixture(scope="session")
-def _main_app_with_llm_routes(main_app_with_admin_api):
-    """Dynamically mount llm_config_router/llm_admin_router if missing.
-
-    Mirrors ``main_app_with_admin_api`` (tests/conftest.py): the session
-    bootstrap force-disables ``LLMCHAT_ENABLED`` for import speed, so
-    ``/llm/providers`` (llm_config_router) isn't mounted on a plain
-    ``mcpgateway.main.app`` import. Unlike the admin router, no existing
-    fixture re-mounts the LLM routers, so this does it the same way.
-
-    Also mounts ``llm_admin_router`` a second time under ``/v1/admin/llm``,
-    mirroring the real production assembly in
-    ``mcpgateway/api/v1/__init__.py::_assemble_routers`` (Group E), which
-    includes the same router instance into both the versioned (``/v1``) and
-    legacy (unprefixed) target routers. This lets tests pin findings 13/14:
-    unlike ``/admin/llm/*``, the ``/v1/admin/llm/*`` mount is NOT covered by
-    ``CSRFMiddleware``'s ``/admin`` exempt-path prefix match (the prefix
-    match is on the raw ``/admin`` string, which does not survive the
-    leading ``/v1``), so it is validated by both ``CSRFMiddleware`` and
-    ``enforce_admin_csrf``.
-    """
-    app = main_app_with_admin_api
-    existing = [r for r in app.routes if getattr(r, "path", "") == "/llm/providers"]
-    if not existing:
-        # First-Party
-        from mcpgateway.config import get_settings
-        from mcpgateway.config import settings as settings_wrapper
-
-        os.environ["LLMCHAT_ENABLED"] = "true"
-        settings_wrapper.__dict__.pop("llmchat_enabled", None)
-        get_settings.cache_clear()
-
-        from mcpgateway.admin import enforce_admin_csrf
-        from mcpgateway.routers.llm_admin_router import llm_admin_router
-        from mcpgateway.routers.llm_config_router import llm_config_router
-
-        app.include_router(llm_config_router, prefix="/llm", tags=["LLM Configuration"])
-        app.include_router(llm_admin_router, prefix="/admin/llm", tags=["LLM Admin"], dependencies=[Depends(enforce_admin_csrf)])
-
-    existing_v1 = [r for r in app.routes if getattr(r, "path", "") == "/v1/admin/llm/providers/{provider_id}/state"]
-    if not existing_v1:
-        # First-Party
-        from mcpgateway.admin import enforce_admin_csrf
-        from mcpgateway.routers.llm_admin_router import llm_admin_router
-
-        app.include_router(llm_admin_router, prefix="/v1/admin/llm", tags=["LLM Admin (v1)"], dependencies=[Depends(enforce_admin_csrf)])
-
-    yield app
-
-
-@pytest.fixture
-def e2e_client(_main_app_with_llm_routes, _e2e_db_engine) -> Generator:
-    """A TestClient wired to the real app/middleware stack with an isolated in-memory DB.
-
-    Depends on ``main_app_with_admin_api`` (tests/conftest.py) because the session
-    bootstrap force-disables ``MCPGATEWAY_ADMIN_API_ENABLED`` for import speed, which
-    means ``admin_router`` (and therefore ``/admin/login``) isn't mounted on a plain
-    ``mcpgateway.main.app`` import.
-    """
-    # Third-Party
-    from mcpgateway.services.argon2_service import Argon2PasswordService
-
-    # First-Party
-    from mcpgateway.middleware import rbac as rbac_module
-
-    app = _main_app_with_llm_routes
-    TestSessionLocal = sessionmaker(bind=_e2e_db_engine)
-
-    def override_get_db():
-        db = TestSessionLocal()
-        try:
-            yield db
-        finally:
-            db.close()
-
-    original_session_local = mcpgateway.db.SessionLocal
-    original_engine = mcpgateway.db.engine
-    mcpgateway.db.SessionLocal = TestSessionLocal
-    mcpgateway.db.engine = _e2e_db_engine
-    app.dependency_overrides[get_db] = override_get_db
-    # llm_admin_router.py depends on the deprecated `rbac.get_db` (not
-    # `mcpgateway.db.get_db`), which module-level-imported `SessionLocal`
-    # from mcpgateway.db at *its own* import time — a separate binding that
-    # the reassignment above does not reach. Without this second override,
-    # every /admin/llm/* write would silently hit whatever real SessionLocal
-    # existed when rbac.py was first imported instead of this isolated
-    # in-memory DB (surfacing as "no such table: llm_providers" once a
-    # request actually reaches a query, since that other engine was never
-    # bootstrapped with Base.metadata.create_all here).
-    app.dependency_overrides[rbac_module.get_db] = override_get_db
-
-    # settings.secure_cookies defaults to True (config.py), so jwt_token/CSRF
-    # cookies are set with the Secure flag unless a local .env overrides it —
-    # which CI's checkout doesn't have. httpx's TestClient models real browser
-    # cookie-jar semantics: a Secure cookie set over this plain-http base_url
-    # is silently dropped on the very next request, breaking the whole session
-    # (dashboard load 302s back to /admin/login instead of rendering) with no
-    # exception raised anywhere to explain why. Pin it False for this
-    # non-TLS test transport, matching what .env.example ships for real
-    # non-TLS deployments.
-    _secure_cookies_was_shadowed = "secure_cookies" in settings_wrapper.__dict__
-    _original_secure_cookies = settings_wrapper.__dict__.get("secure_cookies")
-    settings_wrapper.__dict__["secure_cookies"] = False
-
-    argon2 = Argon2PasswordService()
-    db = TestSessionLocal()
-    db.add(
-        EmailUser(
-            email=USER_EMAIL,
-            password_hash=argon2.hash_password(ADMIN_PASSWORD),
-            full_name="Admin E2E Test",
-            is_admin=True,
-            is_active=True,
-            auth_provider="local",
-            email_verified_at=datetime.datetime.now(timezone.utc),
-        )
-    )
-    db.commit()
-    db.close()
-
-    # base_url must match settings.app_domain (default http://localhost:4444) so
-    # Origin/Referer checks in CSRFMiddleware and the RBAC same-origin-referer
-    # check both see a host they actually allow (TestClient's default
-    # "testserver" host matches neither).
-    yield TestClient(app, base_url="http://localhost:4444")
-
-    app.dependency_overrides.clear()
-    mcpgateway.db.SessionLocal = original_session_local
-    mcpgateway.db.engine = original_engine
-    if _secure_cookies_was_shadowed:
-        settings_wrapper.__dict__["secure_cookies"] = _original_secure_cookies
-    else:
-        settings_wrapper.__dict__.pop("secure_cookies", None)
-
-
-def test_admin_login_csrf_token_validates_llm_provider_write(e2e_client):
-    """End-to-end regression for #5739: a real /admin/login must produce a CSRF
-    cookie that a subsequent /llm/providers write actually validates against.
-
-    This exercises the full stack (real login handler, real CSRFMiddleware,
-    real RBAC) rather than hand-built Request mocks, so a regression in how the
-    login handler binds `csrf_user_id` (or in how CSRFMiddleware derives its
-    own identity) would be caught here even if the more targeted unit tests
-    above still pass.
-    """
-    login_resp = e2e_client.post(
-        "/admin/login",
-        data={"email": USER_EMAIL, "password": ADMIN_PASSWORD},
-        follow_redirects=False,
-    )
-    assert login_resp.status_code == 303, login_resp.text
-    assert "jwt_token" in e2e_client.cookies
-
-    # A real browser auto-follows the 303 to GET /admin/. That first dashboard
-    # load is what actually rotates the CSRF cookie to the HMAC-bound value
-    # (see admin_ui()'s csrf_user_id/csrf_session_id binding in admin.py) —
-    # the login handler itself only sets an opaque, non-HMAC placeholder.
-    dashboard_resp = e2e_client.get("/admin/", headers={"origin": "http://localhost:4444", "accept": "text/html"})
-    assert dashboard_resp.status_code == 200, dashboard_resp.text
-    csrf_token = e2e_client.cookies.get("mcpgateway_csrf_token")
-    assert csrf_token, "dashboard load must set the mcpgateway_csrf_token cookie"
-
-    create_resp = e2e_client.post(
-        "/llm/providers",
-        json={"name": "e2e-test-provider", "provider_type": "openai"},
-        headers={"X-CSRF-Token": csrf_token, "referer": "http://localhost:4444/admin/"},
-    )
-
-    assert create_resp.status_code != 403, create_resp.text
-    assert "CSRF_TOKEN_INVALID" not in create_resp.text
-    assert create_resp.status_code == status.HTTP_201_CREATED, create_resp.text
 
 
 def test_csrf_middleware_runs_after_auth_context_middleware():
     """Regression guard for the middleware registration-order bug fixed
     alongside #5739: ``CSRFMiddleware`` must be registered *before*
-    ``AuthContextMiddleware`` in ``main.py`` so that, per Starlette's
+    ``AuthContextMiddleware`` so that, per Starlette's
     reverse-registration-order execution, it actually runs *after*
     ``AuthContextMiddleware`` has populated ``request.state.user``.
 
@@ -429,10 +284,22 @@ def test_csrf_middleware_runs_after_auth_context_middleware():
     of the email admin.py binds CSRF tokens to — reintroducing #5739 even
     though the HMAC-binding fix itself is correct.
     """
+    # Third-Party
+    from fastapi import FastAPI
+
     # First-Party
-    from mcpgateway.main import app
+    from mcpgateway.middleware.auth_context_stack import register_auth_context_middleware
     from mcpgateway.middleware.auth_middleware import AuthContextMiddleware
-    from mcpgateway.middleware.csrf_middleware import CSRFMiddleware
+
+    with _shadow_settings(
+        csrf_enabled=True,
+        mcpgateway_admin_api_enabled=True,
+        security_logging_enabled=False,
+        siem_export_enabled=False,
+        password_change_enforcement_enabled=False,
+    ):
+        app = FastAPI()
+        register_auth_context_middleware(app)
 
     middleware_classes = [m.cls for m in app.user_middleware]
     assert AuthContextMiddleware in middleware_classes, "AuthContextMiddleware must be registered for this regression guard to be meaningful"
@@ -446,6 +313,68 @@ def test_csrf_middleware_runs_after_auth_context_middleware():
     # CSRFMiddleware so request.state.user is populated by the time
     # CSRFMiddleware reads it.
     assert auth_index < csrf_index, f"AuthContextMiddleware (index {auth_index}) must run before CSRFMiddleware (index {csrf_index}) so request.state.user is populated for CSRF identity resolution"
+
+
+def test_password_change_enforcement_runs_between_auth_context_and_csrf():
+    """With password-change enforcement enabled, the execution order must be
+    AuthContextMiddleware -> PasswordChangeEnforcementMiddleware ->
+    CSRFMiddleware: enforcement needs ``request.state.user`` from
+    AuthContextMiddleware, and CSRF validation stays innermost.
+    """
+    # Third-Party
+    from fastapi import FastAPI
+
+    # First-Party
+    from mcpgateway.middleware.auth_context_stack import register_auth_context_middleware
+    from mcpgateway.middleware.auth_middleware import AuthContextMiddleware
+    from mcpgateway.middleware.password_change_enforcement import PasswordChangeEnforcementMiddleware
+
+    with _shadow_settings(
+        csrf_enabled=True,
+        mcpgateway_admin_api_enabled=False,
+        security_logging_enabled=False,
+        siem_export_enabled=False,
+        password_change_enforcement_enabled=True,
+    ):
+        app = FastAPI()
+        register_auth_context_middleware(app)
+
+    middleware_classes = [m.cls for m in app.user_middleware]
+    auth_index = middleware_classes.index(AuthContextMiddleware)
+    pce_index = middleware_classes.index(PasswordChangeEnforcementMiddleware)
+    csrf_index = middleware_classes.index(CSRFMiddleware)
+
+    assert auth_index < pce_index < csrf_index, f"Execution order must be AuthContext ({auth_index}) -> PasswordChangeEnforcement ({pce_index}) -> CSRF ({csrf_index})"
+
+
+def test_auth_context_middleware_registration_is_conditional():
+    """Pins the conditional-registration behavior that made the old
+    app-singleton tests order-dependent: with the session bootstrap's minimal
+    feature flags (admin API disabled, security logging off, no SIEM auth
+    source, no password enforcement), the assembled app legitimately has NO
+    AuthContextMiddleware — so any test that needs ``request.state.user``
+    populated must not rely on the shared ``mcpgateway.main.app``.
+    """
+    # Third-Party
+    from fastapi import FastAPI
+
+    # First-Party
+    from mcpgateway.middleware.auth_context_stack import register_auth_context_middleware
+    from mcpgateway.middleware.auth_middleware import AuthContextMiddleware
+
+    with _shadow_settings(
+        csrf_enabled=True,
+        mcpgateway_admin_api_enabled=False,
+        security_logging_enabled=False,
+        siem_export_enabled=False,
+        password_change_enforcement_enabled=False,
+    ):
+        app = FastAPI()
+        register_auth_context_middleware(app)
+
+    middleware_classes = [m.cls for m in app.user_middleware]
+    assert AuthContextMiddleware not in middleware_classes
+    assert CSRFMiddleware in middleware_classes
 
 
 @pytest.mark.asyncio
@@ -503,317 +432,216 @@ async def test_csrf_fallback_preserves_existing_user_id():
     call_next.assert_awaited_once_with(request)
 
 
-def test_admin_login_csrf_token_rejected_without_header(e2e_client):
-    """Sanity check for the harness itself: the same write without the CSRF
-    header must still 403, proving the positive-path test above isn't passing
-    because CSRF enforcement is silently disabled in this test setup.
-    """
-    login_resp = e2e_client.post(
-        "/admin/login",
-        data={"email": USER_EMAIL, "password": ADMIN_PASSWORD},
-        follow_redirects=False,
-    )
-    assert login_resp.status_code == 303, login_resp.text
-
-    create_resp = e2e_client.post(
-        "/llm/providers",
-        json={"name": "e2e-test-provider-2", "provider_type": "openai"},
-        headers={"origin": "http://localhost:4444"},
-    )
-
-    assert create_resp.status_code == 403
-    assert "CSRF_TOKEN_INVALID" in create_resp.text
-
-
 # ---------------------------------------------------------------------------
-# End-to-end regression: enforce_admin_csrf path (/admin/llm/* and
-# /v1/admin/llm/*), as opposed to the CSRFMiddleware path exercised above.
+# enforce_admin_csrf (admin.py) — direct-call unit tests
 #
-# `enforce_admin_csrf` (admin.py:1803) is a distinct implementation from
-# CSRFMiddleware: hardcoded cookie/header names, a plain double-submit
-# comparison (no HMAC), and its own three-way error surface. Nothing outside
-# this file issues a real request against it, so these tests pin its actual
-# deny/allow behavior rather than only asserting it is present as a FastAPI
-# dependency (see tests/unit/mcpgateway/test_api_versioning_parity.py).
+# ``enforce_admin_csrf`` is a distinct implementation from CSRFMiddleware:
+# hardcoded cookie/header names, a plain double-submit comparison (no HMAC),
+# and its own three-way error surface. These tests call the dependency
+# function directly with a mocked Request, replacing earlier full-stack
+# versions that needed the assembled app (and were therefore hostage to
+# import-order pollution of the shared ``mcpgateway.main.app`` singleton).
 # ---------------------------------------------------------------------------
 
-LLM_ADMIN_STATE_PATH = "/admin/llm/providers/e2e-nonexistent-provider/state"
-LLM_ADMIN_STATE_PATH_V1 = "/v1/admin/llm/providers/e2e-nonexistent-provider/state"
+CSRF_COOKIE = "mcpgateway_csrf_token"  # ADMIN_CSRF_COOKIE_NAME (admin.py)
+CSRF_HEADER = "x-csrf-token"  # ADMIN_CSRF_HEADER_NAME (admin.py)
+ADMIN_URL = "http://localhost:4444/admin/llm/providers/e2e-nonexistent-provider/state"
+DOUBLE_SUBMIT_TOKEN = "double-submit-token-value-0123456789"  # pragma: allowlist secret
 
 
-def _login_and_prime_admin_session(client: TestClient) -> str:
-    """Perform a real ``/admin/login`` then the dashboard GET that rotates the
-    CSRF cookie to its HMAC-bound value.
-
-    Mirrors the login+dashboard sequence in
-    ``test_admin_login_csrf_token_validates_llm_provider_write`` above:
-    ``admin_login_handler`` (admin.py) itself only sets an opaque,
-    non-HMAC-bound CSRF cookie via ``_set_admin_csrf_cookie(request,
-    response)``; it is the *dashboard* load (``admin_ui()``, which supplies
-    ``user_id``/``session_id``) that rotates the cookie to its real HMAC
-    value. Every ``enforce_admin_csrf`` case below runs against this fully
-    primed session — both to match real browser behavior and to avoid the
-    vacuous-pass hazard where ``enforce_admin_csrf`` no-ops entirely without
-    a ``jwt_token`` cookie (admin.py:1818-1822).
+def _make_admin_request(*, method="POST", cookies=None, headers=None, form=None):
+    """Build a mocked Request for direct ``enforce_admin_csrf`` calls.
 
     Args:
-        client: The e2e TestClient to authenticate.
+        method: HTTP method (safe methods short-circuit the check).
+        cookies: Cookie dict; ``jwt_token`` presence is what makes CSRF
+            relevant at all.
+        headers: Header dict; origin/referer/host feed
+            ``_request_origin_matches``.
+        form: When provided, ``request.form()`` returns this dict (for the
+            form-encoded token fallback).
 
     Returns:
-        The CSRF token value now held in the client's cookie jar.
+        A ``MagicMock(spec=Request)`` with a real ``URL`` so scheme/netloc
+        comparisons in ``_request_origin_matches`` behave realistically.
     """
-    login_resp = client.post(
-        "/admin/login",
-        data={"email": USER_EMAIL, "password": ADMIN_PASSWORD},
-        follow_redirects=False,
-    )
-    assert login_resp.status_code == 303, login_resp.text
-    assert "jwt_token" in client.cookies
-
-    dashboard_resp = client.get("/admin/", headers={"origin": "http://localhost:4444", "accept": "text/html"})
-    assert dashboard_resp.status_code == 200, dashboard_resp.text
-
-    csrf_token = client.cookies.get("mcpgateway_csrf_token")
-    assert csrf_token, "dashboard load must set the mcpgateway_csrf_token cookie"
-    return csrf_token
+    request = MagicMock(spec=Request)
+    request.method = method
+    request.cookies = dict(cookies or {})
+    request.headers = dict(headers or {})
+    request.url = URL(ADMIN_URL)
+    if form is not None:
+        request.form = AsyncMock(return_value=form)
+    return request
 
 
-def test_enforce_admin_csrf_allows_matching_header_and_cookie(e2e_client):
+def _primed_cookies():
+    """Cookies for a fully primed admin session: JWT session + CSRF cookie."""
+    return {"jwt_token": "admin-session-jwt", CSRF_COOKIE: DOUBLE_SUBMIT_TOKEN}
+
+
+def _good_headers():
+    """Headers that pass origin validation and double-submit comparison."""
+    return {CSRF_HEADER: DOUBLE_SUBMIT_TOKEN, "origin": "http://localhost:4444", "host": "localhost:4444"}
+
+
+@pytest.mark.asyncio
+async def test_enforce_admin_csrf_allows_matching_header_and_cookie():
     """Happy path: session cookie + matching X-CSRF-Token header + good
-    Origin must not 403 against the enforce_admin_csrf-only /admin/llm/*
-    mount. The write 404s (provider does not exist) rather than 2xx,
-    proving the request reached the handler without depending on
-    provider/service state — the outcome under test is the CSRF verdict,
-    not the business result.
-    """
-    csrf_token = _login_and_prime_admin_session(e2e_client)
+    Origin must pass without raising."""
+    # First-Party
+    from mcpgateway.admin import enforce_admin_csrf
 
-    resp = e2e_client.post(
-        LLM_ADMIN_STATE_PATH,
-        headers={"x-csrf-token": csrf_token, "origin": "http://localhost:4444", "accept": "text/html"},
-    )
+    request = _make_admin_request(cookies=_primed_cookies(), headers=_good_headers())
 
-    assert resp.status_code != 403, resp.text
-    assert resp.status_code == status.HTTP_404_NOT_FOUND, resp.text
+    await enforce_admin_csrf(request)  # must not raise
 
 
-def test_enforce_admin_csrf_rejects_missing_header(e2e_client):
+@pytest.mark.asyncio
+async def test_enforce_admin_csrf_rejects_missing_header():
     """Header missing entirely -> 403 'CSRF token validation failed'."""
-    _login_and_prime_admin_session(e2e_client)
+    # First-Party
+    from mcpgateway.admin import enforce_admin_csrf
 
-    resp = e2e_client.post(
-        LLM_ADMIN_STATE_PATH,
-        headers={"origin": "http://localhost:4444"},
-    )
+    headers = _good_headers()
+    del headers[CSRF_HEADER]
+    request = _make_admin_request(cookies=_primed_cookies(), headers=headers)
 
-    assert resp.status_code == 403, resp.text
-    assert resp.json()["detail"] == "CSRF token validation failed"
+    with pytest.raises(HTTPException) as exc_info:
+        await enforce_admin_csrf(request)
+
+    assert exc_info.value.status_code == 403
+    assert exc_info.value.detail == "CSRF token validation failed"
 
 
-def test_enforce_admin_csrf_rejects_header_not_matching_cookie(e2e_client):
+@pytest.mark.asyncio
+async def test_enforce_admin_csrf_rejects_header_not_matching_cookie():
     """Header present but != cookie -> 403 'CSRF token validation failed'."""
-    _login_and_prime_admin_session(e2e_client)
+    # First-Party
+    from mcpgateway.admin import enforce_admin_csrf
 
-    resp = e2e_client.post(
-        LLM_ADMIN_STATE_PATH,
-        headers={"x-csrf-token": "attacker-supplied-token-does-not-match", "origin": "http://localhost:4444"},
-    )
+    headers = _good_headers()
+    headers[CSRF_HEADER] = "attacker-supplied-token-does-not-match"
+    request = _make_admin_request(cookies=_primed_cookies(), headers=headers)
 
-    assert resp.status_code == 403, resp.text
-    assert resp.json()["detail"] == "CSRF token validation failed"
+    with pytest.raises(HTTPException) as exc_info:
+        await enforce_admin_csrf(request)
+
+    assert exc_info.value.status_code == 403
+    assert exc_info.value.detail == "CSRF token validation failed"
 
 
-def test_enforce_admin_csrf_rejects_missing_cookie(e2e_client):
+@pytest.mark.asyncio
+async def test_enforce_admin_csrf_rejects_missing_cookie():
     """CSRF cookie absent (header present) -> 403 'CSRF token cookie missing'.
 
-    The header carries a syntactically valid (previously real) token, but
-    the cookie half of the double-submit pair has been stripped from the
-    client's cookie jar — simulating a cookie that expired, was cleared, or
-    was never set for this origin.
+    The header carries a syntactically valid token, but the cookie half of
+    the double-submit pair is gone — simulating a cookie that expired, was
+    cleared, or was never set for this origin.
     """
-    csrf_token = _login_and_prime_admin_session(e2e_client)
-    del e2e_client.cookies["mcpgateway_csrf_token"]
+    # First-Party
+    from mcpgateway.admin import enforce_admin_csrf
 
-    resp = e2e_client.post(
-        LLM_ADMIN_STATE_PATH,
-        headers={"x-csrf-token": csrf_token, "origin": "http://localhost:4444"},
-    )
+    cookies = _primed_cookies()
+    del cookies[CSRF_COOKIE]
+    request = _make_admin_request(cookies=cookies, headers=_good_headers())
 
-    assert resp.status_code == 403, resp.text
-    assert resp.json()["detail"] == "CSRF token cookie missing"
+    with pytest.raises(HTTPException) as exc_info:
+        await enforce_admin_csrf(request)
+
+    assert exc_info.value.status_code == 403
+    assert exc_info.value.detail == "CSRF token cookie missing"
 
 
-def test_enforce_admin_csrf_rejects_bad_origin(e2e_client):
+@pytest.mark.asyncio
+async def test_enforce_admin_csrf_rejects_missing_origin():
     """Missing Origin/Referer -> 403 'CSRF origin validation failed'.
 
     enforce_admin_csrf checks origin before either CSRF-token check, so this
     fails even though the header/cookie pair below is fully valid.
     """
-    csrf_token = _login_and_prime_admin_session(e2e_client)
+    # First-Party
+    from mcpgateway.admin import enforce_admin_csrf
 
-    resp = e2e_client.post(
-        LLM_ADMIN_STATE_PATH,
-        headers={"x-csrf-token": csrf_token},
-    )
+    headers = _good_headers()
+    del headers["origin"]
+    request = _make_admin_request(cookies=_primed_cookies(), headers=headers)
 
-    assert resp.status_code == 403, resp.text
-    assert resp.json()["detail"] == "CSRF origin validation failed"
+    with pytest.raises(HTTPException) as exc_info:
+        await enforce_admin_csrf(request)
+
+    assert exc_info.value.status_code == 403
+    assert exc_info.value.detail == "CSRF origin validation failed"
 
 
-def test_enforce_admin_csrf_rejects_wrong_origin(e2e_client):
+@pytest.mark.asyncio
+async def test_enforce_admin_csrf_rejects_wrong_origin():
     """Present but non-matching Origin -> 403 'CSRF origin validation failed'.
 
-    ``test_enforce_admin_csrf_rejects_bad_origin`` above only covers a
-    *missing* Origin/Referer, which ``_request_origin_matches`` short-circuits
-    on before ever reaching its ``settings.allowed_origins`` fallback branch
-    (admin.py ~line 1685). A present-but-wrong Origin exercises that fallback
-    branch instead: the exact-same-origin comparison against the request's
-    forwarded scheme/host fails, and the candidate origin is also absent from
-    ``settings.allowed_origins``, so the request is rejected the same way but
-    via different code than the missing-header case.
+    A present-but-wrong Origin exercises the ``settings.allowed_origins``
+    fallback branch of ``_request_origin_matches`` (admin.py): the
+    exact-same-origin comparison against the request's host fails, and the
+    candidate origin is absent from ``allowed_origins``, so the request is
+    rejected via different code than the missing-header case.
     """
-    csrf_token = _login_and_prime_admin_session(e2e_client)
+    # First-Party
+    from mcpgateway.admin import enforce_admin_csrf
 
-    resp = e2e_client.post(
-        LLM_ADMIN_STATE_PATH,
-        headers={"x-csrf-token": csrf_token, "origin": "https://evil.example"},
-    )
+    headers = _good_headers()
+    headers["origin"] = "https://evil.example"
+    request = _make_admin_request(cookies=_primed_cookies(), headers=headers)
 
-    assert resp.status_code == 403, resp.text
-    assert resp.json()["detail"] == "CSRF origin validation failed"
+    with _shadow_settings(allowed_origins=[]):
+        with pytest.raises(HTTPException) as exc_info:
+            await enforce_admin_csrf(request)
+
+    assert exc_info.value.status_code == 403
+    assert exc_info.value.detail == "CSRF origin validation failed"
 
 
-def test_enforce_admin_csrf_allows_form_encoded_csrf_token_field(e2e_client):
-    """Form-encoded body with a csrf_token field, no header -> not 403.
+@pytest.mark.asyncio
+async def test_enforce_admin_csrf_allows_form_encoded_csrf_token_field():
+    """Form-encoded body with a csrf_token field, no header -> passes.
 
     enforce_admin_csrf falls back to reading ``csrf_token`` out of an
     ``application/x-www-form-urlencoded`` body when the header is absent
-    (admin.py:1832-1841) — the classic HTML-form (non-JS) submission shape.
+    (admin.py) — the classic HTML-form (non-JS) submission shape.
     """
-    csrf_token = _login_and_prime_admin_session(e2e_client)
+    # First-Party
+    from mcpgateway.admin import enforce_admin_csrf
 
-    resp = e2e_client.post(
-        LLM_ADMIN_STATE_PATH,
-        data={"csrf_token": csrf_token},
-        headers={"origin": "http://localhost:4444", "accept": "text/html"},
-    )
+    headers = {"origin": "http://localhost:4444", "host": "localhost:4444", "content-type": "application/x-www-form-urlencoded"}
+    request = _make_admin_request(cookies=_primed_cookies(), headers=headers, form={"csrf_token": DOUBLE_SUBMIT_TOKEN})
 
-    assert resp.status_code != 403, resp.text
-    assert resp.status_code == status.HTTP_404_NOT_FOUND, resp.text
+    await enforce_admin_csrf(request)  # must not raise
 
 
-def test_enforce_admin_csrf_bypassed_for_bearer_token_without_session_cookie(e2e_client):
-    """A Bearer-token API call with no jwt_token session cookie is not
-    subject to enforce_admin_csrf at all (admin.py:1818-1822: 'CSRF is
-    relevant only for browser cookie auth').
+@pytest.mark.asyncio
+async def test_enforce_admin_csrf_bypassed_without_session_cookie():
+    """A request with no jwt_token session cookie is not subject to
+    enforce_admin_csrf at all (admin.py: 'CSRF is relevant only for browser
+    cookie auth').
 
     No login, no CSRF header, no CSRF cookie, no Origin — every ingredient
-    enforce_admin_csrf would otherwise demand is absent, and the request
-    still is not blocked at the CSRF layer, because there is no jwt_token
-    cookie to make CSRF relevant in the first place. The 404 (rather than a
-    403) proves the request reached the handler.
+    enforce_admin_csrf would otherwise demand is absent, and the call still
+    is not blocked, because there is no jwt_token cookie to make CSRF
+    relevant in the first place.
     """
-    # Standard
-    import asyncio
-
     # First-Party
-    import mcpgateway.db as db_mod
-    from mcpgateway.routers.email_auth import create_access_token
+    from mcpgateway.admin import enforce_admin_csrf
 
-    with db_mod.SessionLocal() as db:
-        user = db.query(EmailUser).filter_by(email=USER_EMAIL).first()
-        assert user is not None
-        bearer_token, _ = asyncio.run(create_access_token(user))
+    request = _make_admin_request(cookies={}, headers={})
 
-    assert "jwt_token" not in e2e_client.cookies
-
-    resp = e2e_client.post(
-        LLM_ADMIN_STATE_PATH,
-        headers={"authorization": f"Bearer {bearer_token}"},
-    )
-
-    assert resp.status_code != 403, resp.text
-    assert resp.status_code == status.HTTP_404_NOT_FOUND, resp.text
+    await enforce_admin_csrf(request)  # must not raise
 
 
-def test_admin_llm_write_agrees_across_legacy_and_v1_mounts_after_dashboard_rotation(e2e_client):
-    """Pin findings 13/14 (positive case): once a session has visited the
-    dashboard (so the CSRF cookie has been rotated to its real HMAC-bound
-    value), an identical write against the legacy ``/admin/llm/*`` mount
-    (enforce_admin_csrf only, per finding 13 — exempt from CSRFMiddleware
-    via the ``/admin`` prefix match) and the versioned ``/v1/admin/llm/*``
-    mount (enforce_admin_csrf AND CSRFMiddleware, since ``/v1/admin`` does
-    not match the ``/admin`` exempt-path prefix) agree: neither 403s.
+@pytest.mark.asyncio
+async def test_enforce_admin_csrf_skips_safe_methods():
+    """Safe methods (GET/HEAD/OPTIONS/TRACE) short-circuit before any check,
+    even with a session cookie present and no CSRF token anywhere."""
+    # First-Party
+    from mcpgateway.admin import enforce_admin_csrf
 
-    This is the steady-state a real browser session reaches after the first
-    dashboard load, so it is the common case. See
-    ``test_admin_llm_write_diverges_between_mounts_immediately_after_login``
-    below for the narrower window, right after login and before any
-    dashboard visit, where finding 14 shows the two mounts do NOT agree.
-    """
-    csrf_token = _login_and_prime_admin_session(e2e_client)
-    headers = {"x-csrf-token": csrf_token, "origin": "http://localhost:4444", "referer": "http://localhost:4444/admin/"}
+    request = _make_admin_request(method="GET", cookies=_primed_cookies(), headers={})
 
-    legacy_resp = e2e_client.post(LLM_ADMIN_STATE_PATH, headers=headers)
-    v1_resp = e2e_client.post(LLM_ADMIN_STATE_PATH_V1, headers=headers)
-
-    assert legacy_resp.status_code != 403, legacy_resp.text
-    assert v1_resp.status_code != 403, v1_resp.text
-    assert legacy_resp.status_code == status.HTTP_404_NOT_FOUND, legacy_resp.text
-    assert v1_resp.status_code == status.HTTP_404_NOT_FOUND, v1_resp.text
-
-
-def test_admin_llm_write_diverges_between_mounts_immediately_after_login(e2e_client):
-    """Pins finding 14: the fallback-token divergence is real and reachable
-    in a normal session, in the window between login and the first
-    dashboard load.
-
-    ``admin_login_handler`` (admin.py:4634) sets the CSRF cookie via
-    ``_set_admin_csrf_cookie(request, response)`` with NO ``user_id``/
-    ``session_id`` — the opaque ``secrets.token_urlsafe(32)`` fallback
-    (admin.py:1766-1770), not an HMAC token. It is only the *dashboard* GET
-    (``admin_ui()``, admin.py:4371) that supplies ``user_id``/``session_id``
-    and rotates the cookie to its HMAC-bound value.
-
-    A client that writes to ``/admin/llm/*`` right after login — before
-    ever loading the dashboard — presents this opaque cookie. That is
-    sufficient for ``enforce_admin_csrf``'s plain
-    ``secrets.compare_digest(header, cookie)`` double-submit check (which
-    has no concept of HMAC), so the legacy mount accepts the write. But the
-    identical write to ``/v1/admin/llm/*`` also traverses
-    ``CSRFMiddleware``, whose ``CSRFService.validate_csrf_token()`` check
-    requires the cookie to be a real HMAC token for the caller's
-    (email, jti) — an opaque token is not, so it 403s with
-    ``CSRF_TOKEN_INVALID``.
-
-    Net effect: the exact same session, same cookie, same header, same
-    origin — accepted at ``/admin/llm/*``, rejected at
-    ``/v1/admin/llm/*``. This is not a hypothetical; it is what actually
-    happens below. This is a real behavioral gap worth a follow-up fix; this
-    test pins the current (divergent) behavior rather than asserting the two
-    mounts agree, so a fix — or a further regression — shows up here.
-    Tracked at https://github.com/IBM/mcp-context-forge/issues/5978.
-    """
-    login_resp = e2e_client.post(
-        "/admin/login",
-        data={"email": USER_EMAIL, "password": ADMIN_PASSWORD},
-        follow_redirects=False,
-    )
-    assert login_resp.status_code == 303, login_resp.text
-
-    csrf_token = e2e_client.cookies.get("mcpgateway_csrf_token")
-    assert csrf_token, "admin_login_handler must set an (opaque, pre-rotation) CSRF cookie"
-
-    headers = {"x-csrf-token": csrf_token, "origin": "http://localhost:4444", "referer": "http://localhost:4444/admin/"}
-
-    legacy_resp = e2e_client.post(LLM_ADMIN_STATE_PATH, headers=headers)
-    v1_resp = e2e_client.post(LLM_ADMIN_STATE_PATH_V1, headers=headers)
-
-    # Legacy mount: enforce_admin_csrf only, plain double-submit -> accepted.
-    assert legacy_resp.status_code != 403, legacy_resp.text
-    assert legacy_resp.status_code == status.HTTP_404_NOT_FOUND, legacy_resp.text
-
-    # Versioned mount: enforce_admin_csrf passes the same way, but
-    # CSRFMiddleware's HMAC check on the opaque token fails -> 403.
-    assert v1_resp.status_code == 403, v1_resp.text
-    assert "CSRF_TOKEN_INVALID" in v1_resp.text
+    await enforce_admin_csrf(request)  # must not raise
