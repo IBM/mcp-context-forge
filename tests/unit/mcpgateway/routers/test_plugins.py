@@ -135,6 +135,22 @@ async def test_list_plugins_disabled_returns_empty(monkeypatch, permission_servi
     assert response.total == 0
 
 
+@pytest.mark.asyncio
+async def test_list_plugins_get_all_failure_returns_500(monkeypatch, permission_service):
+    """Plugin service failures return a sanitized server error."""
+    service = MagicMock()
+    service.get_all_plugins.side_effect = RuntimeError("catalog unavailable")
+    monkeypatch.setattr("mcpgateway.routers.plugins.get_plugin_service", lambda: service)
+    monkeypatch.setattr("mcpgateway.routers.plugins.sync_plugin_service_from_runtime", AsyncMock())
+    db = MagicMock()
+
+    with pytest.raises(HTTPException) as exc_info:
+        await list_plugins(_request(), db=db, user={"email": "reader@example.com", "db": db})
+
+    assert exc_info.value.status_code == 500
+    assert exc_info.value.detail == "Failed to list plugins"
+
+
 def test_plugins_router_is_v1_only():
     """Plugin discovery has no unversioned legacy alias."""
     v1_paths = [path for path, *_ in collect_routes(build_v1_router(settings, **_empty_router_kwargs()))]

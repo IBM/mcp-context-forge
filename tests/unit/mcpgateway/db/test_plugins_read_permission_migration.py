@@ -60,6 +60,8 @@ def test_upgrade_and_downgrade_are_idempotent(migration, connection):
             permissions = _permissions(connection, role_name)
             assert "tools.read" in permissions
             assert permissions.count("plugins.read") == 1
+        assert _permissions(connection, "viewer") == ["tools.read"]
+        assert _permissions(connection, "platform_viewer") == ["tools.read"]
         assert _permissions(connection, "platform_admin") == ["*"]
 
         migration.downgrade()

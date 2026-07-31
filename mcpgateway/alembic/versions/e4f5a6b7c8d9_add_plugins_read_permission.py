@@ -3,10 +3,10 @@
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
 
-Add plugins.read permission to built-in read roles.
+Add plugins.read permission to privileged built-in roles.
 
 Revision ID: e4f5a6b7c8d9
-Revises: d21698ae4a19
+Revises: e1a2b3c4d5f6
 Create Date: 2026-07-28 00:00:00.000000
 """
 
@@ -21,7 +21,7 @@ import sqlalchemy as sa
 from sqlalchemy import text
 
 revision: str = "e4f5a6b7c8d9"  # pragma: allowlist secret
-down_revision: Union[str, Sequence[str], None] = "d21698ae4a19"  # pragma: allowlist secret
+down_revision: Union[str, Sequence[str], None] = "e1a2b3c4d5f6"  # pragma: allowlist secret
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
@@ -29,8 +29,6 @@ PERMISSION = "plugins.read"
 ROLE_SCOPES = (
     ("team_admin", "team"),
     ("developer", "team"),
-    ("viewer", "team"),
-    ("platform_viewer", "global"),
 )
 
 
@@ -83,7 +81,7 @@ def _update_permission(role_name: str, scope: str, add: bool) -> None:
 
 
 def upgrade() -> None:
-    """Grant plugins.read to existing built-in read roles."""
+    """Grant plugins.read to existing privileged built-in roles."""
     if "roles" not in sa.inspect(op.get_bind()).get_table_names():
         return
     for role_name, scope in ROLE_SCOPES:
@@ -91,7 +89,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    """Remove plugins.read from existing built-in read roles."""
+    """Remove plugins.read from existing privileged built-in roles."""
     if "roles" not in sa.inspect(op.get_bind()).get_table_names():
         return
     for role_name, scope in ROLE_SCOPES:
