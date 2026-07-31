@@ -1346,3 +1346,27 @@ plugins:
       detect_ssn: true
       block_on_detection: false
       log_detections: false
+
+  # invinoveritas Review — independent, signed pre-action verdict for tool_pre_invoke.
+  # Distinct from PDP/rule-based gates (unified_pdp, deny_filter, etc.): those decide
+  # eligibility deterministically (may this actor/tool/resource combination happen at
+  # all); this decides soundness for THIS specific payload (a judgment call a static
+  # rule can't make). See plugins/invinoveritas_review/README.md for the full design.
+  # Disabled by default, matching every other opt-in plugin here -- requires an
+  # IVV_API_KEY (free registration: POST https://api.babyblueviper.com/register).
+  - name: "InvinoveritasReviewPlugin"
+    kind: "plugins.invinoveritas_review.invinoveritas_review.InvinoveritasReviewPlugin"
+    description: "Gates tool_pre_invoke on an independent invinoveritas /review verdict."
+    version: "0.1.0"
+    author: "babyblueviper1"
+    hooks: ["tool_pre_invoke"]
+    tags: ["plugin", "safety", "review", "human-in-the-loop"]
+    mode: "disabled" # enforce | enforce_ignore_error | permissive | disabled
+    priority: 100
+    conditions: []
+    config:
+      base_url: "https://api.babyblueviper.com"
+      block_on_reject: true
+      sign: false
+      artifact_type: "general"
+      timeout_s: 15.0
