@@ -83,6 +83,11 @@ def test_csrf_cookie_name_default_matches_env_example():
     """
     import re
 
+    dummy_env = {
+        "JWT_SECRET_KEY": _TEST_JWT_SECRET,
+        "AUTH_ENCRYPTION_SECRET": _TEST_ENC_SECRET,
+    }
+
     repo_root = os.path.join(os.path.dirname(__file__), "..", "..", "..")
     env_example_path = os.path.normpath(os.path.join(repo_root, ".env.example"))
 
@@ -95,9 +100,10 @@ def test_csrf_cookie_name_default_matches_env_example():
     assert match, "CSRF_COOKIE_NAME not found in .env.example"
     env_example_value = match.group(1).strip()
 
-    s = Settings(_env_file=None)
-    assert env_example_value == s.csrf_cookie_name, f".env.example CSRF_COOKIE_NAME={env_example_value!r} does not match config.py default={s.csrf_cookie_name!r}"
-    assert s.ratelimiter_redis_socket_connect_timeout == 2.0
+    with patch.dict(os.environ, dummy_env, clear=True):
+        s = Settings(_env_file=None)
+        assert env_example_value == s.csrf_cookie_name, f".env.example CSRF_COOKIE_NAME={env_example_value!r} does not match config.py default={s.csrf_cookie_name!r}"
+        assert s.ratelimiter_redis_socket_connect_timeout == 2.0
 
 
 def test_admin_csrf_cookie_name_matches_config_default():
@@ -114,8 +120,14 @@ def test_admin_csrf_cookie_name_matches_config_default():
     # First-Party
     from mcpgateway import admin
 
-    s = Settings(_env_file=None)
-    assert admin.ADMIN_CSRF_COOKIE_NAME == s.csrf_cookie_name, f"admin.ADMIN_CSRF_COOKIE_NAME={admin.ADMIN_CSRF_COOKIE_NAME!r} does not match config.py default={s.csrf_cookie_name!r}"
+    dummy_env = {
+        "JWT_SECRET_KEY": _TEST_JWT_SECRET,
+        "AUTH_ENCRYPTION_SECRET": _TEST_ENC_SECRET,
+    }
+
+    with patch.dict(os.environ, dummy_env, clear=True):
+        s = Settings(_env_file=None)
+        assert admin.ADMIN_CSRF_COOKIE_NAME == s.csrf_cookie_name, f"admin.ADMIN_CSRF_COOKIE_NAME={admin.ADMIN_CSRF_COOKIE_NAME!r} does not match config.py default={s.csrf_cookie_name!r}"
 
 
 def test_oauth_router_csrf_cookie_name_matches_config_default():
@@ -130,8 +142,14 @@ def test_oauth_router_csrf_cookie_name_matches_config_default():
     # First-Party
     from mcpgateway.routers import oauth_router
 
-    s = Settings(_env_file=None)
-    assert oauth_router.ADMIN_CSRF_COOKIE_NAME == s.csrf_cookie_name, f"oauth_router.ADMIN_CSRF_COOKIE_NAME={oauth_router.ADMIN_CSRF_COOKIE_NAME!r} does not match config.py default={s.csrf_cookie_name!r}"
+    dummy_env = {
+        "JWT_SECRET_KEY": _TEST_JWT_SECRET,
+        "AUTH_ENCRYPTION_SECRET": _TEST_ENC_SECRET,
+    }
+
+    with patch.dict(os.environ, dummy_env, clear=True):
+        s = Settings(_env_file=None)
+        assert oauth_router.ADMIN_CSRF_COOKIE_NAME == s.csrf_cookie_name, f"oauth_router.ADMIN_CSRF_COOKIE_NAME={oauth_router.ADMIN_CSRF_COOKIE_NAME!r} does not match config.py default={s.csrf_cookie_name!r}"
 
 
 def test_ratelimiter_redis_url_set():

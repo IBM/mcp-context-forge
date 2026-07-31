@@ -1815,6 +1815,7 @@ class TestGatewayServiceExtended:
 
         with patch("mcpgateway.services.token_storage_service.TokenStorageService") as mock_token_storage:
             mock_token_storage.return_value.get_user_token = AsyncMock(return_value="token")
+            mock_token_storage.return_value.get_user_learned_audience = AsyncMock(return_value=(None, None))
             with (
                 patch.object(
                     service,

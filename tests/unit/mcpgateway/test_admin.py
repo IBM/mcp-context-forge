@@ -54,6 +54,7 @@ from mcpgateway.admin import (  # admin_get_metrics,
     _normalize_team_id,
     _normalize_ui_hide_values,
     _owner_access_condition,
+    _parse_gateway_data_from_request,
     _parse_tag_filter_groups,
     _read_request_json,
     _render_user_card_html,
@@ -284,6 +285,7 @@ from mcpgateway.services.root_service import RootService, RootServiceNotFoundErr
 from mcpgateway.services.server_service import ServerService
 from mcpgateway.services.team_management_service import JoinRequestNotFoundError, UNSET
 from mcpgateway.services.tool_service import ToolError, ToolNotFoundError, ToolService
+from mcpgateway.utils.oauth_resource import parse_oauth_resource_form
 from mcpgateway.utils.passthrough_headers import PassthroughHeadersError
 from mcpgateway.utils.services_auth import decode_auth
 
@@ -12340,6 +12342,93 @@ async def test_admin_gateways_partial_html_renders(monkeypatch, mock_request, mo
         user={"email": "user@example.com", "db": mock_db},
     )
     assert isinstance(response, HTMLResponse)
+
+
+@pytest.mark.asyncio
+async def test_admin_gateways_partial_html_eager_loads_capability_relationships(monkeypatch, mock_request, mock_db):
+    """Query must eager-load tools/prompts/resources so counts don't require N+1 queries."""
+    pagination = make_pagination_meta()
+    paginate_mock = AsyncMock(return_value={"data": [], "pagination": pagination, "links": None})
+    monkeypatch.setattr("mcpgateway.admin.paginate_query", paginate_mock)
+    setup_team_service(monkeypatch, ["team-1"])
+
+    mock_request.headers = {}
+    await admin_gateways_partial_html(
+        mock_request,
+        page=1,
+        per_page=10,
+        include_inactive=False,
+        render=None,
+        team_id="team-1",
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db},
+    )
+
+    query = paginate_mock.call_args.kwargs["query"]
+    eager_loaded = {opt.path.path[-2].key for opt in query._with_options}
+    assert {"tools", "prompts", "resources"} <= eager_loaded
+
+
+@pytest.mark.asyncio
+async def test_admin_gateways_partial_html_populates_capability_counts_end_to_end(monkeypatch, mock_request, mock_db):
+    """The real gateway_service.convert_gateway_to_read must populate tool/prompt/resource counts
+    from the eagerly-loaded relationships into the data handed to the template."""
+    fake_gateway = SimpleNamespace(
+        id="gw-1",
+        name="Gateway 1",
+        slug="gateway-1",
+        url="http://example.com",
+        description=None,
+        transport="SSE",
+        capabilities={},
+        auth_type=None,
+        auth_value=None,
+        enabled=True,
+        reachable=True,
+        last_seen=None,
+        tags=[],
+        created_by=None,
+        modified_by=None,
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+        version=None,
+        team=None,
+        team_id="team-1",
+        owner_email="user@example.com",
+        visibility="private",
+        federation_source=None,
+        oauth_config=None,
+        passthrough_headers=None,
+        tools=["t1", "t2", "t3"],
+        prompts=["p1", "p2"],
+        resources=["r1"],
+    )
+
+    pagination = make_pagination_meta()
+    monkeypatch.setattr(
+        "mcpgateway.admin.paginate_query",
+        AsyncMock(return_value={"data": [fake_gateway], "pagination": pagination, "links": None}),
+    )
+    setup_team_service(monkeypatch, ["team-1"])
+
+    mock_request.headers = {}
+    await admin_gateways_partial_html(
+        mock_request,
+        page=1,
+        per_page=10,
+        include_inactive=False,
+        render=None,
+        team_id="team-1",
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db},
+    )
+
+    context = mock_request.app.state.templates.TemplateResponse.call_args[0][2]
+    data = context["data"]
+    assert len(data) == 1
+    assert data[0]["toolCount"] == 3
+    assert data[0]["promptCount"] == 2
+    assert data[0]["resourceCount"] == 1
 
 
 @pytest.mark.asyncio
@@ -26069,3 +26158,113 @@ class TestAdminPersonalTeamFiltering:
             # CRITICAL: Admin should see their pending request
             assert team_data.pending_request is not None, "Admin should see their pending join request"
             assert team_data.pending_request.status == "pending", f"Pending request status should be 'pending', got '{team_data.pending_request.status}'"
+
+
+class TestParseOAuthResource:
+    """Unit tests for the shared parse_oauth_resource_form helper (PR #4476 review)."""
+
+    @pytest.mark.parametrize("raw", [None, "", "   ", "\n\t"])
+    def test_empty_returns_none(self, raw):
+        assert parse_oauth_resource_form(raw) is None
+
+    @pytest.mark.parametrize("raw", [42, 3.14, ["already", "a", "list"], {"k": "v"}])
+    def test_non_string_returns_none(self, raw):
+        assert parse_oauth_resource_form(raw) is None
+
+    @pytest.mark.parametrize("raw", [",,", " , ", ",\n,", " , , "])
+    def test_delimiter_only_returns_none(self, raw):
+        """Separators with no URI content yield zero pieces after splitting."""
+        assert parse_oauth_resource_form(raw) is None
+
+    def test_single_uri_passes_through(self):
+        assert parse_oauth_resource_form("https://api.example.com") == "https://api.example.com"
+
+    def test_single_uri_stripped(self):
+        assert parse_oauth_resource_form("   https://api.example.com  \n") == "https://api.example.com"
+
+    def test_multi_value_comma_separated(self):
+        result = parse_oauth_resource_form("https://a.example.com, https://b.example.com")
+        assert result == ["https://a.example.com", "https://b.example.com"]
+
+    def test_multi_value_whitespace_separated(self):
+        result = parse_oauth_resource_form("https://a.example.com https://b.example.com")
+        assert result == ["https://a.example.com", "https://b.example.com"]
+
+    def test_multi_value_newline_separated(self):
+        result = parse_oauth_resource_form("https://a.example.com\nhttps://b.example.com")
+        assert result == ["https://a.example.com", "https://b.example.com"]
+
+    def test_uri_containing_comma_is_preserved_as_single(self):
+        """Regression: reviewer finding #3 — comma-in-URI must not be corrupted into two entries."""
+        raw = "https://api.example.com/path?filter=a,b"
+        assert parse_oauth_resource_form(raw) == raw
+
+    def test_urns_supported(self):
+        result = parse_oauth_resource_form("urn:example:app-a, urn:example:app-b")
+        assert result == ["urn:example:app-a", "urn:example:app-b"]
+
+    def test_mixed_valid_and_relative_falls_back_to_single(self):
+        """When splitting produces at least one piece without a URI scheme, treat as single."""
+        raw = "https://api.example.com, api.example.com/other"
+        assert parse_oauth_resource_form(raw) == raw
+
+
+class TestParseGatewayDataOAuthResource:
+    """Regression tests for reviewer finding #1: gateway CREATE form must persist oauth_resource."""
+
+    async def _parse_form(self, form_dict):
+        request = MagicMock(spec=Request)
+        request.headers = {"content-type": "multipart/form-data"}
+        request.form = AsyncMock(return_value=FakeForm(form_dict))
+        return await _parse_gateway_data_from_request(request)
+
+    @pytest.mark.asyncio
+    async def test_create_form_persists_single_resource(self):
+        data = await self._parse_form(
+            {
+                "name": "gw",
+                "url": "https://gw.example.com",
+                "oauth_grant_type": "authorization_code",
+                "oauth_client_id": "cid",
+                "oauth_resource": "https://api.example.com",
+            }
+        )
+        assert data["oauth_config"]["resource"] == "https://api.example.com"
+
+    @pytest.mark.asyncio
+    async def test_create_form_persists_multi_resource(self):
+        data = await self._parse_form(
+            {
+                "name": "gw",
+                "url": "https://gw.example.com",
+                "oauth_grant_type": "authorization_code",
+                "oauth_client_id": "cid",
+                "oauth_resource": "https://a.example.com, https://b.example.com",
+            }
+        )
+        assert data["oauth_config"]["resource"] == ["https://a.example.com", "https://b.example.com"]
+
+    @pytest.mark.asyncio
+    async def test_create_form_omits_empty_resource(self):
+        data = await self._parse_form(
+            {
+                "name": "gw",
+                "url": "https://gw.example.com",
+                "oauth_grant_type": "authorization_code",
+                "oauth_client_id": "cid",
+                "oauth_resource": "",
+            }
+        )
+        assert "resource" not in data["oauth_config"]
+
+    @pytest.mark.asyncio
+    async def test_create_form_resource_alone_triggers_oauth_config(self):
+        """Setting only oauth_resource still assembles oauth_config (any-field gate covers resource)."""
+        data = await self._parse_form(
+            {
+                "name": "gw",
+                "url": "https://gw.example.com",
+                "oauth_resource": "https://api.example.com",
+            }
+        )
+        assert data["oauth_config"] == {"resource": "https://api.example.com"}
