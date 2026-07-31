@@ -3492,6 +3492,40 @@ class TestGatewayRefresh:
         assert validation_errors == []
         assert valid_tools[0].extension_metadata == {MCP_UI_EXTENSION: {"resourceUri": "ui://widgets/example", "audience": ["model"]}}
 
+    def test_validate_tools_preserves_deprecated_flat_mcp_apps_meta(self, gateway_service):
+        """A tool carrying only the deprecated flat key must survive ToolCreate validation with its UI association."""
+        tools = [
+            {
+                "name": "customer_search",
+                "description": "Search customers",
+                "inputSchema": {},
+                "_meta": {"ui/resourceUri": "ui://widgets/customer-search"},
+            }
+        ]
+
+        valid_tools, validation_errors = gateway_service._validate_tools(tools)
+
+        assert validation_errors == []
+        assert len(valid_tools) == 1
+        assert valid_tools[0].extension_metadata == {MCP_UI_EXTENSION: {"resourceUri": "ui://widgets/customer-search"}}
+
+    def test_validate_tools_keeps_tool_when_deprecated_flat_meta_is_unusable(self, gateway_service):
+        """An invalid legacy value must be ignored rather than failing validation and dropping the tool."""
+        tools = [
+            {
+                "name": "customer_search",
+                "description": "Search customers",
+                "inputSchema": {},
+                "_meta": {"ui/resourceUri": "https://example.com/widget.html"},
+            }
+        ]
+
+        valid_tools, validation_errors = gateway_service._validate_tools(tools)
+
+        assert validation_errors == []
+        assert len(valid_tools) == 1
+        assert valid_tools[0].extension_metadata is None
+
     def test_validate_tools_error_message(self, gateway_service):
         """Validation errors must be 'toolname: reason' strings, not raw pydantic dicts (issue #136 Bug C).
 
@@ -3569,6 +3603,62 @@ class TestGatewayRefresh:
                 result = await gateway_service.register_gateway(db, gateway_data, created_by="test@example.com")
 
         assert result.skipped_tools == [f"{long_name}: Tool name exceeds MCP spec limit of 128 characters (got 129)"]
+
+    @pytest.mark.asyncio
+    async def test_deprecated_flat_meta_honoured_on_resource_ingest_paths(self, gateway_service):
+        """merge_mcp_protocol_meta is shared with the resource and resource-template ingest paths.
+
+        Mocks only the MCP transport so the real connect_to_sse_server chain runs against a
+        resource and a resource template that each carry only the deprecated flat key.
+        """
+        mock_session = AsyncMock()
+        mock_init = MagicMock()
+        mock_init.capabilities.model_dump.return_value = {"resources": {"subscribe": False}}
+        mock_session.initialize.return_value = mock_init
+
+        tool = MagicMock()
+        tool.model_dump.return_value = {"name": "valid_tool", "description": "ok", "inputSchema": {}}
+        mock_list_tools = MagicMock()
+        mock_list_tools.tools = [tool]
+        mock_session.list_tools.return_value = mock_list_tools
+
+        resource = MagicMock()
+        resource.model_dump.return_value = {
+            "uri": "https://example.com/data",
+            "name": "customer_data",
+            "_meta": {"ui/resourceUri": "ui://widgets/customer-search"},
+        }
+        mock_list_resources = MagicMock()
+        mock_list_resources.resources = [resource]
+        mock_session.list_resources.return_value = mock_list_resources
+
+        template = MagicMock()
+        template.model_dump.return_value = {
+            "uriTemplate": "https://example.com/data/{id}",
+            "name": "customer_record",
+            "_meta": {"ui/resourceUri": "ui://widgets/customer-record"},
+        }
+        mock_list_templates = MagicMock()
+        mock_list_templates.resourceTemplates = [template]
+        mock_session.list_resource_templates.return_value = mock_list_templates
+
+        mock_session.list_prompts.return_value = MagicMock(prompts=[])
+
+        mock_sse_cm = AsyncMock()
+        mock_sse_cm.__aenter__.return_value = (MagicMock(), MagicMock())
+        mock_sse_cm.__aexit__.return_value = None
+
+        mock_client_cm = AsyncMock()
+        mock_client_cm.__aenter__.return_value = mock_session
+        mock_client_cm.__aexit__.return_value = None
+
+        with patch("mcpgateway.services.gateway_service.sse_client", return_value=mock_sse_cm):
+            with patch("mcpgateway.services.gateway_service.ClientSession", return_value=mock_client_cm):
+                _capabilities, _tools, resources, _prompts, _errors = await gateway_service.connect_to_sse_server("https://test.example.com")
+
+        by_name = {resource.name: resource for resource in resources}
+        assert by_name["customer_data"].extension_metadata == {MCP_UI_EXTENSION: {"resourceUri": "ui://widgets/customer-search"}}
+        assert by_name["customer_record"].extension_metadata == {MCP_UI_EXTENSION: {"resourceUri": "ui://widgets/customer-record"}}
 
     def test_validate_tools_all_invalid(self, gateway_service):
         """Test failure when all tools are invalid."""

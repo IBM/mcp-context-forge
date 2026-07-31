@@ -77,6 +77,38 @@ and resources. MCP Apps metadata is keyed by the MCP UI capability identifier:
 The gateway also accepts the internal snake_case form, `extension_metadata`, in
 Python service paths. Public API payloads should use `extensionMetadata`.
 
+### Deprecated Flat `ui/resourceUri` Key
+
+Upstream servers advertise Apps metadata on the wire as `_meta`, which the
+gateway folds into `extensionMetadata` during ingest. Alongside the nested
+`_meta.ui` object, the gateway still honours the deprecated flat
+`_meta["ui/resourceUri"]` key so that servers emitting only the older shape keep
+their tool/UI association:
+
+```json
+{
+  "name": "customer_search",
+  "_meta": { "ui/resourceUri": "ui://widgets/customer-search" }
+}
+```
+
+Precedence and handling:
+
+- **The nested object wins.** If `_meta.ui` contains `resourceUri` (or
+  `resource_uri`), the flat key is ignored. Precedence is decided by key
+  *presence*, not truthiness, so a nested value that is empty or malformed stays
+  authoritative and is rejected by validation rather than being silently
+  replaced by the deprecated value.
+- **Only well-formed `ui://` values are folded in.** An unusable flat value is
+  ignored and logged. Folding it in would fail extension metadata validation and
+  drop the whole tool from gateway sync, which is worse than ingesting the tool
+  without a UI association.
+- **Ingest only.** ContextForge always projects the nested shape outbound; it
+  does not re-emit the deprecated key.
+
+The flat key is scheduled for removal from the spec before GA, so treat it as a
+compatibility path rather than a supported input format.
+
 ### Tool Metadata
 
 Tool metadata controls who sees or can invoke the tool:
