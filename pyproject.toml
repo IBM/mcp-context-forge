@@ -173,7 +173,6 @@ dev = [
     "a2a-sdk[http-server]",
     "aiohttp==3.14.1",
     "argparse-manpage>=4.7",
-    "authlib>=1.7.2", # Transitive pin via fastmcp (dev-only test client); 1.7.0 ships security fixes — see tool.uv.exclude-newer-package override
     "autoflake>=2.3.3",
     "bandit>=1.9.4",
     "bump2version>=1.0.1",
@@ -186,7 +185,6 @@ dev = [
     "faker>=40.28.1",
     "fakeredis[lua]>=2.36.2",
     "compliance-reference-server",
-    "fastmcp>=3.4.2",
     "fawltydeps>=0.20.0",
     "gprof2dot>=2025.4.14",
     "hypothesis>=6.152.1",
