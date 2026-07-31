@@ -4464,6 +4464,14 @@ class ToolService(BaseService):
 
         # Run tool_pre_invoke hooks so that plugins (e.g. wxo_connections) can
         # inject credentials and clean arguments before the Rust direct call.
+        #
+        # NOTE: CPEX control-execution telemetry is intentionally not emitted from this
+        # path.  prepare_rust_mcp_tool_execution() builds an execution plan and returns
+        # before the actual tool invocation — there is no downstream flush point where
+        # record_control_telemetry() can be called.  When the Rust runtime falls back to
+        # the Python invoke_tool() path (e.g. post-invoke hooks configured, ineligible
+        # transport) the Python path's own accumulator will capture all telemetry.
+        # Tracked in the Phase 5 attribute-policy follow-on issue.
         modified_args = arguments
         if has_pre_invoke and arguments is not None:
             pre_invoke_headers = HttpHeaderPayload(root=dict(runtime_headers))
@@ -5389,14 +5397,21 @@ class ToolService(BaseService):
                         if tool_metadata:
                             global_context.metadata[TOOL_METADATA] = tool_metadata
                         pre_invoke_headers = HttpHeaderPayload(root=headers)
-                        pre_result, context_table = await plugin_manager.invoke_hook(
-                            ToolHookType.TOOL_PRE_INVOKE,
-                            payload=ToolPreInvokePayload(name=name, args=arguments, headers=pre_invoke_headers),
-                            global_context=global_context,
-                            local_contexts=context_table,  # Pass context from previous hooks
-                            violations_as_exceptions=True,
-                            extensions=build_request_extensions(),
-                        )
+                        try:
+                            pre_result, context_table = await plugin_manager.invoke_hook(
+                                ToolHookType.TOOL_PRE_INVOKE,
+                                payload=ToolPreInvokePayload(name=name, args=arguments, headers=pre_invoke_headers),
+                                global_context=global_context,
+                                local_contexts=context_table,  # Pass context from previous hooks
+                                violations_as_exceptions=True,
+                                extensions=build_request_extensions(),
+                            )
+                        except (PluginError, PluginViolationError):
+                            # violations_as_exceptions=True causes CPEX to raise before returning,
+                            # so add() is never called.  Mark the denial explicitly so telemetry
+                            # emits result.allowed=False rather than the incorrect True default.
+                            _ctl_acc.mark_denied(hook="pre")
+                            raise
                         record_plugin_metrics(current_trace_id.get(), pre_result.metadata)
                         _ctl_acc.add(pre_result, hook="pre")
                         _log_tool_pre_invoke_result(name, arguments, pre_invoke_headers, pre_result)
@@ -6075,7 +6090,7 @@ class ToolService(BaseService):
                                 )
 
                             if plugin_manager:
-                                await self._run_timeout_post_invoke(name, effective_timeout, global_context, context_table, plugin_manager)
+                                await self._run_timeout_post_invoke(name, effective_timeout, global_context, context_table, plugin_manager, ctl_acc=_ctl_acc)
 
                             raise ToolTimeoutError(f"Tool invocation timed out after {effective_timeout}s")
                         except asyncio.CancelledError:
@@ -6301,14 +6316,21 @@ class ToolService(BaseService):
                         if gateway_metadata:
                             global_context.metadata[GATEWAY_METADATA] = gateway_metadata
                         pre_invoke_headers = HttpHeaderPayload(root=headers)
-                        pre_result, context_table = await plugin_manager.invoke_hook(
-                            ToolHookType.TOOL_PRE_INVOKE,
-                            payload=ToolPreInvokePayload(name=name, args=arguments, headers=pre_invoke_headers),
-                            global_context=global_context,
-                            local_contexts=None,
-                            violations_as_exceptions=True,
-                            extensions=build_request_extensions(),
-                        )
+                        try:
+                            pre_result, context_table = await plugin_manager.invoke_hook(
+                                ToolHookType.TOOL_PRE_INVOKE,
+                                payload=ToolPreInvokePayload(name=name, args=arguments, headers=pre_invoke_headers),
+                                global_context=global_context,
+                                local_contexts=None,
+                                violations_as_exceptions=True,
+                                extensions=build_request_extensions(),
+                            )
+                        except (PluginError, PluginViolationError):
+                            # violations_as_exceptions=True causes CPEX to raise before returning,
+                            # so add() is never called.  Mark the denial explicitly so telemetry
+                            # emits result.allowed=False rather than the incorrect True default.
+                            _ctl_acc.mark_denied(hook="pre")
+                            raise
                         record_plugin_metrics(current_trace_id.get(), pre_result.metadata)
                         _ctl_acc.add(pre_result, hook="pre")
                         _log_tool_pre_invoke_result(name, arguments, pre_invoke_headers, pre_result)
@@ -6388,14 +6410,21 @@ class ToolService(BaseService):
                         if tool_metadata:
                             global_context.metadata[TOOL_METADATA] = tool_metadata
                         pre_invoke_headers = HttpHeaderPayload(root=plugin_headers)
-                        pre_result, context_table = await plugin_manager.invoke_hook(
-                            ToolHookType.TOOL_PRE_INVOKE,
-                            payload=ToolPreInvokePayload(name=name, args=arguments, headers=pre_invoke_headers),
-                            global_context=global_context,
-                            local_contexts=context_table,
-                            violations_as_exceptions=True,
-                            extensions=build_request_extensions(),
-                        )
+                        try:
+                            pre_result, context_table = await plugin_manager.invoke_hook(
+                                ToolHookType.TOOL_PRE_INVOKE,
+                                payload=ToolPreInvokePayload(name=name, args=arguments, headers=pre_invoke_headers),
+                                global_context=global_context,
+                                local_contexts=context_table,
+                                violations_as_exceptions=True,
+                                extensions=build_request_extensions(),
+                            )
+                        except (PluginError, PluginViolationError):
+                            # violations_as_exceptions=True causes CPEX to raise before returning,
+                            # so add() is never called.  Mark the denial explicitly so telemetry
+                            # emits result.allowed=False rather than the incorrect True default.
+                            _ctl_acc.mark_denied(hook="pre")
+                            raise
                         record_plugin_metrics(current_trace_id.get(), pre_result.metadata)
                         _ctl_acc.add(pre_result, hook="pre")
                         _log_tool_pre_invoke_result(name, arguments, pre_invoke_headers, pre_result)
@@ -6513,14 +6542,21 @@ class ToolService(BaseService):
                     # Plugin hook: tool post-invoke
                     plugin_manager = await self._get_plugin_manager(plugin_context_id)
                     if plugin_manager and plugin_manager.has_hooks_for(ToolHookType.TOOL_POST_INVOKE):
-                        post_result, _ = await plugin_manager.invoke_hook(
-                            ToolHookType.TOOL_POST_INVOKE,
-                            payload=ToolPostInvokePayload(name=name, result=tool_result.model_dump(by_alias=True)),
-                            global_context=global_context,
-                            local_contexts=context_table,
-                            violations_as_exceptions=True,
-                            extensions=build_request_extensions(),
-                        )
+                        try:
+                            post_result, _ = await plugin_manager.invoke_hook(
+                                ToolHookType.TOOL_POST_INVOKE,
+                                payload=ToolPostInvokePayload(name=name, result=tool_result.model_dump(by_alias=True)),
+                                global_context=global_context,
+                                local_contexts=context_table,
+                                violations_as_exceptions=True,
+                                extensions=build_request_extensions(),
+                            )
+                        except (PluginError, PluginViolationError):
+                            # violations_as_exceptions=True: CPEX raises before returning,
+                            # so add() is never reached.  Mark the denial so telemetry
+                            # emits result.allowed=False correctly.
+                            _ctl_acc.mark_denied(hook="post")
+                            raise
                         record_plugin_metrics(current_trace_id.get(), post_result.metadata)
                         _ctl_acc.add(post_result, hook="post")
                         # Use modified payload if provided
@@ -6569,6 +6605,16 @@ class ToolService(BaseService):
                 # Placed here on the normal-return path so both pre and post records are
                 # accumulated before emitting.  The PluginViolationError re-raise below
                 # also calls this so partial pre-deny telemetry is not lost.
+                #
+                # Identity mapping (provisional — see issue #5785 follow-on for a dedicated
+                # agent-identity model):
+                #   agent_id     = app_user_email ?? user_email — the authenticated caller email.
+                #                  This is a human identity field and is high-cardinality; avoid
+                #                  using it in metric aggregations or OTel cardinality-sensitive paths.
+                #                  GDPR/data-residency implications apply in regulated environments.
+                #   binding_name = gateway_name ?? server_id — the closest available proxy for a
+                #                  "control binding" context.  Gateway name is a registry concept,
+                #                  not a control-binding concept; interpretation may evolve.
                 record_control_telemetry(
                     trace_id=current_trace_id.get(),
                     accumulator=_ctl_acc,
@@ -6587,7 +6633,7 @@ class ToolService(BaseService):
                 # The emitted summary span will reflect the partial pre-hook results; the
                 # effective_allow=False outcome is captured via accumulator.pre_denied.
                 # Upstream CPEX gap tracked in issue #5785 follow-on.
-                record_control_telemetry(
+                record_control_telemetry(  # identity mapping: see normal-return path comment above
                     trace_id=current_trace_id.get(),
                     accumulator=_ctl_acc,
                     tool_name=name,
@@ -6599,7 +6645,7 @@ class ToolService(BaseService):
                 # ToolTimeoutError is raised by timeout handlers which already called tool_post_invoke.
                 # Do NOT call post_invoke again — the retry_delay_ms signal is carried on the exception.
                 # Emit partial telemetry before retrying or re-raising so timeout records are not lost.
-                record_control_telemetry(
+                record_control_telemetry(  # identity mapping: see normal-return path comment above
                     trace_id=current_trace_id.get(),
                     accumulator=_ctl_acc,
                     tool_name=name,
@@ -6673,7 +6719,7 @@ class ToolService(BaseService):
                         logger.debug("Failed to invoke post-invoke plugins on exception: %s", plugin_exc)
 
                 # Emit partial telemetry for unhandled exceptions (post-hook records already added above).
-                record_control_telemetry(
+                record_control_telemetry(  # identity mapping: see normal-return path comment above
                     trace_id=current_trace_id.get(),
                     accumulator=_ctl_acc,
                     tool_name=name,

@@ -88,7 +88,7 @@ class ControlTelemetryAccumulator:
     _records: list = field(default_factory=list)
     _pre_denied: bool = False
     _post_denied: bool = False
-    _truncated: int = 0  # records dropped due to per-call cap
+    _truncated: int = 0  # records dropped due to per-call cap OR per-hook cap
 
     def add(self, result: Any, *, hook: str) -> None:
         """Consume executions from one ``invoke_hook`` result.
@@ -101,7 +101,13 @@ class ControlTelemetryAccumulator:
             return
 
         records = get_executions(result)
-        for rec in itertools.islice(records, _MAX_RECORDS_PER_HOOK):
+        hook_count = 0
+        for rec in records:
+            if hook_count >= _MAX_RECORDS_PER_HOOK:
+                # Per-hook cap exceeded — count these as truncated and stop.
+                self._truncated += 1
+                continue
+            hook_count += 1
             if len(self._records) >= _MAX_RECORDS_PER_CALL:
                 self._truncated += 1
                 continue
@@ -113,6 +119,29 @@ class ControlTelemetryAccumulator:
                 self._pre_denied = True
             else:
                 self._post_denied = True
+
+    def mark_denied(self, *, hook: str) -> None:
+        """Explicitly mark a denial when ``violations_as_exceptions=True`` causes
+        ``invoke_hook()`` to raise before returning, so ``add()`` is never called.
+
+        Call this from the ``except PluginViolationError`` handler immediately
+        after catching the exception and before re-raising.
+
+        Args:
+            hook: ``"pre"`` or ``"post"`` — which enforcement point was denied.
+
+        Examples:
+            >>> acc = ControlTelemetryAccumulator()
+            >>> acc.mark_denied(hook="pre")
+            >>> acc.pre_denied
+            True
+            >>> acc.effective_allowed
+            False
+        """
+        if hook == "pre":
+            self._pre_denied = True
+        else:
+            self._post_denied = True
 
     @property
     def records(self) -> list:
@@ -143,7 +172,7 @@ class ControlTelemetryAccumulator:
 
     @property
     def truncated(self) -> int:
-        """Number of records dropped due to the per-call cap.
+        """Number of records dropped due to the per-hook or per-call cap.
 
         Returns:
             Count of dropped records (0 when no overflow).
@@ -165,6 +194,18 @@ class ControlTelemetryAccumulator:
         Returns a ``dict`` of ``cpex.control.*`` attributes safe for span
         attachment.  Only uses trusted ``ControlExecutionRecord`` fields —
         never plugin metadata.
+
+        Count semantics:
+
+        - ``invocation_count``: controls that *actually ran* — status in
+          ``{completed, error, timeout}``.  Disabled, skipped, and cancelled
+          records are excluded (matches CPEX semantics).
+        - ``records_received``: total records accumulated before any export
+          cap is applied.  Includes disabled/skipped/cancelled.
+        - ``results_count``: records that will actually be exported to sinks,
+          i.e. ``min(records_received, CPEX_CONTROL_TELEMETRY_MAX_RESULTS)``.
+          Downstream operators can derive ``records_dropped = records_received
+          - results_count + truncated`` to understand total loss.
 
         Returns:
             Dictionary of aggregate control telemetry attributes.
@@ -196,13 +237,15 @@ class ControlTelemetryAccumulator:
             except Exception:  # noqa: BLE001
                 logger.debug("Failed to aggregate one ControlExecutionRecord", exc_info=True)
 
+        records_received = len(self._records)
         # results_count = records exported after the per-invocation cap (not raw accumulated count).
-        results_count = min(len(self._records), _get_max_results())
+        results_count = min(records_received, _get_max_results())
 
         return {
             "cpex.control.invocation_count": invocation_count,
             "cpex.control.matched_count": matched_count,
             "cpex.control.applied_count": applied_count,
+            "cpex.control.records_received": records_received,
             "cpex.control.results_count": results_count,
             "cpex.control.duration_ns": total_duration_ns,  # nanoseconds — OTel unit suffix convention
             "cpex.control.result.allowed": self.effective_allowed,
@@ -432,11 +475,23 @@ def _per_control_attributes(hook: str, rec: Any) -> dict:
         # requested_allow: only emit when present (None means not applicable to this mode)
         if rec.requested_allow is not None:
             attrs["cpex.control.result.requested_allowed"] = bool(rec.requested_allow)
-        # Optional free-text fields — only emit when present
-        if rec.reason:
-            attrs["cpex.control.result.reason"] = _safe_str(rec.reason, _MAX_REASON_LEN)
-        if rec.error_code:
-            attrs["cpex.control.result.error_code"] = _safe_str(rec.error_code, _MAX_ERROR_CODE_LEN)
+        # Artifact identity — only emit when CPEX record carries them (optional fields)
+        artifact_name = getattr(rec, "artifact_name", None)
+        if artifact_name:
+            attrs["cpex.control.artifact.name"] = _safe_str(artifact_name, 128)
+        artifact_id = getattr(rec, "artifact_id", None)
+        if artifact_id:
+            attrs["cpex.control.artifact.id"] = _safe_str(artifact_id, 128)
+        # Optional free-text fields — gated by CPEX_CONTROL_TELEMETRY_EMIT_REASON (default: false).
+        # reason and error_code can contain PII, tool argument values, or exception content.
+        # They are opt-in until Phase 5 central attribute-policy wiring provides a redaction
+        # boundary.  Set CPEX_CONTROL_TELEMETRY_EMIT_REASON=true only in environments where
+        # these fields are known safe and the observability sink is appropriately secured.
+        if _emit_reason_enabled():
+            if rec.reason:
+                attrs["cpex.control.result.reason"] = _safe_str(rec.reason, _MAX_REASON_LEN)
+            if rec.error_code:
+                attrs["cpex.control.result.error_code"] = _safe_str(rec.error_code, _MAX_ERROR_CODE_LEN)
         if rec.config_keys:
             # Key names only (CPEX never includes values); bounded list join
             attrs["cpex.control.config.keys"] = ",".join(rec.config_keys[:_MAX_CONFIG_KEYS])
@@ -502,6 +557,29 @@ def _get_max_results() -> int:
         return 32
 
 
+def _emit_reason_enabled() -> bool:
+    """Return True when ``result.reason`` and ``result.error_code`` emission is enabled.
+
+    These fields are opt-in (default: False) because they may contain PII, tool argument
+    values, or exception content that should not leave the process without passing through
+    a redaction boundary.  Enable via ``CPEX_CONTROL_TELEMETRY_EMIT_REASON=true`` only in
+    environments where the observability sink is appropriately secured.
+
+    Returns:
+        True when ``cpex_control_telemetry_emit_reason`` is set to True in settings.
+
+    Examples:
+        >>> isinstance(_emit_reason_enabled(), bool)
+        True
+    """
+    try:
+        from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
+
+        return bool(getattr(settings, "cpex_control_telemetry_emit_reason", False))
+    except Exception:  # noqa: BLE001
+        return False
+
+
 # ---------------------------------------------------------------------------
 # Flattened-results projection helper
 # ---------------------------------------------------------------------------
@@ -556,18 +634,33 @@ def _build_flattened_attributes(
                 seen_names.add(raw_name)
 
                 prefix = f"cpex.control.results.{raw_name}"
+                result[f"{prefix}.name"] = _safe_str(raw_name, 64)
                 result[f"{prefix}.status"] = _safe_str(str(getattr(rec, "status", "")), 32)
                 result[f"{prefix}.enforcement_point"] = hook
                 result[f"{prefix}.result.allowed"] = bool(getattr(rec, "effective_allow", True))
-                result[f"{prefix}.duration"] = int(getattr(rec, "duration_ns", 0))
+                result[f"{prefix}.duration_ns"] = int(getattr(rec, "duration_ns", 0))  # nanoseconds — OTel unit suffix convention
 
-                reason = getattr(rec, "reason", None)
-                if reason:
-                    result[f"{prefix}.result.reason"] = _safe_str(reason, _MAX_REASON_LEN)
+                artifact_name = getattr(rec, "artifact_name", None)
+                if artifact_name:
+                    result[f"{prefix}.artifact.name"] = _safe_str(artifact_name, 128)
 
-                error_code = getattr(rec, "error_code", None)
-                if error_code:
-                    result[f"{prefix}.result.error_code"] = _safe_str(error_code, _MAX_ERROR_CODE_LEN)
+                artifact_id = getattr(rec, "artifact_id", None)
+                if artifact_id:
+                    result[f"{prefix}.artifact.id"] = _safe_str(artifact_id, 128)
+
+                config_keys = getattr(rec, "config_keys", None)
+                if config_keys:
+                    result[f"{prefix}.config.keys"] = ",".join(config_keys[:_MAX_CONFIG_KEYS])
+
+                # reason/error_code gated by CPEX_CONTROL_TELEMETRY_EMIT_REASON (default: false)
+                if _emit_reason_enabled():
+                    reason = getattr(rec, "reason", None)
+                    if reason:
+                        result[f"{prefix}.result.reason"] = _safe_str(reason, _MAX_REASON_LEN)
+
+                    error_code = getattr(rec, "error_code", None)
+                    if error_code:
+                        result[f"{prefix}.result.error_code"] = _safe_str(error_code, _MAX_ERROR_CODE_LEN)
             except Exception:  # noqa: BLE001
                 logger.debug("Failed to flatten one ControlExecutionRecord", exc_info=True)
 

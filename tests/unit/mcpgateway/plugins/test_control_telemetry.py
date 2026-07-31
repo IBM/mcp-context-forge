@@ -8,11 +8,14 @@ SPDX-License-Identifier: Apache-2.0
 Covers:
   - ControlTelemetryAccumulator: empty init, add pre/post, caps, truncated, denied flags,
     effective_allowed, aggregate() semantics.
+  - ControlTelemetryAccumulator.mark_denied(): pre/post explicit denial, effective_allowed.
+  - add() per-hook cap contributes to truncated counter (item 4 / item 6 fix).
   - _per_control_attributes: completed allow/deny, error/timeout/faf, optional field omission,
-    reason truncation, config_keys bounded.
+    reason truncation, config_keys bounded, artifact_name/artifact_id fields.
   - _safe_str: within-limit unchanged, truncated with ellipsis.
   - _enforcement_point: pre/post/pre+post/none.
-  - _build_flattened_attributes: basic, collision, reason, error_code, bounded, edge cases.
+  - _build_flattened_attributes: basic (duration_ns key), collision, reason, error_code,
+    bounded, artifact fields, config_keys field, name field, edge cases.
   - aggregate() exception path, _get_max_results exception path.
 """
 
@@ -330,13 +333,17 @@ class TestPerControlAttributes:
 
     def test_completed_deny_with_reason(self):
         rec = _make_rec(effective_allow=False, reason="PII detected")
-        attrs = _per_control_attributes("pre", rec)
+        # reason is only emitted when CPEX_CONTROL_TELEMETRY_EMIT_REASON=true
+        with patch("mcpgateway.plugins.control_telemetry._emit_reason_enabled", return_value=True):
+            attrs = _per_control_attributes("pre", rec)
         assert attrs["cpex.control.result.allowed"] is False
         assert attrs["cpex.control.result.reason"] == "PII detected"
 
     def test_error_status(self):
         rec = _make_rec(status="error", error_code="PLUGIN_ERROR")
-        attrs = _per_control_attributes("pre", rec)
+        # error_code is only emitted when CPEX_CONTROL_TELEMETRY_EMIT_REASON=true
+        with patch("mcpgateway.plugins.control_telemetry._emit_reason_enabled", return_value=True):
+            attrs = _per_control_attributes("pre", rec)
         assert attrs["cpex.control.status"] == "error"
         assert attrs["cpex.control.result.error_code"] == "PLUGIN_ERROR"
 
@@ -358,9 +365,18 @@ class TestPerControlAttributes:
         assert "cpex.control.result.error_code" not in attrs
         assert "cpex.control.config.keys" not in attrs
 
+    def test_reason_omitted_when_flag_disabled(self):
+        """reason is not emitted when emit_reason=False (default), even when present."""
+        rec = _make_rec(reason="sensitive", error_code="E01")
+        with patch("mcpgateway.plugins.control_telemetry._emit_reason_enabled", return_value=False):
+            attrs = _per_control_attributes("pre", rec)
+        assert "cpex.control.result.reason" not in attrs
+        assert "cpex.control.result.error_code" not in attrs
+
     def test_reason_truncated_to_256(self):
         rec = _make_rec(reason="x" * 300)
-        attrs = _per_control_attributes("pre", rec)
+        with patch("mcpgateway.plugins.control_telemetry._emit_reason_enabled", return_value=True):
+            attrs = _per_control_attributes("pre", rec)
         assert len(attrs["cpex.control.result.reason"].encode("utf-8")) <= 256
 
     def test_config_keys_bounded(self):
@@ -471,8 +487,13 @@ class TestBuildFlattenedAttributes:
         assert "cpex.control.results.pii_guard.status" in flat
         assert flat["cpex.control.results.pii_guard.status"] == "completed"
         assert flat["cpex.control.results.pii_guard.result.allowed"] is True
-        assert flat["cpex.control.results.pii_guard.duration"] == 1000
+        # duration key must use _ns suffix — item 3 fix
+        assert "cpex.control.results.pii_guard.duration_ns" in flat
+        assert flat["cpex.control.results.pii_guard.duration_ns"] == 1000
+        assert "cpex.control.results.pii_guard.duration" not in flat
         assert flat["cpex.control.results.pii_guard.enforcement_point"] == "pre"
+        # name field must be present — item 2 fix
+        assert flat["cpex.control.results.pii_guard.name"] == "pii_guard"
 
     def test_invalid_name_skipped(self):
         """plugin_name with spaces/special chars is dropped from flattening."""
@@ -493,7 +514,8 @@ class TestBuildFlattenedAttributes:
     def test_reason_included_when_present(self):
         acc = ControlTelemetryAccumulator()
         acc._records.append(("pre", _make_rec(plugin_name="pii_guard", reason="PII found")))  # pylint: disable=protected-access
-        flat = _build_flattened_attributes(acc, 32)
+        with patch("mcpgateway.plugins.control_telemetry._emit_reason_enabled", return_value=True):
+            flat = _build_flattened_attributes(acc, 32)
         assert flat.get("cpex.control.results.pii_guard.result.reason") == "PII found"
 
     def test_reason_omitted_when_none(self):
@@ -524,10 +546,11 @@ class TestBuildFlattenedAttributes:
 
 class TestBuildFlattenedAttributesEdgeCases:
     def test_error_code_included_when_present(self):
-        """Line 553: error_code branch emits the error_code attribute."""
+        """error_code branch emits the attribute when emit_reason=True."""
         acc = ControlTelemetryAccumulator()
         acc._records.append(("pre", _make_rec(plugin_name="guard", error_code="TIMEOUT")))  # pylint: disable=protected-access
-        flat = _build_flattened_attributes(acc, 32)
+        with patch("mcpgateway.plugins.control_telemetry._emit_reason_enabled", return_value=True):
+            flat = _build_flattened_attributes(acc, 32)
         assert flat.get("cpex.control.results.guard.result.error_code") == "TIMEOUT"
 
     def test_per_record_exception_is_caught(self):
@@ -551,3 +574,364 @@ class TestBuildFlattenedAttributesEdgeCases:
 
         result = _build_flattened_attributes(ExplodingAcc(), 32)  # type: ignore[arg-type]
         assert result == {}
+
+
+# ---------------------------------------------------------------------------
+# Item 2 — artifact fields in _per_control_attributes and flattened projection
+# ---------------------------------------------------------------------------
+
+
+class TestArtifactFieldsInPerControlAttributes:
+    """_per_control_attributes emits cpex.control.artifact.* when the record has them."""
+
+    def test_artifact_name_emitted_when_present(self):
+        rec = _make_rec()
+        rec.artifact_name = "my-artifact"
+        rec.artifact_id = None
+        attrs = _per_control_attributes("pre", rec)
+        assert attrs.get("cpex.control.artifact.name") == "my-artifact"
+        assert "cpex.control.artifact.id" not in attrs
+
+    def test_artifact_id_emitted_when_present(self):
+        rec = _make_rec()
+        rec.artifact_name = None
+        rec.artifact_id = "artifact-123"
+        attrs = _per_control_attributes("pre", rec)
+        assert attrs.get("cpex.control.artifact.id") == "artifact-123"
+        assert "cpex.control.artifact.name" not in attrs
+
+    def test_both_artifact_fields_emitted(self):
+        rec = _make_rec()
+        rec.artifact_name = "svc-a"
+        rec.artifact_id = "id-xyz"
+        attrs = _per_control_attributes("pre", rec)
+        assert attrs["cpex.control.artifact.name"] == "svc-a"
+        assert attrs["cpex.control.artifact.id"] == "id-xyz"
+
+    def test_artifact_fields_absent_when_not_on_record(self):
+        """Records without artifact fields (older CPEX) must not emit artifact attrs."""
+        rec = _make_rec()
+        # Simulate a record that has no artifact_name / artifact_id attributes at all
+        del rec.artifact_name  # MagicMock deletion makes getattr return default
+        del rec.artifact_id
+        attrs = _per_control_attributes("pre", rec)
+        assert "cpex.control.artifact.name" not in attrs
+        assert "cpex.control.artifact.id" not in attrs
+
+    def test_artifact_name_truncated_to_128(self):
+        rec = _make_rec()
+        rec.artifact_name = "x" * 200
+        rec.artifact_id = None
+        attrs = _per_control_attributes("pre", rec)
+        assert len(attrs["cpex.control.artifact.name"].encode("utf-8")) <= 128
+
+
+class TestArtifactFieldsInFlattenedAttributes:
+    """_build_flattened_attributes emits artifact.name/id + config.keys + name fields."""
+
+    def test_artifact_name_in_flattened(self):
+        acc = ControlTelemetryAccumulator()
+        rec = _make_rec(plugin_name="guard")
+        rec.artifact_name = "my-svc"
+        rec.artifact_id = None
+        acc._records.append(("pre", rec))  # pylint: disable=protected-access
+        flat = _build_flattened_attributes(acc, 32)
+        assert flat.get("cpex.control.results.guard.artifact.name") == "my-svc"
+        assert "cpex.control.results.guard.artifact.id" not in flat
+
+    def test_artifact_id_in_flattened(self):
+        acc = ControlTelemetryAccumulator()
+        rec = _make_rec(plugin_name="guard")
+        rec.artifact_name = None
+        rec.artifact_id = "id-42"
+        acc._records.append(("pre", rec))  # pylint: disable=protected-access
+        flat = _build_flattened_attributes(acc, 32)
+        assert flat.get("cpex.control.results.guard.artifact.id") == "id-42"
+
+    def test_config_keys_in_flattened(self):
+        acc = ControlTelemetryAccumulator()
+        rec = _make_rec(plugin_name="guard", config_keys=["key1", "key2"])
+        rec.artifact_name = None
+        rec.artifact_id = None
+        acc._records.append(("pre", rec))  # pylint: disable=protected-access
+        flat = _build_flattened_attributes(acc, 32)
+        assert flat.get("cpex.control.results.guard.config.keys") == "key1,key2"
+
+    def test_name_field_in_flattened(self):
+        acc = ControlTelemetryAccumulator()
+        rec = _make_rec(plugin_name="rate_limit")
+        rec.artifact_name = None
+        rec.artifact_id = None
+        acc._records.append(("pre", rec))  # pylint: disable=protected-access
+        flat = _build_flattened_attributes(acc, 32)
+        assert flat.get("cpex.control.results.rate_limit.name") == "rate_limit"
+
+
+# ---------------------------------------------------------------------------
+# Item 3 — duration_ns key in flattened projection (no bare .duration key)
+# ---------------------------------------------------------------------------
+
+
+class TestFlattenedDurationKey:
+    """Flattened projection must use .duration_ns, never .duration."""
+
+    def test_duration_ns_key_present(self):
+        acc = ControlTelemetryAccumulator()
+        rec = _make_rec(plugin_name="ctrl", duration_ns=9876)
+        rec.artifact_name = None
+        rec.artifact_id = None
+        acc._records.append(("pre", rec))  # pylint: disable=protected-access
+        flat = _build_flattened_attributes(acc, 32)
+        assert flat["cpex.control.results.ctrl.duration_ns"] == 9876
+
+    def test_bare_duration_key_absent(self):
+        acc = ControlTelemetryAccumulator()
+        rec = _make_rec(plugin_name="ctrl")
+        rec.artifact_name = None
+        rec.artifact_id = None
+        acc._records.append(("pre", rec))  # pylint: disable=protected-access
+        flat = _build_flattened_attributes(acc, 32)
+        assert "cpex.control.results.ctrl.duration" not in flat
+
+
+# ---------------------------------------------------------------------------
+# Item 4 — mark_denied() and per-hook truncation counter
+# ---------------------------------------------------------------------------
+
+
+class TestMarkDenied:
+    """mark_denied() sets the correct denial flag without requiring add() to run."""
+
+    def test_mark_denied_pre_sets_pre_denied(self):
+        acc = ControlTelemetryAccumulator()
+        acc.mark_denied(hook="pre")
+        assert acc.pre_denied is True
+        assert acc.post_denied is False
+
+    def test_mark_denied_post_sets_post_denied(self):
+        acc = ControlTelemetryAccumulator()
+        acc.mark_denied(hook="post")
+        assert acc.post_denied is True
+        assert acc.pre_denied is False
+
+    def test_effective_allowed_false_after_pre_deny(self):
+        acc = ControlTelemetryAccumulator()
+        acc.mark_denied(hook="pre")
+        assert acc.effective_allowed is False
+
+    def test_effective_allowed_false_after_post_deny(self):
+        acc = ControlTelemetryAccumulator()
+        acc.mark_denied(hook="post")
+        assert acc.effective_allowed is False
+
+    def test_mark_denied_with_no_records_still_triggers_telemetry(self):
+        """Accumulator with no records but pre_denied=True is non-empty for telemetry gate."""
+        acc = ControlTelemetryAccumulator()
+        acc.mark_denied(hook="pre")
+        # record_control_telemetry gates on: not records AND not pre_denied AND not post_denied
+        assert acc.pre_denied is True  # telemetry will NOT be skipped
+
+    def test_mark_denied_then_add_still_works(self):
+        """mark_denied does not break subsequent add() calls for partial records."""
+        acc = ControlTelemetryAccumulator()
+        acc.mark_denied(hook="pre")
+        with patch("mcpgateway.plugins.control_telemetry.execution_records_supported", return_value=True):
+            result = _make_result([_make_rec(status="completed")])
+            acc.add(result, hook="pre")
+        assert len(acc.records) == 1
+        assert acc.pre_denied is True
+
+    def test_aggregate_result_allowed_false_when_mark_denied(self):
+        """aggregate() must emit cpex.control.result.allowed=False after mark_denied."""
+        acc = ControlTelemetryAccumulator()
+        acc.mark_denied(hook="pre")
+        agg = acc.aggregate()
+        assert agg["cpex.control.result.allowed"] is False
+
+
+class TestPerHookTruncationCounter:
+    """add() must count records dropped at the per-hook cap (_MAX_RECORDS_PER_HOOK=64)."""
+
+    def test_per_hook_overflow_increments_truncated(self):
+        """Records beyond _MAX_RECORDS_PER_HOOK are counted in _truncated."""
+        acc = ControlTelemetryAccumulator()
+        # Build 70 records — 64 allowed per hook, 6 should be truncated
+        records = [_make_rec(plugin_name=f"ctrl{i}") for i in range(70)]
+        with patch("mcpgateway.plugins.control_telemetry.execution_records_supported", return_value=True):
+            result = _make_result(records)
+            acc.add(result, hook="pre")
+        assert len(acc.records) == 64
+        assert acc.truncated == 6
+
+    def test_per_hook_exactly_at_cap_not_truncated(self):
+        """Exactly _MAX_RECORDS_PER_HOOK records — no truncation."""
+        acc = ControlTelemetryAccumulator()
+        records = [_make_rec(plugin_name=f"ctrl{i}") for i in range(64)]
+        with patch("mcpgateway.plugins.control_telemetry.execution_records_supported", return_value=True):
+            acc.add(_make_result(records), hook="pre")
+        assert acc.truncated == 0
+        assert len(acc.records) == 64
+
+    def test_per_call_overflow_also_counted(self):
+        """Records beyond _MAX_RECORDS_PER_CALL are also counted in truncated."""
+        acc = ControlTelemetryAccumulator()
+        # Fill to cap via two hooks of 64 each = 128 accepted, then add more
+        first_batch = [_make_rec(plugin_name=f"pre{i}") for i in range(64)]
+        second_batch = [_make_rec(plugin_name=f"post{i}") for i in range(64)]
+        extra_batch = [_make_rec(plugin_name=f"extra{i}") for i in range(10)]
+        with patch("mcpgateway.plugins.control_telemetry.execution_records_supported", return_value=True):
+            acc.add(_make_result(first_batch), hook="pre")
+            acc.add(_make_result(second_batch), hook="post")
+            acc.add(_make_result(extra_batch), hook="post")
+        assert len(acc.records) == _MAX_RECORDS_PER_CALL
+        assert acc.truncated == 10
+
+
+# ---------------------------------------------------------------------------
+# Item 6/7 — records_received counter in aggregate()
+# ---------------------------------------------------------------------------
+
+
+class TestAggregateRecordsReceived:
+    """aggregate() must emit cpex.control.records_received — total before export cap."""
+
+    def _make_acc(self, n: int, status: str = "completed") -> ControlTelemetryAccumulator:
+        acc = ControlTelemetryAccumulator()
+        with patch("mcpgateway.plugins.control_telemetry.execution_records_supported", return_value=True):
+            for i in range(n):
+                acc.add(_make_result([_make_rec(plugin_name=f"ctrl{i}", status=status)]), hook="pre")
+        return acc
+
+    def test_records_received_equals_accumulated_count(self):
+        acc = self._make_acc(5)
+        agg = acc.aggregate()
+        assert agg["cpex.control.records_received"] == 5
+
+    def test_records_received_zero_when_empty(self):
+        acc = ControlTelemetryAccumulator()
+        agg = acc.aggregate()
+        assert agg["cpex.control.records_received"] == 0
+
+    def test_records_received_includes_skipped_disabled_cancelled(self):
+        """records_received counts ALL accumulated records, including non-active statuses."""
+        acc = ControlTelemetryAccumulator()
+        with patch("mcpgateway.plugins.control_telemetry.execution_records_supported", return_value=True):
+            acc.add(_make_result([
+                _make_rec(plugin_name="a", status="completed"),
+                _make_rec(plugin_name="b", status="skipped"),
+                _make_rec(plugin_name="c", status="disabled"),
+                _make_rec(plugin_name="d", status="cancelled"),
+            ]), hook="pre")
+        agg = acc.aggregate()
+        assert agg["cpex.control.records_received"] == 4
+        # invocation_count only counts active statuses
+        assert agg["cpex.control.invocation_count"] == 1
+
+    def test_results_count_capped_at_max_results(self):
+        """results_count = min(records_received, max_results)."""
+        import mcpgateway.config as cfg_mod  # noqa: PLC0415
+        mock_settings = MagicMock()
+        mock_settings.cpex_control_telemetry_max_results = 3
+        original = cfg_mod.settings
+        try:
+            cfg_mod.settings = mock_settings
+            acc = self._make_acc(10)
+            agg = acc.aggregate()
+        finally:
+            cfg_mod.settings = original
+        assert agg["cpex.control.records_received"] == 10
+        assert agg["cpex.control.results_count"] == 3
+
+    def test_records_received_present_in_aggregate_keys(self):
+        """records_received is always in the aggregate dict."""
+        agg = ControlTelemetryAccumulator().aggregate()
+        assert "cpex.control.records_received" in agg
+
+
+# ---------------------------------------------------------------------------
+# Item 9 — CPEX_CONTROL_TELEMETRY_EMIT_REASON gates reason/error_code
+# ---------------------------------------------------------------------------
+
+
+class TestEmitReasonFlag:
+    """result.reason and result.error_code are only emitted when emit_reason=True."""
+
+    def _attrs_with_reason_flag(self, flag: bool) -> dict:
+        rec = _make_rec(reason="PII found", error_code="DENY_001")
+        import mcpgateway.config as cfg_mod  # noqa: PLC0415
+        mock_settings = MagicMock()
+        mock_settings.cpex_control_telemetry_emit_reason = flag
+        original = cfg_mod.settings
+        try:
+            cfg_mod.settings = mock_settings
+            return _per_control_attributes("pre", rec)
+        finally:
+            cfg_mod.settings = original
+
+    def test_reason_absent_by_default(self):
+        """result.reason must not appear when emit_reason=False (default)."""
+        attrs = self._attrs_with_reason_flag(False)
+        assert "cpex.control.result.reason" not in attrs
+        assert "cpex.control.result.error_code" not in attrs
+
+    def test_reason_present_when_flag_enabled(self):
+        """result.reason and result.error_code appear when emit_reason=True."""
+        attrs = self._attrs_with_reason_flag(True)
+        assert attrs.get("cpex.control.result.reason") == "PII found"
+        assert attrs.get("cpex.control.result.error_code") == "DENY_001"
+
+    def test_reason_absent_from_flattened_by_default(self):
+        """Flattened projection also respects emit_reason=False."""
+        acc = ControlTelemetryAccumulator()
+        rec = _make_rec(plugin_name="guard", reason="sensitive text", error_code="E001")
+        rec.artifact_name = None
+        rec.artifact_id = None
+        acc._records.append(("pre", rec))  # pylint: disable=protected-access
+        import mcpgateway.config as cfg_mod  # noqa: PLC0415
+        mock_settings = MagicMock()
+        mock_settings.cpex_control_telemetry_emit_reason = False
+        original = cfg_mod.settings
+        try:
+            cfg_mod.settings = mock_settings
+            flat = _build_flattened_attributes(acc, 32)
+        finally:
+            cfg_mod.settings = original
+        assert "cpex.control.results.guard.result.reason" not in flat
+        assert "cpex.control.results.guard.result.error_code" not in flat
+
+    def test_reason_present_in_flattened_when_flag_enabled(self):
+        """Flattened projection emits reason/error_code when emit_reason=True."""
+        acc = ControlTelemetryAccumulator()
+        rec = _make_rec(plugin_name="guard", reason="deny reason", error_code="E002")
+        rec.artifact_name = None
+        rec.artifact_id = None
+        acc._records.append(("pre", rec))  # pylint: disable=protected-access
+        import mcpgateway.config as cfg_mod  # noqa: PLC0415
+        mock_settings = MagicMock()
+        mock_settings.cpex_control_telemetry_emit_reason = True
+        original = cfg_mod.settings
+        try:
+            cfg_mod.settings = mock_settings
+            flat = _build_flattened_attributes(acc, 32)
+        finally:
+            cfg_mod.settings = original
+        assert flat.get("cpex.control.results.guard.result.reason") == "deny reason"
+        assert flat.get("cpex.control.results.guard.result.error_code") == "E002"
+
+    def test_emit_reason_enabled_returns_bool(self):
+        """_emit_reason_enabled() always returns a plain bool."""
+        from mcpgateway.plugins.control_telemetry import _emit_reason_enabled  # noqa: PLC0415
+        assert isinstance(_emit_reason_enabled(), bool)
+
+    def test_emit_reason_enabled_default_false(self):
+        """Default value is False when setting is absent."""
+        from mcpgateway.plugins.control_telemetry import _emit_reason_enabled  # noqa: PLC0415
+        import mcpgateway.config as cfg_mod  # noqa: PLC0415
+        mock_settings = MagicMock(spec=[])  # no cpex_control_telemetry_emit_reason attr
+        original = cfg_mod.settings
+        try:
+            cfg_mod.settings = mock_settings
+            result = _emit_reason_enabled()
+        finally:
+            cfg_mod.settings = original
+        assert result is False

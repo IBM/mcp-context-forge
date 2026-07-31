@@ -629,6 +629,21 @@ def apply_attribute_mapping(attributes: dict, mapping: dict) -> dict:
     Supports both exact key renames and single-``*`` wildcard renames.
     Exact rules take precedence over wildcard rules.
 
+    Collision behaviour (two source keys map to the same destination):
+    The last source key processed wins — ``dict`` assignment overwrites the
+    earlier value silently.  This is documented deterministic behaviour: since
+    exact rules are evaluated first and wildcard rules are evaluated in
+    insertion order, the outcome is predictable.  Compile-time collision
+    detection (rejecting ambiguous configs at startup) is planned for the
+    Phase 5 attribute-policy wiring.
+
+    Fallback on invalid mapping:
+    If ``compile_attribute_policy`` raises ``ValueError`` (e.g. ``otel.*``
+    destination, empty key, key > 256 chars), the function returns the
+    attributes **unchanged** rather than applying a partially-validated
+    mapping.  This is intentional fail-closed behaviour — no attribute will
+    ever be renamed into a reserved namespace on an invalid config.
+
     Args:
         attributes: Dictionary of attributes to rename.
         mapping: Dictionary mapping old attribute names to new names.

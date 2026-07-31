@@ -2015,9 +2015,19 @@ class Settings(BaseSettings):
             "Informational cap on total span attributes across all control telemetry per "
             "invocation. Not enforced gateway-side; intended as a hint for external "
             "OTel-collector attribute-limit configuration (e.g. transform/attributes "
-            "processor). Actual enforcement, if required, should be added alongside "
-            "Phase 5 attribute-policy wiring (see issue #5785). "
+            "processor). Gateway-side enforcement is planned alongside Phase 5 "
+            "attribute-policy wiring. Until then, the internal DB sink is unbounded. "
             "Env: CPEX_CONTROL_TELEMETRY_MAX_ATTRIBUTES."
+        ),
+    )
+    cpex_control_telemetry_emit_reason: bool = Field(
+        default=False,
+        description=(
+            "Emit cpex.control.result.reason and cpex.control.result.error_code on "
+            "per-control spans. Disabled by default because these fields may contain "
+            "PII, tool argument values, or exception content. Enable only when the "
+            "observability sink is appropriately secured and a redaction boundary is "
+            "in place. Env: CPEX_CONTROL_TELEMETRY_EMIT_REASON."
         ),
     )
 
