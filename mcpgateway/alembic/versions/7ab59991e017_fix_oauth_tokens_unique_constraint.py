@@ -101,7 +101,13 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    """Restore original unique constraint on (gateway_id, user_id)."""
+    """Restore original unique constraint on (gateway_id, user_id).
+
+    Raises:
+        RuntimeError: If duplicate (gateway_id, user_id) pairs exist that would
+                     violate the restored constraint. Operators must manually
+                     resolve duplicates before downgrading.
+    """
 
     # Check if oauth_tokens table exists
     conn = op.get_bind()
@@ -139,6 +145,41 @@ def downgrade() -> None:
 
     # Restore the old UniqueConstraint if it doesn't exist
     if not old_constraint_exists:
+        # Check for duplicate (gateway_id, user_id) pairs before recreating constraint
+        duplicate_check = conn.execute(
+            sa.text(
+                """
+                SELECT gateway_id, user_id, COUNT(*) as cnt
+                FROM oauth_tokens
+                GROUP BY gateway_id, user_id
+                HAVING COUNT(*) > 1
+                """
+            )
+        ).fetchall()
+
+        if duplicate_check:
+            # Build detailed error message showing duplicates
+            duplicate_details = "\n".join(
+                [f"  - gateway_id={gw_id}, user_id={u_id}, count={cnt}" for gw_id, u_id, cnt in duplicate_check[:5]]  # Show first 5
+            )
+            if len(duplicate_check) > 5:
+                duplicate_details += f"\n  ... and {len(duplicate_check) - 5} more"
+
+            raise RuntimeError(
+                f"Cannot downgrade migration 7ab59991e017: "
+                f"{len(duplicate_check)} duplicate (gateway_id, user_id) pairs exist.\n\n"
+                f"This is expected after the upgrade enabled multi-user OAuth support. "
+                f"Multiple ContextForge users can now store tokens for the same OAuth provider user.\n\n"
+                f"Duplicate pairs found:\n{duplicate_details}\n\n"
+                f"To downgrade, you must manually resolve these duplicates first.\n"
+                f"See docs/docs/manage/dcr.md for resolution steps:\n"
+                f"  1. Identify duplicates: SELECT gateway_id, user_id, COUNT(*) FROM oauth_tokens GROUP BY gateway_id, user_id HAVING COUNT(*) > 1\n"
+                f"  2. Choose resolution strategy (keep newest, keep specific user, or delete all)\n"
+                f"  3. Verify no duplicates remain\n"
+                f"  4. Retry downgrade"
+            )
+
+        # Safe to recreate the old constraint
         if dialect_name == "sqlite":
             with op.batch_alter_table("oauth_tokens", schema=None) as batch_op:
                 batch_op.create_unique_constraint("unique_gateway_user", ["gateway_id", "user_id"])

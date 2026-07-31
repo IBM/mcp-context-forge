@@ -13,6 +13,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 # Third-Party
+import pytest
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
 import sqlalchemy as sa
@@ -150,6 +151,32 @@ class TestOAuthTokensConstraintMigrationSqlite:
         finally:
             engine.dispose()
 
+    def test_upgrade_allows_same_provider_user_for_distinct_app_users(self):
+        """upgrade() permits two ContextForge users to store one provider identity."""
+        engine = _make_engine()
+        try:
+            with engine.connect() as conn:
+                _create_pre_migration_schema(conn)
+                _run_upgrade(conn)
+
+                conn.execute(sa.text("INSERT INTO gateways (id) VALUES ('gateway-1')"))
+                conn.execute(sa.text("INSERT INTO email_users (email) VALUES ('alice@example.com'), ('bob@example.com')"))
+                conn.execute(
+                    sa.text(
+                        "INSERT INTO oauth_tokens "
+                        "(id, gateway_id, user_id, app_user_email, access_token) "
+                        "VALUES "
+                        "('token-1', 'gateway-1', 'provider-user-1', 'alice@example.com', 'token-a'), "
+                        "('token-2', 'gateway-1', 'provider-user-1', 'bob@example.com', 'token-b')"
+                    )
+                )
+                conn.commit()
+
+                count = conn.execute(sa.text("SELECT COUNT(*) FROM oauth_tokens")).scalar_one()
+                assert count == 2
+        finally:
+            engine.dispose()
+
     def test_downgrade_restores_old_constraint_and_preserves_lookup_index(self):
         """downgrade() restores the historical uniqueness shape on SQLite."""
         engine = _make_engine()
@@ -199,6 +226,51 @@ class TestOAuthTokensConstraintMigrationSqlite:
                 assert NEW_CONSTRAINT not in constraint_names
                 assert OLD_CONSTRAINT in constraint_names
                 assert LOOKUP_INDEX in _index_names(conn)
+        finally:
+            engine.dispose()
+
+    def test_downgrade_fails_with_duplicate_gateway_user_pairs(self):
+        """downgrade() raises RuntimeError when duplicate (gateway_id, user_id) pairs exist."""
+        engine = _make_engine()
+        try:
+            with engine.connect() as conn:
+                _create_pre_migration_schema(conn)
+                _run_upgrade(conn)
+
+                # Insert test data with duplicate (gateway_id, user_id) but different app_user_email
+                conn.execute(sa.text("INSERT INTO gateways (id) VALUES ('gateway-1')"))
+                conn.execute(sa.text("INSERT INTO email_users (email) VALUES ('alice@example.com'), ('bob@example.com')"))
+                conn.execute(
+                    sa.text(
+                        "INSERT INTO oauth_tokens "
+                        "(id, gateway_id, user_id, app_user_email, access_token) "
+                        "VALUES "
+                        "('token-1', 'gateway-1', 'provider-user-1', 'alice@example.com', 'token-a'), "
+                        "('token-2', 'gateway-1', 'provider-user-1', 'bob@example.com', 'token-b')"
+                    )
+                )
+                conn.commit()
+
+                # Verify duplicates exist
+                count = conn.execute(sa.text("SELECT COUNT(*) FROM oauth_tokens")).scalar_one()
+                assert count == 2
+
+                # Attempt downgrade should raise RuntimeError
+                with pytest.raises(RuntimeError) as exc_info:
+                    _run_downgrade(conn)
+
+                # Verify error message contains expected details
+                error_msg = str(exc_info.value)
+                assert "Cannot downgrade migration 7ab59991e017" in error_msg
+                assert "duplicate (gateway_id, user_id) pairs exist" in error_msg
+                assert "gateway_id=gateway-1" in error_msg
+                assert "user_id=provider-user-1" in error_msg
+                assert "manually resolve these duplicates" in error_msg
+
+                # Verify new constraint still exists (downgrade was aborted)
+                constraint_names = _unique_constraint_names(conn)
+                assert NEW_CONSTRAINT not in constraint_names  # Was dropped before duplicate check
+                assert OLD_CONSTRAINT not in constraint_names  # Was never created due to error
         finally:
             engine.dispose()
 
@@ -273,7 +345,13 @@ class TestOAuthTokensConstraintMigrationPostgresql:
     def test_downgrade_drops_new_constraint_and_restores_old_constraint(self):
         """downgrade() restores the historical PostgreSQL constraint."""
         module = importlib.import_module(MODULE_NAME)
-        fake_conn = SimpleNamespace(dialect=SimpleNamespace(name="postgresql"))
+
+        # Mock connection with execute method that returns empty result (no duplicates)
+        mock_result = SimpleNamespace(fetchall=lambda: [])
+        fake_conn = SimpleNamespace(
+            dialect=SimpleNamespace(name="postgresql"),
+            execute=lambda _query: mock_result
+        )
         state = _InspectorState({TABLE_NAME}, [{"name": NEW_CONSTRAINT}])
 
         def _drop_constraint(name, _table_name, type_):

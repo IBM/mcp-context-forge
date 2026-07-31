@@ -289,6 +289,120 @@ Historical note: older deployments used `unique_gateway_user` on `(gateway_id, u
 
 ---
 
+## Downgrading from Migration 7ab59991e017
+
+!!! warning "Data Loss Risk"
+    Downgrading this migration may require deleting OAuth tokens. Users whose tokens are removed will need to re-authorize.
+
+### Prerequisites
+
+Migration 7ab59991e017 enables multi-user OAuth support, allowing multiple ContextForge users to store tokens for the same OAuth provider `user_id`. If you need to downgrade, you must first resolve any duplicate `(gateway_id, user_id)` pairs.
+
+### Step 1: Check for Duplicates
+
+```sql
+-- Identify duplicate pairs
+SELECT gateway_id, user_id, COUNT(*) as token_count,
+       GROUP_CONCAT(app_user_email) as contextforge_users
+FROM oauth_tokens
+GROUP BY gateway_id, user_id
+HAVING COUNT(*) > 1;
+```
+
+If this query returns rows, you have duplicates that must be resolved before downgrading.
+
+### Step 2: Choose Resolution Strategy
+
+#### Option A: Keep Newest Token (Recommended)
+
+Keep only the most recently updated token for each duplicate pair:
+
+**SQLite:**
+```sql
+DELETE FROM oauth_tokens
+WHERE id NOT IN (
+    SELECT id FROM (
+        SELECT id, gateway_id, user_id,
+               ROW_NUMBER() OVER (
+                   PARTITION BY gateway_id, user_id
+                   ORDER BY updated_at DESC, created_at DESC
+               ) as rn
+        FROM oauth_tokens
+    ) WHERE rn = 1
+);
+```
+
+**PostgreSQL:**
+```sql
+DELETE FROM oauth_tokens
+WHERE id IN (
+    SELECT id FROM (
+        SELECT id,
+               ROW_NUMBER() OVER (
+                   PARTITION BY gateway_id, user_id
+                   ORDER BY updated_at DESC, created_at DESC
+               ) as rn
+        FROM oauth_tokens
+    ) t WHERE rn > 1
+);
+```
+
+#### Option B: Keep Specific User's Token
+
+Keep tokens for a specific ContextForge user (e.g., admin):
+
+```sql
+DELETE FROM oauth_tokens
+WHERE (gateway_id, user_id) IN (
+    SELECT gateway_id, user_id
+    FROM oauth_tokens
+    GROUP BY gateway_id, user_id
+    HAVING COUNT(*) > 1
+)
+AND app_user_email != 'admin@example.com';
+```
+
+#### Option C: Delete All Duplicates
+
+Remove all tokens for duplicate pairs (users must re-authorize):
+
+```sql
+DELETE FROM oauth_tokens
+WHERE (gateway_id, user_id) IN (
+    SELECT gateway_id, user_id
+    FROM oauth_tokens
+    GROUP BY gateway_id, user_id
+    HAVING COUNT(*) > 1
+);
+```
+
+### Step 3: Verify No Duplicates Remain
+
+```sql
+-- Should return 0 rows
+SELECT gateway_id, user_id, COUNT(*) as cnt
+FROM oauth_tokens
+GROUP BY gateway_id, user_id
+HAVING COUNT(*) > 1;
+```
+
+### Step 4: Run Downgrade
+
+```bash
+cd mcpgateway
+alembic downgrade d21698ae4a19
+```
+
+### Impact of Downgrade
+
+After downgrading:
+
+- Only ONE ContextForge user can store tokens per OAuth provider `user_id` per gateway
+- If multiple users need access to the same gateway, they must use different OAuth provider accounts
+- Users whose tokens were removed will need to re-authorize
+
+---
+
 ## Security Features
 
 ### 1. Issuer Allowlist
