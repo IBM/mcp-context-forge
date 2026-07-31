@@ -346,7 +346,11 @@ export function MCPServerDetailsPanel({
 
               <div className="my-8 h-px bg-border" />
 
-              <Tabs value={topTab} onValueChange={(v) => setTopTab(v as TopTab)}>
+              <Tabs
+                value={topTab}
+                onValueChange={(v) => setTopTab(v as TopTab)}
+                aria-label="Server details view"
+              >
                 <TabsList className="inline-flex h-10 w-[248px] items-center gap-0 rounded-md bg-muted p-1">
                   <TabsTrigger value="tryit" className={SEGMENTED_TRIGGER_CLASS}>
                     Try it
