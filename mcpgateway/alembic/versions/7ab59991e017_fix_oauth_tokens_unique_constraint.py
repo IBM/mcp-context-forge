@@ -18,7 +18,7 @@ This migration:
 3. Keeps idx_oauth_gateway_user for query performance
 
     Revision ID: 7ab59991e017
-    Revises: d21698ae4a19
+    Revises: c9f8e7d6a4b3
     Create Date: 2026-06-12 10:18:32.623237
 """
 
@@ -31,7 +31,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = "7ab59991e017"
-down_revision: Union[str, Sequence[str], None] = "d21698ae4a19" #pragma: allowlist secret
+down_revision: Union[str, Sequence[str], None] = "c9f8e7d6a4b3" #pragma: allowlist secret
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
