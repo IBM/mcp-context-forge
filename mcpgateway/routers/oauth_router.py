@@ -278,6 +278,30 @@ def _require_unnarrowed_admin(request: Request, current_user: EmailUserResponse)
         raise HTTPException(status_code=403, detail="OAuth client management requires un-narrowed admin access")
 
 
+def _recover_token_teams_from_jwt(request: Request) -> tuple[list[str] | None, bool] | None:
+    """Attempt to recover token_teams from cached JWT payload.
+
+    When ``request.state.token_teams`` is missing or malformed, this helper
+    inspects the cached verified JWT payload (set by the auth middleware) to
+    re-derive a well-typed ``token_teams`` value and the associated admin flag.
+
+    Returns:
+        Tuple of ``(token_teams, is_admin)`` if recovery succeeds, ``None`` otherwise.
+    """
+    cached = getattr(request.state, "_jwt_verified_payload", None)
+    if not (cached and isinstance(cached, tuple) and len(cached) == 2):
+        return None
+
+    _, payload = cached
+    if not (isinstance(payload, dict) and payload):
+        return None
+
+    token_teams = normalize_token_teams(payload)
+    is_admin = _extract_is_admin(payload)
+
+    return (token_teams, is_admin)
+
+
 def _resolve_token_teams_for_scope_check(request: Request, current_user: EmailUserResponse) -> list[str] | None:
     """Resolve token teams for scoped ownership checks using normalized token semantics.
 
@@ -294,8 +318,9 @@ def _resolve_token_teams_for_scope_check(request: Request, current_user: EmailUs
         current_user: Authenticated user context.
 
     Returns:
-        ``None`` for explicitly un-scoped requests (which callers must downgrade for non-admins),
-        or a normalized team list for scoped access.
+        ``None`` for unrestricted admin scope (which callers must downgrade for non-admins),
+        a non-empty list for team-scoped access, or ``[]`` for public-only scope (including
+        fail-closed cases when no trusted source is available).
     """
     is_admin = _extract_is_admin(current_user)
 
@@ -316,18 +341,13 @@ def _resolve_token_teams_for_scope_check(request: Request, current_user: EmailUs
             )
 
         # Attempt recovery from the cached verified JWT payload.
-        cached = getattr(request.state, "_jwt_verified_payload", None)
-        recovered = False
-        if cached and isinstance(cached, tuple) and len(cached) == 2:
-            _, payload = cached
-            if isinstance(payload, dict) and payload:
-                token_teams = normalize_token_teams(payload)
-                user_claim = payload.get("user", {})
-                user_is_admin = user_claim.get("is_admin", False) if isinstance(user_claim, dict) else False
-                is_admin = bool(payload.get("is_admin", False) or user_is_admin)
-                recovered = True
-
-        if not recovered:
+        recovered = _recover_token_teams_from_jwt(request)
+        if recovered:
+            token_teams, is_admin = recovered
+            logger.debug(
+                "_resolve_token_teams_for_scope_check: recovered token_teams from cached JWT payload",
+            )
+        else:
             # No usable cached payload — fail closed to public-only regardless
             # of admin status.  Unrestricted scope requires an explicit signal from
             # a trusted source, not an absence of any signal.
@@ -349,8 +369,11 @@ def _resolve_token_teams_for_scope_check(request: Request, current_user: EmailUs
 def _extract_is_admin(current_user: EmailUserResponse | dict) -> bool:
     """Extract admin flag from typed or dict user contexts.
 
+    Supports both flat dict structures (``{"is_admin": True}``) and nested
+    structures (``{"user": {"is_admin": True}}``), matching JWT payload formats.
+
     Args:
-        current_user: Authenticated user context.
+        current_user: Authenticated user context (typed object or dict).
 
     Returns:
         ``True`` when the user context indicates admin privileges.
