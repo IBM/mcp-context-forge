@@ -800,11 +800,7 @@ clean:
 # =============================================================================
 # help: 🧪 TESTING
 # help: smoketest            - Run smoketest.py --verbose (build container, add MCP server, test endpoints)
-# help: test-protocol-compliance - MCP protocol compliance harness: full (target, transport) matrix across reference + gateway (K=<filter> to pick one)
-# help: test-protocol-compliance-reference - Protocol compliance harness, reference server only (fast, always-on)
-# help: test-protocol-compliance-gateway - Protocol compliance harness, gateway-proxy + gateway-virtual targets (requires working gateway boot)
-# help: test-protocol-compliance-matrix - Protocol compliance matrix across every runnable engine; summary table (pass MATRIX_ARGS='--format markdown --out X' to override)
-# help: test-mcp-protocol-e2e - MCP protocol E2E via FastMCP client against live gateway (K=<filter> to pick one; MCP_E2E_CLIENT_TIMEOUT env to extend the 5s client timeout)
+# help: test-mcp-protocol-e2e - MCP protocol E2E via mcp SDK client against live gateway (K=<filter> to pick one; MCP_E2E_CLIENT_TIMEOUT env to extend the 5s client timeout)
 # help: test-mcp-cli         - [DEPRECATED] Alias for test-mcp-protocol-e2e (accepts same K=<filter>)
 # help: test-bats            - Run bats tests for git tooling (tests/bash; requires bats)
 # help: test-mcp-rbac        - RBAC + multi-transport MCP protocol tests (needs live gateway + SSE)
@@ -812,7 +808,7 @@ clean:
 # help: test-mcp-plugin-parity - MCP plugin parity E2E for current Python or Rust stack
 # help: test-mcp-session-isolation - MCP session/auth isolation tests for Rust public transport
 # help: test-e2e-sso         - E2E tests requiring a live SSO identity provider (Keycloak or Entra ID)
-# help: test-live-gateway    - Run ALL live-gateway tests (mcp + sso + protocol_compliance + e2e_rust)
+# help: test-live-gateway    - Run ALL live-gateway tests (mcp + sso + e2e_rust)
 # help: test-plugin-integration - Self-contained plugin E2E tests (boots gateway; PLUGIN=<name> ENFORCEMENT=static|binding|both)
 # help: test-plugin-secrets-detection  - Plugin E2E: SecretsDetection
 # help: test-plugin-encoded-exfil      - Plugin E2E: EncodedExfil
@@ -860,8 +856,8 @@ clean:
 
 # Dirs/files always excluded from standard pytest runs.
 # tests/live_gateway/ — see tests/live_gateway/README.md. Subsuites need
-# a running gateway (`make testing-up`), Keycloak/Entra (sso/), the Rust
-# transport (e2e_rust/), or specific protocol setup (protocol_compliance/).
+# a running gateway (`make testing-up`), Keycloak/Entra (sso/), or the Rust
+# transport (e2e_rust/).
 # Invoke via `make test-live-gateway` (everything) or a targeted helper
 # (test-mcp-protocol-e2e, test-mcp-rbac, test-mcp-plugin-parity,
 # test-mcp-access-matrix, test-mcp-session-isolation, test-e2e-sso,
@@ -879,7 +875,7 @@ smoketest:
 	@$(VENV_DIR)/bin/python ./smoketest.py --verbose || { echo "❌ Smoketest failed!"; exit 1; }
 	@echo "✅ Smoketest passed!"
 
-test-mcp-protocol-e2e: uv  ## MCP protocol E2E via FastMCP client (K=<filter> to pick one)
+test-mcp-protocol-e2e: uv  ## MCP protocol E2E via mcp SDK client (K=<filter> to pick one)
 	@echo "🔌 Running MCP protocol E2E tests against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
 	@echo "   Env: MCP_CLI_BASE_URL (gateway URL)  JWT_SECRET_KEY  PLATFORM_ADMIN_EMAIL"
 	@echo "   Timeout: $${MCP_E2E_CLIENT_TIMEOUT:-5.0}s per client operation (override MCP_E2E_CLIENT_TIMEOUT)"
@@ -904,28 +900,6 @@ test-bats:                     ## 🧪  Run bats tests for git tooling (tests/ba
 	}
 	@echo "🧪  Running bats tests for git tooling (tests/bash)..."
 	@bats tests/bash/ && echo "✅  bats tests passed!" || { echo "❌  bats tests failed!"; exit 1; }
-
-test-protocol-compliance: uv  ## MCP protocol compliance harness — full (target, transport) matrix (K=<filter> to pick one)
-	@echo "📜 Running MCP protocol compliance harness (tests/live_gateway/protocol_compliance)..."
-	@if [ -n "$(K)" ]; then echo "   Filter: -k \"$(K)\""; fi
-	@$(UV_BIN) run pytest tests/live_gateway/protocol_compliance $(if $(K),-k "$(K)") -v --tb=short \
-		|| { echo "❌ protocol compliance harness failed!"; exit 1; }
-	@echo "✅ protocol compliance harness passed!"
-
-test-protocol-compliance-reference: uv  ## Protocol compliance harness — reference server only (fast, always-on)
-	@echo "📜 Running MCP protocol compliance harness (reference target only)..."
-	@$(UV_BIN) run pytest tests/live_gateway/protocol_compliance -k "reference-stdio" -v --tb=short \
-		|| { echo "❌ reference-target compliance harness failed!"; exit 1; }
-	@echo "✅ reference-target compliance harness passed!"
-
-test-protocol-compliance-gateway: uv  ## Protocol compliance harness — gateway-proxy + gateway-virtual (needs in-process gateway boot to succeed)
-	@echo "📜 Running MCP protocol compliance harness (gateway targets)..."
-	@$(UV_BIN) run pytest tests/live_gateway/protocol_compliance -k "gateway_proxy or gateway_virtual" -v --tb=short \
-		|| { echo "❌ gateway-target compliance harness failed!"; exit 1; }
-	@echo "✅ gateway-target compliance harness passed!"
-
-test-protocol-compliance-matrix: uv  ## MCP compliance matrix across every runnable engine (reference, python, rust_edge, rust_full) with aggregated summary
-	@$(UV_BIN) run python scripts/compliance_matrix.py $(MATRIX_ARGS)
 
 test-mcp-rbac: uv  ## RBAC + multi-transport MCP protocol tests (needs live gateway + SSE)
 	@echo "🔐 Running RBAC + multi-transport MCP protocol tests against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
@@ -976,7 +950,7 @@ test-e2e-sso: uv  ## E2E tests requiring a live SSO identity provider (Keycloak 
 		|| { echo "❌ SSO E2E tests failed!"; exit 1; }
 	@echo "✅ SSO E2E tests passed!"
 
-test-live-gateway: uv  ## Run ALL live-gateway tests (mcp + sso + protocol_compliance)
+test-live-gateway: uv  ## Run ALL live-gateway tests (mcp + sso)
 	@echo "🌐 Running all tests in tests/live_gateway/ ..."
 	@echo "   Requires: live ContextForge gateway (typically 'make testing-up') and any"
 	@echo "             extra services per subsuite — see tests/live_gateway/README.md."
