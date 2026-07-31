@@ -5335,6 +5335,29 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                   <option value="STREAMABLEHTTP">Streamable HTTP</option>
                 </select>
               </div>
+              {% if direct_proxy_enabled %}
+              <div>
+                <label
+                  for="gateway-mode"
+                  class="block text-sm font-medium text-gray-700 dark:text-gray-400"
+                  >Gateway Mode</label
+                >
+                <small class="text-gray-500 dark:text-gray-400 block mb-2">
+                  Cache serves tools and resources from the gateway database.
+                  Direct proxy forwards each MCP call to the remote server and
+                  returns the live result; clients opt in per request with the
+                  X-Context-Forge-Gateway-Id header.
+                </small>
+                <select
+                  name="gateway_mode"
+                  id="gateway-mode"
+                  class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                >
+                  <option value="cache" selected>Cache (default)</option>
+                  <option value="direct_proxy">Direct proxy</option>
+                </select>
+              </div>
+              {% endif %}
               <div>
                 <label
                   class="block text-sm font-medium text-gray-700 dark:text-gray-400"
@@ -9874,6 +9897,30 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                         <option value="STREAMABLEHTTP">Streamable HTTP</option>
                       </select>
                     </div>
+                    {% if direct_proxy_enabled %}
+                    <div>
+                      <label
+                        for="edit-gateway-mode"
+                        class="block text-sm font-medium text-gray-700"
+                        >Gateway Mode</label
+                      >
+                      <small class="text-gray-500 dark:text-gray-400 block mb-2">
+                        Cache serves tools and resources from the gateway
+                        database. Direct proxy forwards each MCP call to the
+                        remote server and returns the live result; clients opt
+                        in per request with the X-Context-Forge-Gateway-Id
+                        header.
+                      </small>
+                      <select
+                        name="gateway_mode"
+                        id="edit-gateway-mode"
+                        class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                      >
+                        <option value="cache">Cache (default)</option>
+                        <option value="direct_proxy">Direct proxy</option>
+                      </select>
+                    </div>
+                    {% endif %}
                     <div>
                       <label class="block text-sm font-medium text-gray-700"
                         >Authentication Type</label
