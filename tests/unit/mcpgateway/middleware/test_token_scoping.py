@@ -363,6 +363,32 @@ class TestTokenScopingMiddleware:
         """A token scoped to a different A2A action is denied."""
         assert middleware._check_permission_restrictions(path, method, [permission]) is False
 
+    @pytest.mark.parametrize(
+        "token_scopes",
+        [
+            ["tools.execute"],
+            ["tools.read"],
+            ["resources.read"],
+            ["prompts.read"],
+            ["tools.read", "resources.read"],
+        ],
+    )
+    @pytest.mark.parametrize("path", ["/sse", "/servers/s1/sse", "/servers/s1/message", "/rpc", "/mcp"])
+    def test_mcp_method_tokens_keep_transport_access(self, middleware, token_scopes, path):
+        """MCP method permissions imply transport access at this layer.
+
+        These paths map to servers.use. The RBAC decorators guard the same endpoints with
+        @require_permission("servers.use"), so both layers must agree — see
+        TestTokenScopeGrants in test_rbac.py for the decorator side of this contract.
+        """
+        method = "GET" if path in ("/sse", "/servers/s1/sse") else "POST"
+        assert middleware._check_permission_restrictions(path, method, token_scopes) is True
+
+    @pytest.mark.parametrize("token_scopes", [["a2a.read"], ["admin.user_management"], ["gateways.read"]])
+    def test_non_mcp_tokens_denied_transport_access(self, middleware, token_scopes):
+        """Tokens without MCP method permissions get no transport compensation."""
+        assert middleware._check_permission_restrictions("/sse", "GET", token_scopes) is False
+
     def test_a2a_category_wildcard_covers_all_a2a_routes(self, middleware):
         """An `a2a.*` scope grants every A2A route but nothing outside the category."""
         assert middleware._check_permission_restrictions("/a2a", "GET", ["a2a.*"]) is True

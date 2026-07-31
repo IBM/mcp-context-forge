@@ -27,7 +27,7 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.db import fresh_db_session, SessionLocal
+from mcpgateway.db import fresh_db_session, Permissions, SessionLocal
 from mcpgateway.plugins.utils import build_request_extensions, record_plugin_metrics
 from mcpgateway.services.observability_service import current_trace_id
 from mcpgateway.services.permission_service import PermissionService
@@ -67,6 +67,15 @@ def token_scope_grants(token_scopes: Optional[List[str]], permission: str) -> bo
       * ``"*"`` — full access.
       * ``"<category>.*"`` — grants every permission in that category, matching the
         delegation rules in ``TokenCatalogService._validate_permission_delegation()``.
+        Note the token-creation API rejects this form (``TokenScopeRequest`` requires
+        ``resource.action``), so it is defensive rather than reachable today.
+      * ``servers.use`` — additionally granted to any token holding an MCP method
+        permission (``tools.*`` / ``resources.*`` / ``prompts.*``). Without transport
+        access those permissions are unusable, so ``_generate_token()`` injects
+        ``servers.use`` at creation time; this compensates for tokens issued before
+        that injection existed. Omitting it here would 403 such tokens on ``/sse``,
+        ``/servers/{id}/sse`` and ``/servers/{id}/message``, which the token-scoping
+        middleware admits.
       * otherwise — exact match.
 
     Args:
@@ -92,6 +101,15 @@ def token_scope_grants(token_scopes: Optional[List[str]], permission: str) -> bo
         True
         >>> token_scope_grants(["tools.read"], "a2a.read")
         False
+
+        MCP method permissions imply transport access:
+
+        >>> token_scope_grants(["tools.execute"], "servers.use")
+        True
+        >>> token_scope_grants(["prompts.read"], "servers.use")
+        True
+        >>> token_scope_grants(["a2a.read"], "servers.use")
+        False
     """
     if not token_scopes:
         # None (not a scoped token) or [] (inherit from RBAC) — no Layer 1 restriction.
@@ -104,7 +122,16 @@ def token_scope_grants(token_scopes: Optional[List[str]], permission: str) -> bo
         return True
 
     category, separator, _ = permission.partition(".")
-    return bool(separator) and f"{category}.{_ALL_PERMISSIONS_SCOPE}" in token_scopes
+    if separator and f"{category}.{_ALL_PERMISSIONS_SCOPE}" in token_scopes:
+        return True
+
+    # Transport compensation: MCP method permissions imply servers.use. Mirrors the
+    # generation-time injection in TokenCatalogService._generate_token() so tokens
+    # predating it are not denied transport access at Layer 1.
+    if permission == Permissions.SERVERS_USE:
+        return any(scope.startswith(Permissions.MCP_METHOD_PREFIXES) for scope in token_scopes)
+
+    return False
 
 
 # Bearer security scheme — uses the configured auth header (AUTH_HEADER_NAME)

@@ -486,10 +486,49 @@ class TestTokenScopeGrants:
             # Permissions without a category separator fall back to exact match
             (["tools.read"], "standalone", False),
             (["standalone"], "standalone", True),
+            # Transport compensation: MCP method permissions imply servers.use, matching
+            # the injection in TokenCatalogService._generate_token(). Without this, tokens
+            # issued before that injection 403 on /sse and /servers/{id}/message even
+            # though the token-scoping middleware admits them.
+            (["tools.execute"], "servers.use", True),
+            (["tools.read"], "servers.use", True),
+            (["resources.read"], "servers.use", True),
+            (["prompts.read"], "servers.use", True),
+            (["tools.execute", "servers.use"], "servers.use", True),
+            # Non-MCP permissions get no transport compensation
+            (["a2a.read"], "servers.use", False),
+            (["admin.user_management"], "servers.use", False),
+            # Compensation is scoped to servers.use only — it must not leak to other permissions
+            (["tools.execute"], "servers.read", False),
+            (["tools.execute"], "admin.system_config", False),
         ],
     )
     def test_token_scope_grants(self, token_scopes, permission, expected):
         assert rbac.token_scope_grants(token_scopes, permission) is expected
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("token_scopes", [["tools.execute"], ["resources.read"], ["prompts.read"]])
+    async def test_mcp_method_token_reaches_transport_endpoints(self, token_scopes):
+        """A token with MCP method permissions but no explicit servers.use must not be 403'd.
+
+        Regression guard: ``@require_permission("servers.use")`` guards /sse,
+        /servers/{id}/sse and /servers/{id}/message. TokenScopingMiddleware admits these
+        tokens via transport compensation, so Layer 1 in the decorator must agree or the
+        request is denied at Layer 1 having never reached RBAC.
+        """
+
+        async def dummy_func(user=None):
+            return "ok"
+
+        perm_service = AsyncMock()
+        perm_service.check_permission.return_value = True
+        decorated = rbac.require_permission("servers.use")(dummy_func)
+        user = {"email": "user@example.com", "db": MagicMock(), "token_scopes": token_scopes}
+
+        with patch.object(rbac, "PermissionService", return_value=perm_service):
+            assert await decorated(user=user) == "ok"
+
+        perm_service.check_permission.assert_called_once()
 
 
 class TestRequirePermissionTokenScopes:
