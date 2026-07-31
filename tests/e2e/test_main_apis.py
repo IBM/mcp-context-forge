@@ -1506,6 +1506,54 @@ class TestGatewayAPIs:
         resp_json = response.json()
         assert "not found" in str(resp_json).lower() or "does not exist" in str(resp_json).lower()
 
+    async def test_list_gateways_includes_capability_counts(self, client: AsyncClient, mock_auth, temp_db):
+        """GET /gateways must report tool/prompt/resource counts for each gateway."""
+        # Standard
+        import uuid as uuid_module
+
+        # First-Party
+        from mcpgateway.db import Gateway as DbGateway
+        from mcpgateway.db import Prompt as DbPrompt
+        from mcpgateway.db import Resource as DbResource
+        from mcpgateway.db import Tool as DbTool
+
+        test_db_dependency = app.dependency_overrides.get(get_db) or get_db
+        db = next(test_db_dependency())
+
+        uid = uuid_module.uuid4().hex[:8]
+        gateway = DbGateway(
+            id=uuid_module.uuid4().hex,
+            name=f"counts_gw_{uid}",
+            slug=f"counts-gw-{uid}",
+            url=f"http://counts.example.com/{uid}",
+            transport="SSE",
+            visibility="public",
+            owner_email="testuser@example.com",
+            enabled=True,
+            capabilities={},
+        )
+        db.add(gateway)
+        db.commit()
+
+        db.add_all(
+            [
+                DbTool(id=uuid_module.uuid4().hex, original_name=f"tool1_{uid}", url="http://example.com/t1", gateway_id=gateway.id, visibility="public", owner_email="testuser@example.com", enabled=True, input_schema={}),
+                DbTool(id=uuid_module.uuid4().hex, original_name=f"tool2_{uid}", url="http://example.com/t2", gateway_id=gateway.id, visibility="public", owner_email="testuser@example.com", enabled=True, input_schema={}),
+                DbTool(id=uuid_module.uuid4().hex, original_name=f"tool3_{uid}", url="http://example.com/t3", gateway_id=gateway.id, visibility="public", owner_email="testuser@example.com", enabled=True, input_schema={}),
+                DbPrompt(id=uuid_module.uuid4().hex, original_name=f"prompt1_{uid}", template="Hello", argument_schema={}, gateway_id=gateway.id, visibility="public", owner_email="testuser@example.com", enabled=True),
+                DbPrompt(id=uuid_module.uuid4().hex, original_name=f"prompt2_{uid}", template="Hello", argument_schema={}, gateway_id=gateway.id, visibility="public", owner_email="testuser@example.com", enabled=True),
+                DbResource(id=uuid_module.uuid4().hex, name=f"resource1_{uid}", uri=f"file:///res1_{uid}", gateway_id=gateway.id, visibility="public", owner_email="testuser@example.com", enabled=True),
+            ]
+        )
+        db.commit()
+
+        response = await client.get("/gateways", headers=TEST_AUTH_HEADER)
+        assert response.status_code == 200
+        gateway_json = next(g for g in response.json() if g["id"] == gateway.id)
+        assert gateway_json["toolCount"] == 3
+        assert gateway_json["promptCount"] == 2
+        assert gateway_json["resourceCount"] == 1
+
 
 # -------------------------
 # Test Root APIs
