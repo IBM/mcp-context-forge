@@ -55,6 +55,7 @@ def upgrade() -> None:
     inspector = sa.inspect(conn)  # Refresh inspector for current state
     unique_constraints = inspector.get_unique_constraints("oauth_tokens")
     old_constraint_exists = any(uc.get("name") == "unique_gateway_user" for uc in unique_constraints)
+    lookup_index_exists = any(index["name"] == "idx_oauth_gateway_user" for index in inspector.get_indexes("oauth_tokens"))
 
     # For SQLite and PostgreSQL, handle constraint migration differently
     if dialect_name == "sqlite":
@@ -64,6 +65,8 @@ def upgrade() -> None:
             print("SQLite detected: Using batch mode to fix constraints...")
             with op.batch_alter_table("oauth_tokens", schema=None) as batch_op:
                 batch_op.drop_constraint("unique_gateway_user", type_="unique")
+                if lookup_index_exists:
+                    batch_op.drop_index("idx_oauth_gateway_user")
                 batch_op.create_unique_constraint("uq_oauth_gateway_user", ["gateway_id", "app_user_email"])
             print("✓ Dropped 'unique_gateway_user' and created 'uq_oauth_gateway_user'")
         else:
@@ -74,8 +77,13 @@ def upgrade() -> None:
 
             if not new_constraint_exists:
                 with op.batch_alter_table("oauth_tokens", schema=None) as batch_op:
+                    if lookup_index_exists:
+                        batch_op.drop_index("idx_oauth_gateway_user")
                     batch_op.create_unique_constraint("uq_oauth_gateway_user", ["gateway_id", "app_user_email"])
                 print("✓ Created new UniqueConstraint 'uq_oauth_gateway_user'")
+            elif lookup_index_exists:
+                op.drop_index("idx_oauth_gateway_user", "oauth_tokens")
+                print("✓ Dropped redundant unique index 'idx_oauth_gateway_user'")
             else:
                 print("New UniqueConstraint 'uq_oauth_gateway_user' already exists")
     else:
@@ -91,13 +99,15 @@ def upgrade() -> None:
         unique_constraints = inspector.get_unique_constraints("oauth_tokens")
         new_constraint_exists = any(uc.get("name") == "uq_oauth_gateway_user" for uc in unique_constraints)
 
+        if lookup_index_exists:
+            op.drop_index("idx_oauth_gateway_user", "oauth_tokens")
+            print("✓ Dropped redundant unique index 'idx_oauth_gateway_user'")
+
         if not new_constraint_exists:
             op.create_unique_constraint("uq_oauth_gateway_user", "oauth_tokens", ["gateway_id", "app_user_email"])
             print("✓ Created new UniqueConstraint 'uq_oauth_gateway_user' on (gateway_id, app_user_email)")
         else:
             print("New UniqueConstraint 'uq_oauth_gateway_user' already exists")
-
-    # Note: idx_oauth_gateway_user remains in place for query performance.
 
 
 def downgrade() -> None:
@@ -126,26 +136,11 @@ def downgrade() -> None:
     unique_constraints = inspector.get_unique_constraints("oauth_tokens")
     new_constraint_exists = any(uc.get("name") == "uq_oauth_gateway_user" for uc in unique_constraints)
 
-    # Drop the new UniqueConstraint if it exists
-    if new_constraint_exists:
-        if dialect_name == "sqlite":
-            with op.batch_alter_table("oauth_tokens", schema=None) as batch_op:
-                batch_op.drop_constraint("uq_oauth_gateway_user", type_="unique")
-            print("Dropped UniqueConstraint 'uq_oauth_gateway_user' on (gateway_id, app_user_email)")
-        else:
-            op.drop_constraint("uq_oauth_gateway_user", "oauth_tokens", type_="unique")
-            print("Dropped UniqueConstraint 'uq_oauth_gateway_user' on (gateway_id, app_user_email)")
-    else:
-        print("UniqueConstraint 'uq_oauth_gateway_user' not found")
-
-    # Check if old constraint already exists
-    inspector = sa.inspect(conn)  # Refresh inspector after constraint drop
-    unique_constraints = inspector.get_unique_constraints("oauth_tokens")
     old_constraint_exists = any(uc.get("name") == "unique_gateway_user" for uc in unique_constraints)
+    lookup_index_exists = any(index["name"] == "idx_oauth_gateway_user" for index in inspector.get_indexes("oauth_tokens"))
 
-    # Restore the old UniqueConstraint if it doesn't exist
+    # Validate that restoring the legacy constraint is possible before any DDL.
     if not old_constraint_exists:
-        # Check for duplicate (gateway_id, user_id) pairs before recreating constraint
         duplicate_check = conn.execute(
             sa.text(
                 """
@@ -158,7 +153,6 @@ def downgrade() -> None:
         ).fetchall()
 
         if duplicate_check:
-            # Build detailed error message showing duplicates
             duplicate_details = "\n".join(
                 [f"  - gateway_id={gw_id}, user_id={u_id}, count={cnt}" for gw_id, u_id, cnt in duplicate_check[:5]]  # Show first 5
             )
@@ -179,7 +173,20 @@ def downgrade() -> None:
                 f"  4. Retry downgrade"
             )
 
-        # Safe to recreate the old constraint
+    # Drop the new UniqueConstraint if it exists
+    if new_constraint_exists:
+        if dialect_name == "sqlite":
+            with op.batch_alter_table("oauth_tokens", schema=None) as batch_op:
+                batch_op.drop_constraint("uq_oauth_gateway_user", type_="unique")
+            print("Dropped UniqueConstraint 'uq_oauth_gateway_user' on (gateway_id, app_user_email)")
+        else:
+            op.drop_constraint("uq_oauth_gateway_user", "oauth_tokens", type_="unique")
+            print("Dropped UniqueConstraint 'uq_oauth_gateway_user' on (gateway_id, app_user_email)")
+    else:
+        print("UniqueConstraint 'uq_oauth_gateway_user' not found")
+
+    # Restore the old UniqueConstraint if it doesn't exist
+    if not old_constraint_exists:
         if dialect_name == "sqlite":
             with op.batch_alter_table("oauth_tokens", schema=None) as batch_op:
                 batch_op.create_unique_constraint("unique_gateway_user", ["gateway_id", "user_id"])
@@ -189,3 +196,7 @@ def downgrade() -> None:
             print("Restored old UniqueConstraint 'unique_gateway_user' on (gateway_id, user_id)")
     else:
         print("Old UniqueConstraint 'unique_gateway_user' already exists")
+
+    if not lookup_index_exists:
+        op.create_index("idx_oauth_gateway_user", "oauth_tokens", ["gateway_id", "app_user_email"], unique=True)
+        print("Restored unique index 'idx_oauth_gateway_user' on (gateway_id, app_user_email)")

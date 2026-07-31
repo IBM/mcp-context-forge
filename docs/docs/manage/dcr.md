@@ -302,8 +302,7 @@ Migration 7ab59991e017 enables multi-user OAuth support, allowing multiple Conte
 
 ```sql
 -- Identify duplicate pairs
-SELECT gateway_id, user_id, COUNT(*) as token_count,
-       GROUP_CONCAT(app_user_email) as contextforge_users
+SELECT gateway_id, user_id, COUNT(*) as token_count
 FROM oauth_tokens
 GROUP BY gateway_id, user_id
 HAVING COUNT(*) > 1;
@@ -390,7 +389,7 @@ HAVING COUNT(*) > 1;
 
 ```bash
 cd mcpgateway
-alembic downgrade d21698ae4a19
+alembic downgrade c9f8e7d6a4b3
 ```
 
 ### Impact of Downgrade

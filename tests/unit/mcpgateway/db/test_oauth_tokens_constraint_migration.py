@@ -21,7 +21,7 @@ from sqlalchemy.pool import StaticPool
 
 MODULE_NAME = "mcpgateway.alembic.versions.7ab59991e017_fix_oauth_tokens_unique_constraint"
 REVISION = "7ab59991e017"  # pragma: allowlist secret
-DOWN_REVISION = "d21698ae4a19"  # pragma: allowlist secret
+DOWN_REVISION = "c9f8e7d6a4b3"  # pragma: allowlist secret
 TABLE_NAME = "oauth_tokens"
 OLD_CONSTRAINT = "unique_gateway_user"
 NEW_CONSTRAINT = "uq_oauth_gateway_user"
@@ -131,8 +131,8 @@ class TestOAuthTokensConstraintMigrationStructure:
 class TestOAuthTokensConstraintMigrationSqlite:
     """Functional SQLite coverage for the constraint fix migration."""
 
-    def test_upgrade_renames_constraint_and_preserves_lookup_index(self):
-        """upgrade() removes the old unique constraint and adds the new one on SQLite."""
+    def test_upgrade_replaces_old_constraint_and_redundant_lookup_index(self):
+        """upgrade() replaces legacy uniqueness with one named constraint on SQLite."""
         engine = _make_engine()
         try:
             with engine.connect() as conn:
@@ -147,7 +147,7 @@ class TestOAuthTokensConstraintMigrationSqlite:
                 constraint_names = _unique_constraint_names(conn)
                 assert OLD_CONSTRAINT not in constraint_names
                 assert NEW_CONSTRAINT in constraint_names
-                assert LOOKUP_INDEX in _index_names(conn)
+                assert LOOKUP_INDEX not in _index_names(conn)
         finally:
             engine.dispose()
 
@@ -207,7 +207,7 @@ class TestOAuthTokensConstraintMigrationSqlite:
                 constraint_names = _unique_constraint_names(conn)
                 assert OLD_CONSTRAINT not in constraint_names
                 assert NEW_CONSTRAINT in constraint_names
-                assert LOOKUP_INDEX in _index_names(conn)
+                assert LOOKUP_INDEX not in _index_names(conn)
         finally:
             engine.dispose()
 
@@ -267,10 +267,10 @@ class TestOAuthTokensConstraintMigrationSqlite:
                 assert "user_id=provider-user-1" in error_msg
                 assert "manually resolve these duplicates" in error_msg
 
-                # Verify new constraint still exists (downgrade was aborted)
+                # Verify the upgraded schema is untouched when the downgrade is aborted.
                 constraint_names = _unique_constraint_names(conn)
-                assert NEW_CONSTRAINT not in constraint_names  # Was dropped before duplicate check
-                assert OLD_CONSTRAINT not in constraint_names  # Was never created due to error
+                assert NEW_CONSTRAINT in constraint_names
+                assert OLD_CONSTRAINT not in constraint_names
         finally:
             engine.dispose()
 
@@ -298,9 +298,10 @@ class TestOAuthTokensConstraintMigrationSqlite:
 class _InspectorState:
     """Minimal mutable inspector state for PostgreSQL branch tests."""
 
-    def __init__(self, tables: set[str], unique_constraints: list[dict[str, str]]):
+    def __init__(self, tables: set[str], unique_constraints: list[dict[str, str]], indexes: list[dict[str, str]] | None = None):
         self.tables = tables
         self.unique_constraints = unique_constraints
+        self.indexes = indexes or []
 
     def get_table_names(self):
         """Return reflected table names."""
@@ -310,6 +311,10 @@ class _InspectorState:
         """Return reflected unique constraints."""
         return list(self.unique_constraints)
 
+    def get_indexes(self, _table_name: str):
+        """Return reflected indexes."""
+        return list(self.indexes)
+
 
 class TestOAuthTokensConstraintMigrationPostgresql:
     """Validate PostgreSQL-specific Alembic operations and state transitions."""
@@ -318,7 +323,7 @@ class TestOAuthTokensConstraintMigrationPostgresql:
         """upgrade() uses direct constraint operations on PostgreSQL."""
         module = importlib.import_module(MODULE_NAME)
         fake_conn = SimpleNamespace(dialect=SimpleNamespace(name="postgresql"))
-        state = _InspectorState({TABLE_NAME}, [{"name": OLD_CONSTRAINT}])
+        state = _InspectorState({TABLE_NAME}, [{"name": OLD_CONSTRAINT}], [{"name": LOOKUP_INDEX}])
 
         def _drop_constraint(name, _table_name, type_):
             assert name == OLD_CONSTRAINT
@@ -330,17 +335,24 @@ class TestOAuthTokensConstraintMigrationPostgresql:
             assert columns == ["gateway_id", "app_user_email"]
             state.unique_constraints.append({"name": NEW_CONSTRAINT})
 
+        def _drop_index(name, _table_name):
+            assert name == LOOKUP_INDEX
+            state.indexes = [index for index in state.indexes if index.get("name") != LOOKUP_INDEX]
+
         with (
             patch.object(module.op, "get_bind", return_value=fake_conn),
             patch.object(module.sa, "inspect", side_effect=lambda _conn: state),
             patch.object(module.op, "drop_constraint", side_effect=_drop_constraint) as drop_constraint,
+            patch.object(module.op, "drop_index", side_effect=_drop_index) as drop_index,
             patch.object(module.op, "create_unique_constraint", side_effect=_create_constraint) as create_constraint,
         ):
             module.upgrade()
 
         assert drop_constraint.call_count == 1
+        assert drop_index.call_count == 1
         assert create_constraint.call_count == 1
         assert {constraint["name"] for constraint in state.unique_constraints} == {NEW_CONSTRAINT}
+        assert not state.indexes
 
     def test_downgrade_drops_new_constraint_and_restores_old_constraint(self):
         """downgrade() restores the historical PostgreSQL constraint."""
@@ -364,14 +376,23 @@ class TestOAuthTokensConstraintMigrationPostgresql:
             assert columns == ["gateway_id", "user_id"]
             state.unique_constraints.append({"name": OLD_CONSTRAINT})
 
+        def _create_index(name, _table_name, columns, unique):
+            assert name == LOOKUP_INDEX
+            assert columns == ["gateway_id", "app_user_email"]
+            assert unique is True
+            state.indexes.append({"name": LOOKUP_INDEX})
+
         with (
             patch.object(module.op, "get_bind", return_value=fake_conn),
             patch.object(module.sa, "inspect", side_effect=lambda _conn: state),
             patch.object(module.op, "drop_constraint", side_effect=_drop_constraint) as drop_constraint,
             patch.object(module.op, "create_unique_constraint", side_effect=_create_constraint) as create_constraint,
+            patch.object(module.op, "create_index", side_effect=_create_index) as create_index,
         ):
             module.downgrade()
 
         assert drop_constraint.call_count == 1
         assert create_constraint.call_count == 1
+        assert create_index.call_count == 1
         assert {constraint["name"] for constraint in state.unique_constraints} == {OLD_CONSTRAINT}
+        assert state.indexes == [{"name": LOOKUP_INDEX}]
