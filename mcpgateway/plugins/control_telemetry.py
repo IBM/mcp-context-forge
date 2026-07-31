@@ -172,19 +172,23 @@ class ControlTelemetryAccumulator:
         invocation_count = 0
         matched_count = 0
         applied_count = 0
-        duration_ns = 0
+        total_duration_ns = 0
         error_count = 0
         timeout_count = 0
 
+        # Statuses that represent controls that actually ran (exclude disabled/skipped/cancelled).
+        _ACTIVE_STATUSES = {"completed", "error", "timeout"}
+
         for _hook, rec in self._records:
             try:
-                invocation_count += 1
+                status = str(getattr(rec, "status", ""))
+                if status in _ACTIVE_STATUSES:
+                    invocation_count += 1
                 if getattr(rec, "matched", None) is True:
                     matched_count += 1
                 if getattr(rec, "applied", False):
                     applied_count += 1
-                duration_ns += int(getattr(rec, "duration_ns", 0))
-                status = str(getattr(rec, "status", ""))
+                total_duration_ns += int(getattr(rec, "duration_ns", 0))
                 if status == "error":
                     error_count += 1
                 elif status == "timeout":
@@ -192,12 +196,15 @@ class ControlTelemetryAccumulator:
             except Exception:  # noqa: BLE001
                 logger.debug("Failed to aggregate one ControlExecutionRecord", exc_info=True)
 
+        # results_count = records exported after the per-invocation cap (not raw accumulated count).
+        results_count = min(len(self._records), _get_max_results())
+
         return {
             "cpex.control.invocation_count": invocation_count,
             "cpex.control.matched_count": matched_count,
             "cpex.control.applied_count": applied_count,
-            "cpex.control.results_count": len(self._records),
-            "cpex.control.duration": duration_ns,  # nanoseconds
+            "cpex.control.results_count": results_count,
+            "cpex.control.duration_ns": total_duration_ns,  # nanoseconds — OTel unit suffix convention
             "cpex.control.result.allowed": self.effective_allowed,
             "cpex.control.error_count": error_count,
             "cpex.control.timeout_count": timeout_count,
@@ -407,15 +414,25 @@ def _per_control_attributes(hook: str, rec: Any) -> dict:
     """
     try:
         attrs: dict = {
+            # Identity fields — from trusted CPEX framework PluginRef config
             "cpex.control.name": _safe_str(str(rec.plugin_name), 64),
+            "cpex.control.plugin_id": _safe_str(str(rec.plugin_id), 64),
+            "cpex.control.plugin_kind": _safe_str(str(rec.plugin_kind), 32),
             "cpex.control.hook_name": _safe_str(str(rec.hook_name), 64),
             "cpex.control.mode": _safe_str(str(rec.mode), 32),
+            # Execution outcome fields
             "cpex.control.status": _safe_str(str(rec.status), 32),
             "cpex.control.enforcement_point": hook,
             "cpex.control.result.allowed": bool(rec.effective_allow),
-            "cpex.control.duration": int(rec.duration_ns),
+            "cpex.control.duration_ns": int(rec.duration_ns),  # nanoseconds — OTel unit suffix convention
+            "cpex.control.matched": rec.matched if rec.matched is not None else False,
+            "cpex.control.applied": bool(rec.applied),
+            "cpex.control.payload_modified": bool(rec.payload_modified),
         }
-        # Optional fields — only emit when present
+        # requested_allow: only emit when present (None means not applicable to this mode)
+        if rec.requested_allow is not None:
+            attrs["cpex.control.result.requested_allowed"] = bool(rec.requested_allow)
+        # Optional free-text fields — only emit when present
         if rec.reason:
             attrs["cpex.control.result.reason"] = _safe_str(rec.reason, _MAX_REASON_LEN)
         if rec.error_code:

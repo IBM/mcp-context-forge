@@ -41,12 +41,16 @@ from mcpgateway.plugins.control_telemetry import (
 def _make_rec(
     *,
     plugin_name: str = "pii-guard",
+    plugin_id: str = "pii-guard-001",
+    plugin_kind: str = "builtin",
     hook_name: str = "tool_pre_invoke",
     mode: str = "sequential",
     status: str = "completed",
     effective_allow: bool = True,
+    requested_allow: object = None,
     matched: object = True,
     applied: bool = False,
+    payload_modified: bool = False,
     duration_ns: int = 1000,
     reason: object = None,
     error_code: object = None,
@@ -55,12 +59,16 @@ def _make_rec(
     """Create a minimal ControlExecutionRecord mock."""
     rec = MagicMock()
     rec.plugin_name = plugin_name
+    rec.plugin_id = plugin_id
+    rec.plugin_kind = plugin_kind
     rec.hook_name = hook_name
     rec.mode = mode
     rec.status = status
     rec.effective_allow = effective_allow
+    rec.requested_allow = requested_allow
     rec.matched = matched
     rec.applied = applied
+    rec.payload_modified = payload_modified
     rec.duration_ns = duration_ns
     rec.reason = reason
     rec.error_code = error_code
@@ -96,7 +104,7 @@ class TestAccumulatorInit:
         assert agg["cpex.control.invocation_count"] == 0
         assert agg["cpex.control.matched_count"] == 0
         assert agg["cpex.control.applied_count"] == 0
-        assert agg["cpex.control.duration"] == 0
+        assert agg["cpex.control.duration_ns"] == 0
         assert agg["cpex.control.result.allowed"] is True
         assert agg["cpex.control.error_count"] == 0
         assert agg["cpex.control.timeout_count"] == 0
@@ -209,6 +217,17 @@ class TestAggregate:
         acc = self._make_acc_with_records([("pre", _make_rec()), ("pre", _make_rec())])
         assert acc.aggregate()["cpex.control.invocation_count"] == 2
 
+    def test_invocation_count_excludes_skipped_disabled_cancelled(self):
+        """invocation_count only counts completed/error/timeout — not skipped/disabled/cancelled."""
+        completed = _make_rec(status="completed")
+        skipped = _make_rec(status="skipped")
+        disabled = _make_rec(status="disabled")
+        cancelled = _make_rec(status="cancelled")
+        acc = self._make_acc_with_records([
+            ("pre", completed), ("pre", skipped), ("pre", disabled), ("pre", cancelled),
+        ])
+        assert acc.aggregate()["cpex.control.invocation_count"] == 1  # only completed counts
+
     def test_matched_count(self):
         r1 = _make_rec(matched=True)
         r2 = _make_rec(matched=False)
@@ -226,7 +245,7 @@ class TestAggregate:
         r1 = _make_rec(duration_ns=1000)
         r2 = _make_rec(duration_ns=2000)
         acc = self._make_acc_with_records([("pre", r1), ("post", r2)])
-        assert acc.aggregate()["cpex.control.duration"] == 3000
+        assert acc.aggregate()["cpex.control.duration_ns"] == 3000
 
     def test_error_count(self):
         r1 = _make_rec(status="error")
@@ -271,16 +290,22 @@ class TestAggregateExceptionPath:
     def test_record_raising_on_duration_ns_is_skipped(self):
         """Lines 192-193: record raising during aggregation is caught; others still counted."""
         acc = ControlTelemetryAccumulator()
+        # Make a record whose duration_ns property raises — status read is first, so it
+        # will increment invocation_count before raising.  Verify the exception is caught
+        # and the good sibling record still contributes its duration.
         bad = MagicMock()
         bad.matched = True
         bad.applied = False
+        bad.status = "completed"
         bad.duration_ns = property(lambda self: (_ for _ in ()).throw(ValueError("bad")))
-        good = _make_rec(duration_ns=100)
+        good = _make_rec(status="completed", duration_ns=100)
         acc._records.append(("pre", bad))   # pylint: disable=protected-access
         acc._records.append(("pre", good))  # pylint: disable=protected-access
         agg = acc.aggregate()
+        # bad record was counted (status read succeeded) but its duration is 0 (exception caught)
+        # good record adds its duration
         assert agg["cpex.control.invocation_count"] == 2
-        assert agg["cpex.control.duration"] == 100
+        assert agg["cpex.control.duration_ns"] == 100
 
 
 # ---------------------------------------------------------------------------
@@ -294,8 +319,14 @@ class TestPerControlAttributes:
         attrs = _per_control_attributes("pre", rec)
         assert attrs["cpex.control.status"] == "completed"
         assert attrs["cpex.control.result.allowed"] is True
-        assert attrs["cpex.control.duration"] == 500
+        assert attrs["cpex.control.duration_ns"] == 500
         assert attrs["cpex.control.enforcement_point"] == "pre"
+        # New fields added in review response
+        assert "cpex.control.plugin_id" in attrs
+        assert "cpex.control.plugin_kind" in attrs
+        assert "cpex.control.matched" in attrs
+        assert "cpex.control.applied" in attrs
+        assert "cpex.control.payload_modified" in attrs
 
     def test_completed_deny_with_reason(self):
         rec = _make_rec(effective_allow=False, reason="PII detected")
@@ -318,7 +349,7 @@ class TestPerControlAttributes:
         rec = _make_rec(mode="fire_and_forget", duration_ns=0)
         attrs = _per_control_attributes("post", rec)
         assert attrs["cpex.control.mode"] == "fire_and_forget"
-        assert attrs["cpex.control.duration"] == 0
+        assert attrs["cpex.control.duration_ns"] == 0
 
     def test_missing_optional_fields_omitted(self):
         rec = _make_rec(reason=None, error_code=None, config_keys=[])
@@ -352,6 +383,18 @@ class TestPerControlAttributes:
 class TestSafeStr:
     def test_within_limit_unchanged(self):
         assert _safe_str("hello", 10) == "hello"
+
+    def test_requested_allow_emitted_when_not_none(self):
+        rec = _make_rec()
+        rec.requested_allow = True
+        attrs = _per_control_attributes("pre", rec)
+        assert attrs.get("cpex.control.result.requested_allowed") is True
+
+    def test_requested_allow_omitted_when_none(self):
+        rec = _make_rec()
+        rec.requested_allow = None
+        attrs = _per_control_attributes("pre", rec)
+        assert "cpex.control.result.requested_allowed" not in attrs
 
     def test_truncated_with_ellipsis(self):
         result = _safe_str("a" * 100, 10)

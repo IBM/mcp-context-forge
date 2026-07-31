@@ -42,12 +42,16 @@ from mcpgateway.services.observability_service import ObservabilityService
 def _make_rec(
     *,
     plugin_name: str = "pii-guard",
+    plugin_id: str = "pii-guard-001",
+    plugin_kind: str = "builtin",
     hook_name: str = "tool_pre_invoke",
     mode: str = "sequential",
     status: str = "completed",
     effective_allow: bool = True,
+    requested_allow: object = None,
     matched: object = True,
     applied: bool = False,
+    payload_modified: bool = False,
     duration_ns: int = 500,
     reason: object = None,
     error_code: object = None,
@@ -55,12 +59,16 @@ def _make_rec(
 ) -> MagicMock:
     rec = MagicMock()
     rec.plugin_name = plugin_name
+    rec.plugin_id = plugin_id
+    rec.plugin_kind = plugin_kind
     rec.hook_name = hook_name
     rec.mode = mode
     rec.status = status
     rec.effective_allow = effective_allow
+    rec.requested_allow = requested_allow
     rec.matched = matched
     rec.applied = applied
+    rec.payload_modified = payload_modified
     rec.duration_ns = duration_ns
     rec.reason = reason
     rec.error_code = error_code
@@ -500,13 +508,15 @@ class TestWildcardAttributeMapping:
         assert len(result) == 1
 
     def test_apply_attribute_mapping_valueerror_fallback(self):
-        """Lines 657, 659-660: ValueError from compile falls back to exact-only matching."""
+        """Lines 657-660: ValueError from compile_attribute_policy → fail-closed, attrs unchanged."""
         attrs = {"cpex.control.result.allowed": True, "other": "val"}
-        # otel.* destination triggers ValueError inside compile_attribute_policy
-        # apply_attribute_mapping catches it and falls back to exact matching
+        # otel.* destination triggers ValueError inside compile_attribute_policy.
+        # After the fix: apply_attribute_mapping returns attrs unchanged (fail-closed).
         result = apply_attribute_mapping(attrs, {"cpex.control.result.allowed": "otel.reserved"})
-        # Fallback uses exact match — key is renamed despite the reserved namespace
-        assert "otel.reserved" in result or "cpex.control.result.allowed" in result
+        # Fail-closed: original keys preserved, otel.reserved must NOT appear
+        assert "cpex.control.result.allowed" in result
+        assert "otel.reserved" not in result
+        assert result["cpex.control.result.allowed"] is True
 
 
 # ---------------------------------------------------------------------------

@@ -655,9 +655,11 @@ def apply_attribute_mapping(attributes: dict, mapping: dict) -> dict:
     try:
         compiled_mappings, _ = compile_attribute_policy(mapping, [])
     except ValueError:
-        # Misconfigured mapping at runtime — fall back to exact-only behaviour
-        logger.debug("apply_attribute_mapping: compile_attribute_policy failed; falling back to exact match", exc_info=True)
-        compiled_mappings = [(True, None, src, dst) for src, dst in mapping.items()]
+        # Misconfigured mapping at runtime (e.g. otel.* destination, empty key, key > 256 chars).
+        # Fail-closed: return attributes unchanged rather than applying a partially-validated
+        # mapping that may have bypassed safety checks (e.g. reserved otel.* namespace).
+        logger.debug("apply_attribute_mapping: compile_attribute_policy failed; returning attributes unchanged", exc_info=True)
+        return dict(attributes)
 
     renamed_attributes: dict = {}
     for old_name, value in attributes.items():

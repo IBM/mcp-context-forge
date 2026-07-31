@@ -4669,6 +4669,7 @@ class ToolService(BaseService):
         global_context: Any,
         context_table: Any,
         plugin_manager: Any = None,
+        ctl_acc: Optional["ControlTelemetryAccumulator"] = None,
     ) -> None:
         """Invoke post-invoke plugins after a timeout and raise with retry signal if requested.
 
@@ -4684,6 +4685,9 @@ class ToolService(BaseService):
             global_context: Plugin global context for cross-hook state.
             context_table: Plugin local context table for per-plugin state.
             plugin_manager: Optional pre-fetched plugin manager to avoid redundant lookups.
+            ctl_acc: Optional invocation-local control-telemetry accumulator.  When provided,
+                the post-invoke hook's execution records are added here so they are included
+                in the telemetry emitted on the timeout path.
 
         Raises:
             ToolTimeoutError: When the retry plugin requests a delayed retry.
@@ -4703,6 +4707,8 @@ class ToolService(BaseService):
                 extensions=build_request_extensions(),
             )
             record_plugin_metrics(current_trace_id.get(), timeout_post_result.metadata if timeout_post_result else None)
+            if ctl_acc is not None:
+                ctl_acc.add(timeout_post_result, hook="post")
             if timeout_post_result and timeout_post_result.retry_delay_ms > 0:
                 raise ToolTimeoutError(f"Tool invocation timed out after {effective_timeout}s", retry_delay_ms=timeout_post_result.retry_delay_ms)
 
@@ -5627,7 +5633,7 @@ class ToolService(BaseService):
                                     exc_info=True,
                                 )
                             if plugin_manager:
-                                await self._run_timeout_post_invoke(name, effective_timeout, global_context, context_table, plugin_manager)
+                                await self._run_timeout_post_invoke(name, effective_timeout, global_context, context_table, plugin_manager, ctl_acc=_ctl_acc)
 
                             raise ToolTimeoutError(f"Tool invocation timed out after {effective_timeout}s")
                         try:
@@ -6256,7 +6262,7 @@ class ToolService(BaseService):
                                 )
 
                             if plugin_manager:
-                                await self._run_timeout_post_invoke(name, effective_timeout, global_context, context_table, plugin_manager)
+                                await self._run_timeout_post_invoke(name, effective_timeout, global_context, context_table, plugin_manager, ctl_acc=_ctl_acc)
 
                             raise ToolTimeoutError(f"Tool invocation timed out after {effective_timeout}s")
                         except asyncio.CancelledError:
@@ -6453,7 +6459,7 @@ class ToolService(BaseService):
 
                             # Trigger circuit breaker on timeout
                             if plugin_manager:
-                                await self._run_timeout_post_invoke(name, effective_timeout, global_context, context_table, plugin_manager)
+                                await self._run_timeout_post_invoke(name, effective_timeout, global_context, context_table, plugin_manager, ctl_acc=_ctl_acc)
 
                             raise ToolTimeoutError(f"Tool invocation timed out after {effective_timeout}s")
                         if status_code == 200:
@@ -6494,7 +6500,7 @@ class ToolService(BaseService):
                     except (asyncio.TimeoutError, ToolTimeoutError) as timeout_err:
                         logger.warning("gRPC tool invocation timed out for %s after %ss", tool_name_original, effective_timeout, exc_info=True)
                         if plugin_manager:
-                            await self._run_timeout_post_invoke(name, effective_timeout, global_context, context_table, plugin_manager)
+                            await self._run_timeout_post_invoke(name, effective_timeout, global_context, context_table, plugin_manager, ctl_acc=_ctl_acc)
                         raise ToolTimeoutError(f"Tool invocation timed out after {effective_timeout}s") from timeout_err
                     except Exception as grpc_err:
                         logger.error("gRPC tool invocation failed for %s: %s", tool_name_original, grpc_err, exc_info=True)
@@ -6573,6 +6579,14 @@ class ToolService(BaseService):
                 return tool_result
             except (PluginError, PluginViolationError):
                 # Emit partial telemetry even on pre-invoke deny (tool never executed).
+                # Note: when violations_as_exceptions=True, CPEX raises PluginViolationError
+                # *before* appending a ControlExecutionRecord for the denying plugin to the
+                # executions list (see cpex/framework/manager.py:680-682 — "propagate
+                # immediately, no record needed").  This means _ctl_acc may only contain
+                # records from earlier plugins in the chain that ran *before* the denial.
+                # The emitted summary span will reflect the partial pre-hook results; the
+                # effective_allow=False outcome is captured via accumulator.pre_denied.
+                # Upstream CPEX gap tracked in issue #5785 follow-on.
                 record_control_telemetry(
                     trace_id=current_trace_id.get(),
                     accumulator=_ctl_acc,
