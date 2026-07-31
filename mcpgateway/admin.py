@@ -166,6 +166,7 @@ from mcpgateway.services.email_auth_service import AuthenticationError, EmailAut
 from mcpgateway.services.encryption_service import get_encryption_service
 from mcpgateway.services.export_service import ExportError, ExportService
 from mcpgateway.services.gateway_service import (
+    gateway_capability_loaders,
     GatewayConnectionError,
     GatewayDuplicateConflictError,
     GatewayLookupConflictError,
@@ -9698,7 +9699,7 @@ async def admin_gateways_partial_html(
     team_ids = await _get_user_team_ids(user, db)
 
     # Build base query
-    query = select(DbGateway).options(joinedload(DbGateway.email_team), selectinload(DbGateway.tools))
+    query = select(DbGateway).options(joinedload(DbGateway.email_team), *gateway_capability_loaders())
 
     if not include_inactive:
         query = query.where(DbGateway.enabled.is_(True))

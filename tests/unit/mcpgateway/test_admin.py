@@ -12345,6 +12345,93 @@ async def test_admin_gateways_partial_html_renders(monkeypatch, mock_request, mo
 
 
 @pytest.mark.asyncio
+async def test_admin_gateways_partial_html_eager_loads_capability_relationships(monkeypatch, mock_request, mock_db):
+    """Query must eager-load tools/prompts/resources so counts don't require N+1 queries."""
+    pagination = make_pagination_meta()
+    paginate_mock = AsyncMock(return_value={"data": [], "pagination": pagination, "links": None})
+    monkeypatch.setattr("mcpgateway.admin.paginate_query", paginate_mock)
+    setup_team_service(monkeypatch, ["team-1"])
+
+    mock_request.headers = {}
+    await admin_gateways_partial_html(
+        mock_request,
+        page=1,
+        per_page=10,
+        include_inactive=False,
+        render=None,
+        team_id="team-1",
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db},
+    )
+
+    query = paginate_mock.call_args.kwargs["query"]
+    eager_loaded = {opt.path.path[-2].key for opt in query._with_options}
+    assert {"tools", "prompts", "resources"} <= eager_loaded
+
+
+@pytest.mark.asyncio
+async def test_admin_gateways_partial_html_populates_capability_counts_end_to_end(monkeypatch, mock_request, mock_db):
+    """The real gateway_service.convert_gateway_to_read must populate tool/prompt/resource counts
+    from the eagerly-loaded relationships into the data handed to the template."""
+    fake_gateway = SimpleNamespace(
+        id="gw-1",
+        name="Gateway 1",
+        slug="gateway-1",
+        url="http://example.com",
+        description=None,
+        transport="SSE",
+        capabilities={},
+        auth_type=None,
+        auth_value=None,
+        enabled=True,
+        reachable=True,
+        last_seen=None,
+        tags=[],
+        created_by=None,
+        modified_by=None,
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+        version=None,
+        team=None,
+        team_id="team-1",
+        owner_email="user@example.com",
+        visibility="private",
+        federation_source=None,
+        oauth_config=None,
+        passthrough_headers=None,
+        tools=["t1", "t2", "t3"],
+        prompts=["p1", "p2"],
+        resources=["r1"],
+    )
+
+    pagination = make_pagination_meta()
+    monkeypatch.setattr(
+        "mcpgateway.admin.paginate_query",
+        AsyncMock(return_value={"data": [fake_gateway], "pagination": pagination, "links": None}),
+    )
+    setup_team_service(monkeypatch, ["team-1"])
+
+    mock_request.headers = {}
+    await admin_gateways_partial_html(
+        mock_request,
+        page=1,
+        per_page=10,
+        include_inactive=False,
+        render=None,
+        team_id="team-1",
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db},
+    )
+
+    context = mock_request.app.state.templates.TemplateResponse.call_args[0][2]
+    data = context["data"]
+    assert len(data) == 1
+    assert data[0]["toolCount"] == 3
+    assert data[0]["promptCount"] == 2
+    assert data[0]["resourceCount"] == 1
+
+
+@pytest.mark.asyncio
 async def test_admin_gateways_partial_html_propagates_search_and_tags_to_pagination(monkeypatch, mock_request, mock_db):
     """Cover q/tags query params and gateway search predicate branches."""
     # Third-Party
