@@ -122,9 +122,7 @@ async def client(jwt_token: str, mcp_url: str):
                     holder["session"] = session
                     ready.set()
                     await release.wait()
-        except Exception as exc:  # surface connection/init failures in the test
-            # Exception, not BaseException: a cancelled runner must see
-            # CancelledError propagate, not have it stashed as a result.
+        except BaseException as exc:  # surface connection/init failures in the test
             holder["error"] = exc
             ready.set()
 
