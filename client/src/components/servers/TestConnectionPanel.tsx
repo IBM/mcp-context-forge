@@ -228,8 +228,8 @@ export function TestConnectionPanel({ serverUrl }: TestConnectionPanelProps) {
   const hasResult = status === "success" || status === "error";
 
   return (
-    <div className="space-y-6">
-      <div className="grid gap-6 md:grid-cols-2">
+    <div className="@container space-y-6">
+      <div className="grid gap-6 @3xl:grid-cols-2">
         {/* Left column — request form */}
         <div className="space-y-4">
           {/* URL */}
