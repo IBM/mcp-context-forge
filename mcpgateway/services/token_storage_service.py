@@ -24,8 +24,93 @@ from mcpgateway.config import get_settings
 from mcpgateway.db import OAuthToken
 from mcpgateway.services.encryption_service import get_encryption_service
 from mcpgateway.services.oauth_manager import OAuthError, OAuthInvalidGrantError
+from mcpgateway.utils.oauth_resource import derive_resource_origin, normalize_resource
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_refresh_resource(oauth_config: Dict[str, Any], gateway_url: Optional[str]) -> None:
+    """Resolve the RFC 8707 ``resource`` parameter for a token refresh request.
+
+    Mutates ``oauth_config`` in place.  Precedence (first match wins):
+
+    0. ``omit_resource: true`` explicitly disables the resource parameter —
+       any ``resource`` key (configured or derived) is removed and nothing is
+       injected, for IdPs that reject the parameter (see
+       ``docs/docs/manage/oauth.md``).
+    1. An explicitly configured ``oauth_config["resource"]`` is normalized per
+       RFC 8707 (fragment stripped, query preserved — the admin's value may
+       carry a significant query).  Opaque non-URL identifiers (learned
+       client_id-style audiences) pass through verbatim; RFC 8707 §2 permits
+       the AS to map ``resource`` to an abstract identifier.
+    2. Otherwise the ORIGIN (``scheme://netloc``) is derived from
+       ``gateway_url``, matching what ``oauth_router`` sends on the initial
+       authorization + callback exchanges.  Using the full URL here would
+       ship a different ``resource`` on refresh than the IdP saw at login,
+       causing the refresh to fail or mint a token whose aud no longer
+       matches the audience the user already validated against (RFC 8707
+       §2.2 limits refresh-time resources to the original grant or a subset).
+
+    Args:
+        oauth_config: The gateway OAuth config dict (copied by the caller);
+            mutated so the downstream refresh request carries the resolved
+            ``resource`` value.
+        gateway_url: The gateway's URL, used for origin derivation when no
+            explicit resource is configured.
+
+    Examples:
+        >>> cfg = {"resource": "https://api.example.com/mcp?x=1#f"}
+        >>> _resolve_refresh_resource(cfg, "https://gw.example.com/deep/path")
+        >>> cfg["resource"]
+        'https://api.example.com/mcp?x=1'
+        >>> cfg = {}
+        >>> _resolve_refresh_resource(cfg, "https://gw.example.com/deep/path")
+        >>> cfg["resource"]
+        'https://gw.example.com'
+        >>> cfg = {}
+        >>> _resolve_refresh_resource(cfg, "urn:example:app")
+        >>> "resource" in cfg
+        False
+        >>> cfg = {"resource": ["https://a.example.com/x", "opaque-id"]}
+        >>> _resolve_refresh_resource(cfg, None)
+        >>> cfg["resource"]
+        ['https://a.example.com/x', 'opaque-id']
+        >>> cfg = {"omit_resource": True, "resource": "https://api.example.com"}
+        >>> _resolve_refresh_resource(cfg, "https://gw.example.com")
+        >>> "resource" in cfg
+        False
+    """
+    # Explicit opt-out: the operator disabled the RFC 8707 resource parameter
+    # for this gateway (e.g. IdPs that reject it) — remove any configured
+    # value and skip derivation entirely.
+    if oauth_config.get("omit_resource", False):
+        oauth_config.pop("resource", None)
+        logger.debug("Omitting resource parameter during refresh as per omit_resource=true config")
+        return
+
+    existing_resource = oauth_config.get("resource")
+    if existing_resource:
+        # Normalize existing resource - preserve query for explicit config
+        if isinstance(existing_resource, list):
+            original_count = len(existing_resource)
+            normalized = [normalize_resource(r, preserve_query=True) for r in existing_resource]
+            oauth_config["resource"] = [r for r in normalized if r]
+            if not oauth_config["resource"] and original_count > 0:
+                logger.warning("All %s configured resource values were empty and removed during refresh", original_count)
+        else:
+            normalized = normalize_resource(existing_resource, preserve_query=True)
+            if not normalized and existing_resource:
+                logger.warning("Configured resource was empty and removed during refresh: %s", existing_resource)
+            oauth_config["resource"] = normalized
+    elif gateway_url:
+        derived_origin = derive_resource_origin(gateway_url)
+        if derived_origin:
+            oauth_config["resource"] = derived_origin
+        else:
+            logger.warning(
+                "Cannot derive resource origin from gateway URL (URN or scheme-less), skipping resource parameter: %s",
+                gateway_url,
+            )
 
 
 def _preserve_prior_ttl(token_record: OAuthToken) -> Optional[int]:
@@ -115,7 +200,18 @@ class TokenStorageService:
             logger.warning("OAuth encryption not available, using plain text storage")
             self.encryption = None
 
-    async def store_tokens(self, gateway_id: str, user_id: str, app_user_email: str, access_token: str, refresh_token: Optional[str], expires_in: Optional[int], scopes: List[str]) -> OAuthToken:
+    async def store_tokens(
+        self,
+        gateway_id: str,
+        user_id: str,
+        app_user_email: str,
+        access_token: str,
+        refresh_token: Optional[str],
+        expires_in: Optional[int],
+        scopes: List[str],
+        learned_aud: Optional[Any] = None,
+        learned_iss: Optional[str] = None,
+    ) -> OAuthToken:
         """Store OAuth tokens for a gateway-user combination.
 
         Args:
@@ -126,6 +222,12 @@ class TokenStorageService:
             refresh_token: Refresh token from OAuth provider (optional)
             expires_in: Token expiration time in seconds, or None if the provider does not specify expiration
             scopes: List of OAuth scopes granted
+            learned_aud: The ``aud`` claim (string or list) extracted best-effort from the
+                access token; used later by token_validation_service to authoritatively
+                validate this user's subsequent tokens. Stored per-user to avoid cross-tenant
+                DoS and to prevent RBAC bypass via callback-driven writes to shared config.
+            learned_iss: The ``iss`` claim from the access token, stored alongside
+                learned_aud to enable issuer-pinned validation.
 
         Returns:
             OAuthToken record
@@ -163,6 +265,14 @@ class TokenStorageService:
                 token_record.expires_at = expires_at
                 token_record.scopes = scopes
                 token_record.updated_at = datetime.now(timezone.utc)
+                # Refresh learned aud/iss on re-authentication so a re-auth with a changed
+                # tenant / audience updates this user's own row. Only overwrite when the
+                # caller supplied non-None values so callers that don't inspect the token
+                # (e.g. token_exchange) do not accidentally clear learned metadata.
+                if learned_aud is not None:
+                    token_record.learned_aud = learned_aud
+                if learned_iss is not None:
+                    token_record.learned_iss = learned_iss
                 logger.info(
                     "Updated OAuth tokens for gateway %s, app user %s, OAuth user %s",
                     SecurityValidator.sanitize_log_message(gateway_id),
@@ -172,7 +282,15 @@ class TokenStorageService:
             else:
                 # Create new record
                 token_record = OAuthToken(
-                    gateway_id=gateway_id, user_id=user_id, app_user_email=app_user_email, access_token=encrypted_access, refresh_token=encrypted_refresh, expires_at=expires_at, scopes=scopes
+                    gateway_id=gateway_id,
+                    user_id=user_id,
+                    app_user_email=app_user_email,
+                    access_token=encrypted_access,
+                    refresh_token=encrypted_refresh,
+                    expires_at=expires_at,
+                    scopes=scopes,
+                    learned_aud=learned_aud,
+                    learned_iss=learned_iss,
                 )
                 self.db.add(token_record)
                 logger.info(
@@ -189,6 +307,32 @@ class TokenStorageService:
             self.db.rollback()
             logger.error("Failed to store OAuth tokens: %s", str(e))
             raise OAuthError(f"Token storage failed: {str(e)}")
+
+    async def get_user_learned_audience(self, gateway_id: str, app_user_email: str) -> tuple[Optional[Any], Optional[str]]:
+        """Return the per-user learned ``aud`` and ``iss`` for a gateway-user pair.
+
+        Used by :func:`mcpgateway.services.token_validation_service.validate_oauth_token_claims`
+        to authoritatively validate a user's token audience against the value learned from
+        their own prior OAuth callback, rather than a globally-shared gateway.oauth_config
+        value.
+
+        Args:
+            gateway_id: ID of the gateway.
+            app_user_email: ContextForge user email.
+
+        Returns:
+            Tuple of ``(learned_aud, learned_iss)``. Either element may be ``None`` if
+            no token record exists for the pair or if the fields were never populated
+            (e.g. opaque tokens, decode failures, or pre-migration rows).
+        """
+        try:
+            token_record = self.db.execute(select(OAuthToken.learned_aud, OAuthToken.learned_iss).where(OAuthToken.gateway_id == gateway_id, OAuthToken.app_user_email == app_user_email)).one_or_none()
+            if token_record is None:
+                return (None, None)
+            return (token_record.learned_aud, token_record.learned_iss)
+        except Exception as e:
+            logger.debug("Failed to retrieve learned audience for gateway %s: %s", SecurityValidator.sanitize_log_message(gateway_id), e)
+            return (None, None)
 
     async def get_user_token(self, gateway_id: str, app_user_email: str, threshold_seconds: int = 300) -> Optional[str]:
         """Get a valid access token for a specific ContextForge user, refreshing if necessary.
@@ -311,67 +455,9 @@ class TokenStorageService:
                         )
                     oauth_config["client_secret"] = decrypted_secret
 
-            # RFC 8707: Set resource parameter for JWT access tokens during refresh
-            # Standard
-            from urllib.parse import urlparse, urlunparse  # pylint: disable=import-outside-toplevel
-
-            def normalize_resource(url: str, *, preserve_query: bool = False) -> str | None:
-                """Normalize a resource value per RFC 8707, or pass through opaque identifiers.
-
-                URL-shaped inputs are canonicalized (fragment stripped; query stripped
-                or preserved per ``preserve_query``).  Non-URL inputs are returned
-                verbatim so that opaque audience identifiers learned from IdPs that do
-                not honor RFC 8707 (e.g. ServiceNow / Authentik returning ``aud=client_id``)
-                round-trip correctly through token refresh.  RFC 8707 §2 explicitly
-                permits the AS to map ``resource`` to an abstract identifier; the
-                resource server therefore must accept either form.
-
-                Args:
-                    url: Resource URL or opaque audience identifier to normalize.
-                    preserve_query: If True, preserve query (for explicit config). If False, strip query.
-
-                Returns:
-                    Normalized URL string, the original opaque value, or None if input is empty.
-                """
-                if not url:
-                    return None
-                parsed = urlparse(url)
-                # If the value lacks a scheme it is not a URL; treat as an opaque
-                # audience identifier and pass through verbatim so a learned
-                # client_id-style audience survives refresh.
-                if not parsed.scheme:
-                    return url
-                # Remove fragment (MUST NOT); query: preserve for explicit, strip for auto-derived
-                query = parsed.query if preserve_query else ""
-                return urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, query, ""))
-
-            # RFC 8707: Set resource parameter for JWT access tokens during refresh
-            # Respect omit_resource flag - if explicitly set to true, skip all resource handling
-            omit_resource = oauth_config.get("omit_resource", False)
-            if omit_resource:
-                # User explicitly disabled resource parameter - remove it if present
-                oauth_config.pop("resource", None)
-                logger.debug("Omitting resource parameter for gateway %s as per omit_resource=true config", token_record.gateway_id)
-            else:
-                existing_resource = oauth_config.get("resource")
-                if existing_resource:
-                    # Normalize existing resource - preserve query for explicit config
-                    if isinstance(existing_resource, list):
-                        original_count = len(existing_resource)
-                        normalized = [normalize_resource(r, preserve_query=True) for r in existing_resource]
-                        oauth_config["resource"] = [r for r in normalized if r]
-                        if not oauth_config["resource"] and original_count > 0:
-                            logger.warning("All %s configured resource values were empty and removed during refresh", original_count)
-                    else:
-                        normalized = normalize_resource(existing_resource, preserve_query=True)
-                        if not normalized and existing_resource:
-                            logger.warning("Configured resource was empty and removed during refresh: %s", existing_resource)
-                        oauth_config["resource"] = normalized
-                elif gateway.url:
-                    # Derive from gateway.url if not explicitly configured (strip query)
-                    oauth_config["resource"] = normalize_resource(gateway.url)
-                    if not oauth_config.get("resource"):
-                        logger.warning("Gateway URL is empty, skipping resource parameter: %s", gateway.url)
+            # RFC 8707: resolve the resource parameter for the refresh request
+            # (explicit config normalized; otherwise origin derived from gateway.url).
+            _resolve_refresh_resource(oauth_config, gateway.url)
 
             # Use OAuthManager to refresh the token
             # First-Party

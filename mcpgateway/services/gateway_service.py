@@ -2227,6 +2227,11 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             else:
                 logger.info("Using decrypted OAuth token for gateway %s", gateway.name)
 
+            # Retrieve this user's learned audience for authoritative per-user validation.
+            # See token_validation_service._validate_audience for the precedence rule
+            # (admin-configured resource > per-user learned aud > gateway URL fallback).
+            learned_aud, _learned_iss = await token_storage.get_user_learned_audience(gateway.id, app_user_email)
+
             # Validate JWT claims (audience, scopes, issuer) before forwarding token
             # First-Party
             from mcpgateway.services.token_validation_service import validate_oauth_token_claims  # pylint: disable=import-outside-toplevel
@@ -2236,6 +2241,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 oauth_config=gateway.oauth_config,
                 gateway_url=gateway.url,
                 gateway_name=gateway.name,
+                learned_aud=learned_aud,
             )
             for warning in token_validation.warnings:
                 logger.warning("OAuth token validation for gateway %s: %s", gateway.name, warning)
