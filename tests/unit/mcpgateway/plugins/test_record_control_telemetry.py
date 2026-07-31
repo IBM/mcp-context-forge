@@ -153,7 +153,14 @@ class TestRecordControlTelemetryNoop:
 
 class TestRecordControlTelemetryTruncated:
     def test_truncated_attribute_present_when_accumulator_overflowed(self):
-        """Line 260: cpex.control.truncated is added when accumulator.truncated > 0."""
+        """cpex.control.truncated covers all three truncation tiers:
+        - Tier 1/2: records dropped at accumulation time (per-hook/per-call caps).
+        - Tier 3: records dropped at export time (cpex_control_telemetry_max_results cap).
+
+        With _MAX_RECORDS_PER_CALL=128 records accumulated and max_results=32 (default),
+        tier-1/2 drops = 2 (130 pushed, 128 accepted), tier-3 drops = 96 (128 - 32).
+        Total truncated = 98.
+        """
         from mcpgateway.plugins.control_telemetry import _MAX_RECORDS_PER_CALL  # noqa: PLC0415
 
         acc = ControlTelemetryAccumulator()
@@ -164,7 +171,8 @@ class TestRecordControlTelemetryTruncated:
                 r.continue_processing = True
                 acc.add(r, hook="pre")
 
-        assert acc.truncated == 2
+        # Tier-1/2 drops only at this point (export cap not yet applied)
+        assert acc._truncated == 2  # pylint: disable=protected-access
         captured: dict = {}
 
         def capture_db(service, trace_id, aggregate, accumulator):
@@ -177,7 +185,10 @@ class TestRecordControlTelemetryTruncated:
         ):
             record_control_telemetry("trace-trunc", acc)
 
-        assert captured.get("cpex.control.truncated") == 2
+        # After record_control_telemetry(): tier-3 export-cap drops (128 - 32 = 96) added.
+        # Total: 2 (tier-1/2) + 96 (tier-3) = 98
+        assert captured.get("cpex.control.truncated") == 98
+        assert acc.truncated == 98
 
 
 # ---------------------------------------------------------------------------

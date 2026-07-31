@@ -9,6 +9,7 @@ Covers:
   - ControlTelemetryAccumulator: empty init, add pre/post, caps, truncated, denied flags,
     effective_allowed, aggregate() semantics.
   - ControlTelemetryAccumulator.mark_denied(): pre/post explicit denial, effective_allowed.
+  - ControlTelemetryAccumulator.mark_export_cap_dropped(): tier-3 export-cap truncation.
   - add() per-hook cap contributes to truncated counter (item 4 / item 6 fix).
   - _per_control_attributes: completed allow/deny, error/timeout/faf, optional field omission,
     reason truncation, config_keys bounded, artifact_name/artifact_id fields.
@@ -17,6 +18,7 @@ Covers:
   - _build_flattened_attributes: basic (duration_ns key), collision, reason, error_code,
     bounded, artifact fields, config_keys field, name field, edge cases.
   - aggregate() exception path, _get_max_results exception path.
+  - record_control_telemetry(): tier-3 export-cap drops emitted in cpex.control.truncated.
 """
 
 # Standard
@@ -33,6 +35,7 @@ from mcpgateway.plugins.control_telemetry import (
     _get_max_results,
     _per_control_attributes,
     _safe_str,
+    record_control_telemetry,
 )
 
 
@@ -785,6 +788,105 @@ class TestPerHookTruncationCounter:
             acc.add(_make_result(extra_batch), hook="post")
         assert len(acc.records) == _MAX_RECORDS_PER_CALL
         assert acc.truncated == 10
+
+
+# ---------------------------------------------------------------------------
+# Item 7 — tier-3 export-cap truncation accounting
+# ---------------------------------------------------------------------------
+
+
+class TestExportCapTruncation:
+    """mark_export_cap_dropped() and record_control_telemetry() tier-3 drop accounting."""
+
+    def test_mark_export_cap_dropped_adds_to_truncated(self):
+        """mark_export_cap_dropped() must add to the truncated total."""
+        acc = ControlTelemetryAccumulator()
+        acc.mark_export_cap_dropped(5)
+        assert acc.truncated == 5
+
+    def test_mark_export_cap_dropped_zero_is_no_op(self):
+        """Calling mark_export_cap_dropped(0) must not change truncated."""
+        acc = ControlTelemetryAccumulator()
+        acc.mark_export_cap_dropped(0)
+        assert acc.truncated == 0
+
+    def test_truncated_combines_all_three_tiers(self):
+        """truncated = tier-1/2 accumulation drops + tier-3 export-cap drops."""
+        acc = ControlTelemetryAccumulator()
+        # Simulate tier-1/2 drops by directly incrementing the internal counter
+        acc._truncated = 3  # pylint: disable=protected-access
+        acc.mark_export_cap_dropped(4)
+        assert acc.truncated == 7
+
+    def test_record_control_telemetry_includes_export_cap_in_truncated(self):
+        """When records_received > max_results, cpex.control.truncated reflects the tier-3 drop."""
+        acc = ControlTelemetryAccumulator()
+        # Load 10 records into the accumulator directly (bypass add() to avoid cpex dependency)
+        for i in range(10):
+            acc._records.append(("pre", _make_rec(plugin_name=f"ctrl{i}")))  # pylint: disable=protected-access
+
+        captured_attributes: dict = {}
+
+        def fake_start_span(**kwargs):
+            if kwargs.get("name") == "cpex.control.summary":
+                captured_attributes.update(kwargs.get("attributes", {}))
+            return "span-id-123"
+
+        mock_service = MagicMock()
+        mock_service.start_span.side_effect = fake_start_span
+        mock_service.end_span.return_value = None
+
+        mock_settings = MagicMock()
+        mock_settings.cpex_control_telemetry_enabled = True
+        mock_settings.cpex_control_telemetry_db_enabled = True
+        mock_settings.cpex_control_telemetry_flatten_results = False
+        mock_settings.cpex_control_telemetry_max_results = 3  # cap at 3 out of 10
+
+        with (
+            patch("mcpgateway.plugins.control_telemetry.execution_records_supported", return_value=True),
+            patch("mcpgateway.services.observability_service.ObservabilityService", return_value=mock_service),
+            patch("mcpgateway.db.SessionLocal"),
+            patch("mcpgateway.plugins.control_telemetry._emit_otel_spans"),
+            patch("mcpgateway.config.settings", mock_settings),
+        ):
+            record_control_telemetry("trace-abc", acc, tool_name="my_tool", agent_id="u@e.com", binding_name="gw")
+
+        # 10 accumulated, 3 exported → 7 export-cap drops should be in truncated
+        assert captured_attributes.get("cpex.control.truncated") == 7
+
+    def test_no_truncated_attribute_when_no_drops(self):
+        """cpex.control.truncated must be absent when records_received <= max_results."""
+        acc = ControlTelemetryAccumulator()
+        for i in range(2):
+            acc._records.append(("pre", _make_rec(plugin_name=f"ctrl{i}")))  # pylint: disable=protected-access
+
+        captured_attributes: dict = {}
+
+        def fake_start_span(**kwargs):
+            if kwargs.get("name") == "cpex.control.summary":
+                captured_attributes.update(kwargs.get("attributes", {}))
+            return "span-id-456"
+
+        mock_service = MagicMock()
+        mock_service.start_span.side_effect = fake_start_span
+        mock_service.end_span.return_value = None
+
+        mock_settings = MagicMock()
+        mock_settings.cpex_control_telemetry_enabled = True
+        mock_settings.cpex_control_telemetry_db_enabled = True
+        mock_settings.cpex_control_telemetry_flatten_results = False
+        mock_settings.cpex_control_telemetry_max_results = 32
+
+        with (
+            patch("mcpgateway.plugins.control_telemetry.execution_records_supported", return_value=True),
+            patch("mcpgateway.services.observability_service.ObservabilityService", return_value=mock_service),
+            patch("mcpgateway.db.SessionLocal"),
+            patch("mcpgateway.plugins.control_telemetry._emit_otel_spans"),
+            patch("mcpgateway.config.settings", mock_settings),
+        ):
+            record_control_telemetry("trace-def", acc, tool_name="my_tool", agent_id="u@e.com", binding_name="gw")
+
+        assert "cpex.control.truncated" not in captured_attributes
 
 
 # ---------------------------------------------------------------------------

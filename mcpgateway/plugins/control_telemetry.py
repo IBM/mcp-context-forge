@@ -89,6 +89,7 @@ class ControlTelemetryAccumulator:
     _pre_denied: bool = False
     _post_denied: bool = False
     _truncated: int = 0  # records dropped due to per-call cap OR per-hook cap
+    _export_cap_dropped: int = 0  # records dropped at emit time by the per-invocation export cap
 
     def add(self, result: Any, *, hook: str) -> None:
         """Consume executions from one ``invoke_hook`` result.
@@ -172,12 +173,39 @@ class ControlTelemetryAccumulator:
 
     @property
     def truncated(self) -> int:
-        """Number of records dropped due to the per-hook or per-call cap.
+        """Total records dropped across all three truncation tiers:
+
+        - Tier 1: per-hook cap (``_MAX_RECORDS_PER_HOOK``)
+        - Tier 2: per-call accumulation cap (``_MAX_RECORDS_PER_CALL``)
+        - Tier 3: per-invocation export cap (``CPEX_CONTROL_TELEMETRY_MAX_RESULTS``)
+
+        Tier-3 drops are recorded by ``mark_export_cap_dropped()`` after the
+        export cap is applied in ``record_control_telemetry()``.
 
         Returns:
-            Count of dropped records (0 when no overflow).
+            Total count of dropped records (0 when no overflow on any tier).
         """
-        return self._truncated
+        return self._truncated + self._export_cap_dropped
+
+    def mark_export_cap_dropped(self, count: int) -> None:
+        """Record the number of records silently dropped by the export cap.
+
+        Called once per ``record_control_telemetry()`` invocation, after
+        ``_get_max_results()`` is applied, so the ``cpex.control.truncated``
+        summary attribute reflects all three truncation tiers.
+
+        Args:
+            count: Number of records that exceeded ``CPEX_CONTROL_TELEMETRY_MAX_RESULTS``
+                   and were not exported to any sink.
+
+        Examples:
+            >>> acc = ControlTelemetryAccumulator()
+            >>> acc.mark_export_cap_dropped(5)
+            >>> acc.truncated
+            5
+        """
+        if count > 0:
+            self._export_cap_dropped += count
 
     @property
     def effective_allowed(self) -> bool:
@@ -306,6 +334,16 @@ def record_control_telemetry(
                 "cpex.control.enforcement_point": _enforcement_point(accumulator),
             }
         )
+        # Compute and record export-cap (tier-3) drops before building the summary span.
+        # records_received is the count before any export cap; results_count is the cap-bounded
+        # export count.  The difference is exactly the number of records the islice will skip.
+        records_received = aggregate.get("cpex.control.records_received", 0)
+        max_results = _get_max_results()
+        export_cap_dropped = max(0, records_received - max_results)
+        if export_cap_dropped:
+            accumulator.mark_export_cap_dropped(export_cap_dropped)
+
+        # cpex.control.truncated now covers all three tiers (hook cap + call cap + export cap).
         if accumulator.truncated:
             aggregate["cpex.control.truncated"] = accumulator.truncated
 
