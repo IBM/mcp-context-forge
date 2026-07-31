@@ -52,6 +52,9 @@ _MAX_REASON_LEN = 256  # CPEX already bounds this; enforce again defensively
 _MAX_ERROR_CODE_LEN = 256
 _MAX_CONFIG_KEYS = 64
 
+# Statuses that represent controls that actually ran (exclude disabled/skipped/cancelled).
+_ACTIVE_STATUSES = frozenset({"completed", "error", "timeout"})
+
 
 # ---------------------------------------------------------------------------
 # ControlTelemetryAccumulator
@@ -244,9 +247,6 @@ class ControlTelemetryAccumulator:
         total_duration_ns = 0
         error_count = 0
         timeout_count = 0
-
-        # Statuses that represent controls that actually ran (exclude disabled/skipped/cancelled).
-        _ACTIVE_STATUSES = {"completed", "error", "timeout"}
 
         for _hook, rec in self._records:
             try:
