@@ -42,7 +42,7 @@ const TABS: Array<{ value: ComponentTab; label: string }> = [
 
 // Segmented-control styling for the Try it / Components tab triggers.
 const SEGMENTED_TRIGGER_CLASS =
-  "rounded-md px-3 py-1 font-medium data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm";
+  "flex-1 rounded-sm px-3 py-1.5 font-medium data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm";
 
 interface Tool {
   id: string;
@@ -347,7 +347,7 @@ export function MCPServerDetailsPanel({
               <div className="my-8 h-px bg-border" />
 
               <Tabs value={topTab} onValueChange={(v) => setTopTab(v as TopTab)}>
-                <TabsList className="inline-flex h-9 w-fit items-center gap-1 rounded-lg bg-muted p-1">
+                <TabsList className="inline-flex h-10 w-[248px] items-center gap-0 rounded-md bg-muted p-1">
                   <TabsTrigger value="tryit" className={SEGMENTED_TRIGGER_CLASS}>
                     Try it
                   </TabsTrigger>
