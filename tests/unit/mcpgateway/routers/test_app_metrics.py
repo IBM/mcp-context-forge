@@ -11,6 +11,7 @@ bucketing and percentile math run as actual queries rather than mocked results.
 
 # Standard
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 # Third-Party
@@ -25,6 +26,7 @@ from mcpgateway.config import settings
 from mcpgateway.db import Base, ObservabilityTrace
 from mcpgateway.middleware import rbac as rbac_module
 from mcpgateway.routers import app as app_module
+from mcpgateway.services.observability_service import _execution_timeseries_postgresql, _latency_percentiles_postgresql
 
 BASE_TIME = datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
 
@@ -220,3 +222,20 @@ def test_routes_registered_under_app_prefix():
     """The endpoints are served by the durable /app router, not the admin router."""
     paths = {route.path for route in app_module.app_router.routes}
     assert {"/app/observability/metrics/timeseries", "/app/observability/metrics/percentiles"} <= paths
+
+
+def test_postgres_buckets_normalized_to_utc():
+    """Postgres rows tagged with a session timezone serialize as UTC, matching the SQLite path."""
+    est = timezone(timedelta(hours=-5))
+    bucket = datetime(2025, 1, 1, 7, 0, 0, tzinfo=est)
+
+    db = MagicMock()
+    db.execute.return_value.fetchall.return_value = [SimpleNamespace(bucket=bucket, total=2)]
+    timeseries = _execution_timeseries_postgresql(db, BASE_TIME - timedelta(hours=24), 60)
+    assert timeseries["buckets"] == ["2025-01-01T12:00:00+00:00"]
+    assert timeseries["values"] == [2]
+
+    db.execute.return_value.fetchall.return_value = [SimpleNamespace(bucket=bucket, p50=100.0, p95=190.0, p99=198.0)]
+    percentiles = _latency_percentiles_postgresql(db, BASE_TIME - timedelta(hours=24), 60)
+    assert percentiles["buckets"] == ["2025-01-01T12:00:00+00:00"]
+    assert percentiles["p50"] == [100.0]
