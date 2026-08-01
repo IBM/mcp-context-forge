@@ -6,14 +6,15 @@ SPDX-License-Identifier: Apache-2.0
 Shared MCP protocol test helpers for E2E tests.
 
 Provides utilities for testing MCP JSON-RPC protocol via the mcpgateway.wrapper
-stdio transport plus the mcp-cli CLI. Used by the remaining subprocess-based
-E2E suites (``test_mcp_rbac_transport.py`` — multi-user RBAC + multi-transport,
-and ``test_langfuse_traces.py`` — tracing integration).
+stdio transport plus the mcp-cli CLI, along with the shared ``BASE_URL`` /
+``skip_no_gateway`` primitives used by the plugin E2E suites
+(``tests/live_gateway/plugins/``) and ``test_mcp_plugin_parity.py``.
 
-New protocol-level E2E tests should prefer the FastMCP ``Client``-based pattern
-in ``test_mcp_protocol_e2e.py`` (no subprocess, no external CLI). The helpers
-below are retained for the suites that still need mcp-cli / wrapper semantics
-and are candidates for removal once those suites migrate.
+New protocol-level E2E tests should prefer the official ``mcp`` SDK
+``ClientSession`` pattern used in ``test_mcp_protocol_e2e.py`` and
+``test_mcp_rbac_transport.py`` (no subprocess, no external CLI). The mcp-cli /
+wrapper helpers below are retained for the suites that still need those
+semantics and are candidates for removal once those suites migrate.
 """
 
 # Future
