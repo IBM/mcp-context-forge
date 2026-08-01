@@ -33,7 +33,7 @@ from typing import AsyncIterator, Optional
 import uuid
 
 # Third-Party
-from mcp.types import JSONRPCMessage
+from mcp_types import JSONRPCMessage
 import orjson
 
 # First-Party
