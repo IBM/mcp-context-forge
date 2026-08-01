@@ -53,7 +53,7 @@ from typing import Any, Awaitable, Callable, Dict, Optional, Set, TYPE_CHECKING
 
 # Third-Party
 from mcp.shared.session import RequestResponder
-import mcp.types as mcp_types
+import mcp_types
 
 # First-Party
 from mcpgateway.services.logging_service import LoggingService
@@ -548,7 +548,7 @@ class NotificationService:
         """
         try:
             # Third-Party
-            from mcp.types import JSONRPCMessage, JSONRPCRequest  # pylint: disable=import-outside-toplevel
+            from mcp_types import JSONRPCRequest  # pylint: disable=import-outside-toplevel
 
             # First-Party
             from mcpgateway.transports.server_event_bus import get_server_event_bus  # pylint: disable=import-outside-toplevel
@@ -571,8 +571,8 @@ class NotificationService:
         # "envelope build failed" otherwise have nothing to file a bug
         # against.
         try:
-            inner = responder.request.root if hasattr(responder.request, "root") else responder.request
-            payload = inner.model_dump(by_alias=True, exclude_none=True)
+            # In MCP v2, responder.request is the request directly (no RootModel wrapper)
+            payload = responder.request.model_dump(by_alias=True, exclude_none=True)
         except (AttributeError, ValidationError, TypeError, ValueError) as exc:
             logger.warning(
                 "Failed to build request payload for %s/%s: %s",
@@ -598,13 +598,11 @@ class NotificationService:
             with responder:
                 await responder.cancel()
             return
-        envelope = JSONRPCMessage(
-            JSONRPCRequest(
-                jsonrpc="2.0",
-                id=responder.request_id,
-                method=method,
-                params=payload.get("params"),
-            )
+        envelope = JSONRPCRequest(
+            jsonrpc="2.0",
+            id=responder.request_id,
+            method=method,
+            params=payload.get("params"),
         )
 
         loop = asyncio.get_running_loop()
@@ -795,21 +793,38 @@ class NotificationService:
                     message="Malformed error from downstream",
                     data=None,
                 )
-            await responder.respond(error)
+            # mcp v2: ``RequestResponder`` is a typing-only stub with no
+            # methods. The whole hold-then-respond multiplexer this method
+            # implements has no v2 equivalent (v2 callbacks are return-based,
+            # not imperative). Guard each ``.respond()`` call so the code is
+            # safe in either version; v2 just drops the downstream payload
+            # with a warning instead of crashing. A proper redesign is tracked
+            # against ``mcpgateway/services/notification_service.py`` in the
+            # mcp v1→v2 migration log (see streamablehttp_transport.py:246).
+            if hasattr(responder, "respond"):
+                await responder.respond(error)
+            else:
+                logger.warning("RequestResponder.respond() unavailable (mcp v2); error dropped: %s", error)
             return
         try:
-            result = mcp_types.ClientResult.model_validate(payload.get("result") or {})
+            result = mcp_types.client_result_adapter.validate_python(payload.get("result") or {})
         except ValidationError as exc:
             logger.warning("Could not validate downstream result, sending error: %s", exc)
-            await responder.respond(
-                mcp_types.ErrorData(
-                    code=mcp_types.INTERNAL_ERROR,
-                    message=f"Downstream returned an unrecognized result: {exc}",
-                    data=None,
+            if hasattr(responder, "respond"):
+                await responder.respond(
+                    mcp_types.ErrorData(
+                        code=mcp_types.INTERNAL_ERROR,
+                        message=f"Downstream returned an unrecognized result: {exc}",
+                        data=None,
+                    )
                 )
-            )
+            else:
+                logger.warning("RequestResponder.respond() unavailable (mcp v2); validation error dropped")
             return
-        await responder.respond(result)
+        if hasattr(responder, "respond"):
+            await responder.respond(result)
+        else:
+            logger.warning("RequestResponder.respond() unavailable (mcp v2); downstream result dropped")
 
     def has_pending_request(self, downstream_session_id: str) -> bool:
         """Return True if any server-initiated request is awaiting a response.
@@ -910,7 +925,7 @@ class NotificationService:
         """
         try:
             # Third-Party
-            from mcp.types import JSONRPCMessage, JSONRPCNotification  # pylint: disable=import-outside-toplevel
+            from mcp_types import JSONRPCNotification  # pylint: disable=import-outside-toplevel
 
             # First-Party
             from mcpgateway.transports.server_event_bus import get_server_event_bus  # pylint: disable=import-outside-toplevel
@@ -928,12 +943,9 @@ class NotificationService:
         # with a traceback rather than being bucketed as a publish
         # failure.
         try:
-            # ServerNotification.root is the underlying typed notification
-            # (e.g. ToolsListChangedNotification). We re-wrap as a
-            # JSON-RPC envelope so the SSE listener can serialize it
-            # without knowing about MCP's typed-union shape.
-            inner = notification.root
-            payload = inner.model_dump(by_alias=True, exclude_none=True)
+            # In MCP v2, ServerNotification is a union type, not a RootModel.
+            # The notification IS the typed notification directly.
+            payload = notification.model_dump(by_alias=True, exclude_none=True)
         except (AttributeError, ValidationError, TypeError, ValueError) as exc:
             logger.warning(
                 "Failed to build notification payload for %s: %s",
@@ -952,12 +964,10 @@ class NotificationService:
                 sorted(payload.keys()) if isinstance(payload, dict) else type(payload).__name__,
             )
             return
-        envelope = JSONRPCMessage(
-            JSONRPCNotification(
-                jsonrpc="2.0",
-                method=method,
-                params=payload.get("params"),
-            )
+        envelope = JSONRPCNotification(
+            jsonrpc="2.0",
+            method=method,
+            params=payload.get("params"),
         )
         # Separate try for bus-get vs publish so a ``get_server_event_bus``
         # programming bug doesn't get bucketed as ``transport_error``.
@@ -1000,8 +1010,8 @@ class NotificationService:
         self._notifications_received += 1
 
         # Extract notification type from the notification object
-        # ServerNotification has a 'root' attribute containing the actual notification
-        notification_root = notification.root
+        # In MCP v2, the notification is the typed notification directly
+        notification_root = notification
 
         # Check for list_changed notifications
         notification_type: Optional[NotificationType] = None
