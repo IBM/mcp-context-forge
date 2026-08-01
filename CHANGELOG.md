@@ -10,6 +10,8 @@
 
 ### Breaking Changes
 
+- **MCP SDK 2.0 migration: responses to server-initiated MCP requests are temporarily dropped** - As part of the migration to `mcp==2.0.0b2`, the SDK's `RequestResponder` is a typing-only stub and `responder.respond()` no longer exists. The hold-then-respond multiplexer in `mcpgateway/services/notification_service.py` (`_respond_with_payload`) therefore logs a warning and drops the response to a server-initiated request instead of delivering it. Notification *delivery* (tools/resources/prompts `list_changed`) is unaffected. Tracked for redesign around the v2 return-based callback contract; see the migration notes in `mcpgateway/transports/streamablehttp_transport.py`.
+
 - **Unconditional weak-secret rejection** - `JWT_SECRET_KEY` and `AUTH_ENCRYPTION_SECRET` placeholder and known-weak values now cause `SecurityConfigurationError` at startup in **every** environment, including development. The previous `env != "development"` carve-out and `changeme` → `__REPLACE_ME__` default are both closed. `BASIC_AUTH_PASSWORD` is also patched to a strong value by `make setup` / `make init-secrets-patch-env`. Run `make setup` (fresh checkout) or `make init-secrets-patch-env` (existing `.env`) to provision real secrets.
 
 - **Root URI policy now defaults to deny** (GHSA-x39c-q2jx-f325) - Set `ROOT_ALLOWED_SCHEMES` before restart for every network scheme used by `DEFAULT_ROOTS` or new root registrations. `file://` roots additionally require `ROOT_ALLOW_FILE_SCHEME=true` and non-empty `ROOT_ALLOWED_FILE_PREFIXES`. Invalid `DEFAULT_ROOTS` abort gateway startup; configure policy before upgrading, not after.

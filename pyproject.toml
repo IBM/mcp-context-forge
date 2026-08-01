@@ -76,7 +76,12 @@ prometheus-client = "2026-07-27T23:59:59Z"
 prometheus-fastapi-instrumentator = "2026-07-27T23:59:59Z"
 sse-starlette = "2026-07-27T23:59:59Z"
 starlette-compress = "2026-07-27T23:59:59Z"
+mcp = "2026-07-19T23:59:59Z"
+mcp-types = "2026-07-19T23:59:59Z"
 
+[tool.uv.sources]
+cpex = { git = "https://github.com/contextforge-org/cpex", branch = "0.1.x-mcp-2.0.0" }
+# cpex = { git = "https://github.com/contextforge-org/cpex", rev = "eac9437188734a72a2277177de87bca62d2badac" }  # mcp v 2.0.0b1
 
 # ----------------------------------------------------------------
 # 📦 Core project metadata (PEP 621)
@@ -136,7 +141,8 @@ dependencies = [
     "jsonpath-ng>=1.8.0",
     "jsonschema>=4.26.0",
     "Mako>=1.3.12", # Transitive pin (alembic)
-    "mcp>=1.28.1,<2",
+    "mcp==2.0.0b2",
+    "mcp-types==2.0.0b2",
     "msgpack>=1.2.1",
     "orjson>=3.11.9",
     "parse>=1.22.1",
