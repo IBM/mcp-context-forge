@@ -31,9 +31,6 @@ greenlet = "2026-07-22T13:00:00Z"
 h2 = "2026-08-09T23:59:59Z"
 
 
-[tool.uv.sources]
-compliance-reference-server = { path = "mcp-servers/python/compliance_reference_server", editable = true }
-
 # ----------------------------------------------------------------
 # 📦 Core project metadata (PEP 621)
 # ----------------------------------------------------------------
@@ -138,7 +135,6 @@ dev = [
     "dodgy>=0.2.1",
     "faker>=40.28.1",
     "fakeredis[lua]>=2.36.2",
-    "compliance-reference-server",
     "fawltydeps>=0.20.0",
     "gprof2dot>=2025.4.14",
     "hypothesis>=6.152.1",
@@ -714,24 +710,14 @@ markers = [
     "mcp_lifecycle: marks initialize/capability lifecycle checks",
     "mcp_transport_core: marks streamable-http/transport checks",
     "mcp_server_features: marks tools/resources/prompts/logging checks",
-    "mcp_client_features: marks roots/sampling/elicitation checks",
     "mcp_utilities: marks ping/cancel/progress/pagination checks",
     "mcp_tasks: marks tasks capability checks",
     "mcp_auth: marks authorization discovery checks", # pragma: allowlist secret
-    "mcp_security: marks security compliance checks",
     "regression: marks regression tests for previously-fixed bugs",
     "proxy: marks tests that run through a simulated proxy prefix",
     "iframe: marks tests that run inside an iframe host page",
     "owasp_a01: marks OWASP A01:2021 Broken Access Control security tests",
     "owasp_a01_zap: marks OWASP A01 ZAP DAST scan tests (requires ZAP daemon; set ZAP_BASE_URL)",
-    "protocol_compliance: marks black-box MCP protocol compliance harness tests (tests/live_gateway/protocol_compliance)",
-    "target_reference: marks tests that exercise the reference FastMCP server target",
-    "target_gateway_proxy: marks tests that exercise the gateway-as-proxy target",
-    "target_gateway_virtual: marks tests that exercise a gateway virtual-server target",
-    "transport_stdio: marks tests that exercise the stdio transport",
-    "transport_sse: marks tests that exercise the SSE transport",
-    "transport_http: marks tests that exercise the Streamable HTTP transport",
-    "mcp_drift: marks cross-target behavioral-equivalence tests",
 ]
 
 # Playwright-specific test discovery patterns

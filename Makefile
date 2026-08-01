@@ -860,8 +860,7 @@ clean:
 # transport (e2e_rust/).
 # Invoke via `make test-live-gateway` (everything) or a targeted helper
 # (test-mcp-protocol-e2e, test-mcp-rbac, test-mcp-plugin-parity,
-# test-mcp-access-matrix, test-mcp-session-isolation, test-e2e-sso,
-# test-protocol-compliance{,-reference,-gateway}).
+# test-mcp-access-matrix, test-mcp-session-isolation, test-e2e-sso).
 PYTEST_IGNORE := tests/fuzz tests/manual test.py \
     tests/live_gateway
 
@@ -7437,8 +7436,7 @@ interrogate: uv                     ## 📝 Docstring coverage
 pip-audit:                          ## 🔒 Audit Python dependencies for CVEs
 	@echo "🔒  pip-audit vulnerability scan..."
 	@echo ""
-	@echo "  ⚠️  NOTE: --skip-editable is active. Two editable installs are expected to be skipped:"
-	@echo "       • compliance-reference-server   (mcp-servers/ dev install)"
+	@echo "  ⚠️  NOTE: --skip-editable is active. One editable install is expected to be skipped:"
 	@echo "       • mcp-contextforge-gateway      (main gateway dev install)"
 	@echo ""
 	@echo "  🚨 If ANY OTHER package appears in the skip table → STOP and investigate."
