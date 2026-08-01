@@ -40,7 +40,6 @@ from mcpgateway.utils.identity_propagation import (
     filter_sensitive_attributes,
 )
 
-
 # ---------------------------------------------------------------------------
 # UserContext model tests
 # ---------------------------------------------------------------------------
@@ -87,7 +86,6 @@ class TestUserContext:
         uc2 = UserContext(**data)
         assert uc2.user_id == uc.user_id
         assert uc2.groups == uc.groups
-
 
 # ---------------------------------------------------------------------------
 # build_identity_headers tests
@@ -189,7 +187,6 @@ class TestBuildIdentityHeaders:
         headers = build_identity_headers(uc, gateway=MockGateway())
         assert "X-GW-User-Id" in headers
 
-
 # ---------------------------------------------------------------------------
 # build_identity_meta tests
 # ---------------------------------------------------------------------------
@@ -249,7 +246,6 @@ class TestBuildIdentityMeta:
         meta = build_identity_meta(uc, None)
         assert "user" in meta
 
-
 # ---------------------------------------------------------------------------
 # filter_sensitive_attributes tests
 # ---------------------------------------------------------------------------
@@ -277,7 +273,6 @@ class TestFilterSensitiveAttributes:
         filtered = filter_sensitive_attributes(uc, [])
         assert filtered.attributes == {"a": 1, "b": 2}
 
-
 # ---------------------------------------------------------------------------
 # GlobalContext.user_context tests
 # ---------------------------------------------------------------------------
@@ -303,14 +298,12 @@ class TestGlobalContextUserContext:
         assert ctx.user["email"] == "alice@co.com"
         assert ctx.user_context.user_id == "alice@co.com"
 
-
 # ---------------------------------------------------------------------------
 # PluginContext convenience helpers tests
 # ---------------------------------------------------------------------------
 def _get_user_context(ctx: PluginContext):
     """Extract UserContext from plugin context, mirroring the production accessor pattern."""
     return ctx.global_context.user_context
-
 
 def _get_user_email(ctx: PluginContext):
     """Extract user email from plugin context, mirroring the production accessor pattern."""
@@ -324,14 +317,12 @@ def _get_user_email(ctx: PluginContext):
         return user.get("email")
     return None
 
-
 def _get_user_groups(ctx: PluginContext):
     """Extract user groups from plugin context, mirroring the production accessor pattern."""
     uc = ctx.global_context.user_context
     if uc is not None:
         return uc.groups
     return []
-
 
 class TestPluginContextHelpers:
     """Tests for PluginContext user identity extraction via GlobalContext.state."""
@@ -390,7 +381,6 @@ class TestPluginContextHelpers:
         gctx = GlobalContext(request_id="req-1", user_context=uc)
         ctx = PluginContext(global_context=gctx)
         assert _get_user_groups(ctx) == []
-
 
 # ---------------------------------------------------------------------------
 # _resolve_config tests
@@ -482,7 +472,6 @@ class TestResolveConfig:
         cfg = _resolve_config(GW())
         assert cfg["enabled"] is False  # Falls back to global
 
-
 # ---------------------------------------------------------------------------
 # _sign_claims tests
 # ---------------------------------------------------------------------------
@@ -542,7 +531,6 @@ class TestSignClaims:
         mock_settings.jwt_secret_key = None
         sig = _sign_claims("test-payload")
         assert len(sig) == 64  # Still produces a valid HMAC (with empty key)
-
 
 # ---------------------------------------------------------------------------
 # build_identity_headers — additional branch coverage
@@ -634,7 +622,6 @@ class TestBuildIdentityHeadersBranches:
         headers = build_identity_headers(uc, gateway=GW())
         assert headers == {}
 
-
 # ---------------------------------------------------------------------------
 # build_identity_meta — additional branch coverage
 # ---------------------------------------------------------------------------
@@ -718,7 +705,6 @@ class TestBuildIdentityMetaBranches:
         meta = build_identity_meta(uc, None)
         assert meta == {}
 
-
 # ---------------------------------------------------------------------------
 # filter_sensitive_attributes — settings fallback
 # ---------------------------------------------------------------------------
@@ -736,7 +722,6 @@ class TestFilterSensitiveAttributesFallback:
         assert "password_hash" not in filtered.attributes
         assert "ssn" not in filtered.attributes
         assert filtered.attributes["dept"] == "eng"
-
 
 # ---------------------------------------------------------------------------
 # _set_user_identity_from_dict tests
@@ -803,7 +788,6 @@ class TestSetUserIdentityFromDict:
         uc = user_identity_var.get()
         assert uc.auth_method == "proxy"
         user_identity_var.set(None)
-
 
 # ---------------------------------------------------------------------------
 # _inject_userinfo_instate — UserContext population
@@ -921,7 +905,6 @@ class TestInjectUserInfoUserContext:
         # Should not create user_context when user is None
         gctx = mock_request.state.plugin_global_context
         assert gctx.user_context is None
-
 
 # ---------------------------------------------------------------------------
 # Audit trail service — identity fields
@@ -1043,7 +1026,6 @@ class TestAuditTrailIdentityFields:
         assert captured["acting_as"] is None
         assert captured["delegation_chain"] is None
 
-
 # ---------------------------------------------------------------------------
 # OAuthManager.token_exchange() — RFC 8693
 # ---------------------------------------------------------------------------
@@ -1065,6 +1047,8 @@ class TestOAuthTokenExchange:
         mock_response.raise_for_status = MagicMock()
 
         mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
         mock_client.post = AsyncMock(return_value=mock_response)
         manager._get_client = AsyncMock(return_value=mock_client)
 
@@ -1201,6 +1185,8 @@ class TestOAuthTokenExchange:
         mock_response.raise_for_status = MagicMock()
 
         mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
         mock_client.post = AsyncMock(return_value=mock_response)
         manager._get_client = AsyncMock(return_value=mock_client)
 
@@ -1248,6 +1234,8 @@ class TestOAuthTokenExchange:
         manager = OAuthManager(max_retries=2)
 
         mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
         mock_client.post = AsyncMock(side_effect=httpx.HTTPError("connection failed"))
         manager._get_client = AsyncMock(return_value=mock_client)
 
@@ -1272,6 +1260,8 @@ class TestOAuthTokenExchange:
         mock_response.raise_for_status = MagicMock()
 
         mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
         mock_client.post = AsyncMock(return_value=mock_response)
         manager._get_client = AsyncMock(return_value=mock_client)
 
@@ -1299,6 +1289,8 @@ class TestOAuthTokenExchange:
         mock_response.raise_for_status = MagicMock()
 
         mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
         mock_client.post = AsyncMock(return_value=mock_response)
         manager._get_client = AsyncMock(return_value=mock_client)
 
@@ -1313,7 +1305,6 @@ class TestOAuthTokenExchange:
                 client_secret="raw-secret",  # pragma: allowlist secret
             )
             assert result["access_token"] == "tok"
-
 
 # ---------------------------------------------------------------------------
 # Schema validation for identity_propagation field
@@ -1346,7 +1337,6 @@ class TestSchemaIdentityPropagation:
         gw = GatewayUpdate(identity_propagation={"enabled": False})
         assert gw.identity_propagation["enabled"] is False
 
-
 # ---------------------------------------------------------------------------
 # Coverage: rbac.py lines 246-247 — UserContext construction failure in proxy auth
 # ---------------------------------------------------------------------------
@@ -1378,7 +1368,6 @@ class TestRBACProxyUserContextFailure:
 
             assert caught
 
-
 # ---------------------------------------------------------------------------
 # Coverage: oauth_manager.py lines 613-616 — encrypted secret decryption
 # ---------------------------------------------------------------------------
@@ -1399,6 +1388,8 @@ class TestTokenExchangeEncryptedSecret:
         mock_response.raise_for_status = MagicMock()
 
         mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
         mock_client.post = AsyncMock(return_value=mock_response)
 
         mgr = OAuthManager.__new__(OAuthManager)
@@ -1424,7 +1415,6 @@ class TestTokenExchangeEncryptedSecret:
         call_kwargs = mock_client.post.call_args
         assert call_kwargs.kwargs["data"]["client_secret"] == "decrypted-secret"
 
-
 class TestTokenExchangeZeroRetries:
 
     @pytest.mark.asyncio
@@ -1445,7 +1435,6 @@ class TestTokenExchangeZeroRetries:
                 client_id="client-1",
                 client_secret="secret",
             )
-
 
 # ---------------------------------------------------------------------------
 # Coverage: resource_service.py line 1911 — identity headers in invoke_resource
@@ -1483,7 +1472,6 @@ class TestResourceServiceIdentityInjection:
                 headers.update(build_identity_headers(uc, mock_gateway))
 
         assert "X-Forwarded-User-Id" in headers
-
 
 # ---------------------------------------------------------------------------
 # Coverage: tool_service.py lines 3472-3473, 4702, 4959-4960
@@ -1537,7 +1525,6 @@ class TestToolServiceIdentityInjection:
 
         assert "X-Forwarded-User-Id" in headers
         assert "user" in meta_data
-
 
 # ---------------------------------------------------------------------------
 # Coverage: streamablehttp_transport.py lines 1291, 1342, 1408
@@ -1603,7 +1590,6 @@ class TestTransportIdentityInjection:
             assert "X-Forwarded-User-Id" in headers
         finally:
             user_identity_var.reset(token)
-
 
 # ---------------------------------------------------------------------------
 # Coverage: audit_trail_service.py — auto-extraction of identity from user_identity_var
@@ -1683,7 +1669,6 @@ class TestAuditTrailIdentityAutoExtraction:
         finally:
             user_identity_var.reset(token)
 
-
 # ---------------------------------------------------------------------------
 # Additional coverage for identity propagation call sites
 # ---------------------------------------------------------------------------
@@ -1730,7 +1715,6 @@ class TestRBACProxyIdentityPropagationCoverage:
         assert result["email"] == "proxy@example.com"
         mock_debug.assert_any_call("Could not build UserContext for proxy auth: boom")
 
-
 class TestOAuthManagerAdditionalTokenExchangeCoverage:
     """Cover additional token exchange branches."""
 
@@ -1745,6 +1729,8 @@ class TestOAuthManagerAdditionalTokenExchangeCoverage:
         mock_response.raise_for_status = MagicMock()
 
         mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
         mock_client.post = AsyncMock(return_value=mock_response)
         manager._get_client = AsyncMock(return_value=mock_client)
 
@@ -1778,7 +1764,6 @@ class TestOAuthManagerAdditionalTokenExchangeCoverage:
                 client_secret="",
             )
 
-
 class TestResourceServiceIdentityPropagationCoverage:
     """Cover resource service identity forwarding branches."""
 
@@ -1786,31 +1771,6 @@ class TestResourceServiceIdentityPropagationCoverage:
     async def test_invoke_resource_updates_headers_from_user_context(self):
         # First-Party
         from mcpgateway.services.resource_service import ResourceService
-
-        class _AsyncCM:
-            async def __aenter__(self):
-                return ("read", "write", lambda: None)
-
-            async def __aexit__(self, exc_type, exc, tb):
-                return False
-
-        class _ClientSessionCM:
-            def __init__(self, *_args):
-                self._session = MagicMock()
-                self._session.initialize = AsyncMock(return_value=None)
-
-            async def __aenter__(self):
-                return self._session
-
-            async def __aexit__(self, exc_type, exc, tb):
-                return False
-
-        class _FakeTextResourceContents:
-            def __init__(self, uri, mimeType=None, text=""):
-                self.id = "resource-1"
-                self.uri = uri
-                self.mimeType = mimeType
-                self.text = text
 
         service = ResourceService()
         db = MagicMock()
@@ -1834,13 +1794,16 @@ class TestResourceServiceIdentityPropagationCoverage:
         mock_response = MagicMock()
         mock_response.contents = [MagicMock(text="hello")]
 
+        client_mock = AsyncMock()
+        client_mock.__aenter__ = AsyncMock(return_value=client_mock)
+        client_mock.__aexit__ = AsyncMock(return_value=None)
+
         with (
             patch("mcpgateway.services.resource_service.create_span", return_value=mock_span),
             patch("mcpgateway.services.resource_service.is_input_capture_enabled", return_value=False),
             patch("mcpgateway.services.resource_service.is_output_capture_enabled", return_value=False),
             patch("mcpgateway.services.resource_service.build_identity_headers", return_value={"X-Identity": "1"}) as mock_build_headers,
-            patch("mcpgateway.services.resource_service.streamablehttp_client", return_value=_AsyncCM()),
-            patch("mcpgateway.services.resource_service.ClientSession", _ClientSessionCM),
+            patch("mcpgateway.services.resource_service.mcp_proxy_client", return_value=client_mock),
             patch("mcpgateway.services.resource_service._read_resource_with_meta", AsyncMock(return_value=mock_response)),
         ):
             result = await service.invoke_resource(
@@ -1860,29 +1823,11 @@ class TestResourceServiceIdentityPropagationCoverage:
         # First-Party
         from mcpgateway.services.resource_service import ResourceService
 
-        class _AsyncCM:
-            async def __aenter__(self):
-                return ("read", "write", lambda: None)
-
-            async def __aexit__(self, exc_type, exc, tb):
-                return False
-
-        class _ClientSessionCM:
-            def __init__(self, *_args):
-                self._session = MagicMock()
-                self._session.initialize = AsyncMock(return_value=None)
-
-            async def __aenter__(self):
-                return self._session
-
-            async def __aexit__(self, exc_type, exc, tb):
-                return False
-
         class _FakeTextResourceContents:
-            def __init__(self, uri, mimeType=None, text=""):
+            def __init__(self, uri, mime_type=None, text="", **_kwargs):
                 self.id = "resource-1"
                 self.uri = uri
-                self.mimeType = mimeType
+                self.mime_type = mime_type
                 self.text = text
 
         service = ResourceService()
@@ -1893,7 +1838,11 @@ class TestResourceServiceIdentityPropagationCoverage:
         db.execute.return_value.scalar_one_or_none.return_value = resource_db
         plugin_global_context = GlobalContext(request_id="req-1", user_context=UserContext(user_id="user-1", email="user@example.com"))
         mock_response = MagicMock()
-        mock_response.contents = [MagicMock(text="hello", mimeType="text/plain")]
+        mock_response.contents = [MagicMock(text="hello", mime_type="text/plain")]
+
+        client_mock = AsyncMock()
+        client_mock.__aenter__ = AsyncMock(return_value=client_mock)
+        client_mock.__aexit__ = AsyncMock(return_value=None)
 
         with (
             patch.object(service, "_get_plugin_manager", AsyncMock(return_value=None)),
@@ -1902,8 +1851,7 @@ class TestResourceServiceIdentityPropagationCoverage:
             patch.object(service, "_check_resource_access", AsyncMock(return_value=True)),
             patch("mcpgateway.services.resource_service.build_gateway_auth_headers", return_value={"Authorization": "Bearer gateway"}),
             patch("mcpgateway.services.resource_service.build_identity_headers", return_value={"X-Identity": "1"}) as mock_build_headers,
-            patch("mcpgateway.services.resource_service.streamablehttp_client", return_value=_AsyncCM()),
-            patch("mcpgateway.services.resource_service.ClientSession", _ClientSessionCM),
+            patch("mcpgateway.services.resource_service.mcp_proxy_client", return_value=client_mock),
             patch("mcpgateway.services.resource_service._read_resource_with_meta", AsyncMock(return_value=mock_response)),
             patch("mcpgateway.common.models.TextResourceContents", _FakeTextResourceContents),
             patch.object(__import__("mcpgateway.services.resource_service", fromlist=["settings"]).settings, "experimental_validate_io", False),
@@ -1919,7 +1867,6 @@ class TestResourceServiceIdentityPropagationCoverage:
 
         assert getattr(result, "text") == "hello"
         mock_build_headers.assert_called_once_with(plugin_global_context.user_context, gateway)
-
 
 class TestToolServiceIdentityPropagationCoverage:
     """Cover tool service identity forwarding branches."""
@@ -1937,25 +1884,6 @@ class TestToolServiceIdentityPropagationCoverage:
                 return self._db
 
             def __exit__(self, exc_type, exc, tb):
-                return False
-
-        class _AsyncCM:
-            async def __aenter__(self):
-                return ("read", "write", lambda: None)
-
-            async def __aexit__(self, exc_type, exc, tb):
-                return False
-
-        class _ClientSessionCM:
-            def __init__(self, *_args):
-                self._session = MagicMock()
-                self._session.initialize = AsyncMock(return_value=None)
-                self._session.call_tool = AsyncMock(return_value=MagicMock(is_error=False))
-
-            async def __aenter__(self):
-                return self._session
-
-            async def __aexit__(self, exc_type, exc, tb):
                 return False
 
         service = ToolService()
@@ -1977,6 +1905,11 @@ class TestToolServiceIdentityPropagationCoverage:
         mock_span.__exit__.return_value = False
         user_context = UserContext(user_id="user-1", email="user@example.com")
 
+        client_mock = AsyncMock()
+        client_mock.__aenter__ = AsyncMock(return_value=client_mock)
+        client_mock.__aexit__ = AsyncMock(return_value=None)
+        client_mock.call_tool = AsyncMock(return_value=MagicMock(is_error=False))
+
         with (
             patch("mcpgateway.services.tool_service.fresh_db_session", return_value=_FreshDBSession(db)),
             patch("mcpgateway.services.tool_service.check_gateway_access", AsyncMock(return_value=True)),
@@ -1985,8 +1918,7 @@ class TestToolServiceIdentityPropagationCoverage:
             patch("mcpgateway.services.tool_service.build_identity_meta", return_value={"identity": True}) as mock_build_meta,
             patch("mcpgateway.services.tool_service.create_span", return_value=mock_span),
             patch("mcpgateway.services.tool_service.inject_trace_context_headers", side_effect=lambda headers: headers),
-            patch("mcpgateway.services.tool_service.streamablehttp_client", return_value=_AsyncCM()),
-            patch("mcpgateway.services.tool_service.ClientSession", _ClientSessionCM),
+            patch("mcpgateway.services.tool_service.mcp_proxy_client", return_value=client_mock),
             patch.object(__import__("mcpgateway.services.tool_service", fromlist=["settings"]).settings, "mcpgateway_direct_proxy_enabled", True),
         ):
             await service.invoke_tool_direct(
@@ -2068,30 +2000,7 @@ class TestToolServiceIdentityPropagationCoverage:
     async def test_invoke_tool_mcp_updates_headers_and_meta_from_global_context(self):
         # First-Party
         from mcpgateway.services.tool_service import ToolService
-
-        class _AsyncCM:
-            async def __aenter__(self):
-                return ("read", "write", lambda: None)
-
-            async def __aexit__(self, exc_type, exc, tb):
-                return False
-
-        class _ClientSessionCM:
-            def __init__(self, *_args):
-                self._session = MagicMock()
-                self._session.initialize = AsyncMock(return_value=None)
-                mock_result = MagicMock(is_error=False, isError=False)
-                mock_result.structured_content = None
-                mock_result.meta = None
-                mock_result.content = []
-                mock_result.model_dump.return_value = {"content": [], "isError": False}
-                self._session.call_tool = AsyncMock(return_value=mock_result)
-
-            async def __aenter__(self):
-                return self._session
-
-            async def __aexit__(self, exc_type, exc, tb):
-                return False
+        from mcpgateway.services.upstream_session_registry import RegistryNotInitializedError
 
         service = ToolService()
         service._get_plugin_manager = AsyncMock(return_value=None)
@@ -2132,6 +2041,17 @@ class TestToolServiceIdentityPropagationCoverage:
         mock_span.__enter__.return_value = MagicMock()
         mock_span.__exit__.return_value = False
 
+        mock_result = MagicMock(is_error=False, isError=False)
+        mock_result.structured_content = None
+        mock_result.meta = None
+        mock_result.content = []
+        mock_result.model_dump.return_value = {"content": [], "isError": False}
+
+        client_mock = AsyncMock()
+        client_mock.__aenter__ = AsyncMock(return_value=client_mock)
+        client_mock.__aexit__ = AsyncMock(return_value=None)
+        client_mock.call_tool = AsyncMock(return_value=mock_result)
+
         with (
             patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=cache),
             patch("mcpgateway.services.tool_service.global_config_cache.get_passthrough_headers", return_value=[]),
@@ -2141,8 +2061,8 @@ class TestToolServiceIdentityPropagationCoverage:
             patch("mcpgateway.services.tool_service.create_child_span", return_value=mock_span),
             patch("mcpgateway.services.tool_service.is_input_capture_enabled", return_value=False),
             patch("mcpgateway.services.tool_service.inject_trace_context_headers", side_effect=lambda headers: headers),
-            patch("mcpgateway.services.tool_service.streamablehttp_client", return_value=_AsyncCM()),
-            patch("mcpgateway.services.tool_service.ClientSession", _ClientSessionCM),
+            patch("mcpgateway.services.tool_service.mcp_proxy_client", return_value=client_mock),
+            patch("mcpgateway.services.tool_service.get_upstream_session_registry", side_effect=RegistryNotInitializedError("not init")),
         ):
             await service.invoke_tool(
                 db,
@@ -2155,7 +2075,6 @@ class TestToolServiceIdentityPropagationCoverage:
         mock_build_headers.assert_called_once_with(plugin_global_context.user_context)
         mock_build_meta.assert_called_once_with(plugin_global_context.user_context, {"existing": True})
 
-
 class TestStreamableHttpTransportIdentityPropagationCoverage:
     """Cover transport identity forwarding branches."""
 
@@ -2165,35 +2084,20 @@ class TestStreamableHttpTransportIdentityPropagationCoverage:
         from mcpgateway.transports.context import user_identity_var
         from mcpgateway.transports.streamablehttp_transport import _proxy_list_tools_to_gateway
 
-        class _AsyncCM:
-            async def __aenter__(self):
-                return ("read", "write", lambda: None)
-
-            async def __aexit__(self, exc_type, exc, tb):
-                return False
-
-        class _ClientSessionCM:
-            def __init__(self, *_args):
-                self._session = MagicMock()
-                self._session.initialize = AsyncMock(return_value=None)
-                self._session.list_tools = AsyncMock(return_value=MagicMock(tools=[MagicMock(name="tool")]))
-
-            async def __aenter__(self):
-                return self._session
-
-            async def __aexit__(self, exc_type, exc, tb):
-                return False
-
         gateway = MagicMock(id="gw-1", url="https://gateway.example.com/mcp")
         identity = UserContext(user_id="user-1", email="user@example.com")
         token = user_identity_var.set(identity)
+
+        client_mock = AsyncMock()
+        client_mock.__aenter__ = AsyncMock(return_value=client_mock)
+        client_mock.__aexit__ = AsyncMock(return_value=None)
+        client_mock.list_tools = AsyncMock(return_value=MagicMock(tools=[MagicMock(name="tool")]))
 
         try:
             with (
                 patch("mcpgateway.transports.streamablehttp_transport.build_gateway_auth_headers", return_value={}),
                 patch("mcpgateway.transports.streamablehttp_transport.build_identity_headers", return_value={"X-Identity": "1"}) as mock_build_headers,
-                patch("mcpgateway.transports.streamablehttp_transport.streamablehttp_client", return_value=_AsyncCM()),
-                patch("mcpgateway.transports.streamablehttp_transport.ClientSession", _ClientSessionCM),
+                patch("mcpgateway.transports.streamablehttp_transport.mcp_proxy_client", return_value=client_mock),
             ):
                 await _proxy_list_tools_to_gateway(gateway, {}, {})
         finally:
@@ -2207,35 +2111,20 @@ class TestStreamableHttpTransportIdentityPropagationCoverage:
         from mcpgateway.transports.context import user_identity_var
         from mcpgateway.transports.streamablehttp_transport import _proxy_list_resources_to_gateway
 
-        class _AsyncCM:
-            async def __aenter__(self):
-                return ("read", "write", lambda: None)
-
-            async def __aexit__(self, exc_type, exc, tb):
-                return False
-
-        class _ClientSessionCM:
-            def __init__(self, *_args):
-                self._session = MagicMock()
-                self._session.initialize = AsyncMock(return_value=None)
-                self._session.list_resources = AsyncMock(return_value=MagicMock(resources=[MagicMock(uri="resource://example")]))
-
-            async def __aenter__(self):
-                return self._session
-
-            async def __aexit__(self, exc_type, exc, tb):
-                return False
-
         gateway = MagicMock(id="gw-1", url="https://gateway.example.com/mcp")
         identity = UserContext(user_id="user-1", email="user@example.com")
         token = user_identity_var.set(identity)
+
+        client_mock = AsyncMock()
+        client_mock.__aenter__ = AsyncMock(return_value=client_mock)
+        client_mock.__aexit__ = AsyncMock(return_value=None)
+        client_mock.list_resources = AsyncMock(return_value=MagicMock(resources=[MagicMock(uri="resource://example")]))
 
         try:
             with (
                 patch("mcpgateway.transports.streamablehttp_transport.build_gateway_auth_headers", return_value={}),
                 patch("mcpgateway.transports.streamablehttp_transport.build_identity_headers", return_value={"X-Identity": "1"}) as mock_build_headers,
-                patch("mcpgateway.transports.streamablehttp_transport.streamablehttp_client", return_value=_AsyncCM()),
-                patch("mcpgateway.transports.streamablehttp_transport.ClientSession", _ClientSessionCM),
+                patch("mcpgateway.transports.streamablehttp_transport.mcp_proxy_client", return_value=client_mock),
             ):
                 await _proxy_list_resources_to_gateway(gateway, {}, {})
         finally:
@@ -2249,36 +2138,21 @@ class TestStreamableHttpTransportIdentityPropagationCoverage:
         from mcpgateway.transports.context import request_headers_var, user_identity_var
         from mcpgateway.transports.streamablehttp_transport import _proxy_read_resource_to_gateway
 
-        class _AsyncCM:
-            async def __aenter__(self):
-                return ("read", "write", lambda: None)
-
-            async def __aexit__(self, exc_type, exc, tb):
-                return False
-
-        class _ClientSessionCM:
-            def __init__(self, *_args):
-                self._session = MagicMock()
-                self._session.initialize = AsyncMock(return_value=None)
-                self._session.read_resource = AsyncMock(return_value=MagicMock(contents=[MagicMock(text="hello")]))
-
-            async def __aenter__(self):
-                return self._session
-
-            async def __aexit__(self, exc_type, exc, tb):
-                return False
-
         gateway = MagicMock(id="gw-1", url="https://gateway.example.com/mcp")
         identity = UserContext(user_id="user-1", email="user@example.com")
         identity_token = user_identity_var.set(identity)
         headers_token = request_headers_var.set({})
 
+        client_mock = AsyncMock()
+        client_mock.__aenter__ = AsyncMock(return_value=client_mock)
+        client_mock.__aexit__ = AsyncMock(return_value=None)
+        client_mock.read_resource = AsyncMock(return_value=MagicMock(contents=[MagicMock(text="hello")]))
+
         try:
             with (
                 patch("mcpgateway.transports.streamablehttp_transport.build_gateway_auth_headers", return_value={}),
                 patch("mcpgateway.transports.streamablehttp_transport.build_identity_headers", return_value={"X-Identity": "1"}) as mock_build_headers,
-                patch("mcpgateway.transports.streamablehttp_transport.streamablehttp_client", return_value=_AsyncCM()),
-                patch("mcpgateway.transports.streamablehttp_transport.ClientSession", _ClientSessionCM),
+                patch("mcpgateway.transports.streamablehttp_transport.mcp_proxy_client", return_value=client_mock),
             ):
                 await _proxy_read_resource_to_gateway(gateway, "resource://example", {})
         finally:

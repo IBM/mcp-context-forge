@@ -1585,7 +1585,10 @@ langfuse-up:                               ## Start Langfuse LLM observability s
 	@# Bring up the same lightweight MCP/A2A test targets used by the live smoke
 	@# suites so Langfuse runs can generate real end-to-end tool traffic without
 	@# depending on stale registrations from the testing profile.
-	$(LANGFUSE_COMPOSE) up -d fast_test_server register_fast_test a2a_echo_agent register_a2a_echo
+	$(LANGFUSE_COMPOSE) up -d fast_test_server a2a_echo_agent
+	@# Re-run the one-shot registrar now that the test targets exist; its first
+	@# pass ran with the default stack and skipped these profile-gated upstreams.
+	$(LANGFUSE_COMPOSE) up -d --force-recreate register
 	$(VERIFY_LANGFUSE_GATEWAY_EXPORT)
 	@echo "⏳ Waiting for Langfuse to be ready..."
 	@for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do \
@@ -1736,15 +1739,16 @@ testing-up:                                ## Start testing stack (Locust + A2A 
 	@echo "Gateway (nginx)      http://localhost:8080         API proxy"
 	@echo "Locust Web UI        http://localhost:8089         Load testing (master+workers)"
 	@echo "Fast Test Server     http://localhost:8880         MCP benchmark target"
+	@echo "Fast Time 2026       http://localhost:8887         Strict MCP 2026-07-28 conformance probe"
 	@echo "A2A Echo Agent       http://localhost:9100         A2A protocol target"
 	@echo "MCP Inspector        http://localhost:6274         Interactive MCP client"
 	@echo "Keycloak             http://localhost:8180         SSO / OAuth 2.1 provider (realm: mcp-gateway)"
 	@echo ""
 	@echo "   🔒 For DAST security scanning, also start ZAP: make testing-zap-up"
 	@echo ""
-	@echo "   📝 Auto-registered:"
-	@echo "      • MCP gateway: fast_test (from fast_test_server)"
-	@echo "      • A2A agent:   a2a-echo-agent"
+	@echo "   📝 Auto-registered (one-shot 'register' container):"
+	@echo "      • MCP gateways: fast_time, fast_test, fast_time_2026 (strict 2026-07-28)"
+	@echo "      • A2A agent:    a2a-echo-agent"
 	@echo ""
 	@echo "   Next:"
 	@echo "      • Open Locust: http://localhost:8089 (default host is http://nginx:80)"
