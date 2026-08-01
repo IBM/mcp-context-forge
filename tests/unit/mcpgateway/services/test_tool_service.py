@@ -2005,6 +2005,7 @@ class TestToolService:
         # Mock DB query to check for name conflicts (returns None, so no pre-check conflict)
         mock_scalar = Mock()
         mock_scalar.scalar_one_or_none.return_value = None
+        mock_scalar.scalars.return_value.first.return_value = None
         test_db.execute = Mock(return_value=mock_scalar)
 
         # Mock commit to raise IntegrityError
