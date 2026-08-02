@@ -927,6 +927,21 @@ make coverage        # Generate coverage report
 
 See [Doctest Coverage Guide](https://ibm.github.io/mcp-context-forge/development/doctest-coverage/) for documentation testing details.
 
+### MCP Conformance Triage
+
+Use `conformance-baseline.yml` as the source of truth for current scenario status. Known failing scenarios map to the following implementation work for Epic #5557:
+
+| Scenario | Blocking component | Estimated effort | Dependency order |
+|----------|--------------------|------------------|------------------|
+| `server-stateless` | `McpService::discover` | M | - |
+| `input-required-result-*` | `McpService` MRTR proxying | L | after stateless |
+| `tasks-*` | `McpService` Tasks routing | L | after stateless |
+| `caching` | response middleware | S | independent |
+| `ping` | `McpService` capability dispatch | S | independent |
+| `subscriptions-*` | `McpService` subscriptions routing | M | after stateless |
+| `sessionless-*` | transport/session dispatch | M | after stateless |
+| `legacy-session-*` | MCP initialization/session mode | S | before sessionless |
+
 ---
 
 ## Project Structure
