@@ -1107,6 +1107,67 @@ def _user_from_cached_dict(user_dict: Dict[str, Any]) -> EmailUser:
     )
 
 
+def _is_trust_eligible_token(payload: Dict[str, Any]) -> bool:
+    """Return whether a verified JWT explicitly opts into trusted-claims mode."""
+    trust_markers = (
+        payload.get("token_use"),
+        payload.get("trust_mode"),
+        payload.get("auth_mode"),
+        payload.get("cf_trust_mode"),
+        payload.get("contextforge_trust_mode"),
+    )
+    if any(marker in ("trusted", "trust") for marker in trust_markers):
+        return True
+    return any(payload.get(flag) is True for flag in ("trusted", "cf_trusted", "contextforge_trusted", "gateway_trusted"))
+
+
+def _configured_revocation_claim_name() -> str:
+    """Return the configured JWT claim used as revocation identifier."""
+    for setting_name in (
+        "trusted_token_revocation_claim",
+        "jwt_revocation_claim",
+        "token_revocation_claim",
+        "revocation_identifier_claim",
+    ):
+        claim_name = getattr(settings, setting_name, None)
+        if isinstance(claim_name, str) and claim_name.strip():
+            return claim_name.strip()
+    return "jti"
+
+
+def _trusted_virtual_user_from_claims(payload: Dict[str, Any]) -> EmailUser:
+    """Build a virtual user from trusted JWT claims only."""
+    user_info = payload.get("user", {})
+    if not isinstance(user_info, dict):
+        user_info = {}
+
+    email = payload.get("email") or user_info.get("email") or payload.get("sub")
+    if not isinstance(email, str) or not email.strip():
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid trusted token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    is_admin = payload.get("is_admin")
+    if is_admin is None:
+        is_admin = user_info.get("is_admin", False)
+
+    now = datetime.now(timezone.utc)
+    return EmailUser(
+        email=email.strip(),
+        password_hash="",  # nosec B106 - Virtual principal has no local password.
+        full_name=payload.get("full_name") or payload.get("name") or user_info.get("full_name") or user_info.get("name"),
+        is_admin=bool(is_admin),
+        is_active=True,
+        auth_provider="trusted",
+        password_change_required=False,
+        email_verified_at=now,
+        created_at=now,
+        updated_at=now,
+    )
+
+
 async def get_current_user(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
     request: Request = None,  # type: ignore[assignment]
@@ -1354,6 +1415,62 @@ async def get_current_user(
         payload = await verify_jwt_token_cached(credentials.credentials, request)
 
         logger.debug("JWT token validated successfully")
+
+        if _is_trust_eligible_token(payload):
+            jti = payload.get("jti")
+            revocation_claim = _configured_revocation_claim_name()
+            revocation_id = payload.get(revocation_claim)
+            if not isinstance(revocation_id, str) or not revocation_id.strip():
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Invalid trusted token",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+
+            try:
+                is_revoked = await asyncio.to_thread(_check_token_revoked_sync, revocation_id.strip())
+            except Exception as revoke_check_error:
+                logger.warning(
+                    f"Token revocation check failed for JTI {SecurityValidator.sanitize_log_message(revocation_id)} — denying access (fail-secure): {SecurityValidator.sanitize_log_message(str(revoke_check_error))}"
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Token validation failed",
+                    headers={"WWW-Authenticate": "Bearer"},
+                ) from revoke_check_error
+
+            if is_revoked:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Token has been revoked",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+
+            # Trust mode intentionally has no per-user is_active kill switch:
+            # the virtual principal is claims-derived, with revocation as the
+            # remaining server-side kill switch (see AGENTS.md trust-mode note).
+            user = _trusted_virtual_user_from_claims(payload)
+            normalized_teams = normalize_token_teams(payload)
+            if normalized_teams is None:
+                team_id = None
+            elif len(normalized_teams) == 1:
+                team_id = normalized_teams[0]
+            else:
+                team_id = None
+
+            if request:
+                request.state.token_teams = normalized_teams
+                request.state.team_id = team_id
+                request.state.token_use = "trusted"  # nosec B105 - JWT claim type, not a secret.
+                request.state.auth_method = "jwt"
+                request.state.jti = jti
+                request.state.trace_team_name = _extract_claim_team_name(payload, team_id)
+
+            _inject_userinfo_instate(request, user)
+            _propagate_tenant_id(request)
+            _set_trace_for_user(user, teams=normalized_teams, auth_method="jwt", team_name=getattr(request.state, "trace_team_name", None) if request else None)
+            return user
+
         # Extract user identifier (support both new and legacy token formats)
         email = payload.get("sub")
         if email is None:

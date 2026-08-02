@@ -241,6 +241,93 @@ class TestGetCurrentUser:
                 assert exc_info.value.detail == "Token has been revoked"
 
     @pytest.mark.asyncio
+    async def test_trusted_jwt_returns_claims_virtual_user_without_db_lookup(self):
+        """Trust-mode JWTs return a virtual user and skip DB identity/team resolution."""
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="trusted_jwt")
+        request = SimpleNamespace(state=SimpleNamespace())
+        jwt_payload = {
+            "token_use": "trusted",
+            "sub": "subject-123",
+            "email": "trusted@example.com",
+            "full_name": "Trusted User",
+            "is_admin": False,
+            "teams": ["team-1"],
+            "jti": "trusted-jti-1",
+            "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp(),
+        }
+
+        with (
+            patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=jwt_payload)),
+            patch("mcpgateway.auth._check_token_revoked_sync", return_value=False) as mock_revoked,
+            patch("mcpgateway.auth._get_user_by_email_sync") as mock_get_user,
+            patch("mcpgateway.auth.resolve_session_teams", AsyncMock()) as mock_resolve_session_teams,
+        ):
+            user = await get_current_user(credentials=credentials, request=request)
+
+        assert user.email == "trusted@example.com"
+        assert user.full_name == "Trusted User"
+        assert user.auth_provider == "trusted"
+        assert user.is_active is True
+        assert request.state.token_teams == ["team-1"]
+        assert request.state.team_id == "team-1"
+        assert request.state.token_use == "trusted"
+        assert request.state.auth_method == "jwt"
+        assert request.state.jti == "trusted-jti-1"
+        mock_revoked.assert_called_once_with("trusted-jti-1")
+        mock_get_user.assert_not_called()
+        mock_resolve_session_teams.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_trusted_jwt_revocation_uses_configured_identifier_claim(self, monkeypatch):
+        """Trust-mode revocation uses the configured revocation claim value."""
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="trusted_jwt")
+        jwt_payload = {
+            "token_use": "trusted",
+            "email": "trusted@example.com",
+            "teams": [],
+            "jti": "ordinary-jti",
+            "sid": "configured-revocation-id",
+            "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp(),
+        }
+        monkeypatch.setattr(settings, "revocation_identifier_claim", "sid", raising=False)
+
+        with (
+            patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=jwt_payload)),
+            patch("mcpgateway.auth._check_token_revoked_sync", return_value=True) as mock_revoked,
+            patch("mcpgateway.auth._get_user_by_email_sync") as mock_get_user,
+        ):
+            with pytest.raises(HTTPException) as exc_info:
+                await get_current_user(credentials=credentials, request=SimpleNamespace(state=SimpleNamespace()))
+
+        assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
+        assert exc_info.value.detail == "Token has been revoked"
+        mock_revoked.assert_called_once_with("configured-revocation-id")
+        mock_get_user.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_malformed_trusted_jwt_rejected_without_default_user_lookup(self):
+        """Malformed trust-mode JWTs fail closed instead of falling through."""
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="trusted_jwt")
+        jwt_payload = {
+            "token_use": "trusted",
+            "teams": ["team-1"],
+            "jti": "trusted-jti-2",
+            "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp(),
+        }
+
+        with (
+            patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=jwt_payload)),
+            patch("mcpgateway.auth._check_token_revoked_sync", return_value=False),
+            patch("mcpgateway.auth._get_user_by_email_sync") as mock_get_user,
+        ):
+            with pytest.raises(HTTPException) as exc_info:
+                await get_current_user(credentials=credentials, request=SimpleNamespace(state=SimpleNamespace()))
+
+        assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
+        assert exc_info.value.detail == "Invalid trusted token"
+        mock_get_user.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_token_revocation_check_failure_denies_access(self, caplog):
         """Test that token revocation check failure denies access (fail-secure)."""
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="jwt_with_jti")
