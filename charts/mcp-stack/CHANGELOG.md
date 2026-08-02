@@ -59,7 +59,8 @@ Aligned `values.yaml` with `config.py` secure defaults and tightened for product
 
 ### Added
 
-* `charts/mcp-stack/values-minikube.yaml` — local development overlay for minikube (relaxed SSRF, dev credentials, single replica, `pullPolicy: Never`)
+- **PgBouncer configuration guide** ([#3590](https://github.com/IBM/mcp-context-forge/issues/3590)) - Documented enablement, pool modes, connection limits, and gateway database routing.
+- `charts/mcp-stack/values-minikube.yaml` — local development overlay for minikube (relaxed SSRF, dev credentials, single replica, `pullPolicy: Never`)
 
 ---
 
