@@ -228,6 +228,8 @@ class TokenStorageService:
         refresh_token: Optional[str],
         expires_in: Optional[int],
         scopes: List[str],
+        learned_aud: Optional[str] = None,
+        learned_iss: Optional[str] = None,
     ) -> TokenRecord:
         """Store OAuth tokens for a gateway-user combination.
 
@@ -239,6 +241,8 @@ class TokenStorageService:
             refresh_token: Refresh token from OAuth provider (optional)
             expires_in: Token expiration time in seconds, or None if the provider does not specify expiration
             scopes: List of OAuth scopes granted
+            learned_aud: Learned JWT audience from token introspection (optional)
+            learned_iss: Learned JWT issuer from token introspection (optional)
 
         Returns:
             TokenRecord with token data
@@ -256,6 +260,8 @@ class TokenStorageService:
             refresh_token=refresh_token,
             expires_in=expires_in,
             scopes=scopes,
+            learned_aud=learned_aud,
+            learned_iss=learned_iss,
         )
 
     async def get_user_token(
@@ -370,6 +376,28 @@ class TokenStorageService:
             Number of tokens cleaned up (0 for Vault backend)
         """
         return await self._backend.cleanup_expired_tokens(max_age_days=max_age_days)
+
+    async def get_user_learned_audience(
+        self,
+        gateway_id: str,
+        app_user_email: str,
+    ) -> tuple[str | None, str | None]:
+        """Return the per-user learned JWT audience and issuer for a gateway-user pair.
+
+        Used by token_validation_service.validate_oauth_token_claims to authoritatively
+        validate a user's token audience against the value learned from their own prior
+        OAuth callback, rather than a globally-shared gateway.oauth_config value.
+
+        Args:
+            gateway_id: ID of the gateway
+            app_user_email: ContextForge user email
+
+        Returns:
+            Tuple of (learned_aud, learned_iss). Either element may be None if
+            no token record exists or if the fields were never populated.
+        """
+        team_id = self._get_team_id(gateway_id, app_user_email)
+        return await self._backend.get_user_learned_audience(gateway_id, team_id, app_user_email)
 
     async def get_oauth_credentials(
         self,

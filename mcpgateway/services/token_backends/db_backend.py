@@ -71,6 +71,8 @@ class DatabaseTokenBackend(AbstractTokenBackend):
         refresh_token: str | None,
         expires_in: int | None,
         scopes: list[str],
+        learned_aud: str | None = None,
+        learned_iss: str | None = None,
     ) -> TokenRecord:
         """Store OAuth tokens in database.
 
@@ -86,6 +88,8 @@ class DatabaseTokenBackend(AbstractTokenBackend):
             refresh_token: Refresh token (will be encrypted)
             expires_in: Token expiration in seconds, or None
             scopes: OAuth scopes
+            learned_aud: Learned JWT audience from token introspection (stored in DB)
+            learned_iss: Learned JWT issuer from token introspection (stored in DB)
 
         Returns:
             TokenRecord with plain-text tokens
@@ -125,6 +129,8 @@ class DatabaseTokenBackend(AbstractTokenBackend):
                 token_record.refresh_token = encrypted_refresh
                 token_record.expires_at = expires_at
                 token_record.scopes = scopes
+                token_record.learned_aud = learned_aud
+                token_record.learned_iss = learned_iss
                 token_record.updated_at = now
                 logger.info(
                     "Updated OAuth tokens for gateway %s, app user %s, OAuth user %s",
@@ -142,6 +148,8 @@ class DatabaseTokenBackend(AbstractTokenBackend):
                     refresh_token=encrypted_refresh,
                     expires_at=expires_at,
                     scopes=scopes,
+                    learned_aud=learned_aud,
+                    learned_iss=learned_iss,
                 )
                 self.db.add(token_record)
                 logger.info(
@@ -511,6 +519,49 @@ class DatabaseTokenBackend(AbstractTokenBackend):
             logger.error("Unexpected error refreshing token for gateway %s: %s", token_record.gateway_id, str(e))
             # Preserve token - this is likely a transient or configuration issue
             return None
+
+    async def get_user_learned_audience(
+        self,
+        gateway_id: str,
+        team_id: str,  # ← Phase 1: Accepted but NOT used (no DB column yet)
+        app_user_email: str,
+    ) -> tuple[str | None, str | None]:
+        """Return the per-user learned JWT audience and issuer for a gateway-user pair.
+
+        Used by token_validation_service.validate_oauth_token_claims to authoritatively
+        validate a user's token audience against the value learned from their own prior
+        OAuth callback, rather than a globally-shared gateway.oauth_config value.
+
+        Phase 1: team_id parameter is IGNORED. Query uses (gateway_id, app_user_email).
+
+        Args:
+            gateway_id: ID of the gateway
+            team_id: Team identifier (IGNORED in Phase 1 - no DB column yet)
+            app_user_email: ContextForge user email
+
+        Returns:
+            Tuple of (learned_aud, learned_iss). Either element may be None if
+            no token record exists or if the fields were never populated.
+        """
+        from mcpgateway.common.validators import SecurityValidator  # pylint: disable=import-outside-toplevel
+
+        try:
+            token_record = self.db.execute(
+                select(OAuthToken.learned_aud, OAuthToken.learned_iss).where(
+                    OAuthToken.gateway_id == gateway_id,
+                    OAuthToken.app_user_email == app_user_email,
+                )
+            ).one_or_none()
+            if token_record is None:
+                return (None, None)
+            return (token_record.learned_aud, token_record.learned_iss)
+        except Exception as e:
+            logger.debug(
+                "Failed to retrieve learned audience for gateway %s: %s",
+                SecurityValidator.sanitize_log_message(gateway_id),
+                e,
+            )
+            return (None, None)
 
     def _is_token_expired(self, token_record: OAuthToken, threshold_seconds: int = 300) -> bool:
         """Check if token is expired or near expiration.
