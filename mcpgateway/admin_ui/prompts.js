@@ -11,6 +11,7 @@ import {
   handleFetchError,
   isInactiveChecked,
   makeCopyIdButton,
+  populateTeamSelect,
   safeGetElement,
   showErrorMessage,
 } from "./utils.js";
@@ -401,20 +402,10 @@ export const editPrompt = async function (promptId) {
     const editForm = safeGetElement("edit-prompt-form");
     if (editForm) {
       editForm.action = `${window.ROOT_PATH}/admin/prompts/${encodeURIComponent(promptId)}/edit`;
-      // Add or update hidden team_id input if present in URL
-      const teamId = new URL(window.location.href).searchParams.get("team_id");
-      if (teamId) {
-        let teamInput = safeGetElement("edit-prompt-team-id");
-        if (!teamInput) {
-          teamInput = document.createElement("input");
-          teamInput.type = "hidden";
-          teamInput.name = "team_id";
-          teamInput.id = "edit-prompt-team-id";
-          editForm.appendChild(teamInput);
-        }
-        teamInput.value = teamId;
-      }
     }
+
+    // Populate team dropdown with user's teams, pre-select the entity's current team
+    populateTeamSelect("edit-prompt-team-id", prompt.teamId || "");
 
     const nameValidation = validateInputName(prompt.name, "prompt");
     const customNameValidation = validateInputName(

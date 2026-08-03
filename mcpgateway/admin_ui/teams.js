@@ -684,6 +684,70 @@ export const validatePasswordMatch = function () {
 // ===================================================================
 // TEAM MANAGEMENT FUNCTIONS
 // ===================================================================
+// OIDC group table helpers
+// ===================================================================
+/**
+ * Add a new empty row to an OIDC groups table.
+ * @param {string} tableId - The table element ID
+ * @param {string} hiddenInputId - The hidden input element ID to sync JSON to
+ */
+export const addOidcGroupRow = function (tableId, hiddenInputId) {
+  const table = document.getElementById(tableId);
+  if (!table) return;
+  const tbody = table.querySelector("tbody");
+  const tr = document.createElement("tr");
+  tr.innerHTML =
+    '<td class="pr-2 py-1"><input type="text" data-field="name" placeholder="e.g. IT Department" ' +
+    'class="w-full px-2 py-1 border border-gray-300 dark:border-gray-600 rounded text-sm dark:bg-gray-700 dark:text-white" ' +
+    'onchange="Admin.syncOidcGroupIds(\'' +
+    tableId +
+    "', '" +
+    hiddenInputId +
+    '\')" /></td>' +
+    '<td class="pr-2 py-1"><input type="text" data-field="id" placeholder="5993f5bb-566d-..." ' +
+    'class="w-full px-2 py-1 border border-gray-300 dark:border-gray-600 rounded text-sm font-mono dark:bg-gray-700 dark:text-white" ' +
+    'onchange="Admin.syncOidcGroupIds(\'' +
+    tableId +
+    "', '" +
+    hiddenInputId +
+    '\')" /></td>' +
+    '<td class="py-1"><button type="button" ' +
+    "onclick=\"this.closest('tr').remove(); Admin.syncOidcGroupIds('" +
+    tableId +
+    "', '" +
+    hiddenInputId +
+    "')\" " +
+    'class="text-red-500 hover:text-red-700 text-lg" title="Remove">&times;</button></td>';
+  tbody.appendChild(tr);
+  // Focus the first input of the new row
+  const firstInput = tr.querySelector("input");
+  if (firstInput) firstInput.focus();
+};
+
+/**
+ * Synchronize OIDC groups table rows to the hidden JSON input.
+ * @param {string} tableId - The table element ID
+ * @param {string} hiddenInputId - The hidden input element ID
+ */
+export const syncOidcGroupIds = function (tableId, hiddenInputId) {
+  const table = document.getElementById(tableId);
+  const hiddenInput = document.getElementById(hiddenInputId);
+  if (!table || !hiddenInput) return;
+  const rows = table.querySelectorAll("tbody tr");
+  const groups = [];
+  rows.forEach(function (row) {
+    const nameInput = row.querySelector('[data-field="name"]');
+    const idInput = row.querySelector('[data-field="id"]');
+    const name = nameInput ? nameInput.value.trim() : "";
+    const id = idInput ? idInput.value.trim() : "";
+    if (id) {
+      groups.push({ name: name, id: id });
+    }
+  });
+  hiddenInput.value = JSON.stringify(groups);
+};
+
+// ===================================================================
 // Team edit modal functions
 export const hideTeamEditModal = function () {
   safeGetElement("team-edit-modal").classList.add("hidden");

@@ -23,6 +23,7 @@ import {
   getCurrentTeamId,
   handleFetchError,
   isInactiveChecked,
+  populateTeamSelect,
   makeCopyIdButton,
   safeGetElement,
   showErrorMessage,
@@ -305,15 +306,8 @@ export const editGateway = async function (gatewayId) {
       tagsField.value = rawTags.join(", ");
     }
 
-    const teamId = new URL(window.location.href).searchParams.get("team_id");
-
-    if (teamId) {
-      const hiddenInput = document.createElement("input");
-      hiddenInput.type = "hidden";
-      hiddenInput.name = "team_id";
-      hiddenInput.value = teamId;
-      editForm.appendChild(hiddenInput);
-    }
+    // Populate team dropdown with user's teams, pre-select the entity's current team
+    populateTeamSelect("edit-gateway-team-id", gateway.teamId || "");
 
     const visibility = gateway.visibility
       ? gateway.visibility.toLowerCase()
@@ -336,6 +330,7 @@ export const editGateway = async function (gatewayId) {
     if (visibility) {
       // When public visibility is disabled and we're in a team-scoped view,
       // coerce legacy-public records to team.
+      const _urlTeamId = new URL(window.location.href).searchParams.get("team_id");
       const effectiveVisibility =
         window.ALLOW_PUBLIC_VISIBILITY === false &&
         visibility === "public" &&

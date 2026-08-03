@@ -76,6 +76,7 @@
     class="role-select text-sm px-2 py-1 border border-gray-300 dark:border-gray-600 rounded-md dark:bg-gray-700 dark:text-white flex-shrink-0"
   >
     <option value="member" {{ 'selected' if member_role == 'member' else '' }}>Member</option>
+    <option value="developer" {{ 'selected' if member_role == 'developer' else '' }}>Developer</option>
     <option value="owner" {{ 'selected' if member_role == 'owner' else '' }}>Owner</option>
   </select>
 </div>

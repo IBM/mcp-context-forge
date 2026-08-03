@@ -15,6 +15,7 @@ import {
   showErrorMessage,
   decodeHtml,
   makeCopyIdButton,
+  populateTeamSelect,
 } from "./utils.js";
 
 /**
@@ -726,15 +727,11 @@ export const editServer = async function (serverId) {
       }
     }
 
-    const teamId = new URL(window.location.href).searchParams.get("team_id");
+    // Populate team dropdown with user's teams, pre-select the entity's current team
+    populateTeamSelect("edit-server-team-id", server.teamId || "");
 
-    if (teamId) {
-      const hiddenInput = document.createElement("input");
-      hiddenInput.type = "hidden";
-      hiddenInput.name = "team_id";
-      hiddenInput.value = teamId;
-      editForm.appendChild(hiddenInput);
-    }
+    // Effective team ID for view-public toggle and association filtering
+    const teamId = server.teamId || new URL(window.location.href).searchParams.get("team_id");
 
     // Initialize View Public toggle for Edit Server modal
     if (teamId) {
