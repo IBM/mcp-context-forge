@@ -543,8 +543,6 @@ class DatabaseTokenBackend(AbstractTokenBackend):
             Tuple of (learned_aud, learned_iss). Either element may be None if
             no token record exists or if the fields were never populated.
         """
-        from mcpgateway.common.validators import SecurityValidator  # pylint: disable=import-outside-toplevel
-
         try:
             token_record = self.db.execute(
                 select(OAuthToken.learned_aud, OAuthToken.learned_iss).where(
