@@ -38,6 +38,8 @@ class TokenRecord:
     scopes: list[str]  # OAuth scopes
     created_at: datetime
     updated_at: datetime
+    learned_aud: str | None = None  # Learned JWT audience from token introspection
+    learned_iss: str | None = None  # Learned JWT issuer from token introspection
 
 
 class AbstractTokenBackend(ABC):
@@ -88,6 +90,8 @@ class AbstractTokenBackend(ABC):
         refresh_token: str | None,
         expires_in: int | None,
         scopes: list[str],
+        learned_aud: str | None = None,  # Learned JWT audience from token introspection
+        learned_iss: str | None = None,  # Learned JWT issuer from token introspection
     ) -> TokenRecord:
         """
         Store OAuth tokens for a user.
@@ -96,7 +100,20 @@ class AbstractTokenBackend(ABC):
         DatabaseTokenBackend: encrypts with Fernet, UPSERTs to oauth_tokens table
         VaultTokenBackend: resolves gateway_id → mcp_url, writes plain-text to Vault KV v2
 
-        Returns TokenRecord with plain-text tokens for immediate use.
+        Args:
+            gateway_id: UUID from gateways.id - passed by all existing call sites
+            team_id: Team identifier from user context (JWT/session)
+            user_id: OAuth provider user ID
+            app_user_email: ContextForge user email
+            access_token: Access token from OAuth provider
+            refresh_token: Refresh token from OAuth provider (optional)
+            expires_in: Token expiration in seconds, or None
+            scopes: OAuth scopes granted
+            learned_aud: Per-user learned audience claim from IdP token (optional)
+            learned_iss: Per-user learned issuer claim from IdP token (optional)
+
+        Returns:
+            TokenRecord with plain-text tokens for immediate use
         """
 
     @abstractmethod
@@ -169,6 +186,30 @@ class AbstractTokenBackend(ABC):
         VaultTokenBackend: No-op, returns 0 (Vault KV TTL handles cleanup)
 
         Returns count of deleted tokens.
+        """
+
+    @abstractmethod
+    async def get_user_learned_audience(
+        self,
+        gateway_id: str,
+        team_id: str,  # Team identifier - required by Vault backend for path construction
+        app_user_email: str,
+    ) -> tuple[str | None, str | None]:
+        """
+        Return the per-user learned JWT audience and issuer for a gateway-user pair.
+
+        Used by token_validation_service.validate_oauth_token_claims to authoritatively
+        validate a user's token audience against the value learned from their own prior
+        OAuth callback, rather than a globally-shared gateway.oauth_config value.
+
+        Args:
+            gateway_id: ID of the gateway
+            team_id: Team identifier (Vault backend uses this for path; DB backend ignores it)
+            app_user_email: ContextForge user email
+
+        Returns:
+            Tuple of (learned_aud, learned_iss). Either element may be None if
+            no token record exists or if the fields were never populated.
         """
 
     async def get_oauth_credentials(self, team_id: str | None, mcp_url: str) -> dict | None:  # pylint: disable=unused-argument

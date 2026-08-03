@@ -12,6 +12,7 @@ to avoid code duplication for PR #5244 features.
 import logging
 from datetime import datetime, timezone
 from typing import Any
+from urllib.parse import urlparse
 
 from mcpgateway.common.validators import SecurityValidator
 
@@ -64,8 +65,13 @@ def apply_omit_resource_and_normalize(
                     logger.warning("Configured resource was empty and removed during refresh: %s", existing_resource)
                 oauth_config["resource"] = normalized
         elif gateway_url:
-            # Derive from gateway.url if not explicitly configured (strip query)
-            oauth_config["resource"] = normalize_resource_url(gateway_url)
+            # Derive from gateway.url if not explicitly configured (origin only: scheme + netloc)
+            # RFC 8707 §2.2: IdPs issue origin-level audiences, so derive scheme://netloc
+            parsed = urlparse(gateway_url)
+            if parsed.scheme and parsed.netloc:
+                oauth_config["resource"] = f"{parsed.scheme}://{parsed.netloc}"
+            else:
+                oauth_config["resource"] = None
             if not oauth_config.get("resource"):
                 logger.warning("Gateway URL is empty, skipping resource parameter: %s", gateway_url)
 

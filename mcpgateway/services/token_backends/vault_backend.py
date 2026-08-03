@@ -264,6 +264,8 @@ class VaultTokenBackend(AbstractTokenBackend):
         refresh_token: str | None,
         expires_in: int | None,
         scopes: list[str],
+        learned_aud: str | None = None,
+        learned_iss: str | None = None,
     ) -> TokenRecord:
         """Store OAuth tokens in Vault.
 
@@ -276,6 +278,8 @@ class VaultTokenBackend(AbstractTokenBackend):
             refresh_token: Refresh token (stored plain-text in Vault)
             expires_in: Token expiration in seconds, or None
             scopes: OAuth scopes
+            learned_aud: Learned JWT audience from token introspection (stored in Vault)
+            learned_iss: Learned JWT issuer from token introspection (stored in Vault)
 
         Returns:
             TokenRecord with plain-text tokens
@@ -311,6 +315,8 @@ class VaultTokenBackend(AbstractTokenBackend):
                 "user_id": user_id,
                 "token_type": "Bearer",
                 "expires_at": expires_at.isoformat() if expires_at else None,
+                "learned_aud": learned_aud,
+                "learned_iss": learned_iss,
                 "created_at": original_created_at or now.isoformat(),
                 "updated_at": now.isoformat(),
             }
@@ -346,6 +352,8 @@ class VaultTokenBackend(AbstractTokenBackend):
             scopes=scopes,
             created_at=now,
             updated_at=now,
+            learned_aud=learned_aud,
+            learned_iss=learned_iss,
         )
 
     async def get_user_token(
@@ -580,6 +588,67 @@ class VaultTokenBackend(AbstractTokenBackend):
                 "cleanup_expired_tokens is a no-op for Vault backend. Configure Vault KV TTL or retention policies to handle cleanup. This warning is logged only once per process.",
             )
         return 0
+
+    async def get_user_learned_audience(
+        self,
+        gateway_id: str,
+        team_id: str,
+        app_user_email: str,
+    ) -> tuple[str | None, str | None]:
+        """Return the per-user learned JWT audience and issuer for a gateway-user pair.
+
+        Retrieves learned_aud and learned_iss from the Vault token record for this
+        gateway-team-user combination. These values are captured at OAuth callback time
+        and used by token_validation_service to validate tokens against the IdP's actual
+        audience/issuer rather than gateway.oauth_config defaults.
+
+        Args:
+            gateway_id: ID of the gateway
+            team_id: Team identifier (used in Vault path construction)
+            app_user_email: ContextForge user email
+
+        Returns:
+            Tuple of (learned_aud, learned_iss). Either element may be None if
+            no token record exists or if the fields were never populated.
+        """
+        try:
+            mcp_url = self._resolve_mcp_url(gateway_id)
+            path = self._construct_vault_path(team_id, mcp_url, app_user_email)
+            result = await self._vault_request("GET", path)
+
+            if not result or "data" not in result:
+                logger.debug(
+                    "No token record found in Vault for gateway %s, team=%s, user=%s",
+                    SecurityValidator.sanitize_log_message(gateway_id),
+                    SecurityValidator.sanitize_log_message(team_id),
+                    SecurityValidator.sanitize_log_message(app_user_email),
+                )
+                return (None, None)
+
+            data = result["data"]["data"]
+            learned_aud = data.get("learned_aud")
+            learned_iss = data.get("learned_iss")
+
+            logger.debug(
+                "Retrieved learned audience for gateway %s, team=%s, user=%s: aud=%s, iss=%s",
+                SecurityValidator.sanitize_log_message(gateway_id),
+                SecurityValidator.sanitize_log_message(team_id),
+                SecurityValidator.sanitize_log_message(app_user_email),
+                SecurityValidator.sanitize_log_message(str(learned_aud)),
+                SecurityValidator.sanitize_log_message(str(learned_iss)),
+            )
+
+            return (learned_aud, learned_iss)
+
+        except Exception as e:
+            logger.debug(
+                "Failed to retrieve learned audience for gateway %s, team=%s, user=%s: %s",
+                SecurityValidator.sanitize_log_message(gateway_id),
+                SecurityValidator.sanitize_log_message(team_id),
+                SecurityValidator.sanitize_log_message(app_user_email),
+                SecurityValidator.sanitize_log_message(str(e)),
+            )
+            return (None, None)
 
     async def get_oauth_credentials(self, team_id: str, mcp_url: str) -> dict | None:
         """Retrieve team-scoped OAuth credentials from Vault.
