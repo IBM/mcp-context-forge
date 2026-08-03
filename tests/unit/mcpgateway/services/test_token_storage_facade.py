@@ -328,6 +328,8 @@ class TestTokenStorageServiceStoreTokens:
                 refresh_token="refresh_token_value",
                 expires_in=3600,
                 scopes=["read", "write"],
+                learned_aud=None,
+                learned_iss=None,
             )
 
     @pytest.mark.asyncio
