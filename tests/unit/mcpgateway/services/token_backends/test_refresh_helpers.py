@@ -230,7 +230,7 @@ def test_apply_omit_resource_normalizes_url_strips_fragment():
 
 
 def test_apply_omit_resource_normalizes_url_strips_query():
-    """Resource URL is normalized (query stripped for auto-derived)."""
+    """Resource URL is normalized (origin-level for auto-derived per RFC 8707 §2.2)."""
     oauth_config = {
         "client_id": "test-client",
     }
@@ -238,8 +238,8 @@ def test_apply_omit_resource_normalizes_url_strips_query():
 
     apply_omit_resource_and_normalize(oauth_config, gateway_url, "gw-1")
 
-    # Auto-derived resource strips query
-    assert oauth_config["resource"] == "https://gateway.example.com/path"
+    # Auto-derived resource is origin-level (scheme + netloc only)
+    assert oauth_config["resource"] == "https://gateway.example.com"
 
 
 def test_apply_omit_resource_preserves_query_for_explicit():
