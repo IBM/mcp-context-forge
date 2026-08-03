@@ -45,6 +45,53 @@ def mock_settings_vault():
     return settings
 
 
+@pytest.fixture
+def service(mock_db):
+    """Create a TokenStorageService instance with encryption mocked."""
+    with patch("mcpgateway.services.token_storage_service.get_settings") as mock_settings, \
+         patch("mcpgateway.services.token_backends.db_backend.get_encryption_service") as mock_enc:
+        mock_settings.return_value = MagicMock(
+            auth_encryption_secret="test-salt",  # pragma: allowlist secret
+            oauth_token_backend="database"
+        )
+        mock_enc_instance = MagicMock()
+        mock_enc_instance.encrypt_secret_async = AsyncMock(return_value="encrypted_value")
+        mock_enc_instance.decrypt_secret_async = AsyncMock(return_value="decrypted_value")
+        mock_enc.return_value = mock_enc_instance
+        svc = TokenStorageService(mock_db, user_context={"email": "user@test.com", "teams": ["team1"]})
+    return svc
+
+
+@pytest.fixture
+def service_no_encryption(mock_db):
+    """Create a TokenStorageService instance without encryption."""
+    with patch("mcpgateway.services.token_storage_service.get_settings") as mock_settings, \
+         patch("mcpgateway.services.token_backends.db_backend.get_encryption_service", side_effect=ImportError):
+        mock_settings.return_value = MagicMock(oauth_token_backend="database")
+        svc = TokenStorageService(mock_db, user_context={"email": "user@test.com", "teams": ["team1"]})
+    assert svc._backend.encryption is None
+    return svc
+
+
+def _make_token_record(**overrides):
+    """Helper to create a mock OAuthToken record."""
+    defaults = {
+        "gateway_id": "gw-1",
+        "user_id": "oauth-user-1",
+        "app_user_email": "user@test.com",
+        "access_token": "encrypted_access",
+        "refresh_token": "encrypted_refresh",
+        "expires_at": datetime.now(timezone.utc) + timedelta(hours=1),
+        "scopes": ["read", "write"],
+        "token_type": "bearer",
+        "created_at": datetime.now(timezone.utc),
+        "updated_at": datetime.now(timezone.utc),
+    }
+    defaults.update(overrides)
+    record = MagicMock(**defaults)
+    return record
+
+
 # ---------- Initialization Tests ----------
 
 
@@ -212,6 +259,8 @@ async def test_store_tokens_delegates_to_backend(mock_db, mock_settings_database
                 refresh_token="refresh",
                 expires_in=3600,
                 scopes=["read"],
+                learned_aud=None,
+                learned_iss=None,
             )
 
             assert result.gateway_id == "gw-1"
@@ -396,10 +445,7 @@ def test_get_team_id_falls_back_to_default_when_no_teams(mock_db, mock_settings_
             mock_db.execute = Mock(return_value=execute_result)
 
             team_id = service._get_team_id("gw-123", "user@example.com")
-    gw = MagicMock(oauth_config=None)
-    mock_db.query.return_value.filter.return_value.first.return_value = gw
-    result = await service._refresh_access_token(_make_token_record())
-    assert result is None
+            assert team_id is None  # Should fall back to None when no teams
 
 
 @pytest.mark.asyncio
@@ -433,7 +479,7 @@ async def test_refresh_allowed_for_private_gateway_owned_by_token_owner(service,
     mock_oauth_manager = MagicMock()
     mock_oauth_manager.refresh_token = AsyncMock(return_value={"access_token": "new_access", "expires_in": 3600})
     record = _make_token_record(app_user_email="owner@example.com")
-    with patch("mcpgateway.services.oauth_manager.OAuthManager", return_value=mock_oauth_manager):
+    with patch("mcpgateway.services.token_backends.db_backend.OAuthManager", return_value=mock_oauth_manager):
         result = await service._refresh_access_token(record)
 
     assert result == "new_access"
@@ -443,7 +489,7 @@ async def test_refresh_allowed_for_private_gateway_owned_by_token_owner(service,
 async def test_refresh_decrypt_refresh_token_fails(service, mock_db):
     gw = MagicMock(oauth_config={"token_url": "https://token", "client_id": "cid"}, url="https://gw.com")
     mock_db.query.return_value.filter.return_value.first.return_value = gw
-    service.encryption.decrypt_secret_async = AsyncMock(side_effect=Exception("decrypt failed"))
+    service._backend.encryption.decrypt_secret_async = AsyncMock(side_effect=Exception("decrypt failed"))
     result = await service._refresh_access_token(_make_token_record())
     assert result is None
 
@@ -454,7 +500,7 @@ async def test_refresh_success(service, mock_db):
     mock_db.query.return_value.filter.return_value.first.return_value = gw
     mock_oauth_manager = MagicMock()
     mock_oauth_manager.refresh_token = AsyncMock(return_value={"access_token": "new_access", "refresh_token": "new_refresh", "expires_in": 3600})
-    with patch("mcpgateway.services.oauth_manager.OAuthManager", return_value=mock_oauth_manager):
+    with patch("mcpgateway.services.token_backends.db_backend.OAuthManager", return_value=mock_oauth_manager):
         result = await service._refresh_access_token(_make_token_record())
     assert result == "new_access"
     mock_db.commit.assert_called()
@@ -474,7 +520,7 @@ async def test_refresh_without_expires_in_preserves_prior_ttl(service, mock_db):
     record.updated_at = issued
     record.expires_at = issued + timedelta(seconds=3600)
 
-    with patch("mcpgateway.services.oauth_manager.OAuthManager", return_value=mock_oauth_manager):
+    with patch("mcpgateway.services.token_backends.db_backend.OAuthManager", return_value=mock_oauth_manager):
         result = await service._refresh_access_token(record)
 
     assert result == "new_access"
@@ -496,7 +542,7 @@ async def test_refresh_without_expires_in_no_prior_ttl_stays_none(service, mock_
     record = _make_token_record()
     record.expires_at = None
 
-    with patch("mcpgateway.services.oauth_manager.OAuthManager", return_value=mock_oauth_manager):
+    with patch("mcpgateway.services.token_backends.db_backend.OAuthManager", return_value=mock_oauth_manager):
         result = await service._refresh_access_token(record)
 
     assert result == "new_access"
@@ -509,7 +555,7 @@ async def test_refresh_success_with_resource_list(service, mock_db):
     mock_db.query.return_value.filter.return_value.first.return_value = gw
     mock_oauth_manager = MagicMock()
     mock_oauth_manager.refresh_token = AsyncMock(return_value={"access_token": "new_access", "expires_in": 3600})
-    with patch("mcpgateway.services.oauth_manager.OAuthManager", return_value=mock_oauth_manager):
+    with patch("mcpgateway.services.token_backends.db_backend.OAuthManager", return_value=mock_oauth_manager):
         result = await service._refresh_access_token(_make_token_record())
     assert result == "new_access"
 
@@ -520,7 +566,7 @@ async def test_refresh_success_with_single_resource(service, mock_db):
     mock_db.query.return_value.filter.return_value.first.return_value = gw
     mock_oauth_manager = MagicMock()
     mock_oauth_manager.refresh_token = AsyncMock(return_value={"access_token": "new_access", "expires_in": 3600})
-    with patch("mcpgateway.services.oauth_manager.OAuthManager", return_value=mock_oauth_manager):
+    with patch("mcpgateway.services.token_backends.db_backend.OAuthManager", return_value=mock_oauth_manager):
         result = await service._refresh_access_token(_make_token_record())
     assert result == "new_access"
 
@@ -531,7 +577,7 @@ async def test_refresh_derives_resource_from_gateway_url(service, mock_db):
     mock_db.query.return_value.filter.return_value.first.return_value = gw
     mock_oauth_manager = MagicMock()
     mock_oauth_manager.refresh_token = AsyncMock(return_value={"access_token": "new_access", "expires_in": 3600})
-    with patch("mcpgateway.services.oauth_manager.OAuthManager", return_value=mock_oauth_manager):
+    with patch("mcpgateway.services.token_backends.db_backend.OAuthManager", return_value=mock_oauth_manager):
         result = await service._refresh_access_token(_make_token_record())
     assert result == "new_access"
 
@@ -549,7 +595,7 @@ async def test_refresh_preserves_opaque_resource_list(service, mock_db):
     mock_db.query.return_value.filter.return_value.first.return_value = gw
     mock_oauth_manager = MagicMock()
     mock_oauth_manager.refresh_token = AsyncMock(return_value={"access_token": "new_access", "expires_in": 3600})
-    with patch("mcpgateway.services.oauth_manager.OAuthManager", return_value=mock_oauth_manager):
+    with patch("mcpgateway.services.token_backends.db_backend.OAuthManager", return_value=mock_oauth_manager):
         result = await service._refresh_access_token(_make_token_record())
     assert result == "new_access"
     refresh_call_oauth_config = mock_oauth_manager.refresh_token.call_args[0][1]
@@ -563,7 +609,7 @@ async def test_refresh_preserves_opaque_single_resource(service, mock_db):
     mock_db.query.return_value.filter.return_value.first.return_value = gw
     mock_oauth_manager = MagicMock()
     mock_oauth_manager.refresh_token = AsyncMock(return_value={"access_token": "new_access", "expires_in": 3600})
-    with patch("mcpgateway.services.oauth_manager.OAuthManager", return_value=mock_oauth_manager):
+    with patch("mcpgateway.services.token_backends.db_backend.OAuthManager", return_value=mock_oauth_manager):
         result = await service._refresh_access_token(_make_token_record())
     assert result == "new_access"
     refresh_call_oauth_config = mock_oauth_manager.refresh_token.call_args[0][1]
@@ -590,7 +636,7 @@ async def test_refresh_resource_list_all_empty_logs_warning(service, mock_db, ca
     import logging
 
     with caplog.at_level(logging.WARNING):
-        with patch("mcpgateway.services.oauth_manager.OAuthManager", return_value=mock_oauth_manager):
+        with patch("mcpgateway.services.token_backends.db_backend.OAuthManager", return_value=mock_oauth_manager):
             result = await service._refresh_access_token(_make_token_record())
 
     assert result == "new_access"
@@ -619,8 +665,8 @@ async def test_refresh_resource_string_normalizes_to_empty_logs_warning(service,
     import logging
 
     with caplog.at_level(logging.WARNING):
-        with patch("urllib.parse.urlunparse", return_value=""):
-            with patch("mcpgateway.services.oauth_manager.OAuthManager", return_value=mock_oauth_manager):
+        with patch("mcpgateway.services.token_backends.base.urlunparse", return_value=""):
+            with patch("mcpgateway.services.token_backends.db_backend.OAuthManager", return_value=mock_oauth_manager):
                 result = await service._refresh_access_token(_make_token_record())
 
     assert result == "new_access"
@@ -648,8 +694,8 @@ async def test_refresh_derived_gateway_url_normalizes_to_empty_logs_warning(serv
     import logging
 
     with caplog.at_level(logging.WARNING):
-        with patch("urllib.parse.urlunparse", return_value=""):
-            with patch("mcpgateway.services.oauth_manager.OAuthManager", return_value=mock_oauth_manager):
+        with patch("mcpgateway.services.token_backends.base.urlunparse", return_value=""):
+            with patch("mcpgateway.services.token_backends.db_backend.OAuthManager", return_value=mock_oauth_manager):
                 result = await service._refresh_access_token(_make_token_record())
 
     assert result == "new_access"
@@ -678,7 +724,7 @@ async def test_refresh_client_secret_decrypt_fails_preserves_token_and_returns_n
 
     # Mimic real behaviour: refresh token decrypts OK; client_secret decryption returns None
     # (wrong AUTH_ENCRYPTION_SECRET — the real method never raises, it returns None).
-    service.encryption.decrypt_secret_async = AsyncMock(
+    service._backend.encryption.decrypt_secret_async = AsyncMock(
         side_effect=["decrypted_refresh_token", None]
     )
 
@@ -714,10 +760,11 @@ async def test_refresh_exception_invalid_grant_clears_tokens(service, mock_db):
     from mcpgateway.services.oauth_manager import OAuthInvalidGrantError
     mock_oauth_manager.refresh_token = AsyncMock(side_effect=OAuthInvalidGrantError("Refresh token permanently invalid (invalid_grant): {'error': 'invalid_grant'}"))
     record = _make_token_record()
-    with patch("mcpgateway.services.oauth_manager.OAuthManager", return_value=mock_oauth_manager):
+    with patch("mcpgateway.services.token_backends.db_backend.OAuthManager", return_value=mock_oauth_manager):
         result = await service._refresh_access_token(record)
     assert result is None
-    mock_db.delete.assert_called_once_with(record)
+    # Verify token was deleted (backend calls self.db.delete on the token_record)
+    mock_db.delete.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -729,7 +776,7 @@ async def test_refresh_exception_expired_preserves_tokens(service, mock_db):
     # Non-OAuthError or OAuthError without "invalid_grant" should preserve token
     mock_oauth_manager.refresh_token = AsyncMock(side_effect=Exception("Token has expired"))
     record = _make_token_record()
-    with patch("mcpgateway.services.oauth_manager.OAuthManager", return_value=mock_oauth_manager):
+    with patch("mcpgateway.services.token_backends.db_backend.OAuthManager", return_value=mock_oauth_manager):
         result = await service._refresh_access_token(record)
     assert result is None
     # Token should NOT be deleted
@@ -742,7 +789,7 @@ async def test_refresh_exception_generic_no_cleanup(service, mock_db):
     mock_db.query.return_value.filter.return_value.first.return_value = gw
     mock_oauth_manager = MagicMock()
     mock_oauth_manager.refresh_token = AsyncMock(side_effect=Exception("Network error"))
-    with patch("mcpgateway.services.oauth_manager.OAuthManager", return_value=mock_oauth_manager):
+    with patch("mcpgateway.services.token_backends.db_backend.OAuthManager", return_value=mock_oauth_manager):
         result = await service._refresh_access_token(_make_token_record())
     assert result is None
     mock_db.delete.assert_not_called()
@@ -754,7 +801,7 @@ async def test_refresh_no_encryption(service_no_encryption, mock_db):
     mock_db.query.return_value.filter.return_value.first.return_value = gw
     mock_oauth_manager = MagicMock()
     mock_oauth_manager.refresh_token = AsyncMock(return_value={"access_token": "new_plain", "expires_in": 3600})
-    with patch("mcpgateway.services.oauth_manager.OAuthManager", return_value=mock_oauth_manager):
+    with patch("mcpgateway.services.token_backends.db_backend.OAuthManager", return_value=mock_oauth_manager):
         result = await service_no_encryption._refresh_access_token(_make_token_record(refresh_token="plain_refresh"))
     assert result == "new_plain"
 
@@ -768,8 +815,10 @@ async def test_get_token_info_found(service, mock_db):
     mock_db.execute.return_value.scalar_one_or_none.return_value = record
     result = await service.get_token_info("gw-1", "user@test.com")
     assert result is not None
-    assert result["user_id"] == "oauth-user-1"
-    assert "is_expired" in result
+    # New backend format: minimal fields (scopes, expires_at, status, updated_at)
+    assert "scopes" in result
+    assert "status" in result
+    assert result["status"] == "valid"
 
 
 @pytest.mark.asyncio

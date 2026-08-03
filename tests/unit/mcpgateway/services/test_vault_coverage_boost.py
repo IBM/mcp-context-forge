@@ -115,6 +115,9 @@ class TestAbstractTokenBackendGetOAuthCredentials:
             async def cleanup_expired_tokens(self, **kw):
                 return 0
 
+            async def get_user_learned_audience(self, **kw):
+                return (None, None)
+
         backend = _Concrete()
         result = await backend.get_oauth_credentials(team_id="t1", mcp_url="https://x.com")
         assert result is None
@@ -261,15 +264,16 @@ class TestRefreshHelpersEdgePaths:
         assert config.get("resource") is None
 
     def test_line_70_derived_from_gateway_url_empty(self):
-        """When resource derives from gateway_url but normalizes to None, warn (line 70)."""
+        """When resource derives from gateway_url but the URL has no scheme/netloc, warn (line 76)."""
         from mcpgateway.services.token_backends.refresh_helpers import apply_omit_resource_and_normalize
 
         config = {}  # No existing resource
-        with patch("mcpgateway.services.token_backends.refresh_helpers.normalize_resource_url", return_value=None):
-            with patch("mcpgateway.services.token_backends.refresh_helpers.logger") as mock_log:
-                apply_omit_resource_and_normalize(config, "https://gw.example.com", "gw-1")
+        # Provide a malformed gateway URL with no scheme or netloc
+        with patch("mcpgateway.services.token_backends.refresh_helpers.logger") as mock_log:
+            apply_omit_resource_and_normalize(config, "malformed-url", "gw-1")
 
         mock_log.warning.assert_called_once()
+        assert "Gateway URL is empty" in str(mock_log.warning.call_args)
 
 
 # ===========================================================================
@@ -1166,9 +1170,18 @@ class TestGatewayService401Retry:
         mock_user = MagicMock()
         mock_user.is_admin = False
 
+        # Track call count to return gateway first, then user for subsequent calls
+        execute_call_count = [0]
+
         def _execute(stmt):
             result = MagicMock()
-            result.scalar_one_or_none.return_value = mock_gw
+            execute_call_count[0] += 1
+            if execute_call_count[0] == 1:
+                # First call: gateway query
+                result.scalar_one_or_none.return_value = mock_gw
+            else:
+                # Subsequent calls: user query (or other queries that don't matter)
+                result.scalar_one_or_none.return_value = mock_user
             return result
 
         mock_db.execute.side_effect = _execute
@@ -1185,6 +1198,7 @@ class TestGatewayService401Retry:
             else:
                 # shared path
                 inst.get_user_token = AsyncMock(return_value="shared_token")
+            inst.get_user_learned_audience = AsyncMock(return_value=(None, None))
             return inst
 
         caps = ({"tools": {}}, [], [], [], None)
@@ -1229,9 +1243,21 @@ class TestGatewayService401Retry:
         mock_gw.capabilities = {"tools": {}}
         mock_gw.email_team = None
 
+        mock_user = MagicMock()
+        mock_user.is_admin = False
+
+        # Track call count to return gateway first, then user for subsequent calls
+        execute_call_count = [0]
+
         def _execute(stmt):
             result = MagicMock()
-            result.scalar_one_or_none.return_value = mock_gw
+            execute_call_count[0] += 1
+            if execute_call_count[0] == 1:
+                # First call: gateway query
+                result.scalar_one_or_none.return_value = mock_gw
+            else:
+                # Subsequent calls: user query (or other queries that don't matter)
+                result.scalar_one_or_none.return_value = mock_user
             return result
 
         mock_db.execute.side_effect = _execute
@@ -1240,6 +1266,7 @@ class TestGatewayService401Retry:
         def _tss_factory(db, user_context=None):
             inst = MagicMock()
             inst.get_user_token = AsyncMock(return_value="same_token")
+            inst.get_user_learned_audience = AsyncMock(return_value=(None, None))
             return inst
 
         with patch("mcpgateway.services.token_storage_service.TokenStorageService", side_effect=_tss_factory):
