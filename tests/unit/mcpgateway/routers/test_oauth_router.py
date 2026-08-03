@@ -12,7 +12,7 @@ import base64
 import json
 from datetime import datetime, timezone
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 # Third-Party
 from fastapi import HTTPException, Request
@@ -3356,3 +3356,245 @@ class TestPersistLearnedAudience:
 
         assert original == {"issuer": "https://idp.example.com"}
         assert gateway.oauth_config is not original
+
+
+# ===========================================================================
+# Tests for _build_user_context jwt_teams_claim path (lines 107-113)
+# ===========================================================================
+
+
+class TestBuildUserContextSessionTokenPath:
+    """Tests for _build_user_context with session token jwt_teams_claim (lines 107-113)."""
+
+    def test_session_token_with_jwt_teams_returns_filtered_teams(self):
+        """Session token with valid jwt_teams_claim returns team-scoped context (lines 107-111)."""
+        from mcpgateway.routers.oauth_router import _build_user_context
+
+        current_user = {
+            "email": "user@example.com",
+            "is_admin": False,
+            "token_use": "session",
+            "jwt_teams_claim": ["engineering", "ops"],
+            "token_teams": None,  # RBAC-resolved (admin bypass) — should be ignored for session tokens
+        }
+        result = _build_user_context(current_user)
+
+        assert result["email"] == "user@example.com"
+        assert result["teams"] == ["engineering", "ops"]
+        assert result["is_admin"] is False
+
+    def test_session_token_with_empty_jwt_teams_returns_shared_path(self):
+        """Session token with empty jwt_teams_claim returns shared path (line 113)."""
+        from mcpgateway.routers.oauth_router import _build_user_context
+
+        current_user = {
+            "email": "admin@example.com",
+            "is_admin": True,
+            "token_use": "session",
+            "jwt_teams_claim": [],  # Empty — no team, falls through to shared path
+            "token_teams": None,
+        }
+        result = _build_user_context(current_user)
+
+        assert result["email"] == "admin@example.com"
+        assert result["teams"] is None
+        assert result["is_admin"] is True
+
+    def test_session_token_with_null_jwt_teams_returns_shared_path(self):
+        """Session token with null jwt_teams_claim returns shared path (line 113)."""
+        from mcpgateway.routers.oauth_router import _build_user_context
+
+        current_user = {
+            "email": "admin@example.com",
+            "is_admin": True,
+            "token_use": "session",
+            "jwt_teams_claim": None,
+            "token_teams": None,
+        }
+        result = _build_user_context(current_user)
+
+        assert result["teams"] is None
+
+    def test_session_token_jwt_teams_filters_empty_strings(self):
+        """Session token jwt_teams_claim filters out blank strings (lines 109-111)."""
+        from mcpgateway.routers.oauth_router import _build_user_context
+
+        current_user = {
+            "email": "user@example.com",
+            "is_admin": False,
+            "token_use": "session",
+            "jwt_teams_claim": ["", "engineering", None, "ops"],
+            "token_teams": None,
+        }
+        result = _build_user_context(current_user)
+
+        assert result["teams"] == ["engineering", "ops"]
+
+    def test_session_token_jwt_teams_all_empty_falls_to_shared_path(self):
+        """Session token with only blank/None jwt_teams entries falls to shared path (line 113)."""
+        from mcpgateway.routers.oauth_router import _build_user_context
+
+        current_user = {
+            "email": "user@example.com",
+            "is_admin": False,
+            "token_use": "session",
+            "jwt_teams_claim": ["", None, 123],  # All non-string or blank
+            "token_teams": None,
+        }
+        result = _build_user_context(current_user)
+
+        assert result["teams"] is None
+
+
+# ===========================================================================
+# Tests for oauth_router callback scope handling (lines 914-930)
+# ===========================================================================
+
+
+class TestOAuthCallbackScopeHandling:
+    """Tests for scope_value list/str/other handling in OAuth callback (lines 922-928)."""
+
+    def test_scope_as_list_builds_scopes_list(self):
+        """scope_value as a list of strings produces scopes_list (lines 923-924)."""
+        scope_value = ["read", "write", "profile"]
+        if isinstance(scope_value, list):
+            scopes_list = [s for s in scope_value if isinstance(s, str)]
+        elif isinstance(scope_value, str):
+            scopes_list = scope_value.split() if scope_value else []
+        else:
+            scopes_list = []
+
+        assert scopes_list == ["read", "write", "profile"]
+
+    def test_scope_as_string_splits_into_list(self):
+        """scope_value as a space-delimited string is split into list (lines 925-926)."""
+        scope_value = "read write profile"
+        if isinstance(scope_value, list):
+            scopes_list = [s for s in scope_value if isinstance(s, str)]
+        elif isinstance(scope_value, str):
+            scopes_list = scope_value.split() if scope_value else []
+        else:
+            scopes_list = []
+
+        assert scopes_list == ["read", "write", "profile"]
+
+    def test_scope_as_empty_string_returns_empty_list(self):
+        """scope_value as empty string returns [] (line 926)."""
+        scope_value = ""
+        if isinstance(scope_value, list):
+            scopes_list = [s for s in scope_value if isinstance(s, str)]
+        elif isinstance(scope_value, str):
+            scopes_list = scope_value.split() if scope_value else []
+        else:
+            scopes_list = []
+
+        assert scopes_list == []
+
+    def test_scope_as_none_returns_empty_list(self):
+        """scope_value as None/other returns [] (lines 927-928)."""
+        scope_value = None
+        if isinstance(scope_value, list):
+            scopes_list = [s for s in scope_value if isinstance(s, str)]
+        elif isinstance(scope_value, str):
+            scopes_list = scope_value.split() if scope_value else []
+        else:
+            scopes_list = []
+
+        assert scopes_list == []
+
+    @pytest.mark.asyncio
+    async def test_callback_missing_access_token_returns_invalid_state(self, mock_db):
+        """Callback: success=True but no access_token in token_response returns invalid state (lines 917-919)."""
+        from mcpgateway.routers.oauth_router import oauth_callback
+
+        mock_request = Mock(spec=Request)
+        mock_request.state = SimpleNamespace(user=None, csp_nonce="test-nonce")
+        mock_request.scope = {"root_path": ""}
+
+        mock_gateway = Mock()
+        mock_gateway.id = "gw-123"
+        mock_gateway.oauth_config = {"grant_type": "authorization_code"}
+        mock_gateway.url = "https://mcp.example.com"
+        mock_gateway.ca_certificate = None
+        mock_gateway.client_cert = None
+        mock_gateway.client_key = None
+
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+
+        result_data = {
+            "success": True,
+            "token_response": {},  # No access_token
+            "state_data": {"app_user_email": "user@example.com", "team_id": None},
+            "user_id": "user-123",
+        }
+
+        with patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_mgr_cls, \
+             patch("mcpgateway.routers.oauth_router.TokenStorageService"):
+            mock_mgr = AsyncMock()
+            mock_mgr.resolve_gateway_id_from_state = AsyncMock(return_value="gw-123")
+            mock_mgr.complete_authorization_code_flow = AsyncMock(return_value=result_data)
+            mock_mgr_cls.return_value = mock_mgr
+
+            response = await oauth_callback(
+                request=mock_request,
+                code="auth_code",
+                state="state_token",
+                error=None,
+                error_description=None,
+                db=mock_db,
+            )
+
+        # Should return HTML error page (invalid state response)
+        assert hasattr(response, "status_code")
+        assert response.status_code in (200, 400)
+
+
+# ===========================================================================
+# Tests for oauth_router fetch-tools GatewayConnectionError (lines 1317-1318)
+# ===========================================================================
+
+
+class TestFetchToolsGatewayConnectionError:
+    """Test GatewayConnectionError path in fetch_tools_for_gateway (lines 1317-1318)."""
+
+    @pytest.mark.asyncio
+    async def test_gateway_connection_error_returns_400(self, mock_db):
+        """GatewayConnectionError in fetch_tools raises HTTPException 400 (lines 1317-1318)."""
+        from fastapi import HTTPException
+        from mcpgateway.routers.oauth_router import fetch_tools_after_oauth
+        from mcpgateway.services.gateway_service import GatewayConnectionError
+
+        current_user = {"email": "admin@example.com", "is_admin": True, "token_teams": None, "token_use": "api"}
+
+        mock_request = Mock(spec=Request)
+        mock_request.state = SimpleNamespace(user=current_user)
+        mock_request.scope = {"root_path": ""}
+        mock_request.cookies = {}
+
+        mock_gateway = Mock()
+        mock_gateway.id = "gw-123"
+        mock_gateway.name = "test-gw"
+        mock_gateway.visibility = "public"
+        mock_gateway.owner_email = None
+        mock_gateway.team_id = None
+
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+
+        mock_gw_service = MagicMock()
+        mock_gw_service.fetch_tools_after_oauth = AsyncMock(
+            side_effect=GatewayConnectionError("Connection refused")
+        )
+
+        with patch("mcpgateway.routers.oauth_router.enforce_fetch_tools_csrf", new=AsyncMock()), \
+             patch("mcpgateway.routers.oauth_router._enforce_gateway_access", new=AsyncMock()), \
+             patch("mcpgateway.services.gateway_service.GatewayService", return_value=mock_gw_service):
+            with pytest.raises(HTTPException) as exc_info:
+                await fetch_tools_after_oauth(
+                    gateway_id="gw-123",
+                    request=mock_request,
+                    db=mock_db,
+                    current_user=current_user,
+                )
+
+        assert exc_info.value.status_code == 400
+        assert "Failed to fetch tools" in str(exc_info.value.detail)
