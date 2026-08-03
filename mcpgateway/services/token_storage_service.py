@@ -128,8 +128,6 @@ class TokenStorageService:
         self.user_context = user_context or {}
         settings = get_settings()
 
-<<<<<<< HEAD
-=======
         # Select backend based on configuration
         if settings.oauth_token_backend == "vault":
             self._backend: AbstractTokenBackend = VaultTokenBackend(db, settings)
@@ -221,7 +219,6 @@ class TokenStorageService:
         )
         return None
 
->>>>>>> 60e0cde59 (feat: pluggable OAuth token storage with Database and Vault backends)
     async def store_tokens(
         self,
         gateway_id: str,
@@ -231,13 +228,7 @@ class TokenStorageService:
         refresh_token: Optional[str],
         expires_in: Optional[int],
         scopes: List[str],
-<<<<<<< HEAD
-        learned_aud: Optional[Any] = None,
-        learned_iss: Optional[str] = None,
-    ) -> OAuthToken:
-=======
     ) -> TokenRecord:
->>>>>>> 60e0cde59 (feat: pluggable OAuth token storage with Database and Vault backends)
         """Store OAuth tokens for a gateway-user combination.
 
         Args:
@@ -248,12 +239,6 @@ class TokenStorageService:
             refresh_token: Refresh token from OAuth provider (optional)
             expires_in: Token expiration time in seconds, or None if the provider does not specify expiration
             scopes: List of OAuth scopes granted
-            learned_aud: The ``aud`` claim (string or list) extracted best-effort from the
-                access token; used later by token_validation_service to authoritatively
-                validate this user's subsequent tokens. Stored per-user to avoid cross-tenant
-                DoS and to prevent RBAC bypass via callback-driven writes to shared config.
-            learned_iss: The ``iss`` claim from the access token, stored alongside
-                learned_aud to enable issuer-pinned validation.
 
         Returns:
             TokenRecord with token data
@@ -273,110 +258,12 @@ class TokenStorageService:
             scopes=scopes,
         )
 
-<<<<<<< HEAD
-            if self.encryption:
-                encrypted_access = await self.encryption.encrypt_secret_async(access_token)
-                if refresh_token:
-                    encrypted_refresh = await self.encryption.encrypt_secret_async(refresh_token)
-
-            # Calculate expiration (None if provider does not specify expires_in)
-            if expires_in is not None:
-                expires_at = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
-            else:
-                logger.info(
-                    "No expires_in from OAuth provider for gateway %s; token will not auto-expire",
-                    SecurityValidator.sanitize_log_message(gateway_id),
-                )
-                expires_at = None
-            # Create or update token record - now scoped by app_user_email
-            token_record = self.db.execute(select(OAuthToken).where(OAuthToken.gateway_id == gateway_id, OAuthToken.app_user_email == app_user_email)).scalar_one_or_none()
-
-            if token_record:
-                # Update existing record
-                token_record.user_id = user_id  # Update OAuth provider ID in case it changed
-                token_record.access_token = encrypted_access
-                token_record.refresh_token = encrypted_refresh
-                token_record.expires_at = expires_at
-                token_record.scopes = scopes
-                token_record.updated_at = datetime.now(timezone.utc)
-                # Refresh learned aud/iss on re-authentication so a re-auth with a changed
-                # tenant / audience updates this user's own row. Only overwrite when the
-                # caller supplied non-None values so callers that don't inspect the token
-                # (e.g. token_exchange) do not accidentally clear learned metadata.
-                if learned_aud is not None:
-                    token_record.learned_aud = learned_aud
-                if learned_iss is not None:
-                    token_record.learned_iss = learned_iss
-                logger.info(
-                    "Updated OAuth tokens for gateway %s, app user %s, OAuth user %s",
-                    SecurityValidator.sanitize_log_message(gateway_id),
-                    SecurityValidator.sanitize_log_message(app_user_email),
-                    SecurityValidator.sanitize_log_message(user_id),
-                )
-            else:
-                # Create new record
-                token_record = OAuthToken(
-                    gateway_id=gateway_id,
-                    user_id=user_id,
-                    app_user_email=app_user_email,
-                    access_token=encrypted_access,
-                    refresh_token=encrypted_refresh,
-                    expires_at=expires_at,
-                    scopes=scopes,
-                    learned_aud=learned_aud,
-                    learned_iss=learned_iss,
-                )
-                self.db.add(token_record)
-                logger.info(
-                    "Stored new OAuth tokens for gateway %s, app user %s, OAuth user %s",
-                    SecurityValidator.sanitize_log_message(gateway_id),
-                    SecurityValidator.sanitize_log_message(app_user_email),
-                    SecurityValidator.sanitize_log_message(user_id),
-                )
-
-            self.db.commit()
-            return token_record
-
-        except Exception as e:
-            self.db.rollback()
-            logger.error("Failed to store OAuth tokens: %s", str(e))
-            raise OAuthError(f"Token storage failed: {str(e)}")
-
-    async def get_user_learned_audience(self, gateway_id: str, app_user_email: str) -> tuple[Optional[Any], Optional[str]]:
-        """Return the per-user learned ``aud`` and ``iss`` for a gateway-user pair.
-
-        Used by :func:`mcpgateway.services.token_validation_service.validate_oauth_token_claims`
-        to authoritatively validate a user's token audience against the value learned from
-        their own prior OAuth callback, rather than a globally-shared gateway.oauth_config
-        value.
-
-        Args:
-            gateway_id: ID of the gateway.
-            app_user_email: ContextForge user email.
-
-        Returns:
-            Tuple of ``(learned_aud, learned_iss)``. Either element may be ``None`` if
-            no token record exists for the pair or if the fields were never populated
-            (e.g. opaque tokens, decode failures, or pre-migration rows).
-        """
-        try:
-            token_record = self.db.execute(select(OAuthToken.learned_aud, OAuthToken.learned_iss).where(OAuthToken.gateway_id == gateway_id, OAuthToken.app_user_email == app_user_email)).one_or_none()
-            if token_record is None:
-                return (None, None)
-            return (token_record.learned_aud, token_record.learned_iss)
-        except Exception as e:
-            logger.debug("Failed to retrieve learned audience for gateway %s: %s", SecurityValidator.sanitize_log_message(gateway_id), e)
-            return (None, None)
-
-    async def get_user_token(self, gateway_id: str, app_user_email: str, threshold_seconds: int = 300) -> Optional[str]:
-=======
     async def get_user_token(
         self,
         gateway_id: str,
         app_user_email: str,
         threshold_seconds: int = 300,
     ) -> Optional[str]:
->>>>>>> 60e0cde59 (feat: pluggable OAuth token storage with Database and Vault backends)
         """Get a valid access token for a specific ContextForge user, refreshing if necessary.
 
         Args:
@@ -398,202 +285,6 @@ class TokenStorageService:
     # REMOVED: get_any_valid_token() - This was a security vulnerability
     # All OAuth tokens MUST be user-specific to prevent cross-user token access
 
-    async def get_user_auth_headers(
-
-            gateway = self.db.query(Gateway).filter(Gateway.id == token_record.gateway_id).first()
-
-            if not gateway or not gateway.oauth_config:
-                logger.error("No OAuth configuration found for gateway %s", token_record.gateway_id)
-                return None
-
-            # Refuse refresh on a private gateway whose owner is not the token
-            # owner (PR #4341 invariant): prevents OAuth secret leakage when a
-            # gateway's ownership / visibility changes after token issuance.
-            # The token owner is ``app_user_email`` (ContextForge user), not
-            # the OAuth provider's ``user_id``. Public and team gateways are
-            # not gated here — their RBAC enforcement happens at the call
-            # sites that issue refreshes.
-            gateway_visibility = getattr(gateway, "visibility", "public")
-            gateway_owner_email = getattr(gateway, "owner_email", None)
-            if gateway_visibility == "private" and gateway_owner_email and gateway_owner_email != token_record.app_user_email:
-                logger.warning(
-                    "OAuth refresh denied: gateway %s is private and owned by %s, not token owner %s",
-                    token_record.gateway_id,
-                    gateway_owner_email,
-                    token_record.app_user_email,
-                )
-                return None
-
-            # Decrypt the refresh token if encryption is available
-            refresh_token = token_record.refresh_token
-            if self.encryption:
-                try:
-                    refresh_token = await self.encryption.decrypt_secret_async(refresh_token)
-                except Exception as e:
-                    logger.error("Failed to decrypt refresh token: %s", str(e))
-                    return None
-
-            # Decrypt client_secret if encryption is available.
-            # Always attempt decryption rather than using an is_encrypted() heuristic.
-            # Fail closed on decryption failure: decrypt_secret_async() is the idempotent
-            # wrapper — it returns None (never raises) when decryption fails due to a wrong
-            # key or corrupted ciphertext. Sending None or the raw ciphertext envelope as a
-            # literal client_secret to an Authorization Server causes repeated invalid_client
-            # attempts that can trigger IdP rate-limiting/lockout. We raise OAuthError on
-            # None so the outer OAuthError handler preserves the token for a later retry.
-            oauth_config = gateway.oauth_config.copy()
-            if "client_secret" in oauth_config and oauth_config["client_secret"]:
-                if self.encryption:
-                    client_secret_value = oauth_config["client_secret"]
-                    decrypted_secret = await self.encryption.decrypt_secret_async(client_secret_value)
-                    if decrypted_secret is None:
-                        raise OAuthError(
-                            f"client_secret decryption failed for gateway {token_record.gateway_id}: "
-                            "decrypt_secret_async returned None (wrong AUTH_ENCRYPTION_SECRET or corrupted ciphertext). "
-                            "Check that AUTH_ENCRYPTION_SECRET matches the value used when the gateway was stored."
-                        )
-                    oauth_config["client_secret"] = decrypted_secret
-
-            # RFC 8707: resolve the resource parameter for the refresh request
-            # (explicit config normalized; otherwise origin derived from gateway.url).
-            _resolve_refresh_resource(oauth_config, gateway.url)
-
-            # Use OAuthManager to refresh the token
-            # First-Party
-            from mcpgateway.services.oauth_manager import OAuthManager, parse_expires_in  # pylint: disable=import-outside-toplevel
-
-            oauth_manager = OAuthManager()
-
-            logger.info("Attempting to refresh token for gateway %s, user %s", token_record.gateway_id, token_record.app_user_email)
-            token_response = await oauth_manager.refresh_token(
-                refresh_token,
-                oauth_config,
-                ca_certificate=gateway.ca_certificate,
-                client_cert=gateway.client_cert,
-                client_key=gateway.client_key,
-            )
-
-            # Update stored tokens with new values
-            new_access_token = token_response["access_token"]
-            new_refresh_token = token_response.get("refresh_token", refresh_token)  # Some providers return new refresh token
-            # Reuse the same parsing as the initial-auth path so refresh and
-            # callback flows agree on what "missing expires_in" means.
-            expires_in = parse_expires_in(token_response)
-
-            # Encrypt new tokens if encryption is available
-            encrypted_access = new_access_token
-            encrypted_refresh = new_refresh_token
-            if self.encryption:
-                encrypted_access = await self.encryption.encrypt_secret_async(new_access_token)
-                encrypted_refresh = await self.encryption.encrypt_secret_async(new_refresh_token)
-
-            # Update the token record
-            token_record.access_token = encrypted_access
-            token_record.refresh_token = encrypted_refresh
-            now = datetime.now(timezone.utc)
-            if expires_in is not None:
-                token_record.expires_at = now + timedelta(seconds=expires_in)
-            else:
-                # Refresh response omitted expires_in. If the token previously had a finite
-                # expiry, preserve the prior TTL (expires_at - updated_at) so proactive
-                # refresh keeps working - clearing it outright would cause _is_token_expired
-                # to return False forever and stop the refresh loop. If there was no prior
-                # expiry, leave it as None (provider-level "no known lifetime").
-                preserved_ttl = _preserve_prior_ttl(token_record)
-                if preserved_ttl is not None:
-                    logger.info(
-                        "No expires_in on refresh response for gateway %s; preserving prior TTL of %d seconds",
-                        SecurityValidator.sanitize_log_message(token_record.gateway_id),
-                        preserved_ttl,
-                    )
-                    token_record.expires_at = now + timedelta(seconds=preserved_ttl)
-                else:
-                    logger.info(
-                        "No expires_in on refresh response for gateway %s; no prior TTL to preserve",
-                        SecurityValidator.sanitize_log_message(token_record.gateway_id),
-                    )
-                    token_record.expires_at = None
-            token_record.updated_at = now
-
-            self.db.commit()
-            logger.info("Successfully refreshed token for gateway %s, user %s", token_record.gateway_id, token_record.app_user_email)
-
-            return new_access_token
-
-        except OAuthInvalidGrantError as e:
-            # RFC 6749 §5.2: invalid_grant is a permanent failure — the refresh
-            # token has been revoked, expired, or does not match the grant.
-            # OAuthInvalidGrantError is raised by OAuthManager only when the
-            # token endpoint explicitly returns {"error": "invalid_grant"}, so
-            # this match is based on structured type, not substring heuristics.
-            logger.warning(
-                "Refresh token is permanently invalid for gateway %s (invalid_grant). Deleting token to force re-authorization. Error: %s",
-                token_record.gateway_id,
-                str(e),
-            )
-            self.db.delete(token_record)
-            self.db.commit()
-            return None
-        except OAuthError as e:
-            # All other OAuth errors (invalid_client, invalid_request, network
-            # failures wrapped as OAuthError, decryption failure, etc.).
-            # These are configuration or transient errors — NOT a permanent
-            # token failure.  Preserve the token so a later retry can succeed.
-            logger.error(
-                "Token refresh failed for gateway %s but error does not indicate invalid refresh token. Preserving token for retry. Error: %s",
-                token_record.gateway_id,
-                str(e),
-            )
-            return None
-        except Exception as e:
-            # Non-OAuth errors (network, parsing, encryption, etc.)
-            logger.error("Unexpected error refreshing token for gateway %s: %s", token_record.gateway_id, str(e))
-            # Preserve token - this is likely a transient or configuration issue
-            return None
-
-    def _is_token_expired(self, token_record: OAuthToken, threshold_seconds: int = 300) -> bool:
-        """Check if token is expired or near expiration.
-
-        Tokens with ``expires_at IS NULL`` are returned as non-expired by
-        design: when the OAuth provider omits ``expires_in`` (RFC 6749 §5.1
-        marks it RECOMMENDED, not REQUIRED — see e.g. GitHub OAuth Apps),
-        the gateway has no local lifetime to check against. Stale-token
-        accumulation is bounded by
-        :meth:`cleanup_expired_tokens`, which ages out NULL-expiry rows
-        once ``created_at`` exceeds ``max_age_days``.
-
-        Args:
-            token_record: OAuth token record to check
-            threshold_seconds: Seconds before expiry to consider token expired
-
-        Returns:
-            True if token is expired or near expiration
-
-        Examples:
-            >>> from types import SimpleNamespace
-            >>> from datetime import datetime, timedelta
-            >>> svc = TokenStorageService(None)
-            >>> future = datetime.now(tz=timezone.utc) + timedelta(seconds=600)
-            >>> past = datetime.now(tz=timezone.utc) - timedelta(seconds=10)
-            >>> rec_future = SimpleNamespace(expires_at=future)
-            >>> rec_past = SimpleNamespace(expires_at=past)
-            >>> svc._is_token_expired(rec_future, threshold_seconds=300)  # 10 min ahead, 5 min threshold
-            False
-            >>> svc._is_token_expired(rec_future, threshold_seconds=900)  # 10 min ahead, 15 min threshold
-            True
-            >>> svc._is_token_expired(rec_past, threshold_seconds=0)
-            True
-            >>> svc._is_token_expired(SimpleNamespace(expires_at=None))
-            False
-        """
-        if not token_record.expires_at:
-            # No provider-supplied lifetime; treat as non-expired (see contract above).
-            return False
-        expires_at = token_record.expires_at
-        if expires_at.tzinfo is None:
-            expires_at = expires_at.replace(tzinfo=timezone.utc)
-        return datetime.now(timezone.utc) + timedelta(seconds=threshold_seconds) >= expires_at
-=======
     async def get_user_auth_headers(
         self,
         gateway_id: str,
