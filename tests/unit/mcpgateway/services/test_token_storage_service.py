@@ -675,16 +675,15 @@ async def test_refresh_resource_string_normalizes_to_empty_logs_warning(service,
 
 @pytest.mark.asyncio
 async def test_refresh_derived_gateway_url_normalizes_to_empty_logs_warning(service, mock_db, caplog):
-    """Line 349: when the auto-derived ``gateway.url`` normalizes to empty, log a warning.
+    """Line 349: when the auto-derived ``gateway.url`` has no scheme/netloc, log a warning.
 
     Defensive code path: with no explicit ``resource`` configured, the gateway falls
-    back to ``gateway.url``.  ``normalize_resource`` does not return falsy for truthy
-    URL inputs in the natural flow, so we patch ``urllib.parse.urlunparse`` to return
-    an empty string and trip the defensive warning.
+    back to ``gateway.url``.  If the URL doesn't have a scheme or netloc (malformed),
+    the resource parameter is skipped and a warning is logged.
     """
     gw = MagicMock(
         oauth_config={"token_url": "https://token", "client_id": "cid"},
-        url="https://gw.example.com/api",
+        url="malformed-url",  # No scheme or netloc
     )
     mock_db.query.return_value.filter.return_value.first.return_value = gw
     mock_oauth_manager = MagicMock()
@@ -694,12 +693,11 @@ async def test_refresh_derived_gateway_url_normalizes_to_empty_logs_warning(serv
     import logging
 
     with caplog.at_level(logging.WARNING):
-        with patch("mcpgateway.services.token_backends.base.urlunparse", return_value=""):
-            with patch("mcpgateway.services.token_backends.db_backend.OAuthManager", return_value=mock_oauth_manager):
-                result = await service._refresh_access_token(_make_token_record())
+        with patch("mcpgateway.services.token_backends.db_backend.OAuthManager", return_value=mock_oauth_manager):
+            result = await service._refresh_access_token(_make_token_record())
 
     assert result == "new_access"
-    assert any("Gateway URL is empty, skipping resource parameter: https://gw.example.com/api" in msg for msg in caplog.messages)
+    assert any("Gateway URL is empty, skipping resource parameter: malformed-url" in msg for msg in caplog.messages)
 
 
 @pytest.mark.asyncio
