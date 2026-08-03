@@ -869,3 +869,63 @@ class TestTokenStorageServiceIntegration:
                 app_user_email="user@example.com",
             )
             assert revoked is True
+
+
+# ===========================================================================
+# get_user_learned_audience delegation (lines 399-400)
+# ===========================================================================
+
+
+class TestTokenStorageServiceGetUserLearnedAudience:
+    """Tests for TokenStorageService.get_user_learned_audience (lines 399-400)."""
+
+    @pytest.mark.asyncio
+    async def test_delegates_to_backend(self):
+        """get_user_learned_audience resolves team_id and delegates to backend (lines 399-400)."""
+        from mcpgateway.services.token_storage_service import TokenStorageService
+
+        mock_db = MagicMock()
+        user_context = {"email": "user@example.com", "teams": None, "is_admin": False}
+        mock_backend = MagicMock()
+        mock_backend.get_user_learned_audience = AsyncMock(return_value=("https://api.example.com", "https://idp.example.com"))
+
+        with patch("mcpgateway.services.token_storage_service.get_settings") as mock_get_settings:
+            settings = MagicMock()
+            settings.oauth_token_backend = "database"
+            mock_get_settings.return_value = settings
+
+            service = TokenStorageService(mock_db, user_context)
+            service._backend = mock_backend
+
+            result = await service.get_user_learned_audience(
+                gateway_id="gw-123",
+                app_user_email="user@example.com",
+            )
+
+        assert result == ("https://api.example.com", "https://idp.example.com")
+        mock_backend.get_user_learned_audience.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_returns_none_none_when_backend_has_no_record(self):
+        """get_user_learned_audience returns (None, None) when backend finds nothing (lines 399-400)."""
+        from mcpgateway.services.token_storage_service import TokenStorageService
+
+        mock_db = MagicMock()
+        user_context = {"email": "user@example.com", "teams": None, "is_admin": False}
+        mock_backend = MagicMock()
+        mock_backend.get_user_learned_audience = AsyncMock(return_value=(None, None))
+
+        with patch("mcpgateway.services.token_storage_service.get_settings") as mock_get_settings:
+            settings = MagicMock()
+            settings.oauth_token_backend = "database"
+            mock_get_settings.return_value = settings
+
+            service = TokenStorageService(mock_db, user_context)
+            service._backend = mock_backend
+
+            result = await service.get_user_learned_audience(
+                gateway_id="gw-123",
+                app_user_email="user@example.com",
+            )
+
+        assert result == (None, None)
