@@ -471,7 +471,7 @@ export function TestConnectionPanel({ serverUrl }: TestConnectionPanelProps) {
                 {responseBodyText && (
                   <div className="mt-2 space-y-1">
                     <p className="text-[13px] text-muted-foreground">Response body:</p>
-                    <pre className="overflow-auto text-[13px] leading-relaxed break-words whitespace-pre-wrap text-foreground">
+                    <pre className="max-h-[420px] overflow-auto text-[13px] leading-relaxed break-words whitespace-pre-wrap text-foreground">
                       <code className="break-words">
                         <JsonHighlighter text={responseBodyText} />
                       </code>
