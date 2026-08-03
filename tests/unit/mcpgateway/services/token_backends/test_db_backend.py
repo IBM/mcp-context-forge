@@ -909,3 +909,55 @@ async def test_get_user_token_no_token_type(backend_with_encryption, mock_db):
 
     # Should still return token without warning
     assert result == "decrypted_value"
+
+
+# ===========================================================================
+# Tests for get_user_learned_audience (lines 546-562)
+# ===========================================================================
+
+
+@pytest.mark.asyncio
+async def test_get_user_learned_audience_returns_values(backend_with_encryption, mock_db):
+    """get_user_learned_audience returns (aud, iss) from token record (lines 546-555)."""
+    token_record = MagicMock()
+    token_record.learned_aud = "https://api.example.com"
+    token_record.learned_iss = "https://idp.example.com"
+    mock_db.execute.return_value.one_or_none.return_value = token_record
+
+    result = await backend_with_encryption.get_user_learned_audience(
+        gateway_id="gw-1",
+        team_id="team-1",
+        app_user_email="user@test.com",
+    )
+
+    assert result == ("https://api.example.com", "https://idp.example.com")
+
+
+@pytest.mark.asyncio
+async def test_get_user_learned_audience_no_record(backend_with_encryption, mock_db):
+    """get_user_learned_audience returns (None, None) when no record exists (lines 553-554)."""
+    mock_db.execute.return_value.one_or_none.return_value = None
+
+    result = await backend_with_encryption.get_user_learned_audience(
+        gateway_id="gw-1",
+        team_id="team-1",
+        app_user_email="user@test.com",
+    )
+
+    assert result == (None, None)
+
+
+@pytest.mark.asyncio
+async def test_get_user_learned_audience_exception_returns_none(backend_with_encryption, mock_db):
+    """get_user_learned_audience swallows DB exceptions and returns (None, None) (lines 556-562)."""
+    mock_db.execute.side_effect = Exception("DB error")
+
+    with patch("mcpgateway.services.token_backends.db_backend.logger") as mock_logger:
+        result = await backend_with_encryption.get_user_learned_audience(
+            gateway_id="gw-1",
+            team_id="team-1",
+            app_user_email="user@test.com",
+        )
+
+    assert result == (None, None)
+    mock_logger.debug.assert_called_once()
