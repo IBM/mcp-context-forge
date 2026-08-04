@@ -5272,6 +5272,10 @@ class ToolService(BaseService):
         # Declared here (before the try/with block) so it survives into the
         # exception handlers and the finally block for partial pre-deny telemetry.
         _ctl_acc = ControlTelemetryAccumulator()
+        # Tracks which hook a PluginError propagated from so mark_plugin_error(hook=)
+        # can report the correct enforcement point even when no records were appended.
+        # Updated to "post" immediately before each post-hook invoke_hook call.
+        _ctl_last_hook: str = "pre"
 
         def _emit_ctl_telemetry() -> None:
             """Flush CPEX control-execution telemetry for this invocation (best-effort).
@@ -6560,6 +6564,7 @@ class ToolService(BaseService):
                     # Plugin hook: tool post-invoke
                     plugin_manager = await self._get_plugin_manager(plugin_context_id)
                     if plugin_manager and plugin_manager.has_hooks_for(ToolHookType.TOOL_POST_INVOKE):
+                        _ctl_last_hook = "post"  # update hook tracker before the call
                         try:
                             post_result, _ = await plugin_manager.invoke_hook(
                                 ToolHookType.TOOL_POST_INVOKE,
@@ -6640,7 +6645,9 @@ class ToolService(BaseService):
                 # the summary span carries cpex.control.plugin_error=True, emit partial
                 # telemetry (even when the accumulator is empty, e.g. first-plugin failure),
                 # and do NOT treat this as a policy denial (effective_allowed stays True).
-                _ctl_acc.mark_plugin_error()
+                # hook= is derived from _ctl_last_hook which is "pre" by default and updated
+                # to "post" immediately before the post-hook invoke_hook call.
+                _ctl_acc.mark_plugin_error(hook=_ctl_last_hook)
                 _emit_ctl_telemetry()
                 raise
             except ToolTimeoutError as e:

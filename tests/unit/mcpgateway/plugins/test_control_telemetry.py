@@ -35,6 +35,7 @@ from mcpgateway.plugins.control_telemetry import (
     _get_max_results,
     _per_control_attributes,
     _safe_str,
+    _sanitize_config_key,
     record_control_telemetry,
 )
 
@@ -1129,8 +1130,11 @@ class TestMarkPluginError:
         # Summary span must be emitted and carry plugin_error=True
         assert captured_attributes, "Expected a summary span to be emitted for a first-plugin PluginError"
         assert captured_attributes.get("cpex.control.plugin_error") is True
-        # effective_allowed must remain True — this is not a policy denial
-        assert captured_attributes.get("cpex.control.result.allowed") is True
+        # result.allowed must be ABSENT — the decision is indeterminate when a PluginError
+        # fires with no denial flag set.  Dashboards must treat absence as "unknown".
+        assert "cpex.control.result.allowed" not in captured_attributes, (
+            "cpex.control.result.allowed must be absent when decision is indeterminate (PluginError, no denial)"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -1157,4 +1161,140 @@ class TestEnforcementPointDenialFlags:
     def test_enforcement_point_none_no_records_no_flags(self):
         from mcpgateway.plugins.control_telemetry import _enforcement_point  # noqa: PLC0415
         acc = ControlTelemetryAccumulator()
+        assert _enforcement_point(acc) == "none"
+
+
+# ---------------------------------------------------------------------------
+# _sanitize_config_key — charset validation and injection guards
+# ---------------------------------------------------------------------------
+
+
+class TestSanitizeConfigKey:
+    """_sanitize_config_key() rejects unsafe key names, passes safe ones."""
+
+    def test_valid_simple_key(self):
+        assert _sanitize_config_key("my_key") == "my_key"
+
+    def test_valid_key_with_dots_and_hyphens(self):
+        assert _sanitize_config_key("some.key-name") == "some.key-name"
+
+    def test_comma_rejected(self):
+        """Commas are the CSV delimiter — must be rejected."""
+        assert _sanitize_config_key("bad,key") is None
+
+    def test_lf_rejected(self):
+        """Newline is a log-injection vector."""
+        assert _sanitize_config_key("bad\nkey") is None
+
+    def test_cr_rejected(self):
+        assert _sanitize_config_key("bad\rkey") is None
+
+    def test_nul_rejected(self):
+        assert _sanitize_config_key("bad\x00key") is None
+
+    def test_tab_rejected(self):
+        assert _sanitize_config_key("bad\tkey") is None
+
+    def test_non_ascii_rejected(self):
+        """Non-ASCII characters (e.g. CJK) must be rejected."""
+        assert _sanitize_config_key("钥匙") is None
+
+    def test_secret_marker_equals_rejected(self):
+        """Secret-shaped keys like 'api_key=sk-abc123' contain '=' which is not in charset."""
+        assert _sanitize_config_key("api_key=sk-abc123") is None
+
+    def test_empty_string_rejected(self):
+        assert _sanitize_config_key("") is None
+
+    def test_oversized_key_rejected(self):
+        """Keys longer than 64 chars are rejected by the regex (not just the byte cap)."""
+        assert _sanitize_config_key("a" * 65) is None
+
+    def test_max_length_key_accepted(self):
+        """A key exactly 64 chars passes (the regex allows 1..64)."""
+        assert _sanitize_config_key("a" * 64) is not None
+
+    def test_per_control_attributes_drops_comma_key(self):
+        """_per_control_attributes must drop a key with a comma from config.keys."""
+        rec = _make_rec(plugin_name="ctrl")
+        rec.config_keys = ["good_key", "bad,key", "another_good"]
+        attrs = _per_control_attributes("pre", rec)
+        val = attrs.get("cpex.control.config.keys", "")
+        assert "bad,key" not in val
+        assert "good_key" in val
+        assert "another_good" in val
+
+    def test_per_control_attributes_drops_crlf_key(self):
+        """_per_control_attributes must drop keys with CR/LF."""
+        rec = _make_rec(plugin_name="ctrl")
+        rec.config_keys = ["safe_key", "inject\nkey"]
+        attrs = _per_control_attributes("pre", rec)
+        val = attrs.get("cpex.control.config.keys", "")
+        assert "inject" not in val
+        assert "safe_key" in val
+
+    def test_per_control_attributes_all_keys_unsafe_omits_attribute(self):
+        """When every key fails validation, config.keys must be absent."""
+        rec = _make_rec(plugin_name="ctrl")
+        rec.config_keys = ["bad,one", "bad\ntwo"]
+        attrs = _per_control_attributes("pre", rec)
+        assert "cpex.control.config.keys" not in attrs
+
+
+# ---------------------------------------------------------------------------
+# PluginError indeterminate decision semantics
+# ---------------------------------------------------------------------------
+
+
+class TestPluginErrorIndeterminate:
+    """mark_plugin_error() makes result.allowed indeterminate; aggregate() must omit it."""
+
+    def test_aggregate_omits_result_allowed_on_plugin_error(self):
+        """result.allowed must be absent when plugin_errored=True and no denial."""
+        acc = ControlTelemetryAccumulator()
+        acc.mark_plugin_error(hook="pre")
+        agg = acc.aggregate()
+        assert "cpex.control.result.allowed" not in agg
+
+    def test_aggregate_emits_result_allowed_false_when_also_denied(self):
+        """If a denial flag is also set, denial takes precedence: emit result.allowed=False."""
+        acc = ControlTelemetryAccumulator()
+        acc.mark_plugin_error(hook="pre")
+        acc.mark_denied(hook="pre")  # unusual but possible
+        agg = acc.aggregate()
+        assert agg.get("cpex.control.result.allowed") is False
+
+    def test_aggregate_emits_result_allowed_true_without_error(self):
+        """Normal (no error, no denial) still emits result.allowed=True."""
+        acc = ControlTelemetryAccumulator()
+        agg = acc.aggregate()
+        assert agg.get("cpex.control.result.allowed") is True
+
+    def test_mark_plugin_error_hook_tracked(self):
+        """mark_plugin_error(hook=) stores the hook for enforcement_point derivation."""
+        acc = ControlTelemetryAccumulator()
+        acc.mark_plugin_error(hook="post")
+        assert acc.plugin_error_hook == "post"
+
+    def test_mark_plugin_error_unknown_hook_stored_as_empty(self):
+        """Invalid hook values are silently ignored; plugin_error_hook stays empty."""
+        acc = ControlTelemetryAccumulator()
+        acc.mark_plugin_error(hook="unknown")
+        assert acc.plugin_error_hook == ""
+
+    def test_enforcement_point_uses_error_hook_pre(self):
+        """_enforcement_point falls back to plugin_error_hook when no records/denial."""
+        acc = ControlTelemetryAccumulator()
+        acc.mark_plugin_error(hook="pre")
+        assert _enforcement_point(acc) == "pre"
+
+    def test_enforcement_point_uses_error_hook_post(self):
+        acc = ControlTelemetryAccumulator()
+        acc.mark_plugin_error(hook="post")
+        assert _enforcement_point(acc) == "post"
+
+    def test_enforcement_point_none_when_error_hook_empty(self):
+        """When mark_plugin_error() called with no hook, enforcement_point is 'none'."""
+        acc = ControlTelemetryAccumulator()
+        acc.mark_plugin_error()
         assert _enforcement_point(acc) == "none"

@@ -53,11 +53,20 @@ _MAX_RECORDS_PER_CALL = 128  # cap across pre + post combined
 _MAX_REASON_LEN = 256  # CPEX already bounds this; enforce again defensively
 _MAX_ERROR_CODE_LEN = 256
 _MAX_CONFIG_KEYS = 64
-_MAX_CONFIG_KEY_LEN = 128  # per-key length cap before joining
+_MAX_CONFIG_KEY_LEN = 128  # per-key byte cap before joining
 _MAX_CONFIG_KEYS_JOINED_LEN = 4096  # max total byte length of the joined config_keys string
 
 # Statuses that represent controls that actually ran (exclude disabled/skipped/cancelled).
 _ACTIVE_STATUSES = frozenset({"completed", "error", "timeout"})
+
+# Config-key sanitization: allow printable identifier-like characters only.
+# Commas are the joining delimiter so must be excluded; control characters
+# (CR, LF, NUL, tab, …) and non-ASCII are rejected to prevent log injection and
+# telemetry-ambiguity attacks through key names.  The pattern deliberately does
+# NOT use _IDENTIFIER_RE (which allows dots and hyphens) because config-key names
+# are opaque tokens whose cardinality and format are determined by CPEX control
+# authors, not the gateway; the charset is the safest defensible subset.
+_CONFIG_KEY_RE = _IDENTIFIER_RE  # re-use: ^[A-Za-z0-9_.-]{1,64}$
 
 
 # ---------------------------------------------------------------------------
@@ -96,6 +105,7 @@ class ControlTelemetryAccumulator:
     _pre_denied: bool = False
     _post_denied: bool = False
     _plugin_errored: bool = False  # True when a PluginError (outage) was caught on any hook
+    _plugin_error_hook: str = ""   # "pre" | "post" | "" — which hook the error occurred on
     _truncated: int = 0  # records dropped due to per-call cap OR per-hook cap
     _export_cap_dropped: int = 0  # records dropped at emit time by the per-invocation export cap
 
@@ -152,27 +162,42 @@ class ControlTelemetryAccumulator:
         else:
             self._post_denied = True
 
-    def mark_plugin_error(self) -> None:
+    def mark_plugin_error(self, *, hook: str = "") -> None:
         """Explicitly record that a ``PluginError`` (outage/crash/misconfiguration) occurred.
 
         Call this from the ``except PluginError`` handler before re-raising so that
         the emitted summary span carries ``cpex.control.plugin_error=True``.  This
         distinguishes a plugin infrastructure failure from both a successful allow
-        decision (``result.allowed=True``, no error) and a deliberate policy denial
-        (``result.allowed=False`` set via ``mark_denied()``).
+        decision and a deliberate policy denial (``result.allowed=False`` via
+        ``mark_denied()``).
 
-        When the failing plugin is the first in the chain the accumulator may have no
+        When the failing plugin is first in the chain the accumulator may have no
         records and no denial flags — without this flag ``record_control_telemetry()``
         would silently skip emission.  Including ``_plugin_errored`` in the empty-guard
         ensures the summary span is always emitted so the outage is visible in dashboards.
 
+        Because a ``PluginError`` makes the control-chain decision *indeterminate*
+        (neither allowed nor denied), ``aggregate()`` omits ``cpex.control.result.allowed``
+        when this flag is set and no explicit denial flag is present.  Downstream dashboards
+        must treat the absence of ``result.allowed`` as "decision unknown" rather than
+        as an allow.
+
+        Args:
+            hook: ``"pre"`` or ``"post"`` — which enforcement point the error occurred on.
+                  Used to derive ``enforcement_point`` when no records exist.  Pass ``""``
+                  when the hook is unknown or not applicable.
+
         Examples:
             >>> acc = ControlTelemetryAccumulator()
-            >>> acc.mark_plugin_error()
+            >>> acc.mark_plugin_error(hook="pre")
             >>> acc.plugin_errored
             True
+            >>> acc.plugin_error_hook
+            'pre'
         """
         self._plugin_errored = True
+        if hook in ("pre", "post"):
+            self._plugin_error_hook = hook
 
     @property
     def plugin_errored(self) -> bool:
@@ -182,6 +207,15 @@ class ControlTelemetryAccumulator:
             True if any plugin raised ``PluginError``; False otherwise.
         """
         return self._plugin_errored
+
+    @property
+    def plugin_error_hook(self) -> str:
+        """The hook on which the ``PluginError`` occurred (``"pre"``, ``"post"``, or ``""``).
+
+        Returns:
+            Hook name string, or empty string when not set.
+        """
+        return self._plugin_error_hook
 
     @property
     def records(self) -> list:
@@ -320,10 +354,19 @@ class ControlTelemetryAccumulator:
             "cpex.control.records_received": records_received,
             "cpex.control.results_count": results_count,
             "cpex.control.duration_ns": total_duration_ns,  # nanoseconds — OTel unit suffix convention
-            "cpex.control.result.allowed": self.effective_allowed,
             "cpex.control.error_count": error_count,
             "cpex.control.timeout_count": timeout_count,
         }
+        # cpex.control.result.allowed is the overall enforcement decision.
+        # When a PluginError occurred and no explicit denial was also set, the decision
+        # is INDETERMINATE — the chain did not complete normally so we cannot assert
+        # "allowed".  Omitting the key signals "unknown" to dashboards rather than
+        # implying a clean allow.  If a denial flag was also set (unusual but possible),
+        # the denial takes precedence and we do emit result.allowed=False.
+        decision_indeterminate = self._plugin_errored and self.effective_allowed
+        if not decision_indeterminate:
+            result["cpex.control.result.allowed"] = self.effective_allowed
+
         # cpex.control.plugin_error distinguishes a plugin infrastructure failure
         # (PluginError: crash/timeout/misconfiguration) from both a successful allow
         # and a deliberate policy denial (result.allowed=False).  Only emitted when
@@ -589,12 +632,14 @@ def _per_control_attributes(hook: str, rec: Any) -> dict:
                 attrs["cpex.control.result.error_code"] = _safe_str(rec.error_code, _MAX_ERROR_CODE_LEN)
         if rec.config_keys:
             # Key names only (CPEX never includes values).
-            # Each key is byte-capped via _safe_str; the joined string is also byte-capped
-            # via _safe_str so multibyte characters do not exceed the intended byte budget
-            # (a plain char-slice would under-count bytes for non-ASCII key names).
-            safe_keys = [_safe_str(k, _MAX_CONFIG_KEY_LEN) for k in rec.config_keys[:_MAX_CONFIG_KEYS]]
-            joined = ",".join(safe_keys)
-            attrs["cpex.control.config.keys"] = _safe_str(joined, _MAX_CONFIG_KEYS_JOINED_LEN)
+            # _sanitize_config_key() validates each key against _CONFIG_KEY_RE:
+            # commas, CR/LF, control chars, non-ASCII, and secret-shaped text are
+            # rejected (key dropped entirely, not truncated) to prevent CSV ambiguity
+            # and log/telemetry injection.  The joined string is also byte-bounded.
+            safe_keys = [s for k in rec.config_keys[:_MAX_CONFIG_KEYS] if (s := _sanitize_config_key(k)) is not None]
+            if safe_keys:
+                joined = ",".join(safe_keys)
+                attrs["cpex.control.config.keys"] = _safe_str(joined, _MAX_CONFIG_KEYS_JOINED_LEN)
         return attrs
     except Exception:  # noqa: BLE001
         logger.debug("Failed to build per-control attributes", exc_info=True)
@@ -623,13 +668,62 @@ def _safe_str(value: Any, max_len: int) -> str:
     return encoded[: max_len - 3].decode("utf-8", errors="ignore") + "..."
 
 
+def _sanitize_config_key(raw: Any) -> Optional[str]:
+    """Validate and return a single config-key name, or ``None`` if unsafe.
+
+    Config-key names are opaque tokens from CPEX control configuration.  Even
+    though CPEX only stores key *names* (never values), a malicious or
+    misconfigured control could supply key names that contain:
+
+    - Commas — ambiguous in the CSV join used for the attribute value.
+    - CR/LF/NUL/TAB — log-injection and telemetry-injection vectors.
+    - Non-ASCII / multibyte sequences — encoding ambiguity.
+    - Secret-shaped text (e.g. ``my_api_key=sk-abc123``) that leaks sensitive
+      strings into span attributes.
+
+    Safe set: ASCII letters, digits, underscores, dots, and hyphens — matching
+    ``_CONFIG_KEY_RE`` (``^[A-Za-z0-9_.-]{1,64}$``).  The per-key byte cap
+    ``_MAX_CONFIG_KEY_LEN`` is applied first so an oversized key is rejected
+    rather than silently truncated into something that looks valid.
+
+    Args:
+        raw: Raw key candidate (will be coerced to ``str``).
+
+    Returns:
+        The validated key string if safe, ``None`` otherwise.
+
+    Examples:
+        >>> _sanitize_config_key("my_key")
+        'my_key'
+        >>> _sanitize_config_key("bad,key") is None
+        True
+        >>> _sanitize_config_key("bad\\nkey") is None
+        True
+        >>> _sanitize_config_key("") is None
+        True
+    """
+    try:
+        key = str(raw)
+        # Byte-cap first — an oversized key is silently dropped, not truncated.
+        if len(key.encode("utf-8")) > _MAX_CONFIG_KEY_LEN:
+            return None
+        if _CONFIG_KEY_RE.match(key):
+            return key
+        return None
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def _enforcement_point(acc: "ControlTelemetryAccumulator") -> str:
     """Derive the enforcement-point label from which hooks contributed records.
 
-    When CPEX raises ``PluginViolationError`` with ``violations_as_exceptions=True``
-    it does so *before* appending a ``ControlExecutionRecord``, so the accumulator
-    may have no records even though a hook fired.  Fall back to the denial flags so
-    a pre-invoke denial with zero records still reports ``"pre"`` rather than ``"none"``.
+    Three fallback tiers (in priority order):
+
+    1. Accumulated records — any ``"pre"`` or ``"post"`` tag in the records list.
+    2. Denial flags — set by ``mark_denied()`` when ``violations_as_exceptions=True``
+       raises before a record is appended.
+    3. Plugin-error hook — set by ``mark_plugin_error(hook=)`` when a ``PluginError``
+       fires before any record is appended (e.g. first-plugin crash).
 
     Args:
         acc: The populated accumulator.
@@ -637,8 +731,8 @@ def _enforcement_point(acc: "ControlTelemetryAccumulator") -> str:
     Returns:
         One of ``"pre"``, ``"post"``, ``"pre+post"``, or ``"none"``.
     """
-    has_pre = any(h == "pre" for h, _ in acc.records) or acc.pre_denied
-    has_post = any(h == "post" for h, _ in acc.records) or acc.post_denied
+    has_pre = any(h == "pre" for h, _ in acc.records) or acc.pre_denied or acc.plugin_error_hook == "pre"
+    has_post = any(h == "post" for h, _ in acc.records) or acc.post_denied or acc.plugin_error_hook == "post"
     if has_pre and has_post:
         return "pre+post"
     if has_pre:
@@ -779,9 +873,10 @@ def _build_flattened_attributes(
 
                 config_keys = getattr(rec, "config_keys", None)
                 if config_keys:
-                    safe_keys = [_safe_str(k, _MAX_CONFIG_KEY_LEN) for k in config_keys[:_MAX_CONFIG_KEYS]]
-                    joined = ",".join(safe_keys)
-                    result[f"{prefix}.config.keys"] = _safe_str(joined, _MAX_CONFIG_KEYS_JOINED_LEN)
+                    safe_keys = [s for k in config_keys[:_MAX_CONFIG_KEYS] if (s := _sanitize_config_key(k)) is not None]
+                    if safe_keys:
+                        joined = ",".join(safe_keys)
+                        result[f"{prefix}.config.keys"] = _safe_str(joined, _MAX_CONFIG_KEYS_JOINED_LEN)
 
                 # reason/error_code gated by CPEX_CONTROL_TELEMETRY_EMIT_REASON (default: false)
                 if _emit_reason_enabled():
