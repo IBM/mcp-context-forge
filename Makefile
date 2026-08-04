@@ -1750,7 +1750,14 @@ testing-up:                                ## Start testing stack (Locust + A2A 
 	@echo "   Using image $(IMAGE_LOCAL)"
 	HOST_UID=$(HOST_UID) HOST_GID=$(HOST_GID) \
 	LOCUST_EXPECT_WORKERS=$(TESTING_LOCUST_WORKERS) \
-	$(COMPOSE_CMD_MONITOR) --profile testing --profile inspector --profile sso up -d --scale locust_worker=$(TESTING_LOCUST_WORKERS)
+	$(COMPOSE_CMD_MONITOR) \
+	--profile testing \
+	--profile inspector \
+	--profile sso \
+	$(if $(CONFORMANCE_SERVER),--profile conformance,--profile fast-time) \
+	up -d \
+	--scale locust_worker=$(TESTING_LOCUST_WORKERS)
+
 	@echo ""
 	@echo "✅ Testing stack started!"
 	@echo ""
@@ -1841,6 +1848,59 @@ testing-zap-down:                          ## Stop OWASP ZAP DAST daemon
 	$(COMPOSE_CMD_MONITOR) --profile dast down --remove-orphans
 	@echo "✅ ZAP stopped."
 
+.PHONY: conformance-check
+conformance-check:                         ## Run MCP draft server conformance checks
+	@echo "🧪 Waiting for ContextForge gateway readiness..."
+	@for attempt in $$(seq 1 90); do \
+		if curl -fsS http://localhost:8080/health >/dev/null 2>&1; then \
+			echo "✅ Gateway is ready"; \
+			break; \
+		fi; \
+		if [ "$$attempt" -eq 90 ]; then \
+			echo "❌ Gateway did not become ready within 90 seconds"; \
+			exit 1; \
+		fi; \
+		sleep 1; \
+	done
+	@echo "🔓 Verifying MCP auth passthrough with Rust token verification unset..."
+	@status=$$(env -u CONTEXTFORGE_GATEWAY_RS_TOKEN_VERIFICATION_PUBLIC_KEY \
+		curl -sS -o /tmp/contextforge-auth-response.json -w "%{http_code}" \
+		-X POST http://localhost:8080/mcp); \
+	if [ "$$status" != "401" ]; then \
+		echo "❌ Expected downstream MCP authentication response HTTP 401, got HTTP $$status"; \
+		cat /tmp/contextforge-auth-response.json; \
+		exit 1; \
+	fi; \
+	echo "✅ Auth passthrough verified: downstream MCP endpoint returned HTTP 401"
+	@rm -rf results/server-*
+	@set +e; \
+	env -u CONTEXTFORGE_GATEWAY_RS_TOKEN_VERIFICATION_PUBLIC_KEY \
+		npx @modelcontextprotocol/conformance server \
+		--url http://localhost:8080/mcp \
+		--output-dir results \
+		--suite draft \
+		--spec-version draft \
+		--expected-failures conformance-baseline.yml \
+		--verbose; \
+	conformance_status=$$?; \
+	echo ""; \
+	echo "Scenario                                  Result"; \
+	echo "────────────────────────────────────────────────"; \
+	found=0; \
+	for file in results/server-*/checks.json; do \
+		[ -f "$$file" ] || continue; \
+		found=1; \
+		scenario=$$(basename "$$(dirname "$$file")"); \
+		result=$$(jq -r \
+			'if any(.[]; .status == "FAILURE") then "FAIL" else "PASS" end' \
+			"$$file"); \
+		printf "%-41s %s\n" "$$scenario" "$$result"; \
+	done; \
+	if [ "$$found" -eq 0 ]; then \
+		echo "❌ No conformance result files found"; \
+		exit 1; \
+	fi; \
+	exit $$conformance_status
 # =============================================================================
 # help: 🔍 MCP INSPECTOR (Interactive MCP Client)
 # help: inspector-up           - Start MCP Inspector (http://localhost:6274)
