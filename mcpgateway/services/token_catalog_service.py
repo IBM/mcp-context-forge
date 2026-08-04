@@ -505,7 +505,8 @@ class TokenCatalogService:
                     raise ValueError(f"User {user_email} is not an active member of team {team_id}. Only team members can create tokens for the team.")
 
         # Check for duplicate active token name for this user within the same team scope,
-        # matching DB constraint uq_email_api_tokens_user_name_team (user_email, name, team_id).
+        # matching the partial unique index uq_email_api_tokens_user_name_team (user_email, name, team_id)
+        # WHERE team_id IS NOT NULL AND is_active.
         # team_id=None tokens are scoped to the global (no-team) bucket.
         if team_id:
             name_check = and_(EmailApiToken.user_email == user_email, EmailApiToken.name == name, EmailApiToken.team_id == team_id, EmailApiToken.is_active.is_(True))
