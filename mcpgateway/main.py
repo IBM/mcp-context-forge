@@ -10465,15 +10465,7 @@ async def create_mcp_app_session(request: Request, db: Session = Depends(get_db)
     server_id = body.get("serverId") or body.get("server_id") or request.headers.get("x-contextforge-server-id")
     if not server_id or not isinstance(server_id, str):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="serverId is required for MCP Apps sessions")
-    # Layer-1 exception: keeps the resource-scope email separate from user_email,
-    # which the single-value helper contract cannot express.
-    user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
-    if is_admin and token_teams is None:
-        resource_user_email = None
-    else:
-        resource_user_email = user_email
-        if token_teams is None:
-            token_teams = []
+    resource_user_email, token_teams = get_scoped_resource_access_context(request, user)
 
     try:
         await resource_service.read_resource(
