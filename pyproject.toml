@@ -63,6 +63,7 @@ cpex-secrets-detection = "2026-07-27T23:59:59Z"
 # [plugins] extra to nothing and the gateway would fail to load SQLSanitizer at boot.
 # Vetted ahead of the usual window for this reason.
 cpex-sql-sanitizer = "2026-07-21T23:59:59Z"
+cryptography = "2026-08-01T23:59:59Z"
 langgraph = "2026-05-12T23:59:59Z"
 fastapi = "2026-07-27T23:59:59Z"
 filelock = "2026-07-27T23:59:59Z"
@@ -127,7 +128,7 @@ dependencies = [
     "brotli>=1.2.0",
     "click>=8.4.2", # Transitive pin
     "cpex>=0.1.1",
-    "cryptography>=49.0.0",
+    "cryptography>=50.0.0",
     "fastapi>=0.140.0",
     "filelock>=3.32.0,<3.33.0", # 3.30.0 added fork-safety guard that raises on pre-fork lock reuse; gateway_service.py:5351 rebuilds per-PID (fix from #5654). primary_worker.py and bootstrap_db.py create FileLock post-fork so are unaffected. Ceiling bumped to 3.32.x: 3.30.x–3.32.x have zero runtime changes (CI matrix, packaging, platform support only). Advance ceiling after verifying next minor release.
     "gunicorn>=26.0.0",
