@@ -6175,7 +6175,7 @@ async def set_resource_state(
         return {
             "status": "success",
             "message": f"Resource {resource_id} {'activated' if activate else 'deactivated'}",
-            "resource": resource.model_dump(),
+            "resource": resource.model_dump(by_alias=True),
         }
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))

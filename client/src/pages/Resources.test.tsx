@@ -1226,6 +1226,187 @@ describe("Resources", () => {
     });
   });
 
+  describe("Toggle resource state", () => {
+    beforeEach(() => {
+      vi.mocked(toast.success).mockClear();
+      vi.mocked(toast.error).mockClear();
+    });
+
+    it("activates a resource: sends activate=true and shows a success toast", async () => {
+      const user = userEvent.setup();
+      const mockResources = [createMockResource(1, "toggle-gateway", false)];
+
+      server.use(
+        http.get("/resources", () => HttpResponse.json(mockResources)),
+        http.post("/resources/resource-1/state", () =>
+          HttpResponse.json({
+            status: "success",
+            message: "activated",
+            resource: { ...mockResources[0], enabled: true },
+          }),
+        ),
+      );
+
+      renderWithRouter(<Resources />);
+      await waitFor(() => expect(screen.getByText("toggle-gateway")).toBeInTheDocument());
+
+      await user.click(screen.getByLabelText("More options for toggle-gateway"));
+      await user.click(await screen.findByText("Activate"));
+
+      await waitFor(() => {
+        expect(toast.success).toHaveBeenCalledWith(
+          expect.stringContaining('Resource "Resource 1" activated successfully'),
+        );
+      });
+
+      expect(screen.getByRole("img", { name: "Active" })).toBeInTheDocument();
+    });
+
+    it("deactivates a resource: sends activate=false and shows a success toast", async () => {
+      const user = userEvent.setup();
+      const mockResources = [createMockResource(1, "toggle-gateway", true)];
+
+      server.use(
+        http.get("/resources", () => HttpResponse.json(mockResources)),
+        http.post("/resources/resource-1/state", () =>
+          HttpResponse.json({
+            status: "success",
+            message: "deactivated",
+            resource: { ...mockResources[0], enabled: false },
+          }),
+        ),
+      );
+
+      renderWithRouter(<Resources />);
+      await waitFor(() => expect(screen.getByText("toggle-gateway")).toBeInTheDocument());
+
+      await user.click(screen.getByLabelText("More options for toggle-gateway"));
+      await user.click(await screen.findByText("Deactivate"));
+
+      await waitFor(() => {
+        expect(toast.success).toHaveBeenCalledWith(
+          expect.stringContaining('Resource "Resource 1" deactivated successfully'),
+        );
+      });
+
+      expect(screen.getByRole("img", { name: "Inactive" })).toBeInTheDocument();
+    });
+
+    it("applies the optimistic state before the request resolves, then reconciles with the response", async () => {
+      const user = userEvent.setup();
+      const mockResources = [createMockResource(1, "opt-toggle-gateway", false)];
+
+      let resolveState!: () => void;
+      server.use(
+        http.get("/resources", () => HttpResponse.json(mockResources)),
+        http.post(
+          "/resources/resource-1/state",
+          () =>
+            new Promise<Response>((resolve) => {
+              resolveState = () =>
+                resolve(
+                  HttpResponse.json({
+                    status: "success",
+                    message: "activated",
+                    resource: { ...mockResources[0], enabled: true },
+                  }),
+                );
+            }),
+        ),
+      );
+
+      renderWithRouter(<Resources />);
+      await waitFor(() => expect(screen.getByText("opt-toggle-gateway")).toBeInTheDocument());
+      expect(screen.getByRole("img", { name: "Inactive" })).toBeInTheDocument();
+
+      await user.click(screen.getByLabelText("More options for opt-toggle-gateway"));
+      await user.click(await screen.findByText("Activate"));
+
+      // Optimistic flip happens before the mutation response arrives.
+      await waitFor(() => {
+        expect(screen.getByRole("img", { name: "Active" })).toBeInTheDocument();
+      });
+      expect(toast.success).not.toHaveBeenCalled();
+
+      resolveState();
+      await waitFor(() => {
+        expect(toast.success).toHaveBeenCalled();
+      });
+      expect(screen.getByRole("img", { name: "Active" })).toBeInTheDocument();
+    });
+
+    it("rolls back the optimistic update and shows an error toast when the API call fails", async () => {
+      const user = userEvent.setup();
+      const mockResources = [createMockResource(1, "fail-toggle-gateway", false)];
+
+      server.use(
+        http.get("/resources", () => HttpResponse.json(mockResources)),
+        http.post("/resources/resource-1/state", () =>
+          HttpResponse.json({ detail: "Cannot activate" }, { status: 400 }),
+        ),
+      );
+
+      renderWithRouter(<Resources />);
+      await waitFor(() => expect(screen.getByText("fail-toggle-gateway")).toBeInTheDocument());
+
+      await user.click(screen.getByLabelText("More options for fail-toggle-gateway"));
+      await user.click(await screen.findByText("Activate"));
+
+      await waitFor(() => {
+        expect(toast.error).toHaveBeenCalledWith("Cannot activate");
+      });
+
+      // Reverted back to inactive after the rollback.
+      expect(screen.getByRole("img", { name: "Inactive" })).toBeInTheDocument();
+    });
+
+    it("ignores a repeated toggle click for the same resource while a mutation is in flight", async () => {
+      const user = userEvent.setup();
+      const mockResources = [createMockResource(1, "race-toggle-gateway", false)];
+
+      let resolveState!: () => void;
+      let callCount = 0;
+      server.use(
+        http.get("/resources", () => HttpResponse.json(mockResources)),
+        http.post(
+          "/resources/resource-1/state",
+          () =>
+            new Promise<Response>((resolve) => {
+              callCount += 1;
+              resolveState = () =>
+                resolve(
+                  HttpResponse.json({
+                    status: "success",
+                    message: "activated",
+                    resource: { ...mockResources[0], enabled: true },
+                  }),
+                );
+            }),
+        ),
+      );
+
+      renderWithRouter(<Resources />);
+      await waitFor(() => expect(screen.getByText("race-toggle-gateway")).toBeInTheDocument());
+
+      await user.click(screen.getByLabelText("More options for race-toggle-gateway"));
+      await user.click(await screen.findByText("Activate"));
+
+      // Re-open the menu and click the toggle item again while the first
+      // mutation is still in flight; the optimistic flip already relabeled it
+      // "Deactivate", but the pending-id guard should drop this second call
+      // regardless of direction.
+      await user.click(screen.getByLabelText("More options for race-toggle-gateway"));
+      await user.click(await screen.findByText(/^(Activate|Deactivate)$/));
+
+      expect(callCount).toBe(1);
+
+      resolveState();
+      await waitFor(() => {
+        expect(toast.success).toHaveBeenCalledTimes(1);
+      });
+    });
+  });
+
   describe("gateway name mapping", () => {
     it("labels a resource group using the gateway name from the gateways list", async () => {
       const resource = createMockResource(1, "gw-1");

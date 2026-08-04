@@ -25,12 +25,14 @@ export function ResourcesTable({
   onSelectResource,
   onEditResource,
   onDeleteResource,
+  onToggleResource,
 }: {
   resources: NonNullable<ResourceRead>[];
   selectedResourceId?: string | null;
   onSelectResource: (resource: NonNullable<ResourceRead>) => void;
   onEditResource?: (resource: NonNullable<ResourceRead>) => void;
   onDeleteResource?: (resourceId: string) => void;
+  onToggleResource?: (id: string, currentState: boolean) => void;
 }) {
   const intl = useIntl();
 
@@ -143,6 +145,26 @@ export function ResourcesTable({
                         }}
                       >
                         {intl.formatMessage({ id: "resources.table.edit" })}
+                      </DropdownMenuItem>
+                    )}
+                    {onToggleResource && (
+                      <DropdownMenuItem
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onToggleResource(resource.id, resource.enabled ?? true);
+                        }}
+                        aria-label={intl.formatMessage(
+                          {
+                            id: resource.enabled
+                              ? "resources.card.deactivateAriaLabel"
+                              : "resources.card.activateAriaLabel",
+                          },
+                          { name: resource.title || resource.name },
+                        )}
+                      >
+                        {resource.enabled
+                          ? intl.formatMessage({ id: "resources.card.deactivate" })
+                          : intl.formatMessage({ id: "resources.card.activate" })}
                       </DropdownMenuItem>
                     )}
                     {onDeleteResource && (

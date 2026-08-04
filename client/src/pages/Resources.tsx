@@ -72,9 +72,11 @@ function buildGroups(
 const ResourceGroupCard = memo(function ResourceGroupCard({
   group,
   onViewGroup,
+  onToggleResource,
 }: {
   group: ResourceGroup;
   onViewGroup: (group: ResourceGroup) => void;
+  onToggleResource?: (id: string, currentState: boolean) => void;
 }) {
   const intl = useIntl();
   const visibleResources = group.resources.slice(0, MAX_VISIBLE_RESOURCE_BADGES);
@@ -135,6 +137,26 @@ const ResourceGroupCard = memo(function ResourceGroupCard({
               <DropdownMenuItem onClick={handleView}>
                 {intl.formatMessage({ id: "resources.card.viewDetails" })}
               </DropdownMenuItem>
+              {onToggleResource && group.resources.length === 1 && (
+                <DropdownMenuItem
+                  onClick={() => {
+                    const resource = group.resources[0];
+                    onToggleResource(resource.id, resource.enabled ?? true);
+                  }}
+                  aria-label={intl.formatMessage(
+                    {
+                      id: group.resources[0].enabled
+                        ? "resources.card.deactivateAriaLabel"
+                        : "resources.card.activateAriaLabel",
+                    },
+                    { name: group.resources[0].name },
+                  )}
+                >
+                  {group.resources[0].enabled
+                    ? intl.formatMessage({ id: "resources.card.deactivate" })
+                    : intl.formatMessage({ id: "resources.card.activate" })}
+                </DropdownMenuItem>
+              )}
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
@@ -223,7 +245,7 @@ export function Resources() {
     error,
     refetch,
     setData: setResourcesData,
-  } = useQuery<ResourceRead[]>("/resources?limit=0");
+  } = useQuery<ResourceRead[]>("/resources?limit=0&include_inactive=true");
   const { data: gatewaysData } = useQuery<CursorPaginatedGatewaysResponse>(
     "/gateways?limit=0&include_pagination=true",
     {
@@ -372,6 +394,60 @@ export function Resources() {
       }
     },
     [setResourcesData, intl],
+  );
+
+  // Tracks resource IDs with an in-flight toggle so a repeated click can't
+  // fire a second mutation against a stale currentState before the first
+  // one settles.
+  const pendingToggleIds = useRef<Set<string>>(new Set());
+
+  const handleToggleResource = useCallback(
+    async (id: string, currentState: boolean) => {
+      if (pendingToggleIds.current.has(id)) return;
+      pendingToggleIds.current.add(id);
+
+      const newState = !currentState;
+      const resource = validResources.find((r) => r.id === id);
+      const resourceName = resource?.name || id;
+
+      // Optimistic update
+      setResourcesData((prev) =>
+        prev?.map((r) => (r?.id === id ? { ...r, enabled: newState } : r)),
+      );
+
+      try {
+        const { resource: updated } = await resourcesApi.setState(id, newState);
+        // Patch from the mutation's own response instead of refetching, so a
+        // refresh failure can never revert a change that already succeeded.
+        setResourcesData((prev) => prev?.map((r) => (r?.id === id ? { ...r, ...updated } : r)));
+        toast.success(
+          intl.formatMessage(
+            {
+              id: newState
+                ? "resources.toast.activateSuccess"
+                : "resources.toast.deactivateSuccess",
+            },
+            { name: resourceName },
+          ),
+        );
+      } catch (err) {
+        // Revert optimistic update
+        setResourcesData((prev) =>
+          prev?.map((r) => (r?.id === id ? { ...r, enabled: currentState } : r)),
+        );
+
+        const detail = err instanceof ApiError ? extractApiErrorDetail(err.body) : null;
+        toast.error(
+          detail ||
+            intl.formatMessage({
+              id: newState ? "resources.toast.activateError" : "resources.toast.deactivateError",
+            }),
+        );
+      } finally {
+        pendingToggleIds.current.delete(id);
+      }
+    },
+    [validResources, setResourcesData, intl],
   );
 
   const handleDeleteResource = useCallback(
@@ -547,6 +623,7 @@ export function Resources() {
                   key={group.gatewaySlug}
                   group={group}
                   onViewGroup={handleViewGroup}
+                  onToggleResource={handleToggleResource}
                 />
               ))}
             </div>
@@ -560,6 +637,7 @@ export function Resources() {
               onClose={handleCloseDetails}
               onEditResource={handleEditResource}
               onDeleteResource={handleDeleteResource}
+              onToggleResource={handleToggleResource}
               onAddTag={handleAddResourceTag}
             />
           )}

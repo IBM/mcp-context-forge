@@ -62,6 +62,12 @@
   "resources.table.moreOptionsFor": "More options for {name}",
   "resources.table.edit": "Edit",
   "resources.table.delete": "Delete",
+  "resources.table.enable": "Enable",
+  "resources.table.disable": "Disable",
+  "resources.card.activate": "Activate",
+  "resources.card.deactivate": "Deactivate",
+  "resources.card.activateAriaLabel": "Activate {name}",
+  "resources.card.deactivateAriaLabel": "Deactivate {name}",
   "resources.details.resourcesFor": "Resources for {name}",
   "resources.details.close": "Close resource details",
   "resources.details.componentDetails": "Component details",
@@ -81,5 +87,9 @@
   "resources.details.visibility.public": "Public",
   "resources.details.visibility.private": "Private",
   "resources.details.addTag": "add",
-  "resources.tags.addError": "Failed to add tag. Please try again."
+  "resources.tags.addError": "Failed to add tag. Please try again.",
+  "resources.toast.activateSuccess": "Resource \"{name}\" activated successfully",
+  "resources.toast.deactivateSuccess": "Resource \"{name}\" deactivated successfully",
+  "resources.toast.activateError": "Failed to activate resource",
+  "resources.toast.deactivateError": "Failed to deactivate resource"
 }
