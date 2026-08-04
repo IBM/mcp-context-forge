@@ -24,6 +24,7 @@ from cpex.framework.hooks.tools import (
     ToolPreInvokeResult,
 )
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.transports.context import request_headers_var
 
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
@@ -68,22 +69,56 @@ class IcaMeteringExporterPlugin(Plugin):
             return ToolPreInvokeResult(continue_processing=True)
 
         context.state["ica_metering_start_time"] = time.monotonic()
+
+        # Read raw inbound request headers (unfiltered by passthrough logic).
+        # payload.headers only contains outbound/filtered headers (e.g. just Authorization),
+        # but we need the full inbound set for metering attribution headers.
+        raw_headers = request_headers_var.get() or {}
+        # payload.headers (outbound) as fallback for model-id which OI puts in passthrough
+        outbound_headers = getattr(payload.headers, "root", {})
+
         # Extract model name from transport headers (set by OpenWebUI)
-        headers = getattr(payload.headers, "root", {})
-        model_name = headers.get("x-openwebui-model-id") or headers.get("X-OpenWebUI-Model-Id")
+        model_name = (
+            raw_headers.get("x-openwebui-model-id")
+            or outbound_headers.get("x-openwebui-model-id")
+            or outbound_headers.get("X-OpenWebUI-Model-Id")
+        )
         if model_name:
             context.state["ica_metering_model_name"] = model_name
-        app_id = headers.get("x-app-id") or headers.get("X-App-Id")
+
+        app_id = raw_headers.get("x-app-id") or raw_headers.get("X-App-Id")
         if app_id:
             context.state["ica_app_id"] = app_id
+
+        # MCP client identity headers (sent by MCP clients with each request)
+        client_name = raw_headers.get("x-mcp-client-name") or raw_headers.get("X-MCP-Client-Name")
+        client_version = raw_headers.get("x-mcp-client-version") or raw_headers.get("X-MCP-Client-Version")
+        if client_name:
+            context.state["ica_mcp_client_name"] = client_name
+            context.state["ica_mcp_client_version"] = client_version
+
+        # User-agent resolution: prefer X-Forwarded-User-Agent (browser path),
+        # fall back to MCP client identity headers, then raw user-agent.
         user_agent = (
-            headers.get("x-forwarded-user-agent")
-            or headers.get("X-Forwarded-User-Agent")
-            or headers.get("user-agent")
-            or headers.get("User-Agent")
+            raw_headers.get("x-forwarded-user-agent")
+            or raw_headers.get("X-Forwarded-User-Agent")
         )
+        if not user_agent and client_name:
+            user_agent = f"{client_name}/{client_version}" if client_version else client_name
+        if not user_agent:
+            user_agent = raw_headers.get("user-agent") or raw_headers.get("User-Agent")
         if user_agent:
             context.state["ica_user_agent"] = user_agent
+
+        # Derive appId for API clients when X-App-Id is not provided
+        if not app_id and client_name:
+            context.state["ica_app_id"] = f"api:{client_name}"
+        elif not app_id and user_agent:
+            # Fall back to user-agent prefix (e.g. "opencode/1.18.13" -> "api:opencode")
+            ua_name = user_agent.split("/")[0].strip() if "/" in user_agent else user_agent.split(" ")[0].strip()
+            if ua_name and not ua_name.startswith("Mozilla"):
+                context.state["ica_app_id"] = f"api:{ua_name}"
+
         logger.debug("ICA metering: Pre-invoke for tool %s", payload.name)
         return ToolPreInvokeResult(continue_processing=True)
 
@@ -102,8 +137,13 @@ class IcaMeteringExporterPlugin(Plugin):
             logger.warning("ICA metering: Tool name is empty, skipping")
             return ToolPostInvokeResult(continue_processing=True)
 
-        gateway_meta = context.global_context.metadata.get(GATEWAY_METADATA, {})
-        if not isinstance(gateway_meta, dict):
+        gateway_meta_raw = context.global_context.metadata.get(GATEWAY_METADATA, {})
+        # GATEWAY_METADATA can be a Pydantic model (PydanticGateway) or a dict
+        if hasattr(gateway_meta_raw, "model_dump"):
+            gateway_meta = gateway_meta_raw.model_dump()
+        elif isinstance(gateway_meta_raw, dict):
+            gateway_meta = gateway_meta_raw
+        else:
             gateway_meta = {}
 
         ctx_meta = context.global_context.metadata.get("meta_data", {})
@@ -118,13 +158,22 @@ class IcaMeteringExporterPlugin(Plugin):
 
         tokens = self._extract_tokens(payload.result)
 
+        # Resolve transport type from gateway metadata (populated by CF tool service)
+        raw_transport = gateway_meta.get("transport", "").lower() if gateway_meta else ""
+        if raw_transport in ("streamablehttp", "streamable_http"):
+            request_type = "STREAMABLE_HTTP"
+        elif raw_transport == "sse":
+            request_type = "SSE"
+        else:
+            request_type = raw_transport.upper() if raw_transport else "UNKNOWN"
+
         tool_details: dict[str, Any] = {
             "toolName": payload.name,
             "serverId": context.global_context.server_id or "unknown",
             "serverName": gateway_meta.get("name"),
             "gatewayId": gateway_meta.get("id"),
             "integrationType": "MCP",
-            "requestType": "SSE",
+            "requestType": request_type,
             "latencyMs": latency_ms,
             "hasError": self._is_error(payload.result),
             "errorMessage": self._extract_error_message(payload.result),
