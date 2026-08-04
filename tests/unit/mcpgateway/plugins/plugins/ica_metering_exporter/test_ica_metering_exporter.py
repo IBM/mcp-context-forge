@@ -7,13 +7,9 @@ Unit tests for IcaMeteringExporterPlugin.
 """
 
 # Standard
-from unittest.mock import ANY, AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 # Third-Party
-import httpx
-import pytest
-
-# First-Party
 from cpex.framework import (
     GlobalContext,
     PluginConfig,
@@ -23,6 +19,10 @@ from cpex.framework import (
     ToolPreInvokePayload,
 )
 from cpex.framework.constants import GATEWAY_METADATA
+import httpx
+import pytest
+
+# First-Party
 from plugins.ica_metering_exporter.ica_metering_exporter import IcaMeteringExporterPlugin
 
 
@@ -111,7 +111,8 @@ class TestIcaMeteringExporterPlugin:
         context = _create_context()
         await plugin.tool_pre_invoke(
             ToolPreInvokePayload(
-                name="tool", args={},
+                name="tool",
+                args={},
                 headers={"X-App-Id": "coding-agent:research"},
             ),
             context,
@@ -125,7 +126,8 @@ class TestIcaMeteringExporterPlugin:
         context = _create_context()
         await plugin.tool_pre_invoke(
             ToolPreInvokePayload(
-                name="tool", args={},
+                name="tool",
+                args={},
                 headers={"User-Agent": "ClaudeCode/1.2.3"},
             ),
             context,
@@ -139,7 +141,8 @@ class TestIcaMeteringExporterPlugin:
         context = _create_context()
         await plugin.tool_pre_invoke(
             ToolPreInvokePayload(
-                name="tool", args={},
+                name="tool",
+                args={},
                 headers={
                     "User-Agent": "JavaHttpClient/4.0",
                     "X-Forwarded-User-Agent": "ClaudeCode/1.2.3",
@@ -182,6 +185,188 @@ class TestIcaMeteringExporterPlugin:
         sent_payload = plugin._send_to_ica.await_args.args[0]
         assert sent_payload["appId"] is None
         assert sent_payload["userAgent"] is None
+
+    # ── Call-context (persona) header tests ─────────────────────
+
+    @pytest.mark.asyncio
+    async def test_pre_invoke_extracts_assistant_headers(self):
+        """Pre-invoke should extract llm_call_type and assistant headers."""
+        plugin = _create_plugin()
+        context = _create_context()
+        await plugin.tool_pre_invoke(
+            ToolPreInvokePayload(
+                name="tool",
+                args={},
+                headers={
+                    "llm_call_type": "assistant",
+                    "assistant_uuid": "assistant-123",
+                    "assistant_name": "Austin Weather",
+                },
+            ),
+            context,
+        )
+        assert context.state.get("ica_llm_call_type") == "assistant"
+        assert context.state.get("ica_assistant_uuid") == "assistant-123"
+        assert context.state.get("ica_assistant_name") == "Austin Weather"
+
+    @pytest.mark.asyncio
+    async def test_pre_invoke_extracts_agent_headers(self):
+        """Pre-invoke should extract llm_call_type and agent headers including tool ids."""
+        plugin = _create_plugin()
+        context = _create_context()
+        await plugin.tool_pre_invoke(
+            ToolPreInvokePayload(
+                name="tool",
+                args={},
+                headers={
+                    "llm_call_type": "agent",
+                    "agent_uuid": "agent-456",
+                    "agent_name": "Research Agent",
+                    "agent_tool_ids": "server:mcp:abc123,server:mcp:def456",
+                },
+            ),
+            context,
+        )
+        assert context.state.get("ica_llm_call_type") == "agent"
+        assert context.state.get("ica_agent_uuid") == "agent-456"
+        assert context.state.get("ica_agent_name") == "Research Agent"
+        assert context.state.get("ica_agent_tool_ids") == "server:mcp:abc123,server:mcp:def456"
+
+    @pytest.mark.asyncio
+    async def test_pre_invoke_extracts_digital_ibmer_headers(self):
+        """Pre-invoke should extract llm_call_type and digital-ibmer headers."""
+        plugin = _create_plugin()
+        context = _create_context()
+        await plugin.tool_pre_invoke(
+            ToolPreInvokePayload(
+                name="tool",
+                args={},
+                headers={
+                    "llm_call_type": "digital-ibmer",
+                    "digital-ibmer_uuid": "ibmer-789",
+                    "digital-ibmer_name": "Digital Coworker",
+                    "digital-ibmer_tool_ids": "server:mcp:xyz1",
+                },
+            ),
+            context,
+        )
+        assert context.state.get("ica_llm_call_type") == "digital-ibmer"
+        assert context.state.get("ica_digital_ibmer_uuid") == "ibmer-789"
+        assert context.state.get("ica_digital_ibmer_name") == "Digital Coworker"
+        assert context.state.get("ica_digital_ibmer_tool_ids") == "server:mcp:xyz1"
+
+    @pytest.mark.asyncio
+    async def test_pre_invoke_persona_headers_case_insensitive(self):
+        """Pre-invoke should extract persona headers regardless of casing."""
+        plugin = _create_plugin()
+        context = _create_context()
+        await plugin.tool_pre_invoke(
+            ToolPreInvokePayload(
+                name="tool",
+                args={},
+                headers={
+                    "LLM_CALL_TYPE": "assistant",
+                    "Assistant_Uuid": "assistant-111",
+                    "AGENT_TOOL_IDS": "server:mcp:abc",
+                },
+            ),
+            context,
+        )
+        assert context.state.get("ica_llm_call_type") == "assistant"
+        assert context.state.get("ica_assistant_uuid") == "assistant-111"
+        assert context.state.get("ica_agent_tool_ids") == "server:mcp:abc"
+
+    @pytest.mark.asyncio
+    async def test_pre_invoke_no_persona_headers_leave_state_empty(self):
+        """Pre-invoke should not store persona state when headers are absent."""
+        plugin = _create_plugin()
+        context = _create_context()
+        await plugin.tool_pre_invoke(
+            ToolPreInvokePayload(name="tool", args={}, headers={"x-app-id": "ica-api-dev"}),
+            context,
+        )
+        for state_key in IcaMeteringExporterPlugin.CALL_CONTEXT_HEADERS:
+            assert state_key not in context.state
+
+    @pytest.mark.asyncio
+    async def test_post_invoke_emits_persona_fields(self):
+        """Post-invoke payload should include persona fields from state."""
+        plugin = _create_plugin()
+        context = _create_context()
+        context.state["ica_llm_call_type"] = "agent"
+        context.state["ica_agent_uuid"] = "agent-456"
+        context.state["ica_agent_name"] = "Research Agent"
+        context.state["ica_agent_tool_ids"] = "server:mcp:abc123"
+        await plugin.tool_pre_invoke(
+            ToolPreInvokePayload(name="tool", args={}, headers=None),
+            context,
+        )
+        payload = ToolPostInvokePayload(name="tool", result={"content": [], "isError": False})
+        await plugin.tool_post_invoke(payload, context)
+
+        sent_payload = plugin._send_to_ica.await_args.args[0]
+        assert sent_payload["llmCallType"] == "agent"
+        assert sent_payload["agentUuid"] == "agent-456"
+        assert sent_payload["agentName"] == "Research Agent"
+        assert sent_payload["agentToolIds"] == "server:mcp:abc123"
+        assert sent_payload["appId"] is None
+
+    @pytest.mark.asyncio
+    async def test_post_invoke_persona_fields_none_when_not_set(self):
+        """Persona fields should be None in payload when no persona headers were present."""
+        plugin = _create_plugin()
+        context = _create_context()
+        await plugin.tool_pre_invoke(
+            ToolPreInvokePayload(name="tool", args={}, headers={}),
+            context,
+        )
+        payload = ToolPostInvokePayload(name="tool", result={"content": [], "isError": False})
+        await plugin.tool_post_invoke(payload, context)
+
+        sent_payload = plugin._send_to_ica.await_args.args[0]
+        assert sent_payload["llmCallType"] is None
+        assert sent_payload["assistantUuid"] is None
+        assert sent_payload["agentUuid"] is None
+        assert sent_payload["agentToolIds"] is None
+        assert sent_payload["digitalIbmerUuid"] is None
+        assert sent_payload["digitalIbmerToolIds"] is None
+
+    @pytest.mark.asyncio
+    async def test_post_invoke_emits_persona_fields_via_http(self):
+        """Persona fields propagate through real HTTP payload."""
+        # Third-Party
+        from httpx import MockTransport
+
+        captured_body = None
+
+        def transport_handler(request):
+            nonlocal captured_body
+            captured_body = request
+            return httpx.Response(202)
+
+        plugin = _create_plugin(mock_send=False)
+        plugin.http_client = httpx.AsyncClient(transport=MockTransport(transport_handler))
+
+        context = _create_context()
+        context.state["ica_llm_call_type"] = "assistant"
+        context.state["ica_assistant_uuid"] = "assistant-123"
+        await plugin.tool_pre_invoke(
+            ToolPreInvokePayload(name="echo", args={}, headers=None),
+            context,
+        )
+        payload = ToolPostInvokePayload(
+            name="echo",
+            result={"content": [{"type": "text", "text": "hello"}], "isError": False},
+        )
+        await plugin.tool_post_invoke(payload, context)
+
+        # Standard
+        import json
+
+        body = json.loads(captured_body.content)
+        assert body["llmCallType"] == "assistant"
+        assert body["assistantUuid"] == "assistant-123"
+        assert body["assistantName"] is None  # only populated when header present
 
     # ── Post-invoke latency tests ────────────────────────────────
 
@@ -234,7 +419,8 @@ class TestIcaMeteringExporterPlugin:
         plugin.telemetry_config["global_default_model"] = "global-model"
         await plugin.tool_pre_invoke(
             ToolPreInvokePayload(
-                name="tool", args={},
+                name="tool",
+                args={},
                 headers={"X-OpenWebUI-Model-Id": "header-model"},
             ),
             context,
@@ -347,9 +533,7 @@ class TestIcaMeteringExporterPlugin:
     @pytest.mark.asyncio
     async def test_model_source_tracking_when_enabled(self):
         """modelSource field should be emitted when include_model_source is true."""
-        plugin = _create_plugin({"enabled": True, "include_model_source": True,
-                                "metering_url": "http://localhost:8080/event",
-                                "metering_token": "test-token"})
+        plugin = _create_plugin({"enabled": True, "include_model_source": True, "metering_url": "http://localhost:8080/event", "metering_token": "test-token"})
         context = _create_context(metadata={"model_name": "session-model"})
         await plugin.tool_pre_invoke(
             ToolPreInvokePayload(name="tool", args={}, headers={}),
@@ -393,7 +577,8 @@ class TestIcaMeteringExporterPlugin:
         )
         await plugin.tool_pre_invoke(
             ToolPreInvokePayload(
-                name="tool", args={},
+                name="tool",
+                args={},
                 headers={"X-OpenWebUI-Model-Id": "header-model"},
             ),
             context,
@@ -794,9 +979,7 @@ class TestIcaMeteringExporterPlugin:
         plugin = _create_plugin(mock_send=False)
         assert plugin.http_client is not None
         response = MagicMock(status_code=403, text="forbidden")
-        plugin.http_client.post = AsyncMock(
-            side_effect=httpx.HTTPStatusError("403 error", request=MagicMock(), response=response)
-        )
+        plugin.http_client.post = AsyncMock(side_effect=httpx.HTTPStatusError("403 error", request=MagicMock(), response=response))
 
         await plugin._send_to_ica({"key": "value"})
 
@@ -863,16 +1046,19 @@ class TestIcaMeteringExporterPlugin:
 
     # ── _coerce_int tests ─────────────────────────────────────────
 
-    @pytest.mark.parametrize("value,expected", [
-        (None, None),
-        (42, 42),
-        (42.0, 42),
-        (42.7, 42),
-        ("42", 42),
-        ("abc", None),
-        ([], None),
-        ({}, None),
-    ])
+    @pytest.mark.parametrize(
+        "value,expected",
+        [
+            (None, None),
+            (42, 42),
+            (42.0, 42),
+            (42.7, 42),
+            ("42", 42),
+            ("abc", None),
+            ([], None),
+            ({}, None),
+        ],
+    )
     def test_coerce_int(self, value, expected):
         """_coerce_int should safely convert values or return None."""
         assert IcaMeteringExporterPlugin._coerce_int(value) == expected
@@ -888,14 +1074,18 @@ class TestIcaMeteringExporterPlugin:
 
     def test_get_service_jwt_uses_contextforge_metering_subject(self):
         """JWT should contain 'contextforge-metering' as subject."""
+        # Third-Party
         import jwt as pyjwt
+
         token = IcaMeteringExporterPlugin._get_service_jwt("test-secret-key-for-jwt-generation-test")
         decoded = pyjwt.decode(token, "test-secret-key-for-jwt-generation-test", algorithms=["HS256"])
         assert decoded["sub"] == "contextforge-metering"
 
     def test_get_service_jwt_has_service_attribution(self):
         """JWT should contain service, instance, and scope claims."""
+        # Third-Party
         import jwt as pyjwt
+
         token = IcaMeteringExporterPlugin._get_service_jwt("test-secret-key-for-jwt-generation-test")
         decoded = pyjwt.decode(token, "test-secret-key-for-jwt-generation-test", algorithms=["HS256"])
         assert decoded["service"] == "mcp-context-forge"
@@ -905,8 +1095,12 @@ class TestIcaMeteringExporterPlugin:
 
     def test_get_service_jwt_expires_in_future(self):
         """JWT exp should be ~24h from now."""
-        import jwt as pyjwt
+        # Standard
         import time
+
+        # Third-Party
+        import jwt as pyjwt
+
         token = IcaMeteringExporterPlugin._get_service_jwt("test-secret-key-for-jwt-generation-test")
         decoded = pyjwt.decode(token, "test-secret-key-for-jwt-generation-test", algorithms=["HS256"])
         assert decoded["exp"] > time.time() + 86000  # ~23.9h
@@ -915,11 +1109,14 @@ class TestIcaMeteringExporterPlugin:
     @pytest.mark.asyncio
     async def test_send_to_ica_uses_jwt_when_configured(self):
         """_send_to_ica should send Authorization: Bearer when jwt_secret is set."""
-        plugin = _create_plugin({
-            "enabled": True,
-            "metering_url": "http://localhost:8080/event",
-            "jwt_secret": "test-secret-key-for-jwt-generation-test",
-        }, mock_send=False)
+        plugin = _create_plugin(
+            {
+                "enabled": True,
+                "metering_url": "http://localhost:8080/event",
+                "jwt_secret": "test-secret-key-for-jwt-generation-test",
+            },
+            mock_send=False,
+        )
         assert plugin.http_client is not None
         plugin.http_client.post = AsyncMock(return_value=MagicMock(status_code=202))
 
@@ -947,10 +1144,13 @@ class TestIcaMeteringExporterPlugin:
     @pytest.mark.asyncio
     async def test_send_to_ica_skips_when_no_auth_configured(self):
         """_send_to_ica should warn and skip when neither jwt_secret nor metering_token is set."""
-        plugin = _create_plugin({
-            "enabled": True,
-            "metering_url": "http://localhost:8080/event",
-        }, mock_send=False)
+        plugin = _create_plugin(
+            {
+                "enabled": True,
+                "metering_url": "http://localhost:8080/event",
+            },
+            mock_send=False,
+        )
         assert plugin.http_client is not None
         plugin.http_client.post = AsyncMock()
 
@@ -963,6 +1163,7 @@ class TestIcaMeteringExporterPlugin:
     @pytest.mark.asyncio
     async def test_e2e_metering_payload_via_http(self):
         """Plugin sends correct JSON payload through real HTTP to metering endpoint."""
+        # Third-Party
         from httpx import MockTransport
 
         captured_body = None
@@ -992,7 +1193,9 @@ class TestIcaMeteringExporterPlugin:
         )
         await plugin.tool_post_invoke(payload, context)
 
+        # Standard
         import json
+
         body = json.loads(captured_body.content)
         assert body["userEmail"] == "user@ibm.com"
         assert body["teamName"] == "team-1"
@@ -1009,6 +1212,7 @@ class TestIcaMeteringExporterPlugin:
     @pytest.mark.asyncio
     async def test_e2e_metering_payload_coerces_token_types(self):
         """Token values as float/string are coerced to int in HTTP payload."""
+        # Third-Party
         from httpx import MockTransport
 
         captured_body = None
@@ -1036,7 +1240,9 @@ class TestIcaMeteringExporterPlugin:
         )
         await plugin.tool_post_invoke(payload, context)
 
+        # Standard
         import json
+
         body = json.loads(captured_body.content)
         assert body["toolDetails"]["tokenInput"] == 10
         assert body["toolDetails"]["tokenOutput"] == 20
