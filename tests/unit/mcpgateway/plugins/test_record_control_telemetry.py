@@ -98,6 +98,23 @@ def _acc_pre_denied():
     return acc
 
 
+def _enabled_settings(**kwargs):
+    """Build a MagicMock settings object with CPEX control telemetry enabled.
+
+    Merges any extra kwargs so individual tests can override specific fields.
+    """
+    s = MagicMock()
+    s.cpex_control_telemetry_enabled = True
+    s.cpex_control_telemetry_db_enabled = True
+    s.cpex_control_telemetry_flatten_results = False
+    s.cpex_control_telemetry_max_results = 32
+    s.cpex_control_telemetry_emit_reason = False
+    s.cpex_control_telemetry_emit_agent_id = False
+    for k, v in kwargs.items():
+        setattr(s, k, v)
+    return s
+
+
 # ---------------------------------------------------------------------------
 # record_control_telemetry — no-op scenarios
 # ---------------------------------------------------------------------------
@@ -178,12 +195,17 @@ class TestRecordControlTelemetryTruncated:
         def capture_db(service, trace_id, aggregate, accumulator):
             captured.update(aggregate)
 
-        with (
-            patch("mcpgateway.plugins.control_telemetry.execution_records_supported", return_value=True),
-            patch("mcpgateway.plugins.control_telemetry._emit_db_spans", side_effect=capture_db),
-            patch("mcpgateway.plugins.control_telemetry._emit_otel_spans"),
-        ):
-            record_control_telemetry("trace-trunc", acc)
+        original = cfg_mod.settings
+        try:
+            cfg_mod.settings = _enabled_settings()
+            with (
+                patch("mcpgateway.plugins.control_telemetry.execution_records_supported", return_value=True),
+                patch("mcpgateway.plugins.control_telemetry._emit_db_spans", side_effect=capture_db),
+                patch("mcpgateway.plugins.control_telemetry._emit_otel_spans"),
+            ):
+                record_control_telemetry("trace-trunc", acc)
+        finally:
+            cfg_mod.settings = original
 
         # After record_control_telemetry(): tier-3 export-cap drops (128 - 32 = 96) added.
         # Total: 2 (tier-1/2) + 96 (tier-3) = 98
@@ -239,46 +261,66 @@ class TestRecordControlTelemetryDB:
     def test_writes_summary_span_to_db(self):
         """DB sink is invoked when there are execution records."""
         acc = _acc_with_pre_records([_make_rec()])
-        with (
-            patch("mcpgateway.plugins.control_telemetry.execution_records_supported", return_value=True),
-            patch("mcpgateway.plugins.control_telemetry._emit_db_spans") as mock_db,
-            patch("mcpgateway.plugins.control_telemetry._emit_otel_spans"),
-        ):
-            record_control_telemetry("trace-123", acc, tool_name="my_tool")
-        mock_db.assert_called_once()
+        original = cfg_mod.settings
+        try:
+            cfg_mod.settings = _enabled_settings()
+            with (
+                patch("mcpgateway.plugins.control_telemetry.execution_records_supported", return_value=True),
+                patch("mcpgateway.plugins.control_telemetry._emit_db_spans") as mock_db,
+                patch("mcpgateway.plugins.control_telemetry._emit_otel_spans"),
+            ):
+                record_control_telemetry("trace-123", acc, tool_name="my_tool")
+            mock_db.assert_called_once()
+        finally:
+            cfg_mod.settings = original
 
     def test_writes_per_control_spans(self):
         """DB sink receives the accumulator with multiple records."""
         acc = _acc_with_pre_records([_make_rec(plugin_name="ctrl1"), _make_rec(plugin_name="ctrl2")])
-        with (
-            patch("mcpgateway.plugins.control_telemetry.execution_records_supported", return_value=True),
-            patch("mcpgateway.plugins.control_telemetry._emit_db_spans") as mock_db,
-            patch("mcpgateway.plugins.control_telemetry._emit_otel_spans"),
-        ):
-            record_control_telemetry("trace-123", acc)
-        mock_db.assert_called_once()
-        call_args = mock_db.call_args[0]
-        assert len(call_args[3].records) == 2
+        original = cfg_mod.settings
+        try:
+            cfg_mod.settings = _enabled_settings()
+            with (
+                patch("mcpgateway.plugins.control_telemetry.execution_records_supported", return_value=True),
+                patch("mcpgateway.plugins.control_telemetry._emit_db_spans") as mock_db,
+                patch("mcpgateway.plugins.control_telemetry._emit_otel_spans"),
+            ):
+                record_control_telemetry("trace-123", acc)
+            mock_db.assert_called_once()
+            call_args = mock_db.call_args[0]
+            assert len(call_args[3].records) == 2
+        finally:
+            cfg_mod.settings = original
 
     def test_db_failure_does_not_raise(self):
         """_emit_db_spans raising must not propagate into the request path."""
         acc = _acc_with_pre_records([_make_rec()])
-        with (
-            patch("mcpgateway.plugins.control_telemetry.execution_records_supported", return_value=True),
-            patch("mcpgateway.plugins.control_telemetry._emit_db_spans", side_effect=RuntimeError("DB is down")),
-            patch("mcpgateway.plugins.control_telemetry._emit_otel_spans"),
-        ):
-            record_control_telemetry("trace-123", acc)
+        original = cfg_mod.settings
+        try:
+            cfg_mod.settings = _enabled_settings()
+            with (
+                patch("mcpgateway.plugins.control_telemetry.execution_records_supported", return_value=True),
+                patch("mcpgateway.plugins.control_telemetry._emit_db_spans", side_effect=RuntimeError("DB is down")),
+                patch("mcpgateway.plugins.control_telemetry._emit_otel_spans"),
+            ):
+                record_control_telemetry("trace-123", acc)
+        finally:
+            cfg_mod.settings = original
 
     def test_otel_failure_does_not_raise(self):
         """_emit_otel_spans raising must not propagate."""
         acc = _acc_with_pre_records([_make_rec()])
-        with (
-            patch("mcpgateway.plugins.control_telemetry.execution_records_supported", return_value=True),
-            patch("mcpgateway.plugins.control_telemetry._emit_db_spans"),
-            patch("mcpgateway.plugins.control_telemetry._emit_otel_spans", side_effect=RuntimeError("OTel explode")),
-        ):
-            record_control_telemetry("trace-123", acc)
+        original = cfg_mod.settings
+        try:
+            cfg_mod.settings = _enabled_settings()
+            with (
+                patch("mcpgateway.plugins.control_telemetry.execution_records_supported", return_value=True),
+                patch("mcpgateway.plugins.control_telemetry._emit_db_spans"),
+                patch("mcpgateway.plugins.control_telemetry._emit_otel_spans", side_effect=RuntimeError("OTel explode")),
+            ):
+                record_control_telemetry("trace-123", acc)
+        finally:
+            cfg_mod.settings = original
 
     def test_pre_deny_summary_has_result_allowed_false(self):
         """When pre-hook was denied, aggregate result.allowed must be False."""
@@ -288,12 +330,17 @@ class TestRecordControlTelemetryDB:
         def capture_db(service, trace_id, aggregate, accumulator):
             captured_aggregate.update(aggregate)
 
-        with (
-            patch("mcpgateway.plugins.control_telemetry.execution_records_supported", return_value=True),
-            patch("mcpgateway.plugins.control_telemetry._emit_db_spans", side_effect=capture_db),
-            patch("mcpgateway.plugins.control_telemetry._emit_otel_spans"),
-        ):
-            record_control_telemetry("trace-123", acc)
+        original = cfg_mod.settings
+        try:
+            cfg_mod.settings = _enabled_settings()
+            with (
+                patch("mcpgateway.plugins.control_telemetry.execution_records_supported", return_value=True),
+                patch("mcpgateway.plugins.control_telemetry._emit_db_spans", side_effect=capture_db),
+                patch("mcpgateway.plugins.control_telemetry._emit_otel_spans"),
+            ):
+                record_control_telemetry("trace-123", acc)
+        finally:
+            cfg_mod.settings = original
         assert captured_aggregate.get("cpex.control.result.allowed") is False
 
     def test_tool_name_in_attributes(self):
@@ -304,12 +351,17 @@ class TestRecordControlTelemetryDB:
         def capture_db(service, trace_id, aggregate, accumulator):
             captured.update(aggregate)
 
-        with (
-            patch("mcpgateway.plugins.control_telemetry.execution_records_supported", return_value=True),
-            patch("mcpgateway.plugins.control_telemetry._emit_db_spans", side_effect=capture_db),
-            patch("mcpgateway.plugins.control_telemetry._emit_otel_spans"),
-        ):
-            record_control_telemetry("trace-123", acc, tool_name="my_tool")
+        original = cfg_mod.settings
+        try:
+            cfg_mod.settings = _enabled_settings()
+            with (
+                patch("mcpgateway.plugins.control_telemetry.execution_records_supported", return_value=True),
+                patch("mcpgateway.plugins.control_telemetry._emit_db_spans", side_effect=capture_db),
+                patch("mcpgateway.plugins.control_telemetry._emit_otel_spans"),
+            ):
+                record_control_telemetry("trace-123", acc, tool_name="my_tool")
+        finally:
+            cfg_mod.settings = original
         assert captured.get("cpex.control.tool.name") == "my_tool"
 
     def test_capped_at_max_results(self):
@@ -320,13 +372,18 @@ class TestRecordControlTelemetryDB:
         def capture_db(service, trace_id, aggregate, accumulator):
             call_count_tracker.append(len(accumulator.records))
 
-        with (
-            patch("mcpgateway.plugins.control_telemetry.execution_records_supported", return_value=True),
-            patch("mcpgateway.plugins.control_telemetry._emit_db_spans", side_effect=capture_db),
-            patch("mcpgateway.plugins.control_telemetry._emit_otel_spans"),
-            patch("mcpgateway.plugins.control_telemetry._get_max_results", return_value=3),
-        ):
-            record_control_telemetry("trace-123", acc)
+        original = cfg_mod.settings
+        try:
+            cfg_mod.settings = _enabled_settings()
+            with (
+                patch("mcpgateway.plugins.control_telemetry.execution_records_supported", return_value=True),
+                patch("mcpgateway.plugins.control_telemetry._emit_db_spans", side_effect=capture_db),
+                patch("mcpgateway.plugins.control_telemetry._emit_otel_spans"),
+                patch("mcpgateway.plugins.control_telemetry._get_max_results", return_value=3),
+            ):
+                record_control_telemetry("trace-123", acc)
+        finally:
+            cfg_mod.settings = original
         assert call_count_tracker[0] == 10  # accumulator has all 10
 
 

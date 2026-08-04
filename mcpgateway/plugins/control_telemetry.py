@@ -51,6 +51,8 @@ _MAX_RECORDS_PER_CALL = 128  # cap across pre + post combined
 _MAX_REASON_LEN = 256  # CPEX already bounds this; enforce again defensively
 _MAX_ERROR_CODE_LEN = 256
 _MAX_CONFIG_KEYS = 64
+_MAX_CONFIG_KEY_LEN = 128   # per-key length cap before joining
+_MAX_CONFIG_KEYS_JOINED_LEN = 4096  # max total byte length of the joined config_keys string
 
 # Statuses that represent controls that actually ran (exclude disabled/skipped/cancelled).
 _ACTIVE_STATUSES = frozenset({"completed", "error", "timeout"})
@@ -318,7 +320,7 @@ def record_control_telemetry(
     try:
         from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
 
-        if not getattr(settings, "cpex_control_telemetry_enabled", True):
+        if not getattr(settings, "cpex_control_telemetry_enabled", False):
             return
 
         from mcpgateway.services.observability_service import ObservabilityService  # pylint: disable=import-outside-toplevel,cyclic-import
@@ -329,11 +331,15 @@ def record_control_telemetry(
             {
                 "cpex.control.type": "tool",
                 "cpex.control.tool.name": _safe_str(tool_name, 128),
-                "cpex.control.agent.id": _safe_str(agent_id, 128),
                 "cpex.control.binding.name": _safe_str(binding_name, 128),
                 "cpex.control.enforcement_point": _enforcement_point(accumulator),
             }
         )
+        # cpex.control.agent.id contains the authenticated user email — a high-cardinality
+        # PII field.  Opt-in only (CPEX_CONTROL_TELEMETRY_EMIT_AGENT_ID=false by default)
+        # until Phase 5 central attribute-policy wiring provides a redaction boundary.
+        if _emit_agent_id_enabled():
+            aggregate["cpex.control.agent.id"] = _safe_str(agent_id, 128)
         # Compute and record export-cap (tier-3) drops before building the summary span.
         # records_received is the count before any export cap; results_count is the cap-bounded
         # export count.  The difference is exactly the number of records the islice will skip.
@@ -531,8 +537,12 @@ def _per_control_attributes(hook: str, rec: Any) -> dict:
             if rec.error_code:
                 attrs["cpex.control.result.error_code"] = _safe_str(rec.error_code, _MAX_ERROR_CODE_LEN)
         if rec.config_keys:
-            # Key names only (CPEX never includes values); bounded list join
-            attrs["cpex.control.config.keys"] = ",".join(rec.config_keys[:_MAX_CONFIG_KEYS])
+            # Key names only (CPEX never includes values).
+            # Each key is length-capped, list is count-capped, and the final joined
+            # string is byte-capped to prevent telemetry amplification.
+            safe_keys = [_safe_str(k, _MAX_CONFIG_KEY_LEN) for k in rec.config_keys[:_MAX_CONFIG_KEYS]]
+            joined = ",".join(safe_keys)
+            attrs["cpex.control.config.keys"] = joined[:_MAX_CONFIG_KEYS_JOINED_LEN]
         return attrs
     except Exception:  # noqa: BLE001
         logger.debug("Failed to build per-control attributes", exc_info=True)
@@ -618,6 +628,30 @@ def _emit_reason_enabled() -> bool:
         return False
 
 
+def _emit_agent_id_enabled() -> bool:
+    """Return True when ``cpex.control.agent.id`` emission is enabled.
+
+    The agent ID is the authenticated caller email — a high-cardinality PII field.
+    Opt-in only (default: False) until Phase 5 central attribute-policy wiring
+    provides a redaction boundary.  Enable via
+    ``CPEX_CONTROL_TELEMETRY_EMIT_AGENT_ID=true`` only in environments where
+    the observability sink is appropriately secured.
+
+    Returns:
+        True when ``cpex_control_telemetry_emit_agent_id`` is set to True in settings.
+
+    Examples:
+        >>> isinstance(_emit_agent_id_enabled(), bool)
+        True
+    """
+    try:
+        from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
+
+        return bool(getattr(settings, "cpex_control_telemetry_emit_agent_id", False))
+    except Exception:  # noqa: BLE001
+        return False
+
+
 # ---------------------------------------------------------------------------
 # Flattened-results projection helper
 # ---------------------------------------------------------------------------
@@ -688,7 +722,9 @@ def _build_flattened_attributes(
 
                 config_keys = getattr(rec, "config_keys", None)
                 if config_keys:
-                    result[f"{prefix}.config.keys"] = ",".join(config_keys[:_MAX_CONFIG_KEYS])
+                    safe_keys = [_safe_str(k, _MAX_CONFIG_KEY_LEN) for k in config_keys[:_MAX_CONFIG_KEYS]]
+                    joined = ",".join(safe_keys)
+                    result[f"{prefix}.config.keys"] = joined[:_MAX_CONFIG_KEYS_JOINED_LEN]
 
                 # reason/error_code gated by CPEX_CONTROL_TELEMETRY_EMIT_REASON (default: false)
                 if _emit_reason_enabled():

@@ -1986,8 +1986,15 @@ class Settings(BaseSettings):
     # Enabled only when the installed CPEX version exposes ControlExecutionRecord (>=0.1.2).
     # A no-op when execution_records_supported() returns False (older CPEX build).
     cpex_control_telemetry_enabled: bool = Field(
-        default=True,
-        description=("Emit structured CPEX control-execution telemetry on tool invocations. No-op when CPEX execution records are unavailable (CPEX < 0.1.2). Env: CPEX_CONTROL_TELEMETRY_ENABLED."),
+        default=False,
+        description=(
+            "Emit structured CPEX control-execution telemetry on tool invocations. "
+            "Disabled by default — each traced tool call creates up to 1 summary + "
+            "CPEX_CONTROL_TELEMETRY_MAX_RESULTS result DB spans. Enable only after "
+            "reviewing storage and cardinality implications. "
+            "No-op when CPEX execution records are unavailable (CPEX < 0.1.2). "
+            "Env: CPEX_CONTROL_TELEMETRY_ENABLED."
+        ),
     )
     cpex_control_telemetry_db_enabled: bool = Field(
         default=True,
@@ -2028,6 +2035,16 @@ class Settings(BaseSettings):
             "PII, tool argument values, or exception content. Enable only when the "
             "observability sink is appropriately secured and a redaction boundary is "
             "in place. Env: CPEX_CONTROL_TELEMETRY_EMIT_REASON."
+        ),
+    )
+    cpex_control_telemetry_emit_agent_id: bool = Field(
+        default=False,
+        description=(
+            "Emit cpex.control.agent.id on the summary span. Disabled by default "
+            "because the value is the authenticated caller email — a high-cardinality "
+            "PII field with GDPR/data-residency implications. Enable only when the "
+            "observability sink is appropriately secured and a redaction boundary is "
+            "in place. Env: CPEX_CONTROL_TELEMETRY_EMIT_AGENT_ID."
         ),
     )
 
