@@ -135,14 +135,12 @@ class TokenBlocklistService:
                     if repaired:
                         db.commit()
                     logger.debug("Token %s already revoked", SecurityValidator.sanitize_log_message(jti[:8]))
-                    await self._invalidate_auth_cache(jti)
-                    return True
+                else:
+                    # Create revocation record
+                    revocation = TokenRevocation(jti=jti, revoked_by=revoked_by, reason=reason, token_expiry=token_expiry, last_activity=last_activity or utc_now())
 
-                # Create revocation record
-                revocation = TokenRevocation(jti=jti, revoked_by=revoked_by, reason=reason, token_expiry=token_expiry, last_activity=last_activity or utc_now())
-
-                db.add(revocation)
-                db.commit()
+                    db.add(revocation)
+                    db.commit()
             else:
                 # Create own session
                 with fresh_db_session() as db:
@@ -163,14 +161,12 @@ class TokenBlocklistService:
                         if repaired:
                             db.commit()
                         logger.debug("Token %s already revoked", SecurityValidator.sanitize_log_message(jti[:8]))
-                        await self._invalidate_auth_cache(jti)
-                        return True
+                    else:
+                        # Create revocation record
+                        revocation = TokenRevocation(jti=jti, revoked_by=revoked_by, reason=reason, token_expiry=token_expiry, last_activity=last_activity or utc_now())
 
-                    # Create revocation record
-                    revocation = TokenRevocation(jti=jti, revoked_by=revoked_by, reason=reason, token_expiry=token_expiry, last_activity=last_activity or utc_now())
-
-                    db.add(revocation)
-                    db.commit()
+                        db.add(revocation)
+                        db.commit()
 
             # Cache in Redis for fast lookup
             redis_client = self._get_redis_client()

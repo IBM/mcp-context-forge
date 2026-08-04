@@ -39,13 +39,32 @@ def test_upgrade_repairs_only_revoked_active_tokens():
         engine.dispose()
 
 
-def test_upgrade_is_idempotent_and_skips_missing_tables():
-    """Repeated runs and partial schemas remain safe."""
+def test_upgrade_skips_missing_tables():
+    """Partial schemas remain safe."""
     engine = sa.create_engine("sqlite:///:memory:")
     try:
         with engine.begin() as connection:
             _run_upgrade(connection)
             connection.execute(sa.text("CREATE TABLE email_api_tokens (jti VARCHAR PRIMARY KEY, is_active BOOLEAN NOT NULL)"))
             _run_upgrade(connection)
+    finally:
+        engine.dispose()
+
+
+def test_upgrade_is_idempotent():
+    """Repeated upgrades leave repaired and valid rows unchanged."""
+    engine = sa.create_engine("sqlite:///:memory:")
+    try:
+        with engine.begin() as connection:
+            connection.execute(sa.text("CREATE TABLE email_api_tokens (jti VARCHAR PRIMARY KEY, is_active BOOLEAN NOT NULL)"))
+            connection.execute(sa.text("CREATE TABLE token_revocations (jti VARCHAR PRIMARY KEY)"))
+            connection.execute(sa.text("INSERT INTO email_api_tokens (jti, is_active) VALUES ('revoked', 1), ('valid', 1)"))
+            connection.execute(sa.text("INSERT INTO token_revocations (jti) VALUES ('revoked')"))
+
+            _run_upgrade(connection)
+            _run_upgrade(connection)
+
+            states = dict(connection.execute(sa.text("SELECT jti, is_active FROM email_api_tokens")).all())
+            assert states == {"revoked": 0, "valid": 1}
     finally:
         engine.dispose()

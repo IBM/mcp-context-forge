@@ -13,7 +13,7 @@ import jwt
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -21,7 +21,7 @@ from mcpgateway.config import get_settings
 from mcpgateway.main import app
 from mcpgateway.routers.auth import get_db
 from mcpgateway.auth import get_current_user
-from mcpgateway.db import Base, EmailUser
+from mcpgateway.db import Base, EmailApiToken, EmailUser, TokenRevocation
 import mcpgateway.db
 
 
@@ -141,6 +141,32 @@ class TestLogoutEndpoint:
                 assert call_args.kwargs["reason"] == "logout"
         finally:
             # Clean up overrides
+            app.dependency_overrides.clear()
+
+    def test_logout_persists_inactive_token_and_revocation(self, setup_test_db, mock_db, mock_current_user, valid_token):
+        """Real logout keeps catalog and blocklist state consistent."""
+        api_token = EmailApiToken(user_email="test@example.com", name="Logout integration token", jti="test-jti-123", token_hash="test-hash", is_active=True)
+        mock_db.add(api_token)
+        mock_db.commit()
+
+        app.dependency_overrides[get_current_user] = lambda: mock_current_user
+        app.dependency_overrides[get_db] = lambda: mock_db
+
+        try:
+            with (
+                patch("mcpgateway.services.token_blocklist_service.TokenBlocklistService._get_redis_client", return_value=None),
+                patch("mcpgateway.cache.auth_cache.auth_cache.invalidate_revocation", new_callable=AsyncMock) as mock_invalidate,
+            ):
+                response = TestClient(app).post("/auth/logout", headers={"Authorization": f"Bearer {valid_token}"})
+
+            assert response.status_code == 200
+            mock_db.expire_all()
+            persisted_token = mock_db.execute(select(EmailApiToken).where(EmailApiToken.jti == "test-jti-123")).scalar_one()
+            revocation = mock_db.execute(select(TokenRevocation).where(TokenRevocation.jti == "test-jti-123")).scalar_one()
+            assert persisted_token.is_active is False
+            assert revocation.reason == "logout"
+            mock_invalidate.assert_awaited_once_with("test-jti-123")
+        finally:
             app.dependency_overrides.clear()
 
     def test_logout_missing_authorization_header(self, setup_test_db, mock_db):
