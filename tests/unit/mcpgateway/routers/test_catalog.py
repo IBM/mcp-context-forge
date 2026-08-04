@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 # Third-Party
 from fastapi import APIRouter, HTTPException, Request
+import pydantic
 import pytest
 
 # First-Party
@@ -18,6 +19,7 @@ from mcpgateway.api.v1 import build_legacy_router, build_v1_router
 from mcpgateway.config import settings
 from mcpgateway.routers.catalog import list_catalog_servers, register_catalog_server
 from mcpgateway.schemas import CatalogListResponse, CatalogServerRegisterBody, CatalogServerRegisterRequest, CatalogServerRegisterResponse
+from mcpgateway.services.catalog_service import CATALOG_REGISTER_ALREADY_REGISTERED_MSG, CATALOG_REGISTER_NOT_FOUND_MSG
 from tests.helpers.router_helpers import collect_routes
 
 
@@ -139,23 +141,57 @@ async def test_register_requires_authenticated_user():
 
 @pytest.mark.asyncio
 async def test_register_rbac_denied_returns_403(monkeypatch):
-    """A caller without servers.create is rejected with 403."""
+    """A caller without the required permissions is rejected with 403 before the service runs."""
     mock_perm_service = MagicMock()
     mock_perm_service.check_permission = AsyncMock(return_value=False)
     monkeypatch.setattr("mcpgateway.middleware.rbac.PermissionService", lambda db: mock_perm_service)
     monkeypatch.setattr("mcpgateway.plugins.get_plugin_manager", AsyncMock(return_value=None))
+    mock_register = AsyncMock()
+    monkeypatch.setattr("mcpgateway.routers.catalog.catalog_service.register_catalog_server", mock_register)
     db = MagicMock()
 
     with pytest.raises(HTTPException) as exc_info:
         await register_catalog_server("asana", db=db, _user={"email": "user@example.com", "db": db})
 
     assert exc_info.value.status_code == 403
+    assert mock_register.await_count == 0
+
+
+@pytest.mark.parametrize("denied", ["servers.create", "gateways.create"])
+@pytest.mark.asyncio
+async def test_register_requires_both_permissions(monkeypatch, denied):
+    """Registration needs servers.create AND gateways.create; denying either yields 403."""
+    monkeypatch.setattr("mcpgateway.routers.catalog.settings.mcpgateway_catalog_enabled", True, raising=False)
+
+    async def check_permission(**kwargs):
+        return kwargs["permission"] != denied
+
+    mock_perm_service = MagicMock()
+    mock_perm_service.check_permission = AsyncMock(side_effect=check_permission)
+    monkeypatch.setattr("mcpgateway.middleware.rbac.PermissionService", lambda db: mock_perm_service)
+    monkeypatch.setattr("mcpgateway.plugins.get_plugin_manager", AsyncMock(return_value=None))
+    mock_register = AsyncMock()
+    monkeypatch.setattr("mcpgateway.routers.catalog.catalog_service.register_catalog_server", mock_register)
+    db = MagicMock()
+
+    with pytest.raises(HTTPException) as exc_info:
+        await register_catalog_server("asana", db=db, _user={"email": "user@example.com", "db": db})
+
+    assert exc_info.value.status_code == 403
+    assert mock_register.await_count == 0
+
+
+def test_register_disables_admin_bypass():
+    """Platform admins must hold the permissions explicitly: no admin bypass on this route."""
+    assert register_catalog_server._allow_admin_bypass is False
 
 
 @pytest.mark.asyncio
 async def test_register_disabled_returns_404(monkeypatch, allow_permission):
-    """The register endpoint returns 404 when the catalog feature is disabled."""
+    """The register endpoint returns 404 without touching the service when the feature is disabled."""
     monkeypatch.setattr("mcpgateway.routers.catalog.settings.mcpgateway_catalog_enabled", False, raising=False)
+    mock_register = AsyncMock()
+    monkeypatch.setattr("mcpgateway.routers.catalog.catalog_service.register_catalog_server", mock_register)
     db = MagicMock()
 
     with pytest.raises(HTTPException) as exc_info:
@@ -163,6 +199,7 @@ async def test_register_disabled_returns_404(monkeypatch, allow_permission):
 
     assert exc_info.value.status_code == 404
     assert exc_info.value.detail == "Catalog feature is disabled"
+    assert mock_register.await_count == 0
 
 
 @pytest.mark.asyncio
@@ -203,18 +240,80 @@ async def test_register_with_api_key_builds_request(monkeypatch, allow_permissio
 
 
 @pytest.mark.asyncio
-async def test_register_duplicate_passthrough(monkeypatch, allow_permission):
-    """Business failures are returned unchanged as a success=False envelope."""
+async def test_register_duplicate_returns_409(monkeypatch, allow_permission):
+    """An already-registered catalog server maps to HTTP 409."""
     monkeypatch.setattr("mcpgateway.routers.catalog.settings.mcpgateway_catalog_enabled", True, raising=False)
     mock_response = CatalogServerRegisterResponse(
         success=False,
         server_id="existing-id",
-        message="Server already registered",
+        message=CATALOG_REGISTER_ALREADY_REGISTERED_MSG,
         error="This server is already registered in the system",
+    )
+    monkeypatch.setattr("mcpgateway.routers.catalog.catalog_service.register_catalog_server", AsyncMock(return_value=mock_response))
+    db = MagicMock()
+
+    with pytest.raises(HTTPException) as exc_info:
+        await register_catalog_server("asana", db=db, _user={"email": "user@example.com", "db": db})
+
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.detail == "Server already registered"
+
+
+@pytest.mark.asyncio
+async def test_register_unknown_id_returns_404(monkeypatch, allow_permission):
+    """An unknown catalog id maps to HTTP 404."""
+    monkeypatch.setattr("mcpgateway.routers.catalog.settings.mcpgateway_catalog_enabled", True, raising=False)
+    mock_response = CatalogServerRegisterResponse(
+        success=False,
+        server_id="",
+        message=CATALOG_REGISTER_NOT_FOUND_MSG,
+        error="Invalid catalog server ID",
+    )
+    monkeypatch.setattr("mcpgateway.routers.catalog.catalog_service.register_catalog_server", AsyncMock(return_value=mock_response))
+    db = MagicMock()
+
+    with pytest.raises(HTTPException) as exc_info:
+        await register_catalog_server("asana", db=db, _user={"email": "user@example.com", "db": db})
+
+    assert exc_info.value.status_code == 404
+    assert exc_info.value.detail == "Catalog server not found"
+
+
+@pytest.mark.asyncio
+async def test_register_failure_envelope_scrubs_error(monkeypatch, allow_permission):
+    """Connectivity failures stay a 200 envelope but drop the raw exception text."""
+    monkeypatch.setattr("mcpgateway.routers.catalog.settings.mcpgateway_catalog_enabled", True, raising=False)
+    mock_response = CatalogServerRegisterResponse(
+        success=False,
+        server_id="",
+        message="Server is offline or unreachable",
+        error="Traceback (most recent call last): ConnectionRefusedError: [Errno 61] Connection refused",
     )
     monkeypatch.setattr("mcpgateway.routers.catalog.catalog_service.register_catalog_server", AsyncMock(return_value=mock_response))
     db = MagicMock()
 
     result = await register_catalog_server("asana", db=db, _user={"email": "user@example.com", "db": db})
 
-    assert result is mock_response
+    assert result.success is False
+    assert result.message == "Server is offline or unreachable"
+    assert result.error is None
+
+
+def test_register_body_rejects_unsafe_name():
+    """The register body validates the name override like other named resources."""
+    with pytest.raises(pydantic.ValidationError):
+        CatalogServerRegisterBody(name="<script>alert(1)</script>")
+
+
+def test_register_body_rejects_oversized_api_key():
+    """The register body caps api_key length."""
+    with pytest.raises(pydantic.ValidationError):
+        CatalogServerRegisterBody(api_key="x" * 5000)  # pragma: allowlist secret
+
+
+def test_register_body_allows_empty_payload():
+    """Both overrides are optional."""
+    body = CatalogServerRegisterBody()
+
+    assert body.name is None
+    assert body.api_key is None

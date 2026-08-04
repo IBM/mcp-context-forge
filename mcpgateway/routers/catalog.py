@@ -19,7 +19,7 @@ from mcpgateway.config import settings
 from mcpgateway.db import get_db
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
 from mcpgateway.schemas import CatalogListRequest, CatalogListResponse, CatalogServerRegisterBody, CatalogServerRegisterRequest, CatalogServerRegisterResponse
-from mcpgateway.services.catalog_service import catalog_service
+from mcpgateway.services.catalog_service import CATALOG_REGISTER_ALREADY_REGISTERED_MSG, CATALOG_REGISTER_NOT_FOUND_MSG, catalog_service
 
 router = APIRouter(prefix="/catalog", tags=["Catalog"])
 
@@ -81,8 +81,11 @@ async def list_catalog_servers(
     return await catalog_service.get_catalog_servers(catalog_request, db, user_email=user_email, token_teams=token_teams)
 
 
+# Registration bottoms out in gateway_service.register_gateway (a federated peer), so it requires
+# the same gateways.create as POST /v1/gateways in addition to the admin twin's servers.create.
 @router.post("/{catalog_id}/register", response_model=CatalogServerRegisterResponse)
-@require_permission("servers.create")
+@require_permission("servers.create", allow_admin_bypass=False)
+@require_permission("gateways.create", allow_admin_bypass=False)
 async def register_catalog_server(
     catalog_id: str,
     body: Optional[CatalogServerRegisterBody] = None,
@@ -91,9 +94,11 @@ async def register_catalog_server(
 ) -> CatalogServerRegisterResponse:
     """Register a catalog server as a gateway for the authenticated API caller.
 
-    Business failures (unknown catalog id, already registered, unreachable
-    server) are returned as an HTTP 200 envelope with ``success=False`` and a
-    mapped message, matching the admin registration endpoint.
+    Unknown catalog ids map to HTTP 404 and already-registered servers to HTTP 409.
+    Remaining business failures (unreachable server, auth failure) are returned as an
+    HTTP 200 envelope with ``success=False`` and a mapped message; the ``error`` field
+    is blanked because the service captures raw exception text there. The admin
+    registration endpoint keeps its 200-envelope contract unchanged.
 
     Args:
         catalog_id: Catalog server ID to register.
@@ -105,11 +110,21 @@ async def register_catalog_server(
         Registration result envelope.
 
     Raises:
-        HTTPException: If the catalog feature is disabled.
+        HTTPException: If the catalog feature is disabled (404), the catalog id is
+            unknown (404), or the server is already registered (409).
     """
     if not settings.mcpgateway_catalog_enabled:
         raise HTTPException(status_code=404, detail="Catalog feature is disabled")
 
     request = CatalogServerRegisterRequest(server_id=catalog_id, name=body.name, api_key=body.api_key) if body else None
 
-    return await catalog_service.register_catalog_server(catalog_id=catalog_id, request=request, db=db)
+    result = await catalog_service.register_catalog_server(catalog_id=catalog_id, request=request, db=db)
+
+    if not result.success:
+        if result.message == CATALOG_REGISTER_NOT_FOUND_MSG:
+            raise HTTPException(status_code=404, detail="Catalog server not found")
+        if result.message == CATALOG_REGISTER_ALREADY_REGISTERED_MSG:
+            raise HTTPException(status_code=409, detail="Server already registered")
+        result.error = None
+
+    return result

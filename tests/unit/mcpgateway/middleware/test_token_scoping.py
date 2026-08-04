@@ -329,7 +329,11 @@ class TestTokenScopingMiddleware:
 
     @pytest.mark.asyncio
     async def test_catalog_register_endpoint_requires_servers_create(self, middleware):
-        """POST /catalog/{id}/register is gated on servers.create, with /v1 normalization."""
+        """POST /catalog/{id}/register is gated on servers.create, with /v1 normalization.
+
+        Layer 1 here gates on servers.create only: the pattern list maps one permission
+        per route. The route's stacked decorators additionally enforce gateways.create.
+        """
         result = middleware._check_permission_restrictions("/catalog/asana/register", "POST", [Permissions.SERVERS_CREATE])
         assert result is True, "POST /catalog/{id}/register should be allowed when token has servers.create"
 
@@ -341,6 +345,9 @@ class TestTokenScopingMiddleware:
 
         result = middleware._check_permission_restrictions("/v1/catalog/asana/register", "POST", [Permissions.SERVERS_CREATE])
         assert result is True, "Versioned path should normalize to /catalog before pattern matching"
+
+        result = middleware._check_permission_restrictions("/catalog/foo", "POST", [Permissions.SERVERS_CREATE])
+        assert result is False, "POST /catalog/{id} without the /register suffix must stay default-denied"
 
     @pytest.mark.asyncio
     async def test_sse_endpoint_allowed_with_servers_use_permission(self, middleware):

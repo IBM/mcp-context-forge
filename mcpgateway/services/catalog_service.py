@@ -41,6 +41,10 @@ from mcpgateway.validation.tags import validate_tags_field
 
 logger = logging.getLogger(__name__)
 
+# Business-failure messages the v1 router maps to HTTP 404/409.
+CATALOG_REGISTER_NOT_FOUND_MSG = "Server not found in catalog"
+CATALOG_REGISTER_ALREADY_REGISTERED_MSG = "Server already registered"
+
 
 class CatalogService:
     """Service for managing MCP server catalog."""
@@ -302,7 +306,7 @@ class CatalogService:
                     break
 
             if not server_data:
-                return CatalogServerRegisterResponse(success=False, server_id="", message="Server not found in catalog", error="Invalid catalog server ID")
+                return CatalogServerRegisterResponse(success=False, server_id="", message=CATALOG_REGISTER_NOT_FOUND_MSG, error="Invalid catalog server ID")
 
             # Check if already registered
             try:
@@ -317,7 +321,7 @@ class CatalogService:
                 existing = None
 
             if existing:
-                return CatalogServerRegisterResponse(success=False, server_id=str(existing.id), message="Server already registered", error="This server is already registered in the system")
+                return CatalogServerRegisterResponse(success=False, server_id=str(existing.id), message=CATALOG_REGISTER_ALREADY_REGISTERED_MSG, error="This server is already registered in the system")
 
             # Prepare gateway creation request using proper schema
             # First-Party
