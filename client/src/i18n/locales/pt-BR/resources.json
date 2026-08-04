@@ -62,6 +62,12 @@
   "resources.table.moreOptionsFor": "Mais opções para {name}",
   "resources.table.edit": "Editar",
   "resources.table.delete": "Excluir",
+  "resources.table.enable": "Habilitar",
+  "resources.table.disable": "Desabilitar",
+  "resources.card.activate": "Ativar",
+  "resources.card.deactivate": "Desativar",
+  "resources.card.activateAriaLabel": "Ativar {name}",
+  "resources.card.deactivateAriaLabel": "Desativar {name}",
   "resources.details.resourcesFor": "Recursos de {name}",
   "resources.details.close": "Fechar detalhes do recurso",
   "resources.details.componentDetails": "Detalhes do componente",
@@ -81,5 +87,9 @@
   "resources.details.visibility.public": "Público",
   "resources.details.visibility.private": "Privado",
   "resources.details.addTag": "adicionar",
-  "resources.tags.addError": "Falha ao adicionar a tag. Tente novamente."
+  "resources.tags.addError": "Falha ao adicionar a tag. Tente novamente.",
+  "resources.toast.activateSuccess": "Recurso \"{name}\" ativado com sucesso",
+  "resources.toast.deactivateSuccess": "Recurso \"{name}\" desativado com sucesso",
+  "resources.toast.activateError": "Falha ao ativar o recurso",
+  "resources.toast.deactivateError": "Falha ao desativar o recurso"
 }

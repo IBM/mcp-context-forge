@@ -64,4 +64,21 @@ export const resourcesApi = {
     const validId = validateResourceId(id);
     return api.delete(`/resources/${validId}`);
   },
+
+  /**
+   * Set resource state (activate or deactivate).
+   *
+   * Returns the canonical updated resource so callers can patch their cache
+   * directly instead of refetching the whole list.
+   *
+   * @param id - The resource ID
+   * @param activate - True to activate, false to deactivate
+   */
+  setState: (
+    id: string,
+    activate: boolean,
+  ): Promise<{ status: string; message: string; resource: ResourceRead }> => {
+    const validId = validateResourceId(id);
+    return api.post(`/resources/${validId}/state?activate=${activate}`);
+  },
 };

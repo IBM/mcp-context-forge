@@ -35,6 +35,7 @@ interface ResourceDetailsPanelProps {
   onClose: () => void;
   onEditResource?: (resource: NonNullable<ResourceRead>) => void;
   onDeleteResource?: (resourceId: string) => void;
+  onToggleResource?: (id: string, currentState: boolean) => void;
   /**
    * Persists the resource's full tag list after an inline add. Receives the
    * resource ID and the new complete list of tag labels. When omitted, the tag
@@ -50,6 +51,7 @@ export function ResourceDetailsPanel({
   onClose,
   onEditResource,
   onDeleteResource,
+  onToggleResource,
   onAddTag,
 }: ResourceDetailsPanelProps) {
   const intl = useIntl();
@@ -166,6 +168,7 @@ export function ResourceDetailsPanel({
                 onSelectResource={setSelectedResource}
                 onEditResource={onEditResource}
                 onDeleteResource={onDeleteResource}
+                onToggleResource={onToggleResource}
               />
             </div>
 

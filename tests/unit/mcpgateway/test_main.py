@@ -1473,12 +1473,19 @@ class TestResourceEndpoints:
 
     @patch("mcpgateway.main.resource_service.set_resource_state")
     def test_set_resource_state(self, mock_toggle, test_client, auth_headers):
-        """Test setting resource active/inactive state."""
+        """Test setting resource active/inactive state.
+
+        Response must serialize the resource with by_alias=True so multi-word
+        fields come back camelCase (e.g. updatedAt, gatewayId), matching the
+        generated frontend ResourceRead type instead of raw snake_case.
+        """
         mock_resource = MagicMock()
-        mock_resource.model_dump.return_value = {"id": "1", "enabled": False}
+        mock_resource.model_dump.return_value = {"id": "1", "enabled": False, "updatedAt": "2024-01-01T00:00:00Z", "gatewayId": "gw-1"}
         mock_toggle.return_value = mock_resource
         response = test_client.post("/resources/1/state?activate=false", headers=auth_headers)
         assert response.status_code == 200
+        assert response.json()["resource"] == {"id": "1", "enabled": False, "updatedAt": "2024-01-01T00:00:00Z", "gatewayId": "gw-1"}
+        mock_resource.model_dump.assert_called_once_with(by_alias=True)
 
     @patch("mcpgateway.main.resource_service.set_resource_state")
     def test_set_resource_state_permission_error(self, mock_toggle, test_client, auth_headers):
