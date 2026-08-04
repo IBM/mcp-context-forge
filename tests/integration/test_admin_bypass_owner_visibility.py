@@ -53,6 +53,34 @@ PUBLIC_TAG = "owner-vis-public"
 ADMIN_PRIVATE_PROMPT = "owner-vis-admin-private-prompt"
 OTHER_PRIVATE_PROMPT = "owner-vis-other-private-prompt"
 
+ADMIN_PRIVATE_RESOURCE = "owner-vis://admin-private"
+OTHER_PRIVATE_RESOURCE = "owner-vis://other-private"
+
+
+def _make_resource(owner_email: str, uri: str, visibility: str):
+    """Build a Resource row owned by ``owner_email``.
+
+    Args:
+        owner_email: Email recorded as the resource owner.
+        uri: Unique resource URI.
+        visibility: One of ``public`` / ``team`` / ``private``.
+
+    Returns:
+        An unpersisted ``db_mod.Resource`` instance.
+    """
+    return db_mod.Resource(
+        id=uuid.uuid4().hex,
+        uri=uri,
+        name=uri.rsplit("/", 1)[-1],
+        mime_type="text/plain",
+        text_content="hello",
+        owner_email=owner_email,
+        visibility=visibility,
+        enabled=True,
+        created_by=owner_email,
+        tags=[],
+    )
+
 
 def _make_prompt(owner_email: str, name: str, visibility: str):
     """Build a Prompt row owned by ``owner_email`` with a single completable argument.
@@ -220,6 +248,8 @@ def client_and_db():
     db.add(_make_tool(OTHER_EMAIL, "owner-vis-public-tool", "public", PUBLIC_TAG))
     db.add(_make_prompt(ADMIN_EMAIL, ADMIN_PRIVATE_PROMPT, "private"))
     db.add(_make_prompt(OTHER_EMAIL, OTHER_PRIVATE_PROMPT, "private"))
+    db.add(_make_resource(ADMIN_EMAIL, ADMIN_PRIVATE_RESOURCE, "private"))
+    db.add(_make_resource(OTHER_EMAIL, OTHER_PRIVATE_RESOURCE, "private"))
     db.commit()
 
     # Grant the non-admin caller Layer-2 tags.read so the request reaches the Layer-1
@@ -464,3 +494,44 @@ class TestAdminBypassOwnerVisibilityInternalMcp:
 
         assert ADMIN_PRIVATE_PROMPT not in names
         assert OTHER_PRIVATE_PROMPT not in names
+
+    @staticmethod
+    def _post_resources_list(test_client, monkeypatch, *, email, is_admin, teams):
+        """Call the internal resources/list endpoint with a forged trusted auth context.
+
+        Args:
+            test_client: Client bound to the temp-DB app.
+            monkeypatch: Fixture used to stub the runtime trust gate.
+            email: Email carried in the forwarded auth context.
+            is_admin: Admin flag carried in the forwarded auth context.
+            teams: Team scope carried in the forwarded context (``None`` = unrestricted).
+
+        Returns:
+            The set of resource URIs in the response.
+        """
+        # First-Party
+        from mcpgateway.auth_context import encode_internal_mcp_auth_context
+
+        monkeypatch.setattr(main_mod, "_is_trusted_internal_mcp_runtime_request", lambda _request: True)
+        header = encode_internal_mcp_auth_context(
+            {"email": email, "teams": teams, "is_admin": is_admin, "is_authenticated": True}
+        )
+        resp = test_client.post(
+            "/_internal/mcp/resources/list",
+            json={"jsonrpc": "2.0", "id": "owner-vis-res", "method": "resources/list", "params": {}},
+            headers={"x-contextforge-auth-context": header},
+        )
+        assert resp.status_code == 200, resp.text
+        return {r.get("uri") for r in resp.json().get("resources", [])}
+
+    def test_admin_sees_own_private_resource(self, client_and_db, monkeypatch):
+        """resources/list is a second internal-MCP surface with the same behavior change."""
+        uris = self._post_resources_list(client_and_db, monkeypatch, email=ADMIN_EMAIL, is_admin=True, teams=None)
+
+        assert ADMIN_PRIVATE_RESOURCE in uris
+
+    def test_admin_does_not_see_another_users_private_resource(self, client_and_db, monkeypatch):
+        """Admin bypass on resources/list still excludes another user's private resource."""
+        uris = self._post_resources_list(client_and_db, monkeypatch, email=ADMIN_EMAIL, is_admin=True, teams=None)
+
+        assert OTHER_PRIVATE_RESOURCE not in uris

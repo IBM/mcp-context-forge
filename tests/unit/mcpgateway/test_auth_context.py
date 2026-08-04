@@ -25,7 +25,8 @@ from unittest.mock import MagicMock
 import pytest
 
 # First-Party
-from mcpgateway.auth_context import get_rpc_filter_context, get_scoped_resource_access_context
+from mcpgateway import auth_context
+from mcpgateway.auth_context import get_request_identity, get_rpc_filter_context, get_scoped_resource_access_context
 
 
 def _request(*, jwt_payload=None, token_teams=None, token_use=None):
@@ -147,3 +148,78 @@ class TestMalformedJwtPayload:
         _email, _teams, is_admin = get_rpc_filter_context(request, {"email": "user@example.com"})
 
         assert is_admin is False
+
+
+class TestRequestScopedMemoization:
+    """The derived triple is cached per request, per principal.
+
+    Handlers that need both the visibility scope and the requester identity call
+    ``get_scoped_resource_access_context`` and ``get_request_identity`` back to back.
+    Both derive through ``get_rpc_filter_context``, which can issue a live ``EmailUser``
+    lookup for session tokens, so without memoization those handlers pay it twice.
+    """
+
+    @staticmethod
+    def _counting_teams_reader(monkeypatch):
+        """Count how many times a full derivation runs.
+
+        ``get_token_teams_from_request`` is called exactly once per uncached derivation,
+        which makes it a faithful proxy for "how many times did we derive".
+
+        Args:
+            monkeypatch: Fixture used to install the counting wrapper.
+
+        Returns:
+            A single-element list whose value is the derivation count.
+        """
+        calls = []
+        real = auth_context.get_token_teams_from_request
+
+        def counting(request):
+            calls.append(1)
+            return real(request)
+
+        monkeypatch.setattr(auth_context, "get_token_teams_from_request", counting)
+        return calls
+
+    def test_scope_and_identity_derive_once_for_same_user(self, monkeypatch):
+        """Asking for the scope and then the identity costs one derivation, not two."""
+        calls = self._counting_teams_reader(monkeypatch)
+        request = _request(jwt_payload={"is_admin": True, "teams": None}, token_teams=None)
+        user = {"email": "admin@example.com", "is_admin": True}
+
+        scope = get_scoped_resource_access_context(request, user)
+        identity = get_request_identity(request, user)
+
+        assert len(calls) == 1
+        assert scope == ("admin@example.com", None)
+        assert identity == ("admin@example.com", True)
+
+    def test_repeated_calls_reuse_the_cached_triple(self, monkeypatch):
+        """Repeated derivations for the same principal on one request stay at one."""
+        calls = self._counting_teams_reader(monkeypatch)
+        request = _request(jwt_payload={"is_admin": False, "teams": ["team-a"]}, token_teams=["team-a"])
+        user = {"email": "member@example.com"}
+
+        first = get_rpc_filter_context(request, user)
+        second = get_rpc_filter_context(request, user)
+
+        assert len(calls) == 1
+        assert first == second
+
+    def test_a_different_principal_is_not_served_from_cache(self, monkeypatch):
+        """A second principal on the same request derives separately.
+
+        Trusted internal A2A dispatch builds a synthetic forwarded user and derives with it
+        on a request that may already have derived for the real caller. Keying the cache on
+        the request alone would hand the synthetic user the real caller's context.
+        """
+        calls = self._counting_teams_reader(monkeypatch)
+        request = _request(jwt_payload={"is_admin": False, "teams": ["team-a"]}, token_teams=["team-a"])
+
+        real_caller = get_rpc_filter_context(request, {"email": "caller@example.com"})
+        forwarded = get_rpc_filter_context(request, {"email": "forwarded@example.com"})
+
+        assert len(calls) == 2
+        assert real_caller[0] == "caller@example.com"
+        assert forwarded[0] == "forwarded@example.com"
