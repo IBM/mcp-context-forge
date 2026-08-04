@@ -7,6 +7,7 @@ Versioned plugin discovery API.
 """
 
 # Standard
+import logging
 from typing import Optional
 
 # Third-Party
@@ -19,6 +20,8 @@ from mcpgateway.middleware.rbac import get_current_user_with_permissions, requir
 from mcpgateway.plugins import are_plugins_enabled_shared
 from mcpgateway.schemas import PluginListResponse
 from mcpgateway.services.plugin_service import get_plugin_service, sync_plugin_service_from_runtime
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/plugins", tags=["Plugins"])
 
@@ -75,4 +78,5 @@ async def list_plugins(
             disabled_count=disabled_count,
         )
     except Exception as exc:
+        logger.exception("Failed to list plugins")
         raise HTTPException(status_code=500, detail="Failed to list plugins") from exc

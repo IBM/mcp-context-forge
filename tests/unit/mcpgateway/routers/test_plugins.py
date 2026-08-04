@@ -140,8 +140,10 @@ async def test_list_plugins_get_all_failure_returns_500(monkeypatch, permission_
     """Plugin service failures return a sanitized server error."""
     service = MagicMock()
     service.get_all_plugins.side_effect = RuntimeError("catalog unavailable")
+    logger = MagicMock()
     monkeypatch.setattr("mcpgateway.routers.plugins.get_plugin_service", lambda: service)
     monkeypatch.setattr("mcpgateway.routers.plugins.sync_plugin_service_from_runtime", AsyncMock())
+    monkeypatch.setattr("mcpgateway.routers.plugins.logger", logger)
     db = MagicMock()
 
     with pytest.raises(HTTPException) as exc_info:
@@ -149,6 +151,7 @@ async def test_list_plugins_get_all_failure_returns_500(monkeypatch, permission_
 
     assert exc_info.value.status_code == 500
     assert exc_info.value.detail == "Failed to list plugins"
+    logger.exception.assert_called_once_with("Failed to list plugins")
 
 
 def test_plugins_router_is_v1_only():
