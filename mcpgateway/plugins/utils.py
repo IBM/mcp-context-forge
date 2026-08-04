@@ -7,6 +7,7 @@ Gateway-side plugin utilities.
 """
 
 # Standard
+import functools
 import itertools
 import logging
 import math
@@ -444,8 +445,30 @@ def build_request_extensions() -> Optional[Extensions]:
 #   - Empty source / destination keys are rejected at compile time.
 #   - Rules are compiled once at startup (``_compile_wildcard_rule``), not per invocation.
 
-# Pre-compiled sentinel: a plain [^.]+ pattern replacing one ``*`` segment.
-_SEGMENT_PATTERN = r"[^.]+"
+# Pre-compiled sentinel: a capturing [^.]+ group replacing one ``*`` segment.
+# Using a capturing group lets _apply_one_mapping_rename extract wildcard
+# segments directly via match.group(N) instead of a manual split-and-scan.
+_SEGMENT_PATTERN = r"([^.]+)"
+
+
+# Cache for compile_attribute_policy results, keyed on (mapping items, removals).
+# Populated lazily on first call; subsequent identical configs are O(1).
+@functools.lru_cache(maxsize=256)
+def _cached_compile_attribute_policy(mapping_items: tuple, removals_tuple: tuple) -> "Tuple[list, list]":
+    """Return a cached compile_attribute_policy result for the given frozen config.
+
+    Args:
+        mapping_items: Frozen tuple of (src, dst) pairs from the mapping dict.
+        removals_tuple: Frozen tuple of removal keys.
+
+    Returns:
+        2-tuple (compiled_mappings, compiled_removals) as produced by
+        ``compile_attribute_policy``.
+
+    Raises:
+        ValueError: Propagated from ``compile_attribute_policy`` on invalid config.
+    """
+    return compile_attribute_policy(dict(mapping_items), list(removals_tuple))
 
 
 def _compile_wildcard_rule(src: str) -> "re.Pattern[str]":
@@ -583,43 +606,18 @@ def _apply_one_mapping_rename(
             continue
         m = pattern.fullmatch(key) if pattern else None
         if m:
-            # Reconstruct destination by replacing ``*`` placeholders with the
-            # captured segments.  The number of ``*`` in src and dst must match;
-            # if they differ, skip silently (misconfiguration — already warned at
-            # compile time ideally; here we are defensive).
-            src_parts = src.split("*")
+            # _compile_wildcard_rule builds the pattern with one capturing group
+            # per ``*`` (``_SEGMENT_PATTERN = r"([^.]+)"``), so match.group(N)
+            # directly yields the captured segment — no manual split-and-scan needed.
             dst_parts = dst.split("*")
-            if len(src_parts) != len(dst_parts):
+            n_wildcards = dst.count("*")
+            if src.count("*") != n_wildcards:
+                # Mismatched wildcard counts — skip (misconfiguration)
                 continue
-            # Extract captured segments: they are the substrings of key that
-            # correspond to the ``*`` slots.
-            key_remainder = key
-            captured: List[str] = []
-            for i, prefix in enumerate(src_parts[:-1]):
-                if not key_remainder.startswith(re.escape(prefix)):
-                    # Safety: let the regex result guide us but strip literal prefixes
-                    idx = len(prefix)
-                else:
-                    idx = len(prefix)
-                key_remainder = key_remainder[idx:]
-                # Find the end of the captured segment (next ``re.escape(src_parts[i+1])``)
-                suffix = src_parts[i + 1]
-                if suffix:
-                    cap_end = key_remainder.find(suffix)
-                    if cap_end < 0:
-                        break
-                    captured.append(key_remainder[:cap_end])
-                    key_remainder = key_remainder[cap_end:]
-                else:
-                    captured.append(key_remainder)
-                    key_remainder = ""
-            else:
-                # Build destination by interleaving dst_parts and captured
-                if len(captured) == len(dst_parts) - 1:
-                    result = dst_parts[0]
-                    for seg, dpart in zip(captured, dst_parts[1:]):
-                        result += seg + dpart
-                    return result
+            result = dst_parts[0]
+            for i, dpart in enumerate(dst_parts[1:]):
+                result += m.group(i + 1) + dpart
+            return result
     return key
 
 
@@ -668,12 +666,13 @@ def apply_attribute_mapping(attributes: dict, mapping: dict) -> dict:
         return dict(attributes)
 
     try:
-        compiled_mappings, _ = compile_attribute_policy(mapping, [])
+        compiled_mappings, _ = _cached_compile_attribute_policy(tuple(sorted(mapping.items())), ())
     except ValueError:
         # Misconfigured mapping at runtime (e.g. otel.* destination, empty key, key > 256 chars).
         # Fail-closed: return attributes unchanged rather than applying a partially-validated
         # mapping that may have bypassed safety checks (e.g. reserved otel.* namespace).
-        logger.debug("apply_attribute_mapping: compile_attribute_policy failed; returning attributes unchanged", exc_info=True)
+        # Warn (not just debug) so operators discover bad config at test time, not in production.
+        logger.warning("apply_attribute_mapping: invalid mapping config; returning attributes unchanged", exc_info=True)
         return dict(attributes)
 
     renamed_attributes: dict = {}

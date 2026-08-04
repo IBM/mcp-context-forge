@@ -5406,10 +5406,11 @@ class ToolService(BaseService):
                                 violations_as_exceptions=True,
                                 extensions=build_request_extensions(),
                             )
-                        except (PluginError, PluginViolationError):
-                            # violations_as_exceptions=True causes CPEX to raise before returning,
-                            # so add() is never called.  Mark the denial explicitly so telemetry
-                            # emits result.allowed=False rather than the incorrect True default.
+                        except PluginViolationError:
+                            # Deliberate policy denial: mark so telemetry emits result.allowed=False.
+                            # PluginError (outage) is not caught here — it propagates to the outer
+                            # except PluginError handler without mark_denied(), keeping enforcement
+                            # denials and plugin crashes distinguishable in downstream dashboards.
                             _ctl_acc.mark_denied(hook="pre")
                             raise
                         record_plugin_metrics(current_trace_id.get(), pre_result.metadata)
@@ -6325,10 +6326,9 @@ class ToolService(BaseService):
                                 violations_as_exceptions=True,
                                 extensions=build_request_extensions(),
                             )
-                        except (PluginError, PluginViolationError):
-                            # violations_as_exceptions=True causes CPEX to raise before returning,
-                            # so add() is never called.  Mark the denial explicitly so telemetry
-                            # emits result.allowed=False rather than the incorrect True default.
+                        except PluginViolationError:
+                            # Deliberate policy denial: mark so telemetry emits result.allowed=False.
+                            # PluginError propagates to the outer handler without mark_denied().
                             _ctl_acc.mark_denied(hook="pre")
                             raise
                         record_plugin_metrics(current_trace_id.get(), pre_result.metadata)
@@ -6419,10 +6419,9 @@ class ToolService(BaseService):
                                 violations_as_exceptions=True,
                                 extensions=build_request_extensions(),
                             )
-                        except (PluginError, PluginViolationError):
-                            # violations_as_exceptions=True causes CPEX to raise before returning,
-                            # so add() is never called.  Mark the denial explicitly so telemetry
-                            # emits result.allowed=False rather than the incorrect True default.
+                        except PluginViolationError:
+                            # Deliberate policy denial: mark so telemetry emits result.allowed=False.
+                            # PluginError propagates to the outer handler without mark_denied().
                             _ctl_acc.mark_denied(hook="pre")
                             raise
                         record_plugin_metrics(current_trace_id.get(), pre_result.metadata)
@@ -6551,10 +6550,9 @@ class ToolService(BaseService):
                                 violations_as_exceptions=True,
                                 extensions=build_request_extensions(),
                             )
-                        except (PluginError, PluginViolationError):
-                            # violations_as_exceptions=True: CPEX raises before returning,
-                            # so add() is never reached.  Mark the denial so telemetry
-                            # emits result.allowed=False correctly.
+                        except PluginViolationError:
+                            # Deliberate policy denial: mark so telemetry emits result.allowed=False.
+                            # PluginError propagates to the outer handler without mark_denied().
                             _ctl_acc.mark_denied(hook="post")
                             raise
                         record_plugin_metrics(current_trace_id.get(), post_result.metadata)
@@ -6623,17 +6621,28 @@ class ToolService(BaseService):
                     binding_name=gateway_name or server_id or "",
                 )
                 return tool_result
-            except (PluginError, PluginViolationError):
-                # Emit partial telemetry even on pre-invoke deny (tool never executed).
+            except PluginViolationError:
+                # Deliberate policy denial — emit partial telemetry so the summary span captures
+                # result.allowed=False and any pre-denial execution records.
                 # Note: when violations_as_exceptions=True, CPEX raises PluginViolationError
                 # *before* appending a ControlExecutionRecord for the denying plugin to the
-                # executions list (see cpex/framework/manager.py:680-682 — "propagate
-                # immediately, no record needed").  This means _ctl_acc may only contain
-                # records from earlier plugins in the chain that ran *before* the denial.
-                # The emitted summary span will reflect the partial pre-hook results; the
-                # effective_allow=False outcome is captured via accumulator.pre_denied.
+                # executions list (see cpex/framework/manager.py:680-682).  _ctl_acc therefore
+                # contains only records from plugins that ran before the denier.
                 # Upstream CPEX gap tracked in issue #5785 follow-on.
                 record_control_telemetry(  # identity mapping: see normal-return path comment above
+                    trace_id=current_trace_id.get(),
+                    accumulator=_ctl_acc,
+                    tool_name=name,
+                    agent_id=app_user_email or user_email or "",
+                    binding_name=gateway_name or server_id or "",
+                )
+                raise
+            except PluginError:
+                # Plugin outage (crash/timeout/misconfiguration) — emit partial telemetry so the
+                # summary span is not silently lost, but do NOT treat this as a policy denial.
+                # effective_allowed remains True on the accumulator; downstream dashboards can
+                # distinguish plugin errors from enforcement decisions.
+                record_control_telemetry(
                     trace_id=current_trace_id.get(),
                     accumulator=_ctl_acc,
                     tool_name=name,
