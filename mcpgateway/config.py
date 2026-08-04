@@ -1982,6 +1982,72 @@ class Settings(BaseSettings):
     plugin_metrics_db_numeric_rows_enabled: bool = Field(default=True, description="Additionally record numeric plugin metadata fields as internal ObservabilityMetric rows")
     plugin_metrics_max_numeric_per_call: int = Field(default=16, ge=0, description="Max numeric ObservabilityMetric rows written per invoke_hook() call, across all plugins")
 
+    # CPEX control-execution telemetry (G2: ControlExecutionRecord -> observability).
+    # Enabled only when the installed CPEX version exposes ControlExecutionRecord (>=0.1.2).
+    # A no-op when execution_records_supported() returns False (older CPEX build).
+    cpex_control_telemetry_enabled: bool = Field(
+        default=False,
+        description=(
+            "Emit structured CPEX control-execution telemetry on tool invocations. "
+            "Disabled by default — each traced tool call creates up to 1 summary + "
+            "CPEX_CONTROL_TELEMETRY_MAX_RESULTS result DB spans. Enable only after "
+            "reviewing storage and cardinality implications. "
+            "No-op when CPEX execution records are unavailable (CPEX < 0.1.2). "
+            "Env: CPEX_CONTROL_TELEMETRY_ENABLED."
+        ),
+    )
+    cpex_control_telemetry_db_enabled: bool = Field(
+        default=True,
+        description=("Write cpex.control.summary and cpex.control.result DB spans for each tool invocation. Env: CPEX_CONTROL_TELEMETRY_DB_ENABLED."),
+    )
+    cpex_control_telemetry_flatten_results: bool = Field(
+        default=False,
+        description=(
+            "Also emit flattened cpex.control.results.<name>.* attributes on the summary span. "
+            "Bounded by cpex_control_telemetry_max_results. "
+            "Use only when downstream tooling requires dynamic key names. "
+            "Env: CPEX_CONTROL_TELEMETRY_FLATTEN_RESULTS."
+        ),
+    )
+    cpex_control_telemetry_max_results: int = Field(
+        default=32,
+        ge=0,
+        le=128,
+        description=("Max per-control result records exported per tool invocation. Env: CPEX_CONTROL_TELEMETRY_MAX_RESULTS."),
+    )
+    cpex_control_telemetry_max_attributes: int = Field(
+        default=256,
+        ge=0,
+        description=(
+            "Informational cap on total span attributes across all control telemetry per "
+            "invocation. Not enforced gateway-side; intended as a hint for external "
+            "OTel-collector attribute-limit configuration (e.g. transform/attributes "
+            "processor). Gateway-side enforcement is planned alongside Phase 5 "
+            "attribute-policy wiring. Until then, the internal DB sink is unbounded. "
+            "Env: CPEX_CONTROL_TELEMETRY_MAX_ATTRIBUTES."
+        ),
+    )
+    cpex_control_telemetry_emit_reason: bool = Field(
+        default=False,
+        description=(
+            "Emit cpex.control.result.reason and cpex.control.result.error_code on "
+            "per-control spans. Disabled by default because these fields may contain "
+            "PII, tool argument values, or exception content. Enable only when the "
+            "observability sink is appropriately secured and a redaction boundary is "
+            "in place. Env: CPEX_CONTROL_TELEMETRY_EMIT_REASON."
+        ),
+    )
+    cpex_control_telemetry_emit_agent_id: bool = Field(
+        default=False,
+        description=(
+            "Emit cpex.control.agent.id on the summary span. Disabled by default "
+            "because the value is the authenticated caller email — a high-cardinality "
+            "PII field with GDPR/data-residency implications. Enable only when the "
+            "observability sink is appropriately secured and a redaction boundary is "
+            "in place. Env: CPEX_CONTROL_TELEMETRY_EMIT_AGENT_ID."
+        ),
+    )
+
     # Correlation ID Settings
     correlation_id_enabled: bool = Field(default=True, description="Enable automatic correlation ID tracking for requests")
     correlation_id_header: str = Field(default="X-Correlation-ID", description="HTTP header name for correlation ID")

@@ -13,7 +13,7 @@ exclude-newer-span = "P10D"
 [options.exclude-newer-package]
 langchain-core = "2026-07-27T23:59:59Z"
 sse-starlette = "2026-07-27T23:59:59Z"
-cpex = "2026-07-27T23:59:59Z"
+cpex = "2026-07-30T23:59:59Z"
 cpex-retry-with-backoff = "2026-07-27T23:59:59Z"
 grpcio-tools = "2026-07-27T23:59:59Z"
 cpex-pii-filter = "2026-07-27T23:59:59Z"
@@ -942,7 +942,7 @@ toml = [
 
 [[package]]
 name = "cpex"
-version = "0.1.1"
+version = "0.1.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "fastapi" },
@@ -960,9 +960,9 @@ dependencies = [
     { name = "pyyaml" },
     { name = "rich" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/50/d5/f3961c8492e20c7f8988a5f041452ffae876878eb0e60a9c121be42e20c5/cpex-0.1.1.tar.gz", hash = "sha256:64ddfda6239f975bc5c0fa841e036e660ac478eb42f03225f7d3fe205680e049", size = 4658279, upload-time = "2026-06-04T19:00:52.486Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/65/f2/2a32438da74096a17bd317eb90b8661e5aa50861b32fe84ad04c93ff11a3/cpex-0.1.2.tar.gz", hash = "sha256:668e439ec32b46d5b7360312c63b081f9ff04a094e0ea7fe00ace43396e791f1", size = 2381420, upload-time = "2026-07-30T03:08:25.808Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/bb/a7/a3f4f37291ba266a138dc72918a9d570fef68ccecb1397cb25d8307f9bb1/cpex-0.1.1-py3-none-any.whl", hash = "sha256:4b0c753979a8c52b0e5eea2269e67328ea96d3bef477da3f3ec200ff297bcddc", size = 272528, upload-time = "2026-06-04T19:00:50.721Z" },
+    { url = "https://files.pythonhosted.org/packages/ae/51/98c3974d23526d8e6dfd3d2dbf8bf1d62cfe6a80b3da62bc166b71d886e8/cpex-0.1.2-py3-none-any.whl", hash = "sha256:6c6b354a51ba4f9bcc187369e4f635bb367715df0c041aa487777d352996fc99", size = 277592, upload-time = "2026-07-30T03:08:24.234Z" },
 ]
 
 [[package]]
@@ -3203,7 +3203,7 @@ requires-dist = [
     { name = "brotli", specifier = ">=1.2.0" },
     { name = "click", specifier = ">=8.4.2" },
     { name = "cookiecutter", marker = "extra == 'templating'", specifier = ">=2.7.1" },
-    { name = "cpex", specifier = ">=0.1.1" },
+    { name = "cpex", specifier = ">=0.1.2" },
     { name = "cpex-encoded-exfil-detection", marker = "extra == 'plugins'", specifier = ">=0.3.6" },
     { name = "cpex-pii-filter", marker = "extra == 'plugins'", specifier = ">=0.3.6" },
     { name = "cpex-rate-limiter", marker = "extra == 'plugins'", specifier = ">=0.1.7" },
