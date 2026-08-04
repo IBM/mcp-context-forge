@@ -124,13 +124,12 @@ describe("MCPServerDetailsPanel", () => {
     expect(region).toHaveAttribute("aria-hidden", "false");
   });
 
-  it("shows the Test Connection tab with the server URL prefilled", async () => {
-    const user = userEvent.setup();
+  it("opens on the Try it tab by default with the test form and the server URL prefilled", async () => {
     renderWithProviders(
       <MCPServerDetailsPanel server={mockServer} error={null} open={true} onClose={() => {}} />,
     );
 
-    await user.click(screen.getByRole("tab", { name: /test connection/i }));
+    expect(screen.getByRole("tab", { name: "Try it" })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByDisplayValue("http://test.example.com")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^test connection$/i })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /search components/i })).not.toBeInTheDocument();
@@ -145,7 +144,13 @@ describe("MCPServerDetailsPanel", () => {
     );
 
     renderWithProviders(
-      <MCPServerDetailsPanel server={mockServer} error={null} open={true} onClose={() => {}} />,
+      <MCPServerDetailsPanel
+        server={mockServer}
+        error={null}
+        open={true}
+        onClose={() => {}}
+        initialTab="components"
+      />,
     );
 
     expect(screen.getByText(/loading components/i)).toBeInTheDocument();
@@ -158,6 +163,7 @@ describe("MCPServerDetailsPanel", () => {
         error={{ message: "Failed to load server" }}
         open={true}
         onClose={() => {}}
+        initialTab="components"
       />,
     );
 
@@ -166,7 +172,13 @@ describe("MCPServerDetailsPanel", () => {
 
   it("fetches and displays tools, resources, and prompts", async () => {
     renderWithProviders(
-      <MCPServerDetailsPanel server={mockServer} error={null} open={true} onClose={() => {}} />,
+      <MCPServerDetailsPanel
+        server={mockServer}
+        error={null}
+        open={true}
+        onClose={() => {}}
+        initialTab="components"
+      />,
     );
 
     await waitFor(() => {
@@ -181,7 +193,13 @@ describe("MCPServerDetailsPanel", () => {
     const user = userEvent.setup();
 
     renderWithProviders(
-      <MCPServerDetailsPanel server={mockServer} error={null} open={true} onClose={() => {}} />,
+      <MCPServerDetailsPanel
+        server={mockServer}
+        error={null}
+        open={true}
+        onClose={() => {}}
+        initialTab="components"
+      />,
     );
 
     await waitFor(() => {
@@ -226,7 +244,13 @@ describe("MCPServerDetailsPanel", () => {
     const user = userEvent.setup();
 
     renderWithProviders(
-      <MCPServerDetailsPanel server={mockServer} error={null} open={true} onClose={() => {}} />,
+      <MCPServerDetailsPanel
+        server={mockServer}
+        error={null}
+        open={true}
+        onClose={() => {}}
+        initialTab="components"
+      />,
     );
 
     await waitFor(() => {
@@ -247,7 +271,13 @@ describe("MCPServerDetailsPanel", () => {
     const user = userEvent.setup();
 
     renderWithProviders(
-      <MCPServerDetailsPanel server={mockServer} error={null} open={true} onClose={() => {}} />,
+      <MCPServerDetailsPanel
+        server={mockServer}
+        error={null}
+        open={true}
+        onClose={() => {}}
+        initialTab="components"
+      />,
     );
 
     await waitFor(() => {
@@ -280,7 +310,13 @@ describe("MCPServerDetailsPanel", () => {
     const user = userEvent.setup();
 
     renderWithProviders(
-      <MCPServerDetailsPanel server={mockServer} error={null} open={true} onClose={() => {}} />,
+      <MCPServerDetailsPanel
+        server={mockServer}
+        error={null}
+        open={true}
+        onClose={() => {}}
+        initialTab="components"
+      />,
     );
 
     await waitFor(() => {
@@ -304,7 +340,13 @@ describe("MCPServerDetailsPanel", () => {
     const user = userEvent.setup();
 
     renderWithProviders(
-      <MCPServerDetailsPanel server={mockServer} error={null} open={true} onClose={() => {}} />,
+      <MCPServerDetailsPanel
+        server={mockServer}
+        error={null}
+        open={true}
+        onClose={() => {}}
+        initialTab="components"
+      />,
     );
 
     await waitFor(() => {
@@ -326,7 +368,13 @@ describe("MCPServerDetailsPanel", () => {
 
   it("displays component with title and identifier", async () => {
     renderWithProviders(
-      <MCPServerDetailsPanel server={mockServer} error={null} open={true} onClose={() => {}} />,
+      <MCPServerDetailsPanel
+        server={mockServer}
+        error={null}
+        open={true}
+        onClose={() => {}}
+        initialTab="components"
+      />,
     );
 
     await waitFor(() => {
@@ -339,7 +387,13 @@ describe("MCPServerDetailsPanel", () => {
 
   it("displays component without title showing only identifier", async () => {
     renderWithProviders(
-      <MCPServerDetailsPanel server={mockServer} error={null} open={true} onClose={() => {}} />,
+      <MCPServerDetailsPanel
+        server={mockServer}
+        error={null}
+        open={true}
+        onClose={() => {}}
+        initialTab="components"
+      />,
     );
 
     await waitFor(() => {
@@ -518,7 +572,13 @@ describe("MCPServerDetailsPanel", () => {
     const user = userEvent.setup();
 
     const { rerender } = renderWithProviders(
-      <MCPServerDetailsPanel server={mockServer} error={null} open={true} onClose={() => {}} />,
+      <MCPServerDetailsPanel
+        server={mockServer}
+        error={null}
+        open={true}
+        onClose={() => {}}
+        initialTab="components"
+      />,
     );
 
     await waitFor(() => {
@@ -547,7 +607,13 @@ describe("MCPServerDetailsPanel", () => {
     );
 
     rerender(
-      <MCPServerDetailsPanel server={newServer} error={null} open={true} onClose={() => {}} />,
+      <MCPServerDetailsPanel
+        server={newServer}
+        error={null}
+        open={true}
+        onClose={() => {}}
+        initialTab="components"
+      />,
     );
 
     await waitFor(() => {
@@ -566,7 +632,13 @@ describe("MCPServerDetailsPanel", () => {
     );
 
     renderWithProviders(
-      <MCPServerDetailsPanel server={mockServer} error={null} open={true} onClose={() => {}} />,
+      <MCPServerDetailsPanel
+        server={mockServer}
+        error={null}
+        open={true}
+        onClose={() => {}}
+        initialTab="components"
+      />,
     );
 
     await waitFor(() => {
@@ -584,7 +656,13 @@ describe("MCPServerDetailsPanel", () => {
     );
 
     renderWithProviders(
-      <MCPServerDetailsPanel server={mockServer} error={null} open={true} onClose={() => {}} />,
+      <MCPServerDetailsPanel
+        server={mockServer}
+        error={null}
+        open={true}
+        onClose={() => {}}
+        initialTab="components"
+      />,
     );
 
     await waitFor(() => {
@@ -607,7 +685,13 @@ describe("MCPServerDetailsPanel", () => {
     );
 
     renderWithProviders(
-      <MCPServerDetailsPanel server={mockServer} error={null} open={true} onClose={() => {}} />,
+      <MCPServerDetailsPanel
+        server={mockServer}
+        error={null}
+        open={true}
+        onClose={() => {}}
+        initialTab="components"
+      />,
     );
 
     await waitFor(() => {
@@ -620,7 +704,13 @@ describe("MCPServerDetailsPanel", () => {
 
   it("displays component badges with correct types", async () => {
     renderWithProviders(
-      <MCPServerDetailsPanel server={mockServer} error={null} open={true} onClose={() => {}} />,
+      <MCPServerDetailsPanel
+        server={mockServer}
+        error={null}
+        open={true}
+        onClose={() => {}}
+        initialTab="components"
+      />,
     );
 
     await waitFor(() => {
@@ -651,7 +741,13 @@ describe("MCPServerDetailsPanel", () => {
 
   it("displays activity timestamps from camelCase fields", async () => {
     renderWithProviders(
-      <MCPServerDetailsPanel server={mockServer} error={null} open={true} onClose={() => {}} />,
+      <MCPServerDetailsPanel
+        server={mockServer}
+        error={null}
+        open={true}
+        onClose={() => {}}
+        initialTab="components"
+      />,
     );
 
     await waitFor(() => {
@@ -665,7 +761,13 @@ describe("MCPServerDetailsPanel", () => {
 
   it("displays copy buttons for identifiers", async () => {
     renderWithProviders(
-      <MCPServerDetailsPanel server={mockServer} error={null} open={true} onClose={() => {}} />,
+      <MCPServerDetailsPanel
+        server={mockServer}
+        error={null}
+        open={true}
+        onClose={() => {}}
+        initialTab="components"
+      />,
     );
 
     await waitFor(() => {
@@ -706,7 +808,13 @@ describe("MCPServerDetailsPanel", () => {
     it("copies titled and untitled component identifiers", async () => {
       const user = userEvent.setup();
       renderWithProviders(
-        <MCPServerDetailsPanel server={mockServer} error={null} open onClose={() => {}} />,
+        <MCPServerDetailsPanel
+          server={mockServer}
+          error={null}
+          open
+          onClose={() => {}}
+          initialTab="components"
+        />,
       );
 
       // A titled tool copies via its title label; an untitled one via its identifier.
@@ -720,7 +828,13 @@ describe("MCPServerDetailsPanel", () => {
     it("moves the active component tab with arrow keys", async () => {
       const user = userEvent.setup();
       renderWithProviders(
-        <MCPServerDetailsPanel server={mockServer} error={null} open onClose={() => {}} />,
+        <MCPServerDetailsPanel
+          server={mockServer}
+          error={null}
+          open
+          onClose={() => {}}
+          initialTab="components"
+        />,
       );
       await screen.findByRole("button", { name: "Copy Tool One" });
 
@@ -804,7 +918,13 @@ describe("MCPServerDetailsPanel", () => {
     it("collapses the search box on blur when empty", async () => {
       const user = userEvent.setup();
       renderWithProviders(
-        <MCPServerDetailsPanel server={mockServer} error={null} open onClose={() => {}} />,
+        <MCPServerDetailsPanel
+          server={mockServer}
+          error={null}
+          open
+          onClose={() => {}}
+          initialTab="components"
+        />,
       );
       await screen.findByRole("button", { name: "Copy Tool One" });
 
