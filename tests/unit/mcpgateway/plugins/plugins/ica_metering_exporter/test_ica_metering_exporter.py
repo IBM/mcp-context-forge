@@ -1223,3 +1223,170 @@ class TestIcaMeteringExporterPlugin:
         assert body["toolDetails"]["tokenOutput"] == 20
         assert isinstance(body["toolDetails"]["tokenInput"], int)
         assert isinstance(body["toolDetails"]["tokenOutput"], int)
+
+    # ── Call-context (persona) header tests ─────────────────────
+
+    @pytest.mark.asyncio
+    async def test_pre_invoke_extracts_assistant_headers(self):
+        """Pre-invoke should extract llm_call_type and assistant headers."""
+        plugin = _create_plugin()
+        context = _create_context()
+        with _set_request_headers({
+            "llm_call_type": "assistant",
+            "assistant_uuid": "assistant-123",
+            "assistant_name": "Austin Weather",
+        }):
+            await plugin.tool_pre_invoke(
+                ToolPreInvokePayload(name="tool", args={}, headers=None),
+                context,
+            )
+        assert context.state.get("ica_llm_call_type") == "assistant"
+        assert context.state.get("ica_assistant_uuid") == "assistant-123"
+        assert context.state.get("ica_assistant_name") == "Austin Weather"
+
+    @pytest.mark.asyncio
+    async def test_pre_invoke_extracts_agent_headers(self):
+        """Pre-invoke should extract llm_call_type and agent headers including tool ids."""
+        plugin = _create_plugin()
+        context = _create_context()
+        with _set_request_headers({
+            "llm_call_type": "agent",
+            "agent_uuid": "agent-456",
+            "agent_name": "Research Agent",
+            "agent_tool_ids": "server:mcp:abc123,server:mcp:def456",
+        }):
+            await plugin.tool_pre_invoke(
+                ToolPreInvokePayload(name="tool", args={}, headers=None),
+                context,
+            )
+        assert context.state.get("ica_llm_call_type") == "agent"
+        assert context.state.get("ica_agent_uuid") == "agent-456"
+        assert context.state.get("ica_agent_name") == "Research Agent"
+        assert context.state.get("ica_agent_tool_ids") == "server:mcp:abc123,server:mcp:def456"
+
+    @pytest.mark.asyncio
+    async def test_pre_invoke_extracts_digital_ibmer_headers(self):
+        """Pre-invoke should extract llm_call_type and digital-ibmer headers."""
+        plugin = _create_plugin()
+        context = _create_context()
+        with _set_request_headers({
+            "llm_call_type": "digital-ibmer",
+            "digital-ibmer_uuid": "ibmer-789",
+            "digital-ibmer_name": "Digital Coworker",
+            "digital-ibmer_tool_ids": "server:mcp:xyz1",
+        }):
+            await plugin.tool_pre_invoke(
+                ToolPreInvokePayload(name="tool", args={}, headers=None),
+                context,
+            )
+        assert context.state.get("ica_llm_call_type") == "digital-ibmer"
+        assert context.state.get("ica_digital_ibmer_uuid") == "ibmer-789"
+        assert context.state.get("ica_digital_ibmer_name") == "Digital Coworker"
+        assert context.state.get("ica_digital_ibmer_tool_ids") == "server:mcp:xyz1"
+
+    @pytest.mark.asyncio
+    async def test_pre_invoke_persona_headers_case_insensitive(self):
+        """Pre-invoke should extract persona headers regardless of casing."""
+        plugin = _create_plugin()
+        context = _create_context()
+        with _set_request_headers({
+            "LLM_CALL_TYPE": "assistant",
+            "Assistant_Uuid": "assistant-111",
+            "AGENT_TOOL_IDS": "server:mcp:abc",
+        }):
+            await plugin.tool_pre_invoke(
+                ToolPreInvokePayload(name="tool", args={}, headers=None),
+                context,
+            )
+        assert context.state.get("ica_llm_call_type") == "assistant"
+        assert context.state.get("ica_assistant_uuid") == "assistant-111"
+        assert context.state.get("ica_agent_tool_ids") == "server:mcp:abc"
+
+    @pytest.mark.asyncio
+    async def test_pre_invoke_no_persona_headers_leave_state_empty(self):
+        """Pre-invoke should not store persona state when headers are absent."""
+        plugin = _create_plugin()
+        context = _create_context()
+        with _set_request_headers({"x-app-id": "ica-api-dev"}):
+            await plugin.tool_pre_invoke(
+                ToolPreInvokePayload(name="tool", args={}, headers=None),
+                context,
+            )
+        for state_key in IcaMeteringExporterPlugin.CALL_CONTEXT_HEADERS:
+            assert state_key not in context.state
+
+    @pytest.mark.asyncio
+    async def test_post_invoke_emits_persona_fields(self):
+        """Post-invoke payload should include persona fields from state."""
+        plugin = _create_plugin()
+        context = _create_context()
+        context.state["ica_llm_call_type"] = "agent"
+        context.state["ica_agent_uuid"] = "agent-456"
+        context.state["ica_agent_name"] = "Research Agent"
+        context.state["ica_agent_tool_ids"] = "server:mcp:abc123"
+        await plugin.tool_pre_invoke(
+            ToolPreInvokePayload(name="tool", args={}, headers=None),
+            context,
+        )
+        payload = ToolPostInvokePayload(name="tool", result={"content": [], "isError": False})
+        await plugin.tool_post_invoke(payload, context)
+
+        sent_payload = plugin._send_to_ica.await_args.args[0]
+        assert sent_payload["llmCallType"] == "agent"
+        assert sent_payload["agentUuid"] == "agent-456"
+        assert sent_payload["agentName"] == "Research Agent"
+        assert sent_payload["agentToolIds"] == "server:mcp:abc123"
+
+    @pytest.mark.asyncio
+    async def test_post_invoke_persona_fields_none_when_not_set(self):
+        """Persona fields should be None in payload when no persona headers were present."""
+        plugin = _create_plugin()
+        context = _create_context()
+        await plugin.tool_pre_invoke(
+            ToolPreInvokePayload(name="tool", args={}, headers=None),
+            context,
+        )
+        payload = ToolPostInvokePayload(name="tool", result={"content": [], "isError": False})
+        await plugin.tool_post_invoke(payload, context)
+
+        sent_payload = plugin._send_to_ica.await_args.args[0]
+        assert sent_payload["llmCallType"] is None
+        assert sent_payload["assistantUuid"] is None
+        assert sent_payload["agentUuid"] is None
+        assert sent_payload["agentToolIds"] is None
+        assert sent_payload["digitalIbmerUuid"] is None
+        assert sent_payload["digitalIbmerToolIds"] is None
+
+    @pytest.mark.asyncio
+    async def test_post_invoke_emits_persona_fields_via_http(self):
+        """Persona fields propagate through real HTTP payload."""
+        # Third-Party
+        from httpx import MockTransport
+
+        captured_body = None
+
+        def transport_handler(request):
+            nonlocal captured_body
+            captured_body = request
+            return httpx.Response(202)
+
+        plugin = _create_plugin(mock_send=False)
+        plugin.http_client = httpx.AsyncClient(transport=MockTransport(transport_handler))
+
+        context = _create_context()
+        context.state["ica_llm_call_type"] = "assistant"
+        context.state["ica_assistant_uuid"] = "assistant-123"
+        await plugin.tool_pre_invoke(
+            ToolPreInvokePayload(name="echo", args={}, headers=None),
+            context,
+        )
+        payload = ToolPostInvokePayload(
+            name="echo",
+            result={"content": [{"type": "text", "text": "hello"}], "isError": False},
+        )
+        await plugin.tool_post_invoke(payload, context)
+
+        import json
+        body = json.loads(captured_body.content)
+        assert body["llmCallType"] == "assistant"
+        assert body["assistantUuid"] == "assistant-123"
