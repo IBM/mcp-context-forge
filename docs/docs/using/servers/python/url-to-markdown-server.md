@@ -114,7 +114,37 @@ export MARKDOWN_MAX_TIMEOUT=120          # Maximum allowed timeout
 export MARKDOWN_MAX_CONTENT_SIZE=50971520 # Max content size (50MB)
 export MARKDOWN_MAX_REDIRECT_HOPS=10     # Max redirect follows
 export MARKDOWN_USER_AGENT="Custom-Agent/1.0"  # Custom user agent
+export MARKDOWN_SSRF_PROTECTION_ENABLED=true   # Block private/internal network destinations (default: true)
+export MARKDOWN_ALLOWED_HOSTS=""               # Comma-separated allowlist (exact host or *.suffix); empty = no allowlist restriction
+export MARKDOWN_BLOCKED_NETWORKS=""            # Extra comma-separated CIDRs to block
+export MARKDOWN_ALLOW_PRIVATE_NETWORKS=false   # Dev-only: allow RFC1918 destinations
+export MARKDOWN_ALLOW_LOCALHOST=false          # Dev-only: allow loopback destinations
+export MARKDOWN_DNS_TIMEOUT=10                 # Max seconds to wait for hostname resolution
+export MARKDOWN_DNS_RESOLVER_THREADS=16        # Size of the dedicated DNS resolver thread pool; also bounds concurrent lookup admission
+export MARKDOWN_ALLOW_UNSAFE_PROXY_PINNING=false  # Dev/ops-only: route matched destinations through a configured egress proxy, unpinned
 ```
+
+#### Egress proxies
+
+The standard `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, and `NO_PROXY` variables are
+honored, per-destination, exactly as HTTPX itself would route them - the session always
+mounts the configured proxy so its routing reflects the operator's configuration. But by
+default, a request to a destination that matches the proxy is **refused outright, before
+any connection to either the proxy or the destination**. A proxy-routed request's socket
+is opened to the proxy, which resolves the real destination itself, so the address
+validated by the SSRF guard cannot be enforced end to end on that path; falling back to
+a direct connection instead would silently bypass whatever egress policy (audit logging,
+DLP, destination allowlisting) the operator configured the proxy to enforce, which is
+its own kind of control bypass distinct from the DNS-rebinding risk pinning addresses.
+
+Operators who need an egress proxy and accept the pinning trade-off can opt in with
+`MARKDOWN_ALLOW_UNSAFE_PROXY_PINNING=true`. Once set, matching destinations are routed
+through the proxy instead of being refused, with a warning logged since connect-time IP
+pinning is not applied on that path. `NO_PROXY`-excluded destinations, and any
+destination that doesn't match a configured proxy, keep IP pinning regardless - opting
+in for some traffic never weakens pinning for traffic that bypasses the proxy. Every
+other SSRF control (scheme allowlist, host allowlist, resolved-IP deny rules, and
+per-hop redirect re-validation) still applies everywhere, with or without this flag.
 
 ### MCP Client Configuration
 
@@ -450,12 +480,17 @@ asyncio.run(convert_content())
 
 ## Security Features
 
-- **Input Validation**: URL and content validation
-- **Size Limits**: Configurable content size limits
-- **Timeout Protection**: Prevents hanging requests
+- **SSRF Protection**: Blocks private, loopback, link-local, unspecified, multicast, reserved,
+  and carrier-grade-NAT (100.64.0.0/10) destinations by default; validates every redirect hop,
+  not just the initial request; resolves DNS and pins the outbound connection to the validated
+  IP to close the DNS-rebinding gap. See Environment Variables below to configure.
+- **Scheme Allowlist**: Only `http`/`https` targets are fetched.
+- **Streaming Size Limits**: Content is streamed and aborted as soon as it exceeds the
+  configured maximum — never fully buffered before the limit is enforced.
+- **Timeout Protection**: Prevents hanging requests.
+- **Redirect Limits**: Bounded, re-validated redirect chain (no unchecked hop can reach a
+  blocked destination).
 - **User Agent Control**: Configurable user agent strings
-- **Redirect Limits**: Prevents redirect loops
-- **Content Type Validation**: Verifies expected content types
 
 ## Performance Optimizations
 

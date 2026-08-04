@@ -1,0 +1,57 @@
+# ===============================================================
+# URL-to-Markdown MCP Server — Tests
+# ===============================================================
+#
+# Runs the url_to_markdown_server package's own pytest suite,
+# including the SSRF regression tests.
+# This package ships its own pyproject.toml/dev extras and is not
+# part of the root uv workspace covered by pytest.yml (which is
+# scoped to mcpgateway/ + tests/), so it gets its own single-purpose
+# workflow, matching the pattern used by alembic-upgrade-validation.yml.
+# ===============================================================
+
+name: URL-to-Markdown MCP Server Tests
+
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review]
+    branches: ["main"]
+    paths:
+      - "mcp-servers/python/url_to_markdown_server/**"
+      - ".github/workflows/mcp-url-to-markdown-tests.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    name: pytest
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    defaults:
+      run:
+        working-directory: mcp-servers/python/url_to_markdown_server
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install package (dev extras)
+        run: python3 -m pip install -e ".[dev]"
+
+      - name: Run pytest with coverage
+        run: pytest -v --cov=url_to_markdown_server --cov-report=term-missing

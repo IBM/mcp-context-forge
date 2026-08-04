@@ -333,7 +333,8 @@ repos:
           (?x)^(
             tests/(.*/)?(pages|helpers|fuzzers|scripts|fixtures|migration|utils|manual|async|load|loadtest|jmeter|client|populate|targets)/.*\.py|
             tests/.*/_[^/]+\.py|
-            tests/.*/make_[^/]+\.py
+            tests/.*/make_[^/]+\.py|
+            mcp-servers/python/url_to_markdown_server/tests/e2e_verify_ssrf_fix\.py
           )$
         args: [--pytest-test-first] # `test_.*\.py`
 
