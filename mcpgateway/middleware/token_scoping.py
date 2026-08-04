@@ -28,7 +28,7 @@ from mcpgateway.auth_context import get_jwt_user_email_from_payload, resolve_jwt
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import Permissions
-from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG
+from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG, _ALL_PERMISSIONS_SCOPE, token_scope_grants
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.utils.orjson_response import ORJSONResponse
 from mcpgateway.utils.verify_credentials import (
@@ -142,6 +142,17 @@ _PERMISSION_PATTERNS: List[Tuple[str, Pattern[str], str]] = [
     # Compliance reporting
     ("GET", re.compile(r"^/compliance(?:$|/)"), Permissions.ADMIN_COMPLIANCE),
     ("POST", re.compile(r"^/compliance(?:$|/)"), Permissions.ADMIN_COMPLIANCE),
+    # A2A agent API permissions (a2a_router, prefix="/a2a" — see main.py).
+    # Order matters: the first method+path match wins, so the concrete /a2a/invoke
+    # collection route is listed before the {agent_name}-scoped POST routes.
+    ("GET", re.compile(r"^/a2a(?:$|/)"), Permissions.A2A_READ),
+    ("POST", re.compile(r"^/a2a/?$"), Permissions.A2A_CREATE),
+    ("POST", re.compile(r"^/a2a/invoke/?$"), Permissions.A2A_INVOKE),
+    ("POST", re.compile(r"^/a2a/[^/]+/invoke(?:$|/)"), Permissions.A2A_INVOKE),
+    ("POST", re.compile(r"^/a2a/[^/]+/jsonrpc(?:$|/)"), Permissions.A2A_INVOKE),
+    ("POST", re.compile(r"^/a2a/[^/]+/(?:state|toggle)(?:$|/)"), Permissions.A2A_UPDATE),
+    ("PUT", re.compile(r"^/a2a/[^/]+(?:$|/)"), Permissions.A2A_UPDATE),
+    ("DELETE", re.compile(r"^/a2a/[^/]+(?:$|/)"), Permissions.A2A_DELETE),
 ]
 
 # Admin route permission map (granular by route group).
@@ -740,13 +751,19 @@ class TokenScopingMiddleware:
             >>> m._check_permission_restrictions('/servers/s1/tools/abc/call', 'POST', ['tools.execute'])
             True
 
+            Category wildcard covers every action in that category:
+            >>> m._check_permission_restrictions('/tools', 'POST', ['tools.*'])
+            True
+
             Missing permission denies:
             >>> m._check_permission_restrictions('/tools', 'POST', ['tools.read'])
+            False
+            >>> m._check_permission_restrictions('/tools', 'POST', ['resources.*'])
             False
         """
         request_path = self._normalize_path_for_matching(request_path)
 
-        if not permissions or "*" in permissions:
+        if not permissions or _ALL_PERMISSIONS_SCOPE in permissions:
             return True  # No restrictions or full access
 
         # Unified search (/v1/search, normalized to /search) is authenticated-only
@@ -763,29 +780,20 @@ class TokenScopingMiddleware:
         if request_path.startswith("/admin"):
             for method, path_pattern, required_permission in _ADMIN_PERMISSION_PATTERNS:
                 if request_method == method and path_pattern.match(request_path):
-                    return required_permission in permissions
+                    return token_scope_grants(permissions, required_permission)
             return False
 
-        # Check each permission mapping (uses precompiled regex patterns)
+        # Check each permission mapping (uses precompiled regex patterns).
+        # token_scope_grants() owns the servers.use transport compensation for tokens
+        # carrying MCP method permissions, so this layer and the RBAC decorators agree.
         for method, path_pattern, required_permission in _PERMISSION_PATTERNS:
             if request_method == method and path_pattern.match(request_path):
-                if required_permission in permissions:
-                    return True
-                # Runtime compensation: tokens with MCP method permissions
-                # (tools.*, resources.*, prompts.*) implicitly have transport
-                # access (servers.use) — mirrors the generation-time injection
-                # in token_catalog_service._generate_token() for pre-existing tokens.
-                if required_permission == Permissions.SERVERS_USE:
-                    if any(p.startswith(Permissions.MCP_METHOD_PREFIXES) for p in permissions):
-                        logger.debug("Runtime servers.use compensation applied for token with MCP method permissions: %s", permissions)
-                        return True
-                    return False
-                return False
+                return token_scope_grants(permissions, required_permission)
 
         # LLM proxy permissions (respect configured llm_api_prefix).
         for method, path_pattern, required_permission in _get_llm_permission_patterns(settings.llm_api_prefix):
             if request_method == method and path_pattern.match(request_path):
-                return required_permission in permissions
+                return token_scope_grants(permissions, required_permission)
 
         # Default deny for unmatched paths (requires explicit permission mapping)
         return False
