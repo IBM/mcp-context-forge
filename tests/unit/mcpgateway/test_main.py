@@ -805,14 +805,14 @@ class TestProtocolEndpoints:
         assert response.status_code == 200
         mock_completion.assert_called_once_with(ANY, req, user_email="viewer@example.com", token_teams=[])
 
-    @patch("mcpgateway.main.get_rpc_filter_context")
+    @patch("mcpgateway.main.get_scoped_resource_access_context")
     @patch("mcpgateway.main.completion_service.handle_completion")
     def test_handle_completion_endpoint_maps_completion_error(self, mock_completion, mock_filter_context, test_client, auth_headers):
         """Protocol completion endpoint should map completion validation errors to 400."""
         # First-Party
         from mcpgateway.services.completion_service import CompletionError
 
-        mock_filter_context.return_value = ("viewer@example.com", ["team-1"], False)
+        mock_filter_context.return_value = ("viewer@example.com", ["team-1"])
         mock_completion.side_effect = CompletionError("invalid completion request")
 
         req = {"ref": {"type": "ref/prompt", "name": "test"}}
@@ -3291,14 +3291,14 @@ class TestRPCEndpoints:
         assert response.json()["result"]["result"] == "done"
         mock_completion.assert_awaited_once_with(ANY, req["params"], user_email="viewer@example.com", token_teams=[])
 
-    @patch("mcpgateway.main.get_rpc_filter_context")
+    @patch("mcpgateway.main.get_scoped_resource_access_context")
     @patch("mcpgateway.main.completion_service.handle_completion", new_callable=AsyncMock)
     def test_rpc_completion_complete_maps_completion_error(self, mock_completion, mock_filter_context, test_client, auth_headers):
         """RPC completion/complete should map CompletionError to JSON-RPC -32602."""
         # First-Party
         from mcpgateway.services.completion_service import CompletionError
 
-        mock_filter_context.return_value = ("user@example.com", ["t1"], False)
+        mock_filter_context.return_value = ("user@example.com", ["t1"])
         mock_completion.side_effect = CompletionError("invalid ref")
         req = {"jsonrpc": "2.0", "id": "test-id", "method": "completion/complete", "params": {"ref": {"type": "ref/prompt", "name": "p1"}}}
 
@@ -3435,11 +3435,11 @@ class TestRPCEndpoints:
         assert body["error"]["code"] == -32600
         assert body["error"]["message"] == "Invalid Request"
 
-    @patch("mcpgateway.main.get_rpc_filter_context")
+    @patch("mcpgateway.main.get_scoped_resource_access_context")
     @patch("mcpgateway.main.tool_service.list_tools", new_callable=AsyncMock)
     def test_rpc_null_params_normalized_to_empty_dict(self, mock_list, mock_filter, test_client, auth_headers):
         """RPC with null params should normalize to empty dict and dispatch normally."""
-        mock_filter.return_value = ("user@example.com", [], False)
+        mock_filter.return_value = ("user@example.com", [])
         mock_list.return_value = ([], None)
         req = {"jsonrpc": "2.0", "id": "null-p", "method": "tools/list", "params": None}
         response = test_client.post("/rpc/", json=req, headers=auth_headers)

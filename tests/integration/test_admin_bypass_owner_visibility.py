@@ -50,6 +50,41 @@ ADMIN_PRIVATE_TAG = "owner-vis-admin-private"
 OTHER_PRIVATE_TAG = "owner-vis-other-private"
 PUBLIC_TAG = "owner-vis-public"
 
+ADMIN_PRIVATE_PROMPT = "owner-vis-admin-private-prompt"
+OTHER_PRIVATE_PROMPT = "owner-vis-other-private-prompt"
+
+
+def _make_prompt(owner_email: str, name: str, visibility: str):
+    """Build a Prompt row owned by ``owner_email`` with a single completable argument.
+
+    Args:
+        owner_email: Email recorded as the prompt owner.
+        name: Unique prompt name.
+        visibility: One of ``public`` / ``team`` / ``private``.
+
+    Returns:
+        An unpersisted ``db_mod.Prompt`` instance.
+    """
+    return db_mod.Prompt(
+        id=uuid.uuid4().hex,
+        original_name=name,
+        custom_name=name,
+        custom_name_slug=name,
+        name=name,
+        template="Hello {{ topic }}",
+        argument_schema={
+            "type": "object",
+            # The completion service matches on each property's own "name" key and
+            # returns its enum values, so both are required for a resolvable completion.
+            "properties": {"topic": {"name": "topic", "type": "string", "enum": ["alpha", "beta"]}},
+        },
+        owner_email=owner_email,
+        visibility=visibility,
+        enabled=True,
+        created_by=owner_email,
+        tags=[],
+    )
+
 
 def _make_tool(owner_email: str, name: str, visibility: str, tag: str):
     """Build a Tool row owned by ``owner_email`` carrying a single ``tag``.
@@ -183,6 +218,8 @@ def client_and_db():
     db.add(_make_tool(ADMIN_EMAIL, "owner-vis-admin-private-tool", "private", ADMIN_PRIVATE_TAG))
     db.add(_make_tool(OTHER_EMAIL, "owner-vis-other-private-tool", "private", OTHER_PRIVATE_TAG))
     db.add(_make_tool(OTHER_EMAIL, "owner-vis-public-tool", "public", PUBLIC_TAG))
+    db.add(_make_prompt(ADMIN_EMAIL, ADMIN_PRIVATE_PROMPT, "private"))
+    db.add(_make_prompt(OTHER_EMAIL, OTHER_PRIVATE_PROMPT, "private"))
     db.commit()
 
     # Grant the non-admin caller Layer-2 tags.read so the request reaches the Layer-1
@@ -191,7 +228,7 @@ def client_and_db():
         id=str(uuid.uuid4()),
         name="owner-vis-tag-reader",
         scope="global",
-        permissions=["tags.read"],
+        permissions=["tags.read", "prompts.read"],
         created_by=ADMIN_EMAIL,
         is_active=True,
     )
@@ -307,3 +344,123 @@ class TestAdminBypassOwnerVisibility:
 
         assert resp.status_code == 200, resp.text
         assert not [entity for entity in resp.json() if entity.get("name") == "owner-vis-other-private-tool"]
+
+
+class TestAdminBypassOwnerVisibilityRpcCompletion:
+    """Same Layer-1 change, exercised through the JSON-RPC dispatcher.
+
+    ``completion/complete`` is a second affected surface: it also used to null
+    ``user_email`` on admin bypass. The completion service resolves the referenced
+    prompt through ``BaseService._apply_visibility_scope``, so an admin's own private
+    prompt is only reachable when the email survives the derivation.
+    """
+
+    @staticmethod
+    def _complete(test_client, headers, prompt_name):
+        """Issue a ``completion/complete`` JSON-RPC call for ``prompt_name``.
+
+        Args:
+            test_client: Authenticated client.
+            headers: Authorization header dict.
+            prompt_name: Name of the prompt to complete against.
+
+        Returns:
+            The parsed JSON-RPC response body.
+        """
+        payload = {
+            "jsonrpc": "2.0",
+            "id": "owner-vis-1",
+            "method": "completion/complete",
+            "params": {
+                "ref": {"type": "ref/prompt", "name": prompt_name},
+                "argument": {"name": "topic", "value": ""},
+            },
+        }
+        resp = test_client.post("/rpc/", json=payload, headers=headers)
+        assert resp.status_code == 200, resp.text
+        return resp.json()
+
+    def test_admin_completes_against_own_private_prompt(self, client_and_db):
+        """The admin's own private prompt resolves through the RPC completion branch.
+
+        When the email is nulled the visibility scope drops every private row, and the
+        service reports "Prompt not found" instead of returning completions.
+        """
+        headers = _auth_headers(client_and_db, ADMIN_EMAIL, ADMIN_PASSWORD)
+
+        body = self._complete(client_and_db, headers, ADMIN_PRIVATE_PROMPT)
+
+        assert "error" not in body, body
+        assert body["result"]["completion"]["values"] == ["alpha", "beta"]
+
+    def test_admin_cannot_complete_against_another_users_private_prompt(self, client_and_db):
+        """Another user's private prompt stays invisible even under admin bypass."""
+        headers = _auth_headers(client_and_db, ADMIN_EMAIL, ADMIN_PASSWORD)
+
+        body = self._complete(client_and_db, headers, OTHER_PRIVATE_PROMPT)
+
+        assert "result" not in body, body
+        assert "not found" in body["error"]["message"].lower(), body
+
+
+class TestAdminBypassOwnerVisibilityInternalMcp:
+    """Same Layer-1 change on the trusted internal MCP dispatch path.
+
+    The six ``handle_internal_mcp_*`` handlers previously nulled ``user_email`` too.
+    They are reachable only from the local Rust runtime, so the trust gate is stubbed;
+    everything below it - the forwarded auth context, the Layer-1 derivation, the
+    service and the database - is real.
+    """
+
+    @staticmethod
+    def _post_prompts_list(test_client, monkeypatch, *, email, is_admin, teams):
+        """Call the internal prompts/list endpoint with a forged trusted auth context.
+
+        Args:
+            test_client: Client bound to the temp-DB app.
+            monkeypatch: Fixture used to stub the runtime trust gate.
+            email: Email carried in the forwarded auth context.
+            is_admin: Admin flag carried in the forwarded auth context.
+            teams: Team scope carried in the forwarded context (``None`` = unrestricted).
+
+        Returns:
+            The set of prompt names in the response.
+        """
+        # First-Party
+        from mcpgateway.auth_context import encode_internal_mcp_auth_context
+
+        monkeypatch.setattr(main_mod, "_is_trusted_internal_mcp_runtime_request", lambda _request: True)
+        header = encode_internal_mcp_auth_context(
+            {
+                "email": email,
+                "teams": teams,
+                "is_admin": is_admin,
+                "is_authenticated": True,
+            }
+        )
+        resp = test_client.post(
+            "/_internal/mcp/prompts/list",
+            json={"jsonrpc": "2.0", "id": "owner-vis-mcp", "method": "prompts/list", "params": {}},
+            headers={"x-contextforge-auth-context": header},
+        )
+        assert resp.status_code == 200, resp.text
+        return {p.get("name") for p in resp.json().get("prompts", [])}
+
+    def test_admin_sees_own_private_prompt(self, client_and_db, monkeypatch):
+        """An unrestricted admin context lists the admin's own private prompt."""
+        names = self._post_prompts_list(client_and_db, monkeypatch, email=ADMIN_EMAIL, is_admin=True, teams=None)
+
+        assert ADMIN_PRIVATE_PROMPT in names
+
+    def test_admin_does_not_see_another_users_private_prompt(self, client_and_db, monkeypatch):
+        """Admin bypass on the internal path still excludes another user's private prompt."""
+        names = self._post_prompts_list(client_and_db, monkeypatch, email=ADMIN_EMAIL, is_admin=True, teams=None)
+
+        assert OTHER_PRIVATE_PROMPT not in names
+
+    def test_non_admin_context_sees_no_private_prompts(self, client_and_db, monkeypatch):
+        """A non-admin forwarded context is held to public-only visibility."""
+        names = self._post_prompts_list(client_and_db, monkeypatch, email=OTHER_EMAIL, is_admin=False, teams=[])
+
+        assert ADMIN_PRIVATE_PROMPT not in names
+        assert OTHER_PRIVATE_PROMPT not in names
