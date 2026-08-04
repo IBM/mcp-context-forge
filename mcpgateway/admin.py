@@ -17262,7 +17262,21 @@ async def register_catalog_server(
     if not settings.mcpgateway_catalog_enabled:
         raise HTTPException(status_code=404, detail="Catalog feature is disabled")
 
-    result = await catalog_service.register_catalog_server(catalog_id=server_id, request=request, db=db)
+    metadata = MetadataCapture.extract_creation_metadata(http_request, _user)
+    user_email = get_user_email(_user)
+    team_service = TeamManagementService(db)
+    team_id = await team_service.verify_team_for_user(user_email)
+    team_id_cast = typing_cast(Optional[str], team_id)
+    result = await catalog_service.register_catalog_server(
+        catalog_id=server_id,
+        request=request,
+        db=db,
+        created_by=metadata["created_by"],
+        created_from_ip=metadata["created_from_ip"],
+        created_user_agent=metadata["created_user_agent"],
+        team_id=team_id_cast,
+        owner_email=user_email,
+    )
 
     # Check if this is an HTMX request
     is_htmx = http_request.headers.get("HX-Request") == "true"
@@ -17366,6 +17380,7 @@ async def check_catalog_server_status(
 @require_permission("servers.create", allow_admin_bypass=False)
 async def bulk_register_catalog_servers(
     request: CatalogBulkRegisterRequest,
+    http_request: Request,
     db: Session = Depends(get_db),
     _user=Depends(get_current_user_with_permissions),
 ) -> CatalogBulkRegisterResponse:
@@ -17385,7 +17400,20 @@ async def bulk_register_catalog_servers(
     if not settings.mcpgateway_catalog_enabled:
         raise HTTPException(status_code=404, detail="Catalog feature is disabled")
 
-    return await catalog_service.bulk_register_servers(request, db)
+    metadata = MetadataCapture.extract_creation_metadata(http_request, _user)
+    user_email = get_user_email(_user)
+    team_service = TeamManagementService(db)
+    team_id = await team_service.verify_team_for_user(user_email)
+    team_id_cast = typing_cast(Optional[str], team_id)
+    return await catalog_service.bulk_register_servers(
+        request,
+        db,
+        created_by=metadata["created_by"],
+        created_from_ip=metadata["created_from_ip"],
+        created_user_agent=metadata["created_user_agent"],
+        team_id=team_id_cast,
+        owner_email=user_email,
+    )
 
 
 @admin_router.get("/mcp-registry/partial")

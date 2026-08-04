@@ -195,6 +195,36 @@ async def test_register_catalog_server_success(service):
 
 
 @pytest.mark.asyncio
+async def test_register_catalog_server_forwards_attribution_to_gateway_service(service):
+    fake_catalog = {"catalog_servers": [{"id": "1", "name": "srv", "url": "http://a", "description": "desc"}]}
+    mock_register = AsyncMock(return_value=MagicMock(id=1, name="srv"))
+    with patch.object(service, "load_catalog", AsyncMock(return_value=fake_catalog)), patch.object(service._gateway_service, "register_gateway", mock_register):
+        db = MagicMock()
+        db.execute.return_value.scalar_one_or_none.return_value = None
+        with patch("mcpgateway.services.catalog_service.select"):
+            result = await service.register_catalog_server(
+                "1",
+                None,
+                db,
+                created_by="alice",
+                created_from_ip="203.0.113.10",
+                created_user_agent="pytest",
+                team_id="team-1",
+                owner_email="alice@example.com",
+            )
+
+    assert result.success
+    _, kwargs = mock_register.call_args
+    assert kwargs["created_by"] == "alice"
+    assert kwargs["created_from_ip"] == "203.0.113.10"
+    assert kwargs["created_user_agent"] == "pytest"
+    assert kwargs["team_id"] == "team-1"
+    assert kwargs["owner_email"] == "alice@example.com"
+    assert kwargs["created_via"] == "catalog"
+    assert kwargs["visibility"] == "public"
+
+
+@pytest.mark.asyncio
 async def test_register_catalog_server_ipv6(service):
     fake_catalog = {"catalog_servers": [{"id": "1", "name": "srv", "url": "[::1]", "description": "desc"}]}
     with patch.object(service, "load_catalog", AsyncMock(return_value=fake_catalog)):
@@ -439,6 +469,55 @@ async def test_register_catalog_server_oauth_without_credentials(service):
             db.refresh.assert_called_once()
 
 
+@pytest.mark.asyncio
+async def test_register_catalog_server_oauth_without_credentials_sets_attribution(service):
+    fake_catalog = {
+        "catalog_servers": [{"id": "oauth-server", "name": "OAuth Server", "url": "https://oauth.example.com/mcp", "description": "OAuth server", "auth_type": "OAuth2.1", "tags": ["oauth"]}]
+    }
+
+    with patch.object(service, "load_catalog", AsyncMock(return_value=fake_catalog)):
+        db = MagicMock()
+        db.execute.return_value.scalar_one_or_none.return_value = None
+        db.commit = MagicMock()
+        db.add = MagicMock()
+
+        now = datetime.now(timezone.utc)
+
+        def mock_refresh(obj):
+            obj.id = "test-id"
+            obj.created_at = now
+            obj.updated_at = now
+            obj.reachable = False
+
+        db.refresh = MagicMock(side_effect=mock_refresh)
+
+        with (
+            patch("mcpgateway.services.catalog_service.select"),
+            patch("mcpgateway.services.catalog_service.slugify", return_value="oauth-server"),
+            patch("mcpgateway.services.catalog_service.validate_tags_field", return_value=[{"id": "oauth", "label": "oauth"}]),
+        ):
+            result = await service.register_catalog_server(
+                "oauth-server",
+                None,
+                db,
+                created_by="alice",
+                created_from_ip="203.0.113.10",
+                created_user_agent="pytest",
+                team_id="team-1",
+                owner_email="alice@example.com",
+            )
+
+    assert result.success
+    db_gateway = db.add.call_args.args[0]
+    assert db_gateway.created_by == "alice"
+    assert db_gateway.created_from_ip == "203.0.113.10"
+    assert db_gateway.created_user_agent == "pytest"
+    assert db_gateway.team_id == "team-1"
+    assert db_gateway.owner_email == "alice@example.com"
+    assert db_gateway.created_via == "catalog"
+    assert db_gateway.visibility == "public"
+
+
 # ---------- Exception mapping in register_catalog_server ----------
 
 
@@ -647,6 +726,31 @@ async def test_bulk_register_exception_per_server(service):
         assert result.total_attempted == 2
         assert len(result.failed) == 1
         assert result.total_successful == 1
+
+
+@pytest.mark.asyncio
+async def test_bulk_register_servers_forwards_attribution(service):
+    fake_request = CatalogBulkRegisterRequest(server_ids=["1", "2"], skip_errors=True)
+    mock_register = AsyncMock(side_effect=[MagicMock(success=True), MagicMock(success=True)])
+    with patch.object(service, "register_catalog_server", mock_register):
+        db = MagicMock()
+        result = await service.bulk_register_servers(
+            fake_request,
+            db,
+            created_by="alice",
+            created_from_ip="203.0.113.10",
+            created_user_agent="pytest",
+            team_id="team-1",
+            owner_email="alice@example.com",
+        )
+
+    assert result.total_successful == 2
+    for call in mock_register.call_args_list:
+        assert call.kwargs["created_by"] == "alice"
+        assert call.kwargs["created_from_ip"] == "203.0.113.10"
+        assert call.kwargs["created_user_agent"] == "pytest"
+        assert call.kwargs["team_id"] == "team-1"
+        assert call.kwargs["owner_email"] == "alice@example.com"
 
 
 @pytest.mark.asyncio

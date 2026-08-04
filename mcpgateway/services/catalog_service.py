@@ -228,13 +228,28 @@ class CatalogService:
 
         return response
 
-    async def register_catalog_server(self, catalog_id: str, request: Optional[CatalogServerRegisterRequest], db: Session) -> CatalogServerRegisterResponse:
+    async def register_catalog_server(
+        self,
+        catalog_id: str,
+        request: Optional[CatalogServerRegisterRequest],
+        db: Session,
+        created_by: Optional[str] = None,
+        created_from_ip: Optional[str] = None,
+        created_user_agent: Optional[str] = None,
+        team_id: Optional[str] = None,
+        owner_email: Optional[str] = None,
+    ) -> CatalogServerRegisterResponse:
         """Register a catalog server as a gateway.
 
         Args:
             catalog_id: Catalog server ID
             request: Registration request with optional overrides
             db: Database session
+            created_by: Username who created this gateway
+            created_from_ip: IP address of creator
+            created_user_agent: User agent of creation request
+            team_id: Team ID to assign the gateway to
+            owner_email: Email of the user who owns this gateway
 
         Returns:
             Registration response
@@ -349,9 +364,14 @@ class CatalogService:
                     capabilities={},
                     auth_type="oauth",  # Mark as OAuth so it can be identified after page refresh
                     enabled=False,  # Disabled until OAuth is configured
+                    created_by=created_by or "system",
+                    created_from_ip=created_from_ip,
+                    created_user_agent=created_user_agent,
                     created_via="catalog",
                     visibility="public",
                     version=1,
+                    team_id=team_id,
+                    owner_email=owner_email,
                 )
 
                 db.add(db_gateway)
@@ -416,8 +436,13 @@ class CatalogService:
             gateway_read = await self._gateway_service.register_gateway(
                 db=db,
                 gateway=gateway_create,
+                created_by=created_by,
+                created_from_ip=created_from_ip,
                 created_via="catalog",
+                created_user_agent=created_user_agent,
                 visibility="public",  # Catalog servers should be public
+                team_id=team_id,
+                owner_email=owner_email,
                 initialize_timeout=settings.httpx_admin_read_timeout,
             )
 
@@ -527,12 +552,26 @@ class CatalogService:
             logger.error(f"Failed to check server status for {catalog_id}: {e}")
             return CatalogServerStatusResponse(server_id=catalog_id, is_available=False, is_registered=False, error=str(e))
 
-    async def bulk_register_servers(self, request: CatalogBulkRegisterRequest, db: Session) -> CatalogBulkRegisterResponse:
+    async def bulk_register_servers(
+        self,
+        request: CatalogBulkRegisterRequest,
+        db: Session,
+        created_by: Optional[str] = None,
+        created_from_ip: Optional[str] = None,
+        created_user_agent: Optional[str] = None,
+        team_id: Optional[str] = None,
+        owner_email: Optional[str] = None,
+    ) -> CatalogBulkRegisterResponse:
         """Register multiple catalog servers.
 
         Args:
             request: Bulk registration request
             db: Database session
+            created_by: Username who created these gateways
+            created_from_ip: IP address of creator
+            created_user_agent: User agent of creation request
+            team_id: Team ID to assign gateways to
+            owner_email: Email of the user who owns these gateways
 
         Returns:
             Bulk registration response
@@ -542,7 +581,16 @@ class CatalogService:
 
         for server_id in request.server_ids:
             try:
-                response = await self.register_catalog_server(catalog_id=server_id, request=None, db=db)
+                response = await self.register_catalog_server(
+                    catalog_id=server_id,
+                    request=None,
+                    db=db,
+                    created_by=created_by,
+                    created_from_ip=created_from_ip,
+                    created_user_agent=created_user_agent,
+                    team_id=team_id,
+                    owner_email=owner_email,
+                )
 
                 if response.success:
                     successful.append(server_id)
