@@ -51,7 +51,7 @@ _MAX_RECORDS_PER_CALL = 128  # cap across pre + post combined
 _MAX_REASON_LEN = 256  # CPEX already bounds this; enforce again defensively
 _MAX_ERROR_CODE_LEN = 256
 _MAX_CONFIG_KEYS = 64
-_MAX_CONFIG_KEY_LEN = 128   # per-key length cap before joining
+_MAX_CONFIG_KEY_LEN = 128  # per-key length cap before joining
 _MAX_CONFIG_KEYS_JOINED_LEN = 4096  # max total byte length of the joined config_keys string
 
 # Statuses that represent controls that actually ran (exclude disabled/skipped/cancelled).
