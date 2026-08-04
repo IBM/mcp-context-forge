@@ -1037,3 +1037,104 @@ class TestEmitReasonFlag:
         finally:
             cfg_mod.settings = original
         assert result is False
+
+
+# ---------------------------------------------------------------------------
+# Fix 4 — mark_plugin_error() and cpex.control.plugin_error flag
+# ---------------------------------------------------------------------------
+
+
+class TestMarkPluginError:
+    """mark_plugin_error() sets the plugin_errored flag and bypasses the empty-accumulator guard."""
+
+    def test_plugin_errored_false_by_default(self):
+        acc = ControlTelemetryAccumulator()
+        assert acc.plugin_errored is False
+
+    def test_mark_plugin_error_sets_flag(self):
+        acc = ControlTelemetryAccumulator()
+        acc.mark_plugin_error()
+        assert acc.plugin_errored is True
+
+    def test_effective_allowed_unchanged_after_plugin_error(self):
+        """PluginError does NOT set effective_allowed=False — it stays True."""
+        acc = ControlTelemetryAccumulator()
+        acc.mark_plugin_error()
+        assert acc.effective_allowed is True
+
+    def test_aggregate_emits_plugin_error_true_when_flagged(self):
+        acc = ControlTelemetryAccumulator()
+        acc.mark_plugin_error()
+        agg = acc.aggregate()
+        assert agg.get("cpex.control.plugin_error") is True
+
+    def test_aggregate_omits_plugin_error_when_not_flagged(self):
+        acc = ControlTelemetryAccumulator()
+        agg = acc.aggregate()
+        assert "cpex.control.plugin_error" not in agg
+
+    def test_plugin_error_flag_bypasses_empty_accumulator_guard(self):
+        """record_control_telemetry() must emit a summary span even with an empty accumulator
+        when plugin_errored=True (first-plugin failure path)."""
+        acc = ControlTelemetryAccumulator()
+        acc.mark_plugin_error()
+        # No records, no denial — only the error flag
+
+        captured_attributes: dict = {}
+
+        def fake_start_span(**kwargs):
+            if kwargs.get("name") == "cpex.control.summary":
+                captured_attributes.update(kwargs.get("attributes", {}))
+            return "span-id-plugin-err"
+
+        mock_service = MagicMock()
+        mock_service.start_span.side_effect = fake_start_span
+        mock_service.end_span.return_value = None
+
+        mock_settings = MagicMock()
+        mock_settings.cpex_control_telemetry_enabled = True
+        mock_settings.cpex_control_telemetry_db_enabled = True
+        mock_settings.cpex_control_telemetry_flatten_results = False
+        mock_settings.cpex_control_telemetry_max_results = 32
+
+        with (
+            patch("mcpgateway.plugins.control_telemetry.execution_records_supported", return_value=True),
+            patch("mcpgateway.services.observability_service.ObservabilityService", return_value=mock_service),
+            patch("mcpgateway.db.SessionLocal"),
+            patch("mcpgateway.plugins.control_telemetry._emit_otel_spans"),
+            patch("mcpgateway.config.settings", mock_settings),
+        ):
+            record_control_telemetry("trace-plugin-err", acc, tool_name="my_tool", agent_id="u@e.com", binding_name="gw")
+
+        # Summary span must be emitted and carry plugin_error=True
+        assert captured_attributes, "Expected a summary span to be emitted for a first-plugin PluginError"
+        assert captured_attributes.get("cpex.control.plugin_error") is True
+        # effective_allowed must remain True — this is not a policy denial
+        assert captured_attributes.get("cpex.control.result.allowed") is True
+
+
+# ---------------------------------------------------------------------------
+# Fix 3 — _enforcement_point uses denial flags when records are empty
+# ---------------------------------------------------------------------------
+
+
+class TestEnforcementPointDenialFlags:
+    """_enforcement_point() must use pre_denied/post_denied when no records exist."""
+
+    def test_enforcement_point_pre_from_flag_no_records(self):
+        """mark_denied(hook='pre') with no records should yield enforcement_point='pre'."""
+        from mcpgateway.plugins.control_telemetry import _enforcement_point  # noqa: PLC0415
+        acc = ControlTelemetryAccumulator()
+        acc.mark_denied(hook="pre")
+        assert _enforcement_point(acc) == "pre"
+
+    def test_enforcement_point_post_from_flag_no_records(self):
+        from mcpgateway.plugins.control_telemetry import _enforcement_point  # noqa: PLC0415
+        acc = ControlTelemetryAccumulator()
+        acc.mark_denied(hook="post")
+        assert _enforcement_point(acc) == "post"
+
+    def test_enforcement_point_none_no_records_no_flags(self):
+        from mcpgateway.plugins.control_telemetry import _enforcement_point  # noqa: PLC0415
+        acc = ControlTelemetryAccumulator()
+        assert _enforcement_point(acc) == "none"

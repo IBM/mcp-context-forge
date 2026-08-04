@@ -93,6 +93,7 @@ class ControlTelemetryAccumulator:
     _records: list = field(default_factory=list)
     _pre_denied: bool = False
     _post_denied: bool = False
+    _plugin_errored: bool = False  # True when a PluginError (outage) was caught on any hook
     _truncated: int = 0  # records dropped due to per-call cap OR per-hook cap
     _export_cap_dropped: int = 0  # records dropped at emit time by the per-invocation export cap
 
@@ -148,6 +149,37 @@ class ControlTelemetryAccumulator:
             self._pre_denied = True
         else:
             self._post_denied = True
+
+    def mark_plugin_error(self) -> None:
+        """Explicitly record that a ``PluginError`` (outage/crash/misconfiguration) occurred.
+
+        Call this from the ``except PluginError`` handler before re-raising so that
+        the emitted summary span carries ``cpex.control.plugin_error=True``.  This
+        distinguishes a plugin infrastructure failure from both a successful allow
+        decision (``result.allowed=True``, no error) and a deliberate policy denial
+        (``result.allowed=False`` set via ``mark_denied()``).
+
+        When the failing plugin is the first in the chain the accumulator may have no
+        records and no denial flags — without this flag ``record_control_telemetry()``
+        would silently skip emission.  Including ``_plugin_errored`` in the empty-guard
+        ensures the summary span is always emitted so the outage is visible in dashboards.
+
+        Examples:
+            >>> acc = ControlTelemetryAccumulator()
+            >>> acc.mark_plugin_error()
+            >>> acc.plugin_errored
+            True
+        """
+        self._plugin_errored = True
+
+    @property
+    def plugin_errored(self) -> bool:
+        """True when a ``PluginError`` was caught on any hook during this invocation.
+
+        Returns:
+            True if any plugin raised ``PluginError``; False otherwise.
+        """
+        return self._plugin_errored
 
     @property
     def records(self) -> list:
@@ -216,6 +248,10 @@ class ControlTelemetryAccumulator:
     def effective_allowed(self) -> bool:
         """True only if neither the pre nor post hook chain produced a denial.
 
+        Note: a ``PluginError`` outage does **not** set ``effective_allowed=False``.
+        Enforcement decisions and infrastructure failures are intentionally distinct.
+        Check ``plugin_errored`` to detect the latter.
+
         Returns:
             True when the overall control chain allowed the invocation.
         """
@@ -271,7 +307,7 @@ class ControlTelemetryAccumulator:
         # results_count = records exported after the per-invocation cap (not raw accumulated count).
         results_count = min(records_received, _get_max_results())
 
-        return {
+        result: dict = {
             "cpex.control.invocation_count": invocation_count,
             "cpex.control.matched_count": matched_count,
             "cpex.control.applied_count": applied_count,
@@ -282,6 +318,13 @@ class ControlTelemetryAccumulator:
             "cpex.control.error_count": error_count,
             "cpex.control.timeout_count": timeout_count,
         }
+        # cpex.control.plugin_error distinguishes a plugin infrastructure failure
+        # (PluginError: crash/timeout/misconfiguration) from both a successful allow
+        # and a deliberate policy denial (result.allowed=False).  Only emitted when
+        # mark_plugin_error() was called; absent means no outage occurred.
+        if self._plugin_errored:
+            result["cpex.control.plugin_error"] = True
+        return result
 
 
 # ---------------------------------------------------------------------------
@@ -313,8 +356,10 @@ def record_control_telemetry(
         return
     if not execution_records_supported():
         return
-    if not accumulator.records and not accumulator.pre_denied and not accumulator.post_denied:
-        # Nothing ran — no-op, don't emit empty spans
+    if not accumulator.records and not accumulator.pre_denied and not accumulator.post_denied and not accumulator.plugin_errored:
+        # Nothing ran and no error/denial flag set — no-op, don't emit empty spans.
+        # plugin_errored is included so a PluginError on the first plugin in the chain
+        # (where no records were appended before the raise) still emits a summary span.
         return
 
     try:
@@ -538,11 +583,12 @@ def _per_control_attributes(hook: str, rec: Any) -> dict:
                 attrs["cpex.control.result.error_code"] = _safe_str(rec.error_code, _MAX_ERROR_CODE_LEN)
         if rec.config_keys:
             # Key names only (CPEX never includes values).
-            # Each key is length-capped, list is count-capped, and the final joined
-            # string is byte-capped to prevent telemetry amplification.
+            # Each key is byte-capped via _safe_str; the joined string is also byte-capped
+            # via _safe_str so multibyte characters do not exceed the intended byte budget
+            # (a plain char-slice would under-count bytes for non-ASCII key names).
             safe_keys = [_safe_str(k, _MAX_CONFIG_KEY_LEN) for k in rec.config_keys[:_MAX_CONFIG_KEYS]]
             joined = ",".join(safe_keys)
-            attrs["cpex.control.config.keys"] = joined[:_MAX_CONFIG_KEYS_JOINED_LEN]
+            attrs["cpex.control.config.keys"] = _safe_str(joined, _MAX_CONFIG_KEYS_JOINED_LEN)
         return attrs
     except Exception:  # noqa: BLE001
         logger.debug("Failed to build per-control attributes", exc_info=True)
@@ -574,14 +620,19 @@ def _safe_str(value: Any, max_len: int) -> str:
 def _enforcement_point(acc: "ControlTelemetryAccumulator") -> str:
     """Derive the enforcement-point label from which hooks contributed records.
 
+    When CPEX raises ``PluginViolationError`` with ``violations_as_exceptions=True``
+    it does so *before* appending a ``ControlExecutionRecord``, so the accumulator
+    may have no records even though a hook fired.  Fall back to the denial flags so
+    a pre-invoke denial with zero records still reports ``"pre"`` rather than ``"none"``.
+
     Args:
         acc: The populated accumulator.
 
     Returns:
         One of ``"pre"``, ``"post"``, ``"pre+post"``, or ``"none"``.
     """
-    has_pre = any(h == "pre" for h, _ in acc.records)
-    has_post = any(h == "post" for h, _ in acc.records)
+    has_pre = any(h == "pre" for h, _ in acc.records) or acc.pre_denied
+    has_post = any(h == "post" for h, _ in acc.records) or acc.post_denied
     if has_pre and has_post:
         return "pre+post"
     if has_pre:
@@ -724,7 +775,7 @@ def _build_flattened_attributes(
                 if config_keys:
                     safe_keys = [_safe_str(k, _MAX_CONFIG_KEY_LEN) for k in config_keys[:_MAX_CONFIG_KEYS]]
                     joined = ",".join(safe_keys)
-                    result[f"{prefix}.config.keys"] = joined[:_MAX_CONFIG_KEYS_JOINED_LEN]
+                    result[f"{prefix}.config.keys"] = _safe_str(joined, _MAX_CONFIG_KEYS_JOINED_LEN)
 
                 # reason/error_code gated by CPEX_CONTROL_TELEMETRY_EMIT_REASON (default: false)
                 if _emit_reason_enabled():

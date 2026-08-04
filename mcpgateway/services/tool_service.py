@@ -6638,10 +6638,11 @@ class ToolService(BaseService):
                 )
                 raise
             except PluginError:
-                # Plugin outage (crash/timeout/misconfiguration) — emit partial telemetry so the
-                # summary span is not silently lost, but do NOT treat this as a policy denial.
-                # effective_allowed remains True on the accumulator; downstream dashboards can
-                # distinguish plugin errors from enforcement decisions.
+                # Plugin outage (crash/timeout/misconfiguration) — mark the accumulator so
+                # the summary span carries cpex.control.plugin_error=True, emit partial
+                # telemetry (even when the accumulator is empty, e.g. first-plugin failure),
+                # and do NOT treat this as a policy denial (effective_allowed stays True).
+                _ctl_acc.mark_plugin_error()
                 record_control_telemetry(
                     trace_id=current_trace_id.get(),
                     accumulator=_ctl_acc,

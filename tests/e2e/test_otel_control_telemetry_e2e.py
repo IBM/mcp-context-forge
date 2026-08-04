@@ -740,8 +740,12 @@ class TestDenialPathTelemetry:
             "id": 8,
         }
         resp = await client.post("/rpc", json=rpc_payload, headers=headers)
-        # Gateway returns an error (422 or 200 with isError) when denial happens — either is fine.
-        assert resp.status_code in {200, 400, 403, 422, 500}
+        # A pre-invoke denial must produce a 4xx error response, never a 5xx.
+        # 200 with isError is acceptable (JSON-RPC error envelope); 500 indicates
+        # an unhandled exception rather than a controlled denial.
+        assert resp.status_code in {200, 400, 403, 422}, (
+            f"Expected a denial error response (200/400/403/422), got {resp.status_code}"
+        )
 
         await asyncio.sleep(0.1)
 
@@ -751,9 +755,12 @@ class TestDenialPathTelemetry:
         spans = obs_resp.json().get("spans", [])
         summary_spans = [s for s in spans if s.get("name") == "cpex.control.summary"]
 
-        # If PIIFilter does not detect PII in this environment, skip gracefully.
-        if not summary_spans:
-            pytest.skip("PIIFilter did not produce a summary span — PII not detected in this environment")
+        # A live pre-invoke denial MUST produce a summary span.  Absence is a regression,
+        # not an environment variation — do not skip.
+        assert summary_spans, (
+            "Expected a cpex.control.summary span for the pre-invoke denial, but none was emitted. "
+            "This indicates denial telemetry is broken."
+        )
 
         summary = summary_spans[0]
         attrs = summary.get("attributes") or {}
@@ -761,8 +768,8 @@ class TestDenialPathTelemetry:
         assert attrs.get("cpex.control.result.allowed") is False, (
             f"Expected result.allowed=false on denial path, got: {attrs.get('cpex.control.result.allowed')!r}"
         )
-        assert attrs.get("cpex.control.enforcement_point") in {"pre", "none"}, (
-            f"Unexpected enforcement_point on pre-deny: {attrs.get('cpex.control.enforcement_point')!r}"
+        assert attrs.get("cpex.control.enforcement_point") == "pre", (
+            f"Expected enforcement_point=pre for a pre-invoke denial, got: {attrs.get('cpex.control.enforcement_point')!r}"
         )
 
     @pytest.mark.asyncio
@@ -795,8 +802,9 @@ class TestDenialPathTelemetry:
         spans = obs_resp.json().get("spans", [])
         summary_spans = [s for s in spans if s.get("name") == "cpex.control.summary"]
 
-        if not summary_spans:
-            pytest.skip("PIIFilter did not produce a summary span — PII not detected in this environment")
+        assert summary_spans, (
+            "Expected a cpex.control.summary span for the pre-invoke denial, but none was emitted."
+        )
 
         summary = summary_spans[0]
         attrs = summary.get("attributes") or {}

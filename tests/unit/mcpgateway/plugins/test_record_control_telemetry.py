@@ -650,3 +650,119 @@ class TestObservabilityServiceAPICompatibility:
         params = sig.parameters
         assert "commit" in params, "ObservabilityService.end_span missing 'commit' kwarg"
         assert "obs_db" in params, "ObservabilityService.end_span missing 'obs_db' kwarg"
+
+
+# ---------------------------------------------------------------------------
+# Fix 1 — wildcard insertion order preserved in apply_attribute_mapping cache
+# ---------------------------------------------------------------------------
+
+
+class TestWildcardInsertionOrderPreserved:
+    """apply_attribute_mapping() must respect insertion order for wildcard rule precedence."""
+
+    def test_first_wildcard_wins_over_later_wildcard(self):
+        """When two wildcard rules match the same key, the first declared rule must win."""
+        attrs = {"x.a": 1}
+        mapping = {
+            "x.*": "first.*",   # declared first — should win
+            "*.a": "second.*",  # declared second — must NOT win
+        }
+        result = apply_attribute_mapping(attrs, mapping)
+        # "x.*" matches "x.a" (captures "a") → "first.a"
+        assert "first.a" in result, (
+            f"Expected first declared wildcard rule to win, got keys: {list(result)}"
+        )
+        assert "second.x" not in result, "Second wildcard rule must not override first"
+
+    def test_reversed_order_changes_result(self):
+        """Reversing the rule order must change which rule wins — proving order is preserved."""
+        attrs = {"x.a": 1}
+        mapping_first_wins = {"x.*": "first.*", "*.a": "second.*"}
+        mapping_second_wins = {"*.a": "second.*", "x.*": "first.*"}
+        result_first = apply_attribute_mapping(attrs, mapping_first_wins)
+        result_second = apply_attribute_mapping(attrs, mapping_second_wins)
+        # Results must differ to prove order is actually preserved
+        assert list(result_first.keys()) != list(result_second.keys()), (
+            "Reversing rule order should change which wildcard fires first"
+        )
+
+    def test_exact_rule_still_beats_all_wildcards(self):
+        """Exact rules take precedence regardless of insertion order."""
+        attrs = {"x.a": 1}
+        mapping = {
+            "*.a": "wildcard_first.*",  # wildcard declared before exact
+            "x.a": "exact_dest",        # exact declared after wildcard
+        }
+        result = apply_attribute_mapping(attrs, mapping)
+        assert "exact_dest" in result
+        assert "wildcard_first.x" not in result
+
+
+# ---------------------------------------------------------------------------
+# Fix 2 — config_keys joined cap is byte-aware via _safe_str
+# ---------------------------------------------------------------------------
+
+
+class TestConfigKeysByteCapAware:
+    """config_keys joined cap must be byte-aware (not char-based) for multibyte keys."""
+
+    def _make_rec_with_keys(self, keys):
+        """Build a minimal ControlExecutionRecord mock with the given config_keys."""
+        from unittest.mock import MagicMock  # noqa: PLC0415
+        rec = MagicMock()
+        rec.plugin_name = "guard"
+        rec.plugin_id = "g-001"
+        rec.plugin_kind = "builtin"
+        rec.hook_name = "tool_pre_invoke"
+        rec.mode = "sequential"
+        rec.status = "completed"
+        rec.effective_allow = True
+        rec.requested_allow = None
+        rec.matched = True
+        rec.applied = False
+        rec.payload_modified = False
+        rec.duration_ns = 1000
+        rec.reason = None
+        rec.error_code = None
+        rec.config_keys = keys
+        rec.artifact_name = None
+        rec.artifact_id = None
+        return rec
+
+    def test_multibyte_key_does_not_exceed_byte_budget(self):
+        """A joined config_keys string with multibyte chars must not exceed _MAX_CONFIG_KEYS_JOINED_LEN bytes."""
+        from mcpgateway.plugins.control_telemetry import _MAX_CONFIG_KEYS_JOINED_LEN, _per_control_attributes  # noqa: PLC0415
+        import mcpgateway.config as cfg_mod_local  # noqa: PLC0415
+        # Use a key with multibyte chars (each '日' is 3 UTF-8 bytes)
+        multibyte_key = "日" * 40  # 40 chars, 120 bytes — under per-key 128-byte limit
+        keys = [multibyte_key] * 100  # many keys to trigger the joined cap
+        rec = self._make_rec_with_keys(keys)
+        mock_settings = MagicMock()
+        mock_settings.cpex_control_telemetry_emit_reason = False
+        original = cfg_mod_local.settings
+        try:
+            cfg_mod_local.settings = mock_settings
+            attrs = _per_control_attributes("pre", rec)
+        finally:
+            cfg_mod_local.settings = original
+        joined = attrs.get("cpex.control.config.keys", "")
+        # The byte length of the result must not exceed the cap
+        assert len(joined.encode("utf-8")) <= _MAX_CONFIG_KEYS_JOINED_LEN, (
+            f"config.keys byte length {len(joined.encode('utf-8'))} exceeds budget {_MAX_CONFIG_KEYS_JOINED_LEN}"
+        )
+
+    def test_ascii_keys_still_work(self):
+        """ASCII-only config_keys must be unaffected by the byte-aware cap."""
+        from mcpgateway.plugins.control_telemetry import _per_control_attributes  # noqa: PLC0415
+        import mcpgateway.config as cfg_mod_local  # noqa: PLC0415
+        keys = ["key_one", "key_two", "key_three"]
+        rec = self._make_rec_with_keys(keys)
+        mock_settings = MagicMock()
+        mock_settings.cpex_control_telemetry_emit_reason = False
+        original = cfg_mod_local.settings
+        try:
+            cfg_mod_local.settings = mock_settings
+            attrs = _per_control_attributes("pre", rec)
+        finally:
+            cfg_mod_local.settings = original
+        assert attrs.get("cpex.control.config.keys") == "key_one,key_two,key_three"

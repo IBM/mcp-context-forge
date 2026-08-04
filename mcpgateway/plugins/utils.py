@@ -666,7 +666,12 @@ def apply_attribute_mapping(attributes: dict, mapping: dict) -> dict:
         return dict(attributes)
 
     try:
-        compiled_mappings, _ = _cached_compile_attribute_policy(tuple(sorted(mapping.items())), ())
+        # Preserve insertion order — sorting changes wildcard-rule precedence because the
+        # documented contract is "first matching wildcard wins" (compile_attribute_policy
+        # evaluates rules in the order they appear in the mapping dict).  Sorting would
+        # silently reorder rules and change which wildcard match is returned for overlapping
+        # patterns.  Using tuple(mapping.items()) keeps the caller's declared order.
+        compiled_mappings, _ = _cached_compile_attribute_policy(tuple(mapping.items()), ())
     except ValueError:
         # Misconfigured mapping at runtime (e.g. otel.* destination, empty key, key > 256 chars).
         # Fail-closed: return attributes unchanged rather than applying a partially-validated
