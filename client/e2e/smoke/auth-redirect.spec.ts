@@ -11,12 +11,16 @@ test.describe("Unauthenticated access (smoke)", () => {
 
   test("dashboard redirects to login", async ({ page }) => {
     await page.goto(APP.ROOT);
-    await expect(page).toHaveURL(new RegExp(`${APP.LOGIN}$`));
+    await expect(page).toHaveURL(
+      new RegExp(`${APP.LOGIN}\\?next=${encodeURIComponent(APP.ROOT)}$`),
+    );
   });
 
   test("protected route redirects to login", async ({ page }) => {
     await page.goto(APP.GATEWAYS);
-    await expect(page).toHaveURL(new RegExp(`${APP.LOGIN}$`));
+    await expect(page).toHaveURL(
+      new RegExp(`${APP.LOGIN}\\?next=${encodeURIComponent(APP.GATEWAYS)}$`),
+    );
   });
 
   test("login page renders form fields", async ({ page }) => {
