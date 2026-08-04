@@ -217,10 +217,6 @@ jobs:
 
       - name: Upload SARIF to CodeQL
         if: always() && (github.event_name == 'merge_group' || github.event_name == 'push') && steps.scan-fedramp.outputs.sarif != ''
-        # The merge-queue ephemeral ref is deleted on ejection; a retried run then
-        # fails "ref not found" on the stale ref baked into the job context.  The
-        # scan itself is unaffected — SARIF lands on the push-to-main re-run.
-        continue-on-error: true
         uses: github/codeql-action/upload-sarif@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4.36.2
         with:
           sarif_file: "${{ steps.scan-fedramp.outputs.sarif }}"
@@ -295,8 +291,6 @@ jobs:
 
       - name: Upload SARIF to CodeQL
         if: always() && (github.event_name == 'merge_group' || github.event_name == 'push') && steps.scan.outputs.sarif != ''
-        # Same stale-ref guard as the fedramp job above.
-        continue-on-error: true
         uses: github/codeql-action/upload-sarif@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4.36.2
         with:
           sarif_file: "${{ steps.scan.outputs.sarif }}"
