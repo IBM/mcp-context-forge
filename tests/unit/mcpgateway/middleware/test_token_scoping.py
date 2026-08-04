@@ -325,6 +325,76 @@ class TestTokenScopingMiddleware:
         result = middleware._check_permission_restrictions("/sse", "GET", ["*"])
         assert result is True, "GET /sse should be allowed with wildcard permission"
 
+    @pytest.mark.parametrize(
+        "method,path,permission",
+        [
+            # Every route registered on a2a_router (main.py) with the permission its
+            # @require_permission decorator demands. An unmapped route is default-denied,
+            # so a gap here silently 403s validly-scoped tokens.
+            ("GET", "/a2a", Permissions.A2A_READ),
+            ("GET", "/a2a/", Permissions.A2A_READ),
+            ("GET", "/a2a/agent-1", Permissions.A2A_READ),
+            ("POST", "/a2a", Permissions.A2A_CREATE),
+            ("POST", "/a2a/", Permissions.A2A_CREATE),
+            ("PUT", "/a2a/agent-1", Permissions.A2A_UPDATE),
+            ("POST", "/a2a/agent-1/state", Permissions.A2A_UPDATE),
+            ("POST", "/a2a/agent-1/toggle", Permissions.A2A_UPDATE),
+            ("DELETE", "/a2a/agent-1", Permissions.A2A_DELETE),
+            ("POST", "/a2a/invoke", Permissions.A2A_INVOKE),
+            ("POST", "/a2a/my-agent/invoke", Permissions.A2A_INVOKE),
+            ("POST", "/a2a/my-agent/jsonrpc", Permissions.A2A_INVOKE),
+        ],
+    )
+    def test_a2a_routes_map_to_declared_permission(self, middleware, method, path, permission):
+        """Each A2A route resolves to the permission its endpoint decorator requires."""
+        assert middleware._check_permission_restrictions(path, method, [permission]) is True
+
+    @pytest.mark.parametrize(
+        "method,path,permission",
+        [
+            ("GET", "/a2a", Permissions.A2A_CREATE),
+            ("POST", "/a2a", Permissions.A2A_READ),
+            ("DELETE", "/a2a/agent-1", Permissions.A2A_UPDATE),
+            ("POST", "/a2a/my-agent/invoke", Permissions.A2A_READ),
+            ("POST", "/a2a/my-agent/jsonrpc", Permissions.A2A_UPDATE),
+        ],
+    )
+    def test_a2a_routes_reject_wrong_permission(self, middleware, method, path, permission):
+        """A token scoped to a different A2A action is denied."""
+        assert middleware._check_permission_restrictions(path, method, [permission]) is False
+
+    @pytest.mark.parametrize(
+        "token_scopes",
+        [
+            ["tools.execute"],
+            ["tools.read"],
+            ["resources.read"],
+            ["prompts.read"],
+            ["tools.read", "resources.read"],
+        ],
+    )
+    @pytest.mark.parametrize("path", ["/sse", "/servers/s1/sse", "/servers/s1/message", "/rpc", "/mcp"])
+    def test_mcp_method_tokens_keep_transport_access(self, middleware, token_scopes, path):
+        """MCP method permissions imply transport access at this layer.
+
+        These paths map to servers.use. The RBAC decorators guard the same endpoints with
+        @require_permission("servers.use"), so both layers must agree — see
+        TestTokenScopeGrants in test_rbac.py for the decorator side of this contract.
+        """
+        method = "GET" if path in ("/sse", "/servers/s1/sse") else "POST"
+        assert middleware._check_permission_restrictions(path, method, token_scopes) is True
+
+    @pytest.mark.parametrize("token_scopes", [["a2a.read"], ["admin.user_management"], ["gateways.read"]])
+    def test_non_mcp_tokens_denied_transport_access(self, middleware, token_scopes):
+        """Tokens without MCP method permissions get no transport compensation."""
+        assert middleware._check_permission_restrictions("/sse", "GET", token_scopes) is False
+
+    def test_a2a_category_wildcard_covers_all_a2a_routes(self, middleware):
+        """An `a2a.*` scope grants every A2A route but nothing outside the category."""
+        assert middleware._check_permission_restrictions("/a2a", "GET", ["a2a.*"]) is True
+        assert middleware._check_permission_restrictions("/a2a/my-agent/invoke", "POST", ["a2a.*"]) is True
+        assert middleware._check_permission_restrictions("/tools", "GET", ["a2a.*"]) is False
+
     @pytest.mark.asyncio
     async def test_admin_permissions_use_canonical_constants(self, middleware):
         """Test that admin endpoint groups use canonical granular permissions."""

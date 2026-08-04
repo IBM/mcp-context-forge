@@ -693,6 +693,7 @@ def _lookup_api_token_sync(token_hash: str) -> Optional[Dict[str, Any]]:
         return {
             "user_email": api_token.user_email,
             "jti": api_token.jti,
+            "resource_scopes": api_token.resource_scopes or [],
         }
 
 
@@ -1285,8 +1286,67 @@ async def get_current_user(
     """
     clear_trace_context()
 
+    def _store_jwt_token_scopes(payload: dict) -> None:
+        """Store a JWT API token's permission scopes on request.state for Layer 1 enforcement.
+
+        Called from every branch of ``_set_auth_method_from_payload()`` that classifies the
+        caller as an API token, so scope extraction happens on all three JWT authentication
+        paths (auth-cache hit, batched query, and individual-query fallback).
+
+        NAMING NOTE: JWT tokens carry permissions under the nested ``scopes.permissions``
+        claim, while database API tokens use the ``resource_scopes`` column. Both converge
+        on ``request.state.token_scopes`` so enforcement has a single input.
+
+        Semantics (kept aligned with TokenScopingMiddleware._check_permission_restrictions()
+        and TokenCatalogService._generate_token()):
+          * ``scopes`` claim absent -> legacy token predating the claim; no Layer 1
+            restriction is recorded and RBAC (Layer 2) alone applies.
+          * ``permissions`` empty -> "inherit from RBAC at runtime", not deny-all.
+          * ``permissions`` malformed (not a list) or ``scopes`` malformed (not an object)
+            -> reject the token, since a scope claim we cannot parse must not fail open.
+
+        Args:
+            payload: Decoded JWT payload
+
+        Raises:
+            HTTPException: If the ``scopes`` claim is present but structurally invalid.
+        """
+        if not request:
+            return
+
+        scopes = payload.get("scopes")
+        if scopes is None:
+            # Legacy API tokens issued before the scopes claim existed. Absent scopes
+            # means "no Layer 1 restriction"; RBAC still gates every operation.
+            return
+
+        if not isinstance(scopes, dict):
+            logger.warning(f"JWT API token rejected: scopes claim is {type(scopes).__name__}, expected an object. Regenerate the token with the correct structure.")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token: malformed scopes field",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        permissions = scopes.get("permissions")
+        if permissions is None:
+            permissions = []
+        if not isinstance(permissions, list):
+            logger.warning(f"JWT API token rejected: scopes.permissions is {type(permissions).__name__}, expected a list.")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token: malformed scopes field",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        request.state.token_scopes = permissions
+
     async def _set_auth_method_from_payload(payload: dict) -> None:
         """Set request.state.auth_method based on JWT payload.
+
+        Also extracts API token permission scopes into request.state.token_scopes so that
+        Layer 1 enforcement in the RBAC decorators sees them regardless of which
+        authentication path served the request.
 
         Args:
             payload: Decoded JWT payload
@@ -1301,6 +1361,7 @@ async def get_current_user(
 
         if auth_provider == "api_token":
             request.state.auth_method = "api_token"
+            _store_jwt_token_scopes(payload)
             jti = payload.get("jti")
             if jti:
                 request.state.jti = jti
@@ -1324,6 +1385,7 @@ async def get_current_user(
             if is_legacy_api_token:
                 request.state.auth_method = "api_token"
                 request.state.jti = jti_for_check
+                _store_jwt_token_scopes(payload)
                 logger.debug(f"Legacy API token detected via DB lookup (JTI: ...{jti_for_check[-8:]})")
                 try:
                     await asyncio.to_thread(_update_api_token_last_used_sync, jti_for_check)
@@ -1858,6 +1920,9 @@ async def get_current_user(
             # Store JTI for use in middleware (e.g., token usage logging)
             if jti:
                 request.state.jti = jti
+
+            # Sets auth_method and, for API tokens, request.state.token_scopes.
+            # Session tokens leave token_scopes unset so Layer 1 is skipped and RBAC alone applies.
             await _set_auth_method_from_payload(payload)
 
     except HTTPException:
@@ -1901,6 +1966,12 @@ async def get_current_user(
                     # Store JTI for use in middleware
                     if "jti" in api_token_info:
                         request.state.jti = api_token_info["jti"]
+                    # Store token scopes for permission checking (database API tokens).
+                    # NAMING NOTE: database API tokens carry permissions in the "resource_scopes"
+                    # column while JWT tokens use the nested "scopes.permissions" claim; both
+                    # converge on "token_scopes" here so enforcement has a single input.
+                    # See _store_jwt_token_scopes() above for the JWT-side extraction.
+                    request.state.token_scopes = api_token_info.get("resource_scopes") or []
             else:
                 logger.debug("API token not found in database")
                 logger.debug("No valid authentication method found")

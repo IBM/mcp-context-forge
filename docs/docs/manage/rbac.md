@@ -367,7 +367,7 @@ These checks are aligned with equivalent REST endpoints.
 | Method / Endpoint | Required Permission | Notes |
 |-------------------|---------------------|-------|
 | JSON-RPC `logging/setLevel` (`POST /rpc`) | `admin.system_config` | Same permission as `POST /logging/setLevel` |
-| Utility SSE (`GET /sse`) | `tools.execute` | Canonical tool execution permission |
+| Utility SSE (`GET /sse`) | `servers.use` | Transport access. Tokens holding an MCP method permission (`tools.*`, `resources.*`, `prompts.*`) satisfy this implicitly — see [Token Scope Semantics](#token-scope-semantics). |
 | Utility message relay (`POST /message`) | `tools.execute` | Canonical tool execution permission |
 | `GET`/`PATCH /admin/runtime/mcp-mode` | `admin.system_config` | Runtime override of public `/mcp` ingress (`shadow ↔ edge`); see [Rust MCP Runtime](../architecture/rust-mcp-runtime.md#runtime-mode-override). |
 | `GET`/`PATCH /admin/runtime/a2a-mode` | `admin.system_config` | Runtime override of registered-A2A invocation path (`shadow ↔ edge`). |
@@ -493,6 +493,40 @@ Permissions are defined in the `Permissions` class and control what actions user
 | **A2A** | a2a.create, a2a.read, a2a.update, a2a.delete, a2a.invoke |
 | **Tags** | tags.read, tags.create, tags.update, tags.delete |
 | **Wildcard** | `*` (all permissions) |
+
+### Token Scope Semantics
+
+An API token carries its own permission list (Layer 1), evaluated *before* the RBAC role
+check (Layer 2). Both must allow the operation. `token_scope_grants()` in
+`mcpgateway/middleware/rbac.py` is the single policy point for these rules.
+
+| Token scopes | Meaning | Layer 1 result |
+|--------------|---------|----------------|
+| No `scopes` claim | Legacy token predating the claim | No restriction — RBAC alone applies |
+| `[]` (empty) | **"Inherit from RBAC at runtime"** — the default for tokens created without an explicit scope | No restriction — RBAC alone applies |
+| `["*"]` | Full access | Allowed |
+| `["tools.read"]` | Exact grant | Allowed only for `tools.read` |
+
+!!! warning "Empty scopes are not deny-all"
+    A token created without an explicit scope is issued with `permissions: []`, which means
+    *defer to RBAC*, **not** *deny everything*. Such a token can do whatever its user's roles
+    allow. To restrict a token, grant it an explicit, minimal permission list.
+
+!!! note "Changing a token's scope requires reissuing it"
+    Layer 1 reads the permissions embedded in the token's signed claim. Updating a token's
+    scope records the change in the database but does not re-sign the existing token, so a
+    token already in circulation keeps the scopes it was issued with. Issue a new token to
+    apply a scope change.
+
+**Category wildcards (`tools.*`)** are *not* accepted when creating a token — the token API
+requires each entry to be either `*` or an exact `resource.action` pair. Category wildcards
+are meaningful only for RBAC *role* permissions, where they are used to decide what a caller
+may delegate into a new token.
+
+**Transport access:** a token holding any MCP method permission (`tools.*`, `resources.*`,
+`prompts.*`) implicitly satisfies `servers.use`, which guards the MCP transport endpoints.
+Without this, an execute-only token could not open the transport it needs. New tokens receive
+`servers.use` explicitly at creation; the implicit grant covers tokens issued earlier.
 
 ### Permission Checking Flow
 
