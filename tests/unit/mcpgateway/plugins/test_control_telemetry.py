@@ -888,6 +888,26 @@ class TestExportCapTruncation:
 
         assert "cpex.control.truncated" not in captured_attributes
 
+    def test_mark_export_cap_dropped_is_idempotent(self):
+        """Calling mark_export_cap_dropped() more than once must not inflate truncated.
+
+        Regression guard for the idempotency bug where repeated calls on the same
+        accumulator (e.g. on a retry path) used += and doubled the count.
+        """
+        acc = ControlTelemetryAccumulator()
+        acc.mark_export_cap_dropped(7)
+        acc.mark_export_cap_dropped(7)  # second call must be a no-op
+        acc.mark_export_cap_dropped(7)  # third call must also be a no-op
+        assert acc.truncated == 7  # still 7, not 21
+
+    def test_mark_export_cap_dropped_zero_then_positive(self):
+        """Zero call does not lock the slot; a subsequent positive call must succeed."""
+        acc = ControlTelemetryAccumulator()
+        acc.mark_export_cap_dropped(0)  # no-op — must not consume the single-write slot
+        acc.mark_export_cap_dropped(4)  # first positive call — must succeed
+        acc.mark_export_cap_dropped(4)  # second call — must be a no-op
+        assert acc.truncated == 4
+
 
 # ---------------------------------------------------------------------------
 # Item 6/7 — records_received counter in aggregate()

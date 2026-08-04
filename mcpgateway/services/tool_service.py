@@ -5273,6 +5273,25 @@ class ToolService(BaseService):
         # exception handlers and the finally block for partial pre-deny telemetry.
         _ctl_acc = ControlTelemetryAccumulator()
 
+        def _emit_ctl_telemetry() -> None:
+            """Flush CPEX control-execution telemetry for this invocation (best-effort).
+
+            Thin wrapper that captures the invocation-local ``_ctl_acc``, ``name``,
+            and identity fields so all five exit paths (normal return, PluginViolationError,
+            PluginError, ToolTimeoutError, BaseException) call a single canonical site.
+            Identity mapping is provisional — see issue #5785 follow-on for a dedicated
+            agent-identity model:
+              agent_id     = app_user_email ?? user_email  (authenticated caller email)
+              binding_name = gateway_name ?? server_id     (closest proxy for binding context)
+            """
+            record_control_telemetry(
+                trace_id=current_trace_id.get(),
+                accumulator=_ctl_acc,
+                tool_name=name,
+                agent_id=app_user_email or user_email or "",
+                binding_name=gateway_name or server_id or "",
+            )
+
         start_time = time.monotonic()
         success = False
         error_message = None
@@ -6601,25 +6620,10 @@ class ToolService(BaseService):
 
                 # Emit CPEX control-execution telemetry for this invocation (best-effort).
                 # Placed here on the normal-return path so both pre and post records are
-                # accumulated before emitting.  The PluginViolationError re-raise below
-                # also calls this so partial pre-deny telemetry is not lost.
-                #
-                # Identity mapping (provisional — see issue #5785 follow-on for a dedicated
-                # agent-identity model):
-                #   agent_id     = app_user_email ?? user_email — the authenticated caller email.
-                #                  This is a human identity field and is high-cardinality; avoid
-                #                  using it in metric aggregations or OTel cardinality-sensitive paths.
-                #                  GDPR/data-residency implications apply in regulated environments.
-                #   binding_name = gateway_name ?? server_id — the closest available proxy for a
-                #                  "control binding" context.  Gateway name is a registry concept,
-                #                  not a control-binding concept; interpretation may evolve.
-                record_control_telemetry(
-                    trace_id=current_trace_id.get(),
-                    accumulator=_ctl_acc,
-                    tool_name=name,
-                    agent_id=app_user_email or user_email or "",
-                    binding_name=gateway_name or server_id or "",
-                )
+                # accumulated before emitting.  Exception paths below also call this helper
+                # so partial pre-deny / error telemetry is never lost.
+                # Identity mapping rationale: see _emit_ctl_telemetry() docstring above.
+                _emit_ctl_telemetry()
                 return tool_result
             except PluginViolationError:
                 # Deliberate policy denial — emit partial telemetry so the summary span captures
@@ -6629,13 +6633,7 @@ class ToolService(BaseService):
                 # executions list (see cpex/framework/manager.py:680-682).  _ctl_acc therefore
                 # contains only records from plugins that ran before the denier.
                 # Upstream CPEX gap tracked in issue #5785 follow-on.
-                record_control_telemetry(  # identity mapping: see normal-return path comment above
-                    trace_id=current_trace_id.get(),
-                    accumulator=_ctl_acc,
-                    tool_name=name,
-                    agent_id=app_user_email or user_email or "",
-                    binding_name=gateway_name or server_id or "",
-                )
+                _emit_ctl_telemetry()
                 raise
             except PluginError:
                 # Plugin outage (crash/timeout/misconfiguration) — mark the accumulator so
@@ -6643,25 +6641,13 @@ class ToolService(BaseService):
                 # telemetry (even when the accumulator is empty, e.g. first-plugin failure),
                 # and do NOT treat this as a policy denial (effective_allowed stays True).
                 _ctl_acc.mark_plugin_error()
-                record_control_telemetry(
-                    trace_id=current_trace_id.get(),
-                    accumulator=_ctl_acc,
-                    tool_name=name,
-                    agent_id=app_user_email or user_email or "",
-                    binding_name=gateway_name or server_id or "",
-                )
+                _emit_ctl_telemetry()
                 raise
             except ToolTimeoutError as e:
                 # ToolTimeoutError is raised by timeout handlers which already called tool_post_invoke.
                 # Do NOT call post_invoke again — the retry_delay_ms signal is carried on the exception.
                 # Emit partial telemetry before retrying or re-raising so timeout records are not lost.
-                record_control_telemetry(  # identity mapping: see normal-return path comment above
-                    trace_id=current_trace_id.get(),
-                    accumulator=_ctl_acc,
-                    tool_name=name,
-                    agent_id=app_user_email or user_email or "",
-                    binding_name=gateway_name or server_id or "",
-                )
+                _emit_ctl_telemetry()
                 error_message = str(e)
                 if span:
                     set_span_error(span, error_message)
@@ -6729,13 +6715,7 @@ class ToolService(BaseService):
                         logger.debug("Failed to invoke post-invoke plugins on exception: %s", plugin_exc)
 
                 # Emit partial telemetry for unhandled exceptions (post-hook records already added above).
-                record_control_telemetry(  # identity mapping: see normal-return path comment above
-                    trace_id=current_trace_id.get(),
-                    accumulator=_ctl_acc,
-                    tool_name=name,
-                    agent_id=app_user_email or user_email or "",
-                    binding_name=gateway_name or server_id or "",
-                )
+                _emit_ctl_telemetry()
 
                 # Retry if the plugin requested a delayed retry and we haven't hit the ceiling.
                 # Same counting convention as the success path: retry_attempt is 0-based,

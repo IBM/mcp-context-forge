@@ -7,8 +7,10 @@ Accumulator and emitter for CPEX control-execution telemetry.
 
 Mirrors the structure of ``record_plugin_metrics()`` in ``plugins/utils.py``
 but consumes **trusted** ``ControlExecutionRecord`` fields rather than
-untrusted plugin metadata.  All bounds and sanitization follow the same S4
-principles.
+untrusted plugin metadata.  All bounds and sanitization follow the same
+principles of bounded cardinality and field-level sanitization applied
+throughout the plugin telemetry pipeline (see ``plugins/utils.py`` for the
+shared ``_safe_str``/``_safe_num`` helpers and field-name allowlists).
 
 Architecture
 ------------
@@ -227,9 +229,10 @@ class ControlTelemetryAccumulator:
     def mark_export_cap_dropped(self, count: int) -> None:
         """Record the number of records silently dropped by the export cap.
 
-        Called once per ``record_control_telemetry()`` invocation, after
-        ``_get_max_results()`` is applied, so the ``cpex.control.truncated``
-        summary attribute reflects all three truncation tiers.
+        Idempotent: the first call with ``count > 0`` sets the value; subsequent
+        calls on the same accumulator are no-ops.  This prevents ``cpex.control.truncated``
+        from being inflated when ``record_control_telemetry()`` is called more than once
+        on the same accumulator (e.g. on a retry path or in tests).
 
         Args:
             count: Number of records that exceeded ``CPEX_CONTROL_TELEMETRY_MAX_RESULTS``
@@ -240,9 +243,12 @@ class ControlTelemetryAccumulator:
             >>> acc.mark_export_cap_dropped(5)
             >>> acc.truncated
             5
+            >>> acc.mark_export_cap_dropped(5)  # second call is a no-op
+            >>> acc.truncated
+            5
         """
-        if count > 0:
-            self._export_cap_dropped += count
+        if count > 0 and self._export_cap_dropped == 0:
+            self._export_cap_dropped = count
 
     @property
     def effective_allowed(self) -> bool:
