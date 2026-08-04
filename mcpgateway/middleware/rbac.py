@@ -738,6 +738,9 @@ async def check_permission_inline(
     never raises for a denial — it returns ``False`` so callers can degrade a response
     (e.g. omit a section of a feed) instead of rejecting the request.
 
+    Layer 1 (API token scopes) is enforced here, before plugin hooks and RBAC, so direct
+    callers get the same gate as the ``@require_permission`` decorator.
+
     Args:
         user_context: Authenticated user context dict; must contain ``email``.
         permission: Permission string to check (e.g. ``"security:read"``).
@@ -769,6 +772,16 @@ async def check_permission_inline(
         False
     """
     if not user_context or not isinstance(user_context, dict) or "email" not in user_context:
+        return False
+
+    # SECURITY: Check API token scopes BEFORE plugin hooks and RBAC (Layer 1).
+    # A scoped API token must carry the required permission; this is independent of
+    # the RBAC role checks below (Layer 2). Session tokens and tokens whose scopes
+    # are empty ("inherit from RBAC") pass through — see token_scope_grants().
+    token_scopes = user_context.get("token_scopes")
+    if not token_scope_grants(token_scopes, permission):
+        # Log detailed info server-side but return generic error message to avoid permission disclosure
+        logger.warning(f"API token scope check failed: user={user_context['email']}, permission={permission}, token_scopes={token_scopes}")
         return False
 
     # First, check if any plugins want to handle permission checking
@@ -963,16 +976,6 @@ def require_permission(permission: str, resource_type: Optional[str] = None, all
             user_context = kwargs.get("user") or kwargs.get("_user") or kwargs.get("current_user") or kwargs.get("current_user_ctx")
             if not user_context or not isinstance(user_context, dict) or "email" not in user_context:
                 raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User authentication required")
-
-            # SECURITY: Check API token scopes BEFORE RBAC (Layer 1)
-            # A scoped API token must carry the required permission; this is independent of
-            # the RBAC role checks below (Layer 2). Session tokens and tokens whose scopes
-            # are empty ("inherit from RBAC") pass through — see token_scope_grants().
-            token_scopes = user_context.get("token_scopes")
-            if not token_scope_grants(token_scopes, permission):
-                # Log detailed info server-side but return generic error message to avoid permission disclosure
-                logger.warning(f"API token scope check failed: user={user_context['email']}, permission={permission}, token_scopes={token_scopes}")
-                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_ACCESS_DENIED_MSG)
 
             team_id, check_any_team = await _resolve_team_and_check_mode(user_context, kwargs)
 

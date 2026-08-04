@@ -34,6 +34,7 @@ from mcpgateway.db import (
     StructuredLogEntry,
 )
 from mcpgateway.middleware.rbac import check_permission_inline, get_current_user_with_permissions, require_permission
+from mcpgateway.services.audit_trail_service import DataClassification
 from mcpgateway.services.log_aggregator import get_log_aggregator
 
 logger = logging.getLogger(__name__)
@@ -361,7 +362,8 @@ def _audit_to_activity(row: AuditTrail) -> ActivityItem:
         ActivityItem: Feed entry with server-rendered title, description and status.
     """
     label = _RESOURCE_LABELS.get(row.resource_type) or row.resource_type.replace("_", " ").capitalize()
-    verb = _ACTION_VERBS.get(row.action, row.action)
+    action_text = row.action.replace("_", " ")
+    verb = _ACTION_VERBS.get(row.action, action_text)
     actor = row.user_email or row.user_id or ""
     resource_name = row.resource_name or row.resource_id or ""
     name_part = f" '{resource_name}'" if resource_name else ""
@@ -377,8 +379,8 @@ def _audit_to_activity(row: AuditTrail) -> ActivityItem:
         status = "success"
 
     if status == "error":
-        title = f"{label} {row.action} failed"
-        description = f"{label}{name_part} {row.action} failed."
+        title = f"{label} {action_text} failed"
+        description = f"{label}{name_part} {action_text} failed."
         if row.error_message:
             description += f" {row.error_message}"
     else:
@@ -866,14 +868,20 @@ async def get_activity_feed(
         if not is_admin_feed:
             # Filtered in SQL so restricted-row counts are not observable to non-admins.
             # The IS NULL arm is required: a bare != silently drops NULL-classified rows.
-            conditions.append(or_(AuditTrail.data_classification.is_(None), AuditTrail.data_classification != "restricted"))
+            # Only `restricted` is filtered; `confidential` rows stay visible and already
+            # render as a warning via requires_review.
+            conditions.append(or_(AuditTrail.data_classification.is_(None), AuditTrail.data_classification != DataClassification.RESTRICTED.value))
             # AuditTrail has no owner_email/visibility columns, so scoping is team-based
-            # (public NULL-team rows + own teams) rather than the usual
-            # get_scoped_resource_access_context public+team+own-private shape.
+            # rather than the usual get_scoped_resource_access_context
+            # public+team+own-private shape. A NULL team_id means "the writer passed no
+            # team" (e.g. tool_service bulk imports), not "public", so those rows are
+            # visible only to their actor. user_email None fails closed: SQL NULL
+            # comparison matches no row.
+            null_team_own = and_(AuditTrail.team_id.is_(None), AuditTrail.user_email == user_email)
             if token_teams:
-                conditions.append(or_(AuditTrail.team_id.is_(None), AuditTrail.team_id.in_(token_teams)))
+                conditions.append(or_(null_team_own, AuditTrail.team_id.in_(token_teams)))
             else:
-                conditions.append(AuditTrail.team_id.is_(None))
+                conditions.append(null_team_own)
 
         stmt = select(AuditTrail)
         if conditions:
@@ -881,7 +889,9 @@ async def get_activity_feed(
         audit_rows = db.execute(stmt.order_by(desc(AuditTrail.timestamp), desc(AuditTrail.id)).limit(limit)).scalars().all()
 
         security_rows = []
-        if await check_permission_inline(user, Permissions.SECURITY_READ, db=db, request=request):
+        # check_any_team mirrors what the decorator's team resolver picks for this route
+        # (no team kwarg on a read endpoint -> any-team aggregation).
+        if await check_permission_inline(user, Permissions.SECURITY_READ, check_any_team=True, db=db, request=request):
             if is_admin_feed or user_email:
                 sec_conditions = []
                 if since:
@@ -901,6 +911,8 @@ async def get_activity_feed(
 
         return ActivityListResponse(items=items[:limit])
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Activity feed query failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Activity feed query failed")
