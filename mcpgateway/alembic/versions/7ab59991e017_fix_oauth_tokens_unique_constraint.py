@@ -15,7 +15,7 @@ multiple ContextForge users from storing tokens for the same OAuth provider user
 This migration:
 1. Drops the old UniqueConstraint 'unique_gateway_user' on (gateway_id, user_id)
 2. Creates the new UniqueConstraint 'uq_oauth_gateway_user' on (gateway_id, app_user_email)
-3. Keeps idx_oauth_gateway_user for query performance
+3. Drops redundant idx_oauth_gateway_user (uniqueness enforced by constraint)
 
     Revision ID: 7ab59991e017
     Revises: c9f8e7d6a4b3

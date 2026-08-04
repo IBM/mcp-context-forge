@@ -280,10 +280,10 @@ CREATE TABLE oauth_tokens (
     FOREIGN KEY (gateway_id) REFERENCES gateways(id) ON DELETE CASCADE,
     FOREIGN KEY (app_user_email) REFERENCES email_users(email) ON DELETE CASCADE
 );
-
-CREATE UNIQUE INDEX idx_oauth_gateway_user
-    ON oauth_tokens (gateway_id, app_user_email);
 ```
+
+!!! note "Index Redundancy"
+    Earlier versions created a separate unique index `idx_oauth_gateway_user` on `(gateway_id, app_user_email)`, but migration `7ab59991e017` removes it as redundant—the `UNIQUE` constraint already creates an index automatically.
 
 Historical note: older deployments used `unique_gateway_user` on `(gateway_id, user_id)`. That constraint was removed because multiple ContextForge users can legitimately map to the same upstream OAuth provider `user_id`.
 
