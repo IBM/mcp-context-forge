@@ -1113,7 +1113,7 @@ class TestIcaMeteringExporterPlugin:
             {
                 "enabled": True,
                 "metering_url": "http://localhost:8080/event",
-                "jwt_secret": "test-secret-key-for-jwt-generation-test",
+                "jwt_secret": "test-secret-key-for-jwt-generation-test",  # pragma: allowlist secret
             },
             mock_send=False,
         )
