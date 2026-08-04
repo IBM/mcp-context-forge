@@ -22,7 +22,6 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 # First-Party
-import cpex.framework as plugin_framework
 from mcpgateway.db import AuditTrail, Base, SecurityEvent
 from mcpgateway.middleware import rbac as rbac_module
 from mcpgateway.routers import log_search
@@ -55,7 +54,7 @@ def no_plugin_manager(monkeypatch: pytest.MonkeyPatch):
     async def _no_plugin_manager():
         return None
 
-    monkeypatch.setattr(plugin_framework, "get_plugin_manager", _no_plugin_manager)
+    monkeypatch.setattr("mcpgateway.plugins.get_plugin_manager", _no_plugin_manager)
 
 
 @pytest.fixture
@@ -64,10 +63,12 @@ def grant_permissions(monkeypatch: pytest.MonkeyPatch):
 
     def _configure(denied=()):
         async def _check(self, **kwargs):  # type: ignore[no-self-use]
+            _configure.calls.append(kwargs)
             return kwargs.get("permission") not in denied
 
         monkeypatch.setattr(rbac_module.PermissionService, "check_permission", _check)
 
+    _configure.calls = []
     return _configure
 
 
@@ -144,7 +145,7 @@ def make_security(db, *, offset_seconds=0, severity="HIGH", user_email="user@exa
     return row
 
 
-async def call_feed(db, *, user_email="user@example.com", limit=50, since=None):
+async def call_feed(db, *, user_email="user@example.com", limit=50, since=None, token_scopes=None):
     """Invoke the activity feed handler directly.
 
     Args:
@@ -152,6 +153,7 @@ async def call_feed(db, *, user_email="user@example.com", limit=50, since=None):
         user_email: Email placed in the authenticated user context.
         limit: Maximum merged items to request.
         since: Strictly-after timestamp filter.
+        token_scopes: Layer 1 token scopes for the user context, or None for unscoped.
 
     Returns:
         ActivityListResponse: The handler's response.
@@ -160,7 +162,7 @@ async def call_feed(db, *, user_email="user@example.com", limit=50, since=None):
         request=MagicMock(),
         limit=limit,
         since=since,
-        user={"email": user_email, "db": db},
+        user={"email": user_email, "db": db, "token_scopes": token_scopes},
         db=db,
     )
 
@@ -278,30 +280,32 @@ async def test_non_admin_sees_only_own_security_events(db_session, grant_permiss
 
 @pytest.mark.asyncio
 async def test_team_scoped_feed_excludes_other_teams(db_session, grant_permissions, scope):
-    """A team-scoped token sees its own team's rows plus public (NULL-team) rows."""
+    """A team-scoped token sees its own team's rows plus NULL-team rows it authored."""
     grant_permissions()
     scope("user@x.com", ["team-a"])
     make_audit(db_session, offset_seconds=10, team_id="team-a", resource_name="a-row")
     make_audit(db_session, offset_seconds=20, team_id="team-b", resource_name="b-row")
-    make_audit(db_session, offset_seconds=30, team_id=None, resource_name="public-row")
+    make_audit(db_session, offset_seconds=30, team_id=None, user_email="user@x.com", resource_name="own-teamless")
+    make_audit(db_session, offset_seconds=40, team_id=None, user_email="other@x.com", resource_name="foreign-teamless")
 
     response = await call_feed(db_session, user_email="user@x.com")
 
     names = {i.resource_name for i in response.items}
-    assert names == {"a-row", "public-row"}
+    assert names == {"a-row", "own-teamless"}
 
 
 @pytest.mark.asyncio
-async def test_public_only_token_sees_only_null_team_rows(db_session, grant_permissions, scope):
-    """An empty team list is public-only: team-owned audit rows are excluded."""
+async def test_public_only_token_sees_only_own_null_team_rows(db_session, grant_permissions, scope):
+    """NULL team_id means "no team was recorded", not "public": only the actor sees it."""
     grant_permissions()
     scope("user@x.com", [])
     make_audit(db_session, offset_seconds=10, team_id="team-a", resource_name="a-row")
-    make_audit(db_session, offset_seconds=20, team_id=None, resource_name="public-row")
+    make_audit(db_session, offset_seconds=20, team_id=None, user_email="user@x.com", resource_name="own-teamless")
+    make_audit(db_session, offset_seconds=30, team_id=None, user_email="other@x.com", resource_name="foreign-teamless")
 
     response = await call_feed(db_session, user_email="user@x.com")
 
-    assert [i.resource_name for i in response.items] == ["public-row"]
+    assert [i.resource_name for i in response.items] == ["own-teamless"]
 
 
 @pytest.mark.asyncio
@@ -343,6 +347,70 @@ async def test_error_path_returns_500(grant_permissions, scope):
 
     assert exc_info.value.status_code == 500
     assert exc_info.value.detail == "Activity feed query failed"
+
+
+@pytest.mark.asyncio
+async def test_token_without_security_scope_gets_audit_only(db_session, grant_permissions, scope):
+    """Layer 1: a token scoped to audit:read only drops security rows even when RBAC grants all."""
+    grant_permissions()
+    scope("admin@example.com", None)
+    make_audit(db_session, offset_seconds=10)
+    make_security(db_session, offset_seconds=20)
+
+    response = await call_feed(db_session, token_scopes=["audit:read"])
+
+    assert [i.source for i in response.items] == ["audit"]
+
+
+@pytest.mark.asyncio
+async def test_token_with_security_scope_keeps_both_sources(db_session, grant_permissions, scope):
+    """A token carrying both scopes still sees the merged feed."""
+    grant_permissions()
+    scope("admin@example.com", None)
+    make_audit(db_session, offset_seconds=10)
+    make_security(db_session, offset_seconds=20)
+
+    response = await call_feed(db_session, token_scopes=["audit:read", "security:read"])
+
+    assert {i.source for i in response.items} == {"audit", "security"}
+
+
+@pytest.mark.asyncio
+async def test_security_read_is_checked_across_all_teams(db_session, grant_permissions, scope):
+    """The additive security:read check aggregates across teams, matching the decorator."""
+    grant_permissions()
+    scope("user@x.com", ["team-a"])
+    make_audit(db_session, offset_seconds=10, team_id="team-a")
+
+    await call_feed(db_session, user_email="user@x.com")
+
+    security_calls = [c for c in grant_permissions.calls if c.get("permission") == "security:read"]
+    assert len(security_calls) == 1
+    assert security_calls[0]["check_any_team"] is True
+
+
+@pytest.mark.asyncio
+async def test_missing_audit_read_is_rejected(db_session, grant_permissions, scope):
+    """Entry stays gated: without audit:read the request is denied, not narrowed."""
+    grant_permissions(denied={"audit:read"})
+    scope("user@x.com", ["team-a"])
+
+    with pytest.raises(HTTPException) as exc_info:
+        await call_feed(db_session, user_email="user@x.com")
+
+    assert exc_info.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_unauthenticated_request_is_rejected(db_session, grant_permissions, scope):
+    """An absent user context is a 401 before any query runs."""
+    grant_permissions()
+    scope("user@x.com", ["team-a"])
+
+    with pytest.raises(HTTPException) as exc_info:
+        await log_search.get_activity_feed(request=MagicMock(), limit=50, since=None, user=None, db=db_session)
+
+    assert exc_info.value.status_code == 401
 
 
 class TestAuditMapper:
@@ -406,6 +474,16 @@ class TestAuditMapper:
         assert item.resource_name == ""
         assert item.correlation_id == ""
         assert item.description == "Tool was deleted by u."
+
+    def test_unmapped_action_is_humanised(self):
+        """An action with no verb mapping loses its underscores instead of leaking them."""
+        row = AuditTrail(id="6", timestamp=BASE_TIME, action="bulk_create_tools", resource_type="tool", user_id="u", success=True, requires_review=False)
+
+        assert log_search._audit_to_activity(row).title == "Tool bulk create tools"
+
+        row.success = False
+
+        assert log_search._audit_to_activity(row).title == "Tool bulk create tools failed"
 
 
 class TestSecurityMapper:
