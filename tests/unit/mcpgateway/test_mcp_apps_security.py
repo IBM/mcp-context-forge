@@ -967,6 +967,10 @@ class TestAppBridgeEndpoints:
     async def test_rpc_resources_read_maps_missing_uri_and_lookup_failures(self, monkeypatch, mock_db, valid_app_session):
         """AppBridge resources/read should map missing URIs and resource errors to JSON-RPC codes."""
         # First-Party
+        from cpex.framework.errors import PluginError, PluginViolationError
+        from cpex.framework.models import PluginErrorModel, PluginViolation
+
+        # First-Party
         from mcpgateway import main as main_mod
 
         monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", True)
@@ -996,6 +1000,16 @@ class TestAppBridgeEndpoints:
             with patch.object(main_mod.resource_service, "read_resource", new=AsyncMock(side_effect=ResourceError("boom"))):
                 result = await main_mod.handle_mcp_app_session_rpc.__wrapped__("test-session-id", request=request, db=mock_db, user={"email": "user@example.com"})
             assert result["error"]["code"] == -32000
+
+            violation = PluginViolation(reason="policy denied", description="blocked", code="DENIED", mcp_error_code=-32042)
+            with patch.object(main_mod.resource_service, "read_resource", new=AsyncMock(side_effect=PluginViolationError("blocked", violation=violation))):
+                result = await main_mod.handle_mcp_app_session_rpc.__wrapped__("test-session-id", request=request, db=mock_db, user={"email": "user@example.com"})
+            assert result["error"]["code"] == -32042
+
+            plugin_error = PluginErrorModel(message="plugin crashed", plugin_name="test-plugin", code="CRASH", mcp_error_code=-32043)
+            with patch.object(main_mod.resource_service, "read_resource", new=AsyncMock(side_effect=PluginError(error=plugin_error))):
+                result = await main_mod.handle_mcp_app_session_rpc.__wrapped__("test-session-id", request=request, db=mock_db, user={"email": "user@example.com"})
+            assert result["error"]["code"] == -32043
 
             with patch.object(main_mod.resource_service, "read_resource", new=AsyncMock(side_effect=RuntimeError("boom"))):
                 result = await main_mod.handle_mcp_app_session_rpc.__wrapped__("test-session-id", request=request, db=mock_db, user={"email": "user@example.com"})

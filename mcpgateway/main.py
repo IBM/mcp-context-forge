@@ -10607,12 +10607,29 @@ async def create_mcp_app_session(request: Request, db: Session = Depends(get_db)
     )
 
 
+def _app_bridge_request_headers(request: Request) -> Dict[str, str]:
+    """Build the header passthrough for an AppBridge call.
+
+    The gateway routing header is stripped so an app cannot redirect its own
+    call to a different gateway than the one its session is bound to.
+
+    Args:
+        request: Incoming AppBridge RPC request.
+
+    Returns:
+        Lowercased request headers without the gateway routing header.
+    """
+    request_headers = {k.lower(): v for k, v in request.headers.items()}
+    request_headers.pop("x-context-forge-gateway-id", None)
+    return request_headers
+
+
 def _record_app_bridge_log(app_session, params: Dict[str, Any]) -> None:
     """Record a log notification sent by an MCP App.
 
     The MCP Apps lifecycle terminates ``notifications/message`` at the host, so
     the payload is recorded for observability and never proxied upstream. The
-    contents are attacker-influenced, so the message is truncated and logged as
+    contents are attacker-influenced, so every field is truncated and logged as
     data rather than interpolated into the format string.
 
     Args:
@@ -10623,7 +10640,7 @@ def _record_app_bridge_log(app_session, params: Dict[str, Any]) -> None:
     origin_logger = params.get("logger")
     data = params.get("data")
     logger.info(
-        "AppBridge log notification session=%s server=%s level=%r logger=%r data=%.500r",
+        "AppBridge log notification session=%s server=%s level=%.100r logger=%.100r data=%.500r",
         app_session.id,
         app_session.server_id,
         level,
@@ -10655,8 +10672,7 @@ async def _handle_app_bridge_resources_read(db: Session, request: Request, app_s
 
     token_teams = app_session.token_teams
     resource_user_email = None if token_teams is None else app_session.user_email
-    request_headers = {k.lower(): v for k, v in request.headers.items()}
-    request_headers.pop("x-context-forge-gateway-id", None)
+    request_headers = _app_bridge_request_headers(request)
 
     try:
         result = await resource_service.read_resource(
@@ -10717,8 +10733,7 @@ async def _handle_app_bridge_tools_call(db: Session, request: Request, app_sessi
     try:
         token_teams = app_session.token_teams
         tool_user_email = None if token_teams is None else app_session.user_email
-        request_headers = {k.lower(): v for k, v in request.headers.items()}
-        request_headers.pop("x-context-forge-gateway-id", None)
+        request_headers = _app_bridge_request_headers(request)
         result = await tool_service.invoke_tool(
             db=db,
             name=name,
