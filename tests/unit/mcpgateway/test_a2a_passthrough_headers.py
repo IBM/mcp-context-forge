@@ -1421,7 +1421,7 @@ class TestPluginHeaderRefiltering:
 
         filtered = service._refilter_plugin_headers(
             plugin_headers=plugin_headers,
-            agent=agent,
+            passthrough_headers=agent.passthrough_headers,
             feature_flag_enabled=False,  # Sensitive passthrough disabled
         )
 
@@ -1451,7 +1451,7 @@ class TestPluginHeaderRefiltering:
 
         filtered = service._refilter_plugin_headers(
             plugin_headers=plugin_headers,
-            agent=agent,
+            passthrough_headers=agent.passthrough_headers,
             feature_flag_enabled=False,
         )
 
@@ -1483,7 +1483,7 @@ class TestPluginHeaderRefiltering:
 
         filtered = service._refilter_plugin_headers(
             plugin_headers=plugin_headers,
-            agent=agent,
+            passthrough_headers=agent.passthrough_headers,
             feature_flag_enabled=True,  # Sensitive passthrough ENABLED
         )
 

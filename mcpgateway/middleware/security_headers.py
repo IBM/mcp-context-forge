@@ -37,7 +37,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     - Referrer-Policy: Controls referrer information sent with requests
     - Content-Security-Policy: Nonce-based CSP prevents XSS and code injection
     - Strict-Transport-Security: Forces HTTPS connections (when appropriate)
-    - Cache-Control: Prevents Web Cache Deception on authenticated endpoints (no-store, private)
+    - Cache-Control: Prevents Web Cache Deception on authenticated endpoints (no-store, private; no-cache for SSE)
     - Vary: Authorization - Prevents cache key collisions on authenticated endpoints
 
     CSP Implementation:
@@ -58,6 +58,11 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     intermediary caching (CDN, reverse proxy, load balancer) that could expose
     sensitive data to unauthenticated users. The Vary: Authorization header ensures
     cache keys include authentication context.
+
+    SSE Streaming Exception:
+    Server-Sent Events (SSE) endpoints (Content-Type: text/event-stream) preserve
+    their Cache-Control: no-cache header to allow proper streaming behavior while
+    still preventing stale cached streams through revalidation.
 
     Examples:
         >>> middleware = SecurityHeadersMiddleware(None)
@@ -494,14 +499,21 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 
         # Hardened Cache Control for Protected Endpoints
         # Implements defense-in-depth caching policies
-        path = request.url.path
-        root_path = request.scope.get("root_path", "")
-        if root_path and path.startswith(root_path):
-            path = path[len(root_path) :]
-
+        # Note: path was already stripped of root_path at line 389-392
         if self._is_protected_path(path):
-            # Strict cache control: no-store prevents intermediary caching, private restricts to user agent
-            response.headers["Cache-Control"] = "no-store, private"
+            # SSE streaming endpoints need no-cache instead of no-store to allow proper streaming
+            # Check media type before parameters to avoid false positives
+            content_type = response.headers.get("content-type", "").split(";")[0].strip()
+            is_sse_stream = content_type == "text/event-stream"
+
+            if is_sse_stream:
+                # Preserve no-cache for SSE streaming (already set by endpoint)
+                # SSE requires no-cache to allow revalidation while preventing stale cached streams
+                if "Cache-Control" not in response.headers:
+                    response.headers["Cache-Control"] = "no-cache"
+            else:
+                # Strict cache control: no-store prevents intermediary caching, private restricts to user agent
+                response.headers["Cache-Control"] = "no-store, private"
 
             # Legacy protocol compatibility for defense-in-depth
             response.headers["Pragma"] = "no-cache"
