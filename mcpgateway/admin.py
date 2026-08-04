@@ -4258,6 +4258,7 @@ async def admin_ui(
             "a2a_enabled": settings.mcpgateway_a2a_enabled,
             "grpc_enabled": GRPC_AVAILABLE and settings.mcpgateway_grpc_enabled,
             "catalog_enabled": settings.mcpgateway_catalog_enabled,
+            "direct_proxy_enabled": settings.mcpgateway_direct_proxy_enabled,
             "llmchat_enabled": getattr(settings, "llmchat_enabled", False),
             "toolops_enabled": getattr(settings, "toolops_enabled", False),
             "observability_enabled": getattr(settings, "observability_enabled", False),
@@ -13149,6 +13150,8 @@ async def admin_edit_gateway(
             url=str(form["url"]),
             description=str(form.get("description")),
             transport=str(form.get("transport", "SSE")),
+            # Omitted by the UI when direct proxy is disabled; None leaves the stored mode alone.
+            gateway_mode=str(form.get("gateway_mode", "")) or None,
             tags=tags,
             auth_type=auth_type_from_form,
             auth_username=str(form.get("auth_username", "")),

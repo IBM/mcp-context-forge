@@ -71,6 +71,7 @@ export const viewGateway = async function (gatewayId) {
           value: decodeHtml(gateway.description) || "N/A",
         },
         { label: "Visibility", value: gateway.visibility || "private" },
+        { label: "Gateway Mode", value: gateway.gatewayMode || "cache" },
       ];
 
       // Add tags field with special handling
@@ -283,6 +284,9 @@ export const editGateway = async function (gatewayId) {
     const descField = safeGetElement("edit-gateway-description");
 
     const transportField = safeGetElement("edit-gateway-transport");
+    // Absent when MCPGATEWAY_DIRECT_PROXY_ENABLED is false: the template omits
+    // the field, so the form submits no gateway_mode and the stored mode stands.
+    const gatewayModeField = safeGetElement("edit-gateway-mode");
 
     if (nameField && nameValidation.valid) {
       nameField.value = nameValidation.value;
@@ -353,6 +357,10 @@ export const editGateway = async function (gatewayId) {
 
     if (transportField) {
       transportField.value = gateway.transport || "SSE"; // falls back to Admin.SSE(default)
+    }
+
+    if (gatewayModeField) {
+      gatewayModeField.value = gateway.gatewayMode || "cache"; // falls back to cache(default)
     }
 
     const authTypeField = safeGetElement("auth-type-gw-edit");

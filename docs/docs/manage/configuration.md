@@ -246,6 +246,8 @@ capacity has been sized for more frequent snapshots.
 
 **Usage:** Register a gateway with `"gateway_mode": "direct_proxy"`, then send requests with the `X-Context-Forge-Gateway-Id` header set to the gateway's ID. All MCP operations (tools/list, tools/call, resources/list, resources/read) will be proxied directly to the remote server.
 
+**Admin UI:** When `MCPGATEWAY_DIRECT_PROXY_ENABLED=true`, the Gateways tab shows a **Gateway Mode** selector on the add and edit gateway forms, and the gateway detail view reports the current mode. The selector is hidden while the feature is disabled; a gateway already set to `direct_proxy` keeps that mode and is not rewritten by editing it from the UI.
+
 ### ToolOps
 
 ToolOps streamlines the entire workflow by enabling seamless tool enrichment, automated test case generation, and comprehensive tool validation.

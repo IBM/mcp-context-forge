@@ -265,6 +265,147 @@ describe("editGateway", () => {
 });
 
 // ---------------------------------------------------------------------------
+// gateway mode (cache / direct_proxy)
+// ---------------------------------------------------------------------------
+describe("gateway mode", () => {
+  const MODE_SELECT_HTML =
+    '<select id="edit-gateway-mode">' +
+    '<option value="cache">Cache (default)</option>' +
+    '<option value="direct_proxy">Direct proxy</option>' +
+    "</select>";
+
+  function gatewayModeEditHTML({ withModeSelect = true } = {}) {
+    return `
+      <form id="edit-gateway-form"></form>
+      <input id="edit-gateway-name" />
+      <input id="edit-gateway-url" />
+      <textarea id="edit-gateway-description"></textarea>
+      <input id="edit-gateway-tags" />
+      <select id="edit-gateway-transport"><option value="SSE">SSE</option></select>
+      ${withModeSelect ? MODE_SELECT_HTML : ""}
+      <select id="auth-type-gw-edit"><option value="">None</option></select>
+      <input id="edit-gateway-passthrough-headers" />
+      <div id="gateway-edit-modal" class="hidden"></div>
+    `;
+  }
+
+  function mockGateway(gateway) {
+    fetchWithTimeout.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve(gateway),
+    });
+  }
+
+  test("viewGateway displays the gateway mode", async () => {
+    window.ROOT_PATH = "";
+    document.body.innerHTML = `
+      <div id="gateway-details"></div>
+      <div id="gateway-modal" class="hidden"></div>
+    `;
+
+    mockGateway({
+      name: "Direct GW",
+      url: "http://localhost:8080",
+      visibility: "team",
+      gatewayMode: "direct_proxy",
+      enabled: true,
+      reachable: true,
+      tags: [],
+    });
+
+    await viewGateway("gw-direct");
+
+    expect(document.getElementById("gateway-details").textContent).toContain(
+      "Gateway Mode: direct_proxy"
+    );
+  });
+
+  test("viewGateway falls back to cache when the mode is absent", async () => {
+    window.ROOT_PATH = "";
+    document.body.innerHTML = `
+      <div id="gateway-details"></div>
+      <div id="gateway-modal" class="hidden"></div>
+    `;
+
+    mockGateway({
+      name: "Legacy GW",
+      url: "http://localhost:8080",
+      visibility: "team",
+      enabled: true,
+      reachable: true,
+      tags: [],
+    });
+
+    await viewGateway("gw-legacy");
+
+    expect(document.getElementById("gateway-details").textContent).toContain(
+      "Gateway Mode: cache"
+    );
+  });
+
+  test("editGateway selects the stored mode", async () => {
+    window.ROOT_PATH = "";
+    document.body.innerHTML = gatewayModeEditHTML();
+
+    mockGateway({
+      name: "Direct GW",
+      url: "http://localhost:8080",
+      visibility: "team",
+      transport: "SSE",
+      authType: "",
+      gatewayMode: "direct_proxy",
+      tags: [],
+    });
+
+    await editGateway("gw-direct");
+
+    expect(document.getElementById("edit-gateway-mode").value).toBe(
+      "direct_proxy"
+    );
+  });
+
+  test("editGateway falls back to cache when the mode is absent", async () => {
+    window.ROOT_PATH = "";
+    document.body.innerHTML = gatewayModeEditHTML();
+    // Stale value left by a previously edited gateway.
+    document.getElementById("edit-gateway-mode").value = "direct_proxy";
+
+    mockGateway({
+      name: "Legacy GW",
+      url: "http://localhost:8080",
+      visibility: "team",
+      transport: "SSE",
+      authType: "",
+      tags: [],
+    });
+
+    await editGateway("gw-legacy");
+
+    expect(document.getElementById("edit-gateway-mode").value).toBe("cache");
+  });
+
+  test("editGateway succeeds when the mode select is not rendered", async () => {
+    window.ROOT_PATH = "";
+    document.body.innerHTML = gatewayModeEditHTML({ withModeSelect: false });
+
+    mockGateway({
+      name: "Direct GW",
+      url: "http://localhost:8080",
+      visibility: "team",
+      transport: "SSE",
+      authType: "",
+      gatewayMode: "direct_proxy",
+      tags: [],
+    });
+
+    await editGateway("gw-direct");
+
+    expect(showErrorMessage).not.toHaveBeenCalled();
+    expect(openModal).toHaveBeenCalledWith("gateway-edit-modal");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // initGatewaySelect
 // ---------------------------------------------------------------------------
 describe("initGatewaySelect", () => {

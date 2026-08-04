@@ -28,6 +28,7 @@
 - **Startup secret validation** - `JWT_SECRET_KEY`, `AUTH_ENCRYPTION_SECRET`, and `BASIC_AUTH_PASSWORD` are validated at startup with a minimum 32-byte length requirement and a comprehensive blocklist of known-weak values. Weak secrets previously only rejected in non-development environments now fail unconditionally across all environments.
 - **Hardened Helm chart defaults** - `JWT_SECRET_KEY` in `charts/mcp-stack/values.yaml` now defaults to an empty string with deployment guidance, rather than shipping a sample weak key.
 - **Docker Compose and entrypoint hardening** - Compose `:?` variable guards and entrypoint secret checks updated to match the new enforcement policy.
+- **`gateway_mode` silently dropped by the Admin UI edit endpoint** ([#6012](https://github.com/IBM/mcp-context-forge/issues/6012)) - `POST /admin/gateways/{id}/edit` assembled `GatewayUpdate` from an explicit field list that omitted `gateway_mode`, so a submitted value was discarded and the stored mode never changed. The field is now forwarded, and left unset when absent so the stored mode is preserved.
 
 ### Added
 
@@ -36,6 +37,7 @@
 - **`mcpgateway/scripts/init_secrets.py`** - Script backing both Makefile targets; generates secrets using `secrets.token_hex(32)` and rewrites the relevant lines in `.env` without touching unrelated configuration.
 - **`mcpgateway/scripts/validate_env.py`** - Startup validation script invoked by the container entrypoint and `make check-env` that enforces the secret strength policy and surfaces clear remediation guidance.
 - **Popup-Based OAuth Authorization Flow** ([#5660](https://github.com/IBM/mcp-context-forge/issues/5660)) - `GET /oauth/authorize/{gateway_id}` accepts an optional `popup` query parameter that prefixes the generated state token with `popup.`. `GET /oauth/callback` detects the prefix and, for both success and every error path (provider error, missing code, invalid state, `OAuthError`, unexpected exception), responds with a minimal CSP-nonce'd `postMessage` script instead of the full HTML admin page, so a React UI can drive the flow in a popup window without a parent-page navigation. Non-popup flows keep the existing full HTML response unchanged.
+- **Gateway Mode selector in the Admin UI** ([#6012](https://github.com/IBM/mcp-context-forge/issues/6012)) - When `MCPGATEWAY_DIRECT_PROXY_ENABLED=true`, the add and edit gateway forms expose a Gateway Mode selector (`cache` / `direct_proxy`), so a single upstream can be put into pass-through mode without a JSON API call or a manual `UPDATE gateways`. The gateway detail view now reports the stored mode regardless of the flag. The selector is not rendered while the feature is disabled, in which case the form submits no `gateway_mode` and a gateway already stored as `direct_proxy` keeps its mode.
 
 ### Removed
 

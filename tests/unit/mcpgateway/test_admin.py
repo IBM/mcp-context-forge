@@ -3617,6 +3617,45 @@ class TestAdminGatewayRoutes:
         gateway_update = call_args[1].get("gateway") or call_args[0][2]
         assert gateway_update.team_id == existing_team_id
 
+    @pytest.mark.parametrize(
+        ("form_extra", "expected_mode"),
+        [
+            ({"gateway_mode": "direct_proxy"}, "direct_proxy"),
+            ({"gateway_mode": "cache"}, "cache"),
+            # Field omitted (direct proxy disabled): leave the stored mode alone.
+            ({}, None),
+        ],
+    )
+    @patch.object(GatewayService, "update_gateway")
+    async def test_admin_edit_gateway_forwards_gateway_mode(self, mock_update_gateway, mock_request, mock_db, monkeypatch, form_extra, expected_mode):
+        """The gateway mode selector must reach GatewayUpdate, and stay unset when absent."""
+        form_data = FakeForm(
+            {
+                "name": "Updated_Gateway",
+                "url": "http://example.com:9000/sse",
+                "transport": "STREAMABLEHTTP",
+                "visibility": "public",
+                **form_extra,
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        team_service = MagicMock()
+        team_service.verify_team_for_user = AsyncMock(side_effect=lambda email, tid: tid)
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+        monkeypatch.setattr(
+            "mcpgateway.admin.MetadataCapture.extract_modification_metadata",
+            lambda *_args, **_kwargs: {"modified_by": "u", "modified_from_ip": None, "modified_via": "ui", "modified_user_agent": None, "version": 1},
+        )
+        mock_update_gateway.return_value = None
+
+        result = await admin_edit_gateway("gateway-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+
+        assert result.status_code == 200
+        call_args = mock_update_gateway.call_args
+        gateway_update = call_args[1].get("gateway") or call_args[0][2]
+        assert gateway_update.gateway_mode == expected_mode
+
     @patch.object(GatewayService, "set_gateway_state")
     async def test_admin_set_gateway_state_concurrent_calls(self, mock_toggle_status, mock_request, mock_db):
         """Test setting gateway state with simulated concurrent calls."""
@@ -4841,6 +4880,47 @@ class TestAdminUIRoute:
             assert "prompts" in context
             assert "gateways" in context
             assert "roots" in context
+
+    @pytest.mark.parametrize("direct_proxy_enabled", [True, False])
+    @patch.object(ServerService, "list_servers", new_callable=AsyncMock)
+    @patch.object(ToolService, "list_tools", new_callable=AsyncMock)
+    @patch.object(ResourceService, "list_resources", new_callable=AsyncMock)
+    @patch.object(PromptService, "list_prompts", new_callable=AsyncMock)
+    @patch.object(GatewayService, "list_gateways", new_callable=AsyncMock)
+    @patch.object(RootService, "list_roots", new_callable=AsyncMock)
+    async def test_admin_ui_exposes_direct_proxy_flag(
+        self,
+        mock_roots,
+        mock_gateways,
+        mock_prompts,
+        mock_resources,
+        mock_tools,
+        mock_servers,
+        mock_request,
+        mock_db,
+        monkeypatch,
+        direct_proxy_enabled,
+    ):
+        """The gateway mode selector is rendered only when direct proxy is enabled."""
+        mock_servers.return_value = []
+        mock_tools.return_value = ([], None)
+        mock_resources.return_value = []
+        mock_prompts.return_value = []
+        mock_gateways.return_value = []
+        mock_roots.return_value = []
+
+        monkeypatch.setattr(settings, "mcpgateway_direct_proxy_enabled", direct_proxy_enabled)
+
+        await admin_ui(
+            request=mock_request,
+            team_id=None,
+            include_inactive=False,
+            db=mock_db,
+            user={"email": "admin", "db": mock_db},
+        )
+
+        context = mock_request.app.state.templates.TemplateResponse.call_args[0][2]
+        assert context["direct_proxy_enabled"] is direct_proxy_enabled
 
     @patch.object(ServerService, "list_servers", new_callable=AsyncMock)
     @patch.object(ToolService, "list_tools", new_callable=AsyncMock)
