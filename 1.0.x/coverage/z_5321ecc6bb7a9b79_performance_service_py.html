@@ -4,14 +4,14 @@
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
     <title>Coverage for mcpgateway/services/performance_service.py: 97%</title>
     <link rel="icon" sizes="32x32" href="favicon_32_cb_c827f16f.png">
-    <link rel="stylesheet" href="style_cb_9ff733b0.css" type="text/css">
+    <link rel="stylesheet" href="style_cb_4667309f.css" type="text/css">
     <script src="coverage_html_cb_dd2e7eb5.js" defer></script>
 </head>
 <body class="pyfile">
 <header>
     <div class="content">
         <h1>
-            <span class="text">Coverage for </span><b>mcpgateway&#8201;/&#8201;services&#8201;/&#8201;performance_service.py</b>:
+            <span class="text">Coverage for </span><b>mcpgateway<span class="sep">/</span>services<span class="sep">/</span>performance_service.py</b>:
             <span class="pc_cov">97%</span>
         </h1>
         <aside id="help_panel_wrapper">
@@ -60,12 +60,12 @@
             <button type="button" class="exc show_exc button_toggle_exc" value="exc" data-shortcut="x" title="Toggle lines excluded">0<span class="text"> excluded</span></button>
         </h2>
         <p class="text">
-            <a id="prevFileLink" class="nav" href="z_5321ecc6bb7a9b79_observability_service_py.html">&#xab; prev</a> &nbsp; &nbsp;
+            <a id="prevFileLink" class="nav" href="z_5321ecc6bb7a9b79_password_policy_service_py.html">&#xab; prev</a> &nbsp; &nbsp;
             <a id="indexLink" class="nav" href="index.html">&Hat; index</a> &nbsp; &nbsp;
             <a id="nextFileLink" class="nav" href="z_5321ecc6bb7a9b79_performance_tracker_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
-            <a class="nav" href="https://coverage.readthedocs.io/en/7.13.5">coverage.py v7.13.5</a>,
-            created at 2026-04-09 13:58 +0100
+            <a class="nav" href="https://coverage.readthedocs.io/en/7.15.2">coverage.py v7.15.2</a>,
+            created at 2026-07-30 17:23 +0100
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -82,7 +82,7 @@
 <main id="source">
     <p class="pln"><span class="n"><a id="t1" href="#t1">1</a></span><span class="t"><span class="com"># -*- coding: utf-8 -*-</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t2" href="#t2">2</a></span><span class="t"><span class="str">"""Location: ./mcpgateway/services/performance_service.py</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t3" href="#t3">3</a></span><span class="t"><span class="str">Copyright 2025</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t3" href="#t3">3</a></span><span class="t"><span class="str">Copyright contributors to the MCP-CONTEXT-FORGE project</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t4" href="#t4">4</a></span><span class="t"><span class="str">SPDX-License-Identifier: Apache-2.0</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t5" href="#t5">5</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t6" href="#t6">6</a></span><span class="t"><span class="str">Performance Monitoring Service.</span>&nbsp;</span><span class="r"></span></p>
@@ -395,7 +395,7 @@
     <p class="run run2"><span class="n"><a id="t313" href="#t313">313</a></span><span class="t">                    <span class="nam">uptime_seconds</span><span class="op">=</span><span class="nam">uptime</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t314" href="#t314">314</a></span><span class="t">                <span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t315" href="#t315">315</a></span><span class="t">        <span class="key">except</span> <span class="op">(</span><span class="nam">psutil</span><span class="op">.</span><span class="nam">NoSuchProcess</span><span class="op">,</span> <span class="nam">psutil</span><span class="op">.</span><span class="nam">AccessDenied</span><span class="op">)</span> <span class="key">as</span> <span class="nam">e</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t316" href="#t316">316</a></span><span class="t">            <span class="nam">logger</span><span class="op">.</span><span class="nam">warning</span><span class="op">(</span><span class="fst">f"</span><span class="fst">Could not get metrics for process </span><span class="op">{</span><span class="nam">proc</span><span class="op">.</span><span class="nam">pid</span><span class="op">}</span><span class="fst">: </span><span class="op">{</span><span class="nam">e</span><span class="op">}</span><span class="fst">"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t316" href="#t316">316</a></span><span class="t">            <span class="nam">logger</span><span class="op">.</span><span class="nam">warning</span><span class="op">(</span><span class="str">"Could not get metrics for process %s: %s"</span><span class="op">,</span> <span class="nam">proc</span><span class="op">.</span><span class="nam">pid</span><span class="op">,</span> <span class="nam">e</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t317" href="#t317">317</a></span><span class="t">            <span class="key">return</span> <span class="nam">WorkerMetrics</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t318" href="#t318">318</a></span><span class="t">                <span class="nam">pid</span><span class="op">=</span><span class="nam">proc</span><span class="op">.</span><span class="nam">pid</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t319" href="#t319">319</a></span><span class="t">                <span class="nam">cpu_percent</span><span class="op">=</span><span class="num">0.0</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
@@ -513,7 +513,7 @@
     <p class="run"><span class="n"><a id="t431" href="#t431">431</a></span><span class="t">                <span class="nam">self</span><span class="op">.</span><span class="nam">_last_request_time</span> <span class="op">=</span> <span class="nam">current_time</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t432" href="#t432">432</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t433" href="#t433">433</a></span><span class="t">        <span class="key">except</span> <span class="nam">Exception</span> <span class="key">as</span> <span class="nam">e</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t434" href="#t434">434</a></span><span class="t">            <span class="nam">logger</span><span class="op">.</span><span class="nam">warning</span><span class="op">(</span><span class="fst">f"</span><span class="fst">Error collecting Prometheus metrics: </span><span class="op">{</span><span class="nam">e</span><span class="op">}</span><span class="fst">"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t434" href="#t434">434</a></span><span class="t">            <span class="nam">logger</span><span class="op">.</span><span class="nam">warning</span><span class="op">(</span><span class="str">"Error collecting Prometheus metrics: %s"</span><span class="op">,</span> <span class="nam">e</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t435" href="#t435">435</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t436" href="#t436">436</a></span><span class="t">        <span class="key">return</span> <span class="nam">metrics</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t437" href="#t437">437</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
@@ -540,7 +540,7 @@
     <p class="run"><span class="n"><a id="t458" href="#t458">458</a></span><span class="t">                <span class="nam">metrics</span><span class="op">.</span><span class="nam">connections_available</span> <span class="op">=</span> <span class="nam">pool</span><span class="op">.</span><span class="nam">checkedin</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t459" href="#t459">459</a></span><span class="t">                <span class="nam">metrics</span><span class="op">.</span><span class="nam">overflow</span> <span class="op">=</span> <span class="nam">pool</span><span class="op">.</span><span class="nam">overflow</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t460" href="#t460">460</a></span><span class="t">        <span class="key">except</span> <span class="nam">Exception</span> <span class="key">as</span> <span class="nam">e</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t461" href="#t461">461</a></span><span class="t">            <span class="nam">logger</span><span class="op">.</span><span class="nam">warning</span><span class="op">(</span><span class="fst">f"</span><span class="fst">Error collecting database metrics: </span><span class="op">{</span><span class="nam">e</span><span class="op">}</span><span class="fst">"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t461" href="#t461">461</a></span><span class="t">            <span class="nam">logger</span><span class="op">.</span><span class="nam">warning</span><span class="op">(</span><span class="str">"Error collecting database metrics: %s"</span><span class="op">,</span> <span class="nam">e</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t462" href="#t462">462</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t463" href="#t463">463</a></span><span class="t">        <span class="key">return</span> <span class="nam">metrics</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t464" href="#t464">464</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
@@ -584,7 +584,7 @@
     <p class="pln"><span class="n"><a id="t502" href="#t502">502</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t503" href="#t503">503</a></span><span class="t">            <span class="com"># Don't close the shared client</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t504" href="#t504">504</a></span><span class="t">        <span class="key">except</span> <span class="nam">Exception</span> <span class="key">as</span> <span class="nam">e</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t505" href="#t505">505</a></span><span class="t">            <span class="nam">logger</span><span class="op">.</span><span class="nam">warning</span><span class="op">(</span><span class="fst">f"</span><span class="fst">Error collecting Redis metrics: </span><span class="op">{</span><span class="nam">e</span><span class="op">}</span><span class="fst">"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t505" href="#t505">505</a></span><span class="t">            <span class="nam">logger</span><span class="op">.</span><span class="nam">warning</span><span class="op">(</span><span class="str">"Error collecting Redis metrics: %s"</span><span class="op">,</span> <span class="nam">e</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t506" href="#t506">506</a></span><span class="t">            <span class="nam">metrics</span><span class="op">.</span><span class="nam">connected</span> <span class="op">=</span> <span class="key">False</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t507" href="#t507">507</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t508" href="#t508">508</a></span><span class="t">        <span class="key">return</span> <span class="nam">metrics</span>&nbsp;</span><span class="r"></span></p>
@@ -663,7 +663,7 @@
     <p class="pln"><span class="n"><a id="t581" href="#t581">581</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t582" href="#t582">582</a></span><span class="t">            <span class="key">return</span> <span class="nam">snapshot</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t583" href="#t583">583</a></span><span class="t">        <span class="key">except</span> <span class="nam">Exception</span> <span class="key">as</span> <span class="nam">e</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t584" href="#t584">584</a></span><span class="t">            <span class="nam">logger</span><span class="op">.</span><span class="nam">error</span><span class="op">(</span><span class="fst">f"</span><span class="fst">Error saving performance snapshot: </span><span class="op">{</span><span class="nam">e</span><span class="op">}</span><span class="fst">"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t584" href="#t584">584</a></span><span class="t">            <span class="nam">logger</span><span class="op">.</span><span class="nam">error</span><span class="op">(</span><span class="str">"Error saving performance snapshot: %s"</span><span class="op">,</span> <span class="nam">e</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t585" href="#t585">585</a></span><span class="t">            <span class="nam">db</span><span class="op">.</span><span class="nam">rollback</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t586" href="#t586">586</a></span><span class="t">            <span class="key">return</span> <span class="key">None</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t587" href="#t587">587</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
@@ -684,11 +684,11 @@
     <p class="run"><span class="n"><a id="t602" href="#t602">602</a></span><span class="t">            <span class="nam">db</span><span class="op">.</span><span class="nam">commit</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t603" href="#t603">603</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t604" href="#t604">604</a></span><span class="t">            <span class="key">if</span> <span class="nam">deleted</span> <span class="op">></span> <span class="num">0</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t605" href="#t605">605</a></span><span class="t">                <span class="nam">logger</span><span class="op">.</span><span class="nam">info</span><span class="op">(</span><span class="fst">f"</span><span class="fst">Cleaned up </span><span class="op">{</span><span class="nam">deleted</span><span class="op">}</span><span class="fst"> old performance snapshots</span><span class="fst">"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t605" href="#t605">605</a></span><span class="t">                <span class="nam">logger</span><span class="op">.</span><span class="nam">info</span><span class="op">(</span><span class="str">"Cleaned up %s old performance snapshots"</span><span class="op">,</span> <span class="nam">deleted</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t606" href="#t606">606</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t607" href="#t607">607</a></span><span class="t">            <span class="key">return</span> <span class="nam">deleted</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t608" href="#t608">608</a></span><span class="t">        <span class="key">except</span> <span class="nam">Exception</span> <span class="key">as</span> <span class="nam">e</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t609" href="#t609">609</a></span><span class="t">            <span class="nam">logger</span><span class="op">.</span><span class="nam">error</span><span class="op">(</span><span class="fst">f"</span><span class="fst">Error cleaning up snapshots: </span><span class="op">{</span><span class="nam">e</span><span class="op">}</span><span class="fst">"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t609" href="#t609">609</a></span><span class="t">            <span class="nam">logger</span><span class="op">.</span><span class="nam">error</span><span class="op">(</span><span class="str">"Error cleaning up snapshots: %s"</span><span class="op">,</span> <span class="nam">e</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t610" href="#t610">610</a></span><span class="t">            <span class="nam">db</span><span class="op">.</span><span class="nam">rollback</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t611" href="#t611">611</a></span><span class="t">            <span class="key">return</span> <span class="num">0</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t612" href="#t612">612</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
@@ -718,7 +718,7 @@
     <p class="run"><span class="n"><a id="t636" href="#t636">636</a></span><span class="t">        <span class="nam">start_str</span> <span class="op">=</span> <span class="nam">start_time</span><span class="op">.</span><span class="nam">isoformat</span><span class="op">(</span><span class="op">)</span> <span class="key">if</span> <span class="nam">start_time</span> <span class="key">else</span> <span class="str">"none"</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t637" href="#t637">637</a></span><span class="t">        <span class="nam">end_str</span> <span class="op">=</span> <span class="nam">end_time</span><span class="op">.</span><span class="nam">isoformat</span><span class="op">(</span><span class="op">)</span> <span class="key">if</span> <span class="nam">end_time</span> <span class="key">else</span> <span class="str">"none"</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t638" href="#t638">638</a></span><span class="t">        <span class="nam">host_str</span> <span class="op">=</span> <span class="nam">host</span> <span class="key">or</span> <span class="str">"all"</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t639" href="#t639">639</a></span><span class="t">        <span class="nam">cache_key</span> <span class="op">=</span> <span class="fst">f"</span><span class="op">{</span><span class="nam">period_type</span><span class="op">}</span><span class="fst">:</span><span class="op">{</span><span class="nam">start_str</span><span class="op">}</span><span class="fst">:</span><span class="op">{</span><span class="nam">end_str</span><span class="op">}</span><span class="fst">:</span><span class="op">{</span><span class="nam">host_str</span><span class="op">}</span><span class="fst">:</span><span class="op">{</span><span class="nam">limit</span><span class="op">}</span><span class="fst">"</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t639" href="#t639">639</a></span><span class="t">        <span class="nam">cache_key</span> <span class="op">=</span> <span class="str">f"{period_type}:{start_str}:{end_str}:{host_str}:{limit}"</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t640" href="#t640">640</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t641" href="#t641">641</a></span><span class="t">        <span class="com"># Check cache first</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t642" href="#t642">642</a></span><span class="t">        <span class="nam">cache</span> <span class="op">=</span> <span class="nam">_get_admin_stats_cache</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
@@ -830,7 +830,7 @@
     <p class="pln"><span class="n"><a id="t748" href="#t748">748</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t749" href="#t749">749</a></span><span class="t">            <span class="key">return</span> <span class="nam">aggregate</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t750" href="#t750">750</a></span><span class="t">        <span class="key">except</span> <span class="nam">Exception</span> <span class="key">as</span> <span class="nam">e</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t751" href="#t751">751</a></span><span class="t">            <span class="nam">logger</span><span class="op">.</span><span class="nam">error</span><span class="op">(</span><span class="fst">f"</span><span class="fst">Error creating hourly aggregate: </span><span class="op">{</span><span class="nam">e</span><span class="op">}</span><span class="fst">"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t751" href="#t751">751</a></span><span class="t">            <span class="nam">logger</span><span class="op">.</span><span class="nam">error</span><span class="op">(</span><span class="str">"Error creating hourly aggregate: %s"</span><span class="op">,</span> <span class="nam">e</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t752" href="#t752">752</a></span><span class="t">            <span class="nam">db</span><span class="op">.</span><span class="nam">rollback</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t753" href="#t753">753</a></span><span class="t">            <span class="key">return</span> <span class="key">None</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t754" href="#t754">754</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
@@ -858,12 +858,12 @@
 <footer>
     <div class="content">
         <p>
-            <a class="nav" href="z_5321ecc6bb7a9b79_observability_service_py.html">&#xab; prev</a> &nbsp; &nbsp;
+            <a class="nav" href="z_5321ecc6bb7a9b79_password_policy_service_py.html">&#xab; prev</a> &nbsp; &nbsp;
             <a class="nav" href="index.html">&Hat; index</a> &nbsp; &nbsp;
             <a class="nav" href="z_5321ecc6bb7a9b79_performance_tracker_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
-            <a class="nav" href="https://coverage.readthedocs.io/en/7.13.5">coverage.py v7.13.5</a>,
-            created at 2026-04-09 13:58 +0100
+            <a class="nav" href="https://coverage.readthedocs.io/en/7.15.2">coverage.py v7.15.2</a>,
+            created at 2026-07-30 17:23 +0100
         </p>
     </div>
 </footer>
