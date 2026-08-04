@@ -105,7 +105,7 @@ class ControlTelemetryAccumulator:
     _pre_denied: bool = False
     _post_denied: bool = False
     _plugin_errored: bool = False  # True when a PluginError (outage) was caught on any hook
-    _plugin_error_hook: str = ""   # "pre" | "post" | "" — which hook the error occurred on
+    _plugin_error_hook: str = ""  # "pre" | "post" | "" — which hook the error occurred on
     _truncated: int = 0  # records dropped due to per-call cap OR per-hook cap
     _export_cap_dropped: int = 0  # records dropped at emit time by the per-invocation export cap
 
