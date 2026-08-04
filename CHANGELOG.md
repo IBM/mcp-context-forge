@@ -20,6 +20,7 @@
 ### Security
 
 - **OAuth DCR endpoints now enforce un-narrowed admin scope** (GHSA-gj7g-7r6g-jc8v) - `GET /oauth/registered-clients`, `GET /oauth/registered-clients/{gateway_id}`, and `DELETE /oauth/registered-clients/{client_id}` previously gated only on the `is_admin` flag and ignored `token_teams` narrowing carried by scoped API tokens, letting a team-narrowed admin API token list, read, and delete globally-stored registered OAuth client records outside its intended team scope. These endpoints now reject narrowed and public-only admin tokens with `403 Forbidden`. Admin session tokens resolve their teams from the database and cannot be narrowed, so interactive Admin UI users are unaffected.
+- Fixed SSRF vulnerability in `url_to_markdown_server` MCP server (CWE-918). Added comprehensive SSRF protection blocking private/internal network destinations by default, with DNS-rebinding gap closure via connection pinning and configurable allowlisting.
 
 ### Fixed
 
