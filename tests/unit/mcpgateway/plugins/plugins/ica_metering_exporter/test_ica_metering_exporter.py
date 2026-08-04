@@ -7,6 +7,7 @@ Unit tests for IcaMeteringExporterPlugin.
 """
 
 # Standard
+from contextlib import contextmanager
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 # Third-Party
@@ -23,7 +24,18 @@ from cpex.framework import (
     ToolPreInvokePayload,
 )
 from cpex.framework.constants import GATEWAY_METADATA
+from mcpgateway.transports.context import request_headers_var
 from plugins.ica_metering_exporter.ica_metering_exporter import IcaMeteringExporterPlugin
+
+
+@contextmanager
+def _set_request_headers(headers: dict):
+    """Context manager to set request_headers_var for testing."""
+    token = request_headers_var.set(headers)
+    try:
+        yield
+    finally:
+        request_headers_var.reset(token)
 
 
 def _create_plugin(config_dict: dict | None = None, mock_send: bool = True) -> IcaMeteringExporterPlugin:
@@ -106,30 +118,26 @@ class TestIcaMeteringExporterPlugin:
 
     @pytest.mark.asyncio
     async def test_pre_invoke_extracts_app_id_from_headers(self):
-        """Pre-invoke should extract appId from X-App-Id header."""
+        """Pre-invoke should extract appId from request_headers_var."""
         plugin = _create_plugin()
         context = _create_context()
-        await plugin.tool_pre_invoke(
-            ToolPreInvokePayload(
-                name="tool", args={},
-                headers={"X-App-Id": "coding-agent:research"},
-            ),
-            context,
-        )
+        with _set_request_headers({"x-app-id": "coding-agent:research"}):
+            await plugin.tool_pre_invoke(
+                ToolPreInvokePayload(name="tool", args={}, headers=None),
+                context,
+            )
         assert context.state.get("ica_app_id") == "coding-agent:research"
 
     @pytest.mark.asyncio
     async def test_pre_invoke_extracts_user_agent_from_headers(self):
-        """Pre-invoke should extract user agent from User-Agent header."""
+        """Pre-invoke should extract user agent from user-agent header."""
         plugin = _create_plugin()
         context = _create_context()
-        await plugin.tool_pre_invoke(
-            ToolPreInvokePayload(
-                name="tool", args={},
-                headers={"User-Agent": "ClaudeCode/1.2.3"},
-            ),
-            context,
-        )
+        with _set_request_headers({"user-agent": "ClaudeCode/1.2.3"}):
+            await plugin.tool_pre_invoke(
+                ToolPreInvokePayload(name="tool", args={}, headers=None),
+                context,
+            )
         assert context.state.get("ica_user_agent") == "ClaudeCode/1.2.3"
 
     @pytest.mark.asyncio
@@ -137,16 +145,14 @@ class TestIcaMeteringExporterPlugin:
         """X-Forwarded-User-Agent should take priority over User-Agent."""
         plugin = _create_plugin()
         context = _create_context()
-        await plugin.tool_pre_invoke(
-            ToolPreInvokePayload(
-                name="tool", args={},
-                headers={
-                    "User-Agent": "JavaHttpClient/4.0",
-                    "X-Forwarded-User-Agent": "ClaudeCode/1.2.3",
-                },
-            ),
-            context,
-        )
+        with _set_request_headers({
+            "user-agent": "JavaHttpClient/4.0",
+            "x-forwarded-user-agent": "ClaudeCode/1.2.3",
+        }):
+            await plugin.tool_pre_invoke(
+                ToolPreInvokePayload(name="tool", args={}, headers=None),
+                context,
+            )
         assert context.state.get("ica_user_agent") == "ClaudeCode/1.2.3"
 
     @pytest.mark.asyncio
@@ -182,6 +188,180 @@ class TestIcaMeteringExporterPlugin:
         sent_payload = plugin._send_to_ica.await_args.args[0]
         assert sent_payload["appId"] is None
         assert sent_payload["userAgent"] is None
+
+    # ── MCP Client Identity Header Tests ─────────────────────────
+
+    @pytest.mark.asyncio
+    async def test_pre_invoke_extracts_mcp_client_name(self):
+        """Pre-invoke should extract X-MCP-Client-Name and X-MCP-Client-Version."""
+        plugin = _create_plugin()
+        context = _create_context()
+        with _set_request_headers({"x-mcp-client-name": "opencode", "x-mcp-client-version": "1.5.0"}):
+            await plugin.tool_pre_invoke(
+                ToolPreInvokePayload(name="tool", args={}, headers=None),
+                context,
+            )
+        assert context.state.get("ica_mcp_client_name") == "opencode"
+        assert context.state.get("ica_mcp_client_version") == "1.5.0"
+
+    @pytest.mark.asyncio
+    async def test_pre_invoke_mcp_client_name_used_as_user_agent_fallback(self):
+        """MCP client name/version should be used as userAgent when X-Forwarded-User-Agent absent."""
+        plugin = _create_plugin()
+        context = _create_context()
+        with _set_request_headers({"x-mcp-client-name": "opencode", "x-mcp-client-version": "1.5.0"}):
+            await plugin.tool_pre_invoke(
+                ToolPreInvokePayload(name="tool", args={}, headers=None),
+                context,
+            )
+        assert context.state.get("ica_user_agent") == "opencode/1.5.0"
+
+    @pytest.mark.asyncio
+    async def test_pre_invoke_mcp_client_name_without_version(self):
+        """MCP client name alone (no version) should still populate userAgent."""
+        plugin = _create_plugin()
+        context = _create_context()
+        with _set_request_headers({"x-mcp-client-name": "vscode-copilot"}):
+            await plugin.tool_pre_invoke(
+                ToolPreInvokePayload(name="tool", args={}, headers=None),
+                context,
+            )
+        assert context.state.get("ica_user_agent") == "vscode-copilot"
+
+    @pytest.mark.asyncio
+    async def test_pre_invoke_forwarded_user_agent_takes_priority_over_mcp_client(self):
+        """X-Forwarded-User-Agent should take priority over X-MCP-Client-Name."""
+        plugin = _create_plugin()
+        context = _create_context()
+        with _set_request_headers({
+            "x-forwarded-user-agent": "Mozilla/5.0 Safari",
+            "x-mcp-client-name": "opencode",
+            "x-mcp-client-version": "1.0",
+        }):
+            await plugin.tool_pre_invoke(
+                ToolPreInvokePayload(name="tool", args={}, headers=None),
+                context,
+            )
+        assert context.state.get("ica_user_agent") == "Mozilla/5.0 Safari"
+
+    @pytest.mark.asyncio
+    async def test_pre_invoke_derives_app_id_from_mcp_client_name(self):
+        """appId should be derived as 'api:{client_name}' when X-App-Id absent."""
+        plugin = _create_plugin()
+        context = _create_context()
+        with _set_request_headers({"x-mcp-client-name": "opencode", "x-mcp-client-version": "1.0"}):
+            await plugin.tool_pre_invoke(
+                ToolPreInvokePayload(name="tool", args={}, headers=None),
+                context,
+            )
+        assert context.state.get("ica_app_id") == "api:opencode"
+
+    @pytest.mark.asyncio
+    async def test_pre_invoke_explicit_app_id_not_overridden_by_mcp_client(self):
+        """Explicit X-App-Id should NOT be overridden by X-MCP-Client-Name."""
+        plugin = _create_plugin()
+        context = _create_context()
+        with _set_request_headers({
+            "x-app-id": "agent:MyAgent:agent-123",
+            "x-mcp-client-name": "opencode",
+        }):
+            await plugin.tool_pre_invoke(
+                ToolPreInvokePayload(name="tool", args={}, headers=None),
+                context,
+            )
+        assert context.state.get("ica_app_id") == "agent:MyAgent:agent-123"
+
+    @pytest.mark.asyncio
+    async def test_pre_invoke_derives_app_id_from_user_agent(self):
+        """appId should be derived from user-agent when no X-App-Id or X-MCP-Client-Name."""
+        plugin = _create_plugin()
+        context = _create_context()
+        with _set_request_headers({"user-agent": "opencode/1.18.13"}):
+            await plugin.tool_pre_invoke(
+                ToolPreInvokePayload(name="tool", args={}, headers=None),
+                context,
+            )
+        assert context.state.get("ica_app_id") == "api:opencode"
+
+    @pytest.mark.asyncio
+    async def test_pre_invoke_does_not_derive_app_id_from_mozilla_user_agent(self):
+        """appId should NOT be derived from browser-like user-agent."""
+        plugin = _create_plugin()
+        context = _create_context()
+        with _set_request_headers({"user-agent": "Mozilla/5.0 (Macintosh) Safari/537.36"}):
+            await plugin.tool_pre_invoke(
+                ToolPreInvokePayload(name="tool", args={}, headers=None),
+                context,
+            )
+        assert context.state.get("ica_app_id") is None
+
+    # ── requestType from gateway transport tests ─────────────────
+
+    @pytest.mark.asyncio
+    async def test_request_type_from_gateway_streamablehttp(self):
+        """requestType should be STREAMABLE_HTTP when gateway transport is streamablehttp."""
+        plugin = _create_plugin()
+        context = _create_context(
+            metadata={GATEWAY_METADATA: {"id": "gw-1", "name": "gw", "transport": "streamablehttp"}},
+        )
+        await plugin.tool_pre_invoke(
+            ToolPreInvokePayload(name="tool", args={}, headers=None),
+            context,
+        )
+        payload = ToolPostInvokePayload(name="tool", result={"content": [], "isError": False})
+        await plugin.tool_post_invoke(payload, context)
+
+        sent_payload = plugin._send_to_ica.await_args.args[0]
+        assert sent_payload["toolDetails"]["requestType"] == "STREAMABLE_HTTP"
+
+    @pytest.mark.asyncio
+    async def test_request_type_from_gateway_streamable_http_underscore(self):
+        """requestType should be STREAMABLE_HTTP when gateway transport is streamable_http."""
+        plugin = _create_plugin()
+        context = _create_context(
+            metadata={GATEWAY_METADATA: {"id": "gw-1", "name": "gw", "transport": "streamable_http"}},
+        )
+        await plugin.tool_pre_invoke(
+            ToolPreInvokePayload(name="tool", args={}, headers=None),
+            context,
+        )
+        payload = ToolPostInvokePayload(name="tool", result={"content": [], "isError": False})
+        await plugin.tool_post_invoke(payload, context)
+
+        sent_payload = plugin._send_to_ica.await_args.args[0]
+        assert sent_payload["toolDetails"]["requestType"] == "STREAMABLE_HTTP"
+
+    @pytest.mark.asyncio
+    async def test_request_type_from_gateway_sse(self):
+        """requestType should be SSE when gateway transport is sse."""
+        plugin = _create_plugin()
+        context = _create_context(
+            metadata={GATEWAY_METADATA: {"id": "gw-1", "name": "gw", "transport": "sse"}},
+        )
+        await plugin.tool_pre_invoke(
+            ToolPreInvokePayload(name="tool", args={}, headers=None),
+            context,
+        )
+        payload = ToolPostInvokePayload(name="tool", result={"content": [], "isError": False})
+        await plugin.tool_post_invoke(payload, context)
+
+        sent_payload = plugin._send_to_ica.await_args.args[0]
+        assert sent_payload["toolDetails"]["requestType"] == "SSE"
+
+    @pytest.mark.asyncio
+    async def test_request_type_unknown_when_no_gateway_metadata(self):
+        """requestType should be UNKNOWN when no gateway metadata present."""
+        plugin = _create_plugin()
+        context = _create_context(metadata={})
+        await plugin.tool_pre_invoke(
+            ToolPreInvokePayload(name="tool", args={}, headers=None),
+            context,
+        )
+        payload = ToolPostInvokePayload(name="tool", result={"content": [], "isError": False})
+        await plugin.tool_post_invoke(payload, context)
+
+        sent_payload = plugin._send_to_ica.await_args.args[0]
+        assert sent_payload["toolDetails"]["requestType"] == "UNKNOWN"
 
     # ── Post-invoke latency tests ────────────────────────────────
 
@@ -431,6 +611,7 @@ class TestIcaMeteringExporterPlugin:
             metadata={
                 "gateway": {"name": "gw-name", "id": "gw-1"},
                 "meta_data": {"model": "gpt-4"},
+                GATEWAY_METADATA: {"name": "gw-name", "id": "gw-1", "transport": "streamablehttp"},
             },
         )
         await plugin.tool_pre_invoke(
@@ -458,7 +639,7 @@ class TestIcaMeteringExporterPlugin:
         assert td["serverName"] == "gw-name"
         assert td["gatewayId"] == "gw-1"
         assert td["integrationType"] == "MCP"
-        assert td["requestType"] == "SSE"
+        assert td["requestType"] == "STREAMABLE_HTTP"
         assert td["hasError"] is False
         assert td["errorMessage"] is None
         assert td["cached"] is False
