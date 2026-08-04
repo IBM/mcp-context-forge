@@ -4,14 +4,14 @@
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
     <title>Coverage for mcpgateway/services/email_notification_service.py: 100%</title>
     <link rel="icon" sizes="32x32" href="favicon_32_cb_c827f16f.png">
-    <link rel="stylesheet" href="style_cb_9ff733b0.css" type="text/css">
+    <link rel="stylesheet" href="style_cb_4667309f.css" type="text/css">
     <script src="coverage_html_cb_dd2e7eb5.js" defer></script>
 </head>
 <body class="pyfile">
 <header>
     <div class="content">
         <h1>
-            <span class="text">Coverage for </span><b>mcpgateway&#8201;/&#8201;services&#8201;/&#8201;email_notification_service.py</b>:
+            <span class="text">Coverage for </span><b>mcpgateway<span class="sep">/</span>services<span class="sep">/</span>email_notification_service.py</b>:
             <span class="pc_cov">100%</span>
         </h1>
         <aside id="help_panel_wrapper">
@@ -64,8 +64,8 @@
             <a id="indexLink" class="nav" href="index.html">&Hat; index</a> &nbsp; &nbsp;
             <a id="nextFileLink" class="nav" href="z_5321ecc6bb7a9b79_encryption_service_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
-            <a class="nav" href="https://coverage.readthedocs.io/en/7.13.5">coverage.py v7.13.5</a>,
-            created at 2026-04-09 13:58 +0100
+            <a class="nav" href="https://coverage.readthedocs.io/en/7.15.2">coverage.py v7.15.2</a>,
+            created at 2026-07-30 17:23 +0100
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -82,7 +82,7 @@
 <main id="source">
     <p class="pln"><span class="n"><a id="t1" href="#t1">1</a></span><span class="t"><span class="com"># -*- coding: utf-8 -*-</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t2" href="#t2">2</a></span><span class="t"><span class="str">"""Location: ./mcpgateway/services/email_notification_service.py</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t3" href="#t3">3</a></span><span class="t"><span class="str">Copyright 2026</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t3" href="#t3">3</a></span><span class="t"><span class="str">Copyright contributors to the MCP-CONTEXT-FORGE project</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t4" href="#t4">4</a></span><span class="t"><span class="str">SPDX-License-Identifier: Apache-2.0</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t5" href="#t5">5</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t6" href="#t6">6</a></span><span class="t"><span class="str">Email notification service for authentication workflows.</span>&nbsp;</span><span class="r"></span></p>
@@ -163,7 +163,7 @@
     <p class="pln"><span class="n"><a id="t81" href="#t81">81</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t82" href="#t82">82</a></span><span class="t">        <span class="nam">safe_title</span> <span class="op">=</span> <span class="nam">html</span><span class="op">.</span><span class="nam">escape</span><span class="op">(</span><span class="nam">fallback_title</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t83" href="#t83">83</a></span><span class="t">        <span class="nam">safe_body</span> <span class="op">=</span> <span class="nam">html</span><span class="op">.</span><span class="nam">escape</span><span class="op">(</span><span class="nam">fallback_body</span><span class="op">)</span><span class="op">.</span><span class="nam">replace</span><span class="op">(</span><span class="str">"\n"</span><span class="op">,</span> <span class="str">"&lt;br/>"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t84" href="#t84">84</a></span><span class="t">        <span class="key">return</span> <span class="fst">f"</span><span class="fst">&lt;html>&lt;body>&lt;h2></span><span class="op">{</span><span class="nam">safe_title</span><span class="op">}</span><span class="fst">&lt;/h2>&lt;p></span><span class="op">{</span><span class="nam">safe_body</span><span class="op">}</span><span class="fst">&lt;/p>&lt;/body>&lt;/html></span><span class="fst">"</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t84" href="#t84">84</a></span><span class="t">        <span class="key">return</span> <span class="str">f"&lt;html>&lt;body>&lt;h2>{safe_title}&lt;/h2>&lt;p>{safe_body}&lt;/p>&lt;/body>&lt;/html>"</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t85" href="#t85">85</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t86" href="#t86">86</a></span><span class="t">    <span class="op">@</span><span class="nam">staticmethod</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t87" href="#t87">87</a></span><span class="t">    <span class="key">def</span> <span class="nam">_html_to_text</span><span class="op">(</span><span class="nam">value</span><span class="op">:</span> <span class="nam">str</span><span class="op">)</span> <span class="op">-></span> <span class="nam">str</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
@@ -264,7 +264,7 @@
     <p class="run run2"><span class="n"><a id="t182" href="#t182">182</a></span><span class="t">            <span class="nam">template_name</span><span class="op">=</span><span class="str">"password_reset_email.html"</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t183" href="#t183">183</a></span><span class="t">            <span class="nam">context</span><span class="op">=</span><span class="op">{</span><span class="str">"display_name"</span><span class="op">:</span> <span class="nam">display_name</span><span class="op">,</span> <span class="str">"reset_url"</span><span class="op">:</span> <span class="nam">reset_url</span><span class="op">,</span> <span class="str">"expires_minutes"</span><span class="op">:</span> <span class="nam">expires_minutes</span><span class="op">,</span> <span class="str">"recipient_email"</span><span class="op">:</span> <span class="nam">to_email</span><span class="op">}</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t184" href="#t184">184</a></span><span class="t">            <span class="nam">fallback_title</span><span class="op">=</span><span class="str">"Password reset requested"</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t185" href="#t185">185</a></span><span class="t">            <span class="nam">fallback_body</span><span class="op">=</span><span class="fst">f"</span><span class="fst">Hi </span><span class="op">{</span><span class="nam">display_name</span><span class="op">}</span><span class="fst">,\n\nUse this link to reset your password: </span><span class="op">{</span><span class="nam">reset_url</span><span class="op">}</span><span class="fst">\n\nThe link expires in </span><span class="op">{</span><span class="nam">expires_minutes</span><span class="op">}</span><span class="fst"> minutes.</span><span class="fst">"</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t185" href="#t185">185</a></span><span class="t">            <span class="nam">fallback_body</span><span class="op">=</span><span class="str">f"Hi {display_name},\n\nUse this link to reset your password: {reset_url}\n\nThe link expires in {expires_minutes} minutes."</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t186" href="#t186">186</a></span><span class="t">        <span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t187" href="#t187">187</a></span><span class="t">        <span class="key">return</span> <span class="key">await</span> <span class="nam">self</span><span class="op">.</span><span class="nam">_send_email</span><span class="op">(</span><span class="nam">to_email</span><span class="op">,</span> <span class="nam">subject</span><span class="op">,</span> <span class="nam">body</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t188" href="#t188">188</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
@@ -284,7 +284,7 @@
     <p class="run run2"><span class="n"><a id="t202" href="#t202">202</a></span><span class="t">            <span class="nam">template_name</span><span class="op">=</span><span class="str">"password_reset_confirmation_email.html"</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t203" href="#t203">203</a></span><span class="t">            <span class="nam">context</span><span class="op">=</span><span class="op">{</span><span class="str">"display_name"</span><span class="op">:</span> <span class="nam">display_name</span><span class="op">,</span> <span class="str">"recipient_email"</span><span class="op">:</span> <span class="nam">to_email</span><span class="op">}</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t204" href="#t204">204</a></span><span class="t">            <span class="nam">fallback_title</span><span class="op">=</span><span class="str">"Password changed"</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t205" href="#t205">205</a></span><span class="t">            <span class="nam">fallback_body</span><span class="op">=</span><span class="fst">f"</span><span class="fst">Hi </span><span class="op">{</span><span class="nam">display_name</span><span class="op">}</span><span class="fst">,\n\nYour password was changed successfully. If this was not you, contact an administrator immediately.</span><span class="fst">"</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t205" href="#t205">205</a></span><span class="t">            <span class="nam">fallback_body</span><span class="op">=</span><span class="str">f"Hi {display_name},\n\nYour password was changed successfully. If this was not you, contact an administrator immediately."</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t206" href="#t206">206</a></span><span class="t">        <span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t207" href="#t207">207</a></span><span class="t">        <span class="key">return</span> <span class="key">await</span> <span class="nam">self</span><span class="op">.</span><span class="nam">_send_email</span><span class="op">(</span><span class="nam">to_email</span><span class="op">,</span> <span class="nam">subject</span><span class="op">,</span> <span class="nam">body</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t208" href="#t208">208</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
@@ -306,7 +306,7 @@
     <p class="run run2"><span class="n"><a id="t224" href="#t224">224</a></span><span class="t">            <span class="nam">template_name</span><span class="op">=</span><span class="str">"account_lockout_email.html"</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t225" href="#t225">225</a></span><span class="t">            <span class="nam">context</span><span class="op">=</span><span class="op">{</span><span class="str">"display_name"</span><span class="op">:</span> <span class="nam">display_name</span><span class="op">,</span> <span class="str">"locked_until"</span><span class="op">:</span> <span class="nam">locked_until_iso</span><span class="op">,</span> <span class="str">"reset_url"</span><span class="op">:</span> <span class="nam">reset_url</span><span class="op">,</span> <span class="str">"recipient_email"</span><span class="op">:</span> <span class="nam">to_email</span><span class="op">}</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t226" href="#t226">226</a></span><span class="t">            <span class="nam">fallback_title</span><span class="op">=</span><span class="str">"Account temporarily locked"</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t227" href="#t227">227</a></span><span class="t">            <span class="nam">fallback_body</span><span class="op">=</span><span class="fst">f"</span><span class="fst">Hi </span><span class="op">{</span><span class="nam">display_name</span><span class="op">}</span><span class="fst">,\n\nYour account is locked until </span><span class="op">{</span><span class="nam">locked_until_iso</span><span class="op">}</span><span class="fst"> due to repeated failed sign-in attempts.\n\nIf this was not you, reset your password now: </span><span class="op">{</span><span class="nam">reset_url</span><span class="op">}</span><span class="fst">"</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t227" href="#t227">227</a></span><span class="t">            <span class="nam">fallback_body</span><span class="op">=</span><span class="str">f"Hi {display_name},\n\nYour account is locked until {locked_until_iso} due to repeated failed sign-in attempts.\n\nIf this was not you, reset your password now: {reset_url}"</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t228" href="#t228">228</a></span><span class="t">        <span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t229" href="#t229">229</a></span><span class="t">        <span class="key">return</span> <span class="key">await</span> <span class="nam">self</span><span class="op">.</span><span class="nam">_send_email</span><span class="op">(</span><span class="nam">to_email</span><span class="op">,</span> <span class="nam">subject</span><span class="op">,</span> <span class="nam">body</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
 </main>
@@ -317,8 +317,8 @@
             <a class="nav" href="index.html">&Hat; index</a> &nbsp; &nbsp;
             <a class="nav" href="z_5321ecc6bb7a9b79_encryption_service_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
-            <a class="nav" href="https://coverage.readthedocs.io/en/7.13.5">coverage.py v7.13.5</a>,
-            created at 2026-04-09 13:58 +0100
+            <a class="nav" href="https://coverage.readthedocs.io/en/7.15.2">coverage.py v7.15.2</a>,
+            created at 2026-07-30 17:23 +0100
         </p>
     </div>
 </footer>

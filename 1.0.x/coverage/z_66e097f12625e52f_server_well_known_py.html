@@ -4,14 +4,14 @@
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
     <title>Coverage for mcpgateway/routers/server_well_known.py: 97%</title>
     <link rel="icon" sizes="32x32" href="favicon_32_cb_c827f16f.png">
-    <link rel="stylesheet" href="style_cb_9ff733b0.css" type="text/css">
+    <link rel="stylesheet" href="style_cb_4667309f.css" type="text/css">
     <script src="coverage_html_cb_dd2e7eb5.js" defer></script>
 </head>
 <body class="pyfile">
 <header>
     <div class="content">
         <h1>
-            <span class="text">Coverage for </span><b>mcpgateway&#8201;/&#8201;routers&#8201;/&#8201;server_well_known.py</b>:
+            <span class="text">Coverage for </span><b>mcpgateway<span class="sep">/</span>routers<span class="sep">/</span>server_well_known.py</b>:
             <span class="pc_cov">97%</span>
         </h1>
         <aside id="help_panel_wrapper">
@@ -60,12 +60,12 @@
             <button type="button" class="exc show_exc button_toggle_exc" value="exc" data-shortcut="x" title="Toggle lines excluded">0<span class="text"> excluded</span></button>
         </h2>
         <p class="text">
-            <a id="prevFileLink" class="nav" href="z_66e097f12625e52f_reverse_proxy_py.html">&#xab; prev</a> &nbsp; &nbsp;
+            <a id="prevFileLink" class="nav" href="z_66e097f12625e52f_search_py.html">&#xab; prev</a> &nbsp; &nbsp;
             <a id="indexLink" class="nav" href="index.html">&Hat; index</a> &nbsp; &nbsp;
-            <a id="nextFileLink" class="nav" href="z_66e097f12625e52f_sso_py.html">&#xbb; next</a>
+            <a id="nextFileLink" class="nav" href="z_66e097f12625e52f_siem_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
-            <a class="nav" href="https://coverage.readthedocs.io/en/7.13.5">coverage.py v7.13.5</a>,
-            created at 2026-04-09 13:58 +0100
+            <a class="nav" href="https://coverage.readthedocs.io/en/7.15.2">coverage.py v7.15.2</a>,
+            created at 2026-07-30 17:23 +0100
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -82,7 +82,7 @@
 <main id="source">
     <p class="pln"><span class="n"><a id="t1" href="#t1">1</a></span><span class="t"><span class="com"># -*- coding: utf-8 -*-</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t2" href="#t2">2</a></span><span class="t"><span class="str">"""Location: ./mcpgateway/routers/server_well_known.py</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t3" href="#t3">3</a></span><span class="t"><span class="str">Copyright 2025</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t3" href="#t3">3</a></span><span class="t"><span class="str">Copyright contributors to the MCP-CONTEXT-FORGE project</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t4" href="#t4">4</a></span><span class="t"><span class="str">SPDX-License-Identifier: Apache-2.0</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t5" href="#t5">5</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t6" href="#t6">6</a></span><span class="t"><span class="str">Virtual Server Well-Known URI Handler Router.</span>&nbsp;</span><span class="r"></span></p>
@@ -144,9 +144,9 @@
     <p class="pln"><span class="n"><a id="t62" href="#t62">62</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t63" href="#t63">63</a></span><span class="t">    <span class="com"># Build RFC 9728 compliant redirect URL</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t64" href="#t64">64</a></span><span class="t">    <span class="nam">base_url</span> <span class="op">=</span> <span class="nam">get_base_url_with_protocol</span><span class="op">(</span><span class="nam">request</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t65" href="#t65">65</a></span><span class="t">    <span class="nam">compliant_url</span> <span class="op">=</span> <span class="fst">f"</span><span class="op">{</span><span class="nam">base_url</span><span class="op">}</span><span class="fst">/.well-known/oauth-protected-resource/servers/</span><span class="op">{</span><span class="nam">server_id</span><span class="op">}</span><span class="fst">/mcp</span><span class="fst">"</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t65" href="#t65">65</a></span><span class="t">    <span class="nam">compliant_url</span> <span class="op">=</span> <span class="str">f"{base_url}/.well-known/oauth-protected-resource/servers/{server_id}/mcp"</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t66" href="#t66">66</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t67" href="#t67">67</a></span><span class="t">    <span class="nam">logger</span><span class="op">.</span><span class="nam">warning</span><span class="op">(</span><span class="fst">f"</span><span class="fst">Deprecated server-scoped OAuth metadata endpoint called for server </span><span class="op">{</span><span class="nam">server_id</span><span class="op">}</span><span class="fst">. </span><span class="fst">"</span> <span class="fst">f"</span><span class="fst">Redirecting to RFC 9728 compliant endpoint: </span><span class="op">{</span><span class="nam">compliant_url</span><span class="op">}</span><span class="fst">"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t67" href="#t67">67</a></span><span class="t">    <span class="nam">logger</span><span class="op">.</span><span class="nam">warning</span><span class="op">(</span><span class="str">f"Deprecated server-scoped OAuth metadata endpoint called for server {server_id}. Redirecting to RFC 9728 compliant endpoint: {compliant_url}"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t68" href="#t68">68</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t69" href="#t69">69</a></span><span class="t">    <span class="com"># Return 301 Permanent Redirect</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t70" href="#t70">70</a></span><span class="t">    <span class="key">raise</span> <span class="nam">HTTPException</span><span class="op">(</span><span class="nam">status_code</span><span class="op">=</span><span class="num">301</span><span class="op">,</span> <span class="nam">detail</span><span class="op">=</span><span class="str">"Moved Permanently"</span><span class="op">,</span> <span class="nam">headers</span><span class="op">=</span><span class="op">{</span><span class="str">"Location"</span><span class="op">:</span> <span class="nam">compliant_url</span><span class="op">}</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
@@ -201,12 +201,12 @@
 <footer>
     <div class="content">
         <p>
-            <a class="nav" href="z_66e097f12625e52f_reverse_proxy_py.html">&#xab; prev</a> &nbsp; &nbsp;
+            <a class="nav" href="z_66e097f12625e52f_search_py.html">&#xab; prev</a> &nbsp; &nbsp;
             <a class="nav" href="index.html">&Hat; index</a> &nbsp; &nbsp;
-            <a class="nav" href="z_66e097f12625e52f_sso_py.html">&#xbb; next</a>
+            <a class="nav" href="z_66e097f12625e52f_siem_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
-            <a class="nav" href="https://coverage.readthedocs.io/en/7.13.5">coverage.py v7.13.5</a>,
-            created at 2026-04-09 13:58 +0100
+            <a class="nav" href="https://coverage.readthedocs.io/en/7.15.2">coverage.py v7.15.2</a>,
+            created at 2026-07-30 17:23 +0100
         </p>
     </div>
 </footer>
