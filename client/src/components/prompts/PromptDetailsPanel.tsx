@@ -17,7 +17,7 @@ import { PromptDefinitionTable } from "./PromptDefinitionTable";
 
 // Segmented-control styling for the Try it / Definition tab triggers.
 const SEGMENTED_TRIGGER_CLASS =
-  "rounded-md px-3 py-1 font-medium data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm";
+  "flex-1 rounded-sm px-3 py-1.5 font-medium data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm";
 
 function DetailRow({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -180,7 +180,7 @@ export function PromptDetailsPanel({
             <div className="my-8 h-px bg-border" />
 
             <Tabs value={activeTab} onValueChange={setActiveTab}>
-              <TabsList className="inline-flex h-9 w-fit items-center gap-1 rounded-lg bg-muted p-1">
+              <TabsList className="inline-flex h-10 w-[248px] items-center gap-0 rounded-md bg-muted p-1">
                 <TabsTrigger value="tryIt" className={SEGMENTED_TRIGGER_CLASS}>
                   {intl.formatMessage({ id: "prompts.details.tab.tryIt" })}
                 </TabsTrigger>

@@ -535,7 +535,7 @@ test.describe("MCP Servers page", () => {
 
     // Wait for the details panel to open (heading "GitHub MCP Server" appears in the panel header)
     await expect(page.getByRole("heading", { name: "GitHub MCP Server" })).toBeVisible();
-    await expect(page.getByRole("heading", { name: "Components" })).toBeVisible();
+    await expect(page.getByRole("tab", { name: "Components" })).toBeVisible();
   });
 
   test("shows per-page selector in the servers footer", async ({ page }) => {

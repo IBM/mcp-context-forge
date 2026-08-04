@@ -228,8 +228,8 @@ export function TestConnectionPanel({ serverUrl }: TestConnectionPanelProps) {
   const hasResult = status === "success" || status === "error";
 
   return (
-    <div className="space-y-6">
-      <div className="grid gap-6 md:grid-cols-2">
+    <div className="@container space-y-6">
+      <div className="grid gap-6 @3xl:grid-cols-2">
         {/* Left column — request form */}
         <div className="space-y-4">
           {/* URL */}
@@ -391,87 +391,97 @@ export function TestConnectionPanel({ serverUrl }: TestConnectionPanelProps) {
           )}
         </div>
 
-        {/* Right column — response panel */}
-        <div className="flex min-h-[300px] flex-col overflow-hidden rounded-md border border-input bg-transparent">
-          {status === "idle" && (
-            <div className="flex flex-1 items-center justify-center p-6 text-center">
-              <p className="text-sm text-muted-foreground">Run a test to see the response here.</p>
-            </div>
-          )}
-
-          {isTesting && (
-            <div className="flex flex-1 flex-col items-center justify-center gap-3 p-6">
-              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-              <p className="text-sm text-muted-foreground">Running test…</p>
-            </div>
-          )}
-
-          {hasResult && (
-            <div
-              className="relative flex flex-1 flex-col gap-2 overflow-auto p-4"
-              role={status === "error" ? "alert" : "status"}
-              aria-live="polite"
-            >
-              {responseBodyText && (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-xs"
-                  aria-label="Copy response body"
-                  className="absolute right-2 top-2 size-6 bg-neutral-800/80 text-neutral-400 hover:bg-neutral-700 hover:text-neutral-100"
-                  onClick={() => copyToClipboard(responseBodyText)}
-                >
-                  <Copy className="size-3.5" />
-                </Button>
+        {/* Right column — action button + response panel */}
+        <div className="flex flex-col gap-2">
+          {/* Mirror the left column's label row: a fixed label-height band so the
+              response panel below lines up with the URL input. The button is taller
+              than the band and overflows it upward instead of pushing the panel down. */}
+          <div className="flex h-5 items-end justify-end gap-3">
+            {isTesting && (
+              <Button variant="ghost" onClick={handleCancel}>
+                Cancel
+              </Button>
+            )}
+            <Button onClick={handleTest} disabled={isTesting}>
+              {isTesting ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Running test…
+                </>
+              ) : hasResult ? (
+                "Re-test connection"
+              ) : (
+                "Test connection"
               )}
+            </Button>
+          </div>
 
-              <div className="flex items-start gap-2 pr-8">
-                {status === "success" ? (
-                  <CircleCheck className="mt-0.5 size-4 shrink-0 text-green-500" />
-                ) : (
-                  <CircleAlert className="mt-0.5 size-4 shrink-0 text-destructive" />
-                )}
-                <span className="text-sm font-medium break-words text-foreground">{headline}</span>
-              </div>
-
-              {response && (
-                <p className="pl-6 text-[13px] text-muted-foreground">
-                  Latency: {response.latencyMs} ms
+          <div className="flex min-h-[200px] flex-1 flex-col overflow-hidden rounded-md border border-input bg-transparent">
+            {status === "idle" && (
+              <div className="flex flex-1 items-center justify-center p-6 text-center">
+                <p className="text-sm text-muted-foreground">
+                  Run a test to see the response here.
                 </p>
-              )}
+              </div>
+            )}
 
-              {responseBodyText && (
-                <div className="mt-2 space-y-1">
-                  <p className="text-[13px] text-muted-foreground">Response body:</p>
-                  <pre className="overflow-auto text-[13px] leading-relaxed break-words whitespace-pre-wrap text-foreground">
-                    <code className="break-words">
-                      <JsonHighlighter text={responseBodyText} />
-                    </code>
-                  </pre>
+            {isTesting && (
+              <div className="flex flex-1 flex-col items-center justify-center gap-3 p-6">
+                <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                <p className="text-sm text-muted-foreground">Running test…</p>
+              </div>
+            )}
+
+            {hasResult && (
+              <div
+                className="relative flex flex-1 flex-col gap-2 overflow-auto p-4"
+                role={status === "error" ? "alert" : "status"}
+                aria-live="polite"
+              >
+                {responseBodyText && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-xs"
+                    aria-label="Copy response body"
+                    className="absolute right-2 top-2 size-6 bg-background/80 text-muted-foreground backdrop-blur-sm hover:bg-muted hover:text-foreground"
+                    onClick={() => copyToClipboard(responseBodyText)}
+                  >
+                    <Copy className="size-3.5" />
+                  </Button>
+                )}
+
+                <div className="flex items-start gap-2 pr-8">
+                  {status === "success" ? (
+                    <CircleCheck className="mt-0.5 size-4 shrink-0 text-green-500" />
+                  ) : (
+                    <CircleAlert className="mt-0.5 size-4 shrink-0 text-destructive" />
+                  )}
+                  <span className="text-sm font-medium break-words text-foreground">
+                    {headline}
+                  </span>
                 </div>
-              )}
-            </div>
-          )}
+
+                {response && (
+                  <p className="pl-6 text-[13px] text-muted-foreground">
+                    Latency: {response.latencyMs} ms
+                  </p>
+                )}
+
+                {responseBodyText && (
+                  <div className="mt-2 space-y-1">
+                    <p className="text-[13px] text-muted-foreground">Response body:</p>
+                    <pre className="max-h-[420px] overflow-auto text-[13px] leading-relaxed break-words whitespace-pre-wrap text-foreground">
+                      <code className="break-words">
+                        <JsonHighlighter text={responseBodyText} />
+                      </code>
+                    </pre>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
         </div>
-      </div>
-
-      <div className="flex items-center gap-3">
-        <Button onClick={handleTest} disabled={isTesting}>
-          {isTesting ? (
-            <>
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              Running test…
-            </>
-          ) : (
-            "Test connection"
-          )}
-        </Button>
-
-        {isTesting && (
-          <Button variant="ghost" onClick={handleCancel}>
-            Cancel
-          </Button>
-        )}
       </div>
     </div>
   );
