@@ -260,7 +260,7 @@ disabled: platform admins need the permissions granted through their roles.
 ```bash
 curl -X POST -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"name": "My Asana", "api_key": "sk-..."}' \
+  -d "{\"name\": \"My Asana\", \"api_key\": \"$ASANA_API_KEY\"}" \
   http://localhost:4444/v1/catalog/asana/register
 ```
 

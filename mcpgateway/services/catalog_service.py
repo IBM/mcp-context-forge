@@ -321,7 +321,9 @@ class CatalogService:
                 existing = None
 
             if existing:
-                return CatalogServerRegisterResponse(success=False, server_id=str(existing.id), message=CATALOG_REGISTER_ALREADY_REGISTERED_MSG, error="This server is already registered in the system")
+                return CatalogServerRegisterResponse(
+                    success=False, server_id=str(existing.id), message=CATALOG_REGISTER_ALREADY_REGISTERED_MSG, error="This server is already registered in the system"
+                )
 
             # Prepare gateway creation request using proper schema
             # First-Party
