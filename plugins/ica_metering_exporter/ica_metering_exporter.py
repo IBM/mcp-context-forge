@@ -11,18 +11,18 @@ import time
 from typing import Any, Optional
 
 # Third-Party
-import jwt
-import httpx
-
-# First-Party
-from cpex.framework import Plugin, PluginConfig, PluginContext
-from cpex.framework.constants import GATEWAY_METADATA
-from cpex.framework.hooks.tools import (
+from cpex.framework import Plugin, PluginConfig, PluginContext  # type: ignore[import-untyped]
+from cpex.framework.constants import GATEWAY_METADATA  # type: ignore[import-untyped]
+from cpex.framework.hooks.tools import (  # type: ignore[import-untyped]
     ToolPostInvokePayload,
     ToolPostInvokeResult,
     ToolPreInvokePayload,
     ToolPreInvokeResult,
 )
+import httpx
+import jwt
+
+# First-Party
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.transports.context import request_headers_var
 
@@ -30,10 +30,25 @@ logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
 
 
-class IcaMeteringExporterPlugin(Plugin):
+class IcaMeteringExporterPlugin(Plugin):  # type: ignore[misc, no-any-unimported]  # noqa: E501
     """Export MCP tool invocation metrics to ICA metering service."""
 
-    def __init__(self, config: PluginConfig) -> None:
+    # Call-context headers set by the invoking application (Open WebUI), mirroring
+    # ica-litellm-extensions/ica_metering_callbacks.py. Header names are identical
+    # so the MCP and LLM metering pipelines stay symmetric.
+    CALL_CONTEXT_HEADERS: dict[str, str] = {
+        "ica_llm_call_type": "llm_call_type",
+        "ica_assistant_name": "assistant_name",
+        "ica_assistant_uuid": "assistant_uuid",
+        "ica_agent_name": "agent_name",
+        "ica_agent_uuid": "agent_uuid",
+        "ica_agent_tool_ids": "agent_tool_ids",
+        "ica_digital_ibmer_name": "digital-ibmer_name",
+        "ica_digital_ibmer_uuid": "digital-ibmer_uuid",
+        "ica_digital_ibmer_tool_ids": "digital-ibmer_tool_ids",
+    }
+
+    def __init__(self, config: PluginConfig) -> None:  # type: ignore[no-any-unimported]  # noqa: E501
         """Initialize plugin: parse config, parse gateway defaults, create HTTP client if enabled."""
         super().__init__(config)
         self.telemetry_config = config.config
@@ -42,7 +57,7 @@ class IcaMeteringExporterPlugin(Plugin):
         self._jwt_secret: Optional[str] = config.config.get("jwt_secret")
 
         # Parse gateway-level defaults from plugin config
-        self._gateway_configs: dict[str, dict] = {}
+        self._gateway_configs: dict[str, dict[str, Any]] = {}
         raw_gateways = self.telemetry_config.get("gateways", [])
         if isinstance(raw_gateways, list):
             for gw in raw_gateways:
@@ -63,7 +78,7 @@ class IcaMeteringExporterPlugin(Plugin):
             await self.http_client.aclose()
             self.http_client = None
 
-    async def tool_pre_invoke(self, payload: ToolPreInvokePayload, context: PluginContext) -> ToolPreInvokeResult:
+    async def tool_pre_invoke(self, payload: ToolPreInvokePayload, context: PluginContext) -> ToolPreInvokeResult:  # type: ignore[no-any-unimported]  # noqa: E501
         """Record tool invocation start time and extract model name from transport headers."""
         if not self.telemetry_config.get("enabled", False):
             return ToolPreInvokeResult(continue_processing=True)
@@ -119,10 +134,16 @@ class IcaMeteringExporterPlugin(Plugin):
             if ua_name and not ua_name.startswith("Mozilla"):
                 context.state["ica_app_id"] = f"api:{ua_name}"
 
+        # Call-context attribution headers (persona headers from OI)
+        for state_key, header_name in self.CALL_CONTEXT_HEADERS.items():
+            value = self._get_header(raw_headers, header_name)
+            if value:
+                context.state[state_key] = value
+
         logger.debug("ICA metering: Pre-invoke for tool %s", payload.name)
         return ToolPreInvokeResult(continue_processing=True)
 
-    async def tool_post_invoke(self, payload: ToolPostInvokePayload, context: PluginContext) -> ToolPostInvokeResult:
+    async def tool_post_invoke(self, payload: ToolPostInvokePayload, context: PluginContext) -> ToolPostInvokeResult:  # type: ignore[no-any-unimported]  # noqa: E501
         """Compute latency, resolve model name via cascade, build metering payload, fire-and-forget to ICA."""
         if not self.telemetry_config.get("enabled", False):
             return ToolPostInvokeResult(continue_processing=True)
@@ -191,6 +212,15 @@ class IcaMeteringExporterPlugin(Plugin):
             "teamName": context.global_context.tenant_id or "unknown",
             "appId": context.state.get("ica_app_id"),
             "userAgent": context.state.get("ica_user_agent"),
+            "llmCallType": context.state.get("ica_llm_call_type"),
+            "assistantName": context.state.get("ica_assistant_name"),
+            "assistantUuid": context.state.get("ica_assistant_uuid"),
+            "agentName": context.state.get("ica_agent_name"),
+            "agentUuid": context.state.get("ica_agent_uuid"),
+            "agentToolIds": context.state.get("ica_agent_tool_ids"),
+            "digitalIbmerName": context.state.get("ica_digital_ibmer_name"),
+            "digitalIbmerUuid": context.state.get("ica_digital_ibmer_uuid"),
+            "digitalIbmerToolIds": context.state.get("ica_digital_ibmer_tool_ids"),
             "toolDetails": tool_details,
         }
 
@@ -201,11 +231,11 @@ class IcaMeteringExporterPlugin(Plugin):
         await self._send_to_ica(metering_payload)
         return ToolPostInvokeResult(continue_processing=True)
 
-    def _resolve_model_name(
+    def _resolve_model_name(  # type: ignore[no-any-unimported]  # noqa: E501
         self,
         context: PluginContext,
-        headers: dict,
-        ctx_meta: dict,
+        headers: dict[str, Any],
+        ctx_meta: dict[str, Any],
     ) -> tuple[Optional[str], Optional[str]]:
         """
         Resolve model name from multiple sources in priority order.
@@ -260,6 +290,14 @@ class IcaMeteringExporterPlugin(Plugin):
         return None, "unknown"
 
     @staticmethod
+    def _get_header(headers: dict[str, Any], name: str) -> Optional[str]:
+        """Case-insensitive lookup of a header value in a dict."""
+        for key, val in headers.items():
+            if isinstance(key, str) and key.lower() == name.lower() and val is not None:
+                return str(val)
+        return None
+
+    @staticmethod
     def _coerce_int(value: Any) -> int | None:
         """Coerce a value to int or return None if not possible."""
         if value is None:
@@ -299,7 +337,7 @@ class IcaMeteringExporterPlugin(Plugin):
         return None
 
     @staticmethod
-    def _extract_tokens(result: Any) -> dict:
+    def _extract_tokens(result: Any) -> dict[str, Any]:
         """Safely extract token metadata from result."""
         if not isinstance(result, dict):
             return {}
@@ -309,7 +347,7 @@ class IcaMeteringExporterPlugin(Plugin):
         tokens = meta.get("tokens", {})
         return tokens if isinstance(tokens, dict) else {}
 
-    async def _send_to_ica(self, payload: dict) -> None:
+    async def _send_to_ica(self, payload: dict[str, Any]) -> None:
         """Send metering data to ICA endpoint (fire-and-forget)."""
         if not self.http_client:
             return
