@@ -343,11 +343,11 @@ grpc = [
 
 # Convenience meta-extras
 all = [
-    "mcp-contextforge-gateway[redis]>=1.0.6",
+    "mcp-contextforge-gateway[redis]>=1.0.7",
 ]
 
 dev-all = [
-    "mcp-contextforge-gateway[redis,dev,plugins]>=1.0.6",
+    "mcp-contextforge-gateway[redis,dev,plugins]>=1.0.7",
 ]
 
 # --------------------------------------------------------------------
