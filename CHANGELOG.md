@@ -22,7 +22,7 @@ Release 1.0.7 consolidates **57 PRs** focused on **security hardening**, **unifi
 
 ### Breaking Changes
 
-- **Unconditional weak-secret rejection** - `JWT_SECRET_KEY` and `AUTH_ENCRYPTION_SECRET` placeholder and known-weak values now cause `SecurityConfigurationError` at startup in every environment, including development. `BASIC_AUTH_PASSWORD` is also patched to a strong value by `make setup` / `make init-secrets-patch-env`. Run `make setup` (fresh checkout) or `make init-secrets-patch-env` (existing `.env`) to provision real secrets.
+- **Unconditional weak-secret rejection** - `JWT_SECRET_KEY` placeholder and known-weak values now cause `SecurityConfigurationError` at startup in every environment, including development. The `__REPLACE_ME__` placeholder value is always rejected and will block startup. Update the `JWT_SECRET_KEY` manually to a strong secret (length > 32).
 
 - **Root URI policy now defaults to deny** ([internal#294](https://github.ibm.com/contextforge-org/internal_issues/issues/294)) - Set `ROOT_ALLOWED_SCHEMES` before restart for every network scheme used by `DEFAULT_ROOTS` or new root registrations. `file://` roots additionally require `ROOT_ALLOW_FILE_SCHEME=true` and non-empty `ROOT_ALLOWED_FILE_PREFIXES`. Invalid `DEFAULT_ROOTS` abort gateway startup; configure policy before upgrading, not after.
   - **Root management API payloads are strict** - `POST /roots` rejects unknown fields. `PUT /roots/{root_uri}` accepts only optional `name`; existing full-root PUT payloads containing `uri`, `_meta`, or custom fields now return HTTP 422.
@@ -97,7 +97,8 @@ Release 1.0.7 consolidates **57 PRs** focused on **security hardening**, **unifi
 - **Docker Compose Startup** ([#5808](https://github.com/IBM/mcp-context-forge/pull/5808)) - Restored gateway `HOST` binding and fast-time-server startup.
 - **OAuth Callback JavaScript** ([#5997](https://github.com/IBM/mcp-context-forge/pull/5997)) - Removed a Python comment from JavaScript in the OAuth callback.
 - **DCR Client Uniqueness** ([#5198](https://github.com/IBM/mcp-context-forge/pull/5198)) - Removed a blocking unique constraint for multi-user DCR clients.
-- **Startup secret validation** - `JWT_SECRET_KEY`, `AUTH_ENCRYPTION_SECRET`, and `BASIC_AUTH_PASSWORD` are validated at startup with a minimum 32-byte length requirement and a comprehensive blocklist of known-weak values.
+- **Startup secret validation** - `JWT_SECRET_KEY` are validated at startup with a minimum 32-byte length requirement and a comprehensive blocklist of known-weak values.The `__REPLACE_ME__` placeholder value is always rejected and will block startup. Update the `JWT_SECRET_KEY` manually to a strong secret (length > 32).
+
 - **Hardened Helm chart defaults** - `JWT_SECRET_KEY` in `charts/mcp-stack/values.yaml` now defaults to an empty string with deployment guidance, rather than shipping a sample weak key.
 - **Docker Compose and entrypoint hardening** - Compose `:?` variable guards and entrypoint secret checks updated to match the new enforcement policy.
 - **Helm non-root container startup** ([#6041](https://github.com/IBM/mcp-context-forge/pull/6041)) - Set `runAsUser` for postgres (999), redis (999), and fast-time-server (1001) so pods with `runAsNonRoot: true` no longer fail with `CreateContainerConfigError`. Also corrected `migration.image.tag` from `v1.0.6` to `v1.0.7` to ensure the four new Alembic migrations are applied by the init job.
@@ -107,7 +108,7 @@ Release 1.0.7 consolidates **57 PRs** focused on **security hardening**, **unifi
 
 #### **Security & Configuration**
 
-- **`AUTH_ENCRYPTION_SECRET` enforcement relaxed in development** ([#6073](https://github.com/IBM/mcp-context-forge/pull/6073)) - `AUTH_ENCRYPTION_SECRET` values that do not meet minimum cryptographic strength now emit a mandatory `SECURITY WARNING` and allow startup to proceed when `ENVIRONMENT=development`, reducing friction for local PoC and first-run workflows. Full enforcement remains in `staging` and `production`. `JWT_SECRET_KEY` enforcement is unchanged. The `__REPLACE_ME__` placeholder is unconditionally rejected in all environments. `make setup` / `make init-secrets-patch-env` no longer silently auto-patch `AUTH_ENCRYPTION_SECRET` — operators must set it explicitly.
+- **`JWT_SECRET_KEY` placeholder rejection hardened** ([#6073](https://github.com/IBM/mcp-context-forge/pull/6073)) - The `__REPLACE_ME__` placeholder value for `JWT_SECRET_KEY` is now unconditionally rejected at startup in all environments. Update the `JWT_SECRET_KEY` manually to a strong secret (length > 32).
 
 #### **Observability & Security**
 
