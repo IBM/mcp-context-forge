@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
 from fastapi import HTTPException, status, Response
+from pydantic import SecretStr
 import pytest
 
 # First-Party
@@ -224,7 +225,7 @@ class TestEmailAuthLoginPasswordChangeRequired:
                     mock_settings.jwt_issuer = "test-issuer"
                     mock_settings.jwt_audience = "test-audience"
                     mock_settings.csrf_rotate_on_login = True
-                    mock_settings.csrf_secret_key = "secret"
+                    mock_settings.csrf_secret_key = SecretStr("secret")  # pragma: allowlist secret
                     mock_settings.csrf_token_expiry = 60
                     mock_jwt_decode.return_value = {"jti": "session-123"}
 

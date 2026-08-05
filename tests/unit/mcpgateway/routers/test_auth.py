@@ -11,8 +11,9 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
-import pytest
 from fastapi import HTTPException
+from pydantic import SecretStr
+import pytest
 
 # First-Party
 from mcpgateway.routers.auth import LoginRequest, get_csrf_token, get_db, login
@@ -265,7 +266,7 @@ class TestLogin:
             mock_create_token.return_value = ("test_token", 3600)
             mock_settings.sso_enabled = False
             mock_settings.csrf_rotate_on_login = True
-            mock_settings.csrf_secret_key = "secret"
+            mock_settings.csrf_secret_key = SecretStr("secret")  # pragma: allowlist secret
             mock_settings.csrf_token_expiry = 60
 
             login_request = LoginRequest(email="test@example.com", password="password123")  # pragma: allowlist secret
@@ -288,7 +289,7 @@ class TestLogin:
             patch("mcpgateway.services.csrf_service.generate_csrf_token", return_value="csrf-token-123") as mock_generate,
             patch("mcpgateway.services.csrf_service.set_csrf_cookie") as mock_set_cookie,
         ):
-            mock_settings.csrf_secret_key = "secret"
+            mock_settings.csrf_secret_key = SecretStr("secret")  # pragma: allowlist secret
             mock_settings.csrf_token_expiry = 60
 
             response = await get_csrf_token(request, current_user)
@@ -321,7 +322,7 @@ class TestLogin:
             patch("mcpgateway.routers.auth.settings") as mock_settings,
             patch("mcpgateway.services.csrf_service.generate_csrf_token", side_effect=Exception("boom")),
         ):
-            mock_settings.csrf_secret_key = "secret"
+            mock_settings.csrf_secret_key = SecretStr("secret")  # pragma: allowlist secret
             mock_settings.csrf_token_expiry = 60
 
             with pytest.raises(HTTPException) as exc_info:

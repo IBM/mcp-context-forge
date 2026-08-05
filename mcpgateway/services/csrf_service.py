@@ -348,4 +348,4 @@ def get_csrf_service() -> CSRFService:
     Returns:
         CSRFService instance
     """
-    return CSRFService(secret=app_settings.csrf_secret_key, expiry=app_settings.csrf_token_expiry)
+    return CSRFService(secret=app_settings.csrf_secret_key.get_secret_value(), expiry=app_settings.csrf_token_expiry)

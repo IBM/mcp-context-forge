@@ -11,9 +11,11 @@ Tests bundle generation, sanitization, and file operations.
 import builtins
 from pathlib import Path
 import tempfile
+from typing import Dict, get_args
 import zipfile
 
 # Third-Party
+from pydantic import BaseModel, Field, SecretStr
 import pytest
 
 # First-Party
@@ -54,6 +56,29 @@ class TestSupportBundleService:
         assert not service._is_secret("PORT")
         assert not service._is_secret("HOSTNAME")
         assert not service._is_secret("LOG_LEVEL")
+
+    def test_is_secret_detection_url_suffix(self):
+        """Any *_URL environment variable is masked, not just the two named exact matches.
+
+        database_url / redis_url are also *_URL names and are already covered by the
+        SECRET/TOKEN/PASS/KEY substring check or the exact-match list; this test targets
+        URL settings that were previously missed entirely, such as ratelimiter_redis_url
+        and elasticsearch_url, both of which routinely carry inline credentials.
+        """
+        service = SupportBundleService()
+
+        assert service._is_secret("RATELIMITER_REDIS_URL")
+        assert service._is_secret("ELASTICSEARCH_URL")
+        assert service._is_secret("MEMCACHED_URL")
+
+        # Existing exact-match entries must still be caught (not narrowed).
+        assert service._is_secret("DATABASE_URL")
+        assert service._is_secret("REDIS_URL")
+
+        # Benign, non-URL names must not be swept up by the new suffix rule.
+        assert not service._is_secret("LOG_LEVEL")
+        assert not service._is_secret("HOSTNAME")
+        assert not service._is_secret("URL_PREFIX")
 
     def test_sanitize_url(self):
         """Test URL sanitization removes passwords."""
@@ -215,6 +240,84 @@ class TestSupportBundleService:
         assert "redis_url" in config
         assert "secret123" not in config["redis_url"]
         assert "database_url" not in config
+
+    def test_collect_settings_sanitizes_other_url_settings(self, monkeypatch: pytest.MonkeyPatch):
+        """Credentials are redacted from any setting value, whatever the field is called.
+
+        Sanitization keys off the *content* of a value rather than the field name:
+        a name says nothing about the shape of what it holds, so ratelimiter_redis_url,
+        elasticsearch_url, and a URL-shaped value under a name with no url suffix are
+        all covered by the same pass.
+        """
+        service = SupportBundleService()
+
+        def fake_dump(*, exclude=None):  # noqa: ARG001
+            return {
+                "ratelimiter_redis_url": "redis://ratelimiter:hunter2@ratelimiter.example.com:6379/0",  # pragma: allowlist secret
+                "elasticsearch_url": "https://elastic:hunter2@es.example.com:9200",  # pragma: allowlist secret
+                "not_a_url_setting": "https://user:hunter2@example.com",  # pragma: allowlist secret
+                "harmless_setting": "X-CSRF-Token",
+            }
+
+        monkeypatch.setattr("mcpgateway.services.support_bundle_service.settings.model_dump", fake_dump)
+
+        config = service._collect_settings()
+        for key in ("ratelimiter_redis_url", "elasticsearch_url", "not_a_url_setting"):
+            assert "hunter2" not in config[key]
+            assert "*****" in config[key]
+        # Content-based sanitization must not chew through ordinary values.
+        assert config["harmless_setting"] == "X-CSRF-Token"
+
+    def test_sanitize_url_redacts_empty_username_credentials(self):
+        """A DSN with no username still has its password redacted.
+
+        Several clients accept scheme://:password@host. The userinfo pattern must
+        allow a zero-length username, or this common Redis form ships verbatim.
+        """
+        service = SupportBundleService()
+
+        sanitized = service._sanitize_url("redis://:hunter2@cache.example.com:6379/0")  # pragma: allowlist secret
+        assert "hunter2" not in sanitized
+        assert sanitized == "redis://:*****@cache.example.com:6379/0"
+
+        # A URL with no credentials at all is returned unchanged.
+        assert service._sanitize_url("redis://cache.example.com:6379/0") == "redis://cache.example.com:6379/0"
+
+    def test_sanitize_config_value_walks_collections(self):
+        """Collection-typed settings are sanitized element-wise, at any depth."""
+        service = SupportBundleService()
+
+        # List of strings: each element is sanitized on its content.
+        assert service._sanitize_config_value(["redis://:hunter2@h:6379", "10.0.0.0/8"]) == ["redis://:*****@h:6379", "10.0.0.0/8"]  # pragma: allowlist secret
+
+        # List of dicts: a secret-looking key has its value replaced outright,
+        # since the value itself carries no pattern to match on.
+        destinations = [{"endpoint": "https://siem.example.com", "token": "hunter2", "name": "prod"}]  # pragma: allowlist secret
+        assert service._sanitize_config_value(destinations) == [{"endpoint": "https://siem.example.com", "token": "*****", "name": "prod"}]
+
+        # Nested dicts are walked; benign mappings survive intact.
+        assert service._sanitize_config_value({"role_map": {"admin": "platform_admin"}}) == {"role_map": {"admin": "platform_admin"}}
+
+        # Non-string scalars pass through untouched.
+        assert service._sanitize_config_value(3600) == 3600
+        assert service._sanitize_config_value(None) is None
+        # An empty string stays empty rather than becoming None: "set but blank"
+        # and "unset" are different facts to whoever reads the bundle.
+        assert service._sanitize_config_value("") == ""
+
+    def test_sanitize_config_value_redacts_bearer_token_in_header_blob(self):
+        """A header blob carrying a bearer token is redacted.
+
+        otel_exporter_otlp_headers is a comma-separated key=value string that
+        conventionally holds an Authorization header. Its field name matches no
+        secret-name rule, so only content-based sanitization catches it.
+        """
+        service = SupportBundleService()
+
+        sanitized = service._sanitize_config_value("Authorization=Bearer eyJhbGci.eyJzdWIi.abc123,X-Env=prod")  # pragma: allowlist secret
+        assert "eyJhbGci" not in sanitized
+        assert "*****" in sanitized
+        assert "X-Env=prod" in sanitized
 
     def test_collect_logs_file_not_found(self):
         """Test log collection when file doesn't exist."""
@@ -423,6 +526,150 @@ class TestSupportBundleService:
         assert config.include_env is True
         assert config.include_system_info is True
         assert config.log_tail_lines == 1000
+
+    def test_secret_field_names_includes_known_secretstr_settings(self):
+        """The two settings that were previously plain-str secrets are detected.
+
+        Both csrf_secret_key and identity_claims_secret are now SecretStr-typed (see
+        test_secret_field_names_matches_secretstr_fields_exactly for the rule-2 backstop
+        they used to exercise), but pinning them by name is still valuable: neither may
+        slip out of the detected set, regardless of which rule catches it.
+        """
+        names = SupportBundleService._secret_field_names()
+
+        # csrf_secret_key derives from the JWT signing secret when unset.
+        assert "csrf_secret_key" in names
+        # identity_claims_secret derives from it the same way.
+        assert "identity_claims_secret" in names
+
+    def test_secret_field_names_matches_secretstr_fields_exactly(self):
+        """Every secret setting is SecretStr-typed; rule 2 currently adds nothing.
+
+        This test fails the day a contributor adds a plain-string secret with a
+        secret-ish name, forcing an explicit decision (retype it SecretStr, or
+        add it to _SAFE_STRING_FIELDS) rather than silently relying on the net.
+        """
+        # First-Party
+        from mcpgateway.config import Settings
+
+        secretstr_fields = {name for name, field in Settings.model_fields.items() if field.annotation is SecretStr or SecretStr in get_args(field.annotation)}
+
+        assert SupportBundleService._secret_field_names() == secretstr_fields
+
+    def test_secret_field_names_rule_2_backstop_on_throwaway_model(self):
+        """Rule 2 (name-regex fallback for plain strings) is directly exercised.
+
+        Against the real Settings model, rule 2 currently selects nothing (every
+        secret is SecretStr-typed), so this test builds a throwaway model to prove
+        the fallback still works on its own terms: it must catch a plain-string
+        secret-shaped name, ignore a benign string name, ignore a non-string
+        container annotation even with a secret-shaped name, and ignore a
+        non-string scalar annotation with a secret-shaped name.
+        """
+
+        class ThrowawayModel(BaseModel):
+            """Throwaway model exercising _secret_field_names() rule 2 in isolation."""
+
+            api_key: str = ""
+            notes: str = ""
+            mapping: Dict[str, str] = Field(default_factory=dict)
+            token_expiry: int = 0
+
+        names = SupportBundleService._secret_field_names(ThrowawayModel)
+
+        assert "api_key" in names
+        assert "notes" not in names
+        assert "mapping" not in names
+        assert "token_expiry" not in names
+
+    def test_secret_field_names_includes_every_secretstr_field(self):
+        """Every SecretStr-annotated setting is detected by type alone."""
+        # First-Party
+        from mcpgateway.config import Settings
+
+        names = SupportBundleService._secret_field_names()
+        for field_name, field in Settings.model_fields.items():
+            annotation = field.annotation
+            is_secret_type = annotation is SecretStr or SecretStr in get_args(annotation)
+            if is_secret_type:
+                assert field_name in names, f"SecretStr field {field_name} not detected as a secret"
+
+    def test_secret_field_names_excludes_benign_settings(self):
+        """Non-secret knobs whose names contain secret-ish words are kept."""
+        names = SupportBundleService._secret_field_names()
+
+        # int/bool knobs — redacting these would gut the bundle's usefulness
+        for benign in (
+            "token_expiry",
+            "password_min_length",
+            "password_policy_enabled",
+            "min_secret_length",
+            "require_strong_secrets",
+            "csrf_token_name",
+            "host",
+            "port",
+        ):
+            assert benign not in names, f"{benign} must not be redacted"
+
+        # A filesystem path, not a key
+        assert "jwt_private_key_path" not in names
+
+    def test_collect_settings_omits_csrf_secret_key(self):
+        """Neither JWT-derived signing key may appear in the collected settings."""
+        service = SupportBundleService()
+        config = service._collect_settings()
+
+        assert "csrf_secret_key" not in config
+        assert "identity_claims_secret" not in config
+
+    def test_collect_settings_keeps_benign_fields(self):
+        """The bundle stays useful: non-secret settings keep their real values."""
+        service = SupportBundleService()
+        config = service._collect_settings()
+
+        for benign in ("host", "port", "token_expiry", "password_min_length", "csrf_token_name"):
+            assert benign in config, f"{benign} was over-redacted"
+
+    def test_collect_settings_omits_every_detected_secret(self):
+        """Meta-test: every field _secret_field_names() flags is really gone.
+
+        A future secret setting that is neither SecretStr-typed nor name-matched
+        is caught by test_no_secret_leaks_into_bundle below; one that is detected
+        but somehow still emitted is caught here.
+        """
+        service = SupportBundleService()
+        config = service._collect_settings()
+
+        for name in SupportBundleService._secret_field_names():
+            assert name not in config, f"secret field {name} leaked into settings.json"
+
+    def test_no_secret_leaks_into_bundle(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+        """End-to-end: a sentinel JWT secret appears in no bundle member.
+
+        Byte-level rather than key-level, so the check still fires when the value
+        surfaces under some other key — a derived setting carrying a copy of the
+        signing secret would not be caught by a key-name assertion.
+        """
+        # First-Party
+        from mcpgateway.config import Settings
+
+        sentinel = "sentinel-jwt-canary-DO-NOT-USE-IN-PRODUCTION-0123456789"  # pragma: allowlist secret
+        sentinel_settings = Settings(
+            jwt_secret_key=sentinel,
+            database_url="sqlite:///:memory:",
+            environment="development",
+        )
+        # Sanity: the fallback under test really did copy the JWT secret across.
+        assert sentinel_settings.csrf_secret_key == sentinel or sentinel_settings.csrf_secret_key.get_secret_value() == sentinel
+
+        monkeypatch.setattr("mcpgateway.services.support_bundle_service.settings", sentinel_settings)
+
+        service = SupportBundleService()
+        bundle_path = service.generate_bundle(SupportBundleConfig(output_dir=tmp_path, include_logs=False))
+
+        with zipfile.ZipFile(bundle_path) as zf:
+            for member in zf.namelist():
+                assert sentinel.encode() not in zf.read(member), f"JWT secret leaked into {member}"
 
 
 if __name__ == "__main__":

@@ -331,7 +331,8 @@ install-dev: venv
 	@echo "🔑  Next step — choose one:"
 	@echo "    make setup           # recommended: auto-creates .env and patches secrets in-place"
 	@echo "    make init-secrets    # writes secrets to .env.secrets so you can review before copying"
-	@echo "    The gateway will not start until JWT_SECRET_KEY and AUTH_ENCRYPTION_SECRET are set."
+	@echo "    JWT_SECRET_KEY must be strong in every environment."
+	@echo "    AUTH_ENCRYPTION_SECRET: weak values (e.g. my-test-salt) are allowed in ENVIRONMENT=development."
 
 # help: build-ui              - Build Admin UI CSS and JS bundles (requires npm; set SKIP_UI_BUILD=1 to bypass)
 .PHONY: build-ui
@@ -375,7 +376,7 @@ check-env-dev:
 
 # help: init-secrets          - Generate secrets → .env.secrets for manual review; copy values into .env when ready
 # help: init-secrets-force    - Regenerate .env.secrets unconditionally (no prompt)
-# help: init-secrets-patch-env - Write generated secrets directly into .env (in-place, preserves other values)
+# help: init-secrets-patch-env - Patch JWT_SECRET_KEY/BASIC_AUTH_PASSWORD into .env; AUTH_ENCRYPTION_SECRET written to .env.secrets only
 .PHONY: init-secrets init-secrets-force init-secrets-patch-env
 init-secrets:                   ## 🔑 Generate secrets → .env.secrets (prompts if file exists)
 	$(UV_BIN) run python3 -m mcpgateway.scripts.init_secrets
@@ -383,7 +384,7 @@ init-secrets:                   ## 🔑 Generate secrets → .env.secrets (promp
 init-secrets-force:             ## 🔑 Regenerate .env.secrets unconditionally (--force)
 	$(UV_BIN) run python3 -m mcpgateway.scripts.init_secrets --force
 
-init-secrets-patch-env:         ## 🔑 Patch weak/placeholder secrets directly into .env (--patch-env)
+init-secrets-patch-env:         ## 🔑 Patch JWT_SECRET_KEY into .env; AUTH_ENCRYPTION_SECRET written to .env.secrets only (--patch-env)
 	$(UV_BIN) run python3 -m mcpgateway.scripts.init_secrets --patch-env .env
 
 # First-time setup: works before make dev, make serve, and make compose-up.

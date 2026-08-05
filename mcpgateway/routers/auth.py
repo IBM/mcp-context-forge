@@ -156,7 +156,7 @@ async def get_csrf_token(request: Request, current_user: "EmailUser" = Depends(g
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing session identifier")
 
         # Generate fresh CSRF token
-        csrf_token = generate_csrf_token(user_id=current_user.email, session_id=session_id, secret=settings.csrf_secret_key, expiry=settings.csrf_token_expiry)
+        csrf_token = generate_csrf_token(user_id=current_user.email, session_id=session_id, secret=settings.csrf_secret_key.get_secret_value(), expiry=settings.csrf_token_expiry)
 
         # Create response with CSRF cookie
         response = JSONResponse(content={"csrf_token": csrf_token})
@@ -239,7 +239,7 @@ async def login(login_request: LoginRequest, request: Request, db: Session = Dep
                 session_id = payload.get("jti", "")
 
                 # Generate CSRF token
-                csrf_token = generate_csrf_token(user_id=user.email, session_id=session_id, secret=settings.csrf_secret_key, expiry=settings.csrf_token_expiry)
+                csrf_token = generate_csrf_token(user_id=user.email, session_id=session_id, secret=settings.csrf_secret_key.get_secret_value(), expiry=settings.csrf_token_expiry)
 
                 auth_response = AuthenticationResponse(access_token=access_token, token_type="bearer", expires_in=expires_in, user=EmailUserResponse.from_email_user(user))  # nosec B106 - OAuth2 token type, not a password
                 response = JSONResponse(content=auth_response.model_dump(mode="json"))

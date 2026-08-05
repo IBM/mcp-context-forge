@@ -13,6 +13,7 @@ import time
 from unittest.mock import Mock, patch
 
 # Third-Party
+from pydantic import SecretStr
 import pytest
 
 # First-Party
@@ -348,7 +349,7 @@ class TestCSRFService:
 
 def test_get_csrf_service_uses_app_settings():
     with patch("mcpgateway.services.csrf_service.app_settings") as mock_settings:
-        mock_settings.csrf_secret_key = "secret"
+        mock_settings.csrf_secret_key = SecretStr("secret")  # pragma: allowlist secret
         mock_settings.csrf_token_expiry = 3600
 
         get_csrf_service.cache_clear()

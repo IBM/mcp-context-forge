@@ -171,6 +171,10 @@ spec:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
             runAsNonRoot: true
+            # The postgres image declares no USER, so runAsNonRoot alone leaves
+            # kubelet with no non-root uid to use and it refuses the container.
+            # 999 is the postgres uid built into the image.
+            runAsUser: 999
             capabilities:
               drop:
                 - ALL

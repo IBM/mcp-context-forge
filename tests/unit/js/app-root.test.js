@@ -17,14 +17,25 @@ function makeComponent() {
   return { component, watchCallbacks };
 }
 
+function makeLocalStorage() {
+  const values = new Map();
+  return {
+    clear: () => values.clear(),
+    getItem: (key) => values.get(key) ?? null,
+    setItem: (key, value) => values.set(key, String(value)),
+  };
+}
+
 // ─── Setup / teardown ─────────────────────────────────────────────────────────
 
 beforeEach(() => {
+  vi.stubGlobal("localStorage", makeLocalStorage());
   localStorage.clear();
 });
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
   delete window.Admin;
 });
 
@@ -119,7 +130,7 @@ describe("darkMode $watch callback", () => {
   });
 
   test("calls Admin.logRestrictedContext when localStorage.setItem throws", () => {
-    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+    vi.spyOn(localStorage, "setItem").mockImplementation(() => {
       throw new Error("QuotaExceededError");
     });
     const logRestrictedContext = vi.fn();
@@ -131,7 +142,7 @@ describe("darkMode $watch callback", () => {
   });
 
   test("does not throw on write error when Admin is absent", () => {
-    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+    vi.spyOn(localStorage, "setItem").mockImplementation(() => {
       throw new Error("QuotaExceededError");
     });
     delete window.Admin;
