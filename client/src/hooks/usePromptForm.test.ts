@@ -44,6 +44,10 @@ function mockAuth(selectedTeamId: string | null = null) {
     login: vi.fn(),
     logout: vi.fn(),
     setSelectedTeamId: vi.fn(),
+    permissions: [],
+    permissionsLoading: false,
+    permissionsError: false,
+    hasPermission: () => true,
   });
 }
 

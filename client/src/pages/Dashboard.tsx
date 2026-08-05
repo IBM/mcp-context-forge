@@ -4,6 +4,21 @@ import { Blocks, Bot, Code } from "lucide-react";
 import { SourceSelection } from "@/components/gateways/SourceSelection";
 import type { ActionCard } from "@/components/gateways/types";
 import { MCPIcon } from "@/components/icons/MCPIcon";
+import { ActivityFeedButton } from "@/components/dashboard/ActivityFeedButton";
+import { ClearControl } from "@/components/dashboard/ClearControl";
+import { EmptyStatePlaceholder } from "@/components/dashboard/EmptyStatePlaceholder";
+import { MiniCard } from "@/components/dashboard/MiniCard";
+import { PermissionDenied } from "@/components/dashboard/PermissionDenied";
+import { StatusHeadline } from "@/components/dashboard/StatusHeadline";
+import { Skeleton } from "@/components/ui/skeleton";
+import { useAuth } from "@/auth/useAuth";
+import {
+  HOME_STATES,
+  getRightColumnCards,
+  readActiveView,
+  type HomeViewId,
+  type MiniCardId,
+} from "@/components/dashboard/homeStates";
 import { Loading } from "@/components/ui/loading";
 import { useQuery } from "@/hooks/useQuery";
 import { useRouter } from "@/router";
@@ -13,13 +28,18 @@ const SERVERS_QUERY_PATH = "/servers?limit=1&include_pagination=true";
 const MCP_SERVERS_QUERY_PATH = "/gateways?limit=1&include_inactive=true&include_pagination=true";
 const SERVERS_FORM_PATH = "/app/servers?openForm=true";
 
+/** Inline source cards shown in the default state (one per source type). */
+const DEFAULT_SOURCE_CARDS: MiniCardId[] = ["mcp", "a2a", "rest", "grpc"];
+
 interface MCPServersResponse {
   gateways?: unknown[];
 }
 
 export function Dashboard() {
   const intl = useIntl();
-  const { navigate } = useRouter();
+  const { path, navigate } = useRouter();
+  const activeView = readActiveView(path);
+
   const {
     data: virtualServersData,
     error: virtualServersError,
@@ -30,6 +50,7 @@ export function Dashboard() {
     error: mcpServersError,
     isLoading: mcpServersLoading,
   } = useQuery<MCPServersResponse>(MCP_SERVERS_QUERY_PATH);
+
   const actionCards: ActionCard[] = useMemo(
     () => [
       {
@@ -73,7 +94,6 @@ export function Dashboard() {
   }
 
   const queryError = virtualServersError ?? mcpServersError;
-
   if (queryError) {
     return (
       <div className="p-6">
@@ -90,15 +110,88 @@ export function Dashboard() {
   const hasVirtualServers = (virtualServersData?.servers?.length ?? 0) > 0;
   const hasMCPServers = (mcpServersData?.gateways?.length ?? 0) > 0;
 
+  // Onboarding: no sources yet -> show the source-selection flow instead of the home.
   if (!hasVirtualServers && !hasMCPServers) {
     return <SourceSelection actionCards={actionCards} />;
   }
 
   return (
-    <div className="space-y-9 p-6">
-      <h1 className="text-xl font-semibold text-neutral-900 dark:text-neutral-100">
-        {intl.formatMessage({ id: "dashboard.title" })}
-      </h1>
+    <div className="p-6">
+      {activeView === "default" ? <DefaultState /> : <NonDefaultState active={activeView} />}
     </div>
   );
 }
+
+/**
+ * Default (resting) state: status summary with the activity-feed entry point,
+ * the system status card, and the inline source cards. No right column.
+ * Card content (#5841) lands behind the placeholder.
+ */
+function DefaultState() {
+  return (
+    <div className="mx-auto flex max-w-3xl flex-col gap-6">
+      <StatusHeadline action={<ActivityFeedButton />} />
+      {/* #5841 SystemStatusCard swaps in here. */}
+      <EmptyStatePlaceholder messageId="dashboard.home.placeholder.system" />
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        {DEFAULT_SOURCE_CARDS.map((id) => (
+          <MiniCard key={id} id={id} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Any non-default state: main content (title + Clear control + the view's main
+ * content, a placeholder for now) plus the right-column mini-card stack (the six
+ * cards minus the active one).
+ */
+function NonDefaultState({ active }: { active: HomeViewId }) {
+  const intl = useIntl();
+  const { hasPermission, permissionsLoading } = useAuth();
+  const state = HOME_STATES[active];
+  const rightColumnCards = getRightColumnCards(active);
+
+  const gated = Boolean(state.requiredPermission);
+  const allowed = !state.requiredPermission || hasPermission(state.requiredPermission);
+
+  return (
+    <div className="mx-auto grid max-w-5xl grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_260px]">
+      <div className="min-w-0 space-y-4">
+        <div className="flex items-center justify-between gap-4">
+          <h1 className="font-heading text-lg font-medium text-foreground">
+            {state.titleId ? intl.formatMessage({ id: state.titleId }) : null}
+          </h1>
+          <ClearControl />
+        </div>
+        {/* Gate the render on real permissions (never is_admin). Skeleton while
+            permissions load to avoid a flash; PermissionDenied when disallowed.
+            Real content (#5841/#5842/#5531/#5942/#5943) swaps in per view. */}
+        {gated && permissionsLoading ? (
+          <Skeleton className="h-40 w-full rounded-lg" />
+        ) : allowed ? (
+          <EmptyStatePlaceholder messageId={PLACEHOLDER_MESSAGE[active]} />
+        ) : (
+          <PermissionDenied />
+        )}
+      </div>
+      <aside className="flex flex-col gap-3">
+        {rightColumnCards.map((id) => (
+          <MiniCard key={id} id={id} />
+        ))}
+      </aside>
+    </div>
+  );
+}
+
+/** Placeholder copy per view until the real card lands. */
+const PLACEHOLDER_MESSAGE: Record<HomeViewId, string> = {
+  default: "dashboard.home.emptyState",
+  activity: "dashboard.home.placeholder.activity",
+  mcp: "dashboard.home.placeholder.mcp",
+  a2a: "dashboard.home.emptyState",
+  rest: "dashboard.home.emptyState",
+  grpc: "dashboard.home.emptyState",
+  system: "dashboard.home.placeholder.system",
+};
