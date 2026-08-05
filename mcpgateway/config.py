@@ -405,7 +405,10 @@ class Settings(BaseSettings):
 
     # CSRF Protection Configuration
     csrf_enabled: bool = Field(default=True, description="Enable CSRF protection for state-changing operations")
-    csrf_secret_key: str = Field(default="", description="Secret key for CSRF token generation (falls back to jwt_secret_key if empty)")
+    csrf_secret_key: SecretStr = Field(
+        default=SecretStr(""),
+        description="Secret key for CSRF token generation. Falls back to jwt_secret_key when unset; set explicitly so the two keys can be rotated independently.",
+    )
     csrf_token_name: str = Field(default="X-CSRF-Token", description="HTTP header name for CSRF token")
     csrf_cookie_name: str = Field(default="mcpgateway_csrf_token", description="Cookie name for CSRF token")
     csrf_token_expiry: int = Field(default=3600, description="CSRF token expiration time in seconds")
@@ -680,7 +683,7 @@ class Settings(BaseSettings):
         default=False,
         description="Sign propagated user claims with HMAC for verification",
     )
-    identity_claims_secret: Optional[str] = Field(
+    identity_claims_secret: Optional[SecretStr] = Field(
         default=None,
         description="Secret key for signing propagated identity claims (uses JWT_SECRET_KEY if unset)",
     )
@@ -1636,9 +1639,14 @@ class Settings(BaseSettings):
             if self.debug and not self.dev_mode:
                 logger.warning("🐛 SECURITY WARNING: Debug mode is enabled in non-dev mode. This may leak sensitive information! Set DEBUG=false for production.")
 
-        # CSRF secret key fallback to JWT secret key
-        if not self.csrf_secret_key:
-            self.csrf_secret_key = self.jwt_secret_key.get_secret_value()
+        # CSRF secret key fallback to JWT secret key.
+        # NOTE: SecretStr("") is truthy, so the emptiness check must go through
+        # get_secret_value(); `if not self.csrf_secret_key` would never fire and
+        # CSRF tokens would end up signed with an empty key. Settings does not
+        # set validate_assignment, so the assigned value is not coerced and has
+        # to be wrapped in SecretStr explicitly.
+        if not self.csrf_secret_key.get_secret_value():
+            self.csrf_secret_key = SecretStr(self.jwt_secret_key.get_secret_value())
 
         # CSRF_COOKIE_NAME / CSRF_TOKEN_NAME govern CSRFMiddleware only. Every
         # other consumer -- enforce_admin_csrf (admin.py), enforce_fetch_tools_csrf
