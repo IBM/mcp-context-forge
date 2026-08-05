@@ -405,7 +405,10 @@ class Settings(BaseSettings):
 
     # CSRF Protection Configuration
     csrf_enabled: bool = Field(default=True, description="Enable CSRF protection for state-changing operations")
-    csrf_secret_key: str = Field(default="", description="Secret key for CSRF token generation (falls back to jwt_secret_key if empty)")
+    csrf_secret_key: SecretStr = Field(
+        default=SecretStr(""),
+        description="Secret key for CSRF token generation. Falls back to jwt_secret_key when unset; set explicitly so the two keys can be rotated independently.",
+    )
     csrf_token_name: str = Field(default="X-CSRF-Token", description="HTTP header name for CSRF token")
     csrf_cookie_name: str = Field(default="mcpgateway_csrf_token", description="Cookie name for CSRF token")
     csrf_token_expiry: int = Field(default=3600, description="CSRF token expiration time in seconds")
@@ -680,7 +683,7 @@ class Settings(BaseSettings):
         default=False,
         description="Sign propagated user claims with HMAC for verification",
     )
-    identity_claims_secret: Optional[str] = Field(
+    identity_claims_secret: Optional[SecretStr] = Field(
         default=None,
         description="Secret key for signing propagated identity claims (uses JWT_SECRET_KEY if unset)",
     )
@@ -1516,14 +1519,19 @@ class Settings(BaseSettings):
     def validate_security_combinations(self) -> Self:
         """Validate security setting combinations and raise on unsafe secrets.
 
-        Placeholder and weak/known secrets are rejected unconditionally in every
-        environment (development, staging, and production alike).  Some compose
-        sibling containers (e.g. ``register_fast_time``, ``prometheus_token``)
+        ``jwt_secret_key`` is rejected unconditionally in every environment
+        (development, staging, and production) when it is empty, a placeholder,
+        known-weak, too short, or low-entropy.  Some compose sibling containers
         sign tokens with the raw ``JWT_SECRET_KEY`` environment variable outside
         this validator, so per-process random generation cannot be used as a
         fallback — gateway and sibling containers must share the same secret.
-        The only safe option is an unconditional hard-fail that forces operators
-        to provide a real secret before the process will start.
+
+        ``auth_encryption_secret`` follows the same rules in staging and
+        production.  In ``ENVIRONMENT=development``, weak/short/low-entropy
+        values are downgraded to a loud WARNING so local PoC workflows can use
+        a simple value like ``AUTH_ENCRYPTION_SECRET=my-test-salt``.  The
+        ``__REPLACE_ME__`` placeholder is still rejected unconditionally for
+        both fields in every environment — it has no runtime meaning.
 
         Run ``python -m mcpgateway.scripts.init_secrets`` (or ``make init-secrets``
         for interactive use, ``make init-secrets-patch-env`` to write directly into
@@ -1533,14 +1541,24 @@ class Settings(BaseSettings):
             Itself.
 
         Raises:
-            SecurityConfigurationError: If jwt_secret_key or auth_encryption_secret
-                is unset (placeholder), matches a known-weak value, is shorter than
-                ``min_secret_length`` characters, or has low per-character entropy.
+            SecurityConfigurationError: If either secret is empty (both fields,
+                all environments), or if ``jwt_secret_key`` is the
+                ``__REPLACE_ME__`` placeholder, known-weak, too short, or has
+                low per-character entropy (all environments).
+                ``auth_encryption_secret`` only warns for ALL of these in
+                ``ENVIRONMENT=development`` — including the placeholder.
+                Full enforcement applies to ``auth_encryption_secret`` in
+                staging and production.
         """
-        # client_mode is intentionally NOT exempted — secret-strength enforcement
-        # is always active regardless of deployment profile.
         weak_secrets = {v.lower() for v in self.WEAK_VALUES}
         env = str(self.environment).lower()
+        is_dev = env == "development"
+
+        # jwt_secret_key:          unconditional hard-fail in every environment.
+        # auth_encryption_secret:  ALL non-compliant values (placeholder, insufficient
+        #                          length, known-default, low entropy) are WARNING-only
+        #                          in ENVIRONMENT=development. Full enforcement in
+        #                          staging and production.
         for field_name, secret_field in (
             ("jwt_secret_key", self.jwt_secret_key),
             ("auth_encryption_secret", self.auth_encryption_secret),
@@ -1548,27 +1566,58 @@ class Settings(BaseSettings):
             val = secret_field.get_secret_value()
 
             if not val.strip():
-                raise SecurityConfigurationError(f"{field_name}: secret is empty. Set a real value (run 'python -m mcpgateway.scripts.init_secrets').")
-
-            if len(val) < self.min_secret_length:
                 raise SecurityConfigurationError(
-                    f"{field_name}: too short ({len(val)} chars, minimum {self.min_secret_length}). "
-                    "Run 'python -m mcpgateway.scripts.init_secrets' to generate strong values, "
-                    "or use 'make init-secrets-patch-env' to write them directly into .env."
+                    f"{field_name}: secret is empty. "
+                    "To fix, choose one of:\n"
+                    "  make setup                  # recommended: auto-creates .env and patches secrets in-place\n"
+                    "  make init-secrets           # writes secrets to .env.secrets for review, then copy into .env\n"
+                    "  make init-secrets-patch-env # patches secrets directly into an existing .env"
                 )
 
             is_placeholder = val.lower().startswith("__replace_me__")
             is_weak = val.lower() in weak_secrets
             entropy = calculate_entropy(val)
             is_low_entropy = entropy < 3.5
+            is_too_short = len(val) < self.min_secret_length
 
-            if is_placeholder or is_weak or is_low_entropy:
-                if is_placeholder:
-                    reason = "unset placeholder (__REPLACE_ME__)"
-                elif is_weak:
-                    reason = "known-weak/default value"
-                else:
-                    reason = f"low entropy (score {entropy:.2f} < 3.5)"
+            # auth_encryption_secret in development: ALL non-compliant values are
+            # downgraded to a WARNING — including the __REPLACE_ME__ placeholder.
+            # Production and staging always enforce full cryptographic strength.
+            if field_name == "auth_encryption_secret" and is_dev:
+                if is_placeholder or is_too_short or is_weak or is_low_entropy:
+                    logger.warning(
+                        "🔓 SECURITY WARNING - %s: value does not meet minimum cryptographic "
+                        "strength requirements (placeholder, insufficient length, known-default, "
+                        "or low entropy). Permitted only in ENVIRONMENT=development for local "
+                        "PoC use. This configuration MUST NOT be used in staging or production "
+                        "— replace with a cryptographically secure value before any "
+                        "non-development deployment.",
+                        field_name,
+                    )
+                continue
+
+            # For jwt_secret_key and auth_encryption_secret outside development:
+            # placeholder, too-short, weak, and low-entropy all hard-fail.
+            if is_placeholder:
+                raise SecurityConfigurationError(
+                    f"{field_name}: unset placeholder (__REPLACE_ME__) rejected in every environment (including '{env}'). "
+                    "To fix, choose one of:\n"
+                    "  make setup                  # recommended: auto-creates .env and patches secrets in-place\n"
+                    "  make init-secrets           # writes secrets to .env.secrets for review, then copy into .env\n"
+                    "  make init-secrets-patch-env # patches secrets directly into an existing .env"
+                )
+
+            if is_too_short:
+                raise SecurityConfigurationError(
+                    f"{field_name}: too short ({len(val)} chars, minimum {self.min_secret_length}). "
+                    "To fix, choose one of:\n"
+                    "  make setup                  # recommended: auto-creates .env and patches secrets in-place\n"
+                    "  make init-secrets           # writes secrets to .env.secrets for review, then copy into .env\n"
+                    "  make init-secrets-patch-env # patches secrets directly into an existing .env"
+                )
+
+            if is_weak or is_low_entropy:
+                reason = "known-weak/default value" if is_weak else f"low entropy (score {entropy:.2f} < 3.5)"
                 raise SecurityConfigurationError(
                     f"{field_name}: {reason} rejected in every environment (including '{env}'). "
                     "Cross-process token consistency requires operators to supply a real secret before startup — "
@@ -1590,9 +1639,46 @@ class Settings(BaseSettings):
             if self.debug and not self.dev_mode:
                 logger.warning("🐛 SECURITY WARNING: Debug mode is enabled in non-dev mode. This may leak sensitive information! Set DEBUG=false for production.")
 
-        # CSRF secret key fallback to JWT secret key
-        if not self.csrf_secret_key:
-            self.csrf_secret_key = self.jwt_secret_key.get_secret_value()
+        # CSRF secret key fallback to JWT secret key.
+        # NOTE: SecretStr("") is truthy, so the emptiness check must go through
+        # get_secret_value(); `if not self.csrf_secret_key` would never fire and
+        # CSRF tokens would end up signed with an empty key. Settings does not
+        # set validate_assignment, so the assigned value is not coerced and has
+        # to be wrapped in SecretStr explicitly.
+        if not self.csrf_secret_key.get_secret_value():
+            self.csrf_secret_key = SecretStr(self.jwt_secret_key.get_secret_value())
+
+        # CSRF_COOKIE_NAME / CSRF_TOKEN_NAME govern CSRFMiddleware only. Every
+        # other consumer -- enforce_admin_csrf (admin.py), enforce_fetch_tools_csrf
+        # (routers/oauth_router.py), the Admin UI JavaScript, and the server-rendered
+        # login/password templates -- hardcodes the default names. Overriding either
+        # setting desynchronizes the middleware from all of them, which surfaces as
+        # intermittent 403 CSRF_TOKEN_INVALID on non-/admin browser writes rather
+        # than as an obvious failure. Warn loudly at startup instead.
+        #
+        # Comparison is asymmetric by design. HTTP header names are
+        # case-insensitive (RFC 7230) and Starlette normalizes them, so
+        # CSRF_TOKEN_NAME=x-csrf-token is functionally identical to the default
+        # and must not warn. Cookie names are case-sensitive (RFC 6265), so a
+        # cookie name differing only in case is a genuine desync and must warn.
+        if self.csrf_enabled:
+            for setting_name, configured, default, case_sensitive in (
+                ("CSRF_COOKIE_NAME", self.csrf_cookie_name, "mcpgateway_csrf_token", True),
+                ("CSRF_TOKEN_NAME", self.csrf_token_name, "X-CSRF-Token", False),
+            ):
+                differs = configured != default if case_sensitive else configured.casefold() != default.casefold()
+                if differs:
+                    logger.warning(
+                        "⚠️  CSRF CONFIGURATION WARNING: %s is set to %r but the Admin UI and the "
+                        "per-route CSRF dependencies hardcode %r. Browser-based writes outside /admin "
+                        "will intermittently fail with 403 CSRF_TOKEN_INVALID. Set %s=%s (or unset it) "
+                        "unless you have verified every client sends the custom name.",
+                        setting_name,
+                        configured,
+                        default,
+                        setting_name,
+                        default,
+                    )
 
         # Validate header passthrough feature flag dependencies
         # Fail if sensitive passthrough is enabled without base feature
