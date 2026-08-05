@@ -12,8 +12,11 @@
  * omits the param. See `readActiveView()`.
  */
 
-import { Activity, Blocks, Bot, Code, List, Server } from "lucide-react";
+import { Activity, Code, List, Unplug } from "lucide-react";
 import type { ComponentType } from "react";
+
+import { AgentIcon } from "@/components/icons/AgentIcon";
+import { MCPIcon } from "@/components/icons/MCPIcon";
 
 // ---------------------------------------------------------------------------
 // View ids
@@ -69,10 +72,10 @@ export const MINI_CARDS: Record<MiniCardId, MiniCardMeta> = {
     view: "activity",
     icon: List,
   },
-  mcp: { id: "mcp", labelId: "dashboard.home.card.mcp", view: "mcp", icon: Server },
-  a2a: { id: "a2a", labelId: "dashboard.home.card.a2a", view: "a2a", icon: Bot },
+  mcp: { id: "mcp", labelId: "dashboard.home.card.mcp", view: "mcp", icon: MCPIcon },
+  a2a: { id: "a2a", labelId: "dashboard.home.card.a2a", view: "a2a", icon: AgentIcon },
   rest: { id: "rest", labelId: "dashboard.home.card.rest", view: "rest", icon: Code },
-  grpc: { id: "grpc", labelId: "dashboard.home.card.grpc", view: "grpc", icon: Blocks },
+  grpc: { id: "grpc", labelId: "dashboard.home.card.grpc", view: "grpc", icon: Unplug },
 };
 
 // ---------------------------------------------------------------------------
