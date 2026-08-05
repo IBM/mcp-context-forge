@@ -1640,6 +1640,38 @@ class Settings(BaseSettings):
         if not self.csrf_secret_key:
             self.csrf_secret_key = self.jwt_secret_key.get_secret_value()
 
+        # CSRF_COOKIE_NAME / CSRF_TOKEN_NAME govern CSRFMiddleware only. Every
+        # other consumer -- enforce_admin_csrf (admin.py), enforce_fetch_tools_csrf
+        # (routers/oauth_router.py), the Admin UI JavaScript, and the server-rendered
+        # login/password templates -- hardcodes the default names. Overriding either
+        # setting desynchronizes the middleware from all of them, which surfaces as
+        # intermittent 403 CSRF_TOKEN_INVALID on non-/admin browser writes rather
+        # than as an obvious failure. Warn loudly at startup instead.
+        #
+        # Comparison is asymmetric by design. HTTP header names are
+        # case-insensitive (RFC 7230) and Starlette normalizes them, so
+        # CSRF_TOKEN_NAME=x-csrf-token is functionally identical to the default
+        # and must not warn. Cookie names are case-sensitive (RFC 6265), so a
+        # cookie name differing only in case is a genuine desync and must warn.
+        if self.csrf_enabled:
+            for setting_name, configured, default, case_sensitive in (
+                ("CSRF_COOKIE_NAME", self.csrf_cookie_name, "mcpgateway_csrf_token", True),
+                ("CSRF_TOKEN_NAME", self.csrf_token_name, "X-CSRF-Token", False),
+            ):
+                differs = configured != default if case_sensitive else configured.casefold() != default.casefold()
+                if differs:
+                    logger.warning(
+                        "⚠️  CSRF CONFIGURATION WARNING: %s is set to %r but the Admin UI and the "
+                        "per-route CSRF dependencies hardcode %r. Browser-based writes outside /admin "
+                        "will intermittently fail with 403 CSRF_TOKEN_INVALID. Set %s=%s (or unset it) "
+                        "unless you have verified every client sends the custom name.",
+                        setting_name,
+                        configured,
+                        default,
+                        setting_name,
+                        default,
+                    )
+
         # Validate header passthrough feature flag dependencies
         # Fail if sensitive passthrough is enabled without base feature
         if self.enable_sensitive_header_passthrough and not self.enable_header_passthrough:
