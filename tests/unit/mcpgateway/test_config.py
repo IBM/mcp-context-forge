@@ -2352,3 +2352,29 @@ def test_alembic_env_import_does_not_require_secrets():
             if val is not None:
                 os.environ[key] = val
         sys.modules.pop("mcpgateway.alembic.env", None)
+
+
+def test_csrf_secret_key_is_a_secret_and_falls_back_to_jwt_secret():
+    """CSRF key must be SecretStr, and must still inherit the JWT secret when unset."""
+    # Third-Party
+    from pydantic import SecretStr
+
+    # First-Party
+    from mcpgateway.config import Settings
+
+    jwt_value = "config-test-jwt-canary-DO-NOT-USE-IN-PRODUCTION-0123456789"  # pragma: allowlist secret
+    cfg = Settings(jwt_secret_key=jwt_value, database_url="sqlite:///:memory:", environment="development")
+
+    assert isinstance(cfg.csrf_secret_key, SecretStr)
+    # The fallback still fires: SecretStr("") is truthy, so a naive
+    # `if not self.csrf_secret_key` would silently leave the key empty.
+    assert cfg.csrf_secret_key.get_secret_value() == jwt_value
+
+    explicit = "config-test-csrf-canary-DO-NOT-USE-IN-PRODUCTION-0123456789"  # pragma: allowlist secret
+    cfg2 = Settings(
+        jwt_secret_key=jwt_value,
+        csrf_secret_key=explicit,
+        database_url="sqlite:///:memory:",
+        environment="development",
+    )
+    assert cfg2.csrf_secret_key.get_secret_value() == explicit

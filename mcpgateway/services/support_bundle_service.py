@@ -6,14 +6,18 @@ SPDX-License-Identifier: Apache-2.0
 Support Bundle Service - Generate diagnostic bundles for troubleshooting.
 
 This module provides functionality to create comprehensive support bundles containing
-system diagnostics, logs, configuration, and other debugging information with automatic
-sanitization of sensitive data (passwords, tokens, API keys).
+system diagnostics, logs, configuration, and other debugging information. Sensitive
+data is handled differently depending on where it appears: settings.json
+deterministically excludes every field the Settings model marks as a secret (see
+SupportBundleService._secret_field_names()); environment.json masks environment
+variables by name pattern; and logs/ apply best-effort regex redaction, which is not
+a guarantee against every possible secret shape.
 
 Features:
 - Version and system information collection
-- Log file collection with size limits and sanitization
-- Environment configuration with secret redaction
-- Database connection info (sanitized)
+- Log file collection with size limits and best-effort sanitization
+- Environment configuration with name-based secret masking
+- Database connection info (credentials stripped from URLs)
 - Platform and dependency information
 - ZIP archive generation with timestamped filenames
 
@@ -40,17 +44,37 @@ import platform
 import re
 import socket
 import tempfile
-from typing import Any, Dict, Optional
+from types import UnionType
+from typing import Any, Dict, get_args, get_origin, Optional, Union
 import zipfile
 
 # Third-Party
 import orjson
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, SecretStr
 
 # First-Party
 from mcpgateway import __version__
 from mcpgateway.config import settings
 from mcpgateway.db import engine
+
+# Field names that indicate a secret when the setting is string-typed.
+#
+# Deliberately narrower than SupportBundleService._is_secret(): bare "token"
+# and "key" match ~60 harmless settings (token_expiry, password_min_length,
+# csrf_token_name, ...) and redacting those would gut the bundle's value for
+# the debugging it exists to support. _is_secret() can afford to be broad
+# because it inspects raw environment variables whose names are unknown;
+# here the field set is known and typed.
+#
+# This regex is a backstop, not the policy: new secret settings must be typed
+# SecretStr, which _secret_field_names() rule 1 always catches regardless of
+# name. The regex only catches the mistake of forgetting to do that, and it
+# fails open for a plausible name it doesn't match, e.g. webhook_signing_key,
+# encryption_salt, or hmac_pepper. Do not rely on it as the primary control.
+_SECRET_NAME_RE = re.compile(r"secret|password|passwd|credential|passphrase|private_key|api_key", re.IGNORECASE)
+
+# String settings matching _SECRET_NAME_RE that are not themselves secrets.
+_SAFE_STRING_FIELDS = frozenset({"jwt_private_key_path"})
 
 
 class SupportBundleConfig(BaseModel):
@@ -124,12 +148,20 @@ class SupportBundleService:
             True
             >>> service._is_secret("API_KEY")
             True
+            >>> service._is_secret("RATELIMITER_REDIS_URL")
+            True
             >>> service._is_secret("DEBUG")
             False
         """
         key_upper = key.upper()
         # Check for common secret keywords
         if any(tok in key_upper for tok in ("SECRET", "TOKEN", "PASS", "KEY")):
+            return True
+        # URL-shaped settings routinely carry inline credentials in their
+        # userinfo component; mask by name suffix rather than maintaining an
+        # exact-match entry per URL setting (see database_url / redis_url
+        # below, kept for variables whose names predate this rule).
+        if key_upper.endswith("_URL"):
             return True
         # Check for specific secret environment variables
         secret_vars = {
@@ -141,6 +173,88 @@ class SupportBundleService:
             "AUTH_ENCRYPTION_SECRET",
         }
         return key_upper in secret_vars
+
+    @staticmethod
+    def _is_string_annotation(annotation: Any) -> bool:
+        """Check whether a field annotation is ``str`` or ``Optional[str]``.
+
+        Container annotations such as ``Dict[str, str]`` are rejected so that
+        a mapping setting is never mistaken for a scalar secret.
+
+        Args:
+            annotation: The declared annotation of a Pydantic model field.
+
+        Returns:
+            bool: True if the annotation resolves to a plain or optional string.
+
+        Examples:
+            >>> from typing import Dict, Optional
+            >>> SupportBundleService._is_string_annotation(str)
+            True
+            >>> SupportBundleService._is_string_annotation(Optional[str])
+            True
+            >>> SupportBundleService._is_string_annotation(Dict[str, str])
+            False
+            >>> SupportBundleService._is_string_annotation(int)
+            False
+        """
+        if annotation is str:
+            return True
+        if get_origin(annotation) in (Union, UnionType):
+            return all(arg is str or arg is type(None) for arg in get_args(annotation))
+        return False
+
+    @classmethod
+    def _secret_field_names(cls, model: type[BaseModel] | None = None) -> set[str]:
+        """Compute the set of settings fields that must never reach the bundle.
+
+        A field is a secret when either:
+
+        1. ``SecretStr`` appears anywhere in its annotation — directly,
+           ``Optional[SecretStr]``, or nested in a container such as
+           ``Dict[str, SecretStr]`` or ``List[SecretStr]`` — the primary rule,
+           so any correctly typed secret added in future is covered without
+           touching this module; or
+        2. it is string-typed, its name matches :data:`_SECRET_NAME_RE`, and it
+           is not in :data:`_SAFE_STRING_FIELDS` — a backstop for plain-string
+           secrets that were not typed as ``SecretStr``. New secret settings
+           must be typed ``SecretStr``; that is the enforced rule. This name
+           regex only catches the mistake of forgetting to.
+
+        Args:
+            model: Pydantic model class to inspect. Defaults to the
+                application :class:`~mcpgateway.config.Settings` model;
+                overridable so the rule can be exercised against a throwaway
+                model in tests without depending on the real settings shape.
+
+        Returns:
+            set[str]: Field names to exclude from ``settings.json``.
+
+        Examples:
+            >>> names = SupportBundleService._secret_field_names()
+            >>> "jwt_secret_key" in names
+            True
+            >>> "csrf_secret_key" in names
+            True
+            >>> "token_expiry" in names
+            False
+        """
+        # First-Party
+        from mcpgateway.config import Settings  # pylint: disable=import-outside-toplevel
+
+        model = model or Settings
+
+        secret_names: set[str] = set()
+        for name, field in model.model_fields.items():
+            annotation = field.annotation
+            if annotation is SecretStr or SecretStr in get_args(annotation):
+                secret_names.add(name)
+                continue
+            if name in _SAFE_STRING_FIELDS:
+                continue
+            if _SECRET_NAME_RE.search(name) and cls._is_string_annotation(annotation):
+                secret_names.add(name)
+        return secret_names
 
     def _sanitize_url(self, url: Optional[str]) -> Optional[str]:
         """Redact credentials from URLs.
@@ -273,7 +387,7 @@ class SupportBundleService:
         return {k: "*****" if self._is_secret(k) else v for k, v in os.environ.items()}
 
     def _collect_settings(self) -> Dict[str, Any]:
-        """Collect application settings with secrets redacted.
+        """Collect application settings with secret fields excluded.
 
         Returns:
             Dict of application settings
@@ -284,27 +398,20 @@ class SupportBundleService:
             >>> 'host' in config
             True
         """
-        # Export settings as dict but exclude sensitive fields
-        exclude_fields = {
-            "basic_auth_password",
-            "jwt_secret_key",
-            "auth_encryption_secret",
-            "platform_admin_password",
-            "sso_github_client_secret",
-            "sso_google_client_secret",
-            "sso_ibm_verify_client_secret",
-            "sso_okta_client_secret",
-            "sso_keycloak_client_secret",
-            "sso_entra_client_secret",
-            "sso_generic_client_secret",
-        }
-        config = settings.model_dump(exclude=exclude_fields)
+        # Exclusions are computed from the Settings model rather than
+        # hand-maintained: a hardcoded list silently goes stale as new settings
+        # are added, so a field added later is omitted from it by default.
+        config = settings.model_dump(exclude=self._secret_field_names())
 
-        # Sanitize URLs
-        if "database_url" in config:
-            config["database_url"] = self._sanitize_url(config["database_url"])
-        if "redis_url" in config:
-            config["redis_url"] = self._sanitize_url(config["redis_url"])
+        # Sanitize every string-valued *_url setting (database_url, redis_url,
+        # ratelimiter_redis_url, elasticsearch_url, ...) generically rather
+        # than naming each one: these routinely carry inline credentials
+        # (redis://:password@host:6379) and the set of URL settings grows
+        # independently of this module. Iterate a snapshot of the keys since
+        # the loop mutates config in place.
+        for key in list(config.keys()):
+            if key.endswith("_url") and isinstance(config[key], str):
+                config[key] = self._sanitize_url(config[key])
 
         return config
 
@@ -459,20 +566,26 @@ This bundle contains diagnostic information for troubleshooting ContextForge iss
 - MANIFEST.json: Bundle metadata and generation info
 - version.json: Application and dependency versions
 - system_info.json: Platform and system metrics
-- settings.json: Application configuration (secrets redacted)
-- environment.json: Environment variables (secrets redacted)
-- logs/: Application logs (sanitized)
+- settings.json: Application configuration (secret fields excluded)
+- environment.json: Environment variables (credential-like names masked)
+- logs/: Application logs (known credential patterns redacted)
 
 ## Security Notice
 
-This bundle has been automatically sanitized to remove:
-- Passwords and authentication credentials
-- API keys and tokens
-- JWT secrets
-- Database connection passwords
-- Other sensitive configuration values
+This bundle applies different guarantees depending on the file:
 
-However, please review the contents before sharing with support or external parties.
+- settings.json: every field the application's configuration model marks as
+  a secret (passwords, tokens, API keys, JWT/CSRF/identity-claims signing
+  keys, and similar) is deterministically excluded, not just masked.
+- environment.json: variables whose names look credential-like are masked.
+  A secret exposed under an unexpected variable name could be missed.
+- logs/: known credential patterns (passwords, tokens, API keys, bearer
+  auth headers, JWTs, URL-embedded credentials) are redacted on a
+  best-effort basis. Free-form log messages can still contain sensitive
+  data that does not match any known pattern.
+
+Review the contents before sharing this bundle with support or external
+parties, especially the logs/ directory.
 
 ## Usage
 
