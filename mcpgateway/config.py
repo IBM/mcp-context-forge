@@ -1601,12 +1601,19 @@ class Settings(BaseSettings):
         # setting desynchronizes the middleware from all of them, which surfaces as
         # intermittent 403 CSRF_TOKEN_INVALID on non-/admin browser writes rather
         # than as an obvious failure. Warn loudly at startup instead.
+        #
+        # Comparison is asymmetric by design. HTTP header names are
+        # case-insensitive (RFC 7230) and Starlette normalizes them, so
+        # CSRF_TOKEN_NAME=x-csrf-token is functionally identical to the default
+        # and must not warn. Cookie names are case-sensitive (RFC 6265), so a
+        # cookie name differing only in case is a genuine desync and must warn.
         if self.csrf_enabled:
-            for setting_name, configured, default in (
-                ("CSRF_COOKIE_NAME", self.csrf_cookie_name, "mcpgateway_csrf_token"),
-                ("CSRF_TOKEN_NAME", self.csrf_token_name, "X-CSRF-Token"),
+            for setting_name, configured, default, case_sensitive in (
+                ("CSRF_COOKIE_NAME", self.csrf_cookie_name, "mcpgateway_csrf_token", True),
+                ("CSRF_TOKEN_NAME", self.csrf_token_name, "X-CSRF-Token", False),
             ):
-                if configured != default:
+                differs = configured != default if case_sensitive else configured.casefold() != default.casefold()
+                if differs:
                     logger.warning(
                         "⚠️  CSRF CONFIGURATION WARNING: %s is set to %r but the Admin UI and the "
                         "per-route CSRF dependencies hardcode %r. Browser-based writes outside /admin "

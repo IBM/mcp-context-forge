@@ -152,6 +152,51 @@ def test_oauth_router_csrf_cookie_name_matches_config_default():
         assert oauth_router.ADMIN_CSRF_COOKIE_NAME == s.csrf_cookie_name, f"oauth_router.ADMIN_CSRF_COOKIE_NAME={oauth_router.ADMIN_CSRF_COOKIE_NAME!r} does not match config.py default={s.csrf_cookie_name!r}"
 
 
+def test_admin_csrf_header_name_matches_config_default():
+    """ADMIN_CSRF_HEADER_NAME in admin.py must equal config.py's csrf_token_name default.
+
+    ``enforce_admin_csrf`` reads the submitted token via this module-level
+    constant rather than settings.csrf_token_name, so it does not track
+    operator overrides of CSRF_TOKEN_NAME -- the symmetrical gap to the cookie
+    constants pinned above. Compared case-insensitively because HTTP header
+    names are case-insensitive (RFC 7230) and the constant is deliberately
+    lowercased for ``request.headers.get``.
+    """
+    # First-Party
+    from mcpgateway import admin
+
+    dummy_env = {
+        "JWT_SECRET_KEY": _TEST_JWT_SECRET,
+        "AUTH_ENCRYPTION_SECRET": _TEST_ENC_SECRET,
+    }
+
+    with patch.dict(os.environ, dummy_env, clear=True):
+        s = Settings(_env_file=None)
+        assert admin.ADMIN_CSRF_HEADER_NAME.casefold() == s.csrf_token_name.casefold(), f"admin.ADMIN_CSRF_HEADER_NAME={admin.ADMIN_CSRF_HEADER_NAME!r} does not match config.py default={s.csrf_token_name!r}"
+
+
+def test_oauth_router_csrf_header_name_matches_config_default():
+    """ADMIN_CSRF_HEADER_NAME in routers/oauth_router.py must equal config.py's csrf_token_name default.
+
+    oauth_router.py duplicates the constant independently of admin.py (see
+    test_admin_csrf_header_name_matches_config_default). Both copies must stay
+    pinned to the settings default. Case-insensitive for the same reason.
+    """
+    # First-Party
+    from mcpgateway.routers import oauth_router
+
+    dummy_env = {
+        "JWT_SECRET_KEY": _TEST_JWT_SECRET,
+        "AUTH_ENCRYPTION_SECRET": _TEST_ENC_SECRET,
+    }
+
+    with patch.dict(os.environ, dummy_env, clear=True):
+        s = Settings(_env_file=None)
+        assert (
+            oauth_router.ADMIN_CSRF_HEADER_NAME.casefold() == s.csrf_token_name.casefold()
+        ), f"oauth_router.ADMIN_CSRF_HEADER_NAME={oauth_router.ADMIN_CSRF_HEADER_NAME!r} does not match config.py default={s.csrf_token_name!r}"
+
+
 def _csrf_warnings(caplog):
     """Collect CSRF configuration warnings emitted during Settings construction.
 
@@ -188,6 +233,36 @@ def test_csrf_default_names_do_not_warn(caplog):
     Settings(environment="development", _env_file=None)
 
     assert _csrf_warnings(caplog) == []
+
+
+def test_csrf_token_name_case_variant_does_not_warn(caplog):
+    """A header name differing only in case is functionally identical, so must not warn.
+
+    HTTP header names are case-insensitive (RFC 7230) and Starlette normalizes
+    them, so CSRF_TOKEN_NAME=x-csrf-token behaves exactly like the default.
+    admin.py and oauth_router.py in fact hardcode the lowercase spelling.
+    """
+    caplog.set_level("WARNING", logger="mcpgateway.config")
+
+    Settings(csrf_token_name="x-csrf-token", environment="development", _env_file=None)
+
+    assert _csrf_warnings(caplog) == []
+
+
+def test_csrf_cookie_name_case_variant_warns(caplog):
+    """A cookie name differing only in case is a real desync, so must warn.
+
+    Cookie names are case-sensitive (RFC 6265): the browser would hold
+    MCPGateway_CSRF_Token and mcpgateway_csrf_token as two distinct cookies.
+    This pins the asymmetry against a well-meaning blanket casefold that would
+    silence a genuine mismatch.
+    """
+    caplog.set_level("WARNING", logger="mcpgateway.config")
+
+    Settings(csrf_cookie_name="MCPGateway_CSRF_Token", environment="development", _env_file=None)
+
+    warnings = _csrf_warnings(caplog)
+    assert any("CSRF_COOKIE_NAME" in msg for msg in warnings), warnings
 
 
 def test_csrf_name_override_silent_when_csrf_disabled(caplog):
