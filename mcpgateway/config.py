@@ -1538,21 +1538,24 @@ class Settings(BaseSettings):
             Itself.
 
         Raises:
-            SecurityConfigurationError: If either secret is empty or is the
-                ``__REPLACE_ME__`` placeholder (both fields, all environments),
-                or if ``jwt_secret_key`` matches a known-weak value, is shorter
-                than ``min_secret_length`` characters, or has low per-character
-                entropy (``auth_encryption_secret`` only warns for these in
-                ``ENVIRONMENT=development``).
+            SecurityConfigurationError: If either secret is empty (both fields,
+                all environments), or if ``jwt_secret_key`` is the
+                ``__REPLACE_ME__`` placeholder, known-weak, too short, or has
+                low per-character entropy (all environments).
+                ``auth_encryption_secret`` only warns for ALL of these in
+                ``ENVIRONMENT=development`` — including the placeholder.
+                Full enforcement applies to ``auth_encryption_secret`` in
+                staging and production.
         """
         weak_secrets = {v.lower() for v in self.WEAK_VALUES}
         env = str(self.environment).lower()
         is_dev = env == "development"
 
         # jwt_secret_key:          unconditional hard-fail in every environment.
-        # auth_encryption_secret:  same rules in staging/production; weak/short/
-        #                          low-entropy values are WARNING-only in development.
-        #                          The __REPLACE_ME__ placeholder is always rejected.
+        # auth_encryption_secret:  ALL non-compliant values (placeholder, insufficient
+        #                          length, known-default, low entropy) are WARNING-only
+        #                          in ENVIRONMENT=development. Full enforcement in
+        #                          staging and production.
         for field_name, secret_field in (
             ("jwt_secret_key", self.jwt_secret_key),
             ("auth_encryption_secret", self.auth_encryption_secret),
@@ -1574,7 +1577,24 @@ class Settings(BaseSettings):
             is_low_entropy = entropy < 3.5
             is_too_short = len(val) < self.min_secret_length
 
-            # Placeholder is always fatal — it has no usable runtime value.
+            # auth_encryption_secret in development: ALL non-compliant values are
+            # downgraded to a WARNING — including the __REPLACE_ME__ placeholder.
+            # Production and staging always enforce full cryptographic strength.
+            if field_name == "auth_encryption_secret" and is_dev:
+                if is_placeholder or is_too_short or is_weak or is_low_entropy:
+                    logger.warning(
+                        "🔓 SECURITY WARNING - %s: value does not meet minimum cryptographic "
+                        "strength requirements (placeholder, insufficient length, known-default, "
+                        "or low entropy). Permitted only in ENVIRONMENT=development for local "
+                        "PoC use. This configuration MUST NOT be used in staging or production "
+                        "— replace with a cryptographically secure value before any "
+                        "non-development deployment.",
+                        field_name,
+                    )
+                continue
+
+            # For jwt_secret_key and auth_encryption_secret outside development:
+            # placeholder, too-short, weak, and low-entropy all hard-fail.
             if is_placeholder:
                 raise SecurityConfigurationError(
                     f"{field_name}: unset placeholder (__REPLACE_ME__) rejected in every environment (including '{env}'). "
@@ -1583,17 +1603,6 @@ class Settings(BaseSettings):
                     "  make init-secrets           # writes secrets to .env.secrets for review, then copy into .env\n"
                     "  make init-secrets-patch-env # patches secrets directly into an existing .env"
                 )
-
-            # auth_encryption_secret in development: downgrade weak/short/low-entropy to a warning.
-            if field_name == "auth_encryption_secret" and is_dev:
-                if is_too_short or is_weak or is_low_entropy:
-                    logger.warning(
-                        "🔓 DEV-MODE SECURITY WARNING - %s: weak/short/low-entropy secret detected "
-                        "(value allowed only because ENVIRONMENT=development). "
-                        "NEVER use this secret outside local development.",
-                        field_name,
-                    )
-                continue
 
             if is_too_short:
                 raise SecurityConfigurationError(

@@ -1968,10 +1968,14 @@ def test_primary_worker_heartbeat_warns_at_exact_boundary(caplog):
 
 
 def test_placeholder_secret_raises_in_development():
-    """__REPLACE_ME__ placeholder is rejected even in development — both fields."""
+    """__REPLACE_ME__ placeholder is rejected in development for jwt_secret_key.
+
+    For auth_encryption_secret the placeholder is permitted in development
+    (emits a WARNING) — consistent with all other non-compliant values.
+    """
     from mcpgateway.config import SecurityConfigurationError
 
-    # jwt_secret_key placeholder
+    # jwt_secret_key placeholder always hard-fails
     with pytest.raises(SecurityConfigurationError, match="unset placeholder"):
         Settings(
             jwt_secret_key="__REPLACE_ME__run_init-secrets_before_starting",
@@ -1979,15 +1983,15 @@ def test_placeholder_secret_raises_in_development():
             _env_file=None,
         )
 
-    # auth_encryption_secret placeholder — dev mode does NOT exempt the placeholder
+    # auth_encryption_secret placeholder in dev — warns and proceeds
     strong_jwt = "a-strong-jwt-secret-that-is-long-enough-and-unique-xxxx"  # nosec B105
-    with pytest.raises(SecurityConfigurationError, match="unset placeholder"):
-        Settings(
-            jwt_secret_key=strong_jwt,
-            auth_encryption_secret="__REPLACE_ME__run_init-secrets_before_starting",
-            environment="development",
-            _env_file=None,
-        )
+    s = Settings(
+        jwt_secret_key=strong_jwt,
+        auth_encryption_secret="__REPLACE_ME__run_init-secrets_before_starting",
+        environment="development",
+        _env_file=None,
+    )
+    assert s.auth_encryption_secret.get_secret_value() == "__REPLACE_ME__run_init-secrets_before_starting"
 
 
 def test_placeholder_secret_raises_in_staging():
