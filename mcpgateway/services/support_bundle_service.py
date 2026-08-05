@@ -76,6 +76,17 @@ _SECRET_NAME_RE = re.compile(r"secret|password|passwd|credential|passphrase|priv
 # String settings matching _SECRET_NAME_RE that are not themselves secrets.
 _SAFE_STRING_FIELDS = frozenset({"jwt_private_key_path"})
 
+# Key names that indicate a secret when they appear *inside* a collection-typed
+# setting (a SIEM destination entry, a role mapping, ...). Deliberately broader
+# than _SECRET_NAME_RE: that one is narrow because it screens our own typed
+# settings, where "token" and "key" appear in benign names like token_expiry.
+# These keys come from operator-authored config with no such convention, and a
+# nested key called "token" is a credential far more often than it is not.
+_NESTED_SECRET_KEY_RE = re.compile(r"secret|password|passwd|credential|passphrase|token|key|auth", re.IGNORECASE)
+
+# Placeholder written in place of a redacted value inside a collection setting.
+REDACTED_VALUE = "*****"
+
 
 class SupportBundleConfig(BaseModel):
     """Configuration for support bundle generation.
@@ -122,8 +133,11 @@ class SupportBundleService:
         (re.compile(r'secret["\']?\s*[:=]\s*["\']?([^"\'\s,}]+)', re.IGNORECASE), r"secret: *****"),
         (re.compile(r"bearer\s+[A-Za-z0-9\-._~+/]+=*", re.IGNORECASE), r"bearer *****"),
         (re.compile(r'authorization:\s*["\']?([^"\'\s,}]+)', re.IGNORECASE), r"authorization: *****"),
-        # Database / service URLs (scheme-agnostic to catch legacy or misconfigured DSNs)
-        (re.compile(r"(\w[\w+.-]*)://([^:]+):([^@]+)@"), r"\1://\2:*****@"),
+        # Database / service URLs (scheme-agnostic to catch legacy or misconfigured DSNs).
+        # The userinfo username is optional: several clients accept a URL with an
+        # empty user (scheme://:password@host), so the username group must be
+        # allowed to match zero characters.
+        (re.compile(r"(\w[\w+.-]*)://([^:@]*):([^@]+)@"), r"\1://\2:*****@"),
         # JWT tokens (eyJ pattern)
         (re.compile(r"eyJ[A-Za-z0-9\-_]+\.eyJ[A-Za-z0-9\-_]+\.[A-Za-z0-9\-_]+"), r"eyJ*****"),
     ]
@@ -403,17 +417,47 @@ class SupportBundleService:
         # are added, so a field added later is omitted from it by default.
         config = settings.model_dump(exclude=self._secret_field_names())
 
-        # Sanitize every string-valued *_url setting (database_url, redis_url,
-        # ratelimiter_redis_url, elasticsearch_url, ...) generically rather
-        # than naming each one: these routinely carry inline credentials
-        # (redis://:password@host:6379) and the set of URL settings grows
-        # independently of this module. Iterate a snapshot of the keys since
-        # the loop mutates config in place.
-        for key in list(config.keys()):
-            if key.endswith("_url") and isinstance(config[key], str):
-                config[key] = self._sanitize_url(config[key])
+        # Settings that survive exclusion can still carry a credential inside
+        # their value: a DSN with inline userinfo, an OTLP header blob holding a
+        # bearer token, a SIEM destination list whose entries hold per-endpoint
+        # tokens. Keying off the field name cannot find those — the name says
+        # nothing about the shape of the value — so every value is walked and
+        # sanitized on its content instead.
+        return {key: self._sanitize_config_value(value) for key, value in config.items()}
 
-        return config
+    def _sanitize_config_value(self, value: Any) -> Any:
+        """Recursively redact credentials from a settings value.
+
+        Strings are matched against :data:`SENSITIVE_PATTERNS`, the same
+        best-effort rules applied to log text. Lists and dicts are walked so
+        that collection-typed settings are covered too; inside a dict, a key
+        whose name looks like a secret has its value replaced outright, since
+        the value itself carries no pattern to match on.
+
+        Args:
+            value: A settings value of any type.
+
+        Returns:
+            Any: The value with any detected credentials redacted.
+
+        Examples:
+            >>> service = SupportBundleService()
+            >>> service._sanitize_config_value("redis://:hunter2@cache:6379")  # pragma: allowlist secret
+            'redis://:*****@cache:6379'
+            >>> service._sanitize_config_value([{"endpoint": "https://siem.example.com", "token": "abc123"}])
+            [{'endpoint': 'https://siem.example.com', 'token': '*****'}]
+            >>> service._sanitize_config_value(3600)
+            3600
+        """
+        if isinstance(value, str):
+            # Preserve "" rather than turning it into None: an empty setting and
+            # an unset one are different facts to whoever reads the bundle.
+            return self._sanitize_line(value) if value else value
+        if isinstance(value, dict):
+            return {key: REDACTED_VALUE if _NESTED_SECRET_KEY_RE.search(str(key)) else self._sanitize_config_value(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [self._sanitize_config_value(item) for item in value]
+        return value
 
     def _collect_logs(self, config: SupportBundleConfig) -> Dict[str, str]:
         """Collect log files with sanitization and size limits.
