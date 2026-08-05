@@ -228,8 +228,8 @@ const PLACEHOLDER_MESSAGE: Record<HomeViewId, string> = {
   default: "dashboard.home.emptyState",
   activity: "dashboard.home.placeholder.activity",
   mcp: "dashboard.home.placeholder.mcp",
-  a2a: "dashboard.home.emptyState",
-  rest: "dashboard.home.emptyState",
-  grpc: "dashboard.home.emptyState",
+  a2a: "dashboard.home.placeholder.a2a",
+  rest: "dashboard.home.placeholder.rest",
+  grpc: "dashboard.home.placeholder.grpc",
   system: "dashboard.home.placeholder.system",
 };
