@@ -200,16 +200,6 @@ Release 1.0.6 consolidates **61 PRs** focused on **OAuth RFC 8693 token exchange
 
 - **Publish Resource URIs and Capabilities** ([#5588](https://github.com/IBM/mcp-context-forge/pull/5588)) - Publish dataplane resource URIs and capabilities.
 
-### Security
-
-- Fixed cross-environment JWT acceptance (GHSA-vgf8-3685-66j9, CVE pending). Gateway-issued tokens
-  now carry an `env` claim and reject environment mismatches by default (`EMBED_ENVIRONMENT_IN_TOKENS=true`,
-  `VALIDATE_TOKEN_ENVIRONMENT=true`). Added optional `DERIVE_KEY_PER_ENVIRONMENT` to bind the HS*
-  signing key (including explicit-secret mints) to the deployment environment, which also closes legacy
-  tokens lacking an `env` claim. **Upgrade:** use a distinct `JWT_SECRET_KEY` per environment and
-  rotate long-lived tokens; enabling `DERIVE_KEY_PER_ENVIRONMENT` invalidates tokens issued before it
-  was turned on. RS*/ES* deployments must use distinct key pairs per environment.
-
 ### Changed
 
 #### **API**
@@ -351,7 +341,7 @@ Release 1.0.5 consolidates **60 PRs** focused on **API versioning and schema gen
 
 #### **Security**
 
-- **Environment-Bound JWTs** - Fixed cross-environment JWT acceptance (GHSA-vgf8-3685-66j9, CVE pending). Gateway-issued tokens now carry an `env` claim and reject environment mismatches by default (`EMBED_ENVIRONMENT_IN_TOKENS=true`, `VALIDATE_TOKEN_ENVIRONMENT=true`). Added optional `DERIVE_KEY_PER_ENVIRONMENT` to bind HS* signing keys to the deployment environment, including explicit-secret mints.
+- **Environment-Bound JWTs** ([internal#292](https://github.ibm.com/contextforge-org/internal_issues/issues/292)) - Fixed cross-environment JWT acceptance. Gateway-issued tokens now carry an `env` claim and reject environment mismatches by default (`EMBED_ENVIRONMENT_IN_TOKENS=true`, `VALIDATE_TOKEN_ENVIRONMENT=true`). Added optional `DERIVE_KEY_PER_ENVIRONMENT` to bind HS* signing keys to the deployment environment, including explicit-secret mints.
 - **Upgrade Guidance** - Use a distinct `JWT_SECRET_KEY` per environment and rotate long-lived tokens. Enabling `DERIVE_KEY_PER_ENVIRONMENT` invalidates tokens issued before it was turned on. RS*/ES* deployments must use distinct key pairs per environment.
 - **Inbound Passthrough Header Denylist** ([#4726](https://github.com/IBM/mcp-context-forge/pull/4726)) - Expanded inbound passthrough denylist to block protocol-level headers.
 - **Recursive Plugin Filter Scanning** ([#5243](https://github.com/IBM/mcp-context-forge/pull/5243)) - Added recursive scanning to `regex_filter` and `deny_filter`.
