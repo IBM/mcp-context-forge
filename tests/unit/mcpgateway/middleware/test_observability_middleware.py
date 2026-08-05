@@ -48,6 +48,19 @@ async def test_dispatch_disabled(mock_request, mock_call_next):
 
 
 @pytest.mark.asyncio
+async def test_dispatch_disabled_when_http_tracing_is_disabled(mock_request, mock_call_next):
+    service = MagicMock(spec=ObservabilityService)
+    with patch("mcpgateway.middleware.observability_middleware.settings") as mock_settings:
+        mock_settings.observability_trace_http_requests = False
+        middleware = ObservabilityMiddleware(app=None, enabled=True, service=service)
+
+    response = await middleware.dispatch(mock_request, mock_call_next)
+
+    assert response.status_code == 200
+    service.start_trace.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_dispatch_health_check_skipped(mock_request, mock_call_next):
     middleware = ObservabilityMiddleware(app=None, enabled=True)
     mock_request.url.path = "/health"
