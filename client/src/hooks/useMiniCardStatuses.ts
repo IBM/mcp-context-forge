@@ -3,10 +3,11 @@
  * the status headline, mapping the shared `/version` health signal to both the
  * pure `computeMiniCardStatuses` model and the `resolveHeadline` condition.
  *
- * Sources: `/version` (backend health, via useSystemHealth), cheap presence
- * probes for MCP servers and A2A agents, and recent activity for error/warning
- * counts. Activity is fetched once (no polling) to keep the resting home quiet;
- * it is empty until the activity backend (#5944) lands.
+ * Sources: `/version` (backend health, via useSystemHealth), reachability
+ * probes for MCP servers (`/gateways`) and A2A agents (`/a2a`), and recent
+ * activity for error/warning counts. Activity is fetched once (no polling) to
+ * keep the resting home quiet; it is empty until the activity backend (#5944)
+ * lands.
  *
  * `/version` is admin-only, so it is fetched only when the caller can view
  * system diagnostics (`admin.system_config`); non-admins never poll a guaranteed
@@ -23,12 +24,18 @@ import {
   type MiniCardStatus,
 } from "@/components/dashboard/miniCardStatus";
 import type { HeadlineCondition } from "@/components/dashboard/resolveHeadline";
+import { countActiveTotal, type Activatable } from "@/components/dashboard/systemMetrics";
 import { useQuery } from "@/hooks/useQuery";
 import { useRecentActivity } from "@/hooks/useRecentActivity";
 import { deriveMcpHealthy, useSystemHealth, type VersionInfo } from "@/hooks/useSystemHealth";
+import type { ServersResponse } from "@/types/server";
 
-const MCP_PRESENCE_PATH = "/gateways?limit=1";
-const A2A_PRESENCE_PATH = "/a2a?limit=1";
+// Reachability only needs each instance's `reachable` flag. Gateways come back
+// in the paginated `{ gateways: [...] }` shape (matching useMcpServers); A2A is a
+// bare list. Capped at 100 like the roster; a reachable instance past position
+// 100 is not counted.
+const MCP_REACH_PATH = "/gateways?limit=100&include_pagination=true";
+const A2A_REACH_PATH = "/a2a?limit=100";
 
 export interface HomeStatus {
   statuses: Record<MiniCardId, MiniCardStatus>;
@@ -55,25 +62,27 @@ export function useMiniCardStatuses(): HomeStatus {
   // permission 403 as "system down").
   const canViewSystem = hasPermission("admin.system_config");
   const { data: health, error: healthError } = useSystemHealth(undefined, canViewSystem);
-  const { data: gateways } = useQuery<unknown[]>(MCP_PRESENCE_PATH);
-  const { data: a2aAgents, error: a2aError } = useQuery<unknown[]>(A2A_PRESENCE_PATH);
+  const { data: mcpServers } = useQuery<ServersResponse>(MCP_REACH_PATH);
+  const { data: a2aAgents } = useQuery<Activatable[]>(A2A_REACH_PATH);
   const { items } = useRecentActivity({ pollIntervalMs: 0 });
 
   return useMemo(() => {
     const healthy = safeHealthy(health);
-    // undefined data = "still loading" -> null (unknown), so cards don't flash a
-    // premature "Not configured" before the presence probe resolves. An A2A error
-    // is a definitive "disabled/unavailable" -> not configured.
-    const mcpConfigured = gateways === undefined ? null : gateways.length > 0;
-    const a2aConfigured = a2aError ? false : a2aAgents === undefined ? null : a2aAgents.length > 0;
-    // A `/version` response (any shape) means the backend is reachable -> Running.
-    const systemRunning = health ? true : null;
+
+    // Two-tone reachability dots (green = something reachable, grey = everything
+    // else), matching the MCP roster. A source is reachable when it has at least
+    // one enabled + reachable instance (`countActiveTotal` counts those, and is
+    // safe against a non-array/loading response). The system is reachable once
+    // any probe returns, which works for non-admins who cannot fetch the
+    // admin-only /version.
+    const mcpReachable = countActiveTotal(mcpServers?.gateways).active > 0;
+    const a2aReachable = countActiveTotal(a2aAgents).active > 0;
+    const systemReachable = Boolean(health) || mcpServers !== undefined || a2aAgents !== undefined;
 
     const statuses = computeMiniCardStatuses({
-      systemRunning,
-      mcpConfigured,
-      a2aConfigured,
-      healthy,
+      systemReachable,
+      mcpReachable,
+      a2aReachable,
       errors: items.filter((item) => item.status === "error").length,
       warnings: items.filter((item) => item.status === "warning").length,
     });
@@ -90,5 +99,5 @@ export function useMiniCardStatuses(): HomeStatus {
     };
 
     return { statuses, headlineCondition };
-  }, [health, healthError, gateways, a2aAgents, a2aError, items]);
+  }, [health, healthError, mcpServers, a2aAgents, items]);
 }

@@ -3,85 +3,52 @@ import { describe, expect, it } from "vitest";
 import { computeMiniCardStatuses } from "./miniCardStatus";
 
 const base = {
-  systemRunning: true,
-  mcpConfigured: true,
-  a2aConfigured: true,
-  healthy: true,
+  systemReachable: true,
+  mcpReachable: true,
+  a2aReachable: true,
   errors: 0,
   warnings: 0,
 };
 
+const ONLINE = { kind: "dot", tone: "success", labelId: "dashboard.home.status.online" };
+const OFFLINE = { kind: "dot", tone: "muted", labelId: "dashboard.home.status.offline" };
+
 describe("computeMiniCardStatuses", () => {
-  it("marks a healthy configured runtime as success", () => {
+  it("shows a green Online dot for reachable sources", () => {
     const s = computeMiniCardStatuses(base);
-    expect(s.mcp).toEqual({
-      kind: "dot",
-      tone: "success",
-      labelId: "dashboard.home.status.healthy",
-    });
-    expect(s.a2a).toEqual({
-      kind: "dot",
-      tone: "success",
-      labelId: "dashboard.home.status.healthy",
-    });
+    expect(s.system).toEqual(ONLINE);
+    expect(s.mcp).toEqual(ONLINE);
+    expect(s.a2a).toEqual(ONLINE);
   });
 
-  it("marks an unhealthy configured runtime as error", () => {
-    const s = computeMiniCardStatuses({ ...base, healthy: false });
-    expect(s.mcp).toEqual({
-      kind: "dot",
-      tone: "error",
-      labelId: "dashboard.home.status.unhealthy",
+  it("shows a grey Offline dot when a source is not reachable", () => {
+    const s = computeMiniCardStatuses({
+      ...base,
+      systemReachable: false,
+      mcpReachable: false,
+      a2aReachable: false,
     });
+    expect(s.system).toEqual(OFFLINE);
+    expect(s.mcp).toEqual(OFFLINE);
+    expect(s.a2a).toEqual(OFFLINE);
   });
 
-  it("shows Not configured when a source has no instances", () => {
-    const s = computeMiniCardStatuses({ ...base, mcpConfigured: false, a2aConfigured: false });
-    expect(s.mcp).toEqual({
-      kind: "dot",
-      tone: "muted",
-      labelId: "dashboard.home.status.notConfigured",
-    });
-    expect(s.a2a).toEqual({
-      kind: "dot",
-      tone: "muted",
-      labelId: "dashboard.home.status.notConfigured",
-    });
-  });
-
-  it("shows no dot when health is unknown but the source is configured", () => {
-    const s = computeMiniCardStatuses({ ...base, healthy: null });
-    expect(s.mcp).toBeNull();
-    expect(s.a2a).toBeNull();
-  });
-
-  it("shows no dot (not a premature 'Not configured') while presence is loading", () => {
-    const s = computeMiniCardStatuses({ ...base, mcpConfigured: null, a2aConfigured: null });
-    expect(s.mcp).toBeNull();
-    expect(s.a2a).toBeNull();
-  });
-
-  it("always marks REST and gRPC Not configured", () => {
+  it("always marks REST and gRPC offline (transport not built)", () => {
     const s = computeMiniCardStatuses(base);
-    expect(s.rest).toEqual({
-      kind: "dot",
-      tone: "muted",
-      labelId: "dashboard.home.status.notConfigured",
-    });
-    expect(s.grpc).toEqual({
-      kind: "dot",
-      tone: "muted",
-      labelId: "dashboard.home.status.notConfigured",
-    });
+    expect(s.rest).toEqual(OFFLINE);
+    expect(s.grpc).toEqual(OFFLINE);
   });
 
-  it("marks System as Running when the backend is reachable, no dot otherwise", () => {
-    expect(computeMiniCardStatuses(base).system).toEqual({
-      kind: "dot",
-      tone: "success",
-      labelId: "dashboard.home.status.running",
+  it("never returns a null/absent status — every card has a dot or counts", () => {
+    const s = computeMiniCardStatuses({
+      ...base,
+      systemReachable: false,
+      mcpReachable: false,
+      a2aReachable: false,
     });
-    expect(computeMiniCardStatuses({ ...base, systemRunning: null }).system).toBeNull();
+    for (const id of ["system", "activity", "mcp", "a2a", "rest", "grpc"] as const) {
+      expect(s[id]).not.toBeNull();
+    }
   });
 
   it("carries the activity error/warning counts", () => {

@@ -155,11 +155,7 @@ function DefaultState({
       <SystemStatsCardConnected />
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         {DEFAULT_SOURCE_CARDS.map((id) => (
-          <MiniCard
-            key={id}
-            id={id}
-            status={statuses[id] ? <MiniCardStatusIndicator status={statuses[id]} /> : undefined}
-          />
+          <MiniCard key={id} id={id} status={<MiniCardStatusIndicator status={statuses[id]} />} />
         ))}
       </div>
     </div>
@@ -210,11 +206,7 @@ function NonDefaultState({
       </div>
       <aside className="flex flex-col gap-3">
         {rightColumnCards.map((id) => (
-          <MiniCard
-            key={id}
-            id={id}
-            status={statuses[id] ? <MiniCardStatusIndicator status={statuses[id]} /> : undefined}
-          />
+          <MiniCard key={id} id={id} status={<MiniCardStatusIndicator status={statuses[id]} />} />
         ))}
       </aside>
     </div>

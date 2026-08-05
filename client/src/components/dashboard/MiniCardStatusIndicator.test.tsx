@@ -6,27 +6,22 @@ import { renderWithProviders } from "@/test/test-utils";
 import { MiniCardStatusIndicator } from "./MiniCardStatusIndicator";
 
 describe("MiniCardStatusIndicator", () => {
-  it("renders nothing for a null status", () => {
-    const { container } = renderWithProviders(<MiniCardStatusIndicator status={null} />);
-    expect(container).toBeEmptyDOMElement();
-  });
-
-  it("renders a dot status label", () => {
+  it("renders the green Online label", () => {
     renderWithProviders(
       <MiniCardStatusIndicator
-        status={{ kind: "dot", tone: "success", labelId: "dashboard.home.status.healthy" }}
+        status={{ kind: "dot", tone: "success", labelId: "dashboard.home.status.online" }}
       />,
     );
-    expect(screen.getByText("Healthy")).toBeInTheDocument();
+    expect(screen.getByText("Online")).toBeInTheDocument();
   });
 
-  it("renders the not-configured label for the muted tone", () => {
+  it("renders the grey Offline label for the muted tone", () => {
     renderWithProviders(
       <MiniCardStatusIndicator
-        status={{ kind: "dot", tone: "muted", labelId: "dashboard.home.status.notConfigured" }}
+        status={{ kind: "dot", tone: "muted", labelId: "dashboard.home.status.offline" }}
       />,
     );
-    expect(screen.getByText("Not configured")).toBeInTheDocument();
+    expect(screen.getByText("Offline")).toBeInTheDocument();
   });
 
   it("renders activity error and warning counts", () => {

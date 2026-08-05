@@ -45,8 +45,23 @@ function admin(isAdmin = true) {
   } as unknown as ReturnType<typeof useAuth>);
 }
 
+const ONLINE = { kind: "dot", tone: "success", labelId: "dashboard.home.status.online" };
+const OFFLINE = { kind: "dot", tone: "muted", labelId: "dashboard.home.status.offline" };
+
+function query(data: unknown) {
+  return {
+    data,
+    error: null,
+    isLoading: false,
+    execute: vi.fn(),
+    refetch: vi.fn(),
+    setData: vi.fn(),
+  } as unknown as ReturnType<typeof useQuery>;
+}
+
 beforeEach(() => {
-  vi.clearAllMocks();
+  // reset (not just clear) so a per-test mockImplementation cannot leak across tests.
+  vi.resetAllMocks();
   admin(true);
   mockUseSystemHealth.mockReturnValue(health({ data: undefined }));
   mockUseQuery.mockReturnValue({
@@ -107,5 +122,37 @@ describe("useMiniCardStatuses — headline health axis", () => {
     const { result } = renderHook(() => useMiniCardStatuses());
     expect(result.current.headlineCondition.reachable).toBe(true);
     expect(result.current.headlineCondition.dependenciesHealthy).toBe(true);
+  });
+});
+
+describe("useMiniCardStatuses — reachability dots", () => {
+  it("marks the system Online when any probe returns, even without /version", () => {
+    admin(false); // no /version fetched
+    // gateways come back paginated ({ gateways }); a2a is a bare list. Both empty.
+    mockUseQuery.mockReturnValue(query({ gateways: [] }));
+    const { result } = renderHook(() => useMiniCardStatuses());
+    expect(result.current.statuses.system).toEqual(ONLINE);
+    // No reachable instances -> the sources themselves are Offline.
+    expect(result.current.statuses.mcp).toEqual(OFFLINE);
+    expect(result.current.statuses.a2a).toEqual(OFFLINE);
+  });
+
+  it("is Online for a source with a reachable instance, Offline for one without", () => {
+    mockUseQuery.mockImplementation((path: string | null) =>
+      typeof path === "string" && path.includes("/gateways")
+        ? query({ gateways: [{ enabled: true, reachable: true }] })
+        : query([]),
+    );
+    const { result } = renderHook(() => useMiniCardStatuses());
+    expect(result.current.statuses.mcp).toEqual(ONLINE);
+    expect(result.current.statuses.a2a).toEqual(OFFLINE);
+  });
+
+  it("is Offline (never an absent dot) while probes are still loading", () => {
+    // beforeEach leaves useQuery data undefined and /version unresolved.
+    const { result } = renderHook(() => useMiniCardStatuses());
+    for (const id of ["system", "mcp", "a2a", "rest", "grpc"] as const) {
+      expect(result.current.statuses[id]).toEqual(OFFLINE);
+    }
   });
 });

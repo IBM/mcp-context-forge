@@ -1,7 +1,8 @@
 /**
  * MiniCardStatusIndicator — renders a `MiniCardStatus` descriptor as the node
  * for a MiniCard's status slot: a StatusDot with a label, or the activity
- * error/warning counts. Returns null for the empty status so the slot collapses.
+ * error/warning counts. Every source/system card always resolves to a dot, so
+ * there is no empty state to collapse.
  */
 
 import { useIntl } from "react-intl";
@@ -11,8 +12,6 @@ import { StatusDot } from "./StatusDot";
 
 export function MiniCardStatusIndicator({ status }: { status: MiniCardStatus }) {
   const intl = useIntl();
-
-  if (!status) return null;
 
   if (status.kind === "activity") {
     return (

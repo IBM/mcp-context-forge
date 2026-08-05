@@ -130,9 +130,12 @@ export interface ActiveTotal {
  * Count active vs. total rows. A row is "active" unless it is explicitly
  * disabled or explicitly unreachable; missing flags are treated as active
  * (list endpoints omit `reachable` for entities that have no upstream).
+ *
+ * Non-array input (undefined while loading, or an unexpected paginated wrapper)
+ * counts as zero rather than throwing.
  */
 export function countActiveTotal(items: Activatable[] | undefined): ActiveTotal {
-  if (!items) return { active: 0, total: 0 };
+  if (!Array.isArray(items)) return { active: 0, total: 0 };
   const active = items.filter((item) => item.enabled !== false && item.reachable !== false).length;
   return { active, total: items.length };
 }

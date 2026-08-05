@@ -67,9 +67,7 @@
   "dashboard.home.mcp.row.checking": "verificando conexão…",
   "dashboard.home.mcp.transport.SSE": "transporte SSE",
   "dashboard.home.mcp.transport.STREAMABLEHTTP": "transporte Streamable HTTP",
-  "dashboard.home.status.running": "Em execução",
-  "dashboard.home.status.healthy": "Íntegro",
-  "dashboard.home.status.unhealthy": "Com problemas",
-  "dashboard.home.status.notConfigured": "Não configurado",
+  "dashboard.home.status.online": "Online",
+  "dashboard.home.status.offline": "Offline",
   "dashboard.home.status.activity": "{errors} erros · {warnings} avisos"
 }
