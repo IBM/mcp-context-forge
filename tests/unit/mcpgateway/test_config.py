@@ -152,6 +152,53 @@ def test_oauth_router_csrf_cookie_name_matches_config_default():
         assert oauth_router.ADMIN_CSRF_COOKIE_NAME == s.csrf_cookie_name, f"oauth_router.ADMIN_CSRF_COOKIE_NAME={oauth_router.ADMIN_CSRF_COOKIE_NAME!r} does not match config.py default={s.csrf_cookie_name!r}"
 
 
+def _csrf_warnings(caplog):
+    """Collect CSRF configuration warnings emitted during Settings construction.
+
+    Args:
+        caplog: pytest caplog fixture.
+
+    Returns:
+        List of formatted warning messages mentioning the CSRF name mismatch.
+    """
+    return [rec.getMessage() for rec in caplog.records if "CSRF CONFIGURATION WARNING" in rec.getMessage()]
+
+
+def test_csrf_name_override_warns_at_startup(caplog):
+    """Overriding CSRF_COOKIE_NAME/CSRF_TOKEN_NAME must warn loudly at startup.
+
+    Both settings govern CSRFMiddleware only; the Admin UI JS and the per-route
+    CSRF dependencies hardcode the defaults. An override desynchronizes them,
+    which shows up as intermittent 403 CSRF_TOKEN_INVALID on non-/admin browser
+    writes rather than an obvious failure. Fail loudly at boot instead.
+    """
+    caplog.set_level("WARNING", logger="mcpgateway.config")
+
+    Settings(csrf_cookie_name="csrf_token", csrf_token_name="X-Probe-Csrf", environment="development", _env_file=None)
+
+    warnings = _csrf_warnings(caplog)
+    assert any("CSRF_COOKIE_NAME" in msg and "csrf_token" in msg for msg in warnings), warnings
+    assert any("CSRF_TOKEN_NAME" in msg and "X-Probe-Csrf" in msg for msg in warnings), warnings
+
+
+def test_csrf_default_names_do_not_warn(caplog):
+    """The default (and only supported) names must not produce startup noise."""
+    caplog.set_level("WARNING", logger="mcpgateway.config")
+
+    Settings(environment="development", _env_file=None)
+
+    assert _csrf_warnings(caplog) == []
+
+
+def test_csrf_name_override_silent_when_csrf_disabled(caplog):
+    """With CSRF_ENABLED=false the names are inert, so the warning is noise."""
+    caplog.set_level("WARNING", logger="mcpgateway.config")
+
+    Settings(csrf_enabled=False, csrf_cookie_name="csrf_token", environment="development", _env_file=None)
+
+    assert _csrf_warnings(caplog) == []
+
+
 def test_ratelimiter_redis_url_set():
     """Test rate limiter Redis URL can be configured."""
     s = Settings(
