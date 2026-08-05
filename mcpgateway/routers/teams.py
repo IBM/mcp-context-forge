@@ -26,6 +26,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 # First-Party
+from mcpgateway.auth_context import extract_token_team_ids
 from mcpgateway.common.query_params import QueryPaginationCursor, QueryPaginationCursorGeneric
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
@@ -195,6 +196,7 @@ async def list_teams(
         teams_data = []
         next_cursor = None
         total = 0
+        scoped_team_ids = extract_token_team_ids(current_user_ctx)
 
         # Check admin permissions using PermissionService (handles both is_admin flag and RBAC)
         permission_service = PermissionService(db)
@@ -216,15 +218,19 @@ async def list_teams(
                 offset=skip,
                 cursor=cursor,
                 personal_owner_email=current_user_ctx["email"],
+                team_ids=scoped_team_ids,
             )
             # Result is tuple (list, next_cursor)
             teams_data, next_cursor = result
 
             # Get accurate total count for API consumers
-            total = await service.get_teams_count(personal_owner_email=current_user_ctx["email"])
+            total = await service.get_teams_count(personal_owner_email=current_user_ctx["email"], team_ids=scoped_team_ids)
         else:
             # Fallback to user teams and apply pagination locally
             user_teams = await service.get_user_teams(current_user_ctx["email"], include_personal=True)
+            if scoped_team_ids is not None:
+                allowed_team_ids = set(scoped_team_ids)
+                user_teams = [team for team in user_teams if str(team.id) in allowed_team_ids]
             total = len(user_teams)
             teams_data = user_teams[skip : skip + limit]
 

@@ -385,8 +385,54 @@ class TestTeamsRouter:
             assert len(result.teams) == 1
             assert result.teams[0].id == mock_team.id
             # personal_owner_email must be forwarded so an admin sees their own personal team (issue #5391)
-            mock_service.list_teams.assert_called_once_with(limit=50, offset=0, cursor=None, personal_owner_email="admin@example.com")
-            mock_service.get_teams_count.assert_called_once_with(personal_owner_email="admin@example.com")
+            mock_service.list_teams.assert_called_once_with(limit=50, offset=0, cursor=None, personal_owner_email="admin@example.com", team_ids=None)
+            mock_service.get_teams_count.assert_called_once_with(personal_owner_email="admin@example.com", team_ids=None)
+
+    @pytest.mark.asyncio
+    async def test_list_teams_scoped_admin_forwards_team_ids_to_query_and_count(self, mock_admin_context, mock_team, mock_db):
+        """A narrowed admin token scopes both the listed teams and the pagination total."""
+        scoped_context = {**mock_admin_context, "token_teams": ["team-b", {"id": "team-c"}]}
+        mock_team.id = "team-b"
+
+        with mock_permission_check(is_admin=True), patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
+            mock_service = AsyncMock(spec=TeamManagementService)
+            mock_service.list_teams = AsyncMock(return_value=([mock_team], None))
+            mock_service.get_teams_count = AsyncMock(return_value=1)
+            mock_service.get_member_counts_batch_cached = AsyncMock(return_value={"team-b": 1})
+            MockService.return_value = mock_service
+
+            from mcpgateway.routers.teams import list_teams
+
+            result = await list_teams(skip=0, limit=50, cursor=None, include_pagination=False, current_user_ctx=scoped_context, db=mock_db)
+
+            assert len(result.teams) == 1
+            assert result.teams[0].id == "team-b"
+            mock_service.list_teams.assert_called_once_with(limit=50, offset=0, cursor=None, personal_owner_email="admin@example.com", team_ids=["team-b", "team-c"])
+            mock_service.get_teams_count.assert_called_once_with(personal_owner_email="admin@example.com", team_ids=["team-b", "team-c"])
+
+    @pytest.mark.asyncio
+    async def test_list_teams_public_only_admin_token_returns_no_fallback_teams(self, mock_admin_context, mock_team, mock_db):
+        """A public-only admin token falls through permission-wise but still sees zero teams."""
+        public_only_context = {**mock_admin_context, "token_teams": []}
+
+        with mock_permission_check(is_admin=False), patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
+            mock_service = AsyncMock(spec=TeamManagementService)
+            mock_service.get_user_teams = AsyncMock(return_value=[mock_team])
+            mock_service.list_teams = AsyncMock()
+            mock_service.get_teams_count = AsyncMock()
+            mock_service.get_member_counts_batch_cached = AsyncMock(return_value={})
+            MockService.return_value = mock_service
+
+            from mcpgateway.routers.teams import list_teams
+
+            result = await list_teams(skip=0, limit=50, cursor=None, include_pagination=False, current_user_ctx=public_only_context, db=mock_db)
+
+            assert result.teams == []
+            assert result.total == 0
+            mock_service.get_user_teams.assert_called_once_with("admin@example.com", include_personal=True)
+            mock_service.list_teams.assert_not_called()
+            mock_service.get_teams_count.assert_not_called()
+            mock_service.get_member_counts_batch_cached.assert_called_once_with([])
 
     @pytest.mark.asyncio
     async def test_list_teams_admin_includes_own_personal_team(self, mock_admin_context, mock_team, mock_db):
@@ -413,8 +459,8 @@ class TestTeamsRouter:
             assert len(result.teams) == 1
             assert result.teams[0].id == personal_team.id
             assert result.total == 1
-            mock_service.list_teams.assert_called_once_with(limit=50, offset=0, cursor=None, personal_owner_email="admin@example.com")
-            mock_service.get_teams_count.assert_called_once_with(personal_owner_email="admin@example.com")
+            mock_service.list_teams.assert_called_once_with(limit=50, offset=0, cursor=None, personal_owner_email="admin@example.com", team_ids=None)
+            mock_service.get_teams_count.assert_called_once_with(personal_owner_email="admin@example.com", team_ids=None)
 
     @pytest.mark.asyncio
     async def test_list_teams_admin_with_cursor_pagination(self, mock_admin_context, mock_team, mock_db):
@@ -530,7 +576,7 @@ class TestTeamsRouter:
             # SSO platform_admin should see all teams (admin path)
             assert len(result.teams) == 1
             assert result.teams[0].id == mock_team.id
-            mock_service.list_teams.assert_called_once_with(limit=50, offset=0, cursor=None, personal_owner_email="sso-admin@example.com")
+            mock_service.list_teams.assert_called_once_with(limit=50, offset=0, cursor=None, personal_owner_email="sso-admin@example.com", team_ids=None)
             mock_perm_service.check_platform_admin_permission.assert_called_once_with(
                 mock_sso_platform_admin_context["email"],
                 token_teams=mock_sso_platform_admin_context.get("token_teams"),
@@ -583,8 +629,8 @@ class TestTeamsRouter:
 
             assert result.teams == []
             assert result.total == 0
-            mock_service.list_teams.assert_called_once_with(limit=50, offset=0, cursor=None, personal_owner_email="admin@example.com")
-            mock_service.get_teams_count.assert_called_once_with(personal_owner_email="admin@example.com")
+            mock_service.list_teams.assert_called_once_with(limit=50, offset=0, cursor=None, personal_owner_email="admin@example.com", team_ids=None)
+            mock_service.get_teams_count.assert_called_once_with(personal_owner_email="admin@example.com", team_ids=None)
 
     @pytest.mark.asyncio
     async def test_list_teams_sso_platform_admin_includes_own_personal_team(self, mock_sso_platform_admin_context, mock_team, mock_db):
@@ -616,8 +662,8 @@ class TestTeamsRouter:
             assert len(result.teams) == 1
             assert result.teams[0].id == personal_team.id
             # The caller's own email (not a client-supplied value) scopes the personal team.
-            mock_service.list_teams.assert_called_once_with(limit=50, offset=0, cursor=None, personal_owner_email="sso-admin@example.com")
-            mock_service.get_teams_count.assert_called_once_with(personal_owner_email="sso-admin@example.com")
+            mock_service.list_teams.assert_called_once_with(limit=50, offset=0, cursor=None, personal_owner_email="sso-admin@example.com", team_ids=None)
+            mock_service.get_teams_count.assert_called_once_with(personal_owner_email="sso-admin@example.com", team_ids=None)
 
     @pytest.mark.asyncio
     async def test_create_team_sso_platform_admin_bypass_limits(self, mock_sso_platform_admin_context, mock_team, mock_db):
