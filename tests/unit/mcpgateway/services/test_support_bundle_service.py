@@ -242,11 +242,12 @@ class TestSupportBundleService:
         assert "database_url" not in config
 
     def test_collect_settings_sanitizes_other_url_settings(self, monkeypatch: pytest.MonkeyPatch):
-        """URL settings beyond database_url/redis_url are sanitized generically.
+        """Credentials are redacted from any setting value, whatever the field is called.
 
-        Regression for the finding that ratelimiter_redis_url and elasticsearch_url
-        (and any future *_url setting) shipped credentials verbatim because only two
-        URL fields were special-cased.
+        Sanitization keys off the *content* of a value rather than the field name:
+        a name says nothing about the shape of what it holds, so ratelimiter_redis_url,
+        elasticsearch_url, and a URL-shaped value under a name with no url suffix are
+        all covered by the same pass.
         """
         service = SupportBundleService()
 
@@ -255,18 +256,68 @@ class TestSupportBundleService:
                 "ratelimiter_redis_url": "redis://ratelimiter:hunter2@ratelimiter.example.com:6379/0",  # pragma: allowlist secret
                 "elasticsearch_url": "https://elastic:hunter2@es.example.com:9200",  # pragma: allowlist secret
                 "not_a_url_setting": "https://user:hunter2@example.com",  # pragma: allowlist secret
+                "harmless_setting": "X-CSRF-Token",
             }
 
         monkeypatch.setattr("mcpgateway.services.support_bundle_service.settings.model_dump", fake_dump)
 
         config = service._collect_settings()
-        assert "hunter2" not in config["ratelimiter_redis_url"]
-        assert "*****" in config["ratelimiter_redis_url"]
-        assert "hunter2" not in config["elasticsearch_url"]
-        assert "*****" in config["elasticsearch_url"]
-        # A key that doesn't end in "_url" is left untouched by the loop, even
-        # though its value happens to look URL-shaped.
-        assert config["not_a_url_setting"] == "https://user:hunter2@example.com"  # pragma: allowlist secret
+        for key in ("ratelimiter_redis_url", "elasticsearch_url", "not_a_url_setting"):
+            assert "hunter2" not in config[key]
+            assert "*****" in config[key]
+        # Content-based sanitization must not chew through ordinary values.
+        assert config["harmless_setting"] == "X-CSRF-Token"
+
+    def test_sanitize_url_redacts_empty_username_credentials(self):
+        """A DSN with no username still has its password redacted.
+
+        Several clients accept scheme://:password@host. The userinfo pattern must
+        allow a zero-length username, or this common Redis form ships verbatim.
+        """
+        service = SupportBundleService()
+
+        sanitized = service._sanitize_url("redis://:hunter2@cache.example.com:6379/0")  # pragma: allowlist secret
+        assert "hunter2" not in sanitized
+        assert sanitized == "redis://:*****@cache.example.com:6379/0"
+
+        # A URL with no credentials at all is returned unchanged.
+        assert service._sanitize_url("redis://cache.example.com:6379/0") == "redis://cache.example.com:6379/0"
+
+    def test_sanitize_config_value_walks_collections(self):
+        """Collection-typed settings are sanitized element-wise, at any depth."""
+        service = SupportBundleService()
+
+        # List of strings: each element is sanitized on its content.
+        assert service._sanitize_config_value(["redis://:hunter2@h:6379", "10.0.0.0/8"]) == ["redis://:*****@h:6379", "10.0.0.0/8"]  # pragma: allowlist secret
+
+        # List of dicts: a secret-looking key has its value replaced outright,
+        # since the value itself carries no pattern to match on.
+        destinations = [{"endpoint": "https://siem.example.com", "token": "hunter2", "name": "prod"}]  # pragma: allowlist secret
+        assert service._sanitize_config_value(destinations) == [{"endpoint": "https://siem.example.com", "token": "*****", "name": "prod"}]
+
+        # Nested dicts are walked; benign mappings survive intact.
+        assert service._sanitize_config_value({"role_map": {"admin": "platform_admin"}}) == {"role_map": {"admin": "platform_admin"}}
+
+        # Non-string scalars pass through untouched.
+        assert service._sanitize_config_value(3600) == 3600
+        assert service._sanitize_config_value(None) is None
+        # An empty string stays empty rather than becoming None: "set but blank"
+        # and "unset" are different facts to whoever reads the bundle.
+        assert service._sanitize_config_value("") == ""
+
+    def test_sanitize_config_value_redacts_bearer_token_in_header_blob(self):
+        """A header blob carrying a bearer token is redacted.
+
+        otel_exporter_otlp_headers is a comma-separated key=value string that
+        conventionally holds an Authorization header. Its field name matches no
+        secret-name rule, so only content-based sanitization catches it.
+        """
+        service = SupportBundleService()
+
+        sanitized = service._sanitize_config_value("Authorization=Bearer eyJhbGci.eyJzdWIi.abc123,X-Env=prod")  # pragma: allowlist secret
+        assert "eyJhbGci" not in sanitized
+        assert "*****" in sanitized
+        assert "X-Env=prod" in sanitized
 
     def test_collect_logs_file_not_found(self):
         """Test log collection when file doesn't exist."""
