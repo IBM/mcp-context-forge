@@ -7325,6 +7325,52 @@ class TestOAuthFunctionality:
         assert gateway_update.passthrough_headers == ["X-Req-Id", "X-Trace"]
 
     @patch.object(GatewayService, "update_gateway")
+    async def test_admin_edit_gateway_oauth_blank_credentials_preserve_existing(self, mock_update_gateway, mock_request, mock_db, monkeypatch):
+        """Blank edit-form credentials preserve the stored secret and password."""
+        form_data = FakeForm(
+            {
+                "name": "Edited_Gateway",
+                "url": "https://edited.example.com",
+                "oauth_grant_type": "password",
+                "oauth_client_id": "client-id",
+                "oauth_client_secret": "",
+                "oauth_username": "user",
+                "oauth_password": "",
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+        mock_db.get.return_value = SimpleNamespace(
+            oauth_config={
+                "client_secret": "encrypted-client-secret",  # pragma: allowlist secret
+                "password": "stored-password",  # pragma: allowlist secret
+            },
+            team_id=None,
+        )
+
+        team_service = MagicMock()
+        team_service.verify_team_for_user = AsyncMock(return_value=None)
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+        monkeypatch.setattr(
+            "mcpgateway.admin.MetadataCapture.extract_modification_metadata",
+            lambda *_args, **_kwargs: {"modified_by": "u", "modified_from_ip": None, "modified_via": "ui", "modified_user_agent": None, "version": 1},
+        )
+        encryption_factory = MagicMock()
+        monkeypatch.setattr("mcpgateway.admin.get_encryption_service", encryption_factory)
+
+        result = await admin_edit_gateway("gateway-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+
+        assert result.status_code == 200
+        gateway_update = mock_update_gateway.call_args.args[2]
+        assert gateway_update.oauth_config["client_secret"] == "encrypted-client-secret"
+        assert gateway_update.oauth_config["password"] == "stored-password"
+        encryption_factory.assert_not_called()
+
+        form_data["oauth_grant_type"] = "client_credentials"
+        await admin_edit_gateway("gateway-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        gateway_update = mock_update_gateway.call_args.args[2]
+        assert "password" not in gateway_update.oauth_config
+
+    @patch.object(GatewayService, "update_gateway")
     async def test_admin_edit_gateway_oauth_scopes_parse_empty(self, mock_update_gateway, mock_request, mock_db, monkeypatch):
         """Cover the empty-scopes (inner if) branch in admin_edit_gateway."""
         form_data = FakeForm(
@@ -14576,6 +14622,50 @@ class TestAdminAdditionalCoverage:
         agent_update = call_args[1].get("agent_data") or call_args[0][2]
         # UUID is normalized (dashes removed) by schema validation
         assert agent_update.team_id == existing_team_id.replace("-", "")
+
+    async def test_admin_edit_a2a_agent_oauth_blank_credentials_preserve_existing(self, monkeypatch, mock_request, mock_db):
+        """Blank A2A edit credentials preserve the stored OAuth values."""
+        mock_service = MagicMock()
+        mock_service.update_agent = AsyncMock()
+        monkeypatch.setattr("mcpgateway.admin.a2a_service", mock_service)
+
+        team_service = MagicMock()
+        team_service.verify_team_for_user = AsyncMock(return_value=None)
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+        monkeypatch.setattr(
+            "mcpgateway.admin.MetadataCapture.extract_modification_metadata",
+            MagicMock(return_value={"modified_by": "user", "modified_from_ip": "127.0.0.1", "modified_via": "ui", "modified_user_agent": "test"}),
+        )
+        encryption_factory = MagicMock()
+        monkeypatch.setattr("mcpgateway.admin.get_encryption_service", encryption_factory)
+
+        form_data = FakeForm(
+            {
+                "name": "Agent Updated",
+                "endpoint_url": "http://example.com/agent",
+                "oauth_grant_type": "password",
+                "oauth_client_id": "client-id",
+                "oauth_client_secret": "",
+                "oauth_username": "user",
+                "oauth_password": "",
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+        mock_db.get.return_value = SimpleNamespace(
+            oauth_config={
+                "client_secret": "encrypted-client-secret",  # pragma: allowlist secret
+                "password": "stored-password",  # pragma: allowlist secret
+            },
+            team_id=None,
+        )
+
+        response = await admin_edit_a2a_agent("agent-1", mock_request, mock_db, user={"email": "user@example.com", "db": mock_db})
+
+        assert response.status_code == 200
+        agent_update = mock_service.update_agent.call_args.kwargs["agent_data"]
+        assert agent_update.oauth_config["client_secret"] == "encrypted-client-secret"
+        assert agent_update.oauth_config["password"] == "stored-password"
+        encryption_factory.assert_not_called()
 
     async def test_admin_search_a2a_agents_access_filtering(self, monkeypatch, mock_db):
         """Search A2A agents with team access filters."""
