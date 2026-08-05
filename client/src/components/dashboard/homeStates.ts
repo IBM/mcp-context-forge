@@ -94,7 +94,13 @@ export const HOME_STATES: Record<HomeViewId, HomeStateConfig> = {
     titleId: "dashboard.home.card.activity",
     requiredPermission: "audit:read",
   },
-  mcp: { id: "mcp", titleId: "dashboard.home.card.mcp" },
+  mcp: {
+    id: "mcp",
+    titleId: "dashboard.home.card.mcp",
+    // No gate: the card self-gates. Its source (GET /gateways) is RBAC-scoped
+    // server-side, so a caller without gateways.read gets a 403 the card
+    // surfaces as PermissionDenied, and a scoped caller sees only their servers.
+  },
   a2a: { id: "a2a", titleId: "dashboard.home.card.a2a" },
   rest: { id: "rest", titleId: "dashboard.home.card.rest" },
   grpc: { id: "grpc", titleId: "dashboard.home.card.grpc" },

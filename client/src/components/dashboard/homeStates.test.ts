@@ -62,4 +62,8 @@ describe("HOME_STATES permission gates", () => {
     expect(HOME_STATES.rest.requiredPermission).toBeUndefined();
     expect(HOME_STATES.grpc.requiredPermission).toBeUndefined();
   });
+
+  it("leaves the mcp view ungated so the roster card can self-gate", () => {
+    expect(HOME_STATES.mcp.requiredPermission).toBeUndefined();
+  });
 });
