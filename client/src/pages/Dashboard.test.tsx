@@ -19,6 +19,25 @@ vi.mock("@/hooks/useQuery", () => ({
   useQuery: vi.fn(),
 }));
 
+// These tests cover onboarding + source existence, not the mini-card statuses.
+// Stub the status hook so they don't need auth/health/reachability wiring.
+vi.mock("@/hooks/useMiniCardStatuses", () => ({
+  useMiniCardStatuses: () => {
+    const offline = { kind: "dot", tone: "muted", labelId: "dashboard.home.status.offline" };
+    return {
+      statuses: {
+        system: offline,
+        activity: { kind: "activity", errors: 0, warnings: 0 },
+        mcp: offline,
+        a2a: offline,
+        rest: offline,
+        grpc: offline,
+      },
+      headlineCondition: {},
+    };
+  },
+}));
+
 const mockUseQuery = vi.mocked(useQuery);
 
 describe("Dashboard", () => {

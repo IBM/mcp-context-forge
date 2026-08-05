@@ -134,12 +134,17 @@ export function McpHealthCard() {
     );
   }
 
-  // No gateways.read -> 403 -> precise permission gate.
+  // No gateways.read -> 403 -> precise permission gate (authoritative even with
+  // a previously-loaded roster: a lost permission should not keep showing data).
   if (error?.status === 403) {
     return <PermissionDenied />;
   }
 
-  if (error || !servers) {
+  // Only surface the error card when there is no roster to show. Once servers
+  // have loaded, a transient (non-403) refetch failure keeps the last-known
+  // roster on screen rather than replacing it with an error — useQuery preserves
+  // `data` across a failed refetch, and the poll will recover on its own.
+  if (!servers) {
     return (
       <Card size="sm">
         <CardContent className="text-sm text-muted-foreground" role="alert">

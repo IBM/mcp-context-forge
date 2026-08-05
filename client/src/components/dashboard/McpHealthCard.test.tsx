@@ -91,6 +91,31 @@ describe("McpHealthCard", () => {
     expect(screen.getByRole("alert")).toBeInTheDocument();
   });
 
+  it("keeps the last-known roster on a transient (non-403) refetch error", () => {
+    // servers already loaded; a failed poll must not replace them with the error card.
+    mockServers({
+      servers: [makeServer({ id: "a", name: "alpha", reachable: true })],
+      error: { message: "HTTP 500", status: 500 },
+    });
+    renderWithProviders(<McpHealthCard />);
+
+    expect(screen.getByText("alpha")).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("shows PermissionDenied on a 403 even when a roster was previously loaded", () => {
+    // A lost permission is authoritative: do not keep showing data the caller
+    // may no longer be entitled to.
+    mockServers({
+      servers: [makeServer({ id: "a", name: "alpha", reachable: true })],
+      error: { message: "HTTP 403", status: 403 },
+    });
+    renderWithProviders(<McpHealthCard />);
+
+    expect(screen.getByText("You do not have permission to view this.")).toBeInTheDocument();
+    expect(screen.queryByText("alpha")).not.toBeInTheDocument();
+  });
+
   it("shows the empty copy when the fleet is empty", () => {
     mockServers({ servers: [] });
     renderWithProviders(<McpHealthCard />);

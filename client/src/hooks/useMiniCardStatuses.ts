@@ -8,13 +8,15 @@
  * counts. Activity is fetched once (no polling) to keep the resting home quiet;
  * it is empty until the activity backend (#5944) lands.
  *
- * `/version` is polled once here (the hook is resolved at the page level) and
- * feeds both the mini cards and the headline, so the home never double-polls the
- * diagnostics endpoint.
+ * `/version` is admin-only, so it is fetched only when the caller can view
+ * system diagnostics (`admin.system_config`); non-admins never poll a guaranteed
+ * 403. It is polled once here (the hook is resolved at the page level) and feeds
+ * both the mini cards and the headline.
  */
 
 import { useMemo } from "react";
 
+import { useAuth } from "@/auth/useAuth";
 import type { MiniCardId } from "@/components/dashboard/homeStates";
 import {
   computeMiniCardStatuses,
@@ -47,7 +49,12 @@ function safeHealthy(health: VersionInfo | undefined): boolean | null {
 }
 
 export function useMiniCardStatuses(): HomeStatus {
-  const { data: health, error: healthError } = useSystemHealth();
+  const { hasPermission } = useAuth();
+  // `/version` is admin-only; only fetch it when the caller may see diagnostics,
+  // so non-admins never poll a guaranteed 403 (and the headline never reads a
+  // permission 403 as "system down").
+  const canViewSystem = hasPermission("admin.system_config");
+  const { data: health, error: healthError } = useSystemHealth(undefined, canViewSystem);
   const { data: gateways } = useQuery<unknown[]>(MCP_PRESENCE_PATH);
   const { data: a2aAgents, error: a2aError } = useQuery<unknown[]>(A2A_PRESENCE_PATH);
   const { items } = useRecentActivity({ pollIntervalMs: 0 });
@@ -71,12 +78,14 @@ export function useMiniCardStatuses(): HomeStatus {
       warnings: items.filter((item) => item.status === "warning").length,
     });
 
-    // Headline health axis, derived from the same `/version` query. A query
-    // error is a definitive "unreachable"; loading (no data, no error) leaves
-    // both fields undefined so the headline stays optimistic. `null` health
-    // (loading or malformed) maps to `undefined`, not `false`.
+    // Headline health axis, derived from the same `/version` query. Prefer the
+    // last-known health over a transient refetch error (useQuery keeps `data` on
+    // error), so a blip never flips the headline to an error state. Only report
+    // "unreachable" when there is no data AND a definitive, non-permission error;
+    // a 403 (caller can't see diagnostics) and loading both stay optimistic.
+    const definitiveError = healthError != null && healthError.status !== 403;
     const headlineCondition: HeadlineCondition = {
-      reachable: healthError ? false : health ? true : undefined,
+      reachable: health ? true : definitiveError ? false : undefined,
       dependenciesHealthy: healthy ?? undefined,
     };
 
