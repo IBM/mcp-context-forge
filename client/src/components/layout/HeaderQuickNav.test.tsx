@@ -2,13 +2,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { I18nProvider } from "@/i18n";
-import { searchAdminEntities } from "@/api/search";
+import { searchEntities } from "@/api/search";
 import { useAuthContext } from "@/auth/AuthContext";
 import { useRouter } from "@/router";
 import { HeaderQuickNav } from "./HeaderQuickNav";
 
 vi.mock("@/api/search", () => ({
-  searchAdminEntities: vi.fn(),
+  searchEntities: vi.fn(),
 }));
 
 vi.mock("@/auth/AuthContext", () => ({
@@ -56,7 +56,7 @@ beforeEach(() => {
     navigate: mockNavigate,
   });
   vi.mocked(useAuthContext).mockReturnValue(defaultAuthContext);
-  vi.mocked(searchAdminEntities).mockResolvedValue({
+  vi.mocked(searchEntities).mockResolvedValue({
     query: "server",
     entity_types: ["gateways"],
     limit_per_type: 8,
@@ -195,12 +195,12 @@ describe("HeaderQuickNav", () => {
     fireEvent.change(input, { target: { value: "s" } });
     vi.advanceTimersByTime(300);
 
-    expect(searchAdminEntities).not.toHaveBeenCalled();
+    expect(searchEntities).not.toHaveBeenCalled();
     expect(screen.getByText("Type at least 2 characters to search.")).toBeInTheDocument();
   });
 
-  it("searches /admin/search and renders grouped results", async () => {
-    vi.mocked(searchAdminEntities).mockResolvedValue({
+  it("searches /v1/search and renders grouped results", async () => {
+    vi.mocked(searchEntities).mockResolvedValue({
       query: "server",
       entity_types: ["gateways"],
       limit_per_type: 8,
@@ -229,7 +229,7 @@ describe("HeaderQuickNav", () => {
     fireEvent.change(input, { target: { value: "server" } });
 
     await waitFor(() => {
-      expect(searchAdminEntities).toHaveBeenCalledWith(
+      expect(searchEntities).toHaveBeenCalledWith(
         expect.objectContaining({
           query: "server",
           entityTypes: ["servers", "gateways", "tools", "resources", "prompts", "agents", "teams"],
@@ -245,7 +245,7 @@ describe("HeaderQuickNav", () => {
   });
 
   it("shows an error state when global search fails", async () => {
-    vi.mocked(searchAdminEntities).mockRejectedValue(new Error("Search failed"));
+    vi.mocked(searchEntities).mockRejectedValue(new Error("Search failed"));
 
     renderQuickNav();
 
@@ -270,7 +270,7 @@ describe("HeaderQuickNav", () => {
     fireEvent.change(input, { target: { value: "alice" } });
 
     await waitFor(() => {
-      expect(searchAdminEntities).toHaveBeenCalledWith(
+      expect(searchEntities).toHaveBeenCalledWith(
         expect.objectContaining({
           query: "alice",
           entityTypes: expect.arrayContaining(["users"]),
@@ -282,7 +282,7 @@ describe("HeaderQuickNav", () => {
 
   it("navigates to the owning page when a result is selected", async () => {
     const user = userEvent.setup();
-    vi.mocked(searchAdminEntities).mockResolvedValue({
+    vi.mocked(searchEntities).mockResolvedValue({
       query: "tool",
       entity_types: ["tools"],
       limit_per_type: 8,
@@ -309,7 +309,7 @@ describe("HeaderQuickNav", () => {
   });
 
   it("navigates to the first result when the form is submitted", async () => {
-    vi.mocked(searchAdminEntities).mockResolvedValue({
+    vi.mocked(searchEntities).mockResolvedValue({
       query: "resource",
       entity_types: ["resources"],
       limit_per_type: 8,
@@ -340,7 +340,7 @@ describe("HeaderQuickNav", () => {
   });
 
   it("navigates to the focused result with keyboard navigation", async () => {
-    vi.mocked(searchAdminEntities).mockResolvedValue({
+    vi.mocked(searchEntities).mockResolvedValue({
       query: "tool",
       entity_types: ["tools"],
       limit_per_type: 8,
@@ -379,7 +379,7 @@ describe("HeaderQuickNav", () => {
   });
 
   it("keeps keyboard focus inside result boundaries", async () => {
-    vi.mocked(searchAdminEntities).mockResolvedValue({
+    vi.mocked(searchEntities).mockResolvedValue({
       query: "tool",
       entity_types: ["tools"],
       limit_per_type: 8,
@@ -430,10 +430,10 @@ describe("HeaderQuickNav", () => {
     expect(await screen.findByText("No matching results.")).toBeInTheDocument();
   });
 
-  type SearchResult = Awaited<ReturnType<typeof searchAdminEntities>>;
+  type SearchResult = Awaited<ReturnType<typeof searchEntities>>;
 
   it("resolves result labels from fallback fields across multiple groups", async () => {
-    vi.mocked(searchAdminEntities).mockResolvedValue({
+    vi.mocked(searchEntities).mockResolvedValue({
       query: "q",
       entity_types: [],
       limit_per_type: 8,
@@ -468,7 +468,7 @@ describe("HeaderQuickNav", () => {
   });
 
   it("shows a searching state while the request is in flight", async () => {
-    vi.mocked(searchAdminEntities).mockReturnValue(new Promise<SearchResult>(() => {}));
+    vi.mocked(searchEntities).mockReturnValue(new Promise<SearchResult>(() => {}));
 
     renderQuickNav();
     const input = screen.getByRole("searchbox", { name: "Search" });
@@ -479,7 +479,7 @@ describe("HeaderQuickNav", () => {
   });
 
   it("ignores abort errors without showing an error state", async () => {
-    vi.mocked(searchAdminEntities).mockRejectedValue(new DOMException("aborted", "AbortError"));
+    vi.mocked(searchEntities).mockRejectedValue(new DOMException("aborted", "AbortError"));
 
     renderQuickNav();
     const input = screen.getByRole("searchbox", { name: "Search" });
@@ -487,12 +487,12 @@ describe("HeaderQuickNav", () => {
     fireEvent.change(input, { target: { value: "query" } });
 
     // The abort is swallowed, so no error message is rendered.
-    await waitFor(() => expect(searchAdminEntities).toHaveBeenCalled());
+    await waitFor(() => expect(searchEntities).toHaveBeenCalled());
     expect(screen.queryByText(/failed|error/i)).not.toBeInTheDocument();
   });
 
   it("closes the results popover on Escape", async () => {
-    vi.mocked(searchAdminEntities).mockResolvedValue({
+    vi.mocked(searchEntities).mockResolvedValue({
       query: "q",
       entity_types: [],
       limit_per_type: 8,
