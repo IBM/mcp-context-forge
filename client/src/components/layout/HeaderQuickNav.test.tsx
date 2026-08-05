@@ -46,6 +46,10 @@ const defaultAuthContext = {
   login: vi.fn(),
   logout: vi.fn(),
   setSelectedTeamId: vi.fn(),
+  permissions: [],
+  permissionsLoading: false,
+  permissionsError: false,
+  hasPermission: () => true,
 };
 
 beforeEach(() => {

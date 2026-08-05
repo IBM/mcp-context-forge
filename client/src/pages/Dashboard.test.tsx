@@ -98,7 +98,7 @@ describe("Dashboard", () => {
 
     renderWithProviders(<Dashboard />);
 
-    expect(screen.getByRole("heading", { name: "Dashboard" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Up and running..." })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Connect a source" })).not.toBeInTheDocument();
   });
 
@@ -114,7 +114,7 @@ describe("Dashboard", () => {
 
     renderWithProviders(<Dashboard />);
 
-    expect(screen.getByRole("heading", { name: "Dashboard" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Up and running..." })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Connect a source" })).not.toBeInTheDocument();
   });
 
