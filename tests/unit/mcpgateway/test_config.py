@@ -2019,22 +2019,23 @@ def test_weak_secret_raises_in_staging():
         )
 
 
-def test_weak_auth_encryption_secret_raises_in_development():
-    """Known-weak auth_encryption_secret is rejected unconditionally (including development).
+def test_weak_auth_encryption_secret_allowed_in_development():
+    """Known-weak auth_encryption_secret is downgraded to a warning in development mode.
 
-    ``"my-test-salt"`` is 12 chars — below the 32-char length floor — so ``"too short"``
-    fires before the weak-value check.  The test accepts either rejection reason.
+    When ENVIRONMENT=development, short/weak/low-entropy values for
+    auth_encryption_secret no longer raise SecurityConfigurationError — they
+    emit a logger.warning and startup proceeds.  This enables PoC / local-dev
+    convenience (e.g. AUTH_ENCRYPTION_SECRET=my-test-salt).
+    jwt_secret_key is NOT affected and still hard-fails unconditionally.
     """
-    from mcpgateway.config import SecurityConfigurationError
-
-    with pytest.raises(SecurityConfigurationError) as exc_info:
-        Settings(
-            auth_encryption_secret="my-test-salt",  # nosec B106  # pragma: allowlist secret
-            environment="development",
-            _env_file=None,
-        )
-    msg = str(exc_info.value)
-    assert "too short" in msg or "known-weak/default value" in msg
+    strong_jwt = "a-strong-jwt-secret-that-is-long-enough-and-unique-xxxx"  # nosec B105
+    s = Settings(
+        jwt_secret_key=strong_jwt,
+        auth_encryption_secret="my-test-salt",  # nosec B106  # pragma: allowlist secret
+        environment="development",
+        _env_file=None,
+    )
+    assert s.auth_encryption_secret.get_secret_value() == "my-test-salt"  # pragma: allowlist secret
 
 
 def test_strong_secrets_accepted_in_all_envs():
