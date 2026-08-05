@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent, KeyboardEvent as ReactKeyboardEvent } from "react";
 import { Search } from "lucide-react";
 import { useIntl } from "react-intl";
-import { searchAdminEntities } from "@/api/search";
+import { searchEntities } from "@/api/search";
 import type { GlobalSearchGroup, GlobalSearchItem, SearchEntityType } from "@/api/search";
 import { useAuthContext } from "@/auth/AuthContext";
 import { Badge } from "@/components/ui/badge";
@@ -228,7 +228,7 @@ export function HeaderQuickNav() {
     const controller = new AbortController();
     const timeoutId = window.setTimeout(() => {
       setStatus("loading");
-      searchAdminEntities({
+      searchEntities({
         query: trimmedQuery,
         entityTypes: searchEntityTypes,
         limitPerType: SEARCH_LIMIT_PER_TYPE,

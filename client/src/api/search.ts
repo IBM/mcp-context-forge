@@ -45,7 +45,7 @@ export interface GlobalSearchParams {
   signal?: AbortSignal;
 }
 
-export function searchAdminEntities({
+export function searchEntities({
   query,
   entityTypes,
   limitPerType = 8,
@@ -61,5 +61,5 @@ export function searchAdminEntities({
     params.set("team_id", teamId);
   }
 
-  return api.get<GlobalSearchResponse>(`/admin/search?${params.toString()}`, undefined, signal);
+  return api.get<GlobalSearchResponse>(`/v1/search?${params.toString()}`, undefined, signal);
 }

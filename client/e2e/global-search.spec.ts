@@ -62,7 +62,7 @@ test.describe("Global search", () => {
         ]),
       });
     });
-    await page.route("**/admin/search?*", async (route) => {
+    await page.route("**/v1/search?*", async (route) => {
       searchRequestUrl = route.request().url();
       await route.fulfill({
         status: 200,
@@ -101,7 +101,7 @@ test.describe("Global search", () => {
     await searchBox.pressSequentially("eather");
 
     await expect(page.getByText("Weather Tool")).toBeVisible();
-    expect(searchRequestUrl).toContain("/admin/search?");
+    expect(searchRequestUrl).toContain("/v1/search?");
     expect(searchRequestUrl).toContain("q=weather");
     expect(searchRequestUrl).toContain("entity_types=");
 
