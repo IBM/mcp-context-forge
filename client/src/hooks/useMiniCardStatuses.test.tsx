@@ -93,6 +93,13 @@ describe("useMiniCardStatuses — /version gating", () => {
     renderHook(() => useMiniCardStatuses());
     expect(mockUseSystemHealth).toHaveBeenCalledWith(undefined, true);
   });
+
+  it("exposes the shared /version query so McpHealthCard can reuse it", () => {
+    const hr = health({ data: healthyInfo });
+    mockUseSystemHealth.mockReturnValue(hr);
+    const { result } = renderHook(() => useMiniCardStatuses());
+    expect(result.current.systemHealth).toBe(hr);
+  });
 });
 
 describe("useMiniCardStatuses — headline health axis", () => {

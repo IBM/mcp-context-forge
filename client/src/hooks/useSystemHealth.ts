@@ -64,6 +64,9 @@ export function useSystemHealth(
   return query;
 }
 
+/** The `useSystemHealth` result, exposed so a parent can share one poll. */
+export type SystemHealthResult = ReturnType<typeof useSystemHealth>;
+
 /**
  * Redis is only a required dependency when it is the configured cache backend.
  * Overall health is DB reachability plus Redis reachability when Redis is in use.

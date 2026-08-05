@@ -211,4 +211,28 @@ describe("McpHealthCard", () => {
     expect(container.querySelector('[data-slot="skeleton"]')).not.toBeInTheDocument();
     expect(screen.queryByText("PostgreSQL")).not.toBeInTheDocument();
   });
+
+  it("reuses a passed-in /version result instead of polling again", () => {
+    mockUseAuth.mockReturnValue({
+      hasPermission: (perm: string) => perm === "admin.system_config",
+    } as unknown as ReturnType<typeof useAuth>);
+    mockServers({ servers: [makeServer({ reachable: true })] });
+    // Own /version returns nothing; the shared prop supplies the health data.
+    mockHealth(undefined);
+    const shared = {
+      data: healthyInfo,
+      error: null,
+      isLoading: false,
+      execute: vi.fn(),
+      refetch: vi.fn(),
+      setData: vi.fn(),
+    } as unknown as ReturnType<typeof useSystemHealth>;
+    renderWithProviders(<McpHealthCard health={shared} />);
+
+    // Footer chips render from the shared result...
+    expect(screen.getByText("PostgreSQL")).toBeInTheDocument();
+    expect(screen.getByText("Redis")).toBeInTheDocument();
+    // ...and the card's own /version poll is disabled (enabled=false).
+    expect(mockUseSystemHealth).toHaveBeenCalledWith(undefined, false);
+  });
 });

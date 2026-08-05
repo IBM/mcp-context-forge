@@ -26,7 +26,12 @@ import { useIntl } from "react-intl";
 import { useAuth } from "@/auth/useAuth";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { isRedisConfigured, useSystemHealth, type VersionInfo } from "@/hooks/useSystemHealth";
+import {
+  isRedisConfigured,
+  useSystemHealth,
+  type SystemHealthResult,
+  type VersionInfo,
+} from "@/hooks/useSystemHealth";
 import { useMcpServers } from "@/hooks/useMcpServers";
 import { cn } from "@/lib/utils";
 import { formatLastSeen } from "@/utils/format";
@@ -104,19 +109,18 @@ function FooterChipsSkeleton() {
   );
 }
 
-export function McpHealthCard() {
+export function McpHealthCard({ health: sharedHealth }: { health?: SystemHealthResult } = {}) {
   const intl = useIntl();
   const { hasPermission } = useAuth();
   const { servers, error, isLoading, lastUpdated } = useMcpServers();
 
-  // Footer chips need the admin-only /version endpoint. Only fetch it when the
-  // caller can, so non-admins never poll a guaranteed 403.
+  // Footer chips need the admin-only /version endpoint. Reuse the page-level poll
+  // when the home passes it in (it already polls /version for the headline), so
+  // the mcp view doesn't poll it twice; otherwise fetch it here. Only fetch when
+  // the caller can, so non-admins never poll a guaranteed 403.
   const canViewSystem = hasPermission("admin.system_config");
-  const {
-    data: health,
-    isLoading: healthLoading,
-    error: healthError,
-  } = useSystemHealth(undefined, canViewSystem);
+  const ownHealth = useSystemHealth(undefined, canViewSystem && sharedHealth === undefined);
+  const { data: health, isLoading: healthLoading, error: healthError } = sharedHealth ?? ownHealth;
   // Show a placeholder only while the request is genuinely in flight — never
   // after a swallowed 403/other error (then the chips simply stay absent).
   const showFooterSkeleton = canViewSystem && !health && healthLoading && !healthError;

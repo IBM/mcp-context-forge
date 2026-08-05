@@ -14,6 +14,7 @@ import type { MiniCardStatus } from "@/components/dashboard/miniCardStatus";
 import { PermissionDenied } from "@/components/dashboard/PermissionDenied";
 import type { HeadlineCondition } from "@/components/dashboard/resolveHeadline";
 import { useMiniCardStatuses } from "@/hooks/useMiniCardStatuses";
+import type { SystemHealthResult } from "@/hooks/useSystemHealth";
 import { StatusHeadline } from "@/components/dashboard/StatusHeadline";
 import { SystemStatsCardConnected } from "@/components/dashboard/SystemStatsCardConnected";
 import { SystemView } from "@/components/dashboard/SystemView";
@@ -61,7 +62,7 @@ export function Dashboard() {
 
   // Resolved once at the page level (which stays mounted across ?view= changes)
   // so switching states does not remount the queries and flash stale statuses.
-  const { statuses: miniCardStatuses, headlineCondition } = useMiniCardStatuses();
+  const { statuses: miniCardStatuses, headlineCondition, systemHealth } = useMiniCardStatuses();
 
   const actionCards: ActionCard[] = useMemo(
     () => [
@@ -132,7 +133,11 @@ export function Dashboard() {
       {activeView === "default" ? (
         <DefaultState statuses={miniCardStatuses} headlineCondition={headlineCondition} />
       ) : (
-        <NonDefaultState active={activeView} statuses={miniCardStatuses} />
+        <NonDefaultState
+          active={activeView}
+          statuses={miniCardStatuses}
+          systemHealth={systemHealth}
+        />
       )}
     </div>
   );
@@ -170,9 +175,11 @@ function DefaultState({
 function NonDefaultState({
   active,
   statuses,
+  systemHealth,
 }: {
   active: HomeViewId;
   statuses: Record<MiniCardId, MiniCardStatus>;
+  systemHealth: SystemHealthResult;
 }) {
   const intl = useIntl();
   const { hasPermission, permissionsLoading } = useAuth();
@@ -199,7 +206,7 @@ function NonDefaultState({
         {gated && permissionsLoading ? (
           <Skeleton className="h-40 w-full rounded-lg" />
         ) : allowed ? (
-          <MainContent active={active} />
+          <MainContent active={active} systemHealth={systemHealth} />
         ) : (
           <PermissionDenied />
         )}
@@ -217,9 +224,15 @@ function NonDefaultState({
  * Main content per view. Real cards swap in here as they land; the rest render a
  * labeled placeholder. This is the per-view swap point the card PRs target.
  */
-function MainContent({ active }: { active: HomeViewId }) {
+function MainContent({
+  active,
+  systemHealth,
+}: {
+  active: HomeViewId;
+  systemHealth: SystemHealthResult;
+}) {
   if (active === "system") return <SystemView />;
-  if (active === "mcp") return <McpHealthCard />;
+  if (active === "mcp") return <McpHealthCard health={systemHealth} />;
   return <EmptyStatePlaceholder messageId={PLACEHOLDER_MESSAGE[active]} />;
 }
 

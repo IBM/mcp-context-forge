@@ -27,7 +27,12 @@ import type { HeadlineCondition } from "@/components/dashboard/resolveHeadline";
 import { countActiveTotal, type Activatable } from "@/components/dashboard/systemMetrics";
 import { useQuery } from "@/hooks/useQuery";
 import { useRecentActivity } from "@/hooks/useRecentActivity";
-import { deriveMcpHealthy, useSystemHealth, type VersionInfo } from "@/hooks/useSystemHealth";
+import {
+  deriveMcpHealthy,
+  useSystemHealth,
+  type SystemHealthResult,
+  type VersionInfo,
+} from "@/hooks/useSystemHealth";
 import type { ServersResponse } from "@/types/server";
 
 // Reachability only needs each instance's `reachable` flag. Gateways come back
@@ -40,6 +45,11 @@ const A2A_REACH_PATH = "/a2a?limit=100";
 export interface HomeStatus {
   statuses: Record<MiniCardId, MiniCardStatus>;
   headlineCondition: HeadlineCondition;
+  /**
+   * The shared `/version` query, exposed so the mcp view's McpHealthCard can
+   * reuse it instead of polling the diagnostics endpoint a second time.
+   */
+  systemHealth: SystemHealthResult;
 }
 
 /**
@@ -61,12 +71,13 @@ export function useMiniCardStatuses(): HomeStatus {
   // so non-admins never poll a guaranteed 403 (and the headline never reads a
   // permission 403 as "system down").
   const canViewSystem = hasPermission("admin.system_config");
-  const { data: health, error: healthError } = useSystemHealth(undefined, canViewSystem);
+  const systemHealth = useSystemHealth(undefined, canViewSystem);
+  const { data: health, error: healthError } = systemHealth;
   const { data: mcpServers } = useQuery<ServersResponse>(MCP_REACH_PATH);
   const { data: a2aAgents } = useQuery<Activatable[]>(A2A_REACH_PATH);
   const { items } = useRecentActivity({ pollIntervalMs: 0 });
 
-  return useMemo(() => {
+  const derived = useMemo(() => {
     const healthy = safeHealthy(health);
 
     // Two-tone reachability dots (green = something reachable, grey = everything
@@ -100,4 +111,6 @@ export function useMiniCardStatuses(): HomeStatus {
 
     return { statuses, headlineCondition };
   }, [health, healthError, mcpServers, a2aAgents, items]);
+
+  return { ...derived, systemHealth };
 }
