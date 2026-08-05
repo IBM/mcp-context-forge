@@ -67,6 +67,27 @@ redis.call('expire', key, ttl)
 return 1
 """
 
+_LOCKOUT_EXEMPT_EXACT_PATHS = frozenset(
+    {
+        "/health",
+        "/ready",
+        "/version",
+        "/v1/version",
+        "/static",
+        "/live",
+        "/liveness",
+        "/readiness",
+    }
+)
+_LOCKOUT_EXEMPT_PREFIXES = (
+    "/health/",
+    "/ready/",
+    "/static/",
+    "/live/",
+    "/liveness/",
+    "/readiness/",
+)
+
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
     """Redis-backed rate limiting middleware.
@@ -213,13 +234,15 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         dimensions = self._get_client_dimensions(request)
 
         tier_name = self._get_tier_name(request.url.path)
+        lockout_exempt = self._is_lockout_exempt_path(request.url.path)
 
         # Check lockout first — a locked-out dimension blocks regardless of
         # whether the sliding window has cleared.
         locked_out_dims = []
-        for dimension in dimensions:
-            if await self._should_lockout(dimension, tier_name):
-                locked_out_dims.append(dimension)
+        if not lockout_exempt:
+            for dimension in dimensions:
+                if await self._should_lockout(dimension, tier_name):
+                    locked_out_dims.append(dimension)
 
         if locked_out_dims:
             for dim in locked_out_dims:
@@ -257,7 +280,8 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                     tier_name=tier_name,
                     is_lockout=False,
                 )
-                await self._increment_violation(dim, tier_name)
+                if not lockout_exempt:
+                    await self._increment_violation(dim, tier_name)
 
             return self._create_rate_limit_response(
                 request=request,
@@ -283,6 +307,16 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             if re.match(config["pattern"], path):
                 return tier_name
         return "LOW"
+
+    @staticmethod
+    def _is_lockout_exempt_path(path: str) -> bool:
+        """Return True for probe/version/static paths that must not enforce lockouts."""
+        return path in _LOCKOUT_EXEMPT_EXACT_PATHS or path.startswith(_LOCKOUT_EXEMPT_PREFIXES)
+
+    @staticmethod
+    def _violation_key(dimension: str, tier_name: str) -> str:
+        """Return the tier-scoped lockout violation key for a client dimension."""
+        return f"ratelimit:violations:{dimension}:{tier_name}"
 
     async def _check_rate_limit(self, dimension: str, tier: Dict[str, Any], tier_name: str) -> Tuple[bool, int]:
         """Check rate limit for dimension."""
@@ -347,19 +381,19 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
             return True, limit - count - 1
 
-    async def _should_lockout(self, dimension: str, tier_name: str) -> bool:  # pylint: disable=unused-argument
+    async def _should_lockout(self, dimension: str, tier_name: str) -> bool:
         """Check if dimension should be locked out."""
         if not self.lockout_enabled:
             return False
 
-        violation_key = f"ratelimit:violations:{dimension}"
+        violation_key = self._violation_key(dimension, tier_name)
         try:
             loop = asyncio.get_running_loop()
             return await loop.run_in_executor(self.executor, self._should_lockout_sync, violation_key, tier_name, dimension)
         except Exception:
             return self._should_lockout_memory(dimension, tier_name)
 
-    def _should_lockout_sync(self, violation_key: str, tier_name: str, dimension: str) -> bool:  # pylint: disable=unused-argument
+    def _should_lockout_sync(self, violation_key: str, tier_name: str, dimension: str) -> bool:
         """Synchronous lockout check."""
         if not self.use_redis or not self.redis_client:
             return self._should_lockout_memory(dimension, tier_name)
@@ -370,32 +404,33 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         except Exception:
             return self._should_lockout_memory(dimension, tier_name)
 
-    def _should_lockout_memory(self, dimension: str, tier_name: str) -> bool:  # pylint: disable=unused-argument
+    def _should_lockout_memory(self, dimension: str, tier_name: str) -> bool:
         """In-memory lockout check."""
         if not hasattr(self, "_violation_counts"):
             self._violation_counts: Dict[str, int] = {}
         if not hasattr(self, "_violation_expiry"):
             self._violation_expiry: Dict[str, float] = {}
+        violation_key = self._violation_key(dimension, tier_name)
         with self._store_lock:
             now = time.time()
-            expiry = self._violation_expiry.get(dimension, float("inf"))
+            expiry = self._violation_expiry.get(violation_key, float("inf"))
             if now > expiry:
-                self._violation_counts.pop(dimension, None)
-                self._violation_expiry.pop(dimension, None)
+                self._violation_counts.pop(violation_key, None)
+                self._violation_expiry.pop(violation_key, None)
                 return False
-            count = self._violation_counts.get(dimension, 0)
+            count = self._violation_counts.get(violation_key, 0)
             return count >= self.lockout_threshold
 
-    async def _increment_violation(self, dimension: str, tier_name: str) -> None:  # pylint: disable=unused-argument
+    async def _increment_violation(self, dimension: str, tier_name: str) -> None:
         """Increment violation counter for a dimension."""
-        violation_key = f"ratelimit:violations:{dimension}"
+        violation_key = self._violation_key(dimension, tier_name)
         try:
             loop = asyncio.get_running_loop()
-            await loop.run_in_executor(self.executor, self._increment_violation_sync, violation_key, dimension)
+            await loop.run_in_executor(self.executor, self._increment_violation_sync, violation_key, dimension, tier_name)
         except Exception:
-            self._increment_violation_memory(dimension)
+            self._increment_violation_memory(dimension, tier_name)
 
-    def _increment_violation_sync(self, violation_key: str, dimension: str) -> None:
+    def _increment_violation_sync(self, violation_key: str, dimension: str, tier_name: str) -> None:
         """Synchronous violation increment."""
         if self.use_redis and self.redis_client:
             try:
@@ -408,13 +443,14 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                     dimension,
                     str(e),
                 )
-        self._increment_violation_memory(dimension)
+        self._increment_violation_memory(dimension, tier_name)
 
-    def _increment_violation_memory(self, dimension: str) -> None:
+    def _increment_violation_memory(self, dimension: str, tier_name: str) -> None:
         """In-memory violation increment."""
+        violation_key = self._violation_key(dimension, tier_name)
         with self._store_lock:
-            self._violation_counts[dimension] = self._violation_counts.get(dimension, 0) + 1
-            self._violation_expiry[dimension] = time.time() + self.lockout_duration_minutes * 60
+            self._violation_counts[violation_key] = self._violation_counts.get(violation_key, 0) + 1
+            self._violation_expiry[violation_key] = time.time() + self.lockout_duration_minutes * 60
 
     def _log_security_event(
         self,
@@ -481,8 +517,8 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             return JSONResponse(
                 status_code=429,
                 content={
-                    "error": "Account locked",
-                    "message": f"Too many rate limit violations. Account locked for {self.lockout_duration_minutes} minutes. This may indicate suspicious activity on your account.",
+                    "error": "Rate limit lockout active",
+                    "message": f"Too many rate limit violations. This client is temporarily locked out for {self.lockout_duration_minutes} minutes.",
                     "lockout_duration_minutes": self.lockout_duration_minutes,
                     "reset_in_seconds": self.lockout_duration_minutes * 60,
                 },
