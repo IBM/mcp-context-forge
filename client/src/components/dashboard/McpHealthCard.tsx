@@ -1,37 +1,145 @@
 /**
  * McpHealthCard (#5842).
  *
- * Durable MCP health view: overall Healthy/Unhealthy plus Postgres/Redis
- * dependency chips, sourced from the authenticated `GET /version` diagnostics
- * endpoint. Reframed from the deprecated Rust "MCP runtime" card: no runtime
- * cores and no transport badge (the Rust MCP runtime sunset on 2026-07-07).
+ * Per-server MCP reachability roster over `GET /gateways` (React "MCP servers"):
+ * a "Servers" title with a "Refreshed X ago" hint, a top-right fleet status
+ * ("Reachable" / "Reduced coverage" / "Unreachable" / "Disabled"), an inline
+ * "X of N" summary with component totals, one row per server, and Postgres/Redis
+ * dependency chips.
  *
- * The endpoint enforces admin server-side; the mcp view already gates its
- * render on real permissions. A 403 here (e.g. a permission race) falls back to
- * PermissionDenied rather than a crash.
+ * Two-tone only (green = enabled + reachable, grey = everything else); errors
+ * live in the Activity feed, not here. See `mcpServerRoster.ts` for the pure
+ * classification logic.
+ *
+ * Permissions: `/gateways` is RBAC-scoped server-side (`gateways.read` + token
+ * teams), so the card self-gates — a caller without `gateways.read` gets a 403
+ * we surface as PermissionDenied, and a scoped caller only ever sees (and counts)
+ * their own servers. The footer chips come from the admin-only `/version`
+ * endpoint, so we fetch it only when the caller has `admin.system_config` and
+ * swallow any 403 locally (the chips just disappear; the card stays healthy).
  */
 
+import { Database, Server } from "lucide-react";
+import { useMemo } from "react";
 import { useIntl } from "react-intl";
 
+import { useAuth } from "@/auth/useAuth";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { deriveMcpHealthy, isRedisConfigured, useSystemHealth } from "@/hooks/useSystemHealth";
+import { isRedisConfigured, useSystemHealth, type VersionInfo } from "@/hooks/useSystemHealth";
+import { useMcpServers } from "@/hooks/useMcpServers";
+import { cn } from "@/lib/utils";
+import { formatLastSeen } from "@/utils/format";
+import {
+  computeRoster,
+  headerTone,
+  type RosterHeaderKind,
+  type SummarySegment,
+} from "./mcpServerRoster";
 import { PermissionDenied } from "./PermissionDenied";
+import { ServerRosterRow } from "./ServerRosterRow";
 import { StatusDot } from "./StatusDot";
+
+const HEADER_MESSAGE_ID: Record<RosterHeaderKind, string> = {
+  reachable: "dashboard.home.mcp.header.reachable",
+  reducedCoverage: "dashboard.home.mcp.header.reducedCoverage",
+  unreachable: "dashboard.home.mcp.header.unreachable",
+  disabled: "dashboard.home.mcp.header.disabled",
+};
+
+const SEGMENT_MESSAGE_ID: Record<SummarySegment["kind"], string> = {
+  unreachable: "dashboard.home.mcp.summary.unreachable",
+  disabled: "dashboard.home.mcp.summary.disabled",
+  reachable: "dashboard.home.mcp.summary.reachable",
+  pending: "dashboard.home.mcp.summary.pending",
+};
+
+/**
+ * Postgres/Redis dependency chips from the admin-only `/version` diagnostics.
+ * Icons stay muted in the healthy/not-configured case (matching the design) and
+ * only turn red when a configured dependency is unreachable.
+ */
+function FooterChips({ data }: { data: VersionInfo }) {
+  const intl = useIntl();
+  const redisConfigured = isRedisConfigured(data);
+
+  return (
+    <div className="flex flex-wrap gap-x-6 gap-y-2 text-sm text-muted-foreground">
+      <span className="inline-flex items-center gap-1.5">
+        <Database
+          className={cn("size-3.5 shrink-0", !data.database.reachable && "text-destructive")}
+          aria-hidden
+        />
+        {intl.formatMessage({ id: "dashboard.home.mcp.postgres" })}
+      </span>
+      <span className="inline-flex items-center gap-1.5">
+        <Server
+          className={cn(
+            "size-3.5 shrink-0",
+            redisConfigured && !data.redis.reachable && "text-destructive",
+          )}
+          aria-hidden
+        />
+        {intl.formatMessage({ id: "dashboard.home.mcp.redis" })}
+        {!redisConfigured && (
+          <span> ({intl.formatMessage({ id: "dashboard.home.mcp.notConfigured" })})</span>
+        )}
+      </span>
+    </div>
+  );
+}
+
+/**
+ * Placeholder for the footer chips while `/version` is in flight. Reserves the
+ * chips' height so the card does not grow when the real chips arrive — the
+ * footer resolves after the body (separate request, gated behind the async
+ * permission load), so without this the chips would pop in.
+ */
+function FooterChipsSkeleton() {
+  return (
+    <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
+      <Skeleton className="h-4 w-28" />
+      <Skeleton className="h-4 w-20" />
+    </div>
+  );
+}
 
 export function McpHealthCard() {
   const intl = useIntl();
-  const { data, error, isLoading } = useSystemHealth();
+  const { hasPermission } = useAuth();
+  const { servers, error, isLoading, lastUpdated } = useMcpServers();
 
-  if (isLoading && !data) {
-    return <Skeleton className="h-32 w-full rounded-lg" />;
+  // Footer chips need the admin-only /version endpoint. Only fetch it when the
+  // caller can, so non-admins never poll a guaranteed 403.
+  const canViewSystem = hasPermission("admin.system_config");
+  const {
+    data: health,
+    isLoading: healthLoading,
+    error: healthError,
+  } = useSystemHealth(undefined, canViewSystem);
+  // Show a placeholder only while the request is genuinely in flight — never
+  // after a swallowed 403/other error (then the chips simply stay absent).
+  const showFooterSkeleton = canViewSystem && !health && healthLoading && !healthError;
+
+  const roster = useMemo(() => computeRoster(servers ?? []), [servers]);
+
+  // Loading: no data yet.
+  if (isLoading && !servers) {
+    return (
+      <Card size="sm">
+        <CardContent className="text-sm text-muted-foreground">
+          {intl.formatMessage({ id: "dashboard.home.mcp.loading" })}
+        </CardContent>
+      </Card>
+    );
   }
 
+  // No gateways.read -> 403 -> precise permission gate.
   if (error?.status === 403) {
     return <PermissionDenied />;
   }
 
-  if (error || !data) {
+  if (error || !servers) {
     return (
       <Card size="sm">
         <CardContent className="text-sm text-muted-foreground" role="alert">
@@ -41,38 +149,96 @@ export function McpHealthCard() {
     );
   }
 
-  const healthy = deriveMcpHealthy(data);
-  const redisConfigured = isRedisConfigured(data);
+  // Empty fleet: no header, no footer chips, just the empty copy.
+  if (servers.length === 0) {
+    return (
+      <Card size="sm">
+        <CardContent className="text-sm text-muted-foreground">
+          {intl.formatMessage({ id: "dashboard.home.mcp.empty" })}
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const { summary } = roster;
+
+  // Inline summary: reachable/disabled/... segments followed by component totals,
+  // all dot-separated on one line (e.g. "3 of 3 reachable · 42 tools · 3 resources").
+  const summaryParts: { key: string; text: string }[] = roster.segments.map((segment) => ({
+    key: segment.kind,
+    text: intl.formatMessage(
+      { id: SEGMENT_MESSAGE_ID[segment.kind] },
+      { count: segment.count, total: segment.total },
+    ),
+  }));
+  if (summary.toolCount + summary.resourceCount + summary.promptCount > 0) {
+    summaryParts.push({
+      key: "components",
+      text: intl.formatMessage(
+        { id: "dashboard.home.mcp.components" },
+        {
+          tools: summary.toolCount,
+          resources: summary.resourceCount,
+          prompts: summary.promptCount,
+        },
+      ),
+    });
+  }
+
+  const refreshed =
+    lastUpdated != null
+      ? formatLastSeen(new Date(lastUpdated).toISOString(), { locale: intl.locale })
+      : null;
 
   return (
     <Card size="sm">
-      <CardContent className="space-y-4">
-        <StatusDot tone={healthy ? "success" : "error"}>
-          <span className="text-sm font-medium text-foreground">
-            {intl.formatMessage({
-              id: healthy ? "dashboard.home.mcp.healthy" : "dashboard.home.mcp.unhealthy",
-            })}
-          </span>
-        </StatusDot>
-
-        <div className="flex flex-wrap gap-x-6 gap-y-2 text-sm text-muted-foreground">
-          <StatusDot tone={data.database.reachable ? "success" : "error"}>
-            {intl.formatMessage({ id: "dashboard.home.mcp.postgres" })}
-          </StatusDot>
-          {redisConfigured ? (
-            <StatusDot tone={data.redis.reachable ? "success" : "error"}>
-              {intl.formatMessage({ id: "dashboard.home.mcp.redis" })}
-            </StatusDot>
-          ) : (
-            <StatusDot tone="muted">
-              {intl.formatMessage({ id: "dashboard.home.mcp.redis" })}
-              <span className="text-muted-foreground">
-                {" "}
-                ({intl.formatMessage({ id: "dashboard.home.mcp.notConfigured" })})
-              </span>
+      <CardContent className="space-y-6">
+        <div className="flex items-start justify-between gap-4">
+          <div className="space-y-1">
+            <div className="text-sm font-medium text-foreground">
+              {intl.formatMessage({ id: "dashboard.home.mcp.title" })}
+            </div>
+            {refreshed && (
+              <div className="text-xs text-muted-foreground">
+                {intl.formatMessage(
+                  { id: "dashboard.home.mcp.refreshed" },
+                  { relative: refreshed },
+                )}
+              </div>
+            )}
+          </div>
+          {roster.header && (
+            <StatusDot
+              tone={headerTone(roster.header)}
+              className="shrink-0 text-sm text-muted-foreground"
+            >
+              {intl.formatMessage({ id: HEADER_MESSAGE_ID[roster.header] })}
             </StatusDot>
           )}
         </div>
+
+        {summaryParts.length > 0 && (
+          <div className="flex flex-wrap items-center gap-x-2 text-sm text-muted-foreground">
+            {summaryParts.map((part, index) => (
+              <span key={part.key} className="flex items-center gap-x-2">
+                {index > 0 && <span aria-hidden>·</span>}
+                {part.text}
+              </span>
+            ))}
+          </div>
+        )}
+
+        <ul
+          role="list"
+          className="grid grid-cols-[auto_auto_1fr_auto] items-center gap-x-6 gap-y-3"
+        >
+          {roster.rows.map((classified) => (
+            <ServerRosterRow key={classified.server.id} classified={classified} />
+          ))}
+        </ul>
+
+        {canViewSystem && health && <FooterChips data={health} />}
+        {showFooterSkeleton && <FooterChipsSkeleton />}
       </CardContent>
     </Card>
   );
