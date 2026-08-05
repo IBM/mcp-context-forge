@@ -707,6 +707,26 @@ import {
   // wire up the checkbox-pill UI.  Avoids new Function() / unsafe-eval.
   // ===================================================================
   const SELECTOR_SWAP_MAP = {
+    associatedGateways: () =>
+      initGatewaySelect(
+        "associatedGateways",
+        "selectedGatewayPills",
+        "selectedGatewayWarning",
+        12,
+        "selectAllGatewayBtn",
+        "clearAllGatewayBtn",
+        "searchGateways"
+      ),
+    associatedEditGateways: () =>
+      initGatewaySelect(
+        "associatedEditGateways",
+        "selectedEditGatewayPills",
+        "selectedEditGatewayWarning",
+        12,
+        "selectAllEditGatewayBtn",
+        "clearAllEditGatewayBtn",
+        "searchEditGateways"
+      ),
     associatedTools: () =>
       Admin.initToolSelect(
         "associatedTools",

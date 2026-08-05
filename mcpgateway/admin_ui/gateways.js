@@ -620,6 +620,55 @@ export const initGatewaySelect = function (
     return;
   }
 
+  const checkboxGatewayId = (checkbox) =>
+    checkbox.dataset?.gatewayNull === "true"
+      ? "null"
+      : String(checkbox.value);
+
+  const applyPersistedSelection = function () {
+    if (!container.dataset.selectedGatewayIds) return;
+
+    try {
+      const selectedIds = new Set(
+        JSON.parse(container.dataset.selectedGatewayIds).map(String)
+      );
+      container
+        .querySelectorAll('input[type="checkbox"]')
+        .forEach((checkbox) => {
+          checkbox.checked = selectedIds.has(checkboxGatewayId(checkbox));
+        });
+    } catch (error) {
+      console.error("Error restoring gateway selection:", error);
+    }
+  };
+
+  const persistSelection = function () {
+    const selectAllInput = container.querySelector(
+      'input[name="selectAllGateways"]'
+    );
+    const allIdsInput = container.querySelector(
+      'input[name="allGatewayIds"]'
+    );
+
+    if (selectAllInput?.value === "true" && allIdsInput) {
+      try {
+        container.dataset.selectedGatewayIds = JSON.stringify(
+          JSON.parse(allIdsInput.value).map(String)
+        );
+        return;
+      } catch (error) {
+        console.error("Error persisting all gateway IDs:", error);
+      }
+    }
+
+    const selectedIds = Array.from(
+      container.querySelectorAll('input[type="checkbox"]:checked')
+    ).map(checkboxGatewayId);
+    container.dataset.selectedGatewayIds = JSON.stringify(selectedIds);
+  };
+
+  applyPersistedSelection();
+
   const pillClasses =
     "inline-block bg-indigo-100 text-indigo-800 text-xs px-2 py-1 rounded-full dark:bg-indigo-900 dark:text-indigo-200";
 
@@ -779,6 +828,7 @@ export const initGatewaySelect = function (
         allIdsInput.remove();
       }
 
+      persistSelection();
       update();
 
       // Reload associated items after clearing selection
@@ -881,6 +931,7 @@ export const initGatewaySelect = function (
         }
         allIdsInput.value = JSON.stringify(allGatewayIds);
 
+        persistSelection();
         update();
 
         // Reload associated items after selecting all
@@ -952,6 +1003,7 @@ export const initGatewaySelect = function (
         // selected together with real gateways. Server-side filtering already
         // supports mixed lists like `gateway_id=abc,null`.
 
+        persistSelection();
         update();
 
         // Trigger reload of associated tools, resources, and prompts with selected gateway filter
