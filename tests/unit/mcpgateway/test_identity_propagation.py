@@ -155,7 +155,7 @@ class TestBuildIdentityHeaders:
         mock_settings.identity_propagation_mode = "both"
         mock_settings.identity_propagation_headers_prefix = "X-Forwarded-User"
         mock_settings.identity_sign_claims = True
-        mock_settings.identity_claims_secret = "test-secret"  # pragma: allowlist secret
+        mock_settings.identity_claims_secret = SecretStr("test-secret")  # pragma: allowlist secret
         mock_settings.identity_sensitive_attributes = []
         uc = UserContext(user_id="alice@co.com", email="alice@co.com")
         headers = build_identity_headers(uc)
@@ -491,9 +491,43 @@ class TestSignClaims:
 
     @patch("mcpgateway.utils.identity_propagation.settings")
     def test_uses_identity_claims_secret(self, mock_settings):
-        mock_settings.identity_claims_secret = "my-secret"  # pragma: allowlist secret
+        mock_settings.identity_claims_secret = SecretStr("my-secret")  # pragma: allowlist secret
         sig = _sign_claims("test-payload")
         assert len(sig) == 64  # SHA-256 hex
+
+    @patch("mcpgateway.utils.identity_propagation.settings")
+    def test_identity_claims_secret_actually_changes_the_signature(self, mock_settings):
+        """The configured secret must actually be used as the HMAC key, not merely present.
+
+        test_uses_identity_claims_secret and test_falls_back_to_empty_when_no_secrets only
+        assert len(sig) == 64, which would still pass even if identity_claims_secret were
+        silently ignored (HMAC-SHA256 always produces a 64-char hex digest, regardless of
+        key). Signing the same payload with a real secret and with no secret at all and
+        asserting the two signatures differ is what actually proves the secret is honored.
+        """
+        mock_settings.identity_claims_secret = SecretStr("my-secret")  # pragma: allowlist secret
+        mock_settings.jwt_secret_key = SecretStr("jwt-fallback-secret")  # pragma: allowlist secret
+        sig_with_secret = _sign_claims("test-payload")
+
+        mock_settings.identity_claims_secret = None
+        mock_settings.jwt_secret_key = None
+        sig_without_secret = _sign_claims("test-payload")
+
+        assert sig_with_secret != sig_without_secret
+
+    def test_identity_claims_secret_is_a_secret_type(self):
+        """The identity-claims signing key must not be a bare string."""
+        # Standard
+        from typing import get_args
+
+        # Third-Party
+        from pydantic import SecretStr
+
+        # First-Party
+        from mcpgateway.config import Settings
+
+        annotation = Settings.model_fields["identity_claims_secret"].annotation
+        assert SecretStr in get_args(annotation), "identity_claims_secret must be Optional[SecretStr]"
 
     @patch("mcpgateway.utils.identity_propagation.settings")
     def test_falls_back_to_jwt_secret(self, mock_settings):
