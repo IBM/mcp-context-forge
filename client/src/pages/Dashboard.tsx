@@ -22,6 +22,7 @@ import { useAuth } from "@/auth/useAuth";
 import {
   HOME_STATES,
   getRightColumnCards,
+  getViewIcon,
   readActiveView,
   type HomeViewId,
   type MiniCardId,
@@ -181,6 +182,7 @@ function NonDefaultState({
   const { hasPermission, permissionsLoading } = useAuth();
   const state = HOME_STATES[active];
   const rightColumnCards = getRightColumnCards(active);
+  const TitleIcon = getViewIcon(active);
 
   const gated = Boolean(state.requiredPermission);
   const allowed = !state.requiredPermission || hasPermission(state.requiredPermission);
@@ -189,7 +191,8 @@ function NonDefaultState({
     <div className="mx-auto grid max-w-5xl grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_260px]">
       <div className="min-w-0 space-y-4">
         <div className="flex items-center justify-between gap-4">
-          <h1 className="font-heading text-lg font-medium text-foreground">
+          <h1 className="flex items-center gap-2 font-heading text-lg font-medium text-foreground">
+            {TitleIcon && <TitleIcon className="size-5 shrink-0 text-status-icon" />}
             {state.titleId ? intl.formatMessage({ id: state.titleId }) : null}
           </h1>
           <ClearControl />
