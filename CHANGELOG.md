@@ -12,7 +12,7 @@
 
 ### Overview
 
-Release 1.0.7 consolidates **52 PRs** focused on **security hardening**, **unified search and catalog APIs**, **OAuth and CSRF improvements**, **dataplane publishing**, **CPEX control-execution telemetry**, **MCP Apps compatibility**, and **CI/operational reliability**:
+Release 1.0.7 consolidates **57 PRs** focused on **security hardening**, **unified search and catalog APIs**, **OAuth and CSRF improvements**, **dataplane publishing**, **CPEX control-execution telemetry**, **MCP Apps compatibility**, and **CI/operational reliability**:
 
 - **Security** - Root URI policy hardening, token-scope enforcement, safer admin demotion, A2A authorization, REST outbound validation, CSRF response correctness, and patched container dependencies.
 - **API & Platform** - Added v1 catalog and unified search endpoints, bulk team member creation, popup-based OAuth authorization, GatewayRead counts, and improved OAuth resource handling.
@@ -24,12 +24,12 @@ Release 1.0.7 consolidates **52 PRs** focused on **security hardening**, **unifi
 
 - **Unconditional weak-secret rejection** - `JWT_SECRET_KEY` and `AUTH_ENCRYPTION_SECRET` placeholder and known-weak values now cause `SecurityConfigurationError` at startup in every environment, including development. `BASIC_AUTH_PASSWORD` is also patched to a strong value by `make setup` / `make init-secrets-patch-env`. Run `make setup` (fresh checkout) or `make init-secrets-patch-env` (existing `.env`) to provision real secrets.
 
-- **Root URI policy now defaults to deny** (GHSA-x39c-q2jx-f325) - Set `ROOT_ALLOWED_SCHEMES` before restart for every network scheme used by `DEFAULT_ROOTS` or new root registrations. `file://` roots additionally require `ROOT_ALLOW_FILE_SCHEME=true` and non-empty `ROOT_ALLOWED_FILE_PREFIXES`. Invalid `DEFAULT_ROOTS` abort gateway startup; configure policy before upgrading, not after.
+- **Root URI policy now defaults to deny** - Set `ROOT_ALLOWED_SCHEMES` before restart for every network scheme used by `DEFAULT_ROOTS` or new root registrations. `file://` roots additionally require `ROOT_ALLOW_FILE_SCHEME=true` and non-empty `ROOT_ALLOWED_FILE_PREFIXES`. Invalid `DEFAULT_ROOTS` abort gateway startup; configure policy before upgrading, not after.
   - **Root management API payloads are strict** - `POST /roots` rejects unknown fields. `PUT /roots/{root_uri}` accepts only optional `name`; existing full-root PUT payloads containing `uri`, `_meta`, or custom fields now return HTTP 422.
   - **Root-inclusive exports require unrestricted platform administration** - Unfiltered export includes roots and returns HTTP 403 for team-scoped administrators. Run backup exports with unrestricted platform-admin credentials, or explicitly exclude roots when a scoped export is intended.
   - **Root registrations are runtime state** - Roots are held in memory and are not database-persisted. Manual registrations do not survive process restart; configure `DEFAULT_ROOTS` together with matching root policy when persistent startup roots are required.
 
-- **OAuth DCR endpoints now enforce un-narrowed admin scope** (GHSA-gj7g-7r6g-jc8v) - `GET /oauth/registered-clients`, `GET /oauth/registered-clients/{gateway_id}`, and `DELETE /oauth/registered-clients/{client_id}` now reject narrowed and public-only admin tokens with `403 Forbidden`.
+- **OAuth DCR endpoints now enforce un-narrowed admin scope** - `GET /oauth/registered-clients`, `GET /oauth/registered-clients/{gateway_id}`, and `DELETE /oauth/registered-clients/{client_id}` now reject narrowed and public-only admin tokens with `403 Forbidden`.
 
 ### Security
 
@@ -39,7 +39,7 @@ Release 1.0.7 consolidates **52 PRs** focused on **security hardening**, **unifi
 - **Safe admin demotion** ([#5644](https://github.com/IBM/mcp-context-forge/pull/5644)) - Enforced safe rules when demoting administrators.
 - **A2A admin edit authorization** ([#5922](https://github.com/IBM/mcp-context-forge/pull/5922)) - Hardened authorization for A2A administrative edits.
 - **REST outbound validation** ([#5925](https://github.com/IBM/mcp-context-forge/pull/5925)) - Hardened validation of outbound REST tool requests.
-- **Patched libpq dependency** ([#5809](https://github.com/IBM/mcp-context-forge/pull/5809)) - Bumped `UBI_MINIMAL` to include the patched libpq for CVE-2026-6477.
+- **Patched libpq dependency** ([#5809](https://github.com/IBM/mcp-context-forge/pull/5809)) - Bumped `UBI_MINIMAL` to include the patched libpq.
 
 ### Added
 
@@ -88,6 +88,7 @@ Release 1.0.7 consolidates **52 PRs** focused on **security hardening**, **unifi
 - **LLM Settings CSRF** ([#5780](https://github.com/IBM/mcp-context-forge/pull/5780)) - Fixed CSRF failures when saving LLM settings in the Admin UI.
 - **Resource URI Conflict Message** ([#5920](https://github.com/IBM/mcp-context-forge/pull/5920)) - Showed a specific message for duplicate resource URI conflicts.
 - **Vite Rollup Fallback on s390x** ([#5779](https://github.com/IBM/mcp-context-forge/pull/5779), [#5836](https://github.com/IBM/mcp-context-forge/pull/5836), [#5958](https://github.com/IBM/mcp-context-forge/pull/5958)) - Fixed and force-installed the rollup fallback, including a Vite downgrade from 8 to 7 for s390x.
+- **CSRF Name Override Startup Warning** ([#6078](https://github.com/IBM/mcp-context-forge/pull/6078)) - Emitted a startup warning when `CSRF_COOKIE_NAME` or `CSRF_TOKEN_NAME` are overridden to non-default values, surfacing the misconfiguration at boot rather than at request time as intermittent `403 CSRF_TOKEN_INVALID` errors.
 
 #### **Reliability & Infrastructure**
 
@@ -99,6 +100,18 @@ Release 1.0.7 consolidates **52 PRs** focused on **security hardening**, **unifi
 - **Startup secret validation** - `JWT_SECRET_KEY`, `AUTH_ENCRYPTION_SECRET`, and `BASIC_AUTH_PASSWORD` are validated at startup with a minimum 32-byte length requirement and a comprehensive blocklist of known-weak values.
 - **Hardened Helm chart defaults** - `JWT_SECRET_KEY` in `charts/mcp-stack/values.yaml` now defaults to an empty string with deployment guidance, rather than shipping a sample weak key.
 - **Docker Compose and entrypoint hardening** - Compose `:?` variable guards and entrypoint secret checks updated to match the new enforcement policy.
+- **Helm non-root container startup** ([#6041](https://github.com/IBM/mcp-context-forge/pull/6041)) - Set `runAsUser` for postgres (999), redis (999), and fast-time-server (1001) so pods with `runAsNonRoot: true` no longer fail with `CreateContainerConfigError`. Also corrected `migration.image.tag` from `v1.0.6` to `v1.0.7` to ensure the four new Alembic migrations are applied by the init job.
+- **E2E test view-modal race** ([#6084](https://github.com/IBM/mcp-context-forge/pull/6084)) - Re-checked the resources table and row count before reading the second row in the view-modal test, eliminating a re-render race that could cause a 60-second hang.
+
+### Changed
+
+#### **Security & Configuration**
+
+- **`AUTH_ENCRYPTION_SECRET` enforcement relaxed in development** ([#6073](https://github.com/IBM/mcp-context-forge/pull/6073)) - `AUTH_ENCRYPTION_SECRET` values that do not meet minimum cryptographic strength now emit a mandatory `SECURITY WARNING` and allow startup to proceed when `ENVIRONMENT=development`, reducing friction for local PoC and first-run workflows. Full enforcement remains in `staging` and `production`. `JWT_SECRET_KEY` enforcement is unchanged. The `__REPLACE_ME__` placeholder is unconditionally rejected in all environments. `make setup` / `make init-secrets-patch-env` no longer silently auto-patch `AUTH_ENCRYPTION_SECRET` — operators must set it explicitly.
+
+#### **Observability & Security**
+
+- **Support bundle secret redaction** ([#6080](https://github.com/IBM/mcp-context-forge/pull/6080)) - Secret exclusion in generated bundles is now derived from the `Settings` model rather than a hand-maintained list, ensuring newly added secret-typed fields are automatically covered. Credentials are stripped from all string-valued `*_url` settings and `*_URL` environment variables uniformly. `csrf_secret_key` and `identity_claims_secret` are now typed as `SecretStr`.
 
 ### Documentation
 
@@ -132,6 +145,11 @@ Release 1.0.7 consolidates **52 PRs** focused on **security hardening**, **unifi
 | [#5927](https://github.com/IBM/mcp-context-forge/pull/5927) | test: Remove redundant waits | gcgoncalves |
 | [#5438](https://github.com/IBM/mcp-context-forge/pull/5438) | Follow-on refinements to Docker Security Scan job | jonpspri |
 | [#6035](https://github.com/IBM/mcp-context-forge/pull/6035) | chore: bump cryptography to 50.0.0 | msureshkumar88 |
+| [#6041](https://github.com/IBM/mcp-context-forge/pull/6041) | fix(helm): set runAsUser so non-root containers can start | madhu-mohan-jaishankar |
+| [#6073](https://github.com/IBM/mcp-context-forge/pull/6073) | feat: relax AUTH_ENCRYPTION_SECRET enforcement in development environment | prakhar-singh1928 |
+| [#6078](https://github.com/IBM/mcp-context-forge/pull/6078) | fix: warn at startup when CSRF cookie or header names are overridden | madhu-mohan-jaishankar |
+| [#6080](https://github.com/IBM/mcp-context-forge/pull/6080) | chore: improve support bundle redaction and settings secret typing | msureshkumar88 |
+| [#6084](https://github.com/IBM/mcp-context-forge/pull/6084) | fix(tests): re-check resources table before reading second row in view-modal test | gcgoncalves |
 
 ## [1.0.6] - 2026-07-22 - OAuth Token Exchange, Vault Credentials, MCP Apps, Dataplane Publishing, and Security Hardening
 
