@@ -113,6 +113,35 @@ describe("McpHealthCard", () => {
     expect(screen.getByText("bravo")).toBeInTheDocument();
   });
 
+  it("shows 'Refreshed just now' at the moment of a successful poll (0 seconds ago)", () => {
+    mockServers({ servers: [makeServer({ reachable: true })], lastUpdated: Date.now() });
+    renderWithProviders(<McpHealthCard />);
+
+    expect(screen.getByText("Refreshed just now")).toBeInTheDocument();
+  });
+
+  it("shows the relative seconds for a recent-but-not-instant refresh", () => {
+    mockServers({
+      servers: [makeServer({ reachable: true })],
+      lastUpdated: Date.now() - 30_000,
+    });
+    renderWithProviders(<McpHealthCard />);
+
+    expect(screen.getByText("Refreshed 30 seconds ago")).toBeInTheDocument();
+    expect(screen.queryByText("Refreshed just now")).not.toBeInTheDocument();
+  });
+
+  it("shows the relative minutes when the last refresh is stale", () => {
+    mockServers({
+      servers: [makeServer({ reachable: true })],
+      lastUpdated: Date.now() - 5 * 60_000,
+    });
+    renderWithProviders(<McpHealthCard />);
+
+    expect(screen.getByText("Refreshed 5 minutes ago")).toBeInTheDocument();
+    expect(screen.queryByText("Refreshed just now")).not.toBeInTheDocument();
+  });
+
   it("omits the admin-only dependency chips for a non-admin caller", () => {
     mockServers({ servers: [makeServer({ reachable: true })] });
     mockHealth(healthyInfo); // even if health data were present, no admin => no chips

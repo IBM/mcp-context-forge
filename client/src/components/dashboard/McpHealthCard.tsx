@@ -185,10 +185,19 @@ export function McpHealthCard() {
     });
   }
 
-  const refreshed =
-    lastUpdated != null
-      ? formatLastSeen(new Date(lastUpdated).toISOString(), { locale: intl.locale })
+  // "Refreshed just now" only replaces the relative formatter's "now" for a
+  // just-completed poll (0 seconds ago); every other age renders the relative
+  // time as before ("Refreshed 30 seconds ago", "Refreshed 5 minutes ago").
+  const refreshedText = (() => {
+    if (lastUpdated == null) return null;
+    if (Math.round((Date.now() - lastUpdated) / 1000) === 0) {
+      return intl.formatMessage({ id: "dashboard.home.mcp.refreshedJustNow" });
+    }
+    const relative = formatLastSeen(new Date(lastUpdated).toISOString(), { locale: intl.locale });
+    return relative
+      ? intl.formatMessage({ id: "dashboard.home.mcp.refreshed" }, { relative })
       : null;
+  })();
 
   return (
     <Card size="sm">
@@ -198,14 +207,7 @@ export function McpHealthCard() {
             <div className="text-sm font-medium text-foreground">
               {intl.formatMessage({ id: "dashboard.home.mcp.title" })}
             </div>
-            {refreshed && (
-              <div className="text-xs text-muted-foreground">
-                {intl.formatMessage(
-                  { id: "dashboard.home.mcp.refreshed" },
-                  { relative: refreshed },
-                )}
-              </div>
-            )}
+            {refreshedText && <div className="text-xs text-muted-foreground">{refreshedText}</div>}
           </div>
           {roster.header && (
             <StatusDot

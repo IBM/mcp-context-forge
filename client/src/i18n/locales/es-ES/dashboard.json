@@ -49,6 +49,7 @@
   "dashboard.home.mcp.loading": "Comprobando el estado de los servidores…",
   "dashboard.home.mcp.empty": "Aún no se han añadido servidores MCP",
   "dashboard.home.mcp.refreshed": "Actualizado {relative}",
+  "dashboard.home.mcp.refreshedJustNow": "Actualizado hace un momento",
   "dashboard.home.mcp.header.reachable": "Accesible",
   "dashboard.home.mcp.header.reducedCoverage": "Cobertura reducida",
   "dashboard.home.mcp.header.unreachable": "Inaccesible",
