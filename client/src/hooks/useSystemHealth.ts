@@ -26,12 +26,20 @@ const VERSION_HEADERS: Record<string, string> = { Accept: "application/json" };
 
 export const SYSTEM_HEALTH_POLL_INTERVAL_MS = 60_000;
 
-export function useSystemHealth(pollIntervalMs: number = SYSTEM_HEALTH_POLL_INTERVAL_MS) {
-  const query = useQuery<VersionInfo>("/version", { headers: VERSION_HEADERS });
+/**
+ * @param pollIntervalMs - Poll cadence; <= 0 disables polling (initial fetch still runs).
+ * @param enabled - When false, no request is made at all. Callers use this to
+ *   fetch-gate `/version` (admin-only) so non-admins never spam it with 403s.
+ */
+export function useSystemHealth(
+  pollIntervalMs: number = SYSTEM_HEALTH_POLL_INTERVAL_MS,
+  enabled: boolean = true,
+) {
+  const query = useQuery<VersionInfo>(enabled ? "/version" : null, { headers: VERSION_HEADERS });
   const { refetch } = query;
 
   useEffect(() => {
-    if (pollIntervalMs <= 0) return;
+    if (!enabled || pollIntervalMs <= 0) return;
 
     const tick = () => {
       // Pause polling while the tab is hidden.
@@ -51,7 +59,7 @@ export function useSystemHealth(pollIntervalMs: number = SYSTEM_HEALTH_POLL_INTE
       clearInterval(id);
       document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [pollIntervalMs, refetch]);
+  }, [enabled, pollIntervalMs, refetch]);
 
   return query;
 }
