@@ -11,6 +11,7 @@ import importlib
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
 import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql
 
 MODULE_NAME = "mcpgateway.alembic.versions.e5136a7c9d01_repair_revoked_api_token_status"
 
@@ -19,6 +20,23 @@ def _run_upgrade(connection) -> None:
     context = MigrationContext.configure(connection, opts={"as_sql": False})
     with Operations.context(context):
         importlib.import_module(MODULE_NAME).upgrade()
+
+
+def test_repair_statement_uses_postgresql_booleans():
+    """PostgreSQL SQL must not compare BOOLEAN columns with integer literals."""
+    migration = importlib.import_module(MODULE_NAME)
+
+    sql = str(
+        migration._repair_statement().compile(
+            dialect=postgresql.dialect(),
+            compile_kwargs={"literal_binds": True},
+        )
+    )
+
+    assert "SET is_active=false" in sql
+    assert "is_active IS true" in sql
+    assert "is_active = 0" not in sql
+    assert "is_active = 1" not in sql
 
 
 def test_upgrade_repairs_only_revoked_active_tokens():
