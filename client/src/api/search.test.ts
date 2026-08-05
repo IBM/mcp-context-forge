@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "./client";
-import { searchAdminEntities } from "./search";
+import { searchEntities } from "./search";
 
 vi.mock("./client", () => ({
   api: {
@@ -8,12 +8,12 @@ vi.mock("./client", () => ({
   },
 }));
 
-describe("searchAdminEntities", () => {
+describe("searchEntities", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it("builds the /admin/search URL with entity types and per-type limit", async () => {
+  it("builds the /v1/search URL with entity types and per-type limit", async () => {
     const response = {
       query: "tool",
       entity_types: ["tools"],
@@ -25,14 +25,14 @@ describe("searchAdminEntities", () => {
     };
     vi.mocked(api.get).mockResolvedValue(response);
 
-    await searchAdminEntities({
+    await searchEntities({
       query: " tool ",
       entityTypes: ["tools", "resources"],
       limitPerType: 6,
     });
 
     expect(api.get).toHaveBeenCalledWith(
-      "/admin/search?q=tool&limit_per_type=6&entity_types=tools%2Cresources",
+      "/v1/search?q=tool&limit_per_type=6&entity_types=tools%2Cresources",
       undefined,
       undefined,
     );
@@ -50,7 +50,7 @@ describe("searchAdminEntities", () => {
       count: 0,
     });
 
-    await searchAdminEntities({
+    await searchEntities({
       query: "alpha",
       entityTypes: ["teams"],
       teamId: "team-123",
@@ -58,7 +58,7 @@ describe("searchAdminEntities", () => {
     });
 
     expect(api.get).toHaveBeenCalledWith(
-      "/admin/search?q=alpha&limit_per_type=8&entity_types=teams&team_id=team-123",
+      "/v1/search?q=alpha&limit_per_type=8&entity_types=teams&team_id=team-123",
       undefined,
       controller.signal,
     );
