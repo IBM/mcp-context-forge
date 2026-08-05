@@ -18,8 +18,9 @@ export function formatDateTime(value?: string | null, emptyLabel = "Not availabl
   return value.replace(/\.\d+Z?$/, "");
 }
 
-// Descending time divisions used to pick the coarsest unit that still renders a
-// value below the next threshold (e.g. 90s -> "2 minutes ago", not "90 seconds").
+// Time divisions ordered smallest unit first, used to pick the coarsest unit
+// that still renders a value below the next threshold (e.g. 90s -> "2 minutes
+// ago", not "90 seconds").
 const RELATIVE_DIVISIONS: { amount: number; unit: Intl.RelativeTimeFormatUnit }[] = [
   { amount: 60, unit: "second" },
   { amount: 60, unit: "minute" },
