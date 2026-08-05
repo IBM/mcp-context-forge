@@ -1537,10 +1537,13 @@ class Settings(BaseSettings):
                 is unset (placeholder), matches a known-weak value, is shorter than
                 ``min_secret_length`` characters, or has low per-character entropy.
         """
-        # client_mode is intentionally NOT exempted — secret-strength enforcement
-        # is always active regardless of deployment profile.
         weak_secrets = {v.lower() for v in self.WEAK_VALUES}
         env = str(self.environment).lower()
+        is_dev = env == "development"
+
+        # jwt_secret_key: unconditional hard-fail in every environment.
+        # auth_encryption_secret: weak/short/low-entropy values are downgraded to
+        # WARNING-only when ENVIRONMENT=development (PoC / local dev convenience).
         for field_name, secret_field in (
             ("jwt_secret_key", self.jwt_secret_key),
             ("auth_encryption_secret", self.auth_encryption_secret),
@@ -1548,19 +1551,40 @@ class Settings(BaseSettings):
             val = secret_field.get_secret_value()
 
             if not val.strip():
-                raise SecurityConfigurationError(f"{field_name}: secret is empty. Set a real value (run 'python -m mcpgateway.scripts.init_secrets').")
-
-            if len(val) < self.min_secret_length:
                 raise SecurityConfigurationError(
-                    f"{field_name}: too short ({len(val)} chars, minimum {self.min_secret_length}). "
-                    "Run 'python -m mcpgateway.scripts.init_secrets' to generate strong values, "
-                    "or use 'make init-secrets-patch-env' to write them directly into .env."
+                    f"{field_name}: secret is empty. "
+                    "To fix, choose one of:\n"
+                    "  make setup                  # recommended: auto-creates .env and patches secrets in-place\n"
+                    "  make init-secrets           # writes secrets to .env.secrets for review, then copy into .env\n"
+                    "  make init-secrets-patch-env # patches secrets directly into an existing .env"
                 )
 
             is_placeholder = val.lower().startswith("__replace_me__")
             is_weak = val.lower() in weak_secrets
             entropy = calculate_entropy(val)
             is_low_entropy = entropy < 3.5
+            is_too_short = len(val) < self.min_secret_length
+
+            # auth_encryption_secret in dev: warn instead of raising for weak/short/low-entropy.
+            # Placeholder is still rejected unconditionally (it has no runtime meaning).
+            if field_name == "auth_encryption_secret" and is_dev and not is_placeholder:
+                if is_too_short or is_weak or is_low_entropy:
+                    logger.warning(
+                        "🔓 DEV-MODE SECURITY WARNING - %s: weak/short/low-entropy secret detected "
+                        "(value allowed only because ENVIRONMENT=development). "
+                        "NEVER use this secret outside local development.",
+                        field_name,
+                    )
+                continue
+
+            if is_too_short:
+                raise SecurityConfigurationError(
+                    f"{field_name}: too short ({len(val)} chars, minimum {self.min_secret_length}). "
+                    "To fix, choose one of:\n"
+                    "  make setup                  # recommended: auto-creates .env and patches secrets in-place\n"
+                    "  make init-secrets           # writes secrets to .env.secrets for review, then copy into .env\n"
+                    "  make init-secrets-patch-env # patches secrets directly into an existing .env"
+                )
 
             if is_placeholder or is_weak or is_low_entropy:
                 if is_placeholder:
