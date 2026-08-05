@@ -1,8 +1,9 @@
 /**
- * Fixture data for the Recent Activity widget.
+ * Mock data for the Recent Activity widget. Lives outside the test tree so the
+ * runtime hook can import it without coupling app code to `@/test`.
  *
- * Used by the MSW handler in tests and (when VITE_USE_MOCK_ACTIVITY=true)
- * by the dev server before the backend ships /api/logs/activity.
+ * Used by the MSW handler in tests and (when VITE_USE_MOCK_ACTIVITY=true) by the
+ * dev server before the backend ships /api/logs/activity.
  *
  * Timestamps are spread across the last few hours so the relative-time
  * formatter has something interesting to render.

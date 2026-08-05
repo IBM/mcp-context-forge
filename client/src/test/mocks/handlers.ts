@@ -1,6 +1,6 @@
 import { http, HttpResponse } from "msw";
 
-import { RECENT_ACTIVITY_FIXTURE } from "./fixtures/recentActivity";
+import { RECENT_ACTIVITY_FIXTURE } from "@/mocks/recentActivity";
 
 export const handlers = [
   // Mock Recent Activity endpoint — backed by RECENT_ACTIVITY_FIXTURE.

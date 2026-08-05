@@ -3,7 +3,7 @@ import { renderHook, waitFor, act } from "@testing-library/react";
 import { http, HttpResponse } from "msw";
 
 import { server } from "@/test/mocks/server";
-import { RECENT_ACTIVITY_FIXTURE } from "@/test/mocks/fixtures/recentActivity";
+import { RECENT_ACTIVITY_FIXTURE } from "@/mocks/recentActivity";
 
 import { useRecentActivity } from "./useRecentActivity";
 

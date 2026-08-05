@@ -9,7 +9,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { activityApi } from "@/api/activity";
-import { RECENT_ACTIVITY_FIXTURE } from "@/test/mocks/fixtures/recentActivity";
+import { RECENT_ACTIVITY_FIXTURE } from "@/mocks/recentActivity";
 import type { ActivityItem } from "@/types/activity";
 
 export const RECENT_ACTIVITY_POLL_INTERVAL_MS = 30_000;
