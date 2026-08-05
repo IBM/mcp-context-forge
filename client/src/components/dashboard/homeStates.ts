@@ -78,6 +78,15 @@ export const MINI_CARDS: Record<MiniCardId, MiniCardMeta> = {
   grpc: { id: "grpc", labelId: "dashboard.home.card.grpc", view: "grpc", icon: Unplug },
 };
 
+/**
+ * Icon for a view's title row and mini card. Single source of truth (MINI_CARDS)
+ * so the title icon and the nav icon can never drift. The `default` (resting)
+ * state has no title, so no icon.
+ */
+export function getViewIcon(view: HomeViewId): ComponentType<{ className?: string }> | undefined {
+  return view === "default" ? undefined : MINI_CARDS[view].icon;
+}
+
 // ---------------------------------------------------------------------------
 // Per-state configuration
 // ---------------------------------------------------------------------------
