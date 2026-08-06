@@ -1127,6 +1127,33 @@ class Settings(BaseSettings):
     mcpgateway_grpc_max_message_size: int = Field(default=4194304, description="Maximum gRPC message size in bytes (4MB)")
     mcpgateway_grpc_timeout: int = Field(default=30, description="Default gRPC call timeout in seconds")
     mcpgateway_grpc_tls_enabled: bool = Field(default=False, description="Enable TLS for gRPC connections by default")
+    mcpgateway_grpc_health_enabled: bool = Field(default=True, description="Enable gRPC health monitoring when gRPC support is enabled")
+    mcpgateway_grpc_health_interval: int = Field(default=60, ge=10, le=3600, description="Default gRPC health-check interval in seconds")
+    mcpgateway_grpc_health_timeout: int = Field(default=5, ge=1, le=60, description="Default gRPC health-check timeout in seconds")
+    mcpgateway_grpc_health_failure_threshold: int = Field(default=3, ge=1, le=20, description="Consecutive failures before a gRPC service is unhealthy")
+
+    # Proto artifact discovery. Directory scanning is fail-closed and only accepts
+    # service manifests below explicitly configured roots.
+    mcpgateway_proto_scan_enabled: bool = Field(default=False, description="Enable manifest-based Proto directory scanning")
+    mcpgateway_proto_scan_roots: Annotated[list[str], NoDecode] = Field(default_factory=list, description="CSV/JSON list of allowed roots containing grpc-service.yaml manifests")
+    mcpgateway_proto_scan_interval: int = Field(default=60, ge=10, le=3600, description="Proto manifest scan interval in seconds")
+    mcpgateway_proto_max_upload_bytes: int = Field(default=8388608, ge=1024, le=67108864, description="Maximum Proto ZIP/protoset upload size")
+    mcpgateway_proto_max_zip_entries: int = Field(default=1024, ge=1, le=10000, description="Maximum entries accepted from a Proto ZIP")
+    mcpgateway_proto_max_uncompressed_bytes: int = Field(default=33554432, ge=1024, le=268435456, description="Maximum expanded size accepted from a Proto ZIP")
+
+    # External SQL data API and unified debugger are disabled by default.
+    mcpgateway_sql_api_enabled: bool = Field(default=False, description="Enable governed external SQL discovery and data APIs")
+    mcpgateway_sql_default_limit: int = Field(default=100, ge=1, le=1000, description="Default SQL data query row limit")
+    mcpgateway_sql_max_limit: int = Field(default=1000, ge=1, le=1000, description="Maximum SQL data query row limit")
+    mcpgateway_sql_timeout: int = Field(default=30, ge=1, le=300, description="External SQL statement timeout in seconds")
+    mcpgateway_sql_max_response_bytes: int = Field(default=4194304, ge=1024, le=67108864, description="Maximum serialized SQL response size")
+    mcpgateway_sql_max_includes: int = Field(default=5, ge=0, le=5, description="Maximum enabled one-hop relations expanded per query")
+    mcpgateway_sqlite_allowed_roots: Annotated[list[str], NoDecode] = Field(
+        default_factory=list, description="CSV/JSON roots allowed for external SQLite data sources; empty blocks file-backed SQLite"
+    )
+    mcpgateway_api_debug_enabled: bool = Field(default=False, description="Enable the unified API debugger")
+    mcpgateway_api_debug_retention_days: int = Field(default=7, ge=1, le=90, description="Debugger history retention in days")
+    mcpgateway_api_debug_max_history: int = Field(default=100, ge=1, le=1000, description="Maximum debugger history entries retained per user")
 
     # Direct Proxy Configuration (disabled by default)
     mcpgateway_direct_proxy_enabled: bool = Field(default=False, description="Enable direct_proxy gateway mode for pass-through MCP operations")
@@ -3067,6 +3094,8 @@ Disallow: /
         "mcpgateway_ui_hide_header_items",
         "mcpgateway_ui_hide_sections_admin",
         "mcpgateway_ui_hide_header_items_admin",
+        "mcpgateway_proto_scan_roots",
+        "mcpgateway_sqlite_allowed_roots",
         "tool_description_forbidden_patterns",
         mode="before",
     )
@@ -3357,7 +3386,9 @@ Disallow: /
                 db_dir.mkdir(parents=True)
 
     # Validation patterns for safe display (configurable)
-    validation_dangerous_html_pattern: str = r"<(script|iframe|object|embed|link|meta|base|form|img|svg|video|audio|source|track|area|map|canvas|applet|frame|frameset|html|head|body|style)\b|</*(script|iframe|object|embed|link|meta|base|form|img|svg|video|audio|source|track|area|map|canvas|applet|frame|frameset|html|head|body|style)>"
+    validation_dangerous_html_pattern: str = (
+        r"<(script|iframe|object|embed|link|meta|base|form|img|svg|video|audio|source|track|area|map|canvas|applet|frame|frameset|html|head|body|style)\b|</*(script|iframe|object|embed|link|meta|base|form|img|svg|video|audio|source|track|area|map|canvas|applet|frame|frameset|html|head|body|style)>"
+    )
 
     validation_dangerous_js_pattern: str = r"(?i)(?:^|\s|[\"'`<>=])(javascript:|vbscript:|data:\s*[^,]*[;\s]*(javascript|vbscript)|\bon[a-z]+\s*=|<\s*script\b)"
 

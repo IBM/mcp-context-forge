@@ -755,7 +755,7 @@ class ToolCreate(BaseModel):
     title: Optional[str] = Field(None, max_length=255, description="Human-readable title for the tool (MCP BaseMetadata)")
     url: Optional[Union[str, AnyHttpUrl]] = Field(None, description="Tool endpoint URL")
     description: Optional[str] = Field(None, description="Tool description")
-    integration_type: Literal["REST", "MCP", "A2A"] = Field("REST", description="'REST' for individual endpoints, 'MCP' for gateway-discovered tools, 'A2A' for A2A agents")
+    integration_type: Literal["REST", "MCP", "A2A", "gRPC", "SQL"] = Field("REST", description="Tool integration type")
     request_type: Literal["GET", "POST", "PUT", "DELETE", "PATCH", "SSE", "STDIO", "STREAMABLEHTTP"] = Field("SSE", description="HTTP method to be used for invoking the tool")
     headers: Optional[Dict[str, str]] = Field(None, description="Additional headers to send when invoking the tool")
     input_schema: Optional[Dict[str, Any]] = Field(default_factory=lambda: dict(_DEFAULT_INPUT_SCHEMA), description="JSON Schema for validating tool parameters", alias="inputSchema")
@@ -1332,7 +1332,7 @@ class ToolUpdate(BaseModelWithConfigDict):
     custom_name: Optional[str] = Field(None, description="Custom name for the tool")
     url: Optional[Union[str, AnyHttpUrl]] = Field(None, description="Tool endpoint URL")
     description: Optional[str] = Field(None, description="Tool description")
-    integration_type: Optional[Literal["REST", "MCP", "A2A"]] = Field(None, description="Tool integration type")
+    integration_type: Optional[Literal["REST", "MCP", "A2A", "gRPC", "SQL"]] = Field(None, description="Tool integration type")
     request_type: Optional[Literal["GET", "POST", "PUT", "DELETE", "PATCH"]] = Field(None, description="HTTP method to be used for invoking the tool")
     headers: Optional[Dict[str, str]] = Field(None, description="Additional headers to send when invoking the tool")
     input_schema: Optional[Dict[str, Any]] = Field(None, description="JSON Schema for validating tool parameters")
@@ -1794,6 +1794,8 @@ class ToolRead(BaseModelWithConfigDict):
     reachable: bool
     gateway_id: Optional[str]
     grpc_service_id: Optional[str] = Field(None, description="ID of the gRPC service this tool was discovered from")
+    sql_table_id: Optional[str] = Field(None, description="ID of the SQL table backing a generated SQL tool")
+    source_operation: Optional[str] = Field(None, description="Source operation such as query, insert, update, or delete")
     execution_count: Optional[int] = Field(None)
     metrics: Optional[ToolMetrics] = Field(None)
     name: str
@@ -7842,6 +7844,11 @@ class GrpcServiceCreate(BaseModel):
     tls_cert_path: Optional[str] = Field(None, description="Path to TLS certificate file")
     tls_key_path: Optional[str] = Field(None, description="Path to TLS key file")
     grpc_metadata: Dict[str, str] = Field(default_factory=dict, description="gRPC metadata headers")
+    discovery_mode: Literal["auto", "reflection", "artifact"] = Field(default="auto", description="Descriptor discovery mode")
+    health_check_enabled: bool = Field(default=True, description="Enable periodic health checks")
+    health_check_interval: int = Field(default_factory=lambda: settings.mcpgateway_grpc_health_interval, ge=10, le=3600, description="Health-check interval in seconds")
+    health_check_timeout: int = Field(default_factory=lambda: settings.mcpgateway_grpc_health_timeout, ge=1, le=60, description="Health-check timeout in seconds")
+    health_failure_threshold: int = Field(default_factory=lambda: settings.mcpgateway_grpc_health_failure_threshold, ge=1, le=20, description="Failures before unhealthy")
     tags: List[str] = Field(default_factory=list, description="Tags for categorization")
 
     # Team scoping fields
@@ -7911,6 +7918,11 @@ class GrpcServiceUpdate(BaseModel):
     tls_cert_path: Optional[str] = Field(None, description="TLS certificate path")
     tls_key_path: Optional[str] = Field(None, description="TLS key path")
     grpc_metadata: Optional[Dict[str, str]] = Field(None, description="gRPC metadata headers")
+    discovery_mode: Optional[Literal["auto", "reflection", "artifact"]] = Field(None, description="Descriptor discovery mode")
+    health_check_enabled: Optional[bool] = Field(None, description="Enable health checks")
+    health_check_interval: Optional[int] = Field(None, ge=10, le=3600, description="Health-check interval")
+    health_check_timeout: Optional[int] = Field(None, ge=1, le=60, description="Health-check timeout")
+    health_failure_threshold: Optional[int] = Field(None, ge=1, le=20, description="Failures before unhealthy")
     tags: Optional[List[str]] = Field(None, description="Service tags")
     visibility: Optional[Literal["private", "team", "public"]] = Field(None, description="Visibility level: private, team, or public")
 
@@ -7986,10 +7998,25 @@ class GrpcServiceRead(BaseModel):
     tls_cert_path: Optional[str] = Field(None, description="TLS certificate path")
     tls_key_path: Optional[str] = Field(None, description="TLS key path")
     grpc_metadata: Dict[str, str] = Field(default_factory=dict, description="gRPC metadata")
+    discovery_mode: Literal["auto", "reflection", "artifact"] = Field(default="auto", description="Descriptor discovery mode")
+    active_artifact_id: Optional[str] = Field(None, description="Active descriptor artifact ID")
+    active_schema_hash: Optional[str] = Field(None, description="Active descriptor SHA-256")
+    reflected_schema_hash: Optional[str] = Field(None, description="Latest reflection descriptor SHA-256")
+    schema_drift: bool = Field(default=False, description="Reflection and active artifact differ")
+    manifest_path: Optional[str] = Field(None, description="Configured scan manifest path")
+    manifest_hash: Optional[str] = Field(None, description="Latest manifest and Proto content hash")
 
     # Status
     enabled: bool = Field(..., description="Service enabled")
     reachable: bool = Field(..., description="Service reachable")
+    health_check_enabled: bool = Field(default=True, description="Health monitoring enabled")
+    health_check_interval: int = Field(default=60, description="Health-check interval")
+    health_check_timeout: int = Field(default=5, description="Health-check timeout")
+    health_failure_threshold: int = Field(default=3, description="Failure threshold")
+    health_status: str = Field(default="unknown", description="Current health status")
+    consecutive_failures: int = Field(default=0, description="Consecutive failed checks")
+    last_health_check: Optional[datetime] = Field(None, description="Latest health check")
+    last_health_error: Optional[str] = Field(None, description="Latest sanitized health error")
 
     # Discovery
     service_count: int = Field(default=0, description="Number of gRPC services discovered")
@@ -8011,6 +8038,258 @@ class GrpcServiceRead(BaseModel):
     visibility: Literal["private", "team", "public"] = Field(default="public", description="Visibility level: private, team, or public")
 
     _normalize_visibility = field_validator("visibility", mode="before")(classmethod(lambda cls, v: _coerce_visibility(v)))
+
+    @field_validator("discovery_mode", mode="before")
+    @classmethod
+    def default_legacy_discovery_mode(cls, value: Any) -> str:
+        """Default rows created before artifact discovery to automatic mode."""
+        return value or "auto"
+
+    @field_validator("schema_drift", mode="before")
+    @classmethod
+    def default_legacy_schema_drift(cls, value: Any) -> bool:
+        """Treat an unset legacy drift flag as no known drift."""
+        return False if value is None else value
+
+    @field_validator("health_check_enabled", mode="before")
+    @classmethod
+    def default_legacy_health_enabled(cls, value: Any) -> bool:
+        """Enable health checks for legacy rows when gRPC is enabled."""
+        return True if value is None else value
+
+    @field_validator("health_check_interval", "health_check_timeout", "health_failure_threshold", "consecutive_failures", mode="before")
+    @classmethod
+    def default_legacy_health_numbers(cls, value: Any, info: ValidationInfo) -> int:
+        """Supply health defaults for rows predating monitoring columns."""
+        defaults = {"health_check_interval": 60, "health_check_timeout": 5, "health_failure_threshold": 3, "consecutive_failures": 0}
+        return defaults[info.field_name] if value is None else value
+
+    @field_validator("health_status", mode="before")
+    @classmethod
+    def default_legacy_health_status(cls, value: Any) -> str:
+        """Represent an unset legacy health state as unknown."""
+        return value or "unknown"
+
+    @field_serializer("grpc_metadata")
+    def mask_grpc_metadata(self, value: Dict[str, str]) -> Dict[str, str]:
+        """Mask all metadata values in API responses."""
+        return {key: "********" for key in value}
+
+
+class GrpcSchemaArtifactRead(BaseModel):
+    """Safe metadata for a compiled gRPC descriptor artifact."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    grpc_service_id: str
+    version: int
+    source_type: Literal["reflection", "proto", "zip", "protoset", "legacy"]
+    content_hash: str
+    source_info: Dict[str, Any] = Field(default_factory=dict)
+    is_active: bool
+    created_by: Optional[str] = None
+    created_at: datetime
+    activated_at: Optional[datetime] = None
+
+
+class GrpcSchemaDiff(BaseModel):
+    """Service/method level descriptor comparison."""
+
+    from_artifact_id: str
+    to_artifact_id: str
+    added_services: List[str] = Field(default_factory=list)
+    removed_services: List[str] = Field(default_factory=list)
+    added_methods: List[str] = Field(default_factory=list)
+    removed_methods: List[str] = Field(default_factory=list)
+    changed_methods: List[str] = Field(default_factory=list)
+
+
+class SQLDataSourceCreate(BaseModel):
+    """Create an encrypted external SQL data source."""
+
+    name: str = Field(..., min_length=1, max_length=255)
+    description: Optional[str] = None
+    connection_url: str = Field(..., min_length=1, repr=False)
+    enabled: bool = True
+
+    @field_validator("name")
+    @classmethod
+    def validate_source_name(cls, value: str) -> str:
+        """Validate a data source display name."""
+        return SecurityValidator.validate_name(value, "SQL data source name")
+
+    @field_validator("connection_url")
+    @classmethod
+    def validate_connection_url(cls, value: str) -> str:
+        """Allow only explicitly supported synchronous SQLAlchemy drivers."""
+        scheme = value.split("://", 1)[0].lower()
+        if scheme not in {"postgresql+psycopg", "mysql+pymysql", "sqlite+pysqlite"}:
+            raise ValueError("connection_url must use postgresql+psycopg, mysql+pymysql, or sqlite+pysqlite")
+        return value
+
+
+class SQLDataSourceUpdate(BaseModel):
+    """Update an external SQL data source."""
+
+    name: Optional[str] = Field(None, min_length=1, max_length=255)
+    description: Optional[str] = None
+    connection_url: Optional[str] = Field(None, min_length=1, repr=False)
+    enabled: Optional[bool] = None
+
+    @field_validator("name")
+    @classmethod
+    def validate_source_name(cls, value: Optional[str]) -> Optional[str]:
+        """Validate an updated source display name."""
+        if value is None:
+            return None
+        return SecurityValidator.validate_name(value, "SQL data source name")
+
+    @field_validator("connection_url")
+    @classmethod
+    def validate_connection_url(cls, value: Optional[str]) -> Optional[str]:
+        """Allow only explicitly supported synchronous SQLAlchemy drivers."""
+        if value is None:
+            return None
+        scheme = value.split("://", 1)[0].lower()
+        if scheme not in {"postgresql+psycopg", "mysql+pymysql", "sqlite+pysqlite"}:
+            raise ValueError("connection_url must use postgresql+psycopg, mysql+pymysql, or sqlite+pysqlite")
+        return value
+
+
+class SQLDataSourceRead(BaseModel):
+    """Credential-free external SQL data source response."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    name: str
+    slug: str
+    description: Optional[str] = None
+    dialect: str
+    masked_url: str
+    enabled: bool
+    reachable: bool
+    last_error: Optional[str] = None
+    last_tested_at: Optional[datetime] = None
+    last_discovered_at: Optional[datetime] = None
+    created_by: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class SQLTableUpdate(BaseModel):
+    """Update table assignment and per-operation exposure policy."""
+
+    exposed: Optional[bool] = None
+    allow_query: Optional[bool] = None
+    allow_insert: Optional[bool] = None
+    allow_update: Optional[bool] = None
+    allow_delete: Optional[bool] = None
+    team_id: Optional[str] = None
+    visibility: Optional[Literal["private", "team", "public"]] = None
+
+
+class SQLTableRead(BaseModel):
+    """Discovered external SQL table or view."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    source_id: str
+    schema_name: str
+    schema_slug: str
+    table_name: str
+    table_slug: str
+    object_type: Literal["table", "view"]
+    columns: List[Dict[str, Any]]
+    primary_key: List[str]
+    unique_keys: List[List[str]]
+    schema_hash: str
+    stale: bool
+    exposed: bool
+    allow_query: bool
+    allow_insert: bool
+    allow_update: bool
+    allow_delete: bool
+    team_id: Optional[str] = None
+    owner_email: Optional[str] = None
+    visibility: Literal["private", "team", "public"]
+    created_at: datetime
+    updated_at: datetime
+
+
+class SQLRelationUpdate(BaseModel):
+    """Enable or disable a discovered single-hop SQL relation."""
+
+    enabled: bool
+
+
+class SQLRelationRead(BaseModel):
+    """Discovered foreign-key relation."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    source_table_id: str
+    target_table_id: str
+    name: str
+    local_columns: List[str]
+    remote_columns: List[str]
+    enabled: bool
+    stale: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class APISQLTableBindingCreate(BaseModel):
+    """Create an impact-analysis binding without granting SQL access."""
+
+    tool_id: str
+    sql_table_id: str
+    access_mode: Literal["read", "write", "read_write"] = "read"
+
+
+class APISQLTableBindingRead(BaseModel):
+    """API-to-table catalog binding."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    tool_id: str
+    sql_table_id: str
+    access_mode: Literal["read", "write", "read_write"]
+    binding_type: Literal["auto", "manual"]
+    created_by: Optional[str] = None
+    created_at: datetime
+
+
+class APIDebugInvokeRequest(BaseModel):
+    """Invoke a registered tool through the real execution pipeline."""
+
+    tool_id: str
+    arguments: Dict[str, Any] = Field(default_factory=dict)
+    headers: Dict[str, str] = Field(default_factory=dict)
+    metadata: Dict[str, str] = Field(default_factory=dict)
+    deadline_seconds: Optional[float] = Field(default=None, gt=0, le=600)
+
+
+class APIDebugHistoryRead(BaseModel):
+    """Credential-free debug invocation history item."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    owner_email: str
+    tool_id: Optional[str] = None
+    protocol: str
+    request_preview: Dict[str, Any]
+    result_metadata: Dict[str, Any]
+    duration_ms: Optional[float] = None
+    status_code: Optional[str] = None
+    trace_id: Optional[str] = None
+    is_success: bool
+    created_at: datetime
 
 
 # Plugin-related schemas

@@ -30,7 +30,7 @@ import uuid
 
 # Third-Party
 import jsonschema
-from sqlalchemy import BigInteger, Boolean, CheckConstraint, Column, create_engine, DateTime, event, Float, ForeignKey, func, Index
+from sqlalchemy import BigInteger, Boolean, CheckConstraint, Column, create_engine, DateTime, event, Float, ForeignKey, func, Index, LargeBinary
 from sqlalchemy import inspect as sa_inspect
 from sqlalchemy import Integer, JSON, make_url, MetaData, select, String, Table, text, Text, UniqueConstraint
 from sqlalchemy.engine import Engine
@@ -1382,10 +1382,15 @@ class Permissions:
     ADMIN_DASHBOARD = "admin.dashboard"
     ADMIN_EVENTS = "admin.events"
     ADMIN_GRPC = "admin.grpc"
+    ADMIN_SQL_SOURCES = "admin.sql_sources"
     ADMIN_PLUGINS = "admin.plugins"
     ADMIN_METRICS = "admin.metrics"
     ADMIN_EXPORT = "admin.export"
     ADMIN_IMPORT = "admin.import"
+
+    # SQL catalog permissions. Data execution itself remains tools.execute.
+    SQL_TABLES_READ = "sql.tables.read"
+    SQL_TABLES_MANAGE = "sql.tables.manage"
     ADMIN_SSO_PROVIDERS_CREATE = "admin.sso_providers:create"
     ADMIN_SSO_PROVIDERS_READ = "admin.sso_providers:read"
     ADMIN_SSO_PROVIDERS_UPDATE = "admin.sso_providers:update"
@@ -2576,6 +2581,12 @@ class ToolMetric(Base):
     response_time: Mapped[float] = mapped_column(Float, nullable=False)
     is_success: Mapped[bool] = mapped_column(Boolean, nullable=False)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    protocol: Mapped[Optional[str]] = mapped_column(String(20), nullable=True, index=True)
+    status_code: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
+    request_bytes: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    response_bytes: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    trace_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
+    is_debug: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, index=True)
 
     # Relationship back to the Tool model.
     tool: Mapped["Tool"] = relationship("Tool", back_populates="metrics")
@@ -3348,6 +3359,11 @@ class Tool(Base):
     # Federation relationship with a gRPC service
     grpc_service_id: Mapped[Optional[str]] = mapped_column(ForeignKey("grpc_services.id", ondelete="CASCADE"))
     grpc_service: Mapped[Optional["GrpcService"]] = relationship("GrpcService", back_populates="tools")
+
+    # Direct binding for generated SQL tools. Manual catalog bindings are stored
+    # separately and deliberately do not grant database access.
+    sql_table_id: Mapped[Optional[str]] = mapped_column(ForeignKey("sql_tables.id", ondelete="SET NULL"), nullable=True, index=True)
+    source_operation: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
 
     # Many-to-many relationship with Servers
     servers: Mapped[List["Server"]] = relationship("Server", secondary=server_tool_association, back_populates="tools")
@@ -5225,6 +5241,179 @@ class A2ATaskEvent(Base):
         return f"<A2ATaskEvent(id='{self.id}', task_id='{self.task_id}', sequence={self.sequence})>"
 
 
+class GrpcSchemaArtifact(Base):
+    """Immutable compiled descriptor-set version for a gRPC service."""
+
+    __tablename__ = "grpc_schema_artifacts"
+    __table_args__ = (
+        UniqueConstraint("grpc_service_id", "version", name="uq_grpc_schema_artifact_version"),
+        UniqueConstraint("grpc_service_id", "content_hash", name="uq_grpc_schema_artifact_hash"),
+        Index("ix_grpc_schema_artifacts_service_active", "grpc_service_id", "is_active"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
+    grpc_service_id: Mapped[str] = mapped_column(String(36), ForeignKey("grpc_services.id", ondelete="CASCADE"), nullable=False, index=True)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    source_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    descriptor_set: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    source_info: Mapped[Dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    created_by: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    activated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class GrpcHealthSample(Base):
+    """Bounded gRPC health-check sample used for status trends."""
+
+    __tablename__ = "grpc_health_samples"
+    __table_args__ = (Index("ix_grpc_health_service_timestamp", "grpc_service_id", "timestamp"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    grpc_service_id: Mapped[str] = mapped_column(String(36), ForeignKey("grpc_services.id", ondelete="CASCADE"), nullable=False, index=True)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    healthy: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    check_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    status_code: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    latency_ms: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+
+class GrpcMetricsHourly(Base):
+    """Hourly gRPC method metrics with bounded status-code dimensions."""
+
+    __tablename__ = "grpc_metrics_hourly"
+    __table_args__ = (
+        UniqueConstraint("grpc_service_id", "method_name", "hour_start", name="uq_grpc_metrics_service_method_hour"),
+        Index("ix_grpc_metrics_hourly_hour", "hour_start"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    grpc_service_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("grpc_services.id", ondelete="SET NULL"), nullable=True, index=True)
+    service_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    method_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    hour_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    total_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    success_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    failure_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    status_counts: Mapped[Dict[str, int]] = mapped_column(JSON, default=dict, nullable=False)
+    p50_response_time: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    p95_response_time: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    p99_response_time: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    request_bytes: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    response_bytes: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+
+class SQLDataSource(Base):
+    """Encrypted connection configuration for an external SQL database."""
+
+    __tablename__ = "sql_data_sources"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
+    name: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+    slug: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    dialect: Mapped[str] = mapped_column(String(40), nullable=False)
+    connection_url: Mapped[str] = mapped_column(EncryptedText(), nullable=False)
+    masked_url: Mapped[str] = mapped_column(String(767), nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    reachable: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    last_tested_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_discovered_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_by: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+
+
+class SQLTable(Base):
+    """Discovered external table/view plus its explicit exposure policy."""
+
+    __tablename__ = "sql_tables"
+    __table_args__ = (
+        UniqueConstraint("source_id", "schema_name", "table_name", name="uq_sql_table_source_schema_name"),
+        UniqueConstraint("source_id", "schema_slug", "table_slug", name="uq_sql_table_source_slugs"),
+        Index("ix_sql_tables_scope", "team_id", "visibility", "exposed"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
+    source_id: Mapped[str] = mapped_column(String(36), ForeignKey("sql_data_sources.id", ondelete="CASCADE"), nullable=False, index=True)
+    schema_name: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    schema_slug: Mapped[str] = mapped_column(String(255), nullable=False)
+    table_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    table_slug: Mapped[str] = mapped_column(String(255), nullable=False)
+    object_type: Mapped[str] = mapped_column(String(20), nullable=False, default="table")
+    columns: Mapped[List[Dict[str, Any]]] = mapped_column(JSON, default=list, nullable=False)
+    primary_key: Mapped[List[str]] = mapped_column(JSON, default=list, nullable=False)
+    unique_keys: Mapped[List[List[str]]] = mapped_column(JSON, default=list, nullable=False)
+    schema_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    stale: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    exposed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    allow_query: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    allow_insert: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    allow_update: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    allow_delete: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    team_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("email_teams.id", ondelete="SET NULL"), nullable=True)
+    owner_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    visibility: Mapped[str] = mapped_column(String(20), nullable=False, default="private")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+
+
+class SQLRelation(Base):
+    """Explicitly managed one-hop relation discovered from a foreign key."""
+
+    __tablename__ = "sql_relations"
+    __table_args__ = (UniqueConstraint("source_table_id", "name", name="uq_sql_relation_source_name"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
+    source_table_id: Mapped[str] = mapped_column(String(36), ForeignKey("sql_tables.id", ondelete="CASCADE"), nullable=False, index=True)
+    target_table_id: Mapped[str] = mapped_column(String(36), ForeignKey("sql_tables.id", ondelete="CASCADE"), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    local_columns: Mapped[List[str]] = mapped_column(JSON, nullable=False)
+    remote_columns: Mapped[List[str]] = mapped_column(JSON, nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    stale: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+
+
+class APISQLTableBinding(Base):
+    """Catalog/impact binding between any API tool and an external table."""
+
+    __tablename__ = "api_sql_table_bindings"
+    __table_args__ = (UniqueConstraint("tool_id", "sql_table_id", name="uq_api_sql_table_binding"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
+    tool_id: Mapped[str] = mapped_column(String(36), ForeignKey("tools.id", ondelete="CASCADE"), nullable=False, index=True)
+    sql_table_id: Mapped[str] = mapped_column(String(36), ForeignKey("sql_tables.id", ondelete="CASCADE"), nullable=False, index=True)
+    access_mode: Mapped[str] = mapped_column(String(20), nullable=False, default="read")
+    binding_type: Mapped[str] = mapped_column(String(20), nullable=False, default="manual")
+    created_by: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+
+class APIDebugHistory(Base):
+    """Credential-free debug invocation history visible only to its owner."""
+
+    __tablename__ = "api_debug_history"
+    __table_args__ = (Index("ix_api_debug_owner_created", "owner_email", "created_at"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
+    owner_email: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    tool_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("tools.id", ondelete="SET NULL"), nullable=True, index=True)
+    protocol: Mapped[str] = mapped_column(String(20), nullable=False)
+    request_preview: Mapped[Dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+    result_metadata: Mapped[Dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+    duration_ms: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    status_code: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    trace_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    is_success: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+
 class GrpcService(Base):
     """
     ORM model for gRPC services with reflection-based discovery.
@@ -5248,6 +5437,23 @@ class GrpcService(Base):
     tls_cert_path: Mapped[Optional[str]] = mapped_column(String(767))
     tls_key_path: Mapped[Optional[str]] = mapped_column(String(767))
     grpc_metadata: Mapped[Dict[str, str]] = mapped_column(JSON, default=dict)  # gRPC metadata headers
+    discovery_mode: Mapped[str] = mapped_column(String(20), default="auto", nullable=False)
+    active_artifact_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    active_schema_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    reflected_schema_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    schema_drift: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    manifest_path: Mapped[Optional[str]] = mapped_column(String(1024), nullable=True)
+    manifest_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+
+    # Health monitoring configuration and current state.
+    health_check_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    health_check_interval: Mapped[int] = mapped_column(Integer, default=60, nullable=False)
+    health_check_timeout: Mapped[int] = mapped_column(Integer, default=5, nullable=False)
+    health_failure_threshold: Mapped[int] = mapped_column(Integer, default=3, nullable=False)
+    health_status: Mapped[str] = mapped_column(String(20), default="unknown", nullable=False)
+    consecutive_failures: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    last_health_check: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_health_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     # Status
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
