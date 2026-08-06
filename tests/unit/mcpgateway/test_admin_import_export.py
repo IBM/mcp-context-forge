@@ -17,6 +17,7 @@ import pytest
 
 # First-Party
 from mcpgateway import admin
+from mcpgateway.middleware.rbac import _GLOBAL_SCOPE_DENIED_MSG
 from mcpgateway.services.import_service import ImportError as ImportServiceError
 from mcpgateway.services.permission_service import PermissionService
 
@@ -45,7 +46,12 @@ async def test_admin_export_configuration_success():
     mock_db = MagicMock()
     user = {"email": "admin@example.com", "username": "admin"}
 
-    with patch.object(admin, "export_service") as mock_export, patch.object(admin, "is_unrestricted_platform_admin", new=AsyncMock(return_value=True)):
+    with patch.object(admin, "export_service") as mock_export, patch.object(admin, "is_unrestricted_platform_admin", new=AsyncMock(return_value=True)), patch(
+        "mcpgateway.auth_context.is_unrestricted_platform_admin", new=AsyncMock(return_value=True)
+    ):
+        # admin_export_configuration enforces via require_unrestricted_platform_admin(), which
+        # resolves is_unrestricted_platform_admin via its own deferred import from
+        # mcpgateway.auth_context, not admin.py's module-level name, so both must be patched.
         mock_export.export_configuration = AsyncMock(return_value={"ok": True})
         response = await admin.admin_export_configuration(request, db=mock_db, user=user)
         assert response.media_type == "application/json"
@@ -72,12 +78,15 @@ async def test_admin_export_selective_preserves_root_authorization_denial(monkey
     export_service.export_selective = AsyncMock()
     monkeypatch.setattr(admin, "export_service", export_service)
     monkeypatch.setattr(admin, "is_unrestricted_platform_admin", AsyncMock(return_value=False))
+    # admin_export_selective enforces via require_unrestricted_platform_admin(), which resolves
+    # is_unrestricted_platform_admin via its own deferred import from mcpgateway.auth_context.
+    monkeypatch.setattr("mcpgateway.auth_context.is_unrestricted_platform_admin", AsyncMock(return_value=False))
 
     with pytest.raises(HTTPException) as excinfo:
         await admin.admin_export_selective(request, db=MagicMock(), user={"email": "admin@example.com"})
 
     assert excinfo.value.status_code == 403
-    assert excinfo.value.detail == admin._ACCESS_DENIED_MSG
+    assert excinfo.value.detail == _GLOBAL_SCOPE_DENIED_MSG
     export_service.export_selective.assert_not_awaited()
 
 
@@ -104,12 +113,15 @@ async def test_admin_import_preview_denies_root_payload_before_service(monkeypat
     preview_service = MagicMock(preview_import=AsyncMock())
     monkeypatch.setattr(admin, "import_service", preview_service)
     monkeypatch.setattr(admin, "is_unrestricted_platform_admin", AsyncMock(return_value=False))
+    # admin_import_preview enforces via require_unrestricted_platform_admin(), which resolves
+    # is_unrestricted_platform_admin via its own deferred import from mcpgateway.auth_context.
+    monkeypatch.setattr("mcpgateway.auth_context.is_unrestricted_platform_admin", AsyncMock(return_value=False))
 
     with pytest.raises(HTTPException) as excinfo:
         await admin.admin_import_preview(request, db=MagicMock(), user={"email": "admin@example.com"})
 
     assert excinfo.value.status_code == 403
-    assert excinfo.value.detail == admin._ACCESS_DENIED_MSG
+    assert excinfo.value.detail == _GLOBAL_SCOPE_DENIED_MSG
     preview_service.preview_import.assert_not_awaited()
 
 
@@ -156,12 +168,16 @@ async def test_admin_import_configuration_denies_root_payload_before_service(mon
     import_service = MagicMock(import_configuration=AsyncMock())
     monkeypatch.setattr(admin, "import_service", import_service)
     monkeypatch.setattr(admin, "is_unrestricted_platform_admin", AsyncMock(return_value=False))
+    # admin_import_configuration enforces via require_unrestricted_platform_admin(), which
+    # resolves is_unrestricted_platform_admin via its own deferred import from
+    # mcpgateway.auth_context.
+    monkeypatch.setattr("mcpgateway.auth_context.is_unrestricted_platform_admin", AsyncMock(return_value=False))
 
     with pytest.raises(HTTPException) as excinfo:
         await admin.admin_import_configuration(request, db=MagicMock(), user={"email": "admin@example.com"})
 
     assert excinfo.value.status_code == 403
-    assert excinfo.value.detail == admin._ACCESS_DENIED_MSG
+    assert excinfo.value.detail == _GLOBAL_SCOPE_DENIED_MSG
     import_service.import_configuration.assert_not_awaited()
 
 
