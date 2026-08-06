@@ -72,17 +72,21 @@ fails when a new route is added without a classification.
 
 | Issue AC | Where | Status |
 |---|---|---|
-| Identify admin-only routes managing records without team ownership | Appendix A | met — all ~75 routes over the 48 team-less models |
+| Identify admin-only routes managing records without team ownership | Appendix A | met — 84 routes over the 48 team-less models, plus the 26 root call sites |
 | Classify each as global-only, or define a valid team-scoping model | Appendix A + §1 classes; §3.5 defines the team-scoping model for role assignments | met |
 | Reuse a shared scope helper where behavior is equivalent | §2; §3.1 collapses 26 root call sites onto one helper | met |
 | Add tests for unrestricted, team-scoped, and public-only admin contexts | §5 | met |
 | Document exceptions where behavior intentionally differs | Appendix A.3, §4 `EXEMPT` | met |
 
 **Identification and classification are complete; remediation is deliberately
-partial.** This change fixes the four rule-divergent surfaces in A.1. The ~61
-Rule D routes in A.2 are identified, classified, and covered by the drift guard,
-but their guards are changed in a follow-up — see *Out of scope*. #5982 should
-not be closed until that follow-up lands.
+partial.** This change fixes the four rule-divergent surfaces in A.1. The 65
+deferred routes in A.2 and A.4 are identified, classified, and covered by the
+drift guard, but their guards are changed in a follow-up — see *Out of scope*
+and *Follow-up issues to file*. #5982 should not be closed until follow-up 1
+lands.
+
+Route counts by class: 13 changed here (A.1, plus the 26 root call sites which
+are a refactor only), 65 deferred (A.2 + A.4), 6 exempt (A.3).
 
 ## Design
 
@@ -320,12 +324,17 @@ not alter their guards is deliberate: it makes the drift guard useful from day
 one and prevents a new LLM-config or observability route from landing
 unclassified while the follow-up is pending.
 
-Of the five routers carrying no permission decorator, `well_known.py`,
+**Guard detection must inspect dependencies, not just decorators.** Walk
+`app.routes` and examine each route's resolved `dependencies` alongside its
+endpoint attributes. A decorator-only check misreports
+`routers/metrics_maintenance.py` — which guards all four of its routes through a
+router-level `dependencies=[Depends(require_admin_auth)]` (Appendix A.4) — as
+unguarded.
+
+Of the five routers carrying no per-route permission decorator, `well_known.py`,
 `server_well_known.py`, `search.py`, and `reverse_proxy.py` are expected to be
 genuinely public and go to `EXEMPT` with a stated reason.
-`metrics_maintenance.py` is **not** — see Appendix A.4; it is a missing
-authorization check that needs its own issue, and it goes into neither manifest
-until that issue is resolved.
+`metrics_maintenance.py` goes to `GLOBAL_ONLY` (deferred, with A.2).
 
 ### §5 Per-route deny tests
 
@@ -410,6 +419,60 @@ the same anti-pattern the §6 docs fix must sweep up.
   curls `/tools` so it does not break, but it should be corrected alongside the
   docs.
 
+## Follow-up issues to file
+
+**File these after the implementation lands, not before** — the route counts and
+file:line references below must be re-verified against the merged code, and the
+§4 manifests are the authoritative source for the route lists by then.
+
+### Follow-up 1 — apply the canonical rule to the deferred routes
+
+- **Title:** `[BUG]: Team-narrowed admin tokens bypass Layer 1 on admin routes guarded by require_permission`
+- **Labels:** `bug`, `security`, `rbac`, `api`, `triage`
+- **Template:** `.github/ISSUE_TEMPLATE/bug-report-code.md`
+- **Body should cover:**
+  - `services/permission_service.py:125-132` suppresses admin bypass only for
+    public-only tokens (`token_teams == []`); with a non-empty `token_teams` the
+    `elif allow_admin_bypass and await self._is_user_admin(...)` branch returns
+    `True` unconditionally, so a token narrowed to one team retains full admin
+    authority.
+  - This contradicts `is_unrestricted_platform_admin()`
+    (`auth_context.py:788-799`), which rejects any non-`None` `token_teams`. The
+    two are the codebase's two answers to the same question.
+  - Affected surface: the 61 Rule D routes in Appendix A.2 plus the four
+    router-level-guarded routes in A.4 — LLM config and admin, observability,
+    SSO provider management, SIEM destinations, log search, runtime mode,
+    toolops, metrics maintenance.
+  - Note the ambiguity honestly: it is not self-evident whether the current
+    behaviour is intended. Maintainers must decide whether Layer 1 narrowing
+    binds admin bypass everywhere (making this a bug) or only on the routes that
+    opt in (making it a design choice needing documentation). Frame it as a
+    question, not an accusation.
+  - Reference this spec and the PR that resolves the A.1 surfaces.
+  - Note that #5982 should stay open until this lands.
+
+### Follow-up 2 — align `/version` and `metrics_maintenance` on a single admin dependency
+
+- **Title:** `[CHORE]: Consolidate require_admin_auth and get_current_user_with_permissions for admin-only routes`
+- **Labels:** `chore`, `rbac`, `api`, `triage`
+- **Template:** `.github/ISSUE_TEMPLATE/chore-task--devops--linting--maintenance-.md`
+- **Body should cover:**
+  - Two admin dependencies coexist with different capabilities:
+    `require_admin_auth` (`utils/verify_credentials.py:1623`) supports HTTP
+    Basic and browser login redirects but returns a bare email string and never
+    consults `token_teams`; `get_current_user_with_permissions`
+    (`middleware/rbac.py:238`) resolves full Layer-1 context but has no HTTP
+    Basic path.
+  - This forced §3.6 of the linked spec to keep `require_admin_auth` on
+    `/version` and add the narrowing check inside the handler, because swapping
+    the dependency would have turned basic-auth calls into 401.
+    `metrics_maintenance` has the same shape at the router level.
+  - The cleanup is to give one dependency both capabilities so admin-only routes
+    stop choosing between basic-auth support and Layer-1 awareness.
+  - Explicitly a maintenance item, not a security fix — no behaviour change is
+    being requested, only the removal of the fork that makes correct usage
+    awkward.
+
 ## Appendix A — Full classification of admin routes over global records
 
 This appendix satisfies the issue's first two acceptance criteria. Every route
@@ -473,7 +536,7 @@ surface.
 | `toolops_router` (`/toolops`) | 3 | `admin.system_config` | `ToolOpsTestCases` |
 | `rbac` (`/rbac`) | 2 | `admin.security_audit` | permission introspection |
 
-**~61 routes.** They are recorded in the §4 `GLOBAL_ONLY` manifest so the
+**61 routes.** They are recorded in the §4 `GLOBAL_ONLY` manifest so the
 drift-guard test covers them immediately, but their guards are **not** changed
 here — see *Out of scope* for why, and for the follow-up issue this requires.
 
@@ -488,36 +551,51 @@ here — see *Out of scope* for why, and for the follow-up issue this requires.
 | `GET /rbac/my/roles` | Self-scoped — returns only the caller's own assignments |
 | `GET /rbac/my/permissions` | Self-scoped — same |
 
-### A.4 Unguarded — a separate defect, not this issue
+### A.4 Router-level guard — a sixth pattern
 
-`routers/metrics_maintenance.py` carries **no permission decorator on any
-route**:
+`routers/metrics_maintenance.py` carries no *per-route* decorator, but the
+router itself declares one at `metrics_maintenance.py:27`:
 
-| Method + path |
-|---|
-| `POST /api/metrics/cleanup` |
-| `POST /api/metrics/rollup` |
-| `GET /api/metrics/stats` |
-| `GET /api/metrics/config` |
+```python
+router = APIRouter(..., dependencies=[Depends(require_admin_auth)])
+```
 
-Two of these are destructive. This is not a scope-consistency problem — it is a
-missing authorization check, a different and more serious class of defect than
-the one this issue describes. It needs its own issue and its own fix; do not
-fold it into this change. Recording it here so the finding is not lost.
-Whether the router is mounted by default must be confirmed as part of triaging
-that issue.
+| Method + path | Effective guard |
+|---|---|
+| `POST /api/metrics/cleanup` | router-level `require_admin_auth` |
+| `POST /api/metrics/rollup` | router-level `require_admin_auth` |
+| `GET /api/metrics/stats` | router-level `require_admin_auth` |
+| `GET /api/metrics/config` | router-level `require_admin_auth` |
+
+These routes **are** authenticated. They are, however, a sixth pattern:
+`require_admin_auth` returns a plain email string and checks only the DB
+`is_admin` flag — it never consults `token_teams`. A team-narrowed admin token
+therefore passes, exactly as it does on the Rule D routes in A.2. Same
+divergence class, expressed through a router-level dependency instead of a
+decorator.
+
+Classified as **global-only, deferred** alongside A.2.
+
+**Design consequence for §4:** the drift-guard test cannot detect guards by
+inspecting endpoint decorators alone. It must walk `app.routes` and examine each
+route's resolved `dependencies` as well, or it will report these four routes —
+and any future router using this pattern — as unguarded. A survey of the other
+routers found no further router-level auth dependencies (`siem` receives an
+include-time dependency, but it is `enforce_admin_csrf`, not authentication).
 
 ## Out of scope
 
-- **Changing the ~61 Rule D routes in A.2.** They are identified and classified
-  here, which is what the issue's first two acceptance criteria ask for, but
-  changing them is roughly 14× the blast radius and test rework of the four
-  surfaces in A.1 and would make the PR unreviewable. They need a follow-up
+- **Changing the 65 deferred routes in A.2 and A.4.** They are identified and
+  classified here, which is what the issue's first two acceptance criteria ask
+  for, but changing them is roughly 14× the blast radius and test rework of the
+  four surfaces in A.1 and would make the PR unreviewable. They need a follow-up
   issue, and that issue is a prerequisite for calling #5982 fully resolved. The
   §4 drift-guard test covers them from day one, so nothing regresses in the
   interim.
-- **The `metrics_maintenance` missing-authorization defect** in A.4 — different
-  defect class, needs its own issue.
+- **Reconciling `check_permission()`'s admin-bypass semantics** with
+  `is_unrestricted_platform_admin()`. The two disagree about whether a
+  team-narrowed admin token retains bypass; resolving that is the substance of
+  follow-up issue 1 below, not of this change.
 - Merging `check_admin_permission()` and `check_platform_admin_permission()` in
   `permission_service.py`. Both remain; the difference is now expressed at the
   route layer by which decorator is chosen.
