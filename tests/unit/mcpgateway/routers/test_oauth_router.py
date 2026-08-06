@@ -2349,7 +2349,7 @@ class TestOAuthRouterAdditionalCoverage:
         assert mock_permission_service.check_permission.await_args.kwargs["allow_admin_bypass"] is False
 
     @pytest.mark.asyncio
-    async def test_registered_client_routes_reject_scoped_token_without_permission(self, mock_db, mock_admin_request):
+    async def test_registered_client_routes_reject_scoped_token_without_permission(self, mock_db, mock_admin_request, mock_permission_service):
         """Layer 1: a scoped API token lacking the permission is rejected before RBAC runs."""
         # First-Party
         from mcpgateway.routers.oauth_router import delete_registered_client, list_registered_oauth_clients
@@ -2364,6 +2364,8 @@ class TestOAuthRouterAdditionalCoverage:
             await delete_registered_client("c1", mock_admin_request, current_user=scoped_admin, db=mock_db)
         assert exc_info.value.status_code == 403
         mock_db.delete.assert_not_called()
+        mock_db.execute.assert_not_called()
+        mock_permission_service.check_permission.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_registered_client_routes_reject_narrowed_admin_with_permission(self, mock_db):
