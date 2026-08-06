@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { serversApi } from "./servers";
+import { setCsrfToken } from "./client";
 import type { GatewayTestRequest } from "@/generated/types";
 
 describe("serversApi", () => {
@@ -9,14 +10,11 @@ describe("serversApi", () => {
     // Mock fetch globally
     global.fetch = mockFetch;
     vi.clearAllMocks();
-    // Mock document.cookie for CSRF token
-    Object.defineProperty(document, "cookie", {
-      writable: true,
-      value: "mcpgateway_csrf_token=test-csrf-token",
-    });
+    setCsrfToken("test-csrf-token");
   });
 
   afterEach(() => {
+    setCsrfToken(null);
     vi.restoreAllMocks();
   });
 

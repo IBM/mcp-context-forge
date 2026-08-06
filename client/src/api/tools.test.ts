@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { toolsApi } from "./tools";
+import { setCsrfToken } from "./client";
 
 describe("toolsApi", () => {
   const mockFetch = vi.fn();
@@ -7,13 +8,11 @@ describe("toolsApi", () => {
   beforeEach(() => {
     global.fetch = mockFetch;
     vi.clearAllMocks();
-    Object.defineProperty(document, "cookie", {
-      writable: true,
-      value: "mcpgateway_csrf_token=test-csrf-token",
-    });
+    setCsrfToken("test-csrf-token");
   });
 
   afterEach(() => {
+    setCsrfToken(null);
     vi.restoreAllMocks();
   });
 

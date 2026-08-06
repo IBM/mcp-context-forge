@@ -10,21 +10,20 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 
 import { config } from "../../config.js";
-import { createSession, setSessionCookie } from "../../lib/session-store.js";
+import { createSession, setSessionCookie, type SessionUser } from "../../lib/session-store.js";
 
 interface LoginBody {
   email: string;
   password: string;
 }
 
-// Mirrors mcpgateway.schemas.AuthenticationResponse — only the fields the
-// BFF actually needs are declared.
+// Mirrors mcpgateway.schemas.AuthenticationResponse. `user` is forwarded to
+// the browser verbatim (see SessionUser) — the BFF only needs access_token
+// and expires_in.
 interface UpstreamAuthenticationResponse {
   access_token: string;
-  user: {
-    email: string;
-    is_admin: boolean;
-  };
+  expires_in: number;
+  user: SessionUser;
 }
 
 export default async function loginRoute(fastify: FastifyInstance): Promise<void> {
@@ -49,14 +48,26 @@ export default async function loginRoute(fastify: FastifyInstance): Promise<void
         return reply.code(upstreamResponse.status).send({ error: "login_failed", detail });
       }
 
-      const auth = (await upstreamResponse.json()) as UpstreamAuthenticationResponse;
+      const auth = (await upstreamResponse.json()) as UpstreamAuthenticationResponse;  // pragma: allowlist secret
 
-      const sessionId = await createSession(fastify.redis, {
-        bearerToken: auth.access_token,
-        user: { email: auth.user.email, isAdmin: auth.user.is_admin },
-      });
+      // The BFF session/cookie must not outlive the bearer token it wraps —
+      // use the upstream JWT's own lifetime, not a fixed BFF-side default.
+      // See createSession's comment in lib/session-store.ts.
+      const ttlSeconds =
+        Number.isFinite(auth.expires_in) && auth.expires_in > 0
+          ? auth.expires_in
+          : config.sessionTtlSeconds;
 
-      setSessionCookie(reply, sessionId);
+      const sessionId = await createSession(
+        fastify.redis,
+        {
+          bearerToken: auth.access_token,
+          user: auth.user,
+        },
+        ttlSeconds,
+      );
+
+      setSessionCookie(reply, sessionId, ttlSeconds);
       // Cookie holds the CSRF secret (HttpOnly); the SPA needs the derived
       // token itself to echo back via X-CSRF-Token — see plugins/csrf.ts.
       const csrfToken = await reply.generateCsrf();

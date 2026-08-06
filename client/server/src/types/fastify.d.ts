@@ -4,13 +4,12 @@
 
 import "fastify";
 
+import type { SessionUser } from "../lib/session-store.js";
+
 export interface BffSession {
   sessionId: string;
   bearerToken: string;
-  user: {
-    email: string;
-    isAdmin: boolean;
-  };
+  user: SessionUser;
 }
 
 declare module "fastify" {

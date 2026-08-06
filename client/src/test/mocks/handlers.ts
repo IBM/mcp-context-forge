@@ -23,8 +23,8 @@ export const handlers = [
     return HttpResponse.json({ items: items.slice(0, limit) });
   }),
 
-  // Mock login endpoint
-  http.post("*/app/auth/login", async ({ request }) => {
+  // Mock login endpoint (BFF-owned, not proxied through /api)
+  http.post("*/auth/login", async ({ request }) => {
     const body = await request.json();
     const { email, password } = body as { email: string; password: string }; // pragma: allowlist secret
 
@@ -43,20 +43,20 @@ export const handlers = [
           email_verified: true,
           password_change_required: false,
         },
-        mcpgateway_csrf_token: "mock-csrf-token",
+        csrfToken: "mock-csrf-token",
       });
     }
 
     return HttpResponse.json({ detail: "Invalid credentials" }, { status: 401 });
   }),
 
-  // Mock auth check endpoint
-  http.get("*/app/auth/me", () => {
-    return HttpResponse.json({ detail: "Unauthorized" }, { status: 401 });
+  // Mock session-check endpoint (BFF-owned) — always 200, unauthenticated by default
+  http.get("*/auth/session", () => {
+    return HttpResponse.json({ authenticated: false });
   }),
 
   // Mock gateways endpoint with cursor pagination
-  http.get("*/gateways", ({ request }) => {
+  http.get("*/api/gateways", ({ request }) => {
     const url = new URL(request.url);
     const cursor = url.searchParams.get("cursor");
     const limit = parseInt(url.searchParams.get("limit") || "25", 10);
@@ -86,7 +86,7 @@ export const handlers = [
   }),
 
   // Mock single gateway fetch endpoint
-  http.get("*/gateways/:id", ({ params }) => {
+  http.get("*/api/gateways/:id", ({ params }) => {
     return HttpResponse.json({
       id: params.id,
       name: "Test Server",
@@ -98,12 +98,12 @@ export const handlers = [
   }),
 
   // Mock gateway delete endpoint
-  http.delete("*/gateways/:id", () => {
+  http.delete("*/api/gateways/:id", () => {
     return HttpResponse.json({ success: true });
   }),
 
   // Mock gateway test endpoint
-  http.post("*/gateways/:id/test", () => {
+  http.post("*/api/gateways/:id/test", () => {
     return HttpResponse.json({
       success: true,
       message: "Connection successful",
@@ -111,7 +111,7 @@ export const handlers = [
   }),
 
   // Mock create gateway endpoint
-  http.post("*/gateways", async ({ request }) => {
+  http.post("*/api/gateways", async ({ request }) => {
     const body = (await request.json()) as Record<string, unknown>;
     return HttpResponse.json(
       {
@@ -124,7 +124,7 @@ export const handlers = [
   }),
 
   // Mock update gateway endpoint
-  http.put("*/gateways/:gatewayId", async ({ request, params }) => {
+  http.put("*/api/gateways/:gatewayId", async ({ request, params }) => {
     const body = (await request.json()) as Record<string, unknown>;
     const { gatewayId } = params;
     return HttpResponse.json({
@@ -137,9 +137,9 @@ export const handlers = [
   // Default empty collections so page smoke tests that render these pages without
   // an explicit override don't hit unhandled requests. Specific tests still
   // override these via server.use(...).
-  http.get("*/prompts", () => HttpResponse.json([])),
+  http.get("*/api/prompts", () => HttpResponse.json([])),
 
-  http.get("*/resources", () => HttpResponse.json([])),
+  http.get("*/api/resources", () => HttpResponse.json([])),
 
-  http.get("*/teams", () => HttpResponse.json({ teams: [] })),
+  http.get("*/api/teams", () => HttpResponse.json({ teams: [] })),
 ];

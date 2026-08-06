@@ -31,15 +31,15 @@ vi.mock("@/hooks/useMCPServerForm", async (importOriginal) => {
 
 // Mock API responses for ExposeComponentsForm and gateway creation
 const server = setupServer(
-  http.get("/app/auth/me", () => {
-    return HttpResponse.json({ detail: "Unauthorized" }, { status: 401 });
+  http.get("/auth/session", () => {
+    return HttpResponse.json({ authenticated: false });
   }),
   // Mock gateway creation
-  http.post("/gateways", () => {
+  http.post("/api/gateways", () => {
     return HttpResponse.json({ id: "test-gateway-123", name: "Test Server" });
   }),
   // Mock single gateway fetch (used in edit mode)
-  http.get("/gateways/:id", ({ params }) => {
+  http.get("/api/gateways/:id", ({ params }) => {
     return HttpResponse.json({
       id: params.id,
       name: "Test Server",
@@ -50,13 +50,13 @@ const server = setupServer(
     });
   }),
   // Mock ExposeComponentsForm API calls
-  http.get("/tools", () => {
+  http.get("/api/tools", () => {
     return HttpResponse.json([]);
   }),
-  http.get("/resources", () => {
+  http.get("/api/resources", () => {
     return HttpResponse.json([]);
   }),
-  http.get("/prompts", () => {
+  http.get("/api/prompts", () => {
     return HttpResponse.json([]);
   }),
 );

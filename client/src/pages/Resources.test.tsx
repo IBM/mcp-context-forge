@@ -94,7 +94,7 @@ describe("Resources", () => {
     });
 
     server.use(
-      http.get("/resources", async () => {
+      http.get("/api/resources", async () => {
         await requestGate;
         return HttpResponse.json([]);
       }),
@@ -112,7 +112,7 @@ describe("Resources", () => {
   });
 
   it("renders Add resources card", async () => {
-    server.use(http.get("/resources", () => HttpResponse.json([])));
+    server.use(http.get("/api/resources", () => HttpResponse.json([])));
 
     renderWithRouter(<Resources />);
 
@@ -127,7 +127,7 @@ describe("Resources", () => {
 
   it("handles Add resources card click", async () => {
     const user = userEvent.setup();
-    server.use(http.get("/resources", () => HttpResponse.json([])));
+    server.use(http.get("/api/resources", () => HttpResponse.json([])));
 
     renderWithRouter(<Resources />);
 
@@ -148,7 +148,7 @@ describe("Resources", () => {
 
   it("handles Add resources card keyboard activation", async () => {
     const user = userEvent.setup();
-    server.use(http.get("/resources", () => HttpResponse.json([])));
+    server.use(http.get("/api/resources", () => HttpResponse.json([])));
 
     renderWithRouter(<Resources />);
 
@@ -169,7 +169,7 @@ describe("Resources", () => {
 
   it("displays error message when API call fails", async () => {
     server.use(
-      http.get("/resources", () => {
+      http.get("/api/resources", () => {
         return HttpResponse.json({ detail: "Failed to fetch resources" }, { status: 500 });
       }),
     );
@@ -192,7 +192,7 @@ describe("Resources", () => {
       createMockResource(5, "gateway-b"),
     ];
 
-    server.use(http.get("/resources", () => HttpResponse.json(mockResources)));
+    server.use(http.get("/api/resources", () => HttpResponse.json(mockResources)));
 
     renderWithRouter(<Resources />);
 
@@ -208,7 +208,7 @@ describe("Resources", () => {
   it("groups resources without a gateway into the REST resources bucket", async () => {
     const mockResources: Resource[] = [createMockResource(1, null)];
 
-    server.use(http.get("/resources", () => HttpResponse.json(mockResources)));
+    server.use(http.get("/api/resources", () => HttpResponse.json(mockResources)));
 
     renderWithRouter(<Resources />);
 
@@ -226,7 +226,7 @@ describe("Resources", () => {
       createMockResource(3, "multi-resource-gateway"),
     ];
 
-    server.use(http.get("/resources", () => HttpResponse.json(mockResources)));
+    server.use(http.get("/api/resources", () => HttpResponse.json(mockResources)));
 
     renderWithRouter(<Resources />);
 
@@ -243,7 +243,7 @@ describe("Resources", () => {
       createMockResource(2, "inactive-gateway", false),
     ];
 
-    server.use(http.get("/resources", () => HttpResponse.json(mockResources)));
+    server.use(http.get("/api/resources", () => HttpResponse.json(mockResources)));
 
     renderWithRouter(<Resources />);
 
@@ -260,7 +260,7 @@ describe("Resources", () => {
   it("displays resource descriptions as tooltips", async () => {
     const mockResources: Resource[] = [createMockResource(1, "server-1")];
 
-    server.use(http.get("/resources", () => HttpResponse.json(mockResources)));
+    server.use(http.get("/api/resources", () => HttpResponse.json(mockResources)));
 
     renderWithRouter(<Resources />);
 
@@ -285,7 +285,7 @@ describe("Resources", () => {
       createMockResource(2, "server-2"),
     ];
 
-    server.use(http.get("/resources", () => HttpResponse.json(mockResources)));
+    server.use(http.get("/api/resources", () => HttpResponse.json(mockResources)));
 
     renderWithRouter(<Resources />);
 
@@ -300,7 +300,7 @@ describe("Resources", () => {
   });
 
   it("handles empty resources list", async () => {
-    server.use(http.get("/resources", () => HttpResponse.json([])));
+    server.use(http.get("/api/resources", () => HttpResponse.json([])));
 
     renderWithRouter(<Resources />);
 
@@ -313,7 +313,7 @@ describe("Resources", () => {
   });
 
   it("uses correct grid layout classes", async () => {
-    server.use(http.get("/resources", () => HttpResponse.json([])));
+    server.use(http.get("/api/resources", () => HttpResponse.json([])));
 
     renderWithRouter(<Resources />);
 
@@ -334,7 +334,7 @@ describe("Resources", () => {
 
   it("handles network errors gracefully", async () => {
     server.use(
-      http.get("/resources", () => {
+      http.get("/api/resources", () => {
         return HttpResponse.error();
       }),
     );
@@ -353,7 +353,7 @@ describe("Resources", () => {
       createMockResource(i + 1, "gateway-with-many-resources"),
     );
 
-    server.use(http.get("/resources", () => HttpResponse.json(mockResources)));
+    server.use(http.get("/api/resources", () => HttpResponse.json(mockResources)));
 
     renderWithRouter(<Resources />);
 
@@ -387,7 +387,7 @@ describe("Resources", () => {
       createMockResource(i + 1, "gateway-with-eight-resources"),
     );
 
-    server.use(http.get("/resources", () => HttpResponse.json(mockResources)));
+    server.use(http.get("/api/resources", () => HttpResponse.json(mockResources)));
 
     renderWithRouter(<Resources />);
 
@@ -406,7 +406,7 @@ describe("Resources", () => {
       createMockResource(i + 1, "gateway-with-nine-resources"),
     );
 
-    server.use(http.get("/resources", () => HttpResponse.json(mockResources)));
+    server.use(http.get("/api/resources", () => HttpResponse.json(mockResources)));
 
     renderWithRouter(<Resources />);
 
@@ -434,7 +434,7 @@ describe("Resources", () => {
       const user = userEvent.setup();
       const mockResources: Resource[] = [createMockResource(1, "test-gateway")];
 
-      server.use(http.get("/resources", () => HttpResponse.json(mockResources)));
+      server.use(http.get("/api/resources", () => HttpResponse.json(mockResources)));
 
       renderWithRouter(<Resources />);
 
@@ -457,7 +457,7 @@ describe("Resources", () => {
         createMockResource(2, "test-gateway"),
       ];
 
-      server.use(http.get("/resources", () => HttpResponse.json(mockResources)));
+      server.use(http.get("/api/resources", () => HttpResponse.json(mockResources)));
 
       renderWithRouter(<Resources />);
 
@@ -484,7 +484,7 @@ describe("Resources", () => {
       const user = userEvent.setup();
       const mockResources: Resource[] = [createMockResource(1, "test-gateway")];
 
-      server.use(http.get("/resources", () => HttpResponse.json(mockResources)));
+      server.use(http.get("/api/resources", () => HttpResponse.json(mockResources)));
 
       renderWithRouter(<Resources />);
 
@@ -517,7 +517,7 @@ describe("Resources", () => {
       const user = userEvent.setup();
       const mockResources: Resource[] = [createMockResource(1, "test-gateway")];
 
-      server.use(http.get("/resources", () => HttpResponse.json(mockResources)));
+      server.use(http.get("/api/resources", () => HttpResponse.json(mockResources)));
 
       renderWithRouter(<Resources />);
 
@@ -553,7 +553,7 @@ describe("Resources", () => {
         createMockResource(3, "multi-resource-gateway"),
       ];
 
-      server.use(http.get("/resources", () => HttpResponse.json(mockResources)));
+      server.use(http.get("/api/resources", () => HttpResponse.json(mockResources)));
 
       renderWithRouter(<Resources />);
 
@@ -585,7 +585,7 @@ describe("Resources", () => {
         createMockResource(2, "gateway-b"),
       ];
 
-      server.use(http.get("/resources", () => HttpResponse.json(mockResources)));
+      server.use(http.get("/api/resources", () => HttpResponse.json(mockResources)));
 
       renderWithRouter(<Resources />);
 
@@ -652,8 +652,8 @@ describe("Resources", () => {
       const mockResources: Resource[] = [createMockResource(1, "test-gateway")];
 
       server.use(
-        http.get("/resources", () => HttpResponse.json(mockResources)),
-        http.get("/resources/resource-1", () => HttpResponse.json({ text: "resource body" })),
+        http.get("/api/resources", () => HttpResponse.json(mockResources)),
+        http.get("/api/resources/resource-1", () => HttpResponse.json({ text: "resource body" })),
       );
 
       renderWithRouter(<Resources />);
@@ -672,12 +672,12 @@ describe("Resources", () => {
       let getResourcesCallCount = 0;
 
       server.use(
-        http.get("/resources", () => {
+        http.get("/api/resources", () => {
           getResourcesCallCount += 1;
           return HttpResponse.json(mockResources);
         }),
-        http.get("/resources/resource-1", () => HttpResponse.json({ text: "resource body" })),
-        http.put("/resources/resource-1", () =>
+        http.get("/api/resources/resource-1", () => HttpResponse.json({ text: "resource body" })),
+        http.put("/api/resources/resource-1", () =>
           HttpResponse.json({ id: "resource-1" }, { status: 200 }),
         ),
       );
@@ -707,8 +707,8 @@ describe("Resources", () => {
       const user = userEvent.setup();
       const mockResources: Resource[] = [createMockResource(1, "test-gateway")];
       server.use(
-        http.get("/resources", () => HttpResponse.json(mockResources)),
-        http.get("/resources/resource-1", () =>
+        http.get("/api/resources", () => HttpResponse.json(mockResources)),
+        http.get("/api/resources/resource-1", () =>
           HttpResponse.json({ detail: "boom" }, { status: 500 }),
         ),
       );
@@ -728,9 +728,9 @@ describe("Resources", () => {
       const user = userEvent.setup();
       const mockResources: Resource[] = [createMockResource(1, "test-gateway")];
       server.use(
-        http.get("/resources", () => HttpResponse.json(mockResources)),
+        http.get("/api/resources", () => HttpResponse.json(mockResources)),
         // Never resolves, so the content stays in its loading state.
-        http.get("/resources/resource-1", () => new Promise(() => {})),
+        http.get("/api/resources/resource-1", () => new Promise(() => {})),
       );
 
       renderWithRouter(<Resources />);
@@ -748,9 +748,9 @@ describe("Resources", () => {
       const mockResources: Resource[] = [createMockResource(1, "test-gateway")];
 
       server.use(
-        http.get("/resources", () => HttpResponse.json(mockResources)),
-        http.get("/resources/resource-1", () => HttpResponse.json({ text: "resource body" })),
-        http.put("/resources/resource-1", () =>
+        http.get("/api/resources", () => HttpResponse.json(mockResources)),
+        http.get("/api/resources/resource-1", () => HttpResponse.json({ text: "resource body" })),
+        http.put("/api/resources/resource-1", () =>
           HttpResponse.json({ detail: "Update failed" }, { status: 500 }),
         ),
       );
@@ -788,15 +788,15 @@ describe("Resources", () => {
       let refetchCount = 0;
 
       server.use(
-        http.get("/resources", () => {
+        http.get("/api/resources", () => {
           refetchCount += 1;
           if (refetchCount === 1) return HttpResponse.json([]);
           return HttpResponse.json([createMockResource(99, "test-gw")]);
         }),
-        http.get("/gateways", () =>
+        http.get("/api/gateways", () =>
           HttpResponse.json({ gateways: [], next_cursor: null, total: 0 }),
         ),
-        http.post("/resources", () => HttpResponse.json({ id: "res-99" }, { status: 201 })),
+        http.post("/api/resources", () => HttpResponse.json({ id: "res-99" }, { status: 201 })),
       );
 
       renderWithRouter(<Resources />);
@@ -814,11 +814,11 @@ describe("Resources", () => {
       const user = userEvent.setup();
 
       server.use(
-        http.get("/resources", () => HttpResponse.json([])),
-        http.get("/gateways", () =>
+        http.get("/api/resources", () => HttpResponse.json([])),
+        http.get("/api/gateways", () =>
           HttpResponse.json({ gateways: [], next_cursor: null, total: 0 }),
         ),
-        http.post("/resources", () =>
+        http.post("/api/resources", () =>
           HttpResponse.json({ detail: "URI already in use" }, { status: 409 }),
         ),
       );
@@ -838,7 +838,7 @@ describe("Resources", () => {
   describe("ResourceForm Toggle", () => {
     it("closes form when Cancel clicked", async () => {
       const user = userEvent.setup();
-      server.use(http.get("/resources", () => HttpResponse.json([])));
+      server.use(http.get("/api/resources", () => HttpResponse.json([])));
 
       renderWithRouter(<Resources />);
 
@@ -863,7 +863,7 @@ describe("Resources", () => {
 
   describe("Optimistic delete", () => {
     async function setup(mockResources: Resource[], gatewaySlug: string) {
-      server.use(http.get("/resources", () => HttpResponse.json(mockResources)));
+      server.use(http.get("/api/resources", () => HttpResponse.json(mockResources)));
       renderWithRouter(<Resources />);
       await waitFor(() => expect(screen.getByText(gatewaySlug)).toBeInTheDocument());
 
@@ -889,9 +889,9 @@ describe("Resources", () => {
 
       let resolveDelete!: () => void;
       server.use(
-        http.get("/resources", () => HttpResponse.json(mockResources)),
+        http.get("/api/resources", () => HttpResponse.json(mockResources)),
         http.delete(
-          "/resources/resource-1",
+          "/api/resources/resource-1",
           () =>
             new Promise<Response>((resolve) => {
               resolveDelete = () => resolve(new Response(null, { status: 204 }));
@@ -931,8 +931,8 @@ describe("Resources", () => {
     it("rolls back: resource badge reappears in card grid when delete API fails", async () => {
       const mockResources = [createMockResource(1, "rollback-gateway")];
       server.use(
-        http.get("/resources", () => HttpResponse.json(mockResources)),
-        http.delete("/resources/resource-1", () =>
+        http.get("/api/resources", () => HttpResponse.json(mockResources)),
+        http.delete("/api/resources/resource-1", () =>
           HttpResponse.json({ detail: "Server error" }, { status: 500 }),
         ),
       );
@@ -966,8 +966,8 @@ describe("Resources", () => {
     it("details panel closes immediately when the only resource in a group is deleted", async () => {
       const mockResources = [createMockResource(1, "solo-gateway")];
       server.use(
-        http.get("/resources", () => HttpResponse.json(mockResources)),
-        http.delete("/resources/resource-1", () => new HttpResponse(null, { status: 204 })),
+        http.get("/api/resources", () => HttpResponse.json(mockResources)),
+        http.delete("/api/resources/resource-1", () => new HttpResponse(null, { status: 204 })),
       );
 
       const { user } = await setup(mockResources, "solo-gateway");
@@ -990,8 +990,8 @@ describe("Resources", () => {
         createMockResource(2, "multi-gateway"),
       ];
       server.use(
-        http.get("/resources", () => HttpResponse.json(mockResources)),
-        http.delete("/resources/resource-1", () => new HttpResponse(null, { status: 204 })),
+        http.get("/api/resources", () => HttpResponse.json(mockResources)),
+        http.delete("/api/resources/resource-1", () => new HttpResponse(null, { status: 204 })),
       );
 
       const { user } = await setup(mockResources, "multi-gateway");
@@ -1021,9 +1021,9 @@ describe("Resources", () => {
 
       let resolveDelete!: () => void;
       server.use(
-        http.get("/resources", () => HttpResponse.json(mockResources)),
+        http.get("/api/resources", () => HttpResponse.json(mockResources)),
         http.delete(
-          "/resources/resource-1",
+          "/api/resources/resource-1",
           () =>
             new Promise<Response>((resolve) => {
               resolveDelete = () => resolve(new Response(null, { status: 204 }));
@@ -1061,8 +1061,8 @@ describe("Resources", () => {
         createMockResource(2, "reopen-gateway"),
       ];
       server.use(
-        http.get("/resources", () => HttpResponse.json(mockResources)),
-        http.delete("/resources/resource-1", () =>
+        http.get("/api/resources", () => HttpResponse.json(mockResources)),
+        http.delete("/api/resources/resource-1", () =>
           HttpResponse.json({ detail: "Forbidden" }, { status: 403 }),
         ),
       );
@@ -1091,8 +1091,8 @@ describe("Resources", () => {
     it("shows generic error toast when delete returns no detail field", async () => {
       const mockResources = [createMockResource(1, "err-gateway")];
       server.use(
-        http.get("/resources", () => HttpResponse.json(mockResources)),
-        http.delete("/resources/resource-1", () =>
+        http.get("/api/resources", () => HttpResponse.json(mockResources)),
+        http.delete("/api/resources/resource-1", () =>
           HttpResponse.json({ message: "Unexpected error" }, { status: 500 }),
         ),
       );
@@ -1114,9 +1114,9 @@ describe("Resources", () => {
     it("rolls back with a generic error toast when delete fails at the network level", async () => {
       const mockResources = [createMockResource(1, "net-gateway")];
       server.use(
-        http.get("/resources", () => HttpResponse.json(mockResources)),
+        http.get("/api/resources", () => HttpResponse.json(mockResources)),
         // A network-level failure surfaces as a non-ApiError Error in the rollback.
-        http.delete("/resources/resource-1", () => HttpResponse.error()),
+        http.delete("/api/resources/resource-1", () => HttpResponse.error()),
       );
 
       const { user } = await setup(mockResources, "net-gateway");
@@ -1141,7 +1141,7 @@ describe("Resources", () => {
       const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
       server.use(
-        http.get("/resources", () => {
+        http.get("/api/resources", () => {
           throw new Error("Simulated rendering error");
         }),
       );
@@ -1163,11 +1163,11 @@ describe("Resources", () => {
 
       let resourcesListCalls = 0;
       server.use(
-        http.get("/resources", () => {
+        http.get("/api/resources", () => {
           resourcesListCalls += 1;
           return HttpResponse.json([resource]);
         }),
-        http.put("/resources/:id", () =>
+        http.put("/api/resources/:id", () =>
           HttpResponse.json({ ...resource, tags: ["tag1", "alerts"] }),
         ),
       );
@@ -1198,8 +1198,10 @@ describe("Resources", () => {
       const user = userEvent.setup();
       const resource: Resource = { ...createMockResource(1, "test-gateway"), tags: ["tag1"] };
       server.use(
-        http.get("/resources", () => HttpResponse.json([resource])),
-        http.put("/resources/:id", () => HttpResponse.json({ detail: "nope" }, { status: 500 })),
+        http.get("/api/resources", () => HttpResponse.json([resource])),
+        http.put("/api/resources/:id", () =>
+          HttpResponse.json({ detail: "nope" }, { status: 500 }),
+        ),
       );
 
       renderWithRouter(<Resources />);
@@ -1237,8 +1239,8 @@ describe("Resources", () => {
       const mockResources = [createMockResource(1, "toggle-gateway", false)];
 
       server.use(
-        http.get("/resources", () => HttpResponse.json(mockResources)),
-        http.post("/resources/resource-1/state", () =>
+        http.get("/api/resources", () => HttpResponse.json(mockResources)),
+        http.post("/api/resources/resource-1/state", () =>
           HttpResponse.json({
             status: "success",
             message: "activated",
@@ -1267,8 +1269,8 @@ describe("Resources", () => {
       const mockResources = [createMockResource(1, "toggle-gateway", true)];
 
       server.use(
-        http.get("/resources", () => HttpResponse.json(mockResources)),
-        http.post("/resources/resource-1/state", () =>
+        http.get("/api/resources", () => HttpResponse.json(mockResources)),
+        http.post("/api/resources/resource-1/state", () =>
           HttpResponse.json({
             status: "success",
             message: "deactivated",
@@ -1298,9 +1300,9 @@ describe("Resources", () => {
 
       let resolveState!: () => void;
       server.use(
-        http.get("/resources", () => HttpResponse.json(mockResources)),
+        http.get("/api/resources", () => HttpResponse.json(mockResources)),
         http.post(
-          "/resources/resource-1/state",
+          "/api/resources/resource-1/state",
           () =>
             new Promise<Response>((resolve) => {
               resolveState = () =>
@@ -1340,8 +1342,8 @@ describe("Resources", () => {
       const mockResources = [createMockResource(1, "fail-toggle-gateway", false)];
 
       server.use(
-        http.get("/resources", () => HttpResponse.json(mockResources)),
-        http.post("/resources/resource-1/state", () =>
+        http.get("/api/resources", () => HttpResponse.json(mockResources)),
+        http.post("/api/resources/resource-1/state", () =>
           HttpResponse.json({ detail: "Cannot activate" }, { status: 400 }),
         ),
       );
@@ -1367,9 +1369,9 @@ describe("Resources", () => {
       let resolveState!: () => void;
       let callCount = 0;
       server.use(
-        http.get("/resources", () => HttpResponse.json(mockResources)),
+        http.get("/api/resources", () => HttpResponse.json(mockResources)),
         http.post(
-          "/resources/resource-1/state",
+          "/api/resources/resource-1/state",
           () =>
             new Promise<Response>((resolve) => {
               callCount += 1;
@@ -1411,8 +1413,8 @@ describe("Resources", () => {
     it("labels a resource group using the gateway name from the gateways list", async () => {
       const resource = createMockResource(1, "gw-1");
       server.use(
-        http.get("/resources", () => HttpResponse.json([resource])),
-        http.get("/gateways", () =>
+        http.get("/api/resources", () => HttpResponse.json([resource])),
+        http.get("/api/gateways", () =>
           HttpResponse.json({
             gateways: [{ id: "gw-1", slug: "gh-repo-tasks", name: "GH Repo" }],
           }),

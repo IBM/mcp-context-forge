@@ -7,9 +7,9 @@ import { useQuery } from "./useQuery";
 describe("useQuery", () => {
   describe("refetch stability", () => {
     it("returns the same refetch reference across re-renders", async () => {
-      server.use(http.get("/test-stable", () => HttpResponse.json({ value: 1 })));
+      server.use(http.get("/api/test-stable", () => HttpResponse.json({ value: 1 })));
 
-      const { result, rerender } = renderHook(() => useQuery("/test-stable"));
+      const { result, rerender } = renderHook(() => useQuery("/api/test-stable"));
 
       await waitFor(() => expect(result.current.data).toBeDefined());
 
@@ -23,9 +23,9 @@ describe("useQuery", () => {
 
   describe("GET request", () => {
     it("fetches data and sets it on success", async () => {
-      server.use(http.get("/test-get", () => HttpResponse.json({ hello: "world" })));
+      server.use(http.get("/api/test-get", () => HttpResponse.json({ hello: "world" })));
 
-      const { result } = renderHook(() => useQuery<{ hello: string }>("/test-get"));
+      const { result } = renderHook(() => useQuery<{ hello: string }>("/api/test-get"));
 
       await waitFor(() => expect(result.current.data).toEqual({ hello: "world" }));
       expect(result.current.error).toBeNull();
@@ -34,10 +34,12 @@ describe("useQuery", () => {
 
     it("sets error state on non-2xx response", async () => {
       server.use(
-        http.get("/test-error", () => HttpResponse.json({ detail: "Not found" }, { status: 404 })),
+        http.get("/api/test-error", () =>
+          HttpResponse.json({ detail: "Not found" }, { status: 404 }),
+        ),
       );
 
-      const { result } = renderHook(() => useQuery("/test-error"));
+      const { result } = renderHook(() => useQuery("/api/test-error"));
 
       await waitFor(() => expect(result.current.error).not.toBeNull());
       expect(result.current.error?.message).toBe("HTTP 404");
@@ -45,7 +47,7 @@ describe("useQuery", () => {
     });
 
     it("does not fetch when enabled is false", () => {
-      const { result } = renderHook(() => useQuery("/test-disabled", { enabled: false }));
+      const { result } = renderHook(() => useQuery("/api/test-disabled", { enabled: false }));
 
       expect(result.current.isLoading).toBe(false);
       expect(result.current.data).toBeUndefined();
@@ -62,10 +64,10 @@ describe("useQuery", () => {
 
   describe("manual execute (POST with enabled: false)", () => {
     it("does not run on mount and resolves when execute is called", async () => {
-      server.use(http.post("/test-post", () => HttpResponse.json({ created: true })));
+      server.use(http.post("/api/test-post", () => HttpResponse.json({ created: true })));
 
       const { result } = renderHook(() =>
-        useQuery<{ created: boolean }, { name: string }>("/test-post", {
+        useQuery<{ created: boolean }, { name: string }>("/api/test-post", {
           method: "POST",
           enabled: false,
         }),
@@ -115,10 +117,10 @@ describe("useQuery", () => {
 
   describe("PUT, PATCH, DELETE methods", () => {
     it("executes a PUT request", async () => {
-      server.use(http.put("/test-put", () => HttpResponse.json({ updated: true })));
+      server.use(http.put("/api/test-put", () => HttpResponse.json({ updated: true })));
 
       const { result } = renderHook(() =>
-        useQuery<{ updated: boolean }, { name: string }>("/test-put", {
+        useQuery<{ updated: boolean }, { name: string }>("/api/test-put", {
           method: "PUT",
           enabled: false,
         }),
@@ -131,10 +133,10 @@ describe("useQuery", () => {
     });
 
     it("executes a PATCH request", async () => {
-      server.use(http.patch("/test-patch", () => HttpResponse.json({ patched: true })));
+      server.use(http.patch("/api/test-patch", () => HttpResponse.json({ patched: true })));
 
       const { result } = renderHook(() =>
-        useQuery<{ patched: boolean }, { field: string }>("/test-patch", {
+        useQuery<{ patched: boolean }, { field: string }>("/api/test-patch", {
           method: "PATCH",
           enabled: false,
         }),
@@ -147,10 +149,10 @@ describe("useQuery", () => {
     });
 
     it("executes a DELETE request", async () => {
-      server.use(http.delete("/test-delete", () => HttpResponse.json({ deleted: true })));
+      server.use(http.delete("/api/test-delete", () => HttpResponse.json({ deleted: true })));
 
       const { result } = renderHook(() =>
-        useQuery<{ deleted: boolean }>("/test-delete", {
+        useQuery<{ deleted: boolean }>("/api/test-delete", {
           method: "DELETE",
           enabled: false,
         }),
@@ -166,7 +168,7 @@ describe("useQuery", () => {
   describe("initialData option", () => {
     it("starts with initialData and does not set isLoading", () => {
       const { result } = renderHook(() =>
-        useQuery("/test-init", { initialData: { value: "preset" } }),
+        useQuery("/api/test-init", { initialData: { value: "preset" } }),
       );
       // With initialData provided, isLoading should be false immediately
       expect(result.current.data).toEqual({ value: "preset" });
@@ -176,10 +178,10 @@ describe("useQuery", () => {
 
   describe("headers option", () => {
     it("sends custom headers", async () => {
-      server.use(http.get("/test-headers", () => HttpResponse.json({ ok: true })));
+      server.use(http.get("/api/test-headers", () => HttpResponse.json({ ok: true })));
 
       const { result } = renderHook(() =>
-        useQuery("/test-headers", {
+        useQuery("/api/test-headers", {
           headers: { "X-Custom-Header": "value" },
         }),
       );
@@ -192,13 +194,13 @@ describe("useQuery", () => {
   describe("execute error handling", () => {
     it("sets error state when execute fails", async () => {
       server.use(
-        http.post("/test-exec-error", () =>
+        http.post("/api/test-exec-error", () =>
           HttpResponse.json({ detail: "Server error" }, { status: 500 }),
         ),
       );
 
       const { result } = renderHook(() =>
-        useQuery("/test-exec-error", { method: "POST", enabled: false }),
+        useQuery("/api/test-exec-error", { method: "POST", enabled: false }),
       );
 
       await act(async () => {
@@ -211,16 +213,16 @@ describe("useQuery", () => {
 
   describe("immediate option", () => {
     it("does not auto-fetch when immediate is false and method is GET", () => {
-      const { result } = renderHook(() => useQuery("/test-no-immediate", { immediate: false }));
+      const { result } = renderHook(() => useQuery("/api/test-no-immediate", { immediate: false }));
       expect(result.current.isLoading).toBe(false);
       expect(result.current.data).toBeUndefined();
     });
 
     it("auto-fetches when immediate is true for non-GET method", async () => {
-      server.use(http.post("/test-immediate-post", () => HttpResponse.json({ posted: true })));
+      server.use(http.post("/api/test-immediate-post", () => HttpResponse.json({ posted: true })));
 
       const { result } = renderHook(() =>
-        useQuery("/test-immediate-post", { method: "POST", immediate: true }),
+        useQuery("/api/test-immediate-post", { method: "POST", immediate: true }),
       );
 
       await waitFor(() => expect(result.current.data).toBeDefined());
@@ -232,13 +234,13 @@ describe("useQuery", () => {
     it("re-fetches data when refetch is called", async () => {
       let callCount = 0;
       server.use(
-        http.get("/test-refetch", () => {
+        http.get("/api/test-refetch", () => {
           callCount++;
           return HttpResponse.json({ count: callCount });
         }),
       );
 
-      const { result } = renderHook(() => useQuery<{ count: number }>("/test-refetch"));
+      const { result } = renderHook(() => useQuery<{ count: number }>("/api/test-refetch"));
 
       await waitFor(() => expect(result.current.data).toBeDefined());
       expect(result.current.data?.count).toBe(1);
@@ -255,14 +257,14 @@ describe("useQuery", () => {
     it("sends overrideBody instead of default body", async () => {
       let receivedBody: unknown;
       server.use(
-        http.post("/test-override-body", async ({ request }) => {
+        http.post("/api/test-override-body", async ({ request }) => {
           receivedBody = await request.json();
           return HttpResponse.json({ ok: true });
         }),
       );
 
       const { result } = renderHook(() =>
-        useQuery<{ ok: boolean }, { name: string }>("/test-override-body", {
+        useQuery<{ ok: boolean }, { name: string }>("/api/test-override-body", {
           method: "POST",
           enabled: false,
           body: { name: "default" },
