@@ -725,8 +725,8 @@ Append `request: Request = None` **last** in every signature — never first. Fa
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `pytest tests/unit/mcpgateway/routers/test_compliance_router.py tests/unit/mcpgateway/test_global_record_scope.py -v`
-Expected: PASS (17 existing tests; the drift guard arrives in Task 9 and will then assert these five routes carry the marker)
+Run: `pytest tests/unit/mcpgateway/routers/test_compliance_router.py -v`
+Expected: PASS (17 existing tests). The drift guard (`tests/unit/mcpgateway/test_global_record_scope.py`) does not exist until Task 9 — do not reference it here; Task 9 will then assert these five routes carry the marker.
 
 - [ ] **Step 5: Lint and commit**
 
