@@ -307,6 +307,23 @@ def mock_require_admin_permission():
     return decorator
 
 
+def mock_require_global_admin_permission():
+    """Mock version of require_global_admin_permission that always allows access.
+
+    Suites that import a router under :func:`patch_rbac_decorators` supply no
+    ``request`` kwarg, so the real guard would fail closed and 403 every test.
+
+    Returns:
+        Callable: A decorator that performs no scope checking.
+    """
+
+    def decorator(func):
+        # Return the function unchanged - no global-record scope checking
+        return func
+
+    return decorator
+
+
 def mock_require_any_permission(permissions, resource_type: Optional[str] = None, allow_admin_bypass: bool = True):
     """Mock version of require_any_permission that always allows access.
 
@@ -371,12 +388,14 @@ def patch_rbac_decorators():
         "require_permission": rbac_module.require_permission,
         "require_admin_permission": rbac_module.require_admin_permission,
         "require_any_permission": rbac_module.require_any_permission,
+        "require_global_admin_permission": rbac_module.require_global_admin_permission,
     }
 
     # Replace with mock versions
     rbac_module.require_permission = mock_require_permission_decorator
     rbac_module.require_admin_permission = mock_require_admin_permission
     rbac_module.require_any_permission = mock_require_any_permission
+    rbac_module.require_global_admin_permission = mock_require_global_admin_permission
 
     return originals
 
@@ -393,6 +412,7 @@ def restore_rbac_decorators(originals: Dict):
     rbac_module.require_permission = originals["require_permission"]
     rbac_module.require_admin_permission = originals["require_admin_permission"]
     rbac_module.require_any_permission = originals["require_any_permission"]
+    rbac_module.require_global_admin_permission = originals["require_global_admin_permission"]
 
 
 def create_permission_matrix_test_db():
