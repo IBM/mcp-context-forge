@@ -1331,6 +1331,9 @@ class Permissions:
     TOOLS_EXECUTE = "tools.execute"
     TOOLS_MANAGE_PLUGINS = "tools.manage_plugins"
 
+    # Plugin permissions
+    PLUGINS_READ = "plugins.read"
+
     # Resource permissions
     RESOURCES_CREATE = "resources.create"
     RESOURCES_READ = "resources.read"

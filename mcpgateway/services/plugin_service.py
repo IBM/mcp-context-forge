@@ -16,8 +16,27 @@ from typing import Any, Dict, List, Optional, Union
 # Third-Party
 from cpex.framework import PluginManager
 from cpex.framework.models import PluginMode
+from fastapi import Request
 
 logger = logging.getLogger(__name__)
+
+
+async def sync_plugin_service_from_runtime(request: Request, plugin_service: "PluginService") -> None:
+    """Refresh plugin service state from the live runtime.
+
+    Args:
+        request: Current FastAPI request.
+        plugin_service: Plugin service cache to refresh.
+    """
+    try:
+        # First-Party
+        from mcpgateway.plugins import get_plugin_manager  # pylint: disable=import-outside-toplevel
+
+        plugin_manager = await get_plugin_manager()
+        request.app.state.plugin_manager = plugin_manager
+        plugin_service.set_plugin_manager(plugin_manager)
+    except Exception as sync_exc:  # pragma: no cover - defensive best effort
+        logger.warning("Plugin cache refresh failed (%s); response may be stale or empty", sync_exc)
 
 
 def _framework_mode_to_operator_label(mode: Union[str, PluginMode]) -> str:

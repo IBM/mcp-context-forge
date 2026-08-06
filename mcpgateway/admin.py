@@ -183,7 +183,7 @@ from mcpgateway.services.openapi_service import fetch_and_extract_schemas
 from mcpgateway.services.password_policy_service import PasswordPolicyService
 from mcpgateway.services.performance_service import get_performance_service
 from mcpgateway.services.permission_service import PermissionService
-from mcpgateway.services.plugin_service import get_plugin_service
+from mcpgateway.services.plugin_service import get_plugin_service, sync_plugin_service_from_runtime
 from mcpgateway.services.prompt_service import PromptArgumentsJSONError, PromptNameConflictError, PromptNotFoundError, PromptService
 from mcpgateway.services.resource_service import ResourceNotFoundError, ResourceService, ResourceURIConflictError, ResourceValidationError
 from mcpgateway.services.root_service import RootService, RootServiceError, RootServiceNotFoundError, RootServiceValidationError
@@ -2322,7 +2322,7 @@ async def get_overview_partial(
         # Plugin stats — self-heal the cache so the overview reflects the live
         # shared toggle even on a process that booted with plugins disabled.
         overview_plugin_service = get_plugin_service()
-        await _sync_plugin_service_from_runtime(request, overview_plugin_service)
+        await sync_plugin_service_from_runtime(request, overview_plugin_service)
         plugin_stats = await overview_plugin_service.get_plugin_statistics()
 
         # Infrastructure status (database, cache, uptime)
@@ -17230,42 +17230,6 @@ async def get_gateways_section(
 ####################
 
 
-async def _sync_plugin_service_from_runtime(request: Request, plugin_service) -> None:
-    """Self-heal the admin plugin cache from the live framework state.
-
-    The framework's ``get_plugin_manager`` is the single source of truth — it
-    reads the shared toggle (TTL-cached, so this is a cheap call) and returns
-    ``None`` when plugins are globally disabled, even when the disable came
-    from a *remote* node via the Redis toggle.
-
-    Every admin read mirrors that answer back into ``app.state.plugin_manager``
-    and the ``PluginService`` singleton. This closes three gaps:
-
-    1. Processes that booted with plugins disabled never had ``app.state`` set,
-       so admin views returned empty until restart even after the shared
-       toggle was flipped on.
-    2. If ``toggle_plugins_global`` swallowed an admin-cache sync failure, the
-       stale cache would persist forever — now the next GET repairs it.
-    3. A remote disable (``PUT /admin/plugins {"enabled": false}`` on another
-       worker) would leave this worker's ``app.state.plugin_manager``
-       populated from a prior enable, making admin views serve plugin
-       metadata the cluster had already turned off.
-
-    Best-effort: a failure logs a WARNING and leaves ``app.state`` alone. It
-    never raises, so it can't turn a read into a 500.
-    """
-    try:
-        # pylint: disable=import-outside-toplevel
-        # First-Party
-        from mcpgateway.plugins import get_plugin_manager
-
-        plugin_manager = await get_plugin_manager()
-        request.app.state.plugin_manager = plugin_manager
-        plugin_service.set_plugin_manager(plugin_manager)
-    except Exception as sync_exc:
-        LOGGER.warning("Admin plugin-cache self-heal failed (%s) — view may render stale/empty", sync_exc)
-
-
 @admin_router.get("/plugins/partial")
 @require_permission("admin.plugins", allow_admin_bypass=False)
 async def get_plugins_partial(request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> HTMLResponse:  # pylint: disable=unused-argument
@@ -17290,7 +17254,7 @@ async def get_plugins_partial(request: Request, db: Session = Depends(get_db), u
         plugin_service = get_plugin_service()
 
         # Self-heal the cache so the partial reflects the live shared toggle.
-        await _sync_plugin_service_from_runtime(request, plugin_service)
+        await sync_plugin_service_from_runtime(request, plugin_service)
 
         # Get plugin data
         plugins = plugin_service.get_all_plugins()
@@ -17355,7 +17319,7 @@ async def get_a2a_plugin_bindings_partial(
 async def _render_a2a_plugin_bindings_partial(request: Request, db: Session, team_id: Optional[str] = None) -> HTMLResponse:
     """Build and return the A2A agent plugin bindings partial template."""
     plugin_service = get_plugin_service()
-    await _sync_plugin_service_from_runtime(request, plugin_service)
+    await sync_plugin_service_from_runtime(request, plugin_service)
     binding_service = A2AAgentPluginBindingService()
     bindings, _ = binding_service.list_bindings(db, team_id=team_id)
     agents = db.query(DbA2AAgent.name).distinct().order_by(DbA2AAgent.name).all()
@@ -17539,7 +17503,7 @@ async def list_plugins(
         plugin_service = get_plugin_service()
 
         # Self-heal the cache from the live framework state.
-        await _sync_plugin_service_from_runtime(request, plugin_service)
+        await sync_plugin_service_from_runtime(request, plugin_service)
 
         # Get filtered plugins
         if any([search, mode, hook, tag]):
@@ -17665,7 +17629,7 @@ async def get_plugin_stats(request: Request, db: Session = Depends(get_db), user
         plugin_service = get_plugin_service()
 
         # Self-heal the cache from the live framework state.
-        await _sync_plugin_service_from_runtime(request, plugin_service)
+        await sync_plugin_service_from_runtime(request, plugin_service)
 
         # Get statistics
         stats = await plugin_service.get_plugin_statistics()
@@ -17725,7 +17689,7 @@ async def get_plugin_details(name: str, request: Request, db: Session = Depends(
         plugin_service = get_plugin_service()
 
         # Self-heal the cache from the live framework state.
-        await _sync_plugin_service_from_runtime(request, plugin_service)
+        await sync_plugin_service_from_runtime(request, plugin_service)
 
         # Get plugin details
         plugin = plugin_service.get_plugin_by_name(name)

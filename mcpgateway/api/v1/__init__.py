@@ -363,6 +363,12 @@ def build_v1_router(
 
     v1_router.include_router(catalog_router)
     logger.info("Catalog router included - v1 only")
+
+    # First-Party
+    from mcpgateway.routers.plugins import router as plugins_router  # pylint: disable=import-outside-toplevel
+
+    v1_router.include_router(plugins_router)
+    logger.info("Plugin discovery router included - v1 only")
     return v1_router
 
 
