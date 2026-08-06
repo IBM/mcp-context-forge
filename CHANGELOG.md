@@ -10,7 +10,7 @@
 
 ### Breaking Changes
 
-- **OAuth registered-client routes require named permissions** ([#PR](https://github.com/IBM/mcp-context-forge/pull/PR)) - `GET /oauth/registered-clients`, `GET /oauth/registered-clients/{gateway_id}`, and `DELETE /oauth/registered-clients/{client_id}` now enforce `admin.oauth_clients:read` / `admin.oauth_clients:delete` with admin bypass disabled. Admins holding `platform_admin` (assigned by every supported admin-provisioning path) are unaffected. Deployments that set `is_admin` directly in the database, or that point `DEFAULT_ADMIN_ROLE` at a custom role with no inherited path to `*`, must grant the new permissions. See [RBAC troubleshooting](docs/docs/manage/rbac.md) for an audit query.
+- **OAuth registered-client routes require named permissions** ([#6109](https://github.com/IBM/mcp-context-forge/pull/6109)) - `GET /oauth/registered-clients`, `GET /oauth/registered-clients/{gateway_id}`, and `DELETE /oauth/registered-clients/{client_id}` now enforce `admin.oauth_clients:read` / `admin.oauth_clients:delete` with admin bypass disabled. Admins holding `platform_admin` (assigned by every supported admin-provisioning path) are unaffected. Deployments that set `is_admin` directly in the database, or that point `DEFAULT_ADMIN_ROLE` at a custom role with no inherited path to `*`, must grant the new permissions. See [RBAC troubleshooting](docs/docs/manage/rbac.md) for an audit query.
 
 ## [1.0.7] - 2026-08-04 - Security Hardening, Unified Search, OAuth Improvements, Dataplane Enhancements, and Operational Reliability
 
