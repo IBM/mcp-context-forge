@@ -1085,10 +1085,12 @@ class TestTeamManagementService:
             svc = TeamManagementService(db)
             scoped, _ = await svc.list_teams(team_ids=["id-b"])
             scoped_names = {t.name for t in scoped}
+            empty, _ = await svc.list_teams(team_ids=[])
             unfiltered, _ = await svc.list_teams(team_ids=None)
             unfiltered_names = {t.name for t in unfiltered}
 
         assert scoped_names == {"Beta"}  # restricted to the given id
+        assert empty == []  # explicit empty scope matches no teams
         assert {"Alpha", "Beta"} <= unfiltered_names  # None = no filter
 
     @pytest.mark.asyncio

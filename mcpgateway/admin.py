@@ -1949,10 +1949,9 @@ async def _get_user_team_ids(user: dict, db: Session) -> list:
     if cached is not None:
         return cached
 
-    if "token_teams" in user:
-        team_ids = extract_token_team_ids(user)
-        if team_ids is not None:
-            return team_ids
+    team_ids = extract_token_team_ids(user)
+    if team_ids is not None:
+        return team_ids
 
     user_email = get_user_email(user)
     team_service = TeamManagementService(db)
@@ -1992,9 +1991,7 @@ def _is_explicit_token_team_scope(user: Any) -> bool:
     Returns:
         bool: True when ``token_teams`` is present and not ``None``.
     """
-    if not isinstance(user, dict):
-        return False
-    return "token_teams" in user and user.get("token_teams") is not None
+    return extract_token_team_ids(user) is not None
 
 
 def _owner_access_condition(owner_column, team_column, *, user_email: str, team_ids: list[str], user: Any):
