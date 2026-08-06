@@ -1,26 +1,21 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { http, HttpResponse } from "msw";
-import { api, ApiError, getToken, setToken, clearToken } from "./client";
+import { api, ApiError, getToken, setToken, clearToken, setCsrfToken } from "./client";
 import { server } from "@/test/mocks/server";
-
-function clearCookie(name: string) {
-  document.cookie = `${name}=; Max-Age=0; path=/`;
-}
 
 describe("api client", () => {
   afterEach(() => {
-    clearCookie("mcpgateway_csrf_token");
-    clearCookie("csrf_token");
+    setCsrfToken(null);
     vi.clearAllMocks();
   });
 
   describe("CSRF Token Handling", () => {
-    it("sends X-CSRF-Token from the configured mcpgateway CSRF cookie", async () => {
-      document.cookie = "mcpgateway_csrf_token=new-token; path=/";
+    it("sends X-CSRF-Token from the in-memory token set after login/session-check", async () => {
+      setCsrfToken("new-token");
 
       let csrfHeader: string | null = null;
       server.use(
-        http.post("*/csrf-check", ({ request }) => {
+        http.post("*/api/csrf-check", ({ request }) => {
           csrfHeader = request.headers.get("X-CSRF-Token");
           return HttpResponse.json({ ok: true });
         }),
@@ -31,12 +26,10 @@ describe("api client", () => {
       expect(csrfHeader).toBe("new-token");
     });
 
-    it("does not use legacy csrf_token cookies", async () => {
-      document.cookie = "csrf_token=legacy-token; path=/";
-
+    it("does not send a CSRF header when no token has been set", async () => {
       let csrfHeader: string | null = null;
       server.use(
-        http.post("*/csrf-check", ({ request }) => {
+        http.post("*/api/csrf-check", ({ request }) => {
           csrfHeader = request.headers.get("X-CSRF-Token");
           return HttpResponse.json({ ok: true });
         }),
@@ -48,7 +41,7 @@ describe("api client", () => {
     });
 
     it("does not send CSRF token for GET requests", async () => {
-      document.cookie = "mcpgateway_csrf_token=token; path=/";
+      setCsrfToken("token");
 
       let csrfHeader: string | null = null;
       server.use(
@@ -64,7 +57,7 @@ describe("api client", () => {
     });
 
     it("sends CSRF token for PATCH requests", async () => {
-      document.cookie = "mcpgateway_csrf_token=patch-token; path=/";
+      setCsrfToken("patch-token");
 
       let csrfHeader: string | null = null;
       server.use(
@@ -80,7 +73,7 @@ describe("api client", () => {
     });
 
     it("sends CSRF token for PUT requests", async () => {
-      document.cookie = "mcpgateway_csrf_token=put-token; path=/";
+      setCsrfToken("put-token");
 
       let csrfHeader: string | null = null;
       server.use(
@@ -96,7 +89,7 @@ describe("api client", () => {
     });
 
     it("sends CSRF token for DELETE requests", async () => {
-      document.cookie = "mcpgateway_csrf_token=delete-token; path=/";
+      setCsrfToken("delete-token");
 
       let csrfHeader: string | null = null;
       server.use(
@@ -337,10 +330,10 @@ describe("api client", () => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       window.location = { ...originalLocation, replace: mockReplace } as any;
 
-      server.use(http.get("*/app/auth/me", () => new HttpResponse(null, { status: 401 })));
+      server.use(http.get("*/auth/session", () => new HttpResponse(null, { status: 401 })));
 
       try {
-        await api.get("/app/auth/me");
+        await api.get("/auth/session");
       } catch {
         // expected
       }
@@ -394,6 +387,49 @@ describe("api client", () => {
       await api.get("/api/data");
 
       expect(requestUrl).toContain("/api/data");
+    });
+
+    it("prepends /api to a bare path so it routes through the BFF proxy", async () => {
+      let requestUrl: string | null = null;
+      server.use(
+        http.get("*/api/tools", ({ request }) => {
+          requestUrl = request.url;
+          return HttpResponse.json({ ok: true });
+        }),
+      );
+
+      await api.get("/tools");
+
+      expect(requestUrl).toContain("/api/tools");
+    });
+
+    it("does not double-prefix a path that already starts with /api", async () => {
+      let requestUrl: string | null = null;
+      server.use(
+        http.get("*/api/tools", ({ request }) => {
+          requestUrl = request.url;
+          return HttpResponse.json({ ok: true });
+        }),
+      );
+
+      await api.get("/api/tools");
+
+      expect(requestUrl).not.toContain("/api/api/tools");
+    });
+
+    it("leaves /auth/* paths unprefixed (BFF-owned, not proxied)", async () => {
+      let requestUrl: string | null = null;
+      server.use(
+        http.get("*/auth/session", ({ request }) => {
+          requestUrl = request.url;
+          return HttpResponse.json({ authenticated: false });
+        }),
+      );
+
+      await api.get("/auth/session");
+
+      expect(requestUrl).not.toContain("/api/auth");
+      expect(requestUrl).toContain("/auth/session");
     });
   });
 
@@ -452,7 +488,7 @@ describe("api client", () => {
     });
 
     it("accepts authenticated option in api.post", async () => {
-      document.cookie = "mcpgateway_csrf_token=csrf; path=/";
+      setCsrfToken("csrf");
 
       let csrfHeader: string | null = null;
       server.use(

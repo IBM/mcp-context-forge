@@ -14,6 +14,8 @@ import cookiePlugin from "./plugins/cookie.js";
 import csrfPlugin from "./plugins/csrf.js";
 import redisPlugin from "./plugins/redis.js";
 import sessionPlugin from "./plugins/session.js";
+import staticPlugin from "./plugins/static.js";
+import appRoute from "./routes/app.js";
 import loginRoute from "./routes/auth/login.js";
 import logoutRoute from "./routes/auth/logout.js";
 import sessionRoute from "./routes/auth/session.js";
@@ -27,6 +29,7 @@ await fastify.register(cookiePlugin);
 await fastify.register(redisPlugin);
 await fastify.register(sessionPlugin);
 await fastify.register(csrfPlugin);
+await fastify.register(staticPlugin);
 
 fastify.get("/healthz", async () => ({ ok: true }));
 
@@ -35,6 +38,7 @@ await fastify.register(logoutRoute);
 await fastify.register(sessionRoute);
 await fastify.register(sseRoutes);
 await fastify.register(catchAllProxyRoute);
+await fastify.register(appRoute);
 
 const revocationSubscriber = startRevocationSubscriber();
 fastify.addHook("onClose", async () => {

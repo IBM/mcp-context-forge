@@ -881,7 +881,7 @@ describe("useMCPServerForm", () => {
   describe("Edit Mode - Form Population from API", () => {
     it("maps 'authheaders' from API response to 'custom' auth type", async () => {
       server.use(
-        http.get("/gateways/gw-1", () =>
+        http.get("/api/gateways/gw-1", () =>
           HttpResponse.json({
             name: "My Server",
             url: "http://localhost:3000",
@@ -898,7 +898,7 @@ describe("useMCPServerForm", () => {
 
     it("maps 'query_param' from API response to 'query' auth type", async () => {
       server.use(
-        http.get("/gateways/gw-2", () =>
+        http.get("/api/gateways/gw-2", () =>
           HttpResponse.json({
             name: "My Server",
             url: "http://localhost:3000",
@@ -918,7 +918,7 @@ describe("useMCPServerForm", () => {
 
     it("populates advanced settings and OAuth config from the API", async () => {
       server.use(
-        http.get("/gateways/gw-adv", () =>
+        http.get("/api/gateways/gw-adv", () =>
           HttpResponse.json({
             name: "Advanced Server",
             url: "http://localhost:3000",
@@ -959,7 +959,7 @@ describe("useMCPServerForm", () => {
 
     it("accepts OAuth scopes provided as a plain string", async () => {
       server.use(
-        http.get("/gateways/gw-scopes", () =>
+        http.get("/api/gateways/gw-scopes", () =>
           HttpResponse.json({
             name: "Scopes Server",
             url: "http://localhost:3000",
@@ -975,7 +975,7 @@ describe("useMCPServerForm", () => {
 
     it("populates basic auth username and masked password from API", async () => {
       server.use(
-        http.get("/gateways/gw-3", () =>
+        http.get("/api/gateways/gw-3", () =>
           HttpResponse.json({
             name: "My Server",
             url: "http://localhost:3000",
@@ -995,7 +995,7 @@ describe("useMCPServerForm", () => {
 
     it("populates bearer token from API response", async () => {
       server.use(
-        http.get("/gateways/gw-4", () =>
+        http.get("/api/gateways/gw-4", () =>
           HttpResponse.json({
             name: "My Server",
             url: "http://localhost:3000",
@@ -1013,7 +1013,7 @@ describe("useMCPServerForm", () => {
 
     it("populates multiple custom headers from API response", async () => {
       server.use(
-        http.get("/gateways/gw-5", () =>
+        http.get("/api/gateways/gw-5", () =>
           HttpResponse.json({
             name: "My Server",
             url: "http://localhost:3000",
@@ -1035,7 +1035,7 @@ describe("useMCPServerForm", () => {
 
     it("populates oauth store_tokens and auto_refresh as true from API", async () => {
       server.use(
-        http.get("/gateways/gw-6", () =>
+        http.get("/api/gateways/gw-6", () =>
           HttpResponse.json({
             name: "My Server",
             url: "http://localhost:3000",
@@ -1058,7 +1058,7 @@ describe("useMCPServerForm", () => {
 
     it("populates oauth store_tokens and auto_refresh as false from API", async () => {
       server.use(
-        http.get("/gateways/gw-7", () =>
+        http.get("/api/gateways/gw-7", () =>
           HttpResponse.json({
             name: "My Server",
             url: "http://localhost:3000",
@@ -1081,7 +1081,7 @@ describe("useMCPServerForm", () => {
 
     it("defaults oauth store_tokens and auto_refresh to false when absent from API response", async () => {
       server.use(
-        http.get("/gateways/gw-8", () =>
+        http.get("/api/gateways/gw-8", () =>
           HttpResponse.json({
             name: "My Server",
             url: "http://localhost:3000",
@@ -1100,7 +1100,7 @@ describe("useMCPServerForm", () => {
 
     it("opens the advanced panel when server has auth configured", async () => {
       server.use(
-        http.get("/gateways/gw-9", () =>
+        http.get("/api/gateways/gw-9", () =>
           HttpResponse.json({
             name: "My Server",
             url: "http://localhost:3000",
@@ -1131,7 +1131,7 @@ describe("useMCPServerForm", () => {
 
       it("should trigger OAuth authorization after successful gateway creation with OAuth auth type", async () => {
         server.use(
-          http.post("/gateways", () => {
+          http.post("/api/gateways", () => {
             return HttpResponse.json({
               id: "new-gateway-123",
               name: "Test OAuth Gateway",
@@ -1184,7 +1184,7 @@ describe("useMCPServerForm", () => {
 
       it("should trigger OAuth authorization after successful gateway update with OAuth auth type", async () => {
         server.use(
-          http.get("/gateways/existing-gateway", () => {
+          http.get("/api/gateways/existing-gateway", () => {
             return HttpResponse.json({
               id: "existing-gateway",
               name: "Existing Gateway",
@@ -1199,7 +1199,7 @@ describe("useMCPServerForm", () => {
               authType: "oauth",
             });
           }),
-          http.put("/gateways/existing-gateway", () => {
+          http.put("/api/gateways/existing-gateway", () => {
             return HttpResponse.json({
               id: "existing-gateway",
               name: "Updated OAuth Gateway",
@@ -1254,7 +1254,7 @@ describe("useMCPServerForm", () => {
 
       it("should not trigger OAuth authorization for non-OAuth auth types", async () => {
         server.use(
-          http.post("/gateways", () => {
+          http.post("/api/gateways", () => {
             return HttpResponse.json({
               id: "new-gateway-456",
               name: "Test Basic Auth Gateway",
@@ -1295,7 +1295,7 @@ describe("useMCPServerForm", () => {
       it("reuses the created gateway ID on OAuth retry to prevent duplicate gateway creation", async () => {
         let createCallCount = 0;
         server.use(
-          http.post("/gateways", () => {
+          http.post("/api/gateways", () => {
             createCallCount++;
             return HttpResponse.json({ id: "gateway-retry-test" });
           }),
@@ -1351,7 +1351,9 @@ describe("useMCPServerForm", () => {
       it("delays onSuccess by 2 s after OAuth success so the notification is visible", async () => {
         vi.useFakeTimers();
 
-        server.use(http.post("/gateways", () => HttpResponse.json({ id: "gateway-delay-test" })));
+        server.use(
+          http.post("/api/gateways", () => HttpResponse.json({ id: "gateway-delay-test" })),
+        );
 
         const triggerOAuthMock = vi
           .spyOn(serversApi, "triggerOAuthAuthorization")
@@ -1411,7 +1413,7 @@ describe("useMCPServerForm", () => {
     });
 
     it("sets fetchToolsNotification to success after OAuth + successful tool fetch", async () => {
-      server.use(http.post("/gateways", () => HttpResponse.json({ id: "gw-ft-success" })));
+      server.use(http.post("/api/gateways", () => HttpResponse.json({ id: "gw-ft-success" })));
 
       vi.spyOn(serversApi, "triggerOAuthAuthorization").mockResolvedValueOnce({
         type: "oauth_callback",
@@ -1449,7 +1451,7 @@ describe("useMCPServerForm", () => {
     });
 
     it("sets fetchToolsNotification to error with nested detail.message when fetch-tools fails", async () => {
-      server.use(http.post("/gateways", () => HttpResponse.json({ id: "gw-ft-err" })));
+      server.use(http.post("/api/gateways", () => HttpResponse.json({ id: "gw-ft-err" })));
 
       vi.spyOn(serversApi, "triggerOAuthAuthorization").mockResolvedValueOnce({
         type: "oauth_callback",
@@ -1491,7 +1493,7 @@ describe("useMCPServerForm", () => {
     });
 
     it("sets fetchToolsNotification to error with plain detail string when fetch-tools fails", async () => {
-      server.use(http.post("/gateways", () => HttpResponse.json({ id: "gw-ft-str-err" })));
+      server.use(http.post("/api/gateways", () => HttpResponse.json({ id: "gw-ft-str-err" })));
 
       vi.spyOn(serversApi, "triggerOAuthAuthorization").mockResolvedValueOnce({
         type: "oauth_callback",
@@ -1532,7 +1534,7 @@ describe("useMCPServerForm", () => {
     });
 
     it("clearFetchToolsNotification resets fetchToolsNotification to null", async () => {
-      server.use(http.post("/gateways", () => HttpResponse.json({ id: "gw-clear-test" })));
+      server.use(http.post("/api/gateways", () => HttpResponse.json({ id: "gw-clear-test" })));
 
       vi.spyOn(serversApi, "triggerOAuthAuthorization").mockResolvedValueOnce({
         type: "oauth_callback",
@@ -1568,7 +1570,7 @@ describe("useMCPServerForm", () => {
   describe("handleSubmit error parsing", () => {
     it("extracts nested detail.message from API error on create failure", async () => {
       server.use(
-        http.post("/gateways", () =>
+        http.post("/api/gateways", () =>
           HttpResponse.json(
             { detail: { message: "A server with this name already exists", success: false } },
             { status: 400 },
@@ -1595,10 +1597,10 @@ describe("useMCPServerForm", () => {
 
     it("extracts plain detail string from API error on update failure", async () => {
       server.use(
-        http.get("/gateways/edit-gw", () =>
+        http.get("/api/gateways/edit-gw", () =>
           HttpResponse.json({ name: "My Server", url: "http://localhost:3000" }),
         ),
-        http.put("/gateways/edit-gw", () =>
+        http.put("/api/gateways/edit-gw", () =>
           HttpResponse.json({ detail: "Gateway not found" }, { status: 404 }),
         ),
       );
@@ -1618,7 +1620,9 @@ describe("useMCPServerForm", () => {
     });
 
     it("logs error and continues if activation fails during OAuth", async () => {
-      server.use(http.post("/gateways", () => HttpResponse.json({ id: "gw-oauth-activate-fail" })));
+      server.use(
+        http.post("/api/gateways", () => HttpResponse.json({ id: "gw-oauth-activate-fail" })),
+      );
 
       vi.spyOn(serversApi, "triggerOAuthAuthorization").mockResolvedValueOnce({
         type: "oauth_callback",
@@ -1645,7 +1649,7 @@ describe("useMCPServerForm", () => {
       });
 
       expect(consoleErrorSpy).toHaveBeenCalledWith(
-        "Failed to activate gateway after OAuth:",
+        "Failed to activate gateway after OAuth:", // pragma: allowlist secret
         "An error occurred. Please try again.",
       );
     });

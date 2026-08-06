@@ -13,21 +13,51 @@ import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 let upstream: Server;
-let lastRequest: { path: string; authorization: string | undefined; method: string } | undefined;
+let upstreamOrigin: string;
+let lastRequest:
+  | { path: string; authorization: string | undefined; method: string; body: string }
+  | undefined;
 
 beforeAll(async () => {
   upstream = createServer((req: IncomingMessage, res) => {
-    lastRequest = {
-      path: req.url ?? "",
-      authorization: req.headers.authorization,
-      method: req.method ?? "",
-    };
-    res.writeHead(200, { "content-type": "application/json" });
-    res.end(JSON.stringify({ ok: true }));
+    const chunks: Buffer[] = [];
+    req.on("data", (chunk: Buffer) => chunks.push(chunk));
+    req.on("end", () => {
+      lastRequest = {
+        path: req.url ?? "",
+        authorization: req.headers.authorization,
+        method: req.method ?? "",
+        body: Buffer.concat(chunks).toString("utf8"),
+      };
+      // Mirrors Starlette's redirect_slashes: bare "/teams" -> "/teams/"
+      // with an absolute Location built from the upstream's own host:port.
+      if (req.url === "/teams") {
+        res.writeHead(307, { location: `${upstreamOrigin}/teams/` });
+        res.end();
+        return;
+      }
+      // Simulates an expired/invalid bearer token — FastAPI's real
+      // rbac middleware rejects with 401 here.
+      if (req.url === "/expired") {
+        res.writeHead(401, { "content-type": "application/json" });
+        res.end(JSON.stringify({ detail: "Token has expired" }));
+        return;
+      }
+      // Simulates a valid session with insufficient RBAC permissions —
+      // must not be treated the same as an expired token.
+      if (req.url === "/forbidden") {
+        res.writeHead(403, { "content-type": "application/json" });
+        res.end(JSON.stringify({ detail: "Insufficient permissions" }));
+        return;
+      }
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ ok: true }));
+    });
   });
   await new Promise<void>((resolve) => upstream.listen(0, "127.0.0.1", () => resolve()));
   const { port } = upstream.address() as AddressInfo;
-  process.env.FASTAPI_URL = `http://127.0.0.1:${port}`;
+  upstreamOrigin = `http://127.0.0.1:${port}`;
+  process.env.FASTAPI_URL = upstreamOrigin;
 });
 
 afterAll(() => new Promise<void>((resolve) => upstream.close(() => resolve())));
@@ -109,7 +139,7 @@ describe("ALL /api/*", () => {
     expect(response.statusCode).toBe(403);
   });
 
-  it("forwards a state-changing request given a valid CSRF token", async () => {
+  it("forwards a state-changing request given a valid CSRF token, with the JSON body intact", async () => {
     const app = await buildApp();
     const { cookie, csrfToken } = await seedSession(app);
 
@@ -122,5 +152,87 @@ describe("ALL /api/*", () => {
 
     expect(response.statusCode).toBe(200);
     expect(lastRequest?.method).toBe("POST");
+    // @fastify/reply-from always JSON.stringify()s request.body for
+    // Content-Type: application/json (no way to opt out — see catch-all.ts).
+    // A naive raw-Buffer passthrough JSON.stringifies to
+    // {"type":"Buffer","data":[...]}; must round-trip as real JSON instead.
+    expect(JSON.parse(lastRequest!.body)).toEqual({ name: "x" });
+  });
+
+  it("forwards a state-changing request with Content-Type: application/json but no body (e.g. an activate/deactivate toggle)", async () => {
+    const app = await buildApp();
+    const { cookie, csrfToken } = await seedSession(app);
+
+    const response = await app.fastify.inject({
+      method: "POST",
+      url: "/api/gateways/gw-1/state?activate=false",
+      headers: { cookie, "x-csrf-token": csrfToken, "content-type": "application/json" },
+    });
+
+    // Fastify's default JSON parser 400s an empty body under this
+    // Content-Type before the request ever reaches this route — must not
+    // regress to that (see catch-all.ts's addContentTypeParser override).
+    expect(response.statusCode).toBe(200);
+    expect(lastRequest?.method).toBe("POST");
+    expect(lastRequest?.body).toBe("");
+  });
+
+  it("rewrites an upstream redirect's absolute Location back to a same-origin /api/* path", async () => {
+    const app = await buildApp();
+    const { cookie } = await seedSession(app);
+
+    const response = await app.fastify.inject({
+      method: "GET",
+      url: "/api/teams",
+      headers: { cookie },
+    });
+
+    expect(response.statusCode).toBe(307);
+    // Must never leak the upstream host:port to the browser, or the
+    // redirect would leave the BFF and drop the session entirely.
+    expect(response.headers.location).toBe("/api/teams/");
+  });
+
+  it("revokes the BFF session when upstream returns 401 (expired/invalid bearer token)", async () => {
+    const app = await buildApp();
+    const { cookie } = await seedSession(app);
+
+    const response = await app.fastify.inject({
+      method: "GET",
+      url: "/api/expired",
+      headers: { cookie },
+    });
+
+    expect(response.statusCode).toBe(401);
+    const clearedCookie = response.cookies.find((c) => c.name === "bff_sid");
+    expect(clearedCookie?.value).toBe("");
+
+    // Not just the cookie cleared client-side — the session is really gone,
+    // so a follow-up request can't keep retrying with a dead token.
+    const followUp = await app.fastify.inject({
+      method: "GET",
+      url: "/auth/session",
+      headers: { cookie },
+    });
+    expect(followUp.json()).toEqual({ authenticated: false });
+  });
+
+  it("does not revoke the session on a plain 403 (valid session, insufficient permissions)", async () => {
+    const app = await buildApp();
+    const { cookie } = await seedSession(app);
+
+    const response = await app.fastify.inject({
+      method: "GET",
+      url: "/api/forbidden",
+      headers: { cookie },
+    });
+    expect(response.statusCode).toBe(403);
+
+    const followUp = await app.fastify.inject({
+      method: "GET",
+      url: "/auth/session",
+      headers: { cookie },
+    });
+    expect(followUp.json().authenticated).toBe(true);
   });
 });

@@ -6,17 +6,27 @@
 // layered on top of Option A's periodic re-check). A dedicated ioredis
 // connection in subscribe mode — the command client decorated by
 // plugins/redis.ts can't issue normal commands once subscribed, hence the
-// separate connection here.
+// separate connection here. REDIS_URL=memory:// swaps in the in-process
+// MemoryRedis (see plugins/redis.ts) instead — irrelevant for a single dev
+// process, but kept symmetric with the command client's mode.
 
 import { Redis } from "ioredis";
 
 import { config } from "../../config.js";
+import { isMemoryRedisUrl, MemoryRedis } from "../../lib/memory-redis.js";
 import { abortAll } from "./registry.js";
 
 const REVOKED_PATTERN = "bff:session:revoked:*";
 
-export function startRevocationSubscriber(): Redis {
-  const subscriber = new Redis(config.redisUrl);
+function onPmessage(_pattern: string, channel: string): void {
+  const sessionId = channel.slice("bff:session:revoked:".length);
+  if (sessionId) abortAll(sessionId);
+}
+
+export function startRevocationSubscriber(): Redis | MemoryRedis {
+  const subscriber = isMemoryRedisUrl(config.redisUrl)
+    ? new MemoryRedis()
+    : new Redis(config.redisUrl);
 
   subscriber.psubscribe(REVOKED_PATTERN, (err) => {
     if (err) {
@@ -24,10 +34,7 @@ export function startRevocationSubscriber(): Redis {
     }
   });
 
-  subscriber.on("pmessage", (_pattern: string, channel: string) => {
-    const sessionId = channel.slice("bff:session:revoked:".length);
-    if (sessionId) abortAll(sessionId);
-  });
+  subscriber.on("pmessage", onPmessage);
 
   return subscriber;
 }

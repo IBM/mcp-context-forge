@@ -62,6 +62,41 @@ describe("POST /auth/login", () => {
     expect(setCookieNames).toContain("bff_csrf");
   });
 
+  it("sets the session cookie's maxAge to the upstream token's own expires_in, not a fixed BFF default", async () => {
+    const app = await buildTestApp();
+    mockUpstreamLogin(true, {
+      access_token: "upstream-jwt", // pragma: allowlist secret
+      expires_in: 1200, // 20 minutes — FastAPI's default TOKEN_EXPIRY
+      user: { email: "user@example.com", is_admin: false },
+    });
+
+    const response = await app.fastify.inject({
+      method: "POST",
+      url: "/auth/login",
+      payload: { email: "user@example.com", password: "secret" }, // pragma: allowlist secret
+    });
+
+    const sessionCookie = response.cookies.find((c) => c.name === "bff_sid");
+    expect(sessionCookie?.maxAge).toBe(1200);
+  });
+
+  it("falls back to the BFF's default TTL if the upstream response omits expires_in", async () => {
+    const app = await buildTestApp();
+    mockUpstreamLogin(true, {
+      access_token: "upstream-jwt", // pragma: allowlist secret
+      user: { email: "user@example.com", is_admin: false },
+    });
+
+    const response = await app.fastify.inject({
+      method: "POST",
+      url: "/auth/login",
+      payload: { email: "user@example.com", password: "secret" }, // pragma: allowlist secret
+    });
+
+    const sessionCookie = response.cookies.find((c) => c.name === "bff_sid");
+    expect(sessionCookie?.maxAge).toBeGreaterThan(1200); // sanity: not accidentally near-zero
+  });
+
   it("passes through upstream failure status without leaking a session", async () => {
     const app = await buildTestApp();
     mockUpstreamLogin(false, { detail: "Invalid email or password" }, 401);
