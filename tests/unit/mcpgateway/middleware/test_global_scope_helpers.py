@@ -111,3 +111,46 @@ def test_decorator_sets_scope_class_marker():
         return "ok"
 
     assert endpoint.__mcpgateway_scope_class__ == "global_only"
+
+
+# First-Party
+from tests.helpers.scope import admin_user_context, scoped_request
+from tests.utils.rbac_mocks import patch_rbac_decorators, restore_rbac_decorators
+
+
+def test_scope_fixture_shapes():
+    unrestricted = admin_user_context(None)
+    assert unrestricted["email"] == "admin@example.com"
+    assert unrestricted["is_admin"] is True
+    assert unrestricted["token_teams"] is None
+
+    narrowed = admin_user_context(["team-a"], email="ops@example.com")
+    assert narrowed["email"] == "ops@example.com"
+    assert narrowed["token_teams"] == ["team-a"]
+
+    req = scoped_request(["team-a"], path="/compliance/reports")
+    assert req.state.token_teams == ["team-a"]
+    assert req.url.path == "/compliance/reports"
+
+
+@pytest.mark.asyncio
+async def test_patch_rbac_decorators_covers_the_global_guard():
+    """26 suites import routers under this patch; the new guard must be mocked too."""
+    # First-Party
+    import mcpgateway.middleware.rbac as rbac_module
+
+    originals = patch_rbac_decorators()
+    try:
+        assert rbac_module.require_global_admin_permission is not None
+
+        @rbac_module.require_global_admin_permission()
+        async def endpoint(user=None):
+            return "ok"
+
+        # No request kwarg and no scope: the real guard would 403 here.
+        assert await endpoint(user={"email": "a@x.com"}) == "ok"
+    finally:
+        restore_rbac_decorators(originals)
+
+    # Restoration must put the real guard back, or later suites silently lose coverage.
+    assert rbac_module.require_global_admin_permission.__module__ == "mcpgateway.middleware.rbac"
