@@ -337,8 +337,10 @@ def test_compliance_unauthenticated():
 
 
 def test_compliance_non_admin_forbidden():
-    """Should return 403 for non-admin authenticated user."""
+    """Should return 403 for non-admin authenticated user with unrestricted scope."""
     from unittest.mock import AsyncMock, patch
+
+    from starlette.middleware.base import BaseHTTPMiddleware
 
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
@@ -350,7 +352,16 @@ def test_compliance_non_admin_forbidden():
         del sys.modules["mcpgateway.routers.compliance_router"]
     from mcpgateway.routers.compliance_router import router as real_compliance_router
 
+    class UnrestrictedScopeMiddleware(BaseHTTPMiddleware):
+        """Middleware to inject unrestricted token scope for testing."""
+
+        async def dispatch(self, request, call_next):
+            """Set token_teams to None (unrestricted scope) for all requests."""
+            request.state.token_teams = None
+            return await call_next(request)
+
     app = FastAPI()
+    app.add_middleware(UnrestrictedScopeMiddleware)
     app.include_router(real_compliance_router)
 
     async def non_admin_user():
@@ -358,10 +369,8 @@ def test_compliance_non_admin_forbidden():
 
     app.dependency_overrides[get_current_user_with_permissions] = non_admin_user
 
-    # Patch PermissionService to deny admin access
-    with patch("mcpgateway.middleware.rbac.PermissionService") as mock_ps:
-        instance = mock_ps.return_value
-        instance.check_admin_permission = AsyncMock(return_value=False)
+    # Mock the platform admin permission check to return False for non-admins
+    with patch("mcpgateway.services.permission_service.PermissionService.check_platform_admin_permission", new_callable=AsyncMock, return_value=False):
         client = TestClient(app)
         response = client.get("/compliance/frameworks")
         assert response.status_code == 403
