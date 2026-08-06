@@ -16,9 +16,6 @@ tests/unit/mcpgateway/test_global_record_scope.py.
 import importlib
 import sys
 
-# Third-Party
-import pytest
-
 # `test_rbac_router.py` (and any other suite using patch_rbac_decorators) imports
 # this same module while `mcpgateway.middleware.rbac.require_global_admin_permission`
 # is monkeypatched to a no-op. Because Python caches modules in sys.modules, if that
