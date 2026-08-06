@@ -2032,7 +2032,7 @@ class TestOAuthRouterAdditionalCoverage:
 
         from mcpgateway.routers.oauth_router import get_registered_client_for_gateway
 
-        result = await get_registered_client_for_gateway("gateway123", mock_admin_request, {"email": "admin", "is_admin": True}, mock_db)
+        result = await get_registered_client_for_gateway("gateway123", mock_admin_request, current_user={"email": "admin", "is_admin": True}, db=mock_db)
 
         assert result["id"] == "c1"
         assert result["gateway_id"] == "g1"
@@ -2048,7 +2048,7 @@ class TestOAuthRouterAdditionalCoverage:
         from mcpgateway.routers.oauth_router import get_registered_client_for_gateway
 
         with pytest.raises(HTTPException) as exc_info:
-            await get_registered_client_for_gateway("gateway123", mock_admin_request, {"email": "admin", "is_admin": True}, mock_db)
+            await get_registered_client_for_gateway("gateway123", mock_admin_request, current_user={"email": "admin", "is_admin": True}, db=mock_db)
 
         assert exc_info.value.status_code == 404
 
@@ -2060,7 +2060,7 @@ class TestOAuthRouterAdditionalCoverage:
         from mcpgateway.routers.oauth_router import get_registered_client_for_gateway
 
         with pytest.raises(HTTPException) as exc_info:
-            await get_registered_client_for_gateway("gateway123", mock_admin_request, {"email": "admin", "is_admin": True}, mock_db)
+            await get_registered_client_for_gateway("gateway123", mock_admin_request, current_user={"email": "admin", "is_admin": True}, db=mock_db)
 
         assert exc_info.value.status_code == 500
 
@@ -2076,7 +2076,7 @@ class TestOAuthRouterAdditionalCoverage:
         # First-Party
         from mcpgateway.routers.oauth_router import delete_registered_client
 
-        result = await delete_registered_client("c1", mock_admin_request, {"email": "admin", "is_admin": True}, mock_db)
+        result = await delete_registered_client("c1", mock_admin_request, current_user={"email": "admin", "is_admin": True}, db=mock_db)
 
         assert result["success"] is True
         mock_db.delete.assert_called_once_with(client)
@@ -2090,7 +2090,7 @@ class TestOAuthRouterAdditionalCoverage:
         from mcpgateway.routers.oauth_router import delete_registered_client
 
         with pytest.raises(HTTPException) as exc_info:
-            await delete_registered_client("missing", mock_admin_request, {"email": "admin", "is_admin": True}, mock_db)
+            await delete_registered_client("missing", mock_admin_request, current_user={"email": "admin", "is_admin": True}, db=mock_db)
 
         assert exc_info.value.status_code == 404
 
@@ -2107,14 +2107,15 @@ class TestOAuthRouterAdditionalCoverage:
         from mcpgateway.routers.oauth_router import delete_registered_client
 
         with pytest.raises(HTTPException) as exc_info:
-            await delete_registered_client("c1", mock_admin_request, {"email": "admin", "is_admin": True}, mock_db)
+            await delete_registered_client("c1", mock_admin_request, current_user={"email": "admin", "is_admin": True}, db=mock_db)
 
         assert exc_info.value.status_code == 500
         mock_db.rollback.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_registered_oauth_client_endpoints_require_admin(self, mock_db, mock_admin_request):
-        """Non-admin callers are rejected with 403 on all three DCR management routes."""
+        """Non-admin callers are rejected with 403 on all three DCR management routes, even when RBAC grants the permission."""
+        # First-Party
         from mcpgateway.routers.oauth_router import delete_registered_client, get_registered_client_for_gateway, list_registered_oauth_clients
 
         with pytest.raises(HTTPException) as exc_info:
@@ -2122,12 +2123,114 @@ class TestOAuthRouterAdditionalCoverage:
         assert exc_info.value.status_code == 403
 
         with pytest.raises(HTTPException) as exc_info:
-            await get_registered_client_for_gateway("gateway123", mock_admin_request, {"email": "user@example.com", "is_admin": False}, mock_db)
+            await get_registered_client_for_gateway("gateway123", mock_admin_request, current_user={"email": "user@example.com", "is_admin": False}, db=mock_db)
         assert exc_info.value.status_code == 403
 
         with pytest.raises(HTTPException) as exc_info:
-            await delete_registered_client("client123", mock_admin_request, {"email": "user@example.com", "is_admin": False}, mock_db)
+            await delete_registered_client("client123", mock_admin_request, current_user={"email": "user@example.com", "is_admin": False}, db=mock_db)
         assert exc_info.value.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_list_registered_clients_denied_without_read_permission(self, mock_db, mock_admin_request, mock_permission_service):
+        """An eligible admin without admin.oauth_clients:read is rejected with 403."""
+        mock_permission_service.check_permission = AsyncMock(return_value=False)
+
+        # First-Party
+        from mcpgateway.routers.oauth_router import list_registered_oauth_clients
+
+        with pytest.raises(HTTPException) as exc_info:
+            await list_registered_oauth_clients(mock_admin_request, current_user={"email": "admin", "is_admin": True}, db=mock_db)
+
+        assert exc_info.value.status_code == 403
+        mock_db.execute.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_get_registered_client_denied_without_read_permission(self, mock_db, mock_admin_request, mock_permission_service):
+        """An eligible admin without admin.oauth_clients:read cannot fetch a gateway's client."""
+        mock_permission_service.check_permission = AsyncMock(return_value=False)
+
+        # First-Party
+        from mcpgateway.routers.oauth_router import get_registered_client_for_gateway
+
+        with pytest.raises(HTTPException) as exc_info:
+            await get_registered_client_for_gateway("gateway123", mock_admin_request, current_user={"email": "admin", "is_admin": True}, db=mock_db)
+
+        assert exc_info.value.status_code == 403
+        mock_db.execute.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_delete_registered_client_denied_without_delete_permission(self, mock_db, mock_admin_request, mock_permission_service):
+        """An eligible admin without admin.oauth_clients:delete is rejected and mutates nothing."""
+        mock_permission_service.check_permission = AsyncMock(return_value=False)
+        client = Mock()
+        client.id = "c1"
+        client.issuer = "https://issuer"
+        client.gateway_id = "g1"
+        mock_db.execute.return_value.scalar_one_or_none.return_value = client
+
+        # First-Party
+        from mcpgateway.routers.oauth_router import delete_registered_client
+
+        with pytest.raises(HTTPException) as exc_info:
+            await delete_registered_client("c1", mock_admin_request, current_user={"email": "admin", "is_admin": True}, db=mock_db)
+
+        assert exc_info.value.status_code == 403
+        mock_db.delete.assert_not_called()
+        mock_db.commit.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_registered_client_routes_use_named_permissions(self, mock_db, mock_admin_request, mock_permission_service):
+        """The routes check the named permissions with admin bypass disabled."""
+        # First-Party
+        from mcpgateway.db import Permissions
+        from mcpgateway.routers.oauth_router import delete_registered_client, list_registered_oauth_clients
+
+        mock_db.execute.return_value.scalars.return_value.all.return_value = []
+        await list_registered_oauth_clients(mock_admin_request, current_user={"email": "admin", "is_admin": True}, db=mock_db)
+        assert mock_permission_service.check_permission.await_args.kwargs["permission"] == Permissions.ADMIN_OAUTH_CLIENTS_READ
+        assert mock_permission_service.check_permission.await_args.kwargs["allow_admin_bypass"] is False
+
+        client = Mock()
+        client.id = "c1"
+        client.issuer = "https://issuer"
+        client.gateway_id = "g1"
+        mock_db.execute.return_value.scalar_one_or_none.return_value = client
+        await delete_registered_client("c1", mock_admin_request, current_user={"email": "admin", "is_admin": True}, db=mock_db)
+        assert mock_permission_service.check_permission.await_args.kwargs["permission"] == Permissions.ADMIN_OAUTH_CLIENTS_DELETE
+        assert mock_permission_service.check_permission.await_args.kwargs["allow_admin_bypass"] is False
+
+    @pytest.mark.asyncio
+    async def test_registered_client_routes_reject_scoped_token_without_permission(self, mock_db, mock_admin_request):
+        """Layer 1: a scoped API token lacking the permission is rejected before RBAC runs."""
+        # First-Party
+        from mcpgateway.routers.oauth_router import delete_registered_client, list_registered_oauth_clients
+
+        scoped_admin = {"email": "admin", "is_admin": True, "token_scopes": ["gateways.read"]}
+
+        with pytest.raises(HTTPException) as exc_info:
+            await list_registered_oauth_clients(mock_admin_request, current_user=scoped_admin, db=mock_db)
+        assert exc_info.value.status_code == 403
+
+        with pytest.raises(HTTPException) as exc_info:
+            await delete_registered_client("c1", mock_admin_request, current_user=scoped_admin, db=mock_db)
+        assert exc_info.value.status_code == 403
+        mock_db.delete.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_registered_client_routes_reject_narrowed_admin_with_permission(self, mock_db):
+        """A team-narrowed admin holding the permission is still rejected (global rows have no team scope)."""
+        narrowed_request = Mock(spec=Request)
+        narrowed_request.state = SimpleNamespace(token_teams=["team-1"])
+
+        # First-Party
+        from mcpgateway.routers.oauth_router import list_registered_oauth_clients
+
+        with pytest.raises(HTTPException) as exc_info:
+            await list_registered_oauth_clients(narrowed_request, current_user={"email": "admin", "is_admin": True}, db=mock_db)
+
+        assert exc_info.value.status_code == 403
+        assert "un-narrowed" in exc_info.value.detail
+        mock_db.execute.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_oauth_callback_gateway_id_with_quotes_escaped(self, mock_db, mock_request):
@@ -3098,11 +3201,11 @@ class TestOAuthClientManagementScopeGuard:
         assert exc_info.value.status_code == 403
 
         with pytest.raises(HTTPException) as exc_info:
-            await get_registered_client_for_gateway("gateway123", request, admin_user, mock_db)
+            await get_registered_client_for_gateway("gateway123", request, current_user=admin_user, db=mock_db)
         assert exc_info.value.status_code == 403
 
         with pytest.raises(HTTPException) as exc_info:
-            await delete_registered_client("client123", request, admin_user, mock_db)
+            await delete_registered_client("client123", request, current_user=admin_user, db=mock_db)
         assert exc_info.value.status_code == 403
         mock_db.delete.assert_not_called()
         mock_db.commit.assert_not_called()
@@ -3121,11 +3224,11 @@ class TestOAuthClientManagementScopeGuard:
         assert exc_info.value.status_code == 403
 
         with pytest.raises(HTTPException) as exc_info:
-            await get_registered_client_for_gateway("gateway123", request, admin_user, mock_db)
+            await get_registered_client_for_gateway("gateway123", request, current_user=admin_user, db=mock_db)
         assert exc_info.value.status_code == 403
 
         with pytest.raises(HTTPException) as exc_info:
-            await delete_registered_client("client123", request, admin_user, mock_db)
+            await delete_registered_client("client123", request, current_user=admin_user, db=mock_db)
         assert exc_info.value.status_code == 403
         mock_db.delete.assert_not_called()
         mock_db.commit.assert_not_called()
