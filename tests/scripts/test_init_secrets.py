@@ -228,11 +228,9 @@ class TestEnsureEnvFileSecrets:
 
         generated = ensure_env_file_secrets(env_file=str(env))
 
-        # JWT_SECRET_KEY is always auto-patched when weak.
         assert "JWT_SECRET_KEY" in generated
+        assert "AUTH_ENCRYPTION_SECRET" in generated
         assert len(generated["JWT_SECRET_KEY"]) == 43  # 32-byte token_urlsafe
-        # AUTH_ENCRYPTION_SECRET is intentionally NOT auto-patched (dev-mode leniency).
-        assert "AUTH_ENCRYPTION_SECRET" not in generated
 
     def test_ensure_patches_os_environ(self, tmp_path, monkeypatch):
         import os as _os
@@ -306,10 +304,8 @@ class TestEnsureEnvFileSecrets:
 
         generated = ensure_env_file_secrets(env_file=str(env))
 
-        # JWT_SECRET_KEY placeholder is always auto-patched.
         assert "JWT_SECRET_KEY" in generated
-        # AUTH_ENCRYPTION_SECRET is intentionally NOT auto-patched — operators set it manually.
-        assert "AUTH_ENCRYPTION_SECRET" not in generated
+        assert "AUTH_ENCRYPTION_SECRET" in generated
 
     def test_ensure_creates_env_file_when_missing(self, tmp_path, monkeypatch):
         env = tmp_path / ".env"
