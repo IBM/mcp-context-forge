@@ -15,6 +15,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 # Local
+from tests.helpers.scope import scoped_request
 from tests.utils.rbac_mocks import patch_rbac_decorators, restore_rbac_decorators
 
 _originals = patch_rbac_decorators()
@@ -134,7 +135,11 @@ async def test_list_roles(monkeypatch):
     service.list_roles = AsyncMock(return_value=[role])
     monkeypatch.setattr(rbac_router, "RoleService", lambda db: service)
 
-    result = await rbac_router.list_roles(scope=None, active_only=True, user={"email": "admin@example.com"}, db=MagicMock())
+    # is_admin=True + an unrestricted (None) request scope resolve list_roles'
+    # Layer-1 filtering to "unrestricted admin" so the global-scope mock role
+    # below isn't filtered out — this test isn't exercising narrowing (see
+    # test_rbac_scope.py for that), just the success path.
+    result = await rbac_router.list_roles(scope=None, active_only=True, user={"email": "admin@example.com", "is_admin": True}, db=MagicMock(), request=scoped_request(None))
     assert result[0].id == "r1"
 
 
@@ -145,7 +150,7 @@ async def test_get_role_not_found(monkeypatch):
     monkeypatch.setattr(rbac_router, "RoleService", lambda db: service)
 
     with pytest.raises(rbac_router.HTTPException) as excinfo:
-        await rbac_router.get_role("missing", user={"email": "admin@example.com"}, db=MagicMock())
+        await rbac_router.get_role("missing", user={"email": "admin@example.com", "is_admin": True}, db=MagicMock(), request=scoped_request(None))
     assert excinfo.value.status_code == 404
 
 
@@ -157,7 +162,9 @@ async def test_get_role_success(monkeypatch):
     monkeypatch.setattr(rbac_router, "RoleService", lambda db: service)
 
     db = MagicMock()
-    result = await rbac_router.get_role("r1", user={"email": "admin@example.com"}, db=db)
+    # is_admin=True + an unrestricted (None) request scope keep the global-scope
+    # mock role visible — see the comment on test_list_roles above.
+    result = await rbac_router.get_role("r1", user={"email": "admin@example.com", "is_admin": True}, db=db, request=scoped_request(None))
     assert result.id == "r1"
     db.commit.assert_called_once()
     db.close.assert_called_once()
@@ -170,7 +177,7 @@ async def test_get_role_generic_error(monkeypatch):
     monkeypatch.setattr(rbac_router, "RoleService", lambda db: service)
 
     with pytest.raises(rbac_router.HTTPException) as excinfo:
-        await rbac_router.get_role("r1", user={"email": "admin@example.com"}, db=MagicMock())
+        await rbac_router.get_role("r1", user={"email": "admin@example.com", "is_admin": True}, db=MagicMock(), request=scoped_request(None))
     assert excinfo.value.status_code == 500
 
 
