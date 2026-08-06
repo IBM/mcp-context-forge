@@ -1519,19 +1519,14 @@ class Settings(BaseSettings):
     def validate_security_combinations(self) -> Self:
         """Validate security setting combinations and raise on unsafe secrets.
 
-        ``jwt_secret_key`` is rejected unconditionally in every environment
-        (development, staging, and production) when it is empty, a placeholder,
-        known-weak, too short, or low-entropy.  Some compose sibling containers
+        Placeholder and weak/known secrets are rejected unconditionally in every
+        environment (development, staging, and production alike).  Some compose
+        sibling containers (e.g. ``register_fast_time``, ``prometheus_token``)
         sign tokens with the raw ``JWT_SECRET_KEY`` environment variable outside
         this validator, so per-process random generation cannot be used as a
         fallback — gateway and sibling containers must share the same secret.
-
-        ``auth_encryption_secret`` follows the same rules in staging and
-        production.  In ``ENVIRONMENT=development``, weak/short/low-entropy
-        values are downgraded to a loud WARNING so local PoC workflows can use
-        a simple value like ``AUTH_ENCRYPTION_SECRET=my-test-salt``.  The
-        ``__REPLACE_ME__`` placeholder is still rejected unconditionally for
-        both fields in every environment — it has no runtime meaning.
+        The only safe option is an unconditional hard-fail that forces operators
+        to provide a real secret before the process will start.
 
         Run ``python -m mcpgateway.scripts.init_secrets`` (or ``make init-secrets``
         for interactive use, ``make init-secrets-patch-env`` to write directly into
@@ -1541,24 +1536,14 @@ class Settings(BaseSettings):
             Itself.
 
         Raises:
-            SecurityConfigurationError: If either secret is empty (both fields,
-                all environments), or if ``jwt_secret_key`` is the
-                ``__REPLACE_ME__`` placeholder, known-weak, too short, or has
-                low per-character entropy (all environments).
-                ``auth_encryption_secret`` only warns for ALL of these in
-                ``ENVIRONMENT=development`` — including the placeholder.
-                Full enforcement applies to ``auth_encryption_secret`` in
-                staging and production.
+            SecurityConfigurationError: If jwt_secret_key or auth_encryption_secret
+                is unset (placeholder), matches a known-weak value, is shorter than
+                ``min_secret_length`` characters, or has low per-character entropy.
         """
+        # client_mode is intentionally NOT exempted — secret-strength enforcement
+        # is always active regardless of deployment profile.
         weak_secrets = {v.lower() for v in self.WEAK_VALUES}
         env = str(self.environment).lower()
-        is_dev = env == "development"
-
-        # jwt_secret_key:          unconditional hard-fail in every environment.
-        # auth_encryption_secret:  ALL non-compliant values (placeholder, insufficient
-        #                          length, known-default, low entropy) are WARNING-only
-        #                          in ENVIRONMENT=development. Full enforcement in
-        #                          staging and production.
         for field_name, secret_field in (
             ("jwt_secret_key", self.jwt_secret_key),
             ("auth_encryption_secret", self.auth_encryption_secret),
@@ -1566,58 +1551,27 @@ class Settings(BaseSettings):
             val = secret_field.get_secret_value()
 
             if not val.strip():
+                raise SecurityConfigurationError(f"{field_name}: secret is empty. Set a real value (run 'python -m mcpgateway.scripts.init_secrets').")
+
+            if len(val) < self.min_secret_length:
                 raise SecurityConfigurationError(
-                    f"{field_name}: secret is empty. "
-                    "To fix, choose one of:\n"
-                    "  make setup                  # recommended: auto-creates .env and patches secrets in-place\n"
-                    "  make init-secrets           # writes secrets to .env.secrets for review, then copy into .env\n"
-                    "  make init-secrets-patch-env # patches secrets directly into an existing .env"
+                    f"{field_name}: too short ({len(val)} chars, minimum {self.min_secret_length}). "
+                    "Run 'python -m mcpgateway.scripts.init_secrets' to generate strong values, "
+                    "or use 'make init-secrets-patch-env' to write them directly into .env."
                 )
 
             is_placeholder = val.lower().startswith("__replace_me__")
             is_weak = val.lower() in weak_secrets
             entropy = calculate_entropy(val)
             is_low_entropy = entropy < 3.5
-            is_too_short = len(val) < self.min_secret_length
 
-            # auth_encryption_secret in development: ALL non-compliant values are
-            # downgraded to a WARNING — including the __REPLACE_ME__ placeholder.
-            # Production and staging always enforce full cryptographic strength.
-            if field_name == "auth_encryption_secret" and is_dev:
-                if is_placeholder or is_too_short or is_weak or is_low_entropy:
-                    logger.warning(
-                        "🔓 SECURITY WARNING - %s: value does not meet minimum cryptographic "
-                        "strength requirements (placeholder, insufficient length, known-default, "
-                        "or low entropy). Permitted only in ENVIRONMENT=development for local "
-                        "PoC use. This configuration MUST NOT be used in staging or production "
-                        "— replace with a cryptographically secure value before any "
-                        "non-development deployment.",
-                        field_name,
-                    )
-                continue
-
-            # For jwt_secret_key and auth_encryption_secret outside development:
-            # placeholder, too-short, weak, and low-entropy all hard-fail.
-            if is_placeholder:
-                raise SecurityConfigurationError(
-                    f"{field_name}: unset placeholder (__REPLACE_ME__) rejected in every environment (including '{env}'). "
-                    "To fix, choose one of:\n"
-                    "  make setup                  # recommended: auto-creates .env and patches secrets in-place\n"
-                    "  make init-secrets           # writes secrets to .env.secrets for review, then copy into .env\n"
-                    "  make init-secrets-patch-env # patches secrets directly into an existing .env"
-                )
-
-            if is_too_short:
-                raise SecurityConfigurationError(
-                    f"{field_name}: too short ({len(val)} chars, minimum {self.min_secret_length}). "
-                    "To fix, choose one of:\n"
-                    "  make setup                  # recommended: auto-creates .env and patches secrets in-place\n"
-                    "  make init-secrets           # writes secrets to .env.secrets for review, then copy into .env\n"
-                    "  make init-secrets-patch-env # patches secrets directly into an existing .env"
-                )
-
-            if is_weak or is_low_entropy:
-                reason = "known-weak/default value" if is_weak else f"low entropy (score {entropy:.2f} < 3.5)"
+            if is_placeholder or is_weak or is_low_entropy:
+                if is_placeholder:
+                    reason = "unset placeholder (__REPLACE_ME__)"
+                elif is_weak:
+                    reason = "known-weak/default value"
+                else:
+                    reason = f"low entropy (score {entropy:.2f} < 3.5)"
                 raise SecurityConfigurationError(
                     f"{field_name}: {reason} rejected in every environment (including '{env}'). "
                     "Cross-process token consistency requires operators to supply a real secret before startup — "
