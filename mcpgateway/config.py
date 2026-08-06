@@ -50,7 +50,6 @@ Examples:
 from functools import lru_cache
 from importlib.resources import files
 import logging
-import math
 import os
 from pathlib import Path, PurePosixPath
 import re
@@ -67,6 +66,7 @@ from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 # First-Party
 from mcpgateway._security_constants import WEAK_VALUES as _CANONICAL_WEAK_VALUES
+from mcpgateway._security_constants import calculate_entropy
 
 # Only configure basic logging if no handlers exist yet
 # This prevents conflicts with LoggingService while ensuring config logging works
@@ -168,22 +168,6 @@ UI_HIDE_SECTION_ALIASES = {
 
 class SecurityConfigurationError(Exception):
     """Exception for critical security configuration issues."""
-
-
-def calculate_entropy(text: str) -> float:
-    """
-    Calculate Shannon entropy to detect low-randomness secrets.
-
-    Args:
-        text (str): The secret string to evaluate.
-
-    Returns:
-        float: The calculated entropy score.
-    """
-    if not text:
-        return 0.0
-    probabilities = [text.count(c) / len(text) for c in set(text)]
-    return -sum(p * math.log2(p) for p in probabilities)
 
 
 class Settings(BaseSettings):
