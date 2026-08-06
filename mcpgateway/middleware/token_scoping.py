@@ -85,6 +85,11 @@ _PERMISSION_PATTERNS: List[Tuple[str, Pattern[str], str]] = [
     ("DELETE", re.compile(r"^/tools/[^/]+(?:$|/)"), Permissions.TOOLS_DELETE),
     ("GET", re.compile(r"^/servers/[^/]+/tools(?:$|/)"), Permissions.TOOLS_READ),
     ("POST", re.compile(r"^/servers/[^/]+/tools/[^/]+/call(?:$|/)"), Permissions.TOOLS_EXECUTE),
+    # Governed SQL REST surface executes generated tools through ToolService.
+    ("GET", re.compile(r"^/api/v1/data(?:$|/)"), Permissions.TOOLS_EXECUTE),
+    ("POST", re.compile(r"^/api/v1/data(?:$|/)"), Permissions.TOOLS_EXECUTE),
+    ("PATCH", re.compile(r"^/api/v1/data(?:$|/)"), Permissions.TOOLS_EXECUTE),
+    ("DELETE", re.compile(r"^/api/v1/data(?:$|/)"), Permissions.TOOLS_EXECUTE),
     # JSON-RPC endpoint — multiplexes tools/call, resources/list, initialize, etc.
     # Fine-grained per-method RBAC is enforced downstream by _ensure_rpc_permission();
     # the middleware only gates transport-level access via servers.use.
@@ -206,9 +211,22 @@ _ADMIN_PERMISSION_PATTERNS: List[Tuple[str, Pattern[str], str]] = [
     ("GET", re.compile(r"^/admin/sections/gateways(?:$|/)"), Permissions.GATEWAYS_READ),
     # Specialized admin domains
     ("GET", re.compile(r"^/admin/events(?:$|/)"), Permissions.ADMIN_EVENTS),
+    ("GET", re.compile(r"^/admin/grpc/[^/]+/metrics/?$"), Permissions.METRICS_READ),
     ("GET", re.compile(r"^/admin/grpc(?:$|/)"), Permissions.ADMIN_GRPC),
     ("POST", re.compile(r"^/admin/grpc(?:$|/)"), Permissions.ADMIN_GRPC),
     ("PUT", re.compile(r"^/admin/grpc(?:$|/)"), Permissions.ADMIN_GRPC),
+    # SQL source credentials are platform-admin only; table policies are team scoped.
+    ("GET", re.compile(r"^/admin/sql/sources(?:$|/)"), Permissions.ADMIN_SQL_SOURCES),
+    ("POST", re.compile(r"^/admin/sql/sources(?:$|/)"), Permissions.ADMIN_SQL_SOURCES),
+    ("PUT", re.compile(r"^/admin/sql/sources(?:$|/)"), Permissions.ADMIN_SQL_SOURCES),
+    ("DELETE", re.compile(r"^/admin/sql/sources(?:$|/)"), Permissions.ADMIN_SQL_SOURCES),
+    ("GET", re.compile(r"^/admin/sql/(?:tables|relations|bindings)(?:$|/)"), Permissions.SQL_TABLES_READ),
+    ("POST", re.compile(r"^/admin/sql/bindings(?:$|/)"), Permissions.SQL_TABLES_MANAGE),
+    ("PATCH", re.compile(r"^/admin/sql/(?:tables|relations)(?:$|/)"), Permissions.SQL_TABLES_MANAGE),
+    ("DELETE", re.compile(r"^/admin/sql/bindings(?:$|/)"), Permissions.SQL_TABLES_MANAGE),
+    ("GET", re.compile(r"^/admin/debug(?:/catalog|/history)?/?$"), Permissions.TOOLS_READ),
+    ("GET", re.compile(r"^/admin/debug/stats/?$"), Permissions.METRICS_READ),
+    ("POST", re.compile(r"^/admin/debug/(?:invoke|stream)/?$"), Permissions.TOOLS_EXECUTE),
     ("GET", re.compile(r"^/admin/plugins(?:$|/)"), Permissions.ADMIN_PLUGINS),
     ("POST", re.compile(r"^/admin/plugins(?:$|/)"), Permissions.ADMIN_PLUGINS),
     ("PUT", re.compile(r"^/admin/plugins(?:$|/)"), Permissions.ADMIN_PLUGINS),

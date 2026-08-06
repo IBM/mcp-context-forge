@@ -1051,6 +1051,13 @@ class TestTokenScopingMiddleware:
         # Other admin route groups
         assert middleware._check_permission_restrictions("/admin/events", "GET", [Permissions.ADMIN_EVENTS]) == True
         assert middleware._check_permission_restrictions("/admin/grpc", "GET", [Permissions.ADMIN_GRPC]) == True
+        assert middleware._check_permission_restrictions("/admin/grpc/service-1/metrics", "GET", [Permissions.METRICS_READ]) == True
+        assert middleware._check_permission_restrictions("/admin/grpc/service-1/metrics", "GET", [Permissions.ADMIN_GRPC]) == False
+        assert middleware._check_permission_restrictions("/admin/sql/sources", "GET", [Permissions.ADMIN_SQL_SOURCES]) == True
+        assert middleware._check_permission_restrictions("/admin/sql/tables", "GET", [Permissions.SQL_TABLES_READ]) == True
+        assert middleware._check_permission_restrictions("/admin/sql/tables/table-1", "PATCH", [Permissions.SQL_TABLES_MANAGE]) == True
+        assert middleware._check_permission_restrictions("/admin/debug/invoke", "POST", [Permissions.TOOLS_EXECUTE]) == True
+        assert middleware._check_permission_restrictions("/admin/debug/stats", "GET", [Permissions.METRICS_READ]) == True
         assert middleware._check_permission_restrictions("/admin/plugins", "GET", [Permissions.ADMIN_PLUGINS]) == True
 
         # Unmapped admin paths default-deny when token has explicit restrictions
