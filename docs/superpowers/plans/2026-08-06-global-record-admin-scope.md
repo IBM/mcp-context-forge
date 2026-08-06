@@ -1436,14 +1436,20 @@ Refs #5982"
 - Create: `tests/unit/mcpgateway/test_global_record_scope.py`
 
 **Interfaces:**
-- Consumes: `wrapper.__mcpgateway_scope_class__` marker (Task 1); the FastAPI `app` from `mcpgateway.main`.
+- Consumes: `wrapper.__mcpgateway_scope_class__` marker (Task 1); `collect_routes` from `tests/helpers/router_helpers.py`.
 - Produces: the five manifests, which become the authoritative route classification.
 
 Seed the manifests from spec Appendix A: `GLOBAL_ONLY` from A.1, `GLOBAL_ONLY_DEFERRED` from A.2 and A.4, `FILTERED_READ` and `TEAM_SCOPABLE` from A.1, `EXEMPT` from A.3.
 
 **`GLOBAL_ONLY_DEFERRED` is load-bearing.** Without it the 64 deferred routes would sit in `GLOBAL_ONLY`, and `test_global_only_routes_carry_the_guard` would fail on day one for every one of them. Splitting the bucket lets the classification test cover them while the guard test only holds routes this change actually migrated.
 
-**Guard detection must inspect dependencies, not just decorators.** `routers/metrics_maintenance.py:27` guards all four of its routes through a router-level `dependencies=[Depends(require_admin_auth)]`. A decorator-only check reports them as unguarded.
+**Do not iterate `app.routes` directly — it does not contain leaf routes.** On FastAPI 0.137+, `include_router` stores lazy `_IncludedRouter` wrappers, so `app.routes` yields 26 wrapper/mount objects with empty paths, not the hundreds of real routes. A guard written against `app.routes` passes vacuously while checking nothing. Use the existing `collect_routes()` helper in `tests/helpers/router_helpers.py`, which descends the wrappers and returns `(full_path, route, include_deps)` triples. `tests/unit/mcpgateway/test_api_versioning_parity.py` is the working precedent.
+
+`collect_routes` also solves guard detection: `include_deps` accumulates dependencies from every enclosing wrapper, which is how `routers/metrics_maintenance.py:27`'s router-level `dependencies=[Depends(require_admin_auth)]` becomes visible. A decorator-only check would report those four routes as unguarded.
+
+**Every route is mounted twice.** `mcpgateway/api/v1/__init__.py` assembles the same sub-routers into a versioned router (prefix `/v1`, `build_v1_router`) and an unversioned legacy router (`build_legacy_router`), and `main.py:12797` mounts both. So `/compliance/reports` and `/v1/compliance/reports` are distinct entries. Manifests key on the **unversioned** path and the test strips a leading `/v1` before lookup, so one entry covers both mounts.
+
+**Mounting is conditional.** The compliance router is included only when `settings.mcpgateway_admin_api_enabled` is true (`api/v1/__init__.py:265`), which defaults to `False` in `config.py`. The classification test therefore checks whatever is mounted; a dedicated presence test asserts the compliance routes appear when the flag is on, so the suite cannot silently lose coverage of them.
 
 - [ ] **Step 1: Write the test**
 
@@ -1467,7 +1473,13 @@ and docs/docs/manage/rbac.md.
 import pytest
 
 # First-Party
+from mcpgateway.config import settings
 from mcpgateway.main import app
+from tests.helpers.router_helpers import collect_routes
+
+# Paths below are the UNVERSIONED form. Every sub-router is mounted twice — under
+# /v1 and unversioned — so _normalize() strips the /v1 prefix before lookup and a
+# single entry covers both mounts.
 
 # Migrated to the canonical rule by this change.
 GLOBAL_ONLY = {
@@ -1484,7 +1496,8 @@ GLOBAL_ONLY = {
 # Same class, guard NOT yet migrated — spec Appendix A.2 and A.4, follow-up issue 1.
 # This set may only shrink. Adding a new route here to dodge the guard assertion
 # is exactly what test_deferred_bucket_only_shrinks prevents.
-GLOBAL_ONLY_DEFERRED_COUNT = 64
+# Populated in Step 3 from the mounted app; 64 entries.
+GLOBAL_ONLY_DEFERRED = set()
 
 # Global records read with Layer-1 filtering instead of a hard deny — spec §3.4.
 FILTERED_READ = {
@@ -1510,24 +1523,41 @@ EXEMPT = {
 }
 
 
+def _normalize(path: str) -> str:
+    """Strip the /v1 mount prefix so one manifest entry covers both mounts.
+
+    Every sub-router is assembled twice — under /v1 by build_v1_router and
+    unversioned by build_legacy_router (mcpgateway/api/v1/__init__.py).
+
+    Args:
+        path: Fully-qualified route path.
+
+    Returns:
+        str: The unversioned form of the path.
+    """
+    return path[3:] if path.startswith("/v1/") else path
+
+
 def _routes():
-    """Yield (method, path, route) for every mounted API route.
+    """Yield (method, unversioned_path, route, include_deps) for every leaf route.
+
+    Uses collect_routes because app.routes holds lazy _IncludedRouter wrappers on
+    FastAPI 0.137+, not leaf routes — iterating it directly makes these tests
+    vacuous.
 
     Yields:
-        tuple: ``(method, path, route)`` for each HTTP method a route serves.
+        tuple: ``(method, path, route, include_deps)`` per HTTP method served.
     """
-    for route in app.routes:
-        for method in getattr(route, "methods", set()) or set():
-            if method in {"HEAD", "OPTIONS"}:
-                continue
-            yield method, route.path, route
+    for full_path, route, include_deps in collect_routes(app):
+        for method in sorted((getattr(route, "methods", set()) or set()) - {"HEAD", "OPTIONS"}):
+            yield method, _normalize(full_path), route, include_deps
 
 
 def _scope_class(route):
     """Return the scope-class marker set by require_global_admin_permission.
 
     Args:
-        route: A mounted route.
+        route: A leaf route.
 
     Returns:
         Optional[str]: The marker, or ``None`` when the guard is absent.
@@ -1535,15 +1565,48 @@ def _scope_class(route):
     return getattr(getattr(route, "endpoint", None), "__mcpgateway_scope_class__", None)
 
 
+def _has_admin_guard(route, include_deps) -> bool:
+    """Whether a route is admin-guarded by decorator or by an enclosing dependency.
+
+    Args:
+        route: A leaf route.
+        include_deps: Dependencies accumulated from enclosing routers.
+
+    Returns:
+        bool: ``True`` when any admin guard applies.
+    """
+    if _scope_class(route) is not None:
+        return True
+    deps = list(getattr(route, "dependencies", []) or []) + list(include_deps or [])
+    return any("admin" in repr(dep).lower() for dep in deps)
+
+
+def test_collect_routes_actually_finds_routes():
+    """Canary: if this returns almost nothing, every other test here is vacuous."""
+    assert len(list(_routes())) > 100, "collect_routes found almost no routes — the drift guard is not actually inspecting the app"
+
+
 def test_global_only_routes_carry_the_guard():
     """Every migrated route must actually carry the decorator, not just be listed."""
-    missing = {(m, p) for m, p, route in _routes() if (m, p) in GLOBAL_ONLY and _scope_class(route) != "global_only"}
+    seen = {(m, p) for m, p, _route, _deps in _routes()}
+    missing = {(m, p) for m, p, route, _deps in _routes() if (m, p) in GLOBAL_ONLY and _scope_class(route) != "global_only"}
     assert not missing, f"GLOBAL_ONLY routes missing @require_global_admin_permission: {sorted(missing)}\nSee docs/docs/manage/rbac.md"
+    # A manifest entry that matches no mounted route is stale, not passing.
+    stale = {entry for entry in GLOBAL_ONLY if entry not in seen and not entry[1].startswith("/compliance")}
+    assert not stale, f"GLOBAL_ONLY entries match no mounted route: {sorted(stale)}"
+
+
+@pytest.mark.skipif(not settings.mcpgateway_admin_api_enabled, reason="compliance router is only mounted when MCPGATEWAY_ADMIN_API_ENABLED is true")
+def test_compliance_routes_are_mounted_and_guarded():
+    """Compliance mounting is flag-gated; assert it explicitly rather than skipping silently."""
+    seen = {(m, p) for m, p, _route, _deps in _routes()}
+    expected = {entry for entry in GLOBAL_ONLY if entry[1].startswith("/compliance")}
+    assert expected <= seen, f"Compliance routes missing from the app: {sorted(expected - seen)}"
 
 
 def test_manifests_are_disjoint():
     """A route must not be silently reclassified by appearing in two buckets."""
-    buckets = [GLOBAL_ONLY, FILTERED_READ, TEAM_SCOPABLE, set(EXEMPT)]
+    buckets = [GLOBAL_ONLY, GLOBAL_ONLY_DEFERRED, FILTERED_READ, TEAM_SCOPABLE, set(EXEMPT)]
     seen = set()
     for bucket in buckets:
         overlap = seen & bucket
@@ -1553,56 +1616,50 @@ def test_manifests_are_disjoint():
 
 def test_deferred_bucket_only_shrinks():
     """Deferral records existing debt; it is not an escape hatch for new routes."""
-    assert GLOBAL_ONLY_DEFERRED_COUNT <= 64, "GLOBAL_ONLY_DEFERRED grew. New global-record routes must use the canonical rule, not join the deferred set. See docs/docs/manage/rbac.md"
+    assert len(GLOBAL_ONLY_DEFERRED) <= 64, "GLOBAL_ONLY_DEFERRED grew. New global-record routes must use the canonical rule, not join the deferred set. See docs/docs/manage/rbac.md"
 
 
-@pytest.mark.xfail(reason="Enable once the A.2/A.4 routes are enumerated route-by-route in the manifest", strict=False)
 def test_every_admin_route_is_classified():
-    """No admin route over a global record may be left unclassified.
-
-    Guard detection inspects resolved route dependencies as well as endpoint
-    attributes: metrics_maintenance guards its routes through a router-level
-    dependencies=[Depends(require_admin_auth)], which a decorator-only check
-    would report as unguarded.
-    """
-    classified = GLOBAL_ONLY | FILTERED_READ | TEAM_SCOPABLE | set(EXEMPT)
-    unclassified = set()
-    for method, path, route in _routes():
-        if (method, path) in classified:
-            continue
-        has_dep_guard = any("admin" in repr(dep).lower() for dep in getattr(route, "dependencies", []) or [])
-        has_endpoint_guard = _scope_class(route) is not None
-        if has_dep_guard or has_endpoint_guard:
-            unclassified.add((method, path))
+    """No admin route over a global record may be left unclassified."""
+    classified = GLOBAL_ONLY | GLOBAL_ONLY_DEFERRED | FILTERED_READ | TEAM_SCOPABLE | set(EXEMPT)
+    unclassified = {(m, p) for m, p, route, deps in _routes() if (m, p) not in classified and _has_admin_guard(route, deps)}
     assert not unclassified, f"Unclassified admin routes: {sorted(unclassified)}\nClassify each in tests/unit/mcpgateway/test_global_record_scope.py per docs/docs/manage/rbac.md"
 ```
 
-- [ ] **Step 2: Run the test**
+- [ ] **Step 2: Run the test — expect the canary to pass and classification to fail**
 
 Run: `pytest tests/unit/mcpgateway/test_global_record_scope.py -v`
-Expected: 3 PASS, 1 XFAIL
+Expected: `test_collect_routes_actually_finds_routes` PASSES (proving the helper reaches real routes), `test_every_admin_route_is_classified` FAILS listing the unclassified admin routes.
 
-`test_every_admin_route_is_classified` starts as `xfail` because enumerating all 64 deferred routes as literal `(method, path)` tuples is mechanical work best done against the mounted app. Complete it in Step 3 rather than leaving it xfail permanently.
+If the canary fails, stop — `collect_routes` is not reaching leaf routes and every other assertion here is meaningless.
 
-- [ ] **Step 3: Enumerate the deferred routes and drop the xfail**
+- [ ] **Step 3: Populate `GLOBAL_ONLY_DEFERRED` from the failure output**
 
-Generate the literal set from the running app:
+The failing assertion prints the exact `(method, path)` tuples. Generate the same list directly to cross-check against spec Appendix A.2/A.4:
 
 ```bash
-python3 -c "
+./.venv/bin/python -c "
+from mcpgateway.config import settings
 from mcpgateway.main import app
-for r in app.routes:
-    for m in sorted((getattr(r,'methods',set()) or set()) - {'HEAD','OPTIONS'}):
-        print(f'    (\"{m}\", \"{r.path}\"),')
-" | sort -u > /tmp/claude-1000/-home-suresh-dev-issue-block2-mcp-context-forge/d0d4c6f1-70ba-4c16-8734-7cc1d0cb94a6/scratchpad/all_routes.txt
+from tests.helpers.router_helpers import collect_routes
+seen=set()
+for full_path, route, deps in collect_routes(app):
+    p = full_path[3:] if full_path.startswith('/v1/') else full_path
+    for m in sorted((getattr(route,'methods',set()) or set())-{'HEAD','OPTIONS'}):
+        seen.add((m,p))
+for m,p in sorted(seen, key=lambda x:(x[1],x[0])):
+    print(f'    (\"{m}\", \"{p}\"),')
+" > "$SCRATCH/all_routes.txt"
 ```
 
-Cross-reference against spec Appendix A.2 and A.4, write the resulting tuples into a `GLOBAL_ONLY_DEFERRED` set, replace `GLOBAL_ONLY_DEFERRED_COUNT` with `len(GLOBAL_ONLY_DEFERRED)`, add it to both `classified` and the disjointness check, and remove the `@pytest.mark.xfail` decorator.
+Set `MCPGATEWAY_ADMIN_API_ENABLED=true` and the required secrets (`JWT_SECRET_KEY`, `AUTH_ENCRYPTION_SECRET`, `BASIC_AUTH_PASSWORD`, `PLATFORM_ADMIN_PASSWORD` — each ≥32 chars) or the app will refuse to import.
+
+Write the A.2/A.4 tuples into `GLOBAL_ONLY_DEFERRED`. Expect 64. Anything appearing in the failure output but absent from Appendix A is a route the spec's audit missed — add it to the appendix as well as the manifest, and say so in the commit.
 
 - [ ] **Step 4: Run the full guard**
 
 Run: `pytest tests/unit/mcpgateway/test_global_record_scope.py -v`
-Expected: 4 PASS, 0 XFAIL
+Expected: 6 PASS (or 5 PASS + 1 SKIP when `MCPGATEWAY_ADMIN_API_ENABLED` is false)
 
 - [ ] **Step 5: Commit**
 
@@ -1611,12 +1668,21 @@ git add tests/unit/mcpgateway/test_global_record_scope.py
 git commit -s -m "test: add drift guard for admin routes over global records
 
 Manifest-driven test that fails when an admin route over a team-less record is
-unclassified, when a migrated route loses its guard, when a route is classified
-twice, or when the deferred bucket grows.
+unclassified, when a migrated route loses its guard, when a manifest entry goes
+stale, when a route is classified twice, or when the deferred bucket grows.
 
-Guard detection inspects resolved route dependencies as well as endpoint
-attributes, because metrics_maintenance guards its routes through a router-level
-dependency that a decorator-only check would miss.
+Routes are collected with tests/helpers/router_helpers.collect_routes rather than
+by iterating app.routes, which on FastAPI 0.137+ holds lazy _IncludedRouter
+wrappers instead of leaf routes — a guard written against it would pass while
+checking nothing. A canary test asserts the collector actually finds routes.
+
+Guard detection inspects the dependencies collect_routes accumulates from
+enclosing routers as well as endpoint attributes, because metrics_maintenance
+guards its routes through a router-level dependency that a decorator-only check
+would miss.
+
+Paths are normalized to their unversioned form, since every sub-router is mounted
+both under /v1 and unversioned.
 
 Refs #5982"
 ```
