@@ -12,6 +12,7 @@ using automatic service discovery through gRPC server reflection.
 
 # Standard
 import asyncio
+import base64
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, AsyncGenerator, Dict, List, Optional, Sequence
@@ -96,11 +97,29 @@ class GrpcEndpoint:
         self._channel: Optional[grpc.Channel] = None
         self._services: Dict[str, Any] = {}
         self._descriptors: Dict[str, Any] = {}
+        self._last_call_metadata: Dict[str, Any] = {"headers": {}, "trailers": {}, "status": None}
         # Per-endpoint private descriptor pool. NEVER use ``descriptor_pool.Default()``: reflected
         # descriptors come from untrusted upstream services, and adding them to the process-wide
         # default pool can cause cross-request type confusion or symbol collisions.
         self._pool = descriptor_pool.DescriptorPool()
         self._factory = message_factory.MessageFactory(pool=self._pool)
+
+    @staticmethod
+    def _metadata_values(values) -> Dict[str, List[str]]:
+        """Convert gRPC metadata into JSON-safe lists while preserving duplicates."""
+        result: Dict[str, List[str]] = {}
+        for key, value in values or ():
+            rendered = base64.b64encode(value).decode() if isinstance(value, bytes) else str(value)
+            result.setdefault(str(key), []).append(rendered)
+        return result
+
+    def get_call_metadata(self) -> Dict[str, Any]:
+        """Return JSON-safe initial metadata, trailers, and final status for the last call."""
+        return {
+            "headers": dict(self._last_call_metadata.get("headers") or {}),
+            "trailers": dict(self._last_call_metadata.get("trailers") or {}),
+            "status": self._last_call_metadata.get("status"),
+        }
 
     def _validate_target_and_tls(self) -> None:
         """Validate the target address and any TLS paths against SSRF / traversal rules.
@@ -334,9 +353,15 @@ class GrpcEndpoint:
 
         def _call(req):
             """Sync gRPC unary call dispatched to a thread executor; binds ``timeout`` when set."""
-            return unary(req, timeout=timeout) if timeout is not None else unary(req)
+            metadata = list(self._metadata.items())
+            return unary.with_call(req, timeout=timeout, metadata=metadata) if timeout is not None else unary.with_call(req, metadata=metadata)
 
-        response_msg = await asyncio.get_event_loop().run_in_executor(None, _call, request_msg)
+        response_msg, call = await asyncio.get_event_loop().run_in_executor(None, _call, request_msg)
+        self._last_call_metadata = {
+            "headers": self._metadata_values(call.initial_metadata()),
+            "trailers": self._metadata_values(call.trailing_metadata()),
+            "status": call.code().name if call.code() is not None else None,
+        }
 
         # Convert protobuf response to JSON.
         # protobuf>=5 renamed `including_default_value_fields` -> `always_print_fields_with_no_presence`; do not revert.
@@ -350,6 +375,7 @@ class GrpcEndpoint:
         service: str,
         method: str,
         request_data: Dict[str, Any],
+        timeout: Optional[float] = None,
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """Invoke a server-streaming gRPC method.
 
@@ -357,6 +383,7 @@ class GrpcEndpoint:
             service: Service name
             method: Method name
             request_data: JSON request data
+            timeout: Per-RPC deadline in seconds
 
         Yields:
             JSON response chunks
@@ -407,17 +434,60 @@ class GrpcEndpoint:
         channel = self._channel
         method_path = f"/{service}/{method}"
 
-        stream_call = channel.unary_stream(method_path, request_serializer=request_msg.SerializeToString, response_deserializer=response_class.FromString)(request_msg)
+        stream_call = channel.unary_stream(method_path, request_serializer=request_msg.SerializeToString, response_deserializer=response_class.FromString)(
+            request_msg,
+            timeout=timeout,
+            metadata=list(self._metadata.items()),
+        )
 
         # Yield responses as they arrive
+        stream_completed = False
+
+        def _final_metadata():
+            """Read terminal streaming metadata in the executor thread."""
+            code = stream_call.code()
+            return stream_call.trailing_metadata(), code.name if code is not None else None
+
         try:
-            for response_msg in stream_call:
+            iterator = iter(stream_call)
+
+            def _initial_metadata():
+                """Read initial streaming metadata in the executor thread."""
+                return stream_call.initial_metadata()
+
+            initial_metadata = await asyncio.get_running_loop().run_in_executor(None, _initial_metadata)
+            self._last_call_metadata = {"headers": self._metadata_values(initial_metadata), "trailers": {}, "status": None}
+
+            def _next_response():
+                """Read the next stream item without leaking StopIteration into asyncio."""
+                try:
+                    return next(iterator)
+                except StopIteration:
+                    return None
+
+            while True:
+                response_msg = await asyncio.get_running_loop().run_in_executor(None, _next_response)
+                if response_msg is None:
+                    stream_completed = True
+                    break
                 # See note in invoke() about the kwarg rename in protobuf >=5.x.
                 response_dict = json_format.MessageToDict(response_msg, preserving_proto_field_name=True, always_print_fields_with_no_presence=True)
                 yield response_dict
         except grpc.RpcError as e:
             logger.error(f"Streaming RPC error: {e}")
             raise
+        finally:
+            if not stream_completed:
+                stream_call.cancel()
+
+            try:
+                trailing_metadata, status_code = await asyncio.get_running_loop().run_in_executor(None, _final_metadata)
+                self._last_call_metadata["trailers"] = self._metadata_values(trailing_metadata)
+                self._last_call_metadata["status"] = status_code
+            except Exception:  # pylint: disable=broad-except
+                logger.debug("Unable to capture final gRPC streaming metadata", exc_info=True)
+            if stream_completed:
+                stream_call.cancel()
 
         logger.debug(f"Streaming complete for {service}.{method}")
 

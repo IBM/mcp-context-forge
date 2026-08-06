@@ -1739,6 +1739,21 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             else:
                 logger.info("Metrics buffer service initialized (recording disabled)")
 
+        if settings.mcpgateway_grpc_enabled and settings.mcpgateway_grpc_health_enabled:
+            # First-Party
+            from mcpgateway.services.grpc_monitoring_service import get_grpc_monitoring_service  # pylint: disable=import-outside-toplevel
+
+            grpc_monitoring_service = get_grpc_monitoring_service()
+            await grpc_monitoring_service.start()
+            logger.info("gRPC health monitoring service initialized")
+
+        if settings.mcpgateway_grpc_enabled and settings.mcpgateway_proto_scan_enabled:
+            # First-Party
+            from mcpgateway.services.proto_scan_service import get_proto_scan_service  # pylint: disable=import-outside-toplevel
+
+            await get_proto_scan_service().start()
+            logger.info("Proto manifest scanner initialized")
+
         # Initialize metrics cleanup service for automatic deletion of old metrics
         if settings.metrics_cleanup_enabled:
             # First-Party
@@ -1971,6 +1986,18 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
             metrics_buffer_service = get_metrics_buffer_service()
             services_to_shutdown.insert(0, metrics_buffer_service)  # Shutdown first to flush metrics
+
+        if settings.mcpgateway_grpc_enabled and settings.mcpgateway_grpc_health_enabled:
+            # First-Party
+            from mcpgateway.services.grpc_monitoring_service import get_grpc_monitoring_service  # pylint: disable=import-outside-toplevel
+
+            services_to_shutdown.insert(0, get_grpc_monitoring_service())
+
+        if settings.mcpgateway_grpc_enabled and settings.mcpgateway_proto_scan_enabled:
+            # First-Party
+            from mcpgateway.services.proto_scan_service import get_proto_scan_service  # pylint: disable=import-outside-toplevel
+
+            services_to_shutdown.insert(0, get_proto_scan_service())
 
         # Add metrics rollup service if enabled (shutdown before cleanup)
         if settings.metrics_rollup_enabled:
@@ -12795,6 +12822,14 @@ else:  # pragma: no cover
 
 # Internal utility routes (/_internal/*) — must stay at root
 app.include_router(utility_router)
+
+# Governed SQL data API has an explicit /api/v1/data contract and therefore is
+# mounted at the application root rather than under the gateway's /v1 router.
+if settings.mcpgateway_sql_api_enabled:
+    from mcpgateway.routers.sql_data import data_router as sql_data_router  # pylint: disable=import-outside-toplevel
+
+    app.include_router(sql_data_router)
+    logger.info("Governed SQL data API included")
 
 # RFC well-known endpoints (/.well-known/*)
 app.include_router(well_known_router)

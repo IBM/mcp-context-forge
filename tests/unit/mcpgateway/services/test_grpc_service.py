@@ -664,7 +664,7 @@ class TestGrpcService:
             tool = call[0][0]
             assert tool.integration_type == "gRPC"
             assert tool.grpc_service_id == sample_db_service.id
-            assert tool.created_via == "grpc-reflection"
+            assert tool.created_via == "grpc-schema-sync"
             assert tool.federation_source == sample_db_service.name
             assert tool.url == sample_db_service.target
             assert tool.owner_email == "test@example.com"
@@ -734,10 +734,11 @@ class TestGrpcService:
 
         service._sync_tools_from_reflection(mock_db, sample_db_service)
 
-        # Stale-tool cleanup fires exactly 3 deletes (ToolMetric, server_tool_association, DbTool)
-        # plus the initial SELECT for existing tools. Asserting on call_count is more robust than
-        # string-matching the SQLAlchemy Delete object repr.
-        assert mock_db.execute.call_count == 4
+        # Stale methods retain tool identity, server relationships, and metrics.
+        assert mock_db.execute.call_count == 1
+        assert stale_tool.enabled is False
+        assert stale_tool.deprecated is True
+        assert stale_tool.reachable is False
 
     def test_sync_tools_empty_discovered_services(self, service, mock_db, sample_db_service):
         """Test _sync_tools_from_reflection with empty discovered services and no existing tools."""
@@ -868,10 +869,10 @@ class TestGrpcService:
 
         service._sync_tools_from_reflection(mock_db, sample_db_service)
 
-        # Should have added 3 tools total
-        assert mock_db.add.call_count == 3
+        # Client-streaming methods remain catalog-only and are not executable MCP tools.
+        assert mock_db.add.call_count == 2
         tool_names = {call[0][0].original_name for call in mock_db.add.call_args_list}
-        assert tool_names == {"pkg.ServiceA.MethodA", "pkg.ServiceB.MethodB1", "pkg.ServiceB.MethodB2"}
+        assert tool_names == {"pkg.ServiceA.MethodA", "pkg.ServiceB.MethodB1"}
 
     def test_sync_tools_skips_underscore_keys(self, service, mock_db, sample_db_service):
         """Test that _sync_tools_from_reflection skips _-prefixed keys like _file_descriptors."""
@@ -962,13 +963,15 @@ class TestGrpcService:
     @patch("mcpgateway.translate_grpc.GrpcEndpoint")
     async def test_invoke_method_with_stored_descriptors(self, mock_endpoint_cls, service, mock_db, sample_db_service):
         """Test invoke_method uses stored descriptors instead of reflection."""
-        # Standard
-        import base64
+        from google.protobuf.descriptor_pb2 import FileDescriptorProto, FileDescriptorSet
+        from mcpgateway.db import GrpcSchemaArtifact
 
-        fake_descriptor_bytes = b"\x0a\x05hello"
+        file_proto = FileDescriptorProto(name="legacy.proto", package="test", syntax="proto3")
+        descriptor_set = FileDescriptorSet()
+        descriptor_set.file.append(file_proto)
         sample_db_service.enabled = True
+        sample_db_service.active_artifact_id = "artifact-1"
         sample_db_service.discovered_services = {
-            "_file_descriptors": [base64.b64encode(fake_descriptor_bytes).decode("ascii")],
             "test.Svc": {
                 "name": "test.Svc",
                 "methods": [
@@ -981,6 +984,16 @@ class TestGrpcService:
         sample_db_service.tls_key_path = None
         sample_db_service.grpc_metadata = {}
 
+        mock_db.get.return_value = GrpcSchemaArtifact(
+            id="artifact-1",
+            grpc_service_id=sample_db_service.id,
+            version=1,
+            source_type="legacy",
+            content_hash="hash-1",
+            descriptor_set=descriptor_set.SerializeToString(),
+            source_info={},
+            is_active=True,
+        )
         mock_db.execute.return_value.scalar_one_or_none.return_value = sample_db_service
 
         mock_ep_instance = AsyncMock()
@@ -993,16 +1006,12 @@ class TestGrpcService:
         result = await service.invoke_method(mock_db, sample_db_service.id, "test.Svc.Do", {"key": "value"})
 
         assert result == {"result": "ok"}
-        # Should have been created with reflection_enabled=False
         mock_endpoint_cls.assert_called_once()
         call_kwargs = mock_endpoint_cls.call_args[1]
         assert call_kwargs["reflection_enabled"] is False
-        # Should have called load_file_descriptors
         mock_ep_instance.load_file_descriptors.assert_called_once()
-        # Should have set _services (excluding _file_descriptors)
         assert "_file_descriptors" not in mock_ep_instance._services
         mock_ep_instance.close.assert_called_once()
-
     @patch("mcpgateway.translate_grpc.GrpcEndpoint")
     async def test_invoke_method_without_stored_descriptors(self, mock_endpoint_cls, service, mock_db, sample_db_service):
         """Test invoke_method falls back to reflection when no stored descriptors."""
@@ -1039,17 +1048,16 @@ class TestGrpcService:
     @patch("mcpgateway.services.grpc_service.reflection_pb2_grpc")
     @patch("mcpgateway.services.grpc_service.reflection_pb2")
     async def test_perform_reflection_stores_file_descriptor_bytes(self, mock_reflection_pb2, mock_reflection_pb2_grpc, mock_grpc, service, mock_db, sample_db_service):
-        """Test that _perform_reflection collects file descriptor bytes into _file_descriptors."""
-        # Standard
-        import base64
-
+        """Test that reflection normalizes descriptor bytes into an artifact."""
         # Third-Party
-        from google.protobuf.descriptor_pb2 import FileDescriptorProto  # pylint: disable=no-name-in-module
+        from google.protobuf.descriptor_pb2 import FileDescriptorProto, FileDescriptorSet  # pylint: disable=no-name-in-module
 
         # Build a real serialized FileDescriptorProto
         fd_proto = FileDescriptorProto()
         fd_proto.name = "test.proto"
         fd_proto.package = "testpkg"
+        fd_proto.message_type.add(name="Req")
+        fd_proto.message_type.add(name="Resp")
         svc_desc = fd_proto.service.add()
         svc_desc.name = "TestService"
         m = svc_desc.method.add()
@@ -1079,20 +1087,15 @@ class TestGrpcService:
 
         mock_grpc.insecure_channel.return_value = MagicMock()
 
-        # Patch _sync_tools_from_reflection to avoid DB operations
-        with patch.object(service, "_sync_tools_from_reflection"):
+        # Patch persistence while still verifying the normalized protoset payload.
+        with patch.object(service, "_sync_tools_from_reflection"), patch("mcpgateway.services.grpc_service.GrpcSchemaService.import_artifact") as import_artifact:
             await service._perform_reflection(mock_db, sample_db_service)
 
-        # Verify _file_descriptors was populated
-        discovered = sample_db_service.discovered_services
-        assert "_file_descriptors" in discovered
-        assert len(discovered["_file_descriptors"]) == 1
-        # Verify it's valid base64-encoded proto bytes
-        decoded = base64.b64decode(discovered["_file_descriptors"][0])
-        assert decoded == proto_bytes
-        # Verify service was discovered
-        assert "testpkg.TestService" in discovered
-        assert discovered["testpkg.TestService"]["methods"][0]["name"] == "DoStuff"
+        artifact_payload = import_artifact.call_args.args[2]
+        descriptor_set = FileDescriptorSet()
+        descriptor_set.ParseFromString(artifact_payload)
+        assert [item.SerializeToString() for item in descriptor_set.file] == [proto_bytes]
+        assert import_artifact.call_args.kwargs["source_type"] == "reflection"
 
 
 class TestSecurityHardening:
@@ -1763,7 +1766,12 @@ class TestSyncToolsSchemaChange:
             "x-grpc-output-type": ".test.OutputType",
             "x-grpc-client-streaming": False,
             "x-grpc-server-streaming": False,
+            "examples": [{}],
         }
+        existing_tool.output_schema = None
+        existing_tool.enabled = True
+        existing_tool.deprecated = False
+        existing_tool.reachable = True
 
         mock_db = MagicMock(spec=Session)
         mock_scalars = MagicMock()
@@ -1830,7 +1838,12 @@ class TestSyncToolsUnchanged:
             "x-grpc-output-type": ".test.OutputType",
             "x-grpc-client-streaming": False,
             "x-grpc-server-streaming": False,
+            "examples": [{}],
         }
+        existing_tool.output_schema = None
+        existing_tool.enabled = True
+        existing_tool.deprecated = False
+        existing_tool.reachable = True
 
         mock_db = MagicMock(spec=Session)
         mock_scalars = MagicMock()

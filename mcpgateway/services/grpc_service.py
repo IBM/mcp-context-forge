@@ -12,9 +12,11 @@ retrieval, updates, activation toggling, and deletion.
 
 # Standard
 import asyncio
-import base64
+from contextvars import ContextVar
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Union
+import sys
+import time
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Union
 
 try:
     # Third-Party
@@ -30,6 +32,7 @@ except ImportError:
     reflection_pb2_grpc = None  # type: ignore
 
 # Third-Party
+from google.protobuf.descriptor_pb2 import FileDescriptorSet
 from pydantic import ValidationError
 from sqlalchemy import and_, delete, desc, select, update
 from sqlalchemy.orm import Session
@@ -38,12 +41,17 @@ from sqlalchemy.orm import Session
 from mcpgateway import translate_grpc
 from mcpgateway.config import settings
 from mcpgateway.db import EmailTeam
+from mcpgateway.db import GrpcSchemaArtifact
 from mcpgateway.db import GrpcService as DbGrpcService
 from mcpgateway.db import server_tool_association
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import ToolMetric
-from mcpgateway.schemas import GrpcServiceCreate, GrpcServiceRead, GrpcServiceUpdate
+from mcpgateway.observability import create_child_span
+from mcpgateway.schemas import GrpcSchemaDiff, GrpcServiceCreate, GrpcServiceRead, GrpcServiceUpdate
+from mcpgateway.services.encryption_service import get_encryption_service
+from mcpgateway.services.grpc_schema_service import GrpcSchemaService
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.services.metrics import grpc_client_calls_counter, grpc_client_duration_histogram, grpc_reflection_counter
 from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.display_name import generate_display_name
@@ -54,6 +62,10 @@ from mcpgateway.utils.pagination import unified_paginate
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
 
+# Propagate the bounded native gRPC status to ToolService's unified metric row.
+# ContextVar keeps overlapping async invocations isolated.
+grpc_status_context: ContextVar[Optional[str]] = ContextVar("grpc_status_context", default=None)
+
 
 # DoS guards for descriptors returned by ``grpc.reflection`` — intentionally hardcoded
 # (not exposed via settings) so a config change cannot silently weaken these limits.
@@ -61,6 +73,33 @@ _GRPC_MAX_DESCRIPTOR_BYTES = 1 * 1024 * 1024
 _GRPC_MAX_DESCRIPTOR_COUNT = 1024
 _GRPC_MAX_TOTAL_DESCRIPTOR_BYTES = 8 * 1024 * 1024
 _GRPC_TOOL_NAME_MAX_LENGTH = 256
+_SENSITIVE_METADATA_FRAGMENTS = ("authorization", "cookie", "password", "secret", "token", "api-key", "api_key", "credential")
+
+
+def _encrypt_metadata(metadata: Dict[str, str]) -> Dict[str, str]:
+    """Encrypt new metadata values and transparently migrate legacy plaintext."""
+    encryption = get_encryption_service(settings.auth_encryption_secret)
+    return {key: value if encryption.is_encrypted(value) else encryption.encrypt_secret(value) for key, value in metadata.items()}
+
+
+def _decrypt_metadata(metadata: Dict[str, str]) -> Dict[str, str]:
+    """Decrypt stored metadata for an outbound gRPC call only."""
+    encryption = get_encryption_service(settings.auth_encryption_secret)
+    decrypted: Dict[str, str] = {}
+    for key, value in metadata.items():
+        plaintext = encryption.decrypt_secret_or_plaintext(value)
+        if plaintext is not None:
+            decrypted[key] = plaintext
+    return decrypted
+
+
+def _masked_call_metadata(metadata: Dict[str, Any]) -> Dict[str, Any]:
+    """Mask sensitive response metadata before returning debugger diagnostics."""
+    result: Dict[str, Any] = {"status": metadata.get("status")}
+    for section in ("headers", "trailers"):
+        values = metadata.get(section) or {}
+        result[section] = {key: ["********"] if any(fragment in key.lower() for fragment in _SENSITIVE_METADATA_FRAGMENTS) else value for key, value in values.items()}
+    return result
 
 
 def _enforce_descriptor_limits(file_descriptor_bytes_set: set) -> None:
@@ -176,7 +215,12 @@ class GrpcService:
             tls_enabled=service_data.tls_enabled,
             tls_cert_path=service_data.tls_cert_path,
             tls_key_path=service_data.tls_key_path,
-            grpc_metadata=service_data.grpc_metadata or {},
+            grpc_metadata=_encrypt_metadata(service_data.grpc_metadata or {}),
+            discovery_mode=service_data.discovery_mode,
+            health_check_enabled=service_data.health_check_enabled,
+            health_check_interval=service_data.health_check_interval,
+            health_check_timeout=service_data.health_check_timeout,
+            health_failure_threshold=service_data.health_failure_threshold,
             tags=service_data.tags or [],
             team_id=service_data.team_id,
             owner_email=user_email or service_data.owner_email,
@@ -199,7 +243,7 @@ class GrpcService:
         logger.info("Registered gRPC service: %s (target: %s)", db_service.name, db_service.target)
 
         # Perform initial reflection if enabled
-        if db_service.reflection_enabled:
+        if db_service.reflection_enabled and db_service.discovery_mode != "artifact":
             try:
                 await self._perform_reflection(db, db_service)
             except Exception as e:
@@ -367,13 +411,17 @@ class GrpcService:
 
         # Check name conflict if name is being changed
         if service_data.name and service_data.name != service.name:
-            existing = db.execute(select(DbGrpcService).where(and_(DbGrpcService.name == service_data.name, DbGrpcService.id != service_id))).scalar_one_or_none()  # pylint: disable=comparison-with-callable
+            existing = db.execute(
+                select(DbGrpcService).where(and_(DbGrpcService.name == service_data.name, DbGrpcService.id != service_id))
+            ).scalar_one_or_none()  # pylint: disable=comparison-with-callable
 
             if existing:
                 raise GrpcServiceNameConflictError(name=service_data.name, is_active=existing.enabled, service_id=existing.id)
 
         # Update fields
         update_data = service_data.model_dump(exclude_unset=True)
+        if "grpc_metadata" in update_data:
+            update_data["grpc_metadata"] = _encrypt_metadata(update_data["grpc_metadata"] or {})
         # Layer 1 invariant: visibility/team/owner changes on the parent service must propagate
         # to every child tool in the same transaction, or already-discovered tools will keep the
         # old token-scoping. Snapshot the previous values before mutation so we know what changed.
@@ -381,6 +429,10 @@ class GrpcService:
         previous_scoping = {f: getattr(service, f) for f in scoping_fields}
         for field, value in update_data.items():
             setattr(service, field, value)
+
+        # Updating or synchronizing a service is the migration point for legacy
+        # plaintext metadata values.
+        service.grpc_metadata = _encrypt_metadata(service.grpc_metadata or {})
 
         service.updated_at = datetime.now(timezone.utc)
 
@@ -594,18 +646,20 @@ class GrpcService:
         else:
             channel = grpc.insecure_channel(service.target)
 
+        reflection_outcome = "error"
+        span_context = create_child_span(
+            "grpc.reflection",
+            {"rpc.system": "grpc", "rpc.service": "grpc.reflection.v1alpha.ServerReflection", "grpc.service.id": service.id, "server.address": service.target},
+        )
+        span_context.__enter__()  # noqa  # Explicit lifecycle preserves the active exception for __exit__.
         try:  # pylint: disable=too-many-nested-blocks
-            # Import here to avoid circular dependency
-            # Third-Party
-            from google.protobuf.descriptor_pb2 import FileDescriptorProto  # pylint: disable=import-outside-toplevel,no-name-in-module
-
             # Create reflection stub
             stub = reflection_pb2_grpc.ServerReflectionStub(channel)
 
             # List services
             request = reflection_pb2.ServerReflectionRequest(list_services="")  # pylint: disable=no-member
 
-            response = stub.ServerReflectionInfo(iter([request]))
+            response = stub.ServerReflectionInfo(iter([request]), timeout=float(settings.tool_timeout))
 
             service_names = []
             for resp in response:
@@ -618,78 +672,60 @@ class GrpcService:
                         service_names.append(service_name)
 
             # Get detailed information for each service
-            discovered_services = {}
             file_descriptor_bytes_set: set[bytes] = set()  # Deduplicate across services
-            service_count = 0
-            method_count = 0
 
             for service_name in service_names:
                 try:
                     # Request file descriptor containing this service
                     file_request = reflection_pb2.ServerReflectionRequest(file_containing_symbol=service_name)  # pylint: disable=no-member
 
-                    file_response = stub.ServerReflectionInfo(iter([file_request]))
+                    file_response = stub.ServerReflectionInfo(iter([file_request]), timeout=float(settings.tool_timeout))
 
                     for resp in file_response:
                         if resp.HasField("file_descriptor_response"):
-                            # Process file descriptors
+                            # Reflection returns the defining file plus imports.
                             for file_desc_proto_bytes in resp.file_descriptor_response.file_descriptor_proto:
-                                # Store raw bytes for later descriptor pool population
                                 file_descriptor_bytes_set.add(file_desc_proto_bytes)
-
-                                file_desc_proto = FileDescriptorProto()
-                                file_desc_proto.ParseFromString(file_desc_proto_bytes)
-
-                                # Extract service and method information
-                                for service_desc in file_desc_proto.service:
-                                    if service_desc.name in service_name or service_name.endswith(service_desc.name):
-                                        full_service_name = f"{file_desc_proto.package}.{service_desc.name}" if file_desc_proto.package else service_desc.name
-
-                                        methods = []
-                                        for method_desc in service_desc.method:
-                                            methods.append(
-                                                {
-                                                    "name": method_desc.name,
-                                                    "input_type": method_desc.input_type,
-                                                    "output_type": method_desc.output_type,
-                                                    "client_streaming": method_desc.client_streaming,
-                                                    "server_streaming": method_desc.server_streaming,
-                                                }
-                                            )
-                                            method_count += 1
-
-                                        discovered_services[full_service_name] = {
-                                            "name": full_service_name,
-                                            "methods": methods,
-                                            "package": file_desc_proto.package,
-                                        }
-                                        service_count += 1
 
                 except Exception as detail_error:
                     logger.warning("Failed to get details for %s: %s", service_name, detail_error)
-                    # Add basic info even if detailed discovery fails
-                    discovered_services[service_name] = {
-                        "name": service_name,
-                        "methods": [],
-                    }
-                    service_count += 1
 
             _enforce_descriptor_limits(file_descriptor_bytes_set)
 
-            # Store base64-encoded file descriptor protos so invoke_method can
-            # populate the descriptor pool without a reflection round-trip.
-            discovered_services["_file_descriptors"] = [base64.b64encode(b).decode("ascii") for b in file_descriptor_bytes_set]
+            descriptor_set = FileDescriptorSet()
+            for descriptor_bytes in file_descriptor_bytes_set:
+                descriptor_set.file.add().ParseFromString(descriptor_bytes)
 
-            service.discovered_services = discovered_services
-            service.service_count = service_count
-            service.method_count = method_count
+            active_artifact_id = getattr(service, "active_artifact_id", None)
+            active_artifact = db.get(GrpcSchemaArtifact, active_artifact_id) if isinstance(active_artifact_id, str) and active_artifact_id else None
+            discovery_mode = getattr(service, "discovery_mode", None) or "auto"
+            active_source_type = getattr(active_artifact, "source_type", None) if active_artifact is not None else None
+            activate_reflection = discovery_mode == "reflection" or active_artifact is None or active_source_type in {"reflection", "legacy"}
+            if file_descriptor_bytes_set:
+                GrpcSchemaService.import_artifact(
+                    db,
+                    service,
+                    descriptor_set.SerializeToString(),
+                    "reflection.protoset",
+                    created_by="system",
+                    activate=activate_reflection,
+                    source_type="reflection",
+                )
+            elif active_artifact is None:
+                service.discovered_services = {}
+                service.service_count = 0
+                service.method_count = 0
             service.last_reflection = datetime.now(timezone.utc)
             service.reachable = True
 
-            # Sync discovered methods as MCP tools
-            self._sync_tools_from_reflection(db, service)
+            # Only an activated artifact changes the executable catalog. A
+            # conflicting uploaded artifact remains authoritative and drift is
+            # displayed for an administrator to resolve.
+            if activate_reflection:
+                self._sync_tools_from_reflection(db, service)
 
             db.commit()
+            reflection_outcome = "success"
 
         except Exception as e:
             logger.error("Reflection error for %s: %s", service.target, e)
@@ -699,6 +735,8 @@ class GrpcService:
 
         finally:
             channel.close()
+            grpc_reflection_counter.labels(service=service.slug, outcome=reflection_outcome).inc()
+            span_context.__exit__(*sys.exc_info())
 
     def _sync_tools_from_reflection(
         self,
@@ -728,15 +766,15 @@ class GrpcService:
         existing_tools = db.execute(select(DbTool).where(DbTool.grpc_service_id == service.id)).scalars().all()
         existing_tools_map = {tool.original_name: tool for tool in existing_tools}
 
-        # Remove stale tools (tools whose names are no longer in discovered methods)
-        stale_tool_ids = [tool.id for tool in existing_tools if tool.original_name not in expected_tool_names]
-        if stale_tool_ids:
-            for i in range(0, len(stale_tool_ids), 500):
-                chunk = stale_tool_ids[i : i + 500]
-                db.execute(delete(ToolMetric).where(ToolMetric.tool_id.in_(chunk)))
-                db.execute(delete(server_tool_association).where(server_tool_association.c.tool_id.in_(chunk)))
-                db.execute(delete(DbTool).where(DbTool.id.in_(chunk)))
-            logger.info("Removed %d stale tools for gRPC service %s", len(stale_tool_ids), service.name)
+        # Preserve IDs, server relations, and metrics when a method disappears.
+        # Reappearing methods are re-enabled below.
+        stale_tools = [tool for tool in existing_tools if tool.original_name not in expected_tool_names]
+        for stale_tool in stale_tools:
+            stale_tool.enabled = False
+            stale_tool.deprecated = True
+            stale_tool.reachable = False
+        if stale_tools:
+            logger.info("Deprecated %d stale tools for gRPC service %s", len(stale_tools), service.name)
 
         tools_created = 0
         tools_updated = 0
@@ -746,21 +784,29 @@ class GrpcService:
                 continue
             for method in svc_desc.get("methods", []):
                 tool_name = f"{svc_name}.{method['name']}"
+                # Client-streaming and bidi methods remain visible in the gRPC
+                # catalog but are intentionally not executable MCP tools.
+                if method.get("client_streaming"):
+                    existing_tool = existing_tools_map.get(tool_name)
+                    if existing_tool:
+                        existing_tool.enabled = False
+                        existing_tool.deprecated = True
+                    continue
                 # Per-tool try/except: a single bad method must not poison the whole sync.
                 try:
                     _validate_reflected_tool_name(tool_name)
                     description = f"gRPC method {tool_name}"
-                    # ``properties: {}`` is intentional: gRPC argument shape is validated at the
-                    # protobuf invocation layer, not at the MCP tool-call layer. The actual proto
-                    # types are recorded in the x-grpc-* extensions for tooling/inspection.
-                    input_schema = {
-                        "type": "object",
-                        "properties": {},
-                        "x-grpc-input-type": method.get("input_type", ""),
-                        "x-grpc-output-type": method.get("output_type", ""),
-                        "x-grpc-client-streaming": method.get("client_streaming", False),
-                        "x-grpc-server-streaming": method.get("server_streaming", False),
-                    }
+                    input_schema = dict(method.get("input_schema") or {"type": "object", "properties": {}})
+                    input_schema.update(
+                        {
+                            "x-grpc-input-type": method.get("input_type", ""),
+                            "x-grpc-output-type": method.get("output_type", ""),
+                            "x-grpc-client-streaming": method.get("client_streaming", False),
+                            "x-grpc-server-streaming": method.get("server_streaming", False),
+                            "examples": [method.get("request_example", {})],
+                        }
+                    )
+                    output_schema = method.get("output_schema")
 
                     existing_tool = existing_tools_map.get(tool_name)
                     if existing_tool:
@@ -772,6 +818,9 @@ class GrpcService:
                             changed = True
                         if existing_tool.input_schema != input_schema:
                             existing_tool.input_schema = input_schema
+                            changed = True
+                        if existing_tool.output_schema != output_schema:
+                            existing_tool.output_schema = output_schema
                             changed = True
                         if existing_tool.url != service.target:
                             existing_tool.url = service.target
@@ -787,6 +836,11 @@ class GrpcService:
                         if existing_tool.owner_email != service.owner_email:
                             existing_tool.owner_email = service.owner_email
                             changed = True
+                        if not existing_tool.enabled or existing_tool.deprecated or not existing_tool.reachable:
+                            existing_tool.enabled = True
+                            existing_tool.deprecated = False
+                            existing_tool.reachable = True
+                            changed = True
                         if changed:
                             tools_updated += 1
                     else:
@@ -800,8 +854,10 @@ class GrpcService:
                             description=description,
                             integration_type="gRPC",
                             input_schema=input_schema,
+                            output_schema=output_schema,
+                            annotations={"readOnlyHint": False, "x-grpc-server-streaming": method.get("server_streaming", False)},
                             created_by="system",
-                            created_via="grpc-reflection",
+                            created_via="grpc-schema-sync",
                             federation_source=service.name,
                             version=1,
                             team_id=service.team_id,
@@ -824,6 +880,55 @@ class GrpcService:
             tools_failed,
         )
 
+    async def import_schema(
+        self,
+        db: Session,
+        service_id: str,
+        payload: bytes,
+        filename: str,
+        user_email: Optional[str],
+        activate: bool = True,
+    ) -> GrpcSchemaArtifact:
+        """Import and optionally activate a Proto, ZIP, or protoset artifact."""
+        service = db.get(DbGrpcService, service_id)
+        if service is None:
+            raise GrpcServiceNotFoundError(f"gRPC service with ID '{service_id}' not found")
+        artifact = GrpcSchemaService.import_artifact(db, service, payload, filename, user_email, activate=activate)
+        if activate:
+            service.grpc_metadata = _encrypt_metadata(service.grpc_metadata or {})
+            self._sync_tools_from_reflection(db, service)
+            db.commit()
+        return artifact
+
+    async def list_schemas(self, db: Session, service_id: str) -> List[GrpcSchemaArtifact]:
+        """List immutable schema versions newest first."""
+        if db.get(DbGrpcService, service_id) is None:
+            raise GrpcServiceNotFoundError(f"gRPC service with ID '{service_id}' not found")
+        return list(db.execute(select(GrpcSchemaArtifact).where(GrpcSchemaArtifact.grpc_service_id == service_id).order_by(GrpcSchemaArtifact.version.desc())).scalars())
+
+    async def activate_schema(self, db: Session, service_id: str, artifact_id: str) -> GrpcSchemaArtifact:
+        """Activate a descriptor version and synchronize executable methods."""
+        service = db.get(DbGrpcService, service_id)
+        artifact = db.get(GrpcSchemaArtifact, artifact_id)
+        if service is None:
+            raise GrpcServiceNotFoundError(f"gRPC service with ID '{service_id}' not found")
+        if artifact is None or artifact.grpc_service_id != service_id:
+            raise GrpcServiceError("Schema artifact not found for this service")
+        GrpcSchemaService.activate_artifact(db, service, artifact)
+        service.grpc_metadata = _encrypt_metadata(service.grpc_metadata or {})
+        self._sync_tools_from_reflection(db, service)
+        db.commit()
+        db.refresh(artifact)
+        return artifact
+
+    async def diff_schemas(self, db: Session, service_id: str, left_id: str, right_id: str) -> GrpcSchemaDiff:
+        """Compare two schema versions owned by a service."""
+        left = db.get(GrpcSchemaArtifact, left_id)
+        right = db.get(GrpcSchemaArtifact, right_id)
+        if left is None or right is None or left.grpc_service_id != service_id or right.grpc_service_id != service_id:
+            raise GrpcServiceError("Both schema artifacts must belong to the requested service")
+        return GrpcSchemaService.diff(left, right)
+
     async def invoke_method(
         self,
         db: Session,
@@ -831,6 +936,9 @@ class GrpcService:
         method_name: str,
         request_data: Dict[str, Any],
         timeout: Optional[float] = None,
+        metadata_override: Optional[Dict[str, str]] = None,
+        stream_callback: Optional[Callable[[Dict[str, Any]], Awaitable[None]]] = None,
+        capture_call_metadata: bool = False,
     ) -> Dict[str, Any]:
         """Invoke a gRPC method on a registered service.
 
@@ -840,6 +948,9 @@ class GrpcService:
             method_name: Full method name (service.Method)
             request_data: JSON request data
             timeout: Per-call deadline in seconds. Falls back to ``settings.tool_timeout`` when ``None``.
+            metadata_override: Per-call debug metadata, never persisted.
+            stream_callback: Optional debugger callback receiving server-stream items as they arrive.
+            capture_call_metadata: Include masked headers/trailers/status in debugger output.
 
         Returns:
             JSON response data
@@ -872,11 +983,8 @@ class GrpcService:
         if service.tls_key_path:
             _validate_tls_path(service.tls_key_path, "TLS key path")
 
-        # Check if we have stored file descriptors from reflection.
-        # If so, we can populate the descriptor pool without a reflection
-        # round-trip, which avoids per-call overhead.
         discovered = service.discovered_services or {}
-        stored_descriptors = discovered.get("_file_descriptors", [])
+        stored_descriptors = GrpcSchemaService.descriptors_for_service(db, service)
         has_stored_descriptors = bool(stored_descriptors)
 
         endpoint = translate_grpc.GrpcEndpoint(
@@ -885,10 +993,23 @@ class GrpcService:
             tls_enabled=service.tls_enabled,
             tls_cert_path=service.tls_cert_path,
             tls_key_path=service.tls_key_path,
-            metadata=service.grpc_metadata or {},
+            metadata={**_decrypt_metadata(service.grpc_metadata or {}), **(metadata_override or {})},
         )
 
         effective_timeout = timeout if timeout is not None else float(settings.tool_timeout)
+        call_started = time.monotonic()
+        grpc_status = "ERROR"
+        span_context = create_child_span(
+            "grpc.client.call",
+            {
+                "rpc.system": "grpc",
+                "rpc.service": service_name,
+                "rpc.method": method,
+                "server.address": service.target,
+                "grpc.service.id": service.id,
+            },
+        )
+        span_context.__enter__()  # noqa  # Explicit lifecycle preserves the active exception for __exit__.
 
         try:
             # Both the asyncio wrapper AND the underlying gRPC call get the deadline so a slow
@@ -896,28 +1017,59 @@ class GrpcService:
             await asyncio.wait_for(endpoint.start(timeout=effective_timeout, trusted_local=True), timeout=effective_timeout)
 
             if has_stored_descriptors:
-                raw_descriptors = [base64.b64decode(b, validate=True) for b in stored_descriptors]
-                endpoint.load_file_descriptors(raw_descriptors)
+                endpoint.load_file_descriptors(stored_descriptors)
                 # Strip metadata pseudo-keys (e.g. ``_file_descriptors``); they are not real services.
                 endpoint._services = {k: v for k, v in discovered.items() if not k.startswith("_")}  # pylint: disable=protected-access
 
-            response = await asyncio.wait_for(
-                endpoint.invoke(service_name, method, request_data, timeout=effective_timeout),
-                timeout=effective_timeout,
-            )
+            method_info = next((item for item in discovered.get(service_name, {}).get("methods", []) if item.get("name") == method), None)
+            if method_info and method_info.get("client_streaming"):
+                raise GrpcServiceError("Client-streaming and bidirectional gRPC methods are not supported")
+            if method_info and method_info.get("server_streaming"):
 
+                async def collect_stream() -> Dict[str, Any]:
+                    """Collect at most 100 server-stream items before returning to MCP."""
+                    items: List[Dict[str, Any]] = []
+                    truncated = False
+                    async for item in endpoint.invoke_streaming(service_name, method, request_data, timeout=effective_timeout):
+                        if len(items) >= 100:
+                            truncated = True
+                            break
+                        items.append(item)
+                        if stream_callback is not None:
+                            await stream_callback(item)
+                    return {"items": items, "truncated": truncated}
+
+                response = await asyncio.wait_for(collect_stream(), timeout=effective_timeout)
+                if capture_call_metadata:
+                    response["_grpc"] = _masked_call_metadata(endpoint.get_call_metadata())
+                grpc_status = "OK"
+                return response
+
+            response = await asyncio.wait_for(endpoint.invoke(service_name, method, request_data, timeout=effective_timeout), timeout=effective_timeout)
+            if capture_call_metadata:
+                response = {**response, "_grpc": _masked_call_metadata(endpoint.get_call_metadata())}
+            grpc_status = "OK"
             return response
 
         except asyncio.CancelledError:
             raise
         except asyncio.TimeoutError:
+            grpc_status = "DEADLINE_EXCEEDED"
             logger.warning("gRPC call %s on %s timed out after %ss", method_name, service.name, effective_timeout)
             raise
         except (GrpcServiceNotFoundError, GrpcServiceError):
             raise
         except Exception as e:
+            if GRPC_AVAILABLE and isinstance(e, grpc.RpcError):
+                status = e.code()  # pylint: disable=no-member
+                if status is not None:
+                    grpc_status = getattr(status, "name", str(status))
             logger.error("Failed to invoke %s on %s: %s", method_name, service.name, e, exc_info=True)
             raise GrpcServiceError(f"Method invocation failed: {e}") from e
 
         finally:
+            grpc_status_context.set(grpc_status)
             await endpoint.close()
+            grpc_client_calls_counter.labels(service=service.slug, method=method_name, status=grpc_status).inc()
+            grpc_client_duration_histogram.labels(service=service.slug, method=method_name).observe(time.monotonic() - call_started)
+            span_context.__exit__(*sys.exc_info())
