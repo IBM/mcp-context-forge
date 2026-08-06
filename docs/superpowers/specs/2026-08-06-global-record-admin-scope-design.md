@@ -235,9 +235,16 @@ role the caller may not enumerate.
 everything. Filtering is added in the router, not the service, so the service
 stays a plain data-access layer consistent with the rest of the codebase.
 
-Trade-off accepted: admin UI role pickers show fewer entries for narrowed
-tokens, and a narrowed admin cannot read the definition of a global role they
-may still hold.
+Trade-off accepted: a narrowed admin cannot read the definition of a global role
+they may still hold.
+
+**Correction to the original rationale.** This class was justified on the grounds
+that a 403 would break the admin UI role picker. Verification found no such
+consumer: `mcpgateway/admin_ui/` contains no request to `/rbac/roles` — the only
+mention is static copy pointing users at the Teams tab — and `admin.py` exposes
+no roles endpoints of its own. The filtered-read choice still stands on Layer-1
+semantics (scoping controls visibility) and because it is strictly less breaking
+than a deny, but not for the reason originally given.
 
 #### §3.5 Role assignments — team-scoping model (breaking)
 
@@ -372,6 +379,26 @@ fourth acceptance criterion:
 
 Follow the existing fixtures in `tests/unit/mcpgateway/test_auth_context_root_admin.py`,
 which already exercise these three contexts against the roots routes.
+
+**Delivered in layers, not as one deny test per route.** Implementation planning
+surfaced a constraint that makes the naive form unsound: router modules are
+imported once per session, and 26 suites import them under
+`tests/utils/rbac_mocks.patch_rbac_decorators`, which swaps the RBAC decorators
+for no-ops. Whichever test module imports a router first decides whether its
+decorators are real. A per-route deny test in a second module would pass or fail
+on import order — an order-dependent flake presenting as coverage.
+
+The three contexts are therefore covered as:
+
+| Layer | Proves |
+|-------|--------|
+| Unit tests against the real decorator, all three contexts | what the guard does |
+| `__mcpgateway_scope_class__` marker assertions + the §4 drift guard | that these routes use it |
+| Direct handler calls | filtering (§3.4) and the assignment scope matrix (§3.5) |
+| Existing roots suites | the conditional raise-helper call sites still fire |
+
+Together these give the same guarantee. Do not "restore" per-route deny tests
+for the decorated routes.
 
 ### §5.1 Existing tests must be reworked, not merely extended
 
@@ -758,5 +785,5 @@ dimension to filter on. Filtering applies only where the data has a team axis �
 | `/version` 403s break JWT-authenticated monitoring scrapers | Release notes. Basic-auth scrapers are unaffected **only because §3.6 keeps `require_admin_auth`** — swapping to `get_current_user_with_permissions` would 401 them, since that dependency has no HTTP Basic path |
 | Existing unit suites authenticate with bare dicts that resolve to public-only, so ~80 tests would 403 | §5.1: rework the fixtures to set `request.state.token_teams` or mint real JWTs; budget this as a task, not a cleanup |
 | Decorated endpoints lack the `request`/`db` params the decorator needs | §3.2: add `request` to all five compliance endpoints; decorator falls back to `fresh_db_session()` when no `db` kwarg is present. The §4 drift-guard test catches a missing one at import time |
-| Admin UI role picker shows fewer roles for narrowed tokens | Accepted per §3.4; verify the UI degrades gracefully rather than erroring |
+| ~~Admin UI role picker shows fewer roles for narrowed tokens~~ | Not a real risk — verification found no admin-UI consumer of `/rbac/roles`. See the correction in §3.4 |
 | Manifest drifts out of date | That is what §4's first test prevents |
