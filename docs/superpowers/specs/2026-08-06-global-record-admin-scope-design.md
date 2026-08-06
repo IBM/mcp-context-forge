@@ -146,8 +146,15 @@ deduplication half of the issue's "reuse a shared scope helper" criterion.
 #### §3.2 Compliance — tightened (breaking)
 
 `routers/compliance_router.py:125,144,188,229,272` move from
-`@require_admin_permission()` to `@require_global_admin_permission()`. Each of
-the five endpoints requires a `request` param added to its signature.
+`@require_admin_permission()` to `@require_global_admin_permission()`.
+
+**Signature changes are mandatory, not incidental.** The decorator reads Layer-1
+narrowing from `request.state`, so every decorated endpoint needs a `request`
+param — none of the five has one today. It also needs a DB session for
+`check_platform_admin_permission()`: four endpoints have `db`, but
+`list_frameworks` (line 126) has **neither** `request` nor `db`. The decorator
+must therefore fall back to `fresh_db_session()` when no `db` kwarg is present,
+mirroring how `require_admin_permission()` already resolves its session.
 
 Closes the cross-team aggregate leak. Breaking for callers using narrowed admin
 tokens against `/compliance/*`.
@@ -203,19 +210,41 @@ This is the escalation fix: a narrowed admin can no longer assign a global
 
 #### §3.6 `/version` — enforcement gap closed (breaking)
 
-Replace `_user=Depends(require_admin_auth)` with
-`user=Depends(get_current_user_with_permissions)` on `version_endpoint`, apply
-`@require_global_admin_permission()`, and delete `_has_version_admin_access`
-along with its now-unused `normalize_token_teams` import.
+**Do not swap the dependency.** `version_endpoint` (`version.py:1259`) keeps
+`_user=Depends(require_admin_auth)`. The narrowing check moves inside the
+handler, reading `request` (already a parameter) via the shared predicate:
 
-`/version` begins rejecting narrowed admin tokens, which is what its docstring
-has claimed since it was written. Note in the release notes that `/version` is
-a monitoring surface: any scraper authenticating with a narrowed admin token
-will start receiving 403 and must switch to an unrestricted admin token.
+```python
+if not await is_unrestricted_platform_admin(request, _user, db):
+    raise HTTPException(status_code=403, detail=_ACCESS_DENIED_MSG)
+```
 
-The HTML login-redirect behavior of `require_admin_auth` for browser requests
-must be preserved — verify the admin UI diagnostics page still redirects rather
-than rendering a raw 403 when unauthenticated.
+`_has_version_admin_access` is deleted along with its `normalize_token_teams`
+import. A `db` session must be obtained — `/version` has no `db` param today, so
+either add one or use `fresh_db_session()`.
+
+**Why not the decorator.** `get_current_user_with_permissions`
+(`middleware/rbac.py:238`) has **no HTTP Basic path** — `basic_security` /
+`HTTPBasicCredentials` do not appear anywhere in that module. `require_admin_auth`
+(`utils/verify_credentials.py:1623-1627`) accepts
+`basic_credentials: Optional[HTTPBasicCredentials] = Depends(basic_security)`.
+Swapping the dependency would turn every basic-auth call to `/version` into a
+**401**, which is a strictly larger break than the 403 this change intends, and
+it would hit exactly the monitoring callers that the breaking-change analysis
+otherwise records as unaffected.
+
+Keeping `require_admin_auth` also preserves its HTML login-redirect behavior for
+browser requests for free.
+
+`/version` begins rejecting narrowed and claim-less admin tokens, which is what
+its docstring has claimed since it was written. Basic-auth callers keep working:
+the non-JWT path in `auth_context.py:902` returns unrestricted semantics.
+
+**Admin UI dependency:** `/version?partial=true` is fetched by
+`admin_ui/initialization.js:846` and `admin_ui/tabs.js:728`. Those go through the
+browser session cookie, so `resolve_session_teams()` resolves admin from the DB
+and yields `None` (unrestricted). The diagnostics tab is unaffected, but it is
+the one UI path crossing a changed route and must be covered in the test plan.
 
 ### §4 Drift guard
 
@@ -269,6 +298,44 @@ fourth acceptance criterion:
 
 Follow the existing fixtures in `tests/unit/mcpgateway/test_auth_context_root_admin.py`,
 which already exercise these three contexts against the roots routes.
+
+### §5.1 Existing tests must be reworked, not merely extended
+
+The current unit suites authenticate by overriding
+`get_current_user_with_permissions` with a bare dict, e.g.
+`test_compliance_router.py:64` returns `{"email": "admin@example.com", "is_admin": True}`
+and installs it at lines 325 and 349. That dict carries no
+`request.state.token_teams`, so `get_rpc_filter_context()` falls back to
+`normalize_token_teams()` on an absent verified payload and resolves to `[]` —
+public-only. Under the canonical rule every one of those tests would receive a
+403.
+
+This is a structural incompatibility, not a handful of assertion updates. The
+override must set `request.state.token_teams` (or the fixture must mint a real
+JWT via `tests/helpers/auth.make_test_jwt(..., is_admin=True, teams=None)`,
+which is the pattern `tests/populate/verify.py:56-61` already uses correctly).
+
+Approximate scope: 17 tests in `tests/unit/mcpgateway/routers/test_compliance_router.py`,
+35 in the rbac router tests, 28 in `tests/unit/mcpgateway/test_version.py`. Plan
+for a shared fixture rather than per-test edits.
+
+### §5.2 The pre-merge validation gate is not at risk
+
+Verified against the live-gateway harnesses that gate #5 depends on:
+
+- `tests/populate/verify.py:56-61` passes `teams=None, is_admin=True` → unrestricted.
+- `tests/live_gateway/mcp/test_mcp_rbac_transport.py:211` mints `admin_api` with
+  `is_admin=True, teams=None` → unrestricted. The role assignments at lines
+  140-151 create *team-scoped* assignments but are performed **by** that
+  unrestricted admin, so §3.5 does not reject them.
+
+`make test-mcp-rbac`, `test-mcp-protocol-e2e`, and `test-protocol-compliance`
+therefore pass unchanged. This was checked explicitly because a break here would
+block the gate rather than merely inconvenience callers.
+
+Separately, `Makefile:5979` (`compose-test-hardened`) mints a token with the
+simple no-`--admin` form. It only curls `/tools`, so it does not break, but it is
+the same anti-pattern the §6 docs fix must sweep up.
 
 ### §6 Documentation
 
@@ -371,7 +438,9 @@ and an audit of other places the simple form is documented.
 |------|------------|
 | Callers above lose access to `/compliance/*`, role mutation, `/version` | Release notes with the per-caller table and the reissue instructions |
 | Users following `CLAUDE.md` mint a token this change rejects | Docs fix shipped in the same change; see above |
-| `/version` 403s break JWT-authenticated monitoring scrapers | Called out explicitly in release notes; basic-auth scrapers unaffected; the HTML redirect path for browsers is preserved |
+| `/version` 403s break JWT-authenticated monitoring scrapers | Called out explicitly in release notes. Basic-auth scrapers are unaffected **only because §3.6 keeps `require_admin_auth`** — swapping to `get_current_user_with_permissions` would 401 them, since that dependency has no HTTP Basic path |
+| Existing unit suites authenticate with bare dicts that resolve to public-only, so ~80 tests would 403 | §5.1: rework the fixtures to set `request.state.token_teams` or mint real JWTs; budget this as a task, not a cleanup |
+| Decorated endpoints lack the `request`/`db` params the decorator needs | §3.2: add `request` to all five compliance endpoints; decorator falls back to `fresh_db_session()` when no `db` kwarg is present |
 | Admin UI role picker shows fewer roles for narrowed tokens | Accepted per §3.4; verify the UI degrades gracefully rather than erroring |
 | Decorator requires a `request` kwarg that some endpoints lack | Add the param; the drift-guard test catches a missing one at import time |
 | Manifest drifts out of date | That is what §4's first test prevents |
