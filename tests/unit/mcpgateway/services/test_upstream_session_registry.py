@@ -1412,11 +1412,12 @@ async def test_default_session_factory_sse_with_httpx_client_factory(monkeypatch
 
 @pytest.mark.asyncio
 async def test_default_session_factory_cancelled_path_runs_on_ready_timeout(monkeypatch):
-    """When ready times out, the finally clause cancels the owner task and `await task` sees CancelledError.
+    """When ready times out, the factory wraps TimeoutError in RuntimeError with categorization.
 
-    Covers upstream_session_registry.py:385-387. The sibling `except Exception`
-    branch (388-393) is defensive — the owner's own `except Exception` catches
-    all Exception subclasses, so a regular Exception cannot escape `await task`.
+    Validates fix for blocking issue #2: asyncio.wait_for timeout path now
+    categorizes as 'timeout', sanitizes the message, logs to structured logger,
+    and wraps in RuntimeError with the categorized message (instead of raising
+    a bare empty TimeoutError).
     """
     # First-Party
     from mcpgateway.services import upstream_session_registry as usr
@@ -1434,12 +1435,15 @@ async def test_default_session_factory_cancelled_path_runs_on_ready_timeout(monk
     monkeypatch.setattr(usr, "ClientSession", _FakeClientSessionCM)
 
     req = _make_request(timeout_seconds=0.05)
-    with pytest.raises((asyncio.TimeoutError, TimeoutError)):
+    with pytest.raises(RuntimeError) as exc_info:
         await usr._default_session_factory(req)  # pylint: disable=protected-access
 
-    # The important property: the factory surfaced the TimeoutError cleanly —
-    # meaning the finally-clause cleanup completed, which requires the
-    # CancelledError branch to have swallowed the cancellation of the hung owner.
+    # Verify the timeout was categorized and wrapped in RuntimeError
+    error_msg = str(exc_info.value)
+    assert "[timeout]" in error_msg, f"Timeout should be categorized, got: {error_msg}"
+    assert "TimeoutError" in error_msg
+    # Message must not be empty (bare asyncio.TimeoutError('') before fix)
+    assert len(error_msg) > 50, f"Timeout error message should be descriptive, got: {error_msg}"
 
 
 @pytest.mark.asyncio
@@ -1839,3 +1843,179 @@ async def test_singleton_accessors_round_trip():
     await shutdown_upstream_session_registry()
     with pytest.raises(RuntimeError, match="has not been initialized"):
         get_upstream_session_registry()
+
+
+# ---------------------------------------------------------------------------
+# Additional coverage for uncovered lines
+# ---------------------------------------------------------------------------
+
+
+def test_categorize_upstream_error_ssl_error_in_exception_chain():
+    """SSL error buried in exception chain should be detected (covers line 375-377).
+
+    When an unrecognized exception type wraps an ssl.SSLError in its __cause__ or
+    __context__, _categorize_upstream_error must walk the chain and categorize as "ssl_tls".
+    The else block at lines 372-377 only runs for exception types NOT explicitly checked above.
+    """
+    # Standard
+    import ssl
+
+    # First-Party
+    from mcpgateway.services.upstream_session_registry import _categorize_upstream_error
+
+    # Build an exception chain: a generic RuntimeError wrapping ssl.SSLError
+    # (not httpx.ConnectError, since that's explicitly handled earlier)
+    ssl_error = ssl.SSLError("certificate verify failed")
+    outer_error = RuntimeError("Some upstream error")
+    outer_error.__cause__ = ssl_error
+
+    category, exc_type, message, count = _categorize_upstream_error(outer_error)
+
+    # Should detect SSL error in the chain and categorize as ssl_tls
+    assert category == "ssl_tls", f"Expected 'ssl_tls', got {category}"
+    assert exc_type == "RuntimeError"
+    assert count == 1
+
+
+def test_categorize_upstream_error_connection_refused_message_fallback():
+    """ConnectError with 'refused' in message but no ConnectionRefusedError in chain (covers line 329).
+
+    When httpx.ConnectError message contains 'refused' but the exception chain
+    doesn't have a ConnectionRefusedError instance, the fallback message check
+    should still categorize as "connection_refused".
+    """
+    # Third-Party
+    import httpx
+
+    # First-Party
+    from mcpgateway.services.upstream_session_registry import _categorize_upstream_error
+
+    # ConnectError with 'refused' in message but no ConnectionRefusedError in chain
+    connect_error = httpx.ConnectError("connection refused by server")
+
+    category, exc_type, message, count = _categorize_upstream_error(connect_error)
+
+    # Should detect via message fallback
+    assert category == "connection_refused", f"Expected 'connection_refused', got {category}"
+    assert exc_type == "ConnectError"
+
+
+def test_categorize_upstream_error_find_in_chain_returns_current():
+    """Test that _find_in_chain returns the matching exception (covers line 311).
+
+    When httpx.ConnectError's exception chain contains ConnectionRefusedError,
+    _find_in_chain should find and return it. This tests the `return current`
+    path at line 311 within the httpx.ConnectError handling at line 327.
+    """
+    # Third-Party
+    import httpx
+
+    # First-Party
+    from mcpgateway.services.upstream_session_registry import _categorize_upstream_error
+
+    # Build a chain: httpx.ConnectError wrapping ConnectionRefusedError
+    # This triggers the _find_in_chain call at line 327
+    inner = ConnectionRefusedError("Connection refused")
+    connect_error = httpx.ConnectError("All connection attempts failed")
+    connect_error.__cause__ = inner
+
+    category, exc_type, message, count = _categorize_upstream_error(connect_error)
+
+    # Should detect ConnectionRefusedError in chain
+    assert category == "connection_refused", f"Expected 'connection_refused', got {category}"
+    assert exc_type == "ConnectError"
+
+
+@pytest.mark.asyncio
+async def test_default_session_factory_logs_warning_on_post_ready_failure(monkeypatch, caplog):
+    """When the owner task fails AFTER ready is set, log at WARNING level (covers line 542).
+
+    The owner task's exception handler checks if ready.done() to decide ERROR vs WARNING.
+    When ready is already set (session initialized successfully), then a subsequent
+    failure logs at WARNING level (line 542).
+    """
+    # First-Party
+    from mcpgateway.services import upstream_session_registry as usr
+
+    # Transport that succeeds during setup but fails after initialization
+    class _FailingAfterInitClientSession:
+        def __init__(self, read_stream, write_stream, message_handler=None):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            # Raise after the session was successfully initialized
+            raise OSError("stream died after initialization")
+
+        async def initialize(self):
+            return None
+
+    monkeypatch.setattr(usr, "streamablehttp_client", lambda **_kw: _FakeTransportCtx(streams=("r", "w", object())))
+    monkeypatch.setattr(usr, "ClientSession", _FailingAfterInitClientSession)
+
+    req = _make_request()
+    session, _ctx = await usr._default_session_factory(req)  # pylint: disable=protected-access
+
+    # Session should be initialized
+    assert session is not None
+
+    # Let the owner task complete (it should fail post-ready)
+    shutdown_event = getattr(session, "_cf_shutdown_event")
+    owner_task = getattr(session, "_cf_owner_task")
+    shutdown_event.set()
+
+    with caplog.at_level("WARNING", logger=usr.logger.name):
+        try:
+            await owner_task
+        except OSError:
+            pass  # Expected
+
+    # Should have a WARNING log (not ERROR) because ready was already set
+    warnings = [rec for rec in caplog.records if rec.levelname == "WARNING" and "exited post-ready" in rec.getMessage()]
+    assert len(warnings) == 1, f"Expected 1 WARNING log for post-ready failure, got {len(warnings)}"
+    assert "stream died after initialization" in warnings[0].getMessage()
+
+
+@pytest.mark.asyncio
+async def test_default_session_factory_timeout_structured_logging_failure(monkeypatch, caplog):
+    """When structured logging fails during timeout handling, log at DEBUG (covers lines 665-666).
+
+    The timeout path has a try/except around structured logging that catches
+    Exception and logs at DEBUG level (lines 665-666). This tests that path.
+    """
+    # First-Party
+    from mcpgateway.services import upstream_session_registry as usr
+
+    # Transport that hangs during setup
+    class _HangingCtx:
+        async def __aenter__(self):
+            await asyncio.sleep(10.0)  # far longer than timeout
+            return ("r", "w", object())
+
+        async def __aexit__(self, *_exc):
+            return False
+
+    # Mock get_structured_logger to raise an exception
+    def _broken_get_structured_logger():
+        raise RuntimeError("structured logger not initialized")
+
+    monkeypatch.setattr(usr, "streamablehttp_client", lambda **_kw: _HangingCtx())
+    monkeypatch.setattr(usr, "ClientSession", _FakeClientSessionCM)
+
+    # Patch get_structured_logger to fail
+    from mcpgateway.services import structured_logger
+
+    monkeypatch.setattr(structured_logger, "get_structured_logger", _broken_get_structured_logger)
+
+    req = _make_request(timeout_seconds=0.05)
+
+    with caplog.at_level("DEBUG", logger=usr.logger.name):
+        with pytest.raises(RuntimeError, match="Failed to create upstream MCP session"):
+            await usr._default_session_factory(req)  # pylint: disable=protected-access
+
+    # Should have a DEBUG log about structured logging failure
+    debug_logs = [rec for rec in caplog.records if rec.levelname == "DEBUG" and "Structured logging failed" in rec.getMessage()]
+    assert len(debug_logs) >= 1, f"Expected DEBUG log for structured logging failure, got logs: {[r.getMessage() for r in caplog.records]}"
+    assert any("timeout" in log.getMessage().lower() for log in debug_logs)

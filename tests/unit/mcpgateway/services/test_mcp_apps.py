@@ -8,6 +8,7 @@ Tests for the minimal MCP Apps helpers.
 
 # Standard
 import asyncio
+import logging
 from contextlib import contextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -24,6 +25,7 @@ from mcpgateway.services.mcp_apps import (
     build_mcp_apps_capabilities,
     filter_model_visible_tools,
     is_app_visible_tool,
+    LEGACY_RESOURCE_URI_META_KEY,
     MCPAppSessionCleanupService,
     mcp_app_session_service,
     MCP_UI_EXTENSION,
@@ -154,6 +156,150 @@ def test_merge_mcp_protocol_meta_ignores_missing_ui_and_merges_existing_metadata
         "visibility": ["model"],
         "resourceUri": "ui://widgets/example",
     }
+
+
+def test_merge_mcp_protocol_meta_honours_deprecated_flat_resource_uri() -> None:
+    """A server emitting only the deprecated flat key should keep its tool/UI association."""
+    payload = {"_meta": {LEGACY_RESOURCE_URI_META_KEY: "ui://widgets/legacy"}}
+
+    merge_mcp_protocol_meta(payload)
+
+    assert payload["extensionMetadata"][MCP_UI_EXTENSION]["resourceUri"] == "ui://widgets/legacy"
+
+
+def test_merge_mcp_protocol_meta_flat_resource_uri_preserves_nested_siblings() -> None:
+    """The deprecated flat key should merge alongside other nested MCP Apps metadata."""
+    payload = {"_meta": {"ui": {"visibility": ["model", "app"]}, LEGACY_RESOURCE_URI_META_KEY: "ui://widgets/legacy"}}
+
+    merge_mcp_protocol_meta(payload)
+
+    assert payload["extensionMetadata"][MCP_UI_EXTENSION] == {
+        "visibility": ["model", "app"],
+        "resourceUri": "ui://widgets/legacy",
+    }
+
+
+def test_merge_mcp_protocol_meta_prefers_nested_resource_uri_over_flat() -> None:
+    """When both shapes disagree the canonical nested key wins."""
+    payload = {
+        "_meta": {
+            "ui": {"resourceUri": "ui://widgets/new"},
+            LEGACY_RESOURCE_URI_META_KEY: "ui://widgets/old",
+        }
+    }
+
+    merge_mcp_protocol_meta(payload)
+
+    assert payload["extensionMetadata"][MCP_UI_EXTENSION]["resourceUri"] == "ui://widgets/new"
+
+
+def test_merge_mcp_protocol_meta_accepts_matching_nested_and_flat_resource_uri() -> None:
+    """SDK-built servers emit both shapes with the same value and should merge cleanly."""
+    payload = {
+        "_meta": {
+            "ui": {"resourceUri": "ui://widgets/example"},
+            LEGACY_RESOURCE_URI_META_KEY: "ui://widgets/example",
+        }
+    }
+
+    merge_mcp_protocol_meta(payload)
+
+    assert payload["extensionMetadata"][MCP_UI_EXTENSION] == {"resourceUri": "ui://widgets/example"}
+
+
+@pytest.mark.parametrize(
+    "legacy_value",
+    [
+        "https://example.com/widget.html",
+        "",
+        "ui://",
+        "ui://   ",
+        123,
+        None,
+        ["ui://widgets/example"],
+    ],
+)
+def test_merge_mcp_protocol_meta_ignores_unusable_flat_resource_uri(legacy_value) -> None:
+    """Only well-formed ui:// strings are folded in, so invalid values cannot drop a tool."""
+    payload = {"_meta": {LEGACY_RESOURCE_URI_META_KEY: legacy_value}}
+
+    merge_mcp_protocol_meta(payload)
+
+    assert "extensionMetadata" not in payload
+
+
+@pytest.mark.parametrize("nested_key", ["resourceUri", "resource_uri"])
+@pytest.mark.parametrize("nested_value", ["", None, False, 0, "https://example.com/widget.html"])
+def test_merge_mcp_protocol_meta_keeps_present_but_unusable_nested_resource_uri(nested_key, nested_value) -> None:
+    """A present canonical key stays authoritative even when its value is empty or malformed."""
+    payload = {"_meta": {"ui": {nested_key: nested_value}, LEGACY_RESOURCE_URI_META_KEY: "ui://widgets/legacy"}}
+
+    merge_mcp_protocol_meta(payload)
+
+    assert payload["extensionMetadata"][MCP_UI_EXTENSION] == {nested_key: nested_value}
+
+
+def test_merge_mcp_protocol_meta_does_not_log_full_flat_resource_uri(caplog) -> None:
+    """Rejected upstream URIs must not reach the logs verbatim."""
+    legacy_uri = "https://user:s3cret@example.com/" + "a" * 500 + "?token=abcdef#frag"  # pragma: allowlist secret
+    payload = {"_meta": {LEGACY_RESOURCE_URI_META_KEY: legacy_uri}}
+
+    with caplog.at_level(logging.WARNING, logger="mcpgateway.services.mcp_apps"):
+        merge_mcp_protocol_meta(payload)
+
+    logged = caplog.text
+    assert "extensionMetadata" not in payload
+    assert legacy_uri not in logged
+    assert "s3cret" not in logged
+    assert "token=abcdef" not in logged
+    assert "truncated" in logged
+
+
+@pytest.mark.parametrize(
+    "legacy_uri",
+    [
+        "https://user:pa?ss@example.com/widget.html",  # pragma: allowlist secret
+        "https://user:pa#ss@example.com/widget.html",  # pragma: allowlist secret
+        "mailto:user:pa@example.com",  # pragma: allowlist secret
+    ],
+)
+def test_merge_mcp_protocol_meta_redacts_credentials_split_by_a_stray_delimiter(caplog, legacy_uri) -> None:
+    """An unencoded delimiter inside userinfo must not leave a credential prefix in the logs."""
+    payload = {"_meta": {LEGACY_RESOURCE_URI_META_KEY: legacy_uri}}
+
+    with caplog.at_level(logging.WARNING, logger="mcpgateway.services.mcp_apps"):
+        merge_mcp_protocol_meta(payload)
+
+    logged = caplog.text
+    assert "extensionMetadata" not in payload
+    # "pa" is the part of the credential that survives if the query/fragment is stripped
+    # before the userinfo is, so its absence is what pins the ordering-independence.
+    assert "user" not in logged
+    assert "pa" not in logged
+
+
+def test_merge_mcp_protocol_meta_logs_an_unparseable_uri_without_its_contents(caplog) -> None:
+    """A URI that cannot be parsed at all is reported by length only."""
+    legacy_uri = "http://[::1-s3cret"  # pragma: allowlist secret
+    payload = {"_meta": {LEGACY_RESOURCE_URI_META_KEY: legacy_uri}}
+
+    with caplog.at_level(logging.WARNING, logger="mcpgateway.services.mcp_apps"):
+        merge_mcp_protocol_meta(payload)
+
+    assert "extensionMetadata" not in payload
+    assert "s3cret" not in caplog.text
+    assert "unparseable" in caplog.text
+
+
+def test_merge_mcp_protocol_meta_does_not_mutate_source_meta() -> None:
+    """Normalizing the deprecated key must not rewrite the caller's _meta payload."""
+    meta = {"ui": {"visibility": ["app"]}, LEGACY_RESOURCE_URI_META_KEY: "ui://widgets/legacy"}
+    payload = {"_meta": meta}
+
+    merge_mcp_protocol_meta(payload)
+
+    assert meta["ui"] == {"visibility": ["app"]}
+    assert payload["extensionMetadata"][MCP_UI_EXTENSION]["resourceUri"] == "ui://widgets/legacy"
 
 
 @pytest.mark.parametrize(

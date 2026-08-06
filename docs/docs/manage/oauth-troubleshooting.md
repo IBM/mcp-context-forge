@@ -77,9 +77,11 @@ state_data = {
 | `/oauth/callback` | GET | Handles OAuth callback, exchanges code for tokens |
 | `/oauth/status/{gateway_id}` | GET | Returns OAuth configuration status |
 | `/oauth/fetch-tools/{gateway_id}` | POST | Fetches tools from MCP server after OAuth completion |
-| `/oauth/registered-clients` | GET | Lists all DCR-registered OAuth clients |
-| `/oauth/registered-clients/{gateway_id}` | GET | Gets registered client for specific gateway |
-| `/oauth/registered-clients/{client_id}` | DELETE | Deletes a registered OAuth client |
+| `/oauth/registered-clients` | GET | Lists all DCR-registered OAuth clients. Requires un-narrowed platform admin access |
+| `/oauth/registered-clients/{gateway_id}` | GET | Gets registered client for specific gateway. Requires un-narrowed platform admin access |
+| `/oauth/registered-clients/{client_id}` | DELETE | Deletes a registered OAuth client. Requires un-narrowed platform admin access |
+
+> **Note**: The three `/oauth/registered-clients*` endpoints manage DCR client records that are stored globally, with no team association. Because there is no team scope to narrow into, these endpoints require an un-narrowed admin token — an admin API/legacy token carrying a `token_teams` narrowing claim (or a public-only admin token) receives `403 Forbidden` with `"OAuth client management requires un-narrowed admin access"`. Admin session tokens (e.g. the interactive Admin UI) resolve their teams from the database and cannot be narrowed, so this does not change UI behavior.
 
 ---
 
@@ -623,14 +625,71 @@ grep DCR .env
 # Look for DCR-related logs
 grep -E "(DCR|Dynamic Client)" logs/mcpgateway.log
 
-# Check registered clients
-curl -s http://localhost:4444/oauth/registered-clients | jq
+# Check registered clients (requires an un-narrowed admin bearer token)
+curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/oauth/registered-clients | jq
 
 # Common DCR errors:
 # - "DCR failed" - AS doesn't support RFC 7591
 # - "No issuer configured" - Gateway missing issuer URL
 # - "Metadata discovery failed" - AS metadata endpoint unreachable
 ```
+
+---
+
+## Token audience mismatch
+
+### Symptom
+
+The gateway logs or returns an error message:
+
+```
+Refusing to forward OAuth token for gateway 'X': Token audience mismatch: token aud does not match expected resource or gateway URL. Fix oauth_config (resource/scopes/issuer) or the IdP token request.
+```
+
+### Diagnosis steps
+
+1.  **Check the affected user's learned audience**: Query the `oauth_tokens` table for `(gateway_id, app_user_email)` and inspect `learned_aud` / `learned_iss`. This is the value the validator uses authoritatively for that user's tokens (precedence 2, below the admin-configured `oauth_config.resource`).
+2.  **Check gateway configuration**: Verify the `oauth_config.resource` field via `GET /admin/gateways/{id}` or the Admin UI. If it is set, it takes precedence over per-user learned values.
+3.  **Inspect the token**: Decode the JWT access token (e.g. via [jwt.io](https://jwt.io)) and check the `aud` (audience) claim. Compare against `learned_aud` or `oauth_config.resource` above.
+4.  **Verify IdP RFC 8707 support**: Providers like Authentik and ServiceNow do not honor the `resource` parameter — they typically return a default audience such as the `client_id`. Per-user auto-learning handles this automatically.
+
+### Common causes and fixes
+
+-   **IdP returns `aud=client_id` (Authentik, ServiceNow)** — expected behavior for non-RFC-8707 providers. Per-user auto-learning captures the actual `aud` on the user's OAuth callback and stores it as `OAuthToken.learned_aud`. If a user is still failing validation, verify they have completed at least one successful OAuth flow (the row must exist and `learned_aud` must be non-null).
+-   **Multi-tenant Entra ID, wrong tenant** — if the token is being issued for the wrong audience in a multi-tenant setup, set `oauth_config.resource` explicitly to your Application ID URI (e.g., `api://{your-app-id}`). See [OAuth Resource Configuration](oauth-resource-configuration.md).
+-   **Stale learned value for one user after IdP migration** — a user's `learned_aud` becomes stale if the IdP configuration changed since their last authentication. Fix: the user re-authenticates. The next OAuth callback overwrites their `OAuthToken.learned_aud` with the current audience — no admin action needed.
+-   **Stale admin-configured `oauth_config.resource`** — if the admin explicitly set the resource and now needs to clear it, edit the gateway in the Admin UI and blank the Resource field (or PUT `{"oauth_config": {"resource": null}}` via API).
+-   **Salesforce with full gateway URL** — Salesforce tokens use origin-level audiences. The gateway's origin-derivation fallback (`_derive_resource_origin`) handles this automatically for the outbound `resource` parameter; inbound validation uses the per-user learned value.
+
+### Advisory vs. authoritative behavior
+
+Precedence for the expected audience (first match wins):
+
+1.  `oauth_config.resource` — admin-configured. Authoritative.
+2.  `OAuthToken.learned_aud` for THIS USER — per-user. Authoritative for this user.
+3.  Gateway URL origin — auto-derived fallback. Advisory by default.
+
+The advisory fallback (#3) only applies to users with no learned value (first authentication) and no admin-configured resource. To make the auto-derived case blocking (strict mode), set:
+
+```bash
+OAUTH_REQUIRE_CONFIGURED_RESOURCE=true
+```
+
+### Useful debug logs
+
+Set `LOG_LEVEL=DEBUG` and grep for:
+
+-   `mcpgateway.services.oauth_manager` — `Unverified JWT decode failed` (indicates the token is opaque or malformed and no `learned_aud` can be extracted).
+-   `mcpgateway.services.gateway_service` — `Refusing to forward OAuth token` (the blocking-error path).
+-   `mcpgateway.services.token_validation_service` — the per-warning lines emitted before the blocking check.
+-   `mcpgateway.services.token_storage_service` — token storage and retrieval events.
+
+### Gateway vs. upstream validation responsibility
+
+ContextForge's local audience check is either advisory (auto-derived fallback) or authoritative (explicit / learned / `OAUTH_REQUIRE_CONFIGURED_RESOURCE=true`). If ContextForge forwards the token but the upstream MCP server still returns `401 Unauthorized`, the MCP server's own audience configuration doesn't match what the IdP provided. Two options:
+
+1.  Configure the MCP server to accept the audience provided by the IdP.
+2.  Configure the IdP (or set `oauth_config.resource` explicitly) so the minted token's `aud` matches what the MCP server expects.
 
 ---
 
@@ -655,9 +714,173 @@ This section covers requests that present an access token issued by an external 
 
 ---
 
+---
+
+## Popup OAuth Flow Issues (React UI)
+
+### Popup Blocked by Browser
+
+**Symptom**: OAuth popup doesn't open, or opens then immediately closes.
+
+**Cause**: Browser popup blocker or user gesture requirement not met.
+
+**Fix**:
+- Ensure OAuth is triggered by direct user action (click handler)
+- Check browser console for popup blocker warnings
+- Add site to browser's popup allowlist
+- Use `window.open()` synchronously in click handler (not in async callback)
+
+### postMessage Not Received
+
+**Symptom**: Popup completes OAuth but parent window doesn't receive result.
+
+**Causes**:
+1. Parent window closed before callback
+2. Event listener not registered before popup opens
+3. `event.source` validation rejecting message
+4. Cross-origin policy blocking message
+
+**Diagnosis**:
+```javascript
+// Add debug logging to message handler
+window.addEventListener('message', (event) => {
+  console.log('Received message:', event.data);
+  console.log('Event source matches popup:', event.source === authWindow);
+  console.log('Event origin:', event.origin);
+});
+```
+
+**Fix**:
+- Register message listener BEFORE opening popup
+- Verify `event.source === authWindow` check is correct
+- Check browser console for CORS/CSP errors
+- Ensure parent window stays open during OAuth flow
+
+### Popup State Mismatch
+
+**Symptom**: Callback fails with "Invalid state" even though popup flow worked.
+
+**Cause**: State token doesn't have `popup.` prefix.
+
+**Diagnosis**:
+```bash
+# Check state generation logs
+grep "popup\." logs/mcpgateway.log
+grep "Stored OAuth state" logs/mcpgateway.log
+```
+
+**Fix**:
+- Verify `popup=true` query parameter is included in authorize URL
+- Check `oauth_manager.py:1033` generates prefixed state
+- Ensure state prefix isn't stripped during storage/retrieval
+
+### CSP Blocks Inline Script
+
+**Symptom**: Popup shows blank page or "Content Security Policy" error.
+
+**Cause**: Strict CSP without nonce support for inline scripts.
+
+**Diagnosis**:
+```bash
+# Check browser console for CSP errors
+# Look for: "Refused to execute inline script because it violates CSP"
+```
+
+**Fix**:
+- Verify CSP middleware generates nonces (`mcpgateway/middleware/csp_middleware.py`)
+- Check `get_csp_nonce_from_request()` returns valid nonce
+- Ensure callback script includes nonce attribute: `<script nonce="...">`
+- Review CSP header: should include `script-src 'self' 'nonce-...'`
+
+### Popup Closes Before User Sees Result
+
+**Symptom**: Popup closes immediately, user doesn't see success/error message.
+
+**Cause**: `window.close()` executes before user can read the message.
+
+**Expected Behavior**:
+- Popup posts message to parent and closes automatically
+- Parent window should display success/error notification
+- Popup fallback HTML is only shown if `window.opener` is missing
+
+**Fix**: Handle notifications in parent window, not popup:
+```javascript
+window.addEventListener('message', (event) => {
+  if (event.source !== authWindow) return;
+
+  const { type, status, error, errorDescription } = event.data;
+
+  if (type === 'oauth_callback') {
+    if (status === 'success') {
+      showNotification('OAuth authorization successful', 'success');
+    } else {
+      showNotification(`OAuth failed: ${errorDescription}`, 'error');
+    }
+  }
+});
+```
+
+### Multiple Popups or Duplicate Messages
+
+**Symptom**: Multiple OAuth popups open or parent receives duplicate messages.
+
+**Cause**:
+- User clicks "Authorize" multiple times
+- Event listener registered multiple times
+- Popup reference not tracked
+
+**Fix**:
+```javascript
+let authWindow = null;
+
+function startOAuth(gatewayId) {
+  // Close existing popup if any
+  if (authWindow && !authWindow.closed) {
+    authWindow.close();
+  }
+
+  authWindow = window.open(
+    `/oauth/authorize/${gatewayId}?popup=true`,
+    'oauth-popup',
+    'width=600,height=700'
+  );
+}
+
+// Use once() to prevent duplicate listeners
+window.addEventListener('message', handleOAuthMessage, { once: true });
+```
+
+### Popup Opens But Shows Error Page
+
+**Symptom**: Popup opens but immediately shows OAuth error page.
+
+**Causes**:
+1. Gateway not configured for OAuth
+2. Missing OAuth configuration fields
+3. Invalid redirect URI
+4. Provider rejected authorization request
+
+**Diagnosis**:
+```bash
+# Check gateway OAuth config
+curl -H "Authorization: Bearer $TOKEN" \
+  http://localhost:4444/oauth/status/{gateway_id}
+
+# Check logs for authorization errors
+grep "OAuth provider returned error" logs/mcpgateway.log
+```
+
+**Fix**:
+- Verify gateway has `auth_type: oauth` and complete `oauth_config`
+- Check redirect URI matches provider configuration
+- Review provider's authorization requirements (scopes, audience, etc.)
+
+---
+
 ## Related Documentation
 
 - [OAuth Integration](oauth.md) - Main OAuth setup guide
+- [OAuth Resource Configuration](oauth-resource-configuration.md) - Configuring the RFC 8707 `resource` / audience field, provider patterns, forcing a re-learn
 - [Configuration Reference](configuration.md) - All environment variables
 - [Scaling Guide](scale.md) - Multi-worker and Redis setup
 - [Securing ContextForge](securing.md) - Security best practices

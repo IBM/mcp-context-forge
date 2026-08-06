@@ -28,6 +28,18 @@ from mcpgateway.config import (
 )
 
 
+def test_root_policy_configuration_validation():
+    with pytest.raises(ValidationError):
+        Settings(root_allow_file_scheme=True, root_allowed_file_prefixes=[], _env_file=None)
+    with pytest.raises(ValidationError):
+        Settings(root_allowed_schemes=["file"], _env_file=None)
+    with pytest.raises(ValidationError):
+        Settings(root_allowed_file_prefixes=["/workspace/../secret"], _env_file=None)
+
+    settings = Settings(root_allowed_schemes=["HTTPS"], _env_file=None)
+    assert settings.root_allowed_schemes == ["https"]
+
+
 # --------------------------------------------------------------------------- #
 #                          Settings field parsers                             #
 # --------------------------------------------------------------------------- #
@@ -56,7 +68,208 @@ def test_ratelimiter_redis_url_defaults():
     assert s.ratelimiter_redis_url is None
     assert s.ratelimiter_redis_max_connections == 50
     assert s.ratelimiter_redis_socket_timeout == 2.0
-    assert s.ratelimiter_redis_socket_connect_timeout == 2.0
+
+
+def test_csrf_cookie_name_default_matches_env_example():
+    """CSRF_COOKIE_NAME in .env.example must equal config.py's csrf_cookie_name default.
+
+    Operators who copy .env.example (documented first step in README) must get
+    the same cookie name CSRFMiddleware and the Admin UI JS already hardcode
+    (`mcpgateway_csrf_token`). A stale .env.example value silently breaks CSRF
+    validation for every real deployment even though code defaults are correct
+    (see #5739).
+    """
+    import re
+
+    dummy_env = {
+        "JWT_SECRET_KEY": _TEST_JWT_SECRET,
+        "AUTH_ENCRYPTION_SECRET": _TEST_ENC_SECRET,
+    }
+
+    repo_root = os.path.join(os.path.dirname(__file__), "..", "..", "..")
+    env_example_path = os.path.normpath(os.path.join(repo_root, ".env.example"))
+
+    assert os.path.exists(env_example_path), f".env.example not found at {env_example_path}"
+
+    with open(env_example_path, encoding="utf-8") as f:
+        content = f.read()
+
+    match = re.search(r"^CSRF_COOKIE_NAME=(.+)$", content, re.MULTILINE)
+    assert match, "CSRF_COOKIE_NAME not found in .env.example"
+    env_example_value = match.group(1).strip()
+
+    with patch.dict(os.environ, dummy_env, clear=True):
+        s = Settings(_env_file=None)
+        assert env_example_value == s.csrf_cookie_name, f".env.example CSRF_COOKIE_NAME={env_example_value!r} does not match config.py default={s.csrf_cookie_name!r}"
+        assert s.ratelimiter_redis_socket_connect_timeout == 2.0
+
+
+def test_admin_csrf_cookie_name_matches_config_default():
+    """ADMIN_CSRF_COOKIE_NAME in admin.py must equal config.py's csrf_cookie_name default.
+
+    admin.py reads and writes the CSRF cookie via a module-level constant
+    instead of settings.csrf_cookie_name, so it does not track operator
+    overrides of CSRF_COOKIE_NAME -- it only happens to work today because the
+    constant and the settings default are both "mcpgateway_csrf_token". This
+    pins that coincidence so any future drift between them (the exact class of
+    bug behind #5739 and #4712) fails a test instead of silently breaking the
+    admin CSRF flow.
+    """
+    # First-Party
+    from mcpgateway import admin
+
+    dummy_env = {
+        "JWT_SECRET_KEY": _TEST_JWT_SECRET,
+        "AUTH_ENCRYPTION_SECRET": _TEST_ENC_SECRET,
+    }
+
+    with patch.dict(os.environ, dummy_env, clear=True):
+        s = Settings(_env_file=None)
+        assert admin.ADMIN_CSRF_COOKIE_NAME == s.csrf_cookie_name, f"admin.ADMIN_CSRF_COOKIE_NAME={admin.ADMIN_CSRF_COOKIE_NAME!r} does not match config.py default={s.csrf_cookie_name!r}"
+
+
+def test_oauth_router_csrf_cookie_name_matches_config_default():
+    """ADMIN_CSRF_COOKIE_NAME in routers/oauth_router.py must equal config.py's csrf_cookie_name default.
+
+    oauth_router.py independently duplicates the same constant as admin.py
+    (see test_admin_csrf_cookie_name_matches_config_default) rather than
+    reading settings.csrf_cookie_name. Both copies must stay pinned to the
+    settings default to avoid the class of drift that produced #5739 and
+    #4712.
+    """
+    # First-Party
+    from mcpgateway.routers import oauth_router
+
+    dummy_env = {
+        "JWT_SECRET_KEY": _TEST_JWT_SECRET,
+        "AUTH_ENCRYPTION_SECRET": _TEST_ENC_SECRET,
+    }
+
+    with patch.dict(os.environ, dummy_env, clear=True):
+        s = Settings(_env_file=None)
+        assert oauth_router.ADMIN_CSRF_COOKIE_NAME == s.csrf_cookie_name, f"oauth_router.ADMIN_CSRF_COOKIE_NAME={oauth_router.ADMIN_CSRF_COOKIE_NAME!r} does not match config.py default={s.csrf_cookie_name!r}"
+
+
+def test_admin_csrf_header_name_matches_config_default():
+    """ADMIN_CSRF_HEADER_NAME in admin.py must equal config.py's csrf_token_name default.
+
+    ``enforce_admin_csrf`` reads the submitted token via this module-level
+    constant rather than settings.csrf_token_name, so it does not track
+    operator overrides of CSRF_TOKEN_NAME -- the symmetrical gap to the cookie
+    constants pinned above. Compared case-insensitively because HTTP header
+    names are case-insensitive (RFC 7230) and the constant is deliberately
+    lowercased for ``request.headers.get``.
+    """
+    # First-Party
+    from mcpgateway import admin
+
+    dummy_env = {
+        "JWT_SECRET_KEY": _TEST_JWT_SECRET,
+        "AUTH_ENCRYPTION_SECRET": _TEST_ENC_SECRET,
+    }
+
+    with patch.dict(os.environ, dummy_env, clear=True):
+        s = Settings(_env_file=None)
+        assert admin.ADMIN_CSRF_HEADER_NAME.casefold() == s.csrf_token_name.casefold(), f"admin.ADMIN_CSRF_HEADER_NAME={admin.ADMIN_CSRF_HEADER_NAME!r} does not match config.py default={s.csrf_token_name!r}"
+
+
+def test_oauth_router_csrf_header_name_matches_config_default():
+    """ADMIN_CSRF_HEADER_NAME in routers/oauth_router.py must equal config.py's csrf_token_name default.
+
+    oauth_router.py duplicates the constant independently of admin.py (see
+    test_admin_csrf_header_name_matches_config_default). Both copies must stay
+    pinned to the settings default. Case-insensitive for the same reason.
+    """
+    # First-Party
+    from mcpgateway.routers import oauth_router
+
+    dummy_env = {
+        "JWT_SECRET_KEY": _TEST_JWT_SECRET,
+        "AUTH_ENCRYPTION_SECRET": _TEST_ENC_SECRET,
+    }
+
+    with patch.dict(os.environ, dummy_env, clear=True):
+        s = Settings(_env_file=None)
+        assert (
+            oauth_router.ADMIN_CSRF_HEADER_NAME.casefold() == s.csrf_token_name.casefold()
+        ), f"oauth_router.ADMIN_CSRF_HEADER_NAME={oauth_router.ADMIN_CSRF_HEADER_NAME!r} does not match config.py default={s.csrf_token_name!r}"
+
+
+def _csrf_warnings(caplog):
+    """Collect CSRF configuration warnings emitted during Settings construction.
+
+    Args:
+        caplog: pytest caplog fixture.
+
+    Returns:
+        List of formatted warning messages mentioning the CSRF name mismatch.
+    """
+    return [rec.getMessage() for rec in caplog.records if "CSRF CONFIGURATION WARNING" in rec.getMessage()]
+
+
+def test_csrf_name_override_warns_at_startup(caplog):
+    """Overriding CSRF_COOKIE_NAME/CSRF_TOKEN_NAME must warn loudly at startup.
+
+    Both settings govern CSRFMiddleware only; the Admin UI JS and the per-route
+    CSRF dependencies hardcode the defaults. An override desynchronizes them,
+    which shows up as intermittent 403 CSRF_TOKEN_INVALID on non-/admin browser
+    writes rather than an obvious failure. Fail loudly at boot instead.
+    """
+    caplog.set_level("WARNING", logger="mcpgateway.config")
+
+    Settings(csrf_cookie_name="csrf_token", csrf_token_name="X-Probe-Csrf", environment="development", _env_file=None)
+
+    warnings = _csrf_warnings(caplog)
+    assert any("CSRF_COOKIE_NAME" in msg and "csrf_token" in msg for msg in warnings), warnings
+    assert any("CSRF_TOKEN_NAME" in msg and "X-Probe-Csrf" in msg for msg in warnings), warnings
+
+
+def test_csrf_default_names_do_not_warn(caplog):
+    """The default (and only supported) names must not produce startup noise."""
+    caplog.set_level("WARNING", logger="mcpgateway.config")
+
+    Settings(environment="development", _env_file=None)
+
+    assert _csrf_warnings(caplog) == []
+
+
+def test_csrf_token_name_case_variant_does_not_warn(caplog):
+    """A header name differing only in case is functionally identical, so must not warn.
+
+    HTTP header names are case-insensitive (RFC 7230) and Starlette normalizes
+    them, so CSRF_TOKEN_NAME=x-csrf-token behaves exactly like the default.
+    admin.py and oauth_router.py in fact hardcode the lowercase spelling.
+    """
+    caplog.set_level("WARNING", logger="mcpgateway.config")
+
+    Settings(csrf_token_name="x-csrf-token", environment="development", _env_file=None)
+
+    assert _csrf_warnings(caplog) == []
+
+
+def test_csrf_cookie_name_case_variant_warns(caplog):
+    """A cookie name differing only in case is a real desync, so must warn.
+
+    Cookie names are case-sensitive (RFC 6265): the browser would hold
+    MCPGateway_CSRF_Token and mcpgateway_csrf_token as two distinct cookies.
+    This pins the asymmetry against a well-meaning blanket casefold that would
+    silence a genuine mismatch.
+    """
+    caplog.set_level("WARNING", logger="mcpgateway.config")
+
+    Settings(csrf_cookie_name="MCPGateway_CSRF_Token", environment="development", _env_file=None)
+
+    warnings = _csrf_warnings(caplog)
+    assert any("CSRF_COOKIE_NAME" in msg for msg in warnings), warnings
+
+
+def test_csrf_name_override_silent_when_csrf_disabled(caplog):
+    """With CSRF_ENABLED=false the names are inert, so the warning is noise."""
+    caplog.set_level("WARNING", logger="mcpgateway.config")
+
+    Settings(csrf_enabled=False, csrf_cookie_name="csrf_token", environment="development", _env_file=None)
+
+    assert _csrf_warnings(caplog) == []
 
 
 def test_ratelimiter_redis_url_set():
@@ -1893,15 +2106,30 @@ def test_primary_worker_heartbeat_warns_at_exact_boundary(caplog):
 
 
 def test_placeholder_secret_raises_in_development():
-    """__REPLACE_ME__ placeholder is rejected even in development."""
+    """__REPLACE_ME__ placeholder is rejected in development for jwt_secret_key.
+
+    For auth_encryption_secret the placeholder is permitted in development
+    (emits a WARNING) — consistent with all other non-compliant values.
+    """
     from mcpgateway.config import SecurityConfigurationError
 
+    # jwt_secret_key placeholder always hard-fails
     with pytest.raises(SecurityConfigurationError, match="unset placeholder"):
         Settings(
             jwt_secret_key="__REPLACE_ME__run_init-secrets_before_starting",
             environment="development",
             _env_file=None,
         )
+
+    # auth_encryption_secret placeholder in dev — warns and proceeds
+    strong_jwt = "a-strong-jwt-secret-that-is-long-enough-and-unique-xxxx"  # nosec B105
+    s = Settings(
+        jwt_secret_key=strong_jwt,
+        auth_encryption_secret="__REPLACE_ME__run_init-secrets_before_starting",
+        environment="development",
+        _env_file=None,
+    )
+    assert s.auth_encryption_secret.get_secret_value() == "__REPLACE_ME__run_init-secrets_before_starting"
 
 
 def test_placeholder_secret_raises_in_staging():
@@ -1944,22 +2172,46 @@ def test_weak_secret_raises_in_staging():
         )
 
 
-def test_weak_auth_encryption_secret_raises_in_development():
-    """Known-weak auth_encryption_secret is rejected unconditionally (including development).
+def test_weak_auth_encryption_secret_allowed_in_development():
+    """Known-weak auth_encryption_secret is downgraded to a warning in development mode.
 
-    ``"my-test-salt"`` is 12 chars — below the 32-char length floor — so ``"too short"``
-    fires before the weak-value check.  The test accepts either rejection reason.
+    When ENVIRONMENT=development, short/weak/low-entropy values for
+    auth_encryption_secret no longer raise SecurityConfigurationError — they
+    emit a logger.warning and startup proceeds.  This enables PoC / local-dev
+    convenience (e.g. AUTH_ENCRYPTION_SECRET=my-test-salt).
+    jwt_secret_key is NOT affected and still hard-fails unconditionally.
+    """
+    strong_jwt = "a-strong-jwt-secret-that-is-long-enough-and-unique-xxxx"  # nosec B105
+    s = Settings(
+        jwt_secret_key=strong_jwt,
+        auth_encryption_secret="my-test-salt",  # nosec B106  # pragma: allowlist secret
+        environment="development",
+        _env_file=None,
+    )
+    assert s.auth_encryption_secret.get_secret_value() == "my-test-salt"  # pragma: allowlist secret
+
+
+def test_weak_auth_encryption_secret_raises_outside_development():
+    """Known-weak auth_encryption_secret is still rejected in staging and production.
+
+    The dev-mode leniency must not bleed into non-development environments.
+    Uses a value that is long enough to pass the length floor so it reaches the
+    weak-value check rather than the too-short check.
     """
     from mcpgateway.config import SecurityConfigurationError
 
-    with pytest.raises(SecurityConfigurationError) as exc_info:
-        Settings(
-            auth_encryption_secret="my-test-salt",  # nosec B106  # pragma: allowlist secret
-            environment="development",
-            _env_file=None,
-        )
-    msg = str(exc_info.value)
-    assert "too short" in msg or "known-weak/default value" in msg
+    strong_jwt = "a-strong-jwt-secret-that-is-long-enough-and-unique-xxxx"  # nosec B105
+    # "my-test-key-but-now-longer-than-32-bytes" is in WEAK_VALUES and is ≥ 32 chars
+    weak_enc = "my-test-key-but-now-longer-than-32-bytes"  # nosec B106  # pragma: allowlist secret
+
+    for env in ("staging", "production"):
+        with pytest.raises(SecurityConfigurationError, match="known-weak"):
+            Settings(
+                jwt_secret_key=strong_jwt,
+                auth_encryption_secret=weak_enc,
+                environment=env,
+                _env_file=None,
+            )
 
 
 def test_strong_secrets_accepted_in_all_envs():
@@ -1991,7 +2243,13 @@ def test_empty_secret_raises():
 
 
 def test_init_secrets_patch_mode_writes_strong_values(tmp_path):
-    """init_secrets ensure_env_file_secrets replaces placeholder values with strong ones."""
+    """ensure_env_file_secrets patches JWT_SECRET_KEY but NOT AUTH_ENCRYPTION_SECRET.
+
+    AUTH_ENCRYPTION_SECRET is intentionally excluded from auto-patching so that
+    operators set it deliberately.  A weak value like my-test-salt is allowed
+    in ENVIRONMENT=development.  Strong values are still written to .env.secrets
+    by the --output / --stdout paths, just not auto-patched into .env.
+    """
     env_file = tmp_path / ".env"
     env_file.write_text("JWT_SECRET_KEY=__REPLACE_ME__run_init-secrets_before_starting\n" "AUTH_ENCRYPTION_SECRET=__REPLACE_ME__run_init-secrets_before_starting\n")
 
@@ -1999,7 +2257,7 @@ def test_init_secrets_patch_mode_writes_strong_values(tmp_path):
 
     from mcpgateway.scripts.init_secrets import ensure_env_file_secrets
 
-    # Patch os.environ to isolate the test
+    # Isolate from any real env vars
     env_backup_jwt = _os.environ.pop("JWT_SECRET_KEY", None)
     env_backup_enc = _os.environ.pop("AUTH_ENCRYPTION_SECRET", None)
     try:
@@ -2010,24 +2268,20 @@ def test_init_secrets_patch_mode_writes_strong_values(tmp_path):
         if env_backup_enc is not None:
             _os.environ["AUTH_ENCRYPTION_SECRET"] = env_backup_enc
 
+    # JWT_SECRET_KEY must be patched
     assert "JWT_SECRET_KEY" in generated
-    assert "AUTH_ENCRYPTION_SECRET" in generated
-
     new_jwt = generated["JWT_SECRET_KEY"]
-    new_enc = generated["AUTH_ENCRYPTION_SECRET"]
-
-    # Generated values must be non-trivially long (token_urlsafe(32) → 43 chars)
     assert len(new_jwt) >= 32
-    assert len(new_enc) >= 32
-
-    # Must not be placeholder or known-weak
     assert not new_jwt.lower().startswith("__replace_me__")
     assert new_jwt.lower() != "changeme"
 
-    # Running Settings() with the generated values must succeed
+    # AUTH_ENCRYPTION_SECRET must NOT be patched into .env
+    assert "AUTH_ENCRYPTION_SECRET" not in generated
+
+    # The generated JWT must work with Settings (using a dev-mode enc secret is fine)
     s = Settings(
         jwt_secret_key=new_jwt,
-        auth_encryption_secret=new_enc,
+        auth_encryption_secret="my-test-salt",  # nosec B106  # pragma: allowlist secret
         environment="development",
         _env_file=None,
     )
@@ -2111,3 +2365,29 @@ def test_alembic_env_import_does_not_require_secrets():
             if val is not None:
                 os.environ[key] = val
         sys.modules.pop("mcpgateway.alembic.env", None)
+
+
+def test_csrf_secret_key_is_a_secret_and_falls_back_to_jwt_secret():
+    """CSRF key must be SecretStr, and must still inherit the JWT secret when unset."""
+    # Third-Party
+    from pydantic import SecretStr
+
+    # First-Party
+    from mcpgateway.config import Settings
+
+    jwt_value = "config-test-jwt-canary-DO-NOT-USE-IN-PRODUCTION-0123456789"  # pragma: allowlist secret
+    cfg = Settings(jwt_secret_key=jwt_value, database_url="sqlite:///:memory:", environment="development")
+
+    assert isinstance(cfg.csrf_secret_key, SecretStr)
+    # The fallback still fires: SecretStr("") is truthy, so a naive
+    # `if not self.csrf_secret_key` would silently leave the key empty.
+    assert cfg.csrf_secret_key.get_secret_value() == jwt_value
+
+    explicit = "config-test-csrf-canary-DO-NOT-USE-IN-PRODUCTION-0123456789"  # pragma: allowlist secret
+    cfg2 = Settings(
+        jwt_secret_key=jwt_value,
+        csrf_secret_key=explicit,
+        database_url="sqlite:///:memory:",
+        environment="development",
+    )
+    assert cfg2.csrf_secret_key.get_secret_value() == explicit

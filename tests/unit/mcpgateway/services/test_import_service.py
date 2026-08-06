@@ -20,6 +20,7 @@ from mcpgateway.services.gateway_service import GatewayNameConflictError
 from mcpgateway.services.import_service import ConflictStrategy, ImportConflictError, ImportError, ImportService, ImportStatus, ImportValidationError
 from mcpgateway.services.prompt_service import PromptNameConflictError
 from mcpgateway.services.resource_service import ResourceURIConflictError
+from mcpgateway.services.root_service import RootServiceValidationError
 from mcpgateway.services.server_service import ServerNameConflictError
 from mcpgateway.services.tool_service import ToolNameConflictError
 
@@ -34,6 +35,7 @@ def import_service():
     service.prompt_service = AsyncMock()
     service.resource_service = AsyncMock()
     service.root_service = AsyncMock()
+    service.root_service.validate_root_input = MagicMock(side_effect=lambda uri, name=None: (uri, name))
 
     # Setup default return values for bulk registration methods
     service.tool_service.register_tools_bulk.return_value = {"created": 0, "updated": 0, "skipped": 0, "failed": 0, "errors": []}
@@ -69,6 +71,36 @@ async def test_validate_import_data_success(import_service, valid_import_data):
     """Test successful import data validation."""
     # Should not raise any exception
     import_service.validate_import_data(valid_import_data)
+
+
+@pytest.mark.asyncio
+async def test_validate_import_data_maps_root_policy_error_without_uri(import_service):
+    root_uri = "https://sensitive.example/root"
+    import_service.root_service.validate_root_input.side_effect = RootServiceValidationError("scheme_not_allowed")
+    import_data = {
+        "version": "2025-03-26",
+        "exported_at": "2025-01-01T00:00:00Z",
+        "entities": {"roots": [{"uri": root_uri, "name": "Root"}]},
+    }
+
+    with pytest.raises(ImportValidationError) as excinfo:
+        import_service.validate_import_data(import_data)
+
+    assert "scheme_not_allowed" in str(excinfo.value)
+    assert root_uri not in str(excinfo.value)
+
+
+@pytest.mark.asyncio
+async def test_validate_import_data_propagates_unexpected_root_validation_error(import_service):
+    import_service.root_service.validate_root_input.side_effect = RuntimeError("boom")
+    import_data = {
+        "version": "2025-03-26",
+        "exported_at": "2025-01-01T00:00:00Z",
+        "entities": {"roots": [{"uri": "https://example.com/root", "name": "Root"}]},
+    }
+
+    with pytest.raises(RuntimeError, match="boom"):
+        import_service.validate_import_data(import_data)
 
 
 @pytest.mark.asyncio
@@ -1231,8 +1263,28 @@ async def test_root_dry_run_processing(import_service, mock_db):
     )
 
     # Should add dry run warning and not call service
-    assert any("Would import root: file:///test" in warning for warning in status.warnings)
+    assert any("Would import root" in warning for warning in status.warnings)
     import_service.root_service.add_root.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_process_root_maps_policy_error_without_uri(import_service):
+    root_uri = "https://sensitive.example/root"
+    import_service.root_service.validate_root_input.side_effect = RootServiceValidationError("scheme_not_allowed")
+
+    with pytest.raises(ImportValidationError) as excinfo:
+        await import_service._process_root({"uri": root_uri}, ConflictStrategy.FAIL, False, ImportStatus("root-policy"))
+
+    assert "scheme_not_allowed" in str(excinfo.value)
+    assert root_uri not in str(excinfo.value)
+
+
+@pytest.mark.asyncio
+async def test_process_root_propagates_unexpected_validation_error(import_service):
+    import_service.root_service.validate_root_input.side_effect = RuntimeError("boom")
+
+    with pytest.raises(RuntimeError, match="boom"):
+        await import_service._process_root({"uri": "https://example.com/root"}, ConflictStrategy.FAIL, False, ImportStatus("root-unexpected"))
 
 
 @pytest.mark.asyncio

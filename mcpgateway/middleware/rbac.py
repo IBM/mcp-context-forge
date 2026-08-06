@@ -27,7 +27,7 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.db import fresh_db_session, SessionLocal
+from mcpgateway.db import fresh_db_session, Permissions, SessionLocal
 from mcpgateway.plugins.utils import build_request_extensions, record_plugin_metrics
 from mcpgateway.services.observability_service import current_trace_id
 from mcpgateway.services.permission_service import PermissionService
@@ -46,6 +46,93 @@ logger = logging.getLogger(__name__)
 
 # Generic 403 message — intentionally vague to avoid leaking permission names to callers
 _ACCESS_DENIED_MSG = "Access denied"
+
+# Wildcard token scope granting every permission (mirrors Permissions.ALL_PERMISSIONS in db.py,
+# duplicated here to keep this module import-light for TokenScopingMiddleware).
+_ALL_PERMISSIONS_SCOPE = "*"
+
+
+def token_scope_grants(token_scopes: Optional[List[str]], permission: str) -> bool:
+    """Check whether a token's Layer 1 scopes grant a permission.
+
+    This is the single source of truth for Layer 1 (token scope) semantics. Both the
+    ``@require_permission`` / ``@require_any_permission`` decorators and
+    ``TokenScopingMiddleware._check_permission_restrictions()`` route their membership
+    tests through it so scoping behaves identically wherever it is enforced.
+
+    Semantics:
+      * ``None`` or ``[]`` — no scope restriction. Empty permissions mean "inherit from
+        RBAC at runtime" (see ``TokenCatalogService._generate_token()``), *not* deny-all;
+        Layer 2 still gates the request.
+      * ``"*"`` — full access.
+      * ``"<category>.*"`` — grants every permission in that category, matching the
+        delegation rules in ``TokenCatalogService._validate_permission_delegation()``.
+        Note the token-creation API rejects this form (``TokenScopeRequest`` requires
+        ``resource.action``), so it is defensive rather than reachable today.
+      * ``servers.use`` — additionally granted to any token holding an MCP method
+        permission (``tools.*`` / ``resources.*`` / ``prompts.*``). Without transport
+        access those permissions are unusable, so ``_generate_token()`` injects
+        ``servers.use`` at creation time; this compensates for tokens issued before
+        that injection existed. Omitting it here would 403 such tokens on ``/sse``,
+        ``/servers/{id}/sse`` and ``/servers/{id}/message``, which the token-scoping
+        middleware admits.
+      * otherwise — exact match.
+
+    Args:
+        token_scopes: Permissions carried by the token, or None when the caller is not a
+            scoped API token (e.g. a session token).
+        permission: The permission being checked, typically ``"resource.action"``.
+
+    Returns:
+        bool: True if the token's scopes permit the operation.
+
+    Examples:
+        >>> token_scope_grants(None, "tools.read")
+        True
+        >>> token_scope_grants([], "tools.read")
+        True
+        >>> token_scope_grants(["*"], "admin.system_config")
+        True
+        >>> token_scope_grants(["tools.*"], "tools.read")
+        True
+        >>> token_scope_grants(["tools.*"], "resources.read")
+        False
+        >>> token_scope_grants(["tools.read"], "tools.read")
+        True
+        >>> token_scope_grants(["tools.read"], "a2a.read")
+        False
+
+        MCP method permissions imply transport access:
+
+        >>> token_scope_grants(["tools.execute"], "servers.use")
+        True
+        >>> token_scope_grants(["prompts.read"], "servers.use")
+        True
+        >>> token_scope_grants(["a2a.read"], "servers.use")
+        False
+    """
+    if not token_scopes:
+        # None (not a scoped token) or [] (inherit from RBAC) — no Layer 1 restriction.
+        return True
+
+    if _ALL_PERMISSIONS_SCOPE in token_scopes:
+        return True
+
+    if permission in token_scopes:
+        return True
+
+    category, separator, _ = permission.partition(".")
+    if separator and f"{category}.{_ALL_PERMISSIONS_SCOPE}" in token_scopes:
+        return True
+
+    # Transport compensation: MCP method permissions imply servers.use. Mirrors the
+    # generation-time injection in TokenCatalogService._generate_token() so tokens
+    # predating it are not denied transport access at Layer 1.
+    if permission == Permissions.SERVERS_USE:
+        return any(scope.startswith(Permissions.MCP_METHOD_PREFIXES) for scope in token_scopes)
+
+    return False
+
 
 # Bearer security scheme — uses the configured auth header (AUTH_HEADER_NAME)
 # so RBAC token extraction stays aligned with the rest of the auth flow.
@@ -432,6 +519,7 @@ async def get_current_user_with_permissions(request: Request, credentials: Optio
         request_id = getattr(request.state, "request_id", None)
         team_id = getattr(request.state, "team_id", None)
         token_teams = getattr(request.state, "token_teams", None)
+        token_scopes = getattr(request.state, "token_scopes", None)
 
         # Read plugin context data from request.state for cross-hook context sharing
         # (set by HttpAuthMiddleware for passing contexts between different hook types)
@@ -454,6 +542,7 @@ async def get_current_user_with_permissions(request: Request, credentials: Optio
             "team_id": team_id,  # Include team_id from token
             "token_teams": token_teams,  # Include token teams for query-level scoping
             "token_use": token_use,  # Include token_use for RBAC team derivation
+            "token_scopes": token_scopes,  # Include token scopes for API token permission checking
             "plugin_context_table": plugin_context_table,  # Plugin contexts for cross-hook sharing
             "plugin_global_context": plugin_global_context,  # Global context for consistency
         }
@@ -693,6 +782,16 @@ def require_permission(permission: str, resource_type: Optional[str] = None, all
             user_context = kwargs.get("user") or kwargs.get("_user") or kwargs.get("current_user") or kwargs.get("current_user_ctx")
             if not user_context or not isinstance(user_context, dict) or "email" not in user_context:
                 raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User authentication required")
+
+            # SECURITY: Check API token scopes BEFORE RBAC (Layer 1)
+            # A scoped API token must carry the required permission; this is independent of
+            # the RBAC role checks below (Layer 2). Session tokens and tokens whose scopes
+            # are empty ("inherit from RBAC") pass through — see token_scope_grants().
+            token_scopes = user_context.get("token_scopes")
+            if not token_scope_grants(token_scopes, permission):
+                # Log detailed info server-side but return generic error message to avoid permission disclosure
+                logger.warning(f"API token scope check failed: user={user_context['email']}, permission={permission}, token_scopes={token_scopes}")
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_ACCESS_DENIED_MSG)
 
             team_id, check_any_team = await _resolve_team_and_check_mode(user_context, kwargs)
 
@@ -991,6 +1090,16 @@ def require_any_permission(permissions: List[str], resource_type: Optional[str] 
             user_context = kwargs.get("user") or kwargs.get("_user") or kwargs.get("current_user") or kwargs.get("current_user_ctx")
             if not user_context or not isinstance(user_context, dict) or "email" not in user_context:
                 raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User authentication required")
+
+            # SECURITY: Check API token scopes BEFORE RBAC (Layer 1)
+            # A scoped API token must carry at least ONE of the required permissions; this is
+            # independent of the RBAC role checks below (Layer 2). Session tokens and tokens
+            # whose scopes are empty ("inherit from RBAC") pass through — see token_scope_grants().
+            token_scopes = user_context.get("token_scopes")
+            if permissions and not any(token_scope_grants(token_scopes, perm) for perm in permissions):
+                # Log detailed info server-side but return generic error message to avoid permission disclosure
+                logger.warning(f"API token scope check failed: user={user_context['email']}, required_any_of={permissions}, token_scopes={token_scopes}")
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_ACCESS_DENIED_MSG)
 
             team_id, check_any_team = await _resolve_team_and_check_mode(user_context, kwargs)
 

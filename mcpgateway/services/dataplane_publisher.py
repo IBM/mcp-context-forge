@@ -64,6 +64,8 @@ class BackendConfig(TypedDict):
     url: str
     transport: str
     passthrough_headers: list[str]
+    add_headers: dict[str, str]
+    remove_headers: list[str]
     capabilities: dict[str, Any]
     allowed_tool_names: list[str]
     allowed_resource_names: list[str]
@@ -212,12 +214,12 @@ class DataplanePublisherService:
         data: dict[str, dict[str, Any]],
     ) -> dict[str, UserConfig]:
         """
-        Build dataplane payload from already-filtered per-user data.
+        Build dataplane payload from already-filtered per-user data keyed by dataplane subject.
         """
 
         result: dict[str, UserConfig] = {}
 
-        for user_email, user_data in data.items():
+        for subject_key, user_data in data.items():
             servers = user_data["servers"]
             gateways = user_data["gateways"]
             prompts = user_data["prompts"]
@@ -236,6 +238,8 @@ class DataplanePublisherService:
                     "url": gateway["url"],
                     "transport": gateway["transport"],
                     "passthrough_headers": gateway["passthrough_headers"] or [],
+                    "add_headers": gateway.get("add_headers") or {},
+                    "remove_headers": gateway.get("remove_headers") or [],
                     "capabilities": gateway.get("capabilities") or {},
                 }
                 for gateway in gateways
@@ -275,7 +279,7 @@ class DataplanePublisherService:
 
                 virtual_hosts[server["id"]] = {"backends": backends}
 
-            result[user_email] = {"virtual_hosts": virtual_hosts}
+            result[subject_key] = {"virtual_hosts": virtual_hosts}
 
         return result
 
@@ -283,14 +287,16 @@ class DataplanePublisherService:
         """Fetch active users and dataplane data with bulk minimal-column queries."""
         with fresh_db_session() as db:
             try:
-                user_rows = db.execute(select(EmailUser.email, EmailUser.is_admin).where(EmailUser.is_active.is_(True))).all()
+                user_rows = db.execute(select(EmailUser.id, EmailUser.email, EmailUser.is_admin).where(EmailUser.is_active.is_(True))).all()
                 userteam_rows = db.execute(select(EmailTeamMember.user_email, EmailTeamMember.team_id).where(EmailTeamMember.is_active.is_(True))).all()
 
                 user_teams_map: dict[str, set[str]] = defaultdict(set)
                 user_admin_map: dict[str, bool] = {}
-                for user_email, is_admin in user_rows:
+                user_subject_key_by_email: dict[str, str] = {}
+                for user_id, user_email, is_admin in user_rows:
                     user_teams_map.setdefault(user_email, set())
                     user_admin_map[user_email] = is_admin
+                    user_subject_key_by_email[user_email] = str(user_id)
 
                 for user_email, team_id in userteam_rows:
                     if user_email in user_admin_map:
@@ -307,6 +313,8 @@ class DataplanePublisherService:
                         DbGateway.url,
                         DbGateway.transport,
                         DbGateway.passthrough_headers,
+                        DbGateway.add_headers,
+                        DbGateway.remove_headers,
                         DbGateway.capabilities,
                         DbGateway.owner_email,
                         DbGateway.team_id,
@@ -324,7 +332,7 @@ class DataplanePublisherService:
                 backend_items_by_server = self._get_backend_items_by_server(db)
 
                 return {
-                    user_email: self._build_user_data(
+                    user_subject_key_by_email[user_email]: self._build_user_data(
                         user_email,
                         teams,
                         user_admin_map.get(user_email, False),
@@ -373,6 +381,8 @@ class DataplanePublisherService:
                     "url": gateway.url,
                     "transport": gateway.transport,
                     "passthrough_headers": gateway.passthrough_headers,
+                    "add_headers": gateway.add_headers or {},
+                    "remove_headers": gateway.remove_headers or [],
                     "capabilities": gateway.capabilities or {},
                 }
                 for gateway in gateway_rows

@@ -66,7 +66,15 @@ from mcpgateway import version as version_module
 from mcpgateway.auth import get_current_user, get_user_team_roles
 
 # Re-export canonical get_user_email from auth_context for backward compatibility.
-from mcpgateway.auth_context import get_scoped_resource_access_context, get_token_teams_from_request, get_user_email
+from mcpgateway.auth_context import (
+    configuration_export_includes_roots,
+    get_scoped_resource_access_context,
+    get_token_teams_from_request,
+    get_user_email,
+    import_envelope_includes_roots,
+    is_unrestricted_platform_admin,
+    selective_selection_includes_roots,
+)
 from mcpgateway.cache.a2a_stats_cache import a2a_stats_cache
 from mcpgateway.cache.global_config_cache import global_config_cache
 from mcpgateway.common.models import LogLevel
@@ -158,6 +166,7 @@ from mcpgateway.services.email_auth_service import AuthenticationError, EmailAut
 from mcpgateway.services.encryption_service import get_encryption_service
 from mcpgateway.services.export_service import ExportError, ExportService
 from mcpgateway.services.gateway_service import (
+    gateway_capability_loaders,
     GatewayConnectionError,
     GatewayDuplicateConflictError,
     GatewayLookupConflictError,
@@ -177,7 +186,7 @@ from mcpgateway.services.permission_service import PermissionService
 from mcpgateway.services.plugin_service import get_plugin_service
 from mcpgateway.services.prompt_service import PromptArgumentsJSONError, PromptNameConflictError, PromptNotFoundError, PromptService
 from mcpgateway.services.resource_service import ResourceNotFoundError, ResourceService, ResourceURIConflictError, ResourceValidationError
-from mcpgateway.services.root_service import RootService, RootServiceError, RootServiceNotFoundError
+from mcpgateway.services.root_service import RootService, RootServiceError, RootServiceNotFoundError, RootServiceValidationError
 from mcpgateway.services.server_service import ServerError, ServerLockConflictError, ServerNameConflictError, ServerNotFoundError, ServerService
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.tag_service import TagService
@@ -187,6 +196,7 @@ from mcpgateway.services.tool_service import ToolError, ToolLockConflictError, T
 from mcpgateway.utils.create_jwt_token import create_jwt_token, get_jwt_token
 from mcpgateway.utils.error_formatter import ErrorFormatter, sanitize_validation_error_for_log
 from mcpgateway.utils.metadata_capture import MetadataCapture
+from mcpgateway.utils.oauth_resource import parse_oauth_resource_form
 from mcpgateway.utils.orjson_response import ORJSONResponse
 from mcpgateway.utils.pagination import paginate_query
 from mcpgateway.utils.passthrough_headers import PassthroughHeadersError
@@ -934,6 +944,84 @@ def _form_team_id(form: Any) -> Optional[str]:
     return str(raw).strip() or None
 
 
+async def _assemble_oauth_config_from_fields(fields: Any, *, encrypt_secret: bool, include_resource: bool = True) -> Optional[Dict[str, Any]]:
+    """Assemble an ``oauth_config`` dict from individual OAuth form/JSON fields.
+
+    Shared by all four admin OAuth form handlers (gateway create/edit, A2A
+    agent create/edit), which previously carried four near-identical copies of
+    this block — a duplication that already caused one create-form site to be
+    missed in review.  Field semantics:
+
+    * ``oauth_resource`` is parsed via
+      :func:`mcpgateway.utils.oauth_resource.parse_oauth_resource_form`
+      (single URI → ``str``, multiple → ``list[str]``, RFC 7519 §4.1.3 shapes).
+      Pass ``include_resource=False`` for entity types that do not consume
+      ``oauth_config["resource"]`` (A2A agents) so the value is neither
+      assembled nor able to trigger assembly on its own.
+    * ``encrypt_secret=True`` encrypts ``client_secret`` before storage
+      (UI edit/add handlers); ``False`` stores it as submitted (the gateway
+      create path, where encryption happens downstream in the service layer).
+
+    Args:
+        fields: Mapping with ``.get()`` (a form dict or parsed JSON body)
+            containing the ``oauth_*`` keys.
+        encrypt_secret: Whether to encrypt a submitted ``client_secret``.
+        include_resource: Whether to read and emit ``oauth_resource``.
+
+    Returns:
+        Assembled ``oauth_config`` dict, or ``None`` when no meaningful OAuth
+        field was provided.
+    """
+    oauth_grant_type = str(fields.get("oauth_grant_type", ""))
+    oauth_issuer = str(fields.get("oauth_issuer", ""))
+    oauth_token_url = str(fields.get("oauth_token_url", ""))
+    oauth_authorization_url = str(fields.get("oauth_authorization_url", ""))
+    oauth_redirect_uri = str(fields.get("oauth_redirect_uri", ""))
+    oauth_client_id = str(fields.get("oauth_client_id", ""))
+    oauth_client_secret = str(fields.get("oauth_client_secret", ""))
+    oauth_username = str(fields.get("oauth_username", ""))
+    oauth_password = str(fields.get("oauth_password", ""))
+    oauth_scopes_str = str(fields.get("oauth_scopes", ""))
+    oauth_audience = str(fields.get("oauth_audience", "")).strip()
+    oauth_resource = parse_oauth_resource_form(fields.get("oauth_resource")) if include_resource else None
+
+    if not any([oauth_grant_type, oauth_issuer, oauth_token_url, oauth_authorization_url, oauth_client_id, oauth_resource]):
+        return None
+
+    oauth_config: Dict[str, Any] = {}
+    if oauth_grant_type:
+        oauth_config["grant_type"] = oauth_grant_type
+    if oauth_issuer:
+        oauth_config["issuer"] = oauth_issuer
+    if oauth_token_url:
+        oauth_config["token_url"] = oauth_token_url
+    if oauth_authorization_url:
+        oauth_config["authorization_url"] = oauth_authorization_url
+    if oauth_redirect_uri:
+        oauth_config["redirect_uri"] = oauth_redirect_uri
+    if oauth_client_id:
+        oauth_config["client_id"] = oauth_client_id
+    if oauth_client_secret:
+        if encrypt_secret:
+            encryption = get_encryption_service(settings.auth_encryption_secret)
+            oauth_config["client_secret"] = await encryption.encrypt_secret_async(oauth_client_secret)
+        else:
+            oauth_config["client_secret"] = oauth_client_secret
+    if oauth_username:
+        oauth_config["username"] = oauth_username
+    if oauth_password:
+        oauth_config["password"] = oauth_password
+    if oauth_audience:
+        oauth_config["audience"] = oauth_audience
+    if oauth_scopes_str:
+        scopes = [s.strip() for s in oauth_scopes_str.replace(",", " ").split() if s.strip()]
+        if scopes:
+            oauth_config["scopes"] = scopes
+    if oauth_resource:
+        oauth_config["resource"] = oauth_resource
+    return oauth_config
+
+
 async def _parse_gateway_data_from_request(request: Request) -> dict[str, Any]:
     """Parse gateway data from either JSON body or form data.
 
@@ -1018,49 +1106,10 @@ async def _parse_gateway_data_from_request(request: Request) -> dict[str, Any]:
 
         # Option 2: Assemble from individual UI form fields
         # Only try this if oauth_config field was NOT provided
+        # (client_secret encryption happens downstream in the service layer)
         if not oauth_config and not oauth_config_field_provided:
-            oauth_grant_type = str(data.get("oauth_grant_type", ""))
-            oauth_issuer = str(data.get("oauth_issuer", ""))
-            oauth_token_url = str(data.get("oauth_token_url", ""))
-            oauth_authorization_url = str(data.get("oauth_authorization_url", ""))
-            oauth_redirect_uri = str(data.get("oauth_redirect_uri", ""))
-            oauth_client_id = str(data.get("oauth_client_id", ""))
-            oauth_client_secret = str(data.get("oauth_client_secret", ""))
-            oauth_username = str(data.get("oauth_username", ""))
-            oauth_password = str(data.get("oauth_password", ""))
-            oauth_scopes_str = str(data.get("oauth_scopes", ""))
-            oauth_audience = str(data.get("oauth_audience", ""))
+            oauth_config = await _assemble_oauth_config_from_fields(data, encrypt_secret=False)
 
-            # If any OAuth field is provided, assemble oauth_config
-            if any([oauth_grant_type, oauth_issuer, oauth_token_url, oauth_authorization_url, oauth_client_id]):
-                oauth_config = {}
-                if oauth_grant_type:
-                    oauth_config["grant_type"] = oauth_grant_type
-                if oauth_issuer:
-                    oauth_config["issuer"] = oauth_issuer
-                if oauth_token_url:
-                    oauth_config["token_url"] = oauth_token_url
-                if oauth_authorization_url:
-                    oauth_config["authorization_url"] = oauth_authorization_url
-                if oauth_redirect_uri:
-                    oauth_config["redirect_uri"] = oauth_redirect_uri
-                if oauth_client_id:
-                    oauth_config["client_id"] = oauth_client_id
-                if oauth_client_secret:
-                    oauth_config["client_secret"] = oauth_client_secret
-                if oauth_username:
-                    oauth_config["username"] = oauth_username
-                if oauth_password:
-                    oauth_config["password"] = oauth_password
-                # Add audience parameter (for Atlassian, Auth0, and other non-RFC-8707 providers)
-                if oauth_audience:
-                    oauth_config["audience"] = oauth_audience
-                if oauth_scopes_str:
-                    scopes = [s.strip() for s in oauth_scopes_str.replace(",", " ").split() if s.strip()]
-                    if scopes:
-                        oauth_config["scopes"] = scopes
-
-        # Only set oauth_config if it's a non-empty dict
         if oauth_config:
             data["oauth_config"] = oauth_config
 
@@ -3805,6 +3854,10 @@ async def admin_ui(
         # Merge permission-based hiding with query-param and static config
         hidden_sections = hidden_sections | permission_hidden_sections
 
+    can_manage_roots = await is_unrestricted_platform_admin(request, user, db)
+    if not can_manage_roots:
+        hidden_sections.add("roots")
+
     # --------------------------------------------------------------------------------
     # Get user action permissions for UI button visibility
     # Only check permissions when email auth is enabled (same as section hiding)
@@ -4153,8 +4206,10 @@ async def admin_ui(
     # If gateways need team filtering as dicts too, apply _to_dict_and_filter similarly:
     gateways = _to_dict_and_filter(gateways_raw) if isinstance(gateways_raw, (list, tuple)) else gateways
 
-    # roots
-    roots = [root.model_dump(by_alias=True) for root in await root_service.list_roots()]
+    # roots are global platform configuration; scoped admins see dashboard without root data.
+    roots = []
+    if can_manage_roots:
+        roots = [root.model_dump(by_alias=True) for root in await root_service.list_roots()]
 
     # Load A2A agents if enabled
     a2a_agents = []
@@ -4330,7 +4385,11 @@ async def admin_ui(
 
         # Set HTTP-only cookie using centralized security cookie utility
         set_auth_cookie(response, token, remember_me=False)
-        csrf_user_id = str(payload["sub"])
+        # CSRF tokens are HMAC-bound to the identity CSRFMiddleware derives from
+        # request.state.user, which is EmailUser.email — not EmailUser.id (the PK
+        # used for the JWT `sub` claim). Matches routers/auth.py and
+        # routers/email_auth.py, which already bind to the email.
+        csrf_user_id = admin_email
         csrf_session_id = str(payload["jti"])
         LOGGER.debug(f"Set session JWT token cookie for user: {admin_email}")
     except Exception as e:
@@ -9654,7 +9713,7 @@ async def admin_gateways_partial_html(
     team_ids = await _get_user_team_ids(user, db)
 
     # Build base query
-    query = select(DbGateway).options(joinedload(DbGateway.email_team), selectinload(DbGateway.tools))
+    query = select(DbGateway).options(joinedload(DbGateway.email_team), *gateway_capability_loaders())
 
     if not include_inactive:
         query = query.where(DbGateway.enabled.is_(True))
@@ -11493,6 +11552,7 @@ async def admin_search_a2a_agents(
 
 async def perform_unified_search(
     *,
+    request: Optional[Request] = None,
     q: str,
     tags: Optional[str],
     entity_types: Optional[str],
@@ -11515,6 +11575,7 @@ async def perform_unified_search(
     and optionally users (when the caller has ``admin.user_management`` permission).
 
     Args:
+        request: Current request object.
         q (str): Free-text search query.
         tags (Optional[str]): Tag filter expression (comma=OR, plus=AND).
         entity_types (Optional[str]): Optional comma-separated entity type list.
@@ -11736,8 +11797,10 @@ async def perform_unified_search(
         roots_result = await _safe_entity_search(
             admin_search_roots,
             "roots",
+            request=request,
             q=search_query,
             limit=effective_limit,
+            db=db,
             user=user,
         )
         grouped_results["roots"] = typing_cast(list[dict[str, Any]], roots_result.get("roots", roots_result.get("items", [])))
@@ -11768,6 +11831,7 @@ async def perform_unified_search(
 @admin_router.get("/search", response_class=JSONResponse)
 @require_permission("admin.dashboard", allow_admin_bypass=False)
 async def admin_unified_search(
+    request: Request = None,
     q: str = Query("", max_length=500, description="Search query"),
     tags: QueryTagsFilter = None,
     entity_types: QueryEntityTypes = None,
@@ -11790,6 +11854,7 @@ async def admin_unified_search(
     to :func:`perform_unified_search`.
 
     Args:
+        request: Current request object.
         q (str): Free-text search query.
         tags (Optional[str]): Tag filter expression (comma=OR, plus=AND).
         entity_types (Optional[str]): Optional comma-separated entity type list.
@@ -11807,6 +11872,7 @@ async def admin_unified_search(
         dict[str, Any]: Grouped and flattened search results with metadata.
     """
     return await perform_unified_search(
+        request=request,
         q=q,
         tags=tags,
         entity_types=entity_types,
@@ -13069,56 +13135,9 @@ async def admin_edit_gateway(
 
         # Option 2: Assemble from individual UI form fields
         if not oauth_config:
-            oauth_grant_type = str(form.get("oauth_grant_type", ""))
-            oauth_issuer = str(form.get("oauth_issuer", ""))
-            oauth_token_url = str(form.get("oauth_token_url", ""))
-            oauth_authorization_url = str(form.get("oauth_authorization_url", ""))
-            oauth_redirect_uri = str(form.get("oauth_redirect_uri", ""))
-            oauth_client_id = str(form.get("oauth_client_id", ""))
-            oauth_client_secret = str(form.get("oauth_client_secret", ""))
-            oauth_username = str(form.get("oauth_username", ""))
-            oauth_password = str(form.get("oauth_password", ""))
-            oauth_scopes_str = str(form.get("oauth_scopes", ""))
-            oauth_audience = str(form.get("oauth_audience", "")).strip()
-
-            # If any OAuth field is provided, assemble oauth_config
-            if any([oauth_grant_type, oauth_issuer, oauth_token_url, oauth_authorization_url, oauth_client_id]):
-                oauth_config = {}
-
-                if oauth_grant_type:
-                    oauth_config["grant_type"] = oauth_grant_type
-                if oauth_issuer:
-                    oauth_config["issuer"] = oauth_issuer
-                if oauth_token_url:
-                    oauth_config["token_url"] = oauth_token_url  # OAuthManager expects 'token_url', not 'token_endpoint'
-                if oauth_authorization_url:
-                    oauth_config["authorization_url"] = oauth_authorization_url  # OAuthManager expects 'authorization_url', not 'authorization_endpoint'
-                if oauth_redirect_uri:
-                    oauth_config["redirect_uri"] = oauth_redirect_uri
-                if oauth_client_id:
-                    oauth_config["client_id"] = oauth_client_id
-                if oauth_client_secret:
-                    # Encrypt the client secret
-                    encryption = get_encryption_service(settings.auth_encryption_secret)
-                    oauth_config["client_secret"] = await encryption.encrypt_secret_async(oauth_client_secret)
-
-                # Add username and password for password grant type
-                if oauth_username:
-                    oauth_config["username"] = oauth_username
-                if oauth_password:
-                    oauth_config["password"] = oauth_password
-
-                # Add audience parameter (for Atlassian, Auth0, and other non-RFC-8707 providers)
-                if oauth_audience:
-                    oauth_config["audience"] = oauth_audience
-
-                # Parse scopes (comma or space separated)
-                if oauth_scopes_str:
-                    scopes = [s.strip() for s in oauth_scopes_str.replace(",", " ").split() if s.strip()]
-                    if scopes:
-                        oauth_config["scopes"] = scopes
-
-                LOGGER.info(f"✅ Assembled OAuth config from UI form fields (edit): grant_type={oauth_grant_type}, issuer={oauth_issuer}")
+            oauth_config = await _assemble_oauth_config_from_fields(form, encrypt_secret=True)
+            if oauth_config:
+                LOGGER.info(f"✅ Assembled OAuth config from UI form fields (edit): grant_type={oauth_config.get('grant_type')}, issuer={oauth_config.get('issuer')}")
 
         user_email = get_user_email(user)
         # Preserve existing gateway's team_id when no explicit team_id is provided.
@@ -14109,11 +14128,19 @@ async def admin_set_prompt_state(
     return RedirectResponse(redirect_url, status_code=303)
 
 
+async def _require_unrestricted_root_admin(request: Optional[Request], user: Any, db: Session) -> None:
+    """Require unrestricted platform-admin authority for global roots."""
+    if not await is_unrestricted_platform_admin(request, user, db):
+        raise HTTPException(status_code=403, detail=_ACCESS_DENIED_MSG)
+
+
 @admin_router.get("/roots/search", response_class=JSONResponse)
 @require_permission("admin.system_config", allow_admin_bypass=False)
 async def admin_search_roots(
+    request: Request = None,
     q: str = Query("", max_length=500, description="Search query"),
     limit: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Maximum number of results to return"),
+    db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> dict:
     """Search roots by name or URI.
@@ -14125,8 +14152,10 @@ async def admin_search_roots(
     :meth:`~mcpgateway.services.root_service.RootService.list_roots`.
 
     Args:
+        request: Current request object.
         q (str): Free-text search query matched against root name and URI.
         limit (int): Maximum number of results to return.
+        db: Database session.
         user: Authenticated user context.
 
     Returns:
@@ -14138,6 +14167,7 @@ async def admin_search_roots(
         >>> admin_search_roots.__name__
         'admin_search_roots'
     """
+    await _require_unrestricted_root_admin(request, user, db)
     search_query = _normalize_search_query(q)
     # Defense-in-depth clamp: FastAPI validates ge/le at the HTTP layer, but direct
     # Python calls (e.g. from admin_unified_search) bypass that validation.
@@ -14161,6 +14191,8 @@ async def admin_search_roots(
 @require_permission("admin.system_config", allow_admin_bypass=False)
 async def admin_export_root(
     uri: str,
+    request: Request = None,
+    db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
     """
@@ -14168,6 +14200,8 @@ async def admin_export_root(
 
     Args:
         uri: Root URI to export (query parameter)
+        request: Current request object.
+        db: Database session.
         user: Authenticated user
 
     Returns:
@@ -14177,7 +14211,8 @@ async def admin_export_root(
         HTTPException: If root not found or export fails
     """
     try:
-        LOGGER.info(f"Admin user {get_user_email(user)} requested root export for URI: {uri}")
+        await _require_unrestricted_root_admin(request, user, db)
+        LOGGER.info("Admin user %s requested root export", get_user_email(user))
 
         # Get the root by URI
         root = await root_service.get_root_by_uri(uri)
@@ -14216,6 +14251,10 @@ async def admin_export_root(
     except RootServiceNotFoundError as e:
         LOGGER.error(f"Root not found for export by user {get_user_email(user)}: {str(e)}")
         raise HTTPException(status_code=404, detail=str(e))
+    except RootServiceValidationError as e:
+        raise HTTPException(status_code=400, detail={"message": "Root URI rejected by policy", "reason_code": e.reason_code}) from e
+    except HTTPException:
+        raise
     except Exception as e:
         LOGGER.error(f"Unexpected root export error for user {get_user_email(user)}: {str(e)}")
         raise HTTPException(status_code=500, detail="Root export failed")
@@ -14223,7 +14262,7 @@ async def admin_export_root(
 
 @admin_router.get("/roots/{uri:path}")
 @require_permission("admin.system_config", allow_admin_bypass=False)
-async def admin_get_root(uri: str, user=Depends(get_current_user_with_permissions)) -> dict:
+async def admin_get_root(uri: str, request: Request = None, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> dict:
     """Get a specific root by URI via the admin UI.
 
     This endpoint retrieves details for a specific root URI from the system.
@@ -14231,6 +14270,8 @@ async def admin_get_root(uri: str, user=Depends(get_current_user_with_permission
 
     Args:
         uri (str): The URI of the root to retrieve.
+        request: Current request object.
+        db: Database session.
         user: Authenticated user dependency.
 
     Returns:
@@ -14246,12 +14287,15 @@ async def admin_get_root(uri: str, user=Depends(get_current_user_with_permission
         >>> admin_get_root.__name__
         'admin_get_root'
     """
-    LOGGER.debug(f"User {get_user_email(user)} is retrieving root URI {uri}")
+    await _require_unrestricted_root_admin(request, user, db)
+    LOGGER.debug("User %s is retrieving root", get_user_email(user))
     try:
         root = await root_service.get_root_by_uri(uri)
         return root.model_dump(by_alias=True)
     except RootServiceNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    except RootServiceValidationError as e:
+        raise HTTPException(status_code=400, detail={"message": "Root URI rejected by policy", "reason_code": e.reason_code}) from e
     except Exception as e:
         LOGGER.error(f"Error getting root {uri}: {e}")
         raise e
@@ -14259,7 +14303,7 @@ async def admin_get_root(uri: str, user=Depends(get_current_user_with_permission
 
 @admin_router.post("/roots")
 @require_permission("admin.system_config", allow_admin_bypass=False)
-async def admin_add_root(request: Request, user=Depends(get_current_user_with_permissions), _db: Session = Depends(get_db)) -> RedirectResponse:
+async def admin_add_root(request: Request, user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)) -> RedirectResponse:
     """Add a new root via the admin UI.
 
     Expects form fields:
@@ -14269,7 +14313,7 @@ async def admin_add_root(request: Request, user=Depends(get_current_user_with_pe
     Args:
         request: FastAPI request containing form data.
         user: Authenticated user.
-        _db: Database session for permission checks.
+        db: Database session for permission checks.
 
     Returns:
         RedirectResponse: A redirect response to the admin dashboard.
@@ -14281,6 +14325,7 @@ async def admin_add_root(request: Request, user=Depends(get_current_user_with_pe
         'admin_add_root'
     """
     error_message = None
+    await _require_unrestricted_root_admin(request, user, db)
     user_email = get_user_email(user)
     LOGGER.debug(f"User {user_email} is adding a new root")
 
@@ -14296,8 +14341,11 @@ async def admin_add_root(request: Request, user=Depends(get_current_user_with_pe
             raise ValueError("URI is required")
         await root_service.add_root(str(uri), name)
 
-    except RootServiceError as e:
-        LOGGER.warning(f"Failed to add root for user {user_email}: {e}")
+    except RootServiceValidationError as e:
+        LOGGER.warning("Failed to add root for user %s: reason=%s", user_email, e.reason_code)
+        error_message = "Failed to add root. Please check the URI format."
+    except RootServiceError:
+        LOGGER.warning("Failed to add root for user %s", user_email)
         error_message = "Failed to add root. Please check the URI format."
     except ValueError as e:
         LOGGER.warning(f"Invalid input from user {user_email}: {e}")
@@ -14314,7 +14362,7 @@ async def admin_add_root(request: Request, user=Depends(get_current_user_with_pe
 
 @admin_router.post("/roots/{uri:path}/update")
 @require_permission("admin.system_config", allow_admin_bypass=False)
-async def admin_update_root(uri: str, request: Request, user=Depends(get_current_user_with_permissions)) -> RedirectResponse:
+async def admin_update_root(uri: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> RedirectResponse:
     """Update a root via the admin UI.
 
     This endpoint updates an existing root URI in the system. It expects form
@@ -14327,6 +14375,7 @@ async def admin_update_root(uri: str, request: Request, user=Depends(get_current
     Args:
         uri (str): The URI of the root to update.
         request (Request): FastAPI request object containing form data.
+        db: Database session.
         user: Authenticated user dependency.
 
     Returns:
@@ -14343,7 +14392,8 @@ async def admin_update_root(uri: str, request: Request, user=Depends(get_current
         >>> admin_update_root.__name__
         'admin_update_root'
     """
-    LOGGER.debug(f"User {get_user_email(user)} is updating root URI {uri}")
+    await _require_unrestricted_root_admin(request, user, db)
+    LOGGER.debug("User %s is updating root", get_user_email(user))
 
     try:
         form = await request.form()
@@ -14363,6 +14413,9 @@ async def admin_update_root(uri: str, request: Request, user=Depends(get_current
 
     except RootServiceNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    except RootServiceValidationError:
+        root_path = _resolve_root_path(request)
+        return RedirectResponse(_build_admin_redirect(root_path, "roots", error="Failed to update root. Please check the URI format."), status_code=303)
     except Exception as e:
         LOGGER.error(f"Error updating root {uri}: {e}")
         raise e
@@ -14370,7 +14423,7 @@ async def admin_update_root(uri: str, request: Request, user=Depends(get_current
 
 @admin_router.post("/roots/{uri:path}/delete")
 @require_permission("admin.system_config", allow_admin_bypass=False)
-async def admin_delete_root(uri: str, request: Request, user=Depends(get_current_user_with_permissions), _db: Session = Depends(get_db)) -> RedirectResponse:
+async def admin_delete_root(uri: str, request: Request, user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)) -> RedirectResponse:
     """
     Delete a root via the admin UI.
 
@@ -14382,7 +14435,7 @@ async def admin_delete_root(uri: str, request: Request, user=Depends(get_current
         uri (str): The URI of the root to delete.
         request (Request): FastAPI request object (not used directly but required by the route signature).
         user (str): Authenticated user dependency.
-        _db: Database session for permission checks.
+        db: Database session for permission checks.
 
     Returns:
         RedirectResponse: A redirect response to the roots section of the admin
@@ -14394,12 +14447,17 @@ async def admin_delete_root(uri: str, request: Request, user=Depends(get_current
         >>> admin_delete_root.__name__
         'admin_delete_root'
     """
-    LOGGER.debug(f"User {get_user_email(user)} is deleting root URI {uri}")
-    await root_service.remove_root(uri)
+    await _require_unrestricted_root_admin(request, user, db)
+    LOGGER.debug("User %s is deleting root", get_user_email(user))
     form = await request.form()
     root_path = _resolve_root_path(request)
     is_inactive_checked: str = str(form.get("is_inactive_checked", "false"))
     team_id = str(form.get("team_id", "") or "")
+    try:
+        await root_service.remove_root(uri)
+    except RootServiceValidationError:
+        redirect_url = _build_admin_redirect(root_path, "roots", error="Failed to delete root. Please check the URI format.", include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
+        return RedirectResponse(redirect_url, status_code=303)
     redirect_url = _build_admin_redirect(root_path, "roots", include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
     return RedirectResponse(redirect_url, status_code=303)
 
@@ -15607,6 +15665,9 @@ async def admin_export_configuration(
         if tags:
             tags_list = [t.strip() for t in tags.split(",") if t.strip()]
 
+        if configuration_export_includes_roots(include_types, exclude_types_list):
+            await _require_unrestricted_root_admin(request, user, db)
+
         # Extract username from user (which could be string or dict with token)
         username = user if isinstance(user, str) else user.get("username", "unknown")
 
@@ -15642,6 +15703,8 @@ async def admin_export_configuration(
     except ExportError as e:
         LOGGER.error(f"Admin export failed for user {user}: {str(e)}")
         raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
         LOGGER.error(f"Unexpected admin export error for user {user}: {str(e)}")
         raise HTTPException(status_code=500, detail="Export failed")
@@ -15680,6 +15743,9 @@ async def admin_export_selective(request: Request, db: Session = Depends(get_db)
         entity_selections = body.get("entity_selections", {})
         include_dependencies = body.get("include_dependencies", True)
 
+        if selective_selection_includes_roots(entity_selections):
+            await _require_unrestricted_root_admin(request, user, db)
+
         # Extract username from user (which could be string or dict with token)
         username = user if isinstance(user, str) else user.get("username", "unknown")
 
@@ -15706,6 +15772,8 @@ async def admin_export_selective(request: Request, db: Session = Depends(get_db)
     except ExportError as e:
         LOGGER.error(f"Admin selective export failed for user {user}: {str(e)}")
         raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
         LOGGER.error(f"Unexpected admin selective export error for user {user}: {str(e)}")
         raise HTTPException(status_code=500, detail="Export failed")
@@ -15747,6 +15815,9 @@ async def admin_import_preview(request: Request, db: Session = Depends(get_db), 
         import_data = data.get("data")
         if not import_data:
             raise HTTPException(status_code=400, detail="Missing 'data' field with import content")
+
+        if import_envelope_includes_roots(import_data):
+            await _require_unrestricted_root_admin(request, user, db)
 
         # Validate user permissions for import preview
         username = user if isinstance(user, str) else user.get("username", "unknown")
@@ -15805,6 +15876,9 @@ async def admin_import_configuration(request: Request, db: Session = Depends(get
         dry_run = body.get("dry_run", False)
         rekey_secret = body.get("rekey_secret")
         selected_entities = body.get("selected_entities")
+
+        if import_envelope_includes_roots(import_data, selected_entities):
+            await _require_unrestricted_root_admin(request, user, db)
 
         # Validate conflict strategy
         try:
@@ -16069,59 +16143,14 @@ async def admin_add_a2a_agent(
                 LOGGER.error(f"Failed to parse OAuth config: {e}")
                 oauth_config = None
 
-        # Option 2: Assemble from individual UI form fields
+        # Option 2: Assemble from individual UI form fields.
+        # include_resource=False: A2A agents do not consume oauth_config["resource"]
+        # (no per-user token storage / audience validation on the A2A path), so the
+        # field is not offered on A2A forms and is not assembled here.
         if not oauth_config:
-            oauth_grant_type = str(form.get("oauth_grant_type", ""))
-            oauth_issuer = str(form.get("oauth_issuer", ""))
-            oauth_token_url = str(form.get("oauth_token_url", ""))
-            oauth_authorization_url = str(form.get("oauth_authorization_url", ""))
-            oauth_redirect_uri = str(form.get("oauth_redirect_uri", ""))
-            oauth_client_id = str(form.get("oauth_client_id", ""))
-            oauth_client_secret = str(form.get("oauth_client_secret", ""))
-            oauth_username = str(form.get("oauth_username", ""))
-            oauth_password = str(form.get("oauth_password", ""))
-            oauth_scopes_str = str(form.get("oauth_scopes", ""))
-            oauth_audience = str(form.get("oauth_audience", "")).strip()
-
-            # If any OAuth field is provided, assemble oauth_config
-            if any([oauth_grant_type, oauth_issuer, oauth_token_url, oauth_authorization_url, oauth_client_id]):
-                oauth_config = {}
-
-                if oauth_grant_type:
-                    oauth_config["grant_type"] = oauth_grant_type
-                if oauth_issuer:
-                    oauth_config["issuer"] = oauth_issuer
-                if oauth_token_url:
-                    oauth_config["token_url"] = oauth_token_url  # OAuthManager expects 'token_url', not 'token_endpoint'
-                if oauth_authorization_url:
-                    oauth_config["authorization_url"] = oauth_authorization_url  # OAuthManager expects 'authorization_url', not 'authorization_endpoint'
-                if oauth_redirect_uri:
-                    oauth_config["redirect_uri"] = oauth_redirect_uri
-                if oauth_client_id:
-                    oauth_config["client_id"] = oauth_client_id
-                if oauth_client_secret:
-                    # Encrypt the client secret
-                    encryption = get_encryption_service(settings.auth_encryption_secret)
-                    oauth_config["client_secret"] = await encryption.encrypt_secret_async(oauth_client_secret)
-
-                # Add username and password for password grant type
-                if oauth_username:
-                    oauth_config["username"] = oauth_username
-                if oauth_password:
-                    oauth_config["password"] = oauth_password
-
-                # Add audience parameter (for Atlassian, Auth0, and other non-RFC-8707 providers)
-                if oauth_audience:
-                    oauth_config["audience"] = oauth_audience
-
-                # Parse scopes (comma or space separated)
-                if oauth_scopes_str:
-                    scopes = [s.strip() for s in oauth_scopes_str.replace(",", " ").split() if s.strip()]
-                    if scopes:
-                        oauth_config["scopes"] = scopes
-
-                LOGGER.info(f"✅ Assembled OAuth config from UI form fields: grant_type={oauth_grant_type}, issuer={oauth_issuer}")
-                LOGGER.info(f"DEBUG: Complete oauth_config = {oauth_config}")
+            oauth_config = await _assemble_oauth_config_from_fields(form, encrypt_secret=True, include_resource=False)
+            if oauth_config:
+                LOGGER.info(f"✅ Assembled OAuth config from UI form fields: grant_type={oauth_config.get('grant_type')}, issuer={oauth_config.get('issuer')}")
 
         passthrough_headers = str(form.get("passthrough_headers"))
         if passthrough_headers and passthrough_headers.strip():
@@ -16339,58 +16368,14 @@ async def admin_edit_a2a_agent(
                 LOGGER.error(f"Failed to parse OAuth config: {e}")
                 oauth_config = None
 
-        # Option 2: Assemble from individual UI form fields
+        # Option 2: Assemble from individual UI form fields.
+        # include_resource=False: A2A agents do not consume oauth_config["resource"]
+        # (no per-user token storage / audience validation on the A2A path), so the
+        # field is not offered on A2A forms and is not assembled here.
         if not oauth_config:
-            oauth_grant_type = str(form.get("oauth_grant_type", ""))
-            oauth_issuer = str(form.get("oauth_issuer", ""))
-            oauth_token_url = str(form.get("oauth_token_url", ""))
-            oauth_authorization_url = str(form.get("oauth_authorization_url", ""))
-            oauth_redirect_uri = str(form.get("oauth_redirect_uri", ""))
-            oauth_client_id = str(form.get("oauth_client_id", ""))
-            oauth_client_secret = str(form.get("oauth_client_secret", ""))
-            oauth_username = str(form.get("oauth_username", ""))
-            oauth_password = str(form.get("oauth_password", ""))
-            oauth_scopes_str = str(form.get("oauth_scopes", ""))
-            oauth_audience = str(form.get("oauth_audience", "")).strip()
-
-            # If any OAuth field is provided, assemble oauth_config
-            if any([oauth_grant_type, oauth_issuer, oauth_token_url, oauth_authorization_url, oauth_client_id]):
-                oauth_config = {}
-
-                if oauth_grant_type:
-                    oauth_config["grant_type"] = oauth_grant_type
-                if oauth_issuer:
-                    oauth_config["issuer"] = oauth_issuer
-                if oauth_token_url:
-                    oauth_config["token_url"] = oauth_token_url  # OAuthManager expects 'token_url', not 'token_endpoint'
-                if oauth_authorization_url:
-                    oauth_config["authorization_url"] = oauth_authorization_url  # OAuthManager expects 'authorization_url', not 'authorization_endpoint'
-                if oauth_redirect_uri:
-                    oauth_config["redirect_uri"] = oauth_redirect_uri
-                if oauth_client_id:
-                    oauth_config["client_id"] = oauth_client_id
-                if oauth_client_secret:
-                    # Encrypt the client secret
-                    encryption = get_encryption_service(settings.auth_encryption_secret)
-                    oauth_config["client_secret"] = await encryption.encrypt_secret_async(oauth_client_secret)
-
-                # Add username and password for password grant type
-                if oauth_username:
-                    oauth_config["username"] = oauth_username
-                if oauth_password:
-                    oauth_config["password"] = oauth_password
-
-                # Add audience parameter (for Atlassian, Auth0, and other non-RFC-8707 providers)
-                if oauth_audience:
-                    oauth_config["audience"] = oauth_audience
-
-                # Parse scopes (comma or space separated)
-                if oauth_scopes_str:
-                    scopes = [s.strip() for s in oauth_scopes_str.replace(",", " ").split() if s.strip()]
-                    if scopes:
-                        oauth_config["scopes"] = scopes
-
-                LOGGER.info(f"✅ Assembled OAuth config from UI form fields (edit): grant_type={oauth_grant_type}, issuer={oauth_issuer}")
+            oauth_config = await _assemble_oauth_config_from_fields(form, encrypt_secret=True, include_resource=False)
+            if oauth_config:
+                LOGGER.info(f"✅ Assembled OAuth config from UI form fields (edit): grant_type={oauth_config.get('grant_type')}, issuer={oauth_config.get('issuer')}")
 
         user_email = get_user_email(user)
 
@@ -16439,7 +16424,6 @@ async def admin_edit_a2a_agent(
             oauth_config=oauth_config,
             visibility=visibility,
             team_id=team_id,
-            owner_email=user_email,
             capabilities=capabilities,  # Optional, not editable via UI
             config=config,  # Optional, not editable via UI
             # UAID generation fields (only applies if agent doesn't have UAID yet)
@@ -16463,6 +16447,7 @@ async def admin_edit_a2a_agent(
             modified_from_ip=mod_metadata["modified_from_ip"],
             modified_via=mod_metadata["modified_via"],
             modified_user_agent=mod_metadata["modified_user_agent"],
+            user_email=user_email,
         )
 
         return ORJSONResponse({"message": "A2A agent updated successfully", "success": True}, status_code=200)
@@ -16471,10 +16456,24 @@ async def admin_edit_a2a_agent(
         return ORJSONResponse({"message": str(ve), "success": False}, status_code=422)
     except IntegrityError as ie:
         return ORJSONResponse({"message": str(ie), "success": False}, status_code=409)
+    except PermissionError as e:
+        LOGGER.warning(
+            "Permission denied for user %s editing A2A agent %s: %s",
+            SecurityValidator.sanitize_log_message(get_user_email(user)),
+            SecurityValidator.sanitize_log_message(agent_id),
+            e,
+        )
+        return ORJSONResponse({"message": str(e), "success": False}, status_code=403)
+    except A2AAgentNotFoundError:
+        return ORJSONResponse({"message": "A2A agent not found.", "success": False}, status_code=404)
     except HTTPException:
         raise
     except Exception as e:
-        return ORJSONResponse({"message": str(e), "success": False}, status_code=500)
+        LOGGER.exception("Unexpected error in admin_edit_a2a_agent: %s", e)
+        return ORJSONResponse(
+            {"message": "An unexpected error occurred. Please try again or contact support.", "success": False},
+            status_code=500,
+        )
 
 
 @admin_router.post("/a2a/{agent_id}/state")

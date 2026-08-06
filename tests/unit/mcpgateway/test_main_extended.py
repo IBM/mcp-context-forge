@@ -4252,6 +4252,50 @@ class TestCrudEndpoints:
         assert excinfo.value.status_code == 409
 
     @pytest.mark.asyncio
+    async def test_update_resource_validation_error_maps_to_422(self, monkeypatch, allow_permission):
+        """ResourceValidationError on update must map to 422, matching create_resource (issue #4991)."""
+        request = _make_request("/resources/res-1")
+        monkeypatch.setattr(
+            "mcpgateway.main.MetadataCapture.extract_modification_metadata",
+            lambda *_args, **_kwargs: {
+                "modified_by": "user",
+                "modified_from_ip": "127.0.0.1",
+                "modified_via": "api",
+                "modified_user_agent": "test",
+            },
+        )
+        # First-Party
+        from mcpgateway.services.resource_service import ResourceValidationError
+
+        monkeypatch.setattr("mcpgateway.main.resource_service.update_resource", AsyncMock(side_effect=ResourceValidationError("Cannot create a team-scoped resource without a team_id")))
+        with pytest.raises(HTTPException) as excinfo:
+            await update_resource("res-1", ResourceUpdate(name="Res Updated"), request, db=MagicMock(), user={"email": "user@example.com"})
+        assert excinfo.value.status_code == 422
+        assert excinfo.value.detail == "Cannot create a team-scoped resource without a team_id"
+
+    @pytest.mark.asyncio
+    async def test_update_resource_resource_error_maps_to_400(self, monkeypatch, allow_permission):
+        """A plain ResourceError on update must map to 400 rather than escaping as a 500 (issue #4991)."""
+        request = _make_request("/resources/res-1")
+        monkeypatch.setattr(
+            "mcpgateway.main.MetadataCapture.extract_modification_metadata",
+            lambda *_args, **_kwargs: {
+                "modified_by": "user",
+                "modified_from_ip": "127.0.0.1",
+                "modified_via": "api",
+                "modified_user_agent": "test",
+            },
+        )
+        # First-Party
+        from mcpgateway.services.resource_service import ResourceError
+
+        monkeypatch.setattr("mcpgateway.main.resource_service.update_resource", AsyncMock(side_effect=ResourceError("resource update failed")))
+        with pytest.raises(HTTPException) as excinfo:
+            await update_resource("res-1", ResourceUpdate(name="Res Updated"), request, db=MagicMock(), user={"email": "user@example.com"})
+        assert excinfo.value.status_code == 400
+        assert excinfo.value.detail == "resource update failed"
+
+    @pytest.mark.asyncio
     async def test_update_resource_mcp_apps_validation_error_maps_to_422(self, monkeypatch, allow_permission):
         request = _make_request("/resources/res-1")
         monkeypatch.setattr(
@@ -4565,6 +4609,10 @@ class TestSecurityHealthEndpoint:
 class TestRootEndpointsCoverage:
     """Cover export_root + root lookup/update error branches."""
 
+    @pytest.fixture(autouse=True)
+    def _allow_root_admin(self, monkeypatch):
+        monkeypatch.setattr("mcpgateway.main.is_unrestricted_platform_admin", AsyncMock(return_value=True))
+
     @pytest.mark.asyncio
     async def test_export_root_success_and_username_extraction(self, monkeypatch):
         # First-Party
@@ -4615,10 +4663,11 @@ class TestRootEndpointsCoverage:
     async def test_update_root_success_and_errors(self, monkeypatch):
         # First-Party
         import mcpgateway.main as main_mod
+        from mcpgateway.schemas import RootUpdate
 
         updated = SimpleNamespace(uri="root://example", name="Updated")
         monkeypatch.setattr(main_mod.root_service, "update_root", AsyncMock(return_value=updated))
-        root_payload = SimpleNamespace(name="Updated")
+        root_payload = RootUpdate(name="Updated")
         assert await main_mod.update_root("root://example", root_payload, user={"email": "user@example.com"}) == updated
 
         monkeypatch.setattr(main_mod.root_service, "update_root", AsyncMock(side_effect=main_mod.RootServiceNotFoundError("nope")))
@@ -6556,6 +6605,7 @@ class TestRpcHandling:
             "mcpgateway.main._is_trusted_internal_mcp_runtime_request",
             lambda request: request.headers.get("x-contextforge-mcp-runtime") == "rust" and getattr(getattr(request, "client", None), "host", None) in ("127.0.0.1", "::1"),
         )
+        monkeypatch.setattr("mcpgateway.main.is_unrestricted_platform_admin", AsyncMock(return_value=True))
 
     @staticmethod
     def _make_request(payload: dict) -> MagicMock:
@@ -7569,6 +7619,35 @@ class TestRpcHandling:
         assert json.loads(response.body.decode()) == {
             "roots": [{"uri": "file:///tmp", "name": "tmp"}],
         }
+
+    async def test_handle_internal_mcp_roots_list_denies_scoped_admin_before_listing(self, monkeypatch):
+        request = self._make_request({"jsonrpc": "2.0", "id": "roots-denied", "method": "roots/list", "params": {}})
+        request.headers = {"x-contextforge-mcp-runtime": "rust"}
+        request.client = SimpleNamespace(host="127.0.0.1")
+        mock_db = MagicMock()
+        mock_db.is_active = True
+        mock_db.in_transaction.return_value = object()
+        forwarded_user = {"email": "admin@example.com"}
+        list_roots = AsyncMock()
+        root_admin = AsyncMock(return_value=False)
+
+        monkeypatch.setattr("mcpgateway.main._build_internal_mcp_forwarded_user", lambda _request: forwarded_user)
+        monkeypatch.setattr("mcpgateway.main.is_unrestricted_platform_admin", root_admin)
+        monkeypatch.setattr("mcpgateway.main.root_service.list_roots", list_roots)
+
+        with (
+            patch("mcpgateway.main.SessionLocal", return_value=mock_db),
+            patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value=forwarded_user)),
+        ):
+            response = await handle_internal_mcp_roots_list(request)
+
+        body = json.loads(response.body.decode())
+        assert response.status_code == 403
+        assert body["code"] == -32003
+        assert body["message"] == "Access denied"
+        assert body["data"] == {"method": "roots/list"}
+        root_admin.assert_awaited_once_with(request, forwarded_user, mock_db)
+        list_roots.assert_not_awaited()
 
     async def test_handle_internal_mcp_completion_complete_returns_payload(self):
         request = self._make_request({"jsonrpc": "2.0", "id": "completion-1", "method": "completion/complete", "params": {"prompt": "hi"}})
@@ -9511,6 +9590,22 @@ class TestRpcHandling:
             result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
             assert result["error"]["code"] == -32003
 
+    @pytest.mark.parametrize("method", ["list_roots", "roots/list"])
+    async def test_handle_rpc_roots_list_denies_scoped_admin_before_listing(self, monkeypatch, method):
+        payload = {"jsonrpc": "2.0", "id": "roots-denied", "method": method, "params": {}}
+        request = self._make_request(payload)
+        list_roots = AsyncMock()
+        monkeypatch.setattr("mcpgateway.main.root_service.list_roots", list_roots)
+        monkeypatch.setattr("mcpgateway.main.is_unrestricted_platform_admin", AsyncMock(return_value=False))
+
+        with patch("mcpgateway.main.PermissionChecker.has_permission", new=AsyncMock(return_value=True)):
+            result = await handle_rpc(request, db=MagicMock(), user={"email": "admin@example.com"})
+
+        assert result["error"]["code"] == -32003
+        assert result["error"]["message"] == "Access denied"
+        assert result["error"]["data"] == {"method": method}
+        list_roots.assert_not_awaited()
+
     async def test_handle_rpc_admin_short_circuit_still_honors_token_scope_cap(self):
         payload = {"jsonrpc": "2.0", "id": "roots-scope", "method": "roots/list", "params": {}}
         request = self._make_request(payload)
@@ -10535,6 +10630,37 @@ class TestExportImportEndpoints:
             await main_mod.export_configuration.__wrapped__(request, types="tools", db=MagicMock(), user="basic-user")
         assert excinfo.value.status_code == 500
 
+    async def test_export_configuration_preserves_root_authorization_denial(self, monkeypatch):
+        # First-Party
+        import mcpgateway.main as main_mod
+
+        export_service = MagicMock()
+        export_service.export_configuration = AsyncMock()
+        monkeypatch.setattr(main_mod, "export_service", export_service)
+        monkeypatch.setattr(main_mod, "is_unrestricted_platform_admin", AsyncMock(return_value=False))
+
+        with pytest.raises(HTTPException) as excinfo:
+            await main_mod.export_configuration.__wrapped__(MagicMock(spec=Request), types="roots", db=MagicMock(), user={"email": "admin@example.com"})
+
+        assert excinfo.value.status_code == 403
+        assert excinfo.value.detail == main_mod._ACCESS_DENIED_MSG
+        export_service.export_configuration.assert_not_awaited()
+
+    async def test_unfiltered_export_preserves_root_authorization_denial(self, monkeypatch):
+        # First-Party
+        import mcpgateway.main as main_mod
+
+        export_service = MagicMock()
+        export_service.export_configuration = AsyncMock()
+        monkeypatch.setattr(main_mod, "export_service", export_service)
+        monkeypatch.setattr(main_mod, "is_unrestricted_platform_admin", AsyncMock(return_value=False))
+
+        with pytest.raises(HTTPException) as excinfo:
+            await main_mod.export_configuration.__wrapped__(MagicMock(spec=Request), types=None, db=MagicMock(), user={"email": "admin@example.com"})
+
+        assert excinfo.value.status_code == 403
+        export_service.export_configuration.assert_not_awaited()
+
     async def test_export_selective_configuration_success(self):
         export_service = MagicMock()
         export_service.export_selective = AsyncMock(return_value={"tools": ["tool-1"]})
@@ -10578,6 +10704,24 @@ class TestExportImportEndpoints:
             await main_mod.export_selective_configuration.__wrapped__(request, {"tools": ["tool-1"]}, include_dependencies=False, db=MagicMock(), user={"email": "user@example.com"})
         assert excinfo.value.status_code == 500
 
+    async def test_export_selective_configuration_preserves_root_authorization_denial(self, monkeypatch):
+        # First-Party
+        import mcpgateway.main as main_mod
+
+        export_service = MagicMock()
+        export_service.export_selective = AsyncMock()
+        monkeypatch.setattr(main_mod, "export_service", export_service)
+        monkeypatch.setattr(main_mod, "is_unrestricted_platform_admin", AsyncMock(return_value=False))
+
+        with pytest.raises(HTTPException) as excinfo:
+            await main_mod.export_selective_configuration.__wrapped__(
+                MagicMock(spec=Request), {"roots": ["https://example.com/root"]}, db=MagicMock(), user={"email": "admin@example.com"}
+            )
+
+        assert excinfo.value.status_code == 403
+        assert excinfo.value.detail == main_mod._ACCESS_DENIED_MSG
+        export_service.export_selective.assert_not_awaited()
+
     async def test_import_configuration_missing_import_data(self):
         # First-Party
         import mcpgateway.main as main_mod
@@ -10605,6 +10749,39 @@ class TestExportImportEndpoints:
         with patch("mcpgateway.main.import_service", import_service):
             result = await import_configuration(import_data={"tools": []}, conflict_strategy="update", db=MagicMock(), user={"email": "user@example.com"})
             assert result["status"] == "ok"
+
+    @pytest.mark.parametrize("dry_run", [True, False])
+    async def test_import_configuration_denies_root_payload_before_service(self, monkeypatch, dry_run):
+        # First-Party
+        import mcpgateway.main as main_mod
+
+        import_service = MagicMock(import_configuration=AsyncMock())
+        monkeypatch.setattr(main_mod, "import_service", import_service)
+        monkeypatch.setattr(main_mod, "is_unrestricted_platform_admin", AsyncMock(return_value=False))
+        import_data = {"entities": {"roots": [{"uri": "https://example.com/root", "name": "Root"}]}}
+
+        with pytest.raises(HTTPException) as excinfo:
+            await main_mod.import_configuration.__wrapped__(import_data=import_data, conflict_strategy="update", dry_run=dry_run, selected_entities=None, db=MagicMock(), user={"email": "admin@example.com"})
+
+        assert excinfo.value.status_code == 403
+        assert excinfo.value.detail == main_mod._ACCESS_DENIED_MSG
+        import_service.import_configuration.assert_not_awaited()
+
+    @pytest.mark.parametrize("dry_run", [True, False])
+    async def test_import_configuration_allows_root_free_payload_when_root_gate_denies(self, monkeypatch, dry_run):
+        # First-Party
+        import mcpgateway.main as main_mod
+
+        status = MagicMock()
+        status.to_dict.return_value = {"status": "ok"}
+        import_service = MagicMock(import_configuration=AsyncMock(return_value=status))
+        monkeypatch.setattr(main_mod, "import_service", import_service)
+        monkeypatch.setattr(main_mod, "is_unrestricted_platform_admin", AsyncMock(return_value=False))
+
+        result = await main_mod.import_configuration.__wrapped__(import_data={"entities": {"tools": []}}, conflict_strategy="update", dry_run=dry_run, selected_entities=None, db=MagicMock(), user={"email": "admin@example.com"})
+
+        assert result == {"status": "ok"}
+        import_service.import_configuration.assert_awaited_once()
 
     async def test_import_configuration_error_mappings(self, monkeypatch):
         # First-Party

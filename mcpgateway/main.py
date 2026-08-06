@@ -76,6 +76,7 @@ from mcpgateway import __version__
 from mcpgateway import version as version_module
 from mcpgateway.auth import get_current_user, get_user_team_roles, TokenValidationError, validate_token_user
 from mcpgateway.auth_context import (
+    configuration_export_includes_roots,
     decode_internal_mcp_auth_context,
     encode_internal_mcp_auth_context,
     get_internal_mcp_auth_context,
@@ -84,8 +85,11 @@ from mcpgateway.auth_context import (
     get_scoped_resource_access_context,
     get_token_teams_from_request,
     get_user_email,
+    import_envelope_includes_roots,
     INTERNAL_MCP_SESSION_VALIDATED_HEADER,
+    is_unrestricted_platform_admin,
     is_trusted_internal_mcp_request,
+    selective_selection_includes_roots,
 )
 from mcpgateway.cache import ResourceCache, SessionRegistry
 from mcpgateway.common.models import InitializeResult
@@ -101,6 +105,7 @@ from mcpgateway.db import refresh_slugs_on_startup, SessionLocal
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.deprecations import RUST_MCP_RUNTIME_DEPRECATION_MESSAGE, VALIDATION_MIDDLEWARE_DEPRECATION_MESSAGE
 from mcpgateway.handlers.sampling import SamplingError, SamplingHandler
+from mcpgateway.middleware.auth_context_stack import register_auth_context_middleware
 from mcpgateway.middleware.client_disconnect import ClientDisconnectMiddleware
 from mcpgateway.middleware.compression import SSEAwareCompressMiddleware
 from mcpgateway.middleware.correlation_id import CorrelationIDMiddleware
@@ -155,6 +160,8 @@ from mcpgateway.schemas import (
     ResourceRead,
     ResourceSubscription,
     ResourceUpdate,
+    RootCreate,
+    RootUpdate,
     RPCRequest,
     ServerCreate,
     ServerRead,
@@ -251,7 +258,7 @@ if settings.plugins.enabled:
 from mcpgateway.services.gateway_service import gateway_service  # noqa: E402
 from mcpgateway.services.prompt_service import prompt_service  # noqa: E402
 from mcpgateway.services.resource_service import resource_service  # noqa: E402
-from mcpgateway.services.root_service import root_service, RootServiceNotFoundError  # noqa: E402
+from mcpgateway.services.root_service import root_service, RootServiceError, RootServiceNotFoundError, RootServiceValidationError  # noqa: E402
 from mcpgateway.services.server_service import server_service  # noqa: E402
 from mcpgateway.services.tool_service import tool_service  # noqa: E402
 
@@ -3403,49 +3410,8 @@ if settings.correlation_id_enabled:
     app.add_middleware(CorrelationIDMiddleware)
     logger.info(f"✅ Correlation ID tracking enabled (header: {settings.correlation_id_header})")
 
-# Add authentication context middleware if security logging is enabled OR password change enforcement is enabled
-# This middleware extracts user context and logs security events (authentication attempts)
-# Note: SIEM export can also require auth event capture even when DB security logging is off.
-# Note: Password change enforcement also requires user context to be available
-# IMPORTANT: Middleware runs in REVERSE order of addition in Starlette/FastAPI
-# Add PasswordChangeEnforcementMiddleware FIRST so it runs AFTER AuthContextMiddleware
-_siem_auth_source_enabled = settings.siem_export_enabled and "auth" in {str(item).lower() for item in getattr(settings, "siem_export_event_sources", [])}
 
-# Add password change enforcement middleware FIRST (runs SECOND due to reverse order)
-# This middleware enforces mandatory password changes for users with password_change_required flag
-# Note: Runs after AuthContextMiddleware (added below) so request.state.user is available
-if settings.password_change_enforcement_enabled:
-    # First-Party
-    from mcpgateway.middleware.password_change_enforcement import PasswordChangeEnforcementMiddleware
-
-    app.add_middleware(PasswordChangeEnforcementMiddleware)
-    logger.info("🔒 Password change enforcement middleware enabled - blocking access for users requiring password change")
-else:
-    logger.info("🔒 Password change enforcement middleware disabled")
-
-# Add authentication context middleware SECOND (runs FIRST due to reverse order)
-# This populates request.state.user for downstream middleware and handlers
-_auth_context_required = settings.security_logging_enabled or _siem_auth_source_enabled or settings.mcpgateway_admin_api_enabled or settings.password_change_enforcement_enabled
-if _auth_context_required:
-    # First-Party
-    from mcpgateway.middleware.auth_middleware import AuthContextMiddleware
-
-    app.add_middleware(AuthContextMiddleware)
-    logger.info("🔐 Authentication context middleware enabled - capturing authentication security events")
-else:
-    logger.info("🔐 Security event logging disabled")
-
-# Add CSRF protection middleware
-# This validates CSRF tokens on state-changing requests to prevent Cross-Site Request Forgery attacks
-# Note: Runs after AuthContextMiddleware so request.state.user is available for token validation
-if settings.csrf_enabled:
-    # First-Party
-    from mcpgateway.middleware.csrf_middleware import CSRFMiddleware
-
-    app.add_middleware(CSRFMiddleware)
-    logger.info("🛡️  CSRF protection middleware enabled - validating tokens on state-changing requests")
-else:
-    logger.info("🛡️  CSRF protection middleware disabled")
+register_auth_context_middleware(app)
 
 # Add token usage logging middleware
 # This tracks API token usage for analytics and security monitoring
@@ -6660,6 +6626,10 @@ async def update_resource(
         raise HTTPException(status_code=409, detail=ErrorFormatter.format_database_error(e))
     except ResourceURIConflictError as e:
         raise HTTPException(status_code=409, detail=str(e))
+    except ResourceValidationError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except ResourceError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except ContentSizeError as e:
         logger.error(f"Content size exceeded in updating resource: {e}")
         raise HTTPException(status_code=413, detail={"error": f"{e.content_type} size limit exceeded", "message": str(e), "actual_size": e.actual_size, "max_size": e.max_size})
@@ -7725,21 +7695,37 @@ async def refresh_gateway_tools(
 ##############
 # Root APIs  #
 ##############
+async def _require_unrestricted_root_admin(request: Request, user: Any, db: Session) -> None:
+    """Require unrestricted platform-admin authority for global roots."""
+    if not await is_unrestricted_platform_admin(request, user, db):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_ACCESS_DENIED_MSG)
+
+
+def _root_validation_http_error(exc: RootServiceValidationError) -> HTTPException:
+    """Map root policy failures to safe REST details."""
+    return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail={"message": "Root URI rejected by policy", "reason_code": exc.reason_code})
+
+
 @root_router.get("", response_model=List[Root])
 @root_router.get("/", response_model=List[Root])
 @require_permission("admin.system_config")
 async def list_roots(
+    request: Request,
+    db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> List[Root]:
     """
     Retrieve a list of all registered roots.
 
     Args:
+        request: Current request object.
+        db: Database session.
         user: Authenticated user.
 
     Returns:
         List of Root objects.
     """
+    await _require_unrestricted_root_admin(request, user, db)
     logger.debug(f"User '{safe_log_user(user)}' requested list of roots")
     return await root_service.list_roots()
 
@@ -7748,6 +7734,8 @@ async def list_roots(
 @require_permission("admin.system_config")
 async def export_root(
     uri: str,
+    request: Request = None,
+    db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Dict[str, Any]:
     """
@@ -7755,6 +7743,8 @@ async def export_root(
 
     Args:
         uri: Root URI to export (query parameter)
+        request: Current request object.
+        db: Database session.
         user: Authenticated user
 
     Returns:
@@ -7764,7 +7754,8 @@ async def export_root(
         HTTPException: If root not found or export fails
     """
     try:
-        logger.info(f"User {safe_log_user(user)} requested root export for URI: {uri}")
+        await _require_unrestricted_root_admin(request, user, db)
+        logger.info("User %s requested root export", safe_log_user(user))
 
         # Extract username from user
         username: Optional[str] = None
@@ -7795,6 +7786,10 @@ async def export_root(
     except RootServiceNotFoundError as e:
         logger.error(f"Root not found for export by user {safe_log_user(user)}: {str(e)}")
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except RootServiceValidationError as e:
+        raise _root_validation_http_error(e) from e
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Unexpected root export error for user {safe_log_user(user)}: {str(e)}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Root export failed")
@@ -7803,17 +7798,22 @@ async def export_root(
 @root_router.get("/changes")
 @require_permission("admin.system_config")
 async def subscribe_roots_changes(
+    request: Request,
+    db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> StreamingResponse:
     """
     Subscribe to real-time changes in root list via Server-Sent Events (SSE).
 
     Args:
+        request: Current request object.
+        db: Database session.
         user: Authenticated user.
 
     Returns:
         StreamingResponse with event-stream media type.
     """
+    await _require_unrestricted_root_admin(request, user, db)
     logger.debug(f"User '{safe_log_user(user)}' subscribed to root changes stream")
 
     async def generate_events():
@@ -7832,6 +7832,8 @@ async def subscribe_roots_changes(
 @require_permission("admin.system_config")
 async def get_root_by_uri(
     root_uri: str,
+    request: Request = None,
+    db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Root:
     """
@@ -7839,6 +7841,8 @@ async def get_root_by_uri(
 
     Args:
         root_uri: URI of the root to retrieve.
+        request: Current request object.
+        db: Database session.
         user: Authenticated user.
 
     Returns:
@@ -7848,12 +7852,15 @@ async def get_root_by_uri(
         HTTPException: If the root is not found.
         Exception: For any other unexpected errors.
     """
-    logger.debug(f"User '{safe_log_user(user)}' requested root with URI: {root_uri}")
+    await _require_unrestricted_root_admin(request, user, db)
+    logger.debug("User '%s' requested root", safe_log_user(user))
     try:
         root = await root_service.get_root_by_uri(root_uri)
         return root
     except RootServiceNotFoundError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except RootServiceValidationError as e:
+        raise _root_validation_http_error(e) from e
     except Exception as e:
         logger.error(f"Error getting root {root_uri}: {e}")
         raise e
@@ -7863,28 +7870,40 @@ async def get_root_by_uri(
 @root_router.post("/", response_model=Root)
 @require_permission("admin.system_config")
 async def add_root(
-    root: Root,  # Accept JSON body using the Root model from models.py
+    root_data: RootCreate,
+    request: Request = None,
+    db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Root:
     """
     Add a new root.
 
     Args:
-        root: Root object containing URI and name.
+        root_data: Root payload containing URI and name.
+        request: Current request object.
+        db: Database session.
         user: Authenticated user.
 
     Returns:
         The added Root object.
     """
-    logger.debug(f"User '{safe_log_user(user)}' requested to add root: {root}")
-    return await root_service.add_root(str(root.uri), root.name)
+    await _require_unrestricted_root_admin(request, user, db)
+    logger.debug("User '%s' requested to add root", safe_log_user(user))
+    try:
+        return await root_service.add_root(root_data.uri, root_data.name)
+    except RootServiceValidationError as e:
+        raise _root_validation_http_error(e) from e
+    except RootServiceError as e:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Root already exists") from e
 
 
 @root_router.put("/{root_uri:path}", response_model=Root)
 @require_permission("admin.system_config")
 async def update_root(
     root_uri: str,
-    root: Root,
+    root_data: RootUpdate,
+    request: Request = None,
+    db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Root:
     """
@@ -7892,7 +7911,9 @@ async def update_root(
 
     Args:
         root_uri: URI of the root to update.
-        root: Root object with updated information.
+        root_data: Root update payload.
+        request: Current request object.
+        db: Database session.
         user: Authenticated user.
 
     Returns:
@@ -7902,12 +7923,15 @@ async def update_root(
         HTTPException: If the root is not found.
         Exception: For any other unexpected errors.
     """
-    logger.debug(f"User '{safe_log_user(user)}' requested to update root with URI: {root_uri}")
+    await _require_unrestricted_root_admin(request, user, db)
+    logger.debug("User '%s' requested to update root", safe_log_user(user))
     try:
-        root = await root_service.update_root(root_uri, root.name)
+        root = await root_service.update_root(root_uri, root_data.name)
         return root
     except RootServiceNotFoundError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except RootServiceValidationError as e:
+        raise _root_validation_http_error(e) from e
     except Exception as e:
         logger.error(f"Error updating root {root_uri}: {e}")
         raise e
@@ -7917,6 +7941,8 @@ async def update_root(
 @require_permission("admin.system_config")
 async def remove_root(
     uri: str,
+    request: Request = None,
+    db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Dict[str, str]:
     """
@@ -7924,20 +7950,25 @@ async def remove_root(
 
     Args:
         uri: URI of the root to remove.
+        request: Current request object.
+        db: Database session.
         user: Authenticated user.
 
     Returns:
         Status message indicating result.
     """
-    logger.debug(f"User '{safe_log_user(user)}' requested to remove root with URI: {uri}")
+    await _require_unrestricted_root_admin(request, user, db)
+    logger.debug("User '%s' requested to remove root", safe_log_user(user))
     try:
         await root_service.remove_root(uri)
     except RootServiceNotFoundError as e:
-        raise HTTPException(status_code=404, detail=str(e)) from e
+        raise HTTPException(status_code=404, detail="Root not found") from e
+    except RootServiceValidationError as e:
+        raise _root_validation_http_error(e) from e
     except Exception as e:
-        logger.error(f"Failed to remove root {uri}: {e}")
+        logger.error("Failed to remove root")
         raise HTTPException(status_code=500, detail="Internal error removing root") from e
-    return {"status": "success", "message": f"Root {uri} removed"}
+    return {"status": "success", "message": "Root removed"}
 
 
 ##################
@@ -8949,7 +8980,7 @@ async def handle_internal_mcp_roots_list(request: Request):
     db = SessionLocal()
     req_id = None
     try:
-        _build_internal_mcp_forwarded_user(request)
+        user = _build_internal_mcp_forwarded_user(request)
         try:
             body = orjson.loads(await request.body())
         except orjson.JSONDecodeError:
@@ -8980,6 +9011,8 @@ async def handle_internal_mcp_roots_list(request: Request):
             method="roots/list",
             server_id=None,
         )
+        if not await is_unrestricted_platform_admin(request, user, db):
+            raise JSONRPCError(-32003, _ACCESS_DENIED_MSG, {"method": "roots/list"})
         roots = await root_service.list_roots()
         payload = {"roots": [r.model_dump(by_alias=True, exclude_none=True) for r in roots]}
         if db.is_active and db.in_transaction() is not None:
@@ -11314,6 +11347,8 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
                 result["nextCursor"] = next_cursor
         elif method == "list_roots":
             await _ensure_rpc_permission(user, db, "admin.system_config", method, request=request)
+            if not await is_unrestricted_platform_admin(request, user, db):
+                raise JSONRPCError(-32003, _ACCESS_DENIED_MSG, {"method": method})
             roots = await root_service.list_roots()
             result = {"roots": [r.model_dump(by_alias=True, exclude_none=True) for r in roots]}
         elif method == "resources/list":
@@ -11517,6 +11552,8 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
         elif method == "roots/list":
             # MCP spec-compliant method name
             await _ensure_rpc_permission(user, db, "admin.system_config", method, request=request)
+            if not await is_unrestricted_platform_admin(request, user, db):
+                raise JSONRPCError(-32003, _ACCESS_DENIED_MSG, {"method": method})
             roots = await root_service.list_roots()
             result = {"roots": [r.model_dump(by_alias=True, exclude_none=True) for r in roots]}
         elif method.startswith("roots/"):
@@ -12520,6 +12557,9 @@ async def export_configuration(
         if tags:
             tags_list = [t.strip() for t in tags.split(",") if t.strip()]
 
+        if configuration_export_includes_roots(include_types, exclude_types_list):
+            await _require_unrestricted_root_admin(request, user, db)
+
         # Extract username from user (which is now an EmailUser object)
         if hasattr(user, "email"):
             username = getattr(user, "email", None)
@@ -12553,6 +12593,8 @@ async def export_configuration(
     except ExportError as e:
         logger.error(f"Export failed for user {safe_log_user(user)}: {str(e)}")
         raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Unexpected export error for user {safe_log_user(user)}: {str(e)}")
         raise HTTPException(status_code=500, detail="Export failed")
@@ -12589,6 +12631,9 @@ async def export_selective_configuration(
     try:
         logger.info(f"User {safe_log_user(user)} requested selective configuration export")
 
+        if selective_selection_includes_roots(entity_selections):
+            await _require_unrestricted_root_admin(request, user, db)
+
         username: Optional[str] = None
         # Extract username from user (which is now an EmailUser object)
         if hasattr(user, "email"):
@@ -12617,6 +12662,8 @@ async def export_selective_configuration(
     except ExportError as e:
         logger.error(f"Selective export failed for user {safe_log_user(user)}: {str(e)}")
         raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Unexpected selective export error for user {safe_log_user(user)}: {str(e)}")
         raise HTTPException(status_code=500, detail="Export failed")
@@ -12625,6 +12672,7 @@ async def export_selective_configuration(
 @export_import_router.post("/import", response_model=Dict[str, Any])
 @require_permission("admin.import")
 async def import_configuration(
+    request: Request = None,
     import_data: Dict[str, Any] = Body(...),
     conflict_strategy: str = Body("update"),
     dry_run: bool = Body(False),
@@ -12637,6 +12685,7 @@ async def import_configuration(
     Import configuration data with conflict resolution.
 
     Args:
+        request: Current request object.
         import_data: The configuration data to import
         conflict_strategy: How to handle conflicts: skip, update, rename, fail
         dry_run: If true, validate but don't make changes
@@ -12656,6 +12705,9 @@ async def import_configuration(
             raise HTTPException(status_code=400, detail="Missing 'import_data' in request body")
 
         logger.info(f"User {safe_log_user(user)} requested configuration import (dry_run={dry_run})")
+
+        if import_envelope_includes_roots(import_data, selected_entities):
+            await _require_unrestricted_root_admin(request, user, db)
 
         # Validate conflict strategy
         try:
