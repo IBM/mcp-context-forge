@@ -109,7 +109,7 @@ from mcpgateway.db import Server as DbServer
 from mcpgateway.db import SessionLocal
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import utc_now
-from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG, get_current_user_with_permissions, require_any_permission, require_permission
+from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG, get_current_user_with_permissions, require_any_permission, require_permission, require_unrestricted_platform_admin
 from mcpgateway.routers.email_auth import create_access_token
 from mcpgateway.schemas import (
     _encode_auth_headers_list,
@@ -14114,12 +14114,6 @@ async def admin_set_prompt_state(
     return RedirectResponse(redirect_url, status_code=303)
 
 
-async def _require_unrestricted_root_admin(request: Optional[Request], user: Any, db: Session) -> None:
-    """Require unrestricted platform-admin authority for global roots."""
-    if not await is_unrestricted_platform_admin(request, user, db):
-        raise HTTPException(status_code=403, detail=_ACCESS_DENIED_MSG)
-
-
 @admin_router.get("/roots/search", response_class=JSONResponse)
 @require_permission("admin.system_config", allow_admin_bypass=False)
 async def admin_search_roots(
@@ -14153,7 +14147,7 @@ async def admin_search_roots(
         >>> admin_search_roots.__name__
         'admin_search_roots'
     """
-    await _require_unrestricted_root_admin(request, user, db)
+    await require_unrestricted_platform_admin(request, user, db)
     search_query = _normalize_search_query(q)
     # Defense-in-depth clamp: FastAPI validates ge/le at the HTTP layer, but direct
     # Python calls (e.g. from admin_unified_search) bypass that validation.
@@ -14197,7 +14191,7 @@ async def admin_export_root(
         HTTPException: If root not found or export fails
     """
     try:
-        await _require_unrestricted_root_admin(request, user, db)
+        await require_unrestricted_platform_admin(request, user, db)
         LOGGER.info("Admin user %s requested root export", get_user_email(user))
 
         # Get the root by URI
@@ -14273,7 +14267,7 @@ async def admin_get_root(uri: str, request: Request = None, db: Session = Depend
         >>> admin_get_root.__name__
         'admin_get_root'
     """
-    await _require_unrestricted_root_admin(request, user, db)
+    await require_unrestricted_platform_admin(request, user, db)
     LOGGER.debug("User %s is retrieving root", get_user_email(user))
     try:
         root = await root_service.get_root_by_uri(uri)
@@ -14311,7 +14305,7 @@ async def admin_add_root(request: Request, user=Depends(get_current_user_with_pe
         'admin_add_root'
     """
     error_message = None
-    await _require_unrestricted_root_admin(request, user, db)
+    await require_unrestricted_platform_admin(request, user, db)
     user_email = get_user_email(user)
     LOGGER.debug(f"User {user_email} is adding a new root")
 
@@ -14378,7 +14372,7 @@ async def admin_update_root(uri: str, request: Request, db: Session = Depends(ge
         >>> admin_update_root.__name__
         'admin_update_root'
     """
-    await _require_unrestricted_root_admin(request, user, db)
+    await require_unrestricted_platform_admin(request, user, db)
     LOGGER.debug("User %s is updating root", get_user_email(user))
 
     try:
@@ -14433,7 +14427,7 @@ async def admin_delete_root(uri: str, request: Request, user=Depends(get_current
         >>> admin_delete_root.__name__
         'admin_delete_root'
     """
-    await _require_unrestricted_root_admin(request, user, db)
+    await require_unrestricted_platform_admin(request, user, db)
     LOGGER.debug("User %s is deleting root", get_user_email(user))
     form = await request.form()
     root_path = _resolve_root_path(request)
@@ -15652,7 +15646,7 @@ async def admin_export_configuration(
             tags_list = [t.strip() for t in tags.split(",") if t.strip()]
 
         if configuration_export_includes_roots(include_types, exclude_types_list):
-            await _require_unrestricted_root_admin(request, user, db)
+            await require_unrestricted_platform_admin(request, user, db)
 
         # Extract username from user (which could be string or dict with token)
         username = user if isinstance(user, str) else user.get("username", "unknown")
@@ -15730,7 +15724,7 @@ async def admin_export_selective(request: Request, db: Session = Depends(get_db)
         include_dependencies = body.get("include_dependencies", True)
 
         if selective_selection_includes_roots(entity_selections):
-            await _require_unrestricted_root_admin(request, user, db)
+            await require_unrestricted_platform_admin(request, user, db)
 
         # Extract username from user (which could be string or dict with token)
         username = user if isinstance(user, str) else user.get("username", "unknown")
@@ -15803,7 +15797,7 @@ async def admin_import_preview(request: Request, db: Session = Depends(get_db), 
             raise HTTPException(status_code=400, detail="Missing 'data' field with import content")
 
         if import_envelope_includes_roots(import_data):
-            await _require_unrestricted_root_admin(request, user, db)
+            await require_unrestricted_platform_admin(request, user, db)
 
         # Validate user permissions for import preview
         username = user if isinstance(user, str) else user.get("username", "unknown")
@@ -15864,7 +15858,7 @@ async def admin_import_configuration(request: Request, db: Session = Depends(get
         selected_entities = body.get("selected_entities")
 
         if import_envelope_includes_roots(import_data, selected_entities):
-            await _require_unrestricted_root_admin(request, user, db)
+            await require_unrestricted_platform_admin(request, user, db)
 
         # Validate conflict strategy
         try:
