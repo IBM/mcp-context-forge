@@ -1,175 +1,80 @@
 # ContextForge
 
-> An open source registry and proxy that federates MCP, A2A, and REST/gRPC APIs with centralized governance, discovery, and observability. Optimizes Agent & Tool calling, and supports plugins.
+> 🌏 **语言 / Language:** **简体中文（当前）** | [English](./README.en.md)
+
+> 一个开源注册表与代理，将 MCP、A2A 与 REST/gRPC API 统一联邦到一个端点，提供集中式治理、发现与可观测性。优化 Agent 与 Tool 调用，并支持插件。
 
 ![ContextForge Banner](docs/docs/images/contextforge-logo_horizontal_black.png)
 
-<!-- === CI / Security / Build Badges === -->
-[![Build Python Package](https://github.com/IBM/mcp-context-forge/actions/workflows/python-package.yml/badge.svg)](https://github.com/IBM/mcp-context-forge/actions/workflows/python-package.yml)&nbsp;
-[![Dependency Review](https://github.com/IBM/mcp-context-forge/actions/workflows/dependency-review.yml/badge.svg)](https://github.com/IBM/mcp-context-forge/actions/workflows/dependency-review.yml)&nbsp;
-[![Tests & Coverage](https://github.com/IBM/mcp-context-forge/actions/workflows/pytest.yml/badge.svg)](https://github.com/IBM/mcp-context-forge/actions/workflows/pytest.yml)&nbsp;
-[![Lint & Static Analysis](https://github.com/IBM/mcp-context-forge/actions/workflows/lint.yml/badge.svg)](https://github.com/IBM/mcp-context-forge/actions/workflows/lint.yml)
+**ContextForge** 是一个开源的注册表与代理，把各类工具、Agent 和 API 联邦到统一的干净端点，为你的 AI 客户端提供服务。它横跨整个 AI 基础设施提供集中式治理、发现与可观测性：
 
-<!-- === Package / Container === -->
-[![Async](https://img.shields.io/badge/async-await-green.svg)](https://docs.python.org/3/library/asyncio.html)
-[![License](https://img.shields.io/github/license/ibm/mcp-context-forge)](LICENSE)&nbsp;
-[![PyPI](https://img.shields.io/pypi/v/mcp-contextforge-gateway)](https://pypi.org/project/mcp-contextforge-gateway/)&nbsp;
-[![Docker Image](https://img.shields.io/badge/docker-ghcr.io%2Fibm%2Fmcp--context--forge-blue)](https://github.com/ibm/mcp-context-forge/pkgs/container/mcp-context-forge)&nbsp;
+- **工具网关（Tools Gateway）** —— MCP、REST、gRPC 转 MCP 翻译，以及 TOON 压缩
+- **Agent 网关（Agent Gateway）** —— A2A 协议、兼容 OpenAI 与 Anthropic 的 Agent 路由
+- **API 网关（API Gateway）** —— 限流、认证、重试，以及 REST 服务的反向代理
+- **插件扩展（Plugin Extensibility）** —— 40+ 插件，支持额外的传输层、协议与集成
+- **可观测性（Observability）** —— 通过 Phoenix、Jaeger、Zipkin 等 OTLP 后端实现 OpenTelemetry 链路追踪
 
-
-**ContextForge** is an open source registry and proxy that federates tools, agents, and APIs into one clean endpoint for your AI clients. It provides centralized governance, discovery, and observability across your AI infrastructure:
-
-- **Tools Gateway** — MCP, REST, gRPC-to-MCP translation, and TOON compression
-- **Agent Gateway** — A2A protocol, OpenAI-compatible and Anthropic agent routing
-- **API Gateway** — Rate limiting, auth, retries, and reverse proxy for REST services
-- **Plugin Extensibility** — 40+ plugins for additional transports, protocols, and integrations
-- **Observability** — OpenTelemetry tracing with Phoenix, Jaeger, Zipkin, and other OTLP backends
-
-It runs as a fully compliant MCP server, deployable via PyPI or Docker, and scales to multi-cluster environments on Kubernetes with Redis-backed federation and caching.
-
-![ContextForge](https://ibm.github.io/mcp-context-forge/images/mcpgateway.gif)
----
-
-<!-- vscode-markdown-toc -->
-## Table of Contents
-
-- [Overview & Goals](#overview--goals)
-- [Quick Start - PyPI](#quick-start---pypi)
-- [Quick Start - Containers](#quick-start---containers)
-- [VS Code Dev Container](#quick-start-vs-code-dev-container)
-- [Installation](#installation)
-- [Upgrading](#upgrading)
-- [Configuration](#configuration)
-- [Running](#running)
-- [Cloud Deployment](#cloud-deployment)
-- [API Reference](#api-reference)
-- [Testing](#testing)
-- [Project Structure](#project-structure)
-- [Development](#development)
-- [Troubleshooting](#troubleshooting)
-- [Contributing](#contributing)
+它作为完全合规的 MCP 服务器运行，可通过 PyPI 或 Docker 部署，并可借助 Redis 联邦与缓存扩展到 Kubernetes 多集群环境。
 
 ---
 
-### 📌 Quick Links
+## 目录
 
-| Resource | Description |
-|----------|-------------|
-| **[5-Minute Setup](https://github.com/IBM/mcp-context-forge/issues/2503)** | Get started fast — uvx, Docker, Compose, or local dev |
-| **[Getting Help](https://github.com/IBM/mcp-context-forge/issues/2504)** | Support options, FAQ, community channels |
-| **[Issue Guide](https://github.com/IBM/mcp-context-forge/issues/2502)** | How to file bugs, request features, contribute |
-| **[Full Documentation](https://ibm.github.io/mcp-context-forge/)** | Complete guides, tutorials, API reference |
-| **[Deprecations](https://ibm.github.io/mcp-context-forge/deprecations/)** | Deprecated runtime paths and migration guidance |
-
----
-
-## Overview & Goals
-
-**ContextForge** is an open source registry and proxy that federates any [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server, A2A server, or REST/gRPC API, providing centralized governance, discovery, and observability. It optimizes agent and tool calling, and supports plugins. See the [project roadmap](https://ibm.github.io/mcp-context-forge/architecture/roadmap/) for more details.
-
-It currently supports:
-
-* Federation across multiple MCP and REST services
-* **A2A (Agent-to-Agent) integration** for external AI agents (OpenAI, Anthropic, custom)
-* **gRPC-to-MCP translation** via automatic reflection-based service discovery
-* Virtualization of legacy APIs as MCP-compliant tools and servers
-* Transport over HTTP, JSON-RPC, WebSocket, SSE (with configurable keepalive), stdio and streamable-HTTP
-* An Admin UI for real-time management, configuration, and log monitoring (with airgapped deployment support)
-* Built-in auth, retries, and rate-limiting with user-scoped OAuth tokens and unconditional X-Upstream-Authorization header support
-* **OpenTelemetry observability** with Phoenix, Jaeger, Zipkin, and other OTLP backends
-* Scalable deployments via Docker or PyPI, Redis-backed caching, and multi-cluster federation
-
-![ContextForge Architecture](https://ibm.github.io/mcp-context-forge/images/mcpgateway.svg)
-
-For a list of upcoming features, check out the [ContextForge Roadmap](https://ibm.github.io/mcp-context-forge/architecture/roadmap/)
+- [项目概览与目标](#项目概览与目标)
+- [快速开始 —— PyPI](#快速开始--pypi)
+- [快速开始 —— 容器](#快速开始--容器)
+- [安装](#安装)
+- [升级](#升级)
+- [配置](#配置)
+- [运行](#运行)
+- [新增功能](#新增功能)
+- [云部署](#云部署)
+- [API 参考](#api-参考)
+- [测试](#测试)
+- [项目结构](#项目结构)
+- [开发](#开发)
+- [故障排查](#故障排查)
+- [参与贡献](#参与贡献)
+- [更新日志](#更新日志)
+- [许可证](#许可证)
 
 ---
 
-<details>
-<summary><strong>🔌 Gateway Layer with Protocol Flexibility</strong></summary>
+## 项目概览与目标
 
-* Federates any MCP server or REST API
-* Lets you choose your MCP protocol version (e.g., `2025-11-25`)
-* Exposes a single, unified interface for diverse backends
+**ContextForge** 是一个开源注册表与代理，联邦任何遵循[模型上下文协议（Model Context Protocol, MCP）](https://modelcontextprotocol.io)的 MCP 服务器、A2A 服务器，或 REST/gRPC API，提供集中式治理、发现与可观测性。它优化 Agent 和 Tool 调用，并支持插件。
 
-</details>
+当前支持的功能：
 
-<details>
-<summary><strong>🧩 Virtualization of REST/gRPC Services</strong></summary>
-
-* Wraps non-MCP services as virtual MCP servers
-* Registers tools, prompts, and resources with minimal configuration
-* **gRPC-to-MCP translation** via server reflection protocol
-* Automatic service discovery and method introspection
-
-</details>
-
-<details>
-<summary><strong>🔁 REST-to-MCP Tool Adapter</strong></summary>
-
-* Adapts REST APIs into tools with:
-
-  * Automatic JSON Schema extraction
-  * Support for headers, tokens, and custom auth
-  * Retry, timeout, and rate-limit policies
-
-</details>
-
-<details>
-<summary><strong>🧠 Unified Registries</strong></summary>
-
-* **Prompts**: Jinja2 templates, multimodal support, rollback/versioning
-* **Resources**: URI-based access, MIME detection, caching, SSE updates
-* **Tools**: Native or adapted, with input validation and concurrency controls
-
-</details>
-
-<details>
-<summary><strong>📈 Admin UI, Observability & Dev Experience</strong></summary>
-
-* Admin UI built with HTMX 2.0.3 (bundled) + Alpine.js
-* Real-time log viewer with filtering, search, and export capabilities
-* Auth: Basic, JWT, or custom schemes
-* Structured logs, health endpoints, metrics
-* 7,000+ tests, Makefile targets, live reload, pre-commit hooks
-
-</details>
-
-<details>
-<summary><strong>🔍 OpenTelemetry Observability</strong></summary>
-
-* **Vendor-agnostic tracing** with OpenTelemetry (OTLP) protocol support
-* **Multiple backend support**: Phoenix (LLM-focused), Jaeger, Zipkin, Tempo, DataDog, New Relic
-* **Distributed tracing** across federated gateways and services
-* **Automatic instrumentation** of tools, prompts, resources, and gateway operations
-* **LLM-specific metrics**: Token usage, costs, model performance
-* **Zero-overhead when disabled** with graceful degradation
-
-See **[Observability Documentation](https://ibm.github.io/mcp-context-forge/manage/observability/)** for setup guides with Phoenix, Jaeger, and other backends.
-
-</details>
+- 跨多个 MCP 与 REST 服务的联邦
+- **A2A（Agent-to-Agent）集成**，用于外部 AI Agent（OpenAI、Anthropic、自定义）
+- **gRPC 转 MCP 翻译**，基于自动的 reflection 服务发现
+- 将遗留 API 虚拟化为符合 MCP 规范的 Tool 与服务器
+- 多种传输层：HTTP、JSON-RPC、WebSocket、SSE（可配置 keepalive）、stdio 与 streamable-HTTP
+- 管理界面 Admin UI，支持实时管理、配置与日志监控（支持离线部署）
+- 内置认证、重试与限流，支持用户级 OAuth Token 与无条件 X-Upstream-Authorization 头
+- **OpenTelemetry 可观测性**，支持 Phoenix、Jaeger、Zipkin 等 OTLP 后端
+- 通过 Docker 或 PyPI 扩展部署、Redis 缓存与多集群联邦
 
 ---
 
-## Quick Start - PyPI
+## 快速开始 —— PyPI
 
-ContextForge is published on [PyPI](https://pypi.org/project/mcp-contextforge-gateway/) as `mcp-contextforge-gateway`.
+ContextForge 已发布到 [PyPI](https://pypi.org/project/mcp-contextforge-gateway/)，包名为 `mcp-contextforge-gateway`。
 
----
+> ⚠️ **每个环境都必须配置 `JWT_SECRET_KEY` 与 `AUTH_ENCRYPTION_SECRET` —— 包括本地开发环境。** 缺少它们网关无法启动。首次运行前请用 `python3 -m mcpgateway.scripts.init_secrets` 生成真实密钥。
 
-> ⚠️ **`JWT_SECRET_KEY` and `AUTH_ENCRYPTION_SECRET` are required in every environment — including local development.** The gateway will not start without them. Generate real secrets with `python3 -m mcpgateway.scripts.init_secrets` before first run.
-
-**TLDR** — single command using [uv](https://docs.astral.sh/uv/):
+**TLDR** —— 使用 [uv](https://docs.astral.sh/uv/) 单条命令：
 
 ```bash
-# 1️⃣  Generate secure secrets (creates .env.secrets)
+# 1️⃣  生成安全密钥（创建 .env.secrets）
 python3 -m mcpgateway.scripts.init_secrets
 
-# 2️⃣  Export the generated values
+# 2️⃣  导出生成的值
 export JWT_SECRET_KEY="$(grep '^JWT_SECRET_KEY=' .env.secrets | cut -d= -f2)"
 export AUTH_ENCRYPTION_SECRET="$(grep '^AUTH_ENCRYPTION_SECRET=' .env.secrets | cut -d= -f2)"
 
-# 3️⃣  Start the gateway
+# 3️⃣  启动网关
 JWT_SECRET_KEY="$JWT_SECRET_KEY" \
 AUTH_ENCRYPTION_SECRET="$AUTH_ENCRYPTION_SECRET" \
 MCPGATEWAY_UI_ENABLED=true \
@@ -179,36 +84,36 @@ uvx --from mcp-contextforge-gateway mcpgateway --host 0.0.0.0 --port 4444
 ```
 
 <details>
-<summary><strong>📋 Prerequisites</strong></summary>
+<summary><strong>📋 前置条件</strong></summary>
 
 * **Python ≥ 3.11**
-* **curl + jq** - only for the last smoke-test step
+* **curl + jq** —— 仅最后一步冒烟测试需要
 
 </details>
 
-### 1 - Install & run (copy-paste friendly)
+### 1 - 安装并运行（可直接复制粘贴）
 
 ```bash
-# 1️⃣  Create an isolated env and install from PyPI
+# 1️⃣  创建隔离环境并从 PyPI 安装
 mkdir mcpgateway && cd mcpgateway
 python3 -m venv .venv && source .venv/bin/activate
 pip install --upgrade pip
 pip install mcp-contextforge-gateway
 
-# 2️⃣  Download .env.example and generate real secrets
+# 2️⃣  下载 .env.example 并生成真实密钥
 curl -O https://raw.githubusercontent.com/IBM/mcp-context-forge/main/.env.example
 cp .env.example .env
 
-# Generate cryptographically secure secrets into .env.secrets
+# 生成密码学安全密钥到 .env.secrets
 python3 -m mcpgateway.scripts.init_secrets
 
-# Patch the generated secrets into .env (replaces __REPLACE_ME__ placeholders)
+# 把生成的密钥回填到 .env（替换 __REPLACE_ME__ 占位符）
 python3 -m mcpgateway.scripts.init_secrets --patch-env .env
 
-# 3️⃣  Start the gateway
+# 3️⃣  启动网关
 mcpgateway --host 0.0.0.0 --port 4444 &
 
-# 4️⃣  Generate a bearer token and smoke-test
+# 4️⃣  生成 bearer token 并冒烟测试
 export JWT_SECRET_KEY=$(grep '^JWT_SECRET_KEY=' .env | cut -d= -f2)
 export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
     --username admin@example.com --exp 10080 --secret "$JWT_SECRET_KEY")
@@ -217,302 +122,94 @@ curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
      http://127.0.0.1:4444/version | jq
 ```
 
-<details>
-<summary><strong>Windows (PowerShell) quick-start</strong></summary>
-
-```powershell
-# 1️⃣  Isolated env + install from PyPI
-mkdir mcpgateway ; cd mcpgateway
-python3 -m venv .venv ; .\.venv\Scripts\Activate.ps1
-pip install --upgrade pip
-pip install mcp-contextforge-gateway
-
-# 2️⃣  Download .env.example and generate real secrets
-Invoke-WebRequest -Uri "https://raw.githubusercontent.com/IBM/mcp-context-forge/main/.env.example" -OutFile ".env.example"
-Copy-Item .env.example .env
-
-# Generate cryptographically secure secrets into .env.secrets
-python3 -m mcpgateway.scripts.init_secrets
-
-# Patch the generated secrets into .env (replaces __REPLACE_ME__ placeholders)
-python3 -m mcpgateway.scripts.init_secrets --patch-env .env
-
-# 3️⃣  Launch the gateway
-mcpgateway.exe --host 0.0.0.0 --port 4444
-
-# 4️⃣  Bearer token and smoke-test
-$Env:JWT_SECRET_KEY = (Get-Content .env | Select-String '^JWT_SECRET_KEY=').ToString().Split('=')[1]
-$Env:MCPGATEWAY_BEARER_TOKEN = python3 -m mcpgateway.utils.create_jwt_token `
-    --username admin@example.com --exp 10080 --secret $Env:JWT_SECRET_KEY
-
-curl -s -H "Authorization: Bearer $Env:MCPGATEWAY_BEARER_TOKEN" `
-     http://127.0.0.1:4444/version | jq
-```
-
-<details>
-<summary><strong>⚡ Alternative: uv (faster)</strong></summary>
-
-```powershell
-# 1️⃣  Isolated env + install from PyPI using uv
-mkdir mcpgateway ; cd mcpgateway
-uv venv
-.\.venv\Scripts\activate
-uv pip install mcp-contextforge-gateway
-
-# Continue with steps 2️⃣-4️⃣ above...
-```
-
-</details>
-
-</details>
-
-<details>
-<summary><strong>More configuration</strong></summary>
-
-Copy [.env.example](https://github.com/IBM/mcp-context-forge/blob/main/.env.example) to `.env` and tweak any of the settings (or use them as env variables).
-
-</details>
-
-<details>
-<summary><strong>🚀 End-to-end demo (register a local MCP server)</strong></summary>
+### 端到端演示（注册本地 MCP 服务器）
 
 ```bash
-# 1️⃣  Spin up the sample MCP time server using mcpgateway.translate & docker (replace docker with podman if needed)
+# 1️⃣  用 mcpgateway.translate 启动示例 MCP time server
 python3 -m mcpgateway.translate \
      --stdio "docker run --rm -i ghcr.io/ibm/fast-time-server:latest -transport=stdio" \
      --expose-sse \
      --port 8003
 
-# Or using the official mcp-server-git using uvx:
-pip install uv # to install uvx, if not already installed
+# 或使用 uvx 跑官方 mcp-server-git：
+pip install uv # 如尚未安装 uvx
 python3 -m mcpgateway.translate --stdio "uvx mcp-server-git" --expose-sse --port 9000
 
-# NEW: Expose via multiple protocols simultaneously!
-python3 -m mcpgateway.translate \
-     --stdio "uvx mcp-server-git" \
-     --expose-sse \
-     --expose-streamable-http \
-     --port 9000
-# Now accessible via both /sse (SSE) and /mcp (streamable HTTP) endpoints
-
-# 2️⃣  Register it with the gateway
+# 2️⃣  注册到网关
 curl -s -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
      -H "Content-Type: application/json" \
      -d '{"name":"fast_time","url":"http://localhost:8003/sse"}' \
      http://localhost:4444/gateways
 
-# 3️⃣  Verify tool catalog
+# 3️⃣  查看 Tool 目录
 curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/tools | jq
 
-# 4️⃣  Create a *virtual server* bundling those tools. Use the ID of tools from the tool catalog (Step #3) and pass them in the associatedTools list.
+# 4️⃣  创建虚拟服务器，把这些 Tool 打包进去
 curl -s -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
      -H "Content-Type: application/json" \
-     -d '{"server":{"name":"time_server","description":"Fast time tools","associated_tools":[<ID_OF_TOOLS>]}}' \
+     -d '{"server":{"name":"time_server","description":"Fast time tools","associated_tools":[<TOOL_ID>]}}' \
      http://localhost:4444/servers | jq
 
-# Example curl
-curl -s -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
-     -H "Content-Type: application/json" \
-     -d '{"server":{"name":"time_server","description":"Fast time tools","associated_tools":["6018ca46d32a4ac6b4c054c13a1726a2"]}}' \
-     http://localhost:4444/servers | jq
-
-# 5️⃣  List servers (should now include the UUID of the newly created virtual server)
+# 5️⃣  列出服务器（应包含新创建的虚拟服务器 UUID）
 curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/servers | jq
-
-# 6️⃣  Client HTTP endpoint. Inspect it interactively with the MCP Inspector CLI (or use any MCP client)
-npx -y @modelcontextprotocol/inspector
-# Transport Type: Streamable HTTP, URL: http://localhost:4444/servers/UUID_OF_SERVER_1/mcp,  Header Name: "Authorization", Bearer Token
 ```
-
-</details>
-
-<details>
-<summary><strong>🖧 Using the stdio wrapper (mcpgateway-wrapper)</strong></summary>
-
-```bash
-export MCP_AUTH="Bearer ${MCPGATEWAY_BEARER_TOKEN}"
-export MCP_SERVER_URL=http://localhost:4444/servers/UUID_OF_SERVER_1/mcp
-python3 -m mcpgateway.wrapper  # Ctrl-C to exit
-```
-
-You can also run it with `uv` or inside Docker/Podman - see the *Containers* section above.
-
-In MCP Inspector, define `MCP_AUTH` and `MCP_SERVER_URL` env variables, and select `python3` as the Command, and `-m mcpgateway.wrapper` as Arguments.
-
-```bash
-echo $PWD/.venv/bin/python3 # Using the Python3 full path ensures you have a working venv
-export MCP_SERVER_URL='http://localhost:4444/servers/UUID_OF_SERVER_1/mcp'
-export MCP_AUTH="Bearer ${MCPGATEWAY_BEARER_TOKEN}"
-npx -y @modelcontextprotocol/inspector
-```
-
-or
-
-Pass the url and auth as arguments (no need to set environment variables)
-```bash
-npx -y @modelcontextprotocol/inspector
-command as `python`
-Arguments as `-m mcpgateway.wrapper --url "http://localhost:4444/servers/UUID_OF_SERVER_1/mcp" --auth "Bearer <your token>"`
-```
-
-
-When using a MCP Client such as Claude with stdio:
-
-```json
-{
-  "mcpServers": {
-    "mcpgateway-wrapper": {
-      "command": "python",
-      "args": ["-m", "mcpgateway.wrapper"],
-      "env": {
-        "MCP_AUTH": "Bearer your-token-here",
-        "MCP_SERVER_URL": "http://localhost:4444/servers/UUID_OF_SERVER_1",
-        "MCP_TOOL_CALL_TIMEOUT": "120"
-      }
-    }
-  }
-}
-```
-
-</details>
 
 ---
 
-## Quick Start - Containers
+## 快速开始 —— 容器
 
-Use the official OCI image from GHCR with **Docker** *or* **Podman**.
-Please note: Currently, arm64 is not supported on production. If you are e.g. running on MacOS with Apple Silicon chips (M1, M2, etc), you can run the containers using Rosetta or install via PyPi instead.
+使用 GHCR 官方 OCI 镜像，配合 **Docker** 或 **Podman**。
 
-### 🚀 Quick Start - Docker Compose
+> 注意：目前生产环境不支持 arm64。如果在 Apple Silicon（M1、M2 等）Mac 上运行，可以通过 Rosetta 运行容器，或改用 PyPI 安装。
 
-> **Important:** `docker compose up -d` does **not** build the gateway image locally by default — it uses the pre-built image from GHCR. The compose file includes a `build:` block as a fallback, but local builds require a hermetic wheel closure that is only produced by the CI pipeline. If you see a `cryptography` or dependency resolution error during build, you are hitting this — just pull the image instead (step 2 below handles this automatically).
+### 🚀 Docker Compose 快速开始
+
+> **重要提示：** `docker compose up -d` 默认不会本地构建网关镜像 —— 它使用 GHCR 预构建镜像。compose 文件包含 `build:` 块作为后备，但本地构建需要 CI 流水线产生的封闭 wheel 集合。如果在构建过程中遇到 `cryptography` 或依赖解析错误，说明命中了这一点 —— 直接拉取镜像即可（第 2 步会自动处理）。
 >
-> You also **must** have a `.env` file with real secrets before running `docker compose up -d`. The gateway will not start with placeholder values.
+> 运行 `docker compose up -d` 之前**必须**有带真实密钥的 `.env` 文件。使用占位值网关不会启动。
 
-Get a full stack running with PostgreSQL and Redis:
+搭建带 PostgreSQL 与 Redis 的完整栈：
 
 ```bash
-# 1️⃣  Clone the repository
+# 1️⃣  克隆仓库
 git clone https://github.com/IBM/mcp-context-forge.git
 cd mcp-context-forge
 
-# 2️⃣  Set up .env with real secrets AND pull the pre-built images
+# 2️⃣  用真实密钥设置 .env，并拉取预构建镜像
 cp .env.example .env
 python3 -m mcpgateway.scripts.init_secrets --patch-env .env
-# .env now has strong JWT_SECRET_KEY and AUTH_ENCRYPTION_SECRET
 
-# Pull pre-built images from GHCR (avoids local build entirely)
+# 拉取 GHCR 预构建镜像（完全避免本地构建）
 docker pull ghcr.io/ibm/mcp-context-forge:latest
 echo 'IMAGE_LOCAL=ghcr.io/ibm/mcp-context-forge:latest' >> .env
 
-# Build only the nginx image (small, local-only, builds in seconds)
+# 仅本地构建 nginx 镜像（小而快，仅本地用）
 docker compose build nginx
 
-# 3️⃣  Start the full stack
+# 3️⃣  启动完整栈
 docker compose up -d
 
-# 4️⃣  Check status
+# 4️⃣  查看状态
 docker compose ps
 
-# 5️⃣  View logs
+# 5️⃣  查看日志
 docker compose logs -f gateway
 
-# 6️⃣  Access Admin UI: http://localhost:8080/admin
-#     Login: PLATFORM_ADMIN_EMAIL / PLATFORM_ADMIN_PASSWORD (from .env)
-
-# 7️⃣  Generate an API token
-export JWT_SECRET_KEY=$(grep '^JWT_SECRET_KEY=' .env | cut -d= -f2)
-docker compose exec gateway python3 -m mcpgateway.utils.create_jwt_token \
-  --username admin@example.com --exp 10080 --secret "$JWT_SECRET_KEY"
+# 6️⃣  访问 Admin UI: http://localhost:8080/admin
+#     登录: PLATFORM_ADMIN_EMAIL / PLATFORM_ADMIN_PASSWORD（来自 .env）
 ```
 
-**What you get:**
-- 🗄️ **PostgreSQL** - Production-ready database with 55+ tables
-- 🚀 **ContextForge** - Full-featured gateway with Admin UI
-- 📊 **Redis** - High-performance caching and session storage
-- 🔧 **Admin Tools** - pgAdmin, Redis Insight for database management
-- 🌐 **Nginx Proxy** - Caching reverse proxy on port 8080
+**你获得的内容：**
+- 🗄️ **PostgreSQL** —— 生产级数据库，55+ 张表
+- 🚀 **ContextForge** —— 带 Admin UI 的全功能网关
+- 📊 **Redis** —— 高性能缓存与会话存储
+- 🔧 **Admin Tools** —— 用于数据库管理的 pgAdmin、Redis Insight
+- 🌐 **Nginx 代理** —— 8080 端口的缓存反向代理
 
-**Enable HTTPS (optional):**
-```bash
-# Start with TLS enabled (auto-generates self-signed certs)
-make compose-tls
-
-# Access via HTTPS: https://localhost:8443/admin
-
-# Or bring your own certificates:
-# Unencrypted key:
-mkdir -p certs
-cp your-cert.pem certs/cert.pem && cp your-key.pem certs/key.pem
-make compose-tls
-
-# Passphrase-protected key:
-mkdir -p certs
-cp your-cert.pem certs/cert.pem && cp your-encrypted-key.pem certs/key-encrypted.pem
-echo "KEY_FILE_PASSWORD=your-passphrase" >> .env
-make compose-tls
-```
-
-### ☸️ Quick Start - Helm (Kubernetes)
-
-Deploy to Kubernetes with enterprise-grade features:
+### 🐳 Docker（单容器）
 
 ```bash
-# Add Helm repository (when available)
-# helm repo add mcp-context-forge https://ibm.github.io/mcp-context-forge
-# helm repo update
-
-# For now, use local chart
-git clone https://github.com/IBM/mcp-context-forge.git
-cd mcp-context-forge/charts/mcp-stack
-
-# Generate secrets first
-python3 -m mcpgateway.scripts.init_secrets
-JWT_SECRET=$(grep '^JWT_SECRET_KEY=' .env.secrets | cut -d= -f2)
-ENC_SECRET=$(grep '^AUTH_ENCRYPTION_SECRET=' .env.secrets | cut -d= -f2)
-
-# Install with PostgreSQL (default)
-# IMPORTANT: replace <strong-password> with a real password — do not use 'changeme' in production
-helm install mcp-gateway . \
-  --set mcpContextForge.secret.PLATFORM_ADMIN_EMAIL=admin@yourcompany.com \
-  --set mcpContextForge.secret.PLATFORM_ADMIN_PASSWORD=<strong-password> \
-  --set mcpContextForge.secret.BASIC_AUTH_PASSWORD=<strong-password> \
-  --set "mcpContextForge.secret.JWT_SECRET_KEY=${JWT_SECRET}" \
-  --set "mcpContextForge.secret.AUTH_ENCRYPTION_SECRET=${ENC_SECRET}"
-
-# Check deployment status
-kubectl get pods -l app.kubernetes.io/name=mcp-context-forge
-
-# Port forward to access Admin UI
-kubectl port-forward svc/mcp-gateway-mcp-context-forge 4444:80
-# Access: http://localhost:4444/admin
-
-# Generate API token (reads JWT_SECRET_KEY from the pod's environment)
-kubectl exec deployment/mcp-gateway-mcp-context-forge -- \
-  python3 -m mcpgateway.utils.create_jwt_token \
-  --username admin@yourcompany.com --exp 10080 --secret "${JWT_SECRET}"
-```
-
-> SSRF note: Helm defaults to strict SSRF settings (`SSRF_ALLOW_PRIVATE_NETWORKS=false`).
-> If you register in-cluster tool URLs (for example fast-time or fast-test services),
-> allow only your cluster CIDRs via `mcpContextForge.config.SSRF_ALLOWED_NETWORKS` or,
-> for local-only benchmark setups, temporarily set `SSRF_ALLOW_PRIVATE_NETWORKS=true`.
-> See `docs/docs/manage/configuration.md#ssrf-protection` and `docs/docs/deployment/helm.md`.
-
-**Enterprise Features:**
-- 🔄 **Auto-scaling** - HPA with CPU/memory targets
-- 🗄️ **Database Choice** - PostgreSQL (prod), SQLite (dev)
-- 📊 **Observability** - Prometheus metrics, OpenTelemetry tracing
-- 🔒 **Security** - RBAC, network policies, secret management
-- 🚀 **High Availability** - Multi-replica deployments with Redis clustering
-- 📈 **Monitoring** - Built-in Grafana dashboards and alerting
-
----
-
-### 🐳 Docker (Single Container)
-
-```bash
-# Generate secrets first (creates .env.secrets)
+# 先生成密钥（创建 .env.secrets）
 python3 -m mcpgateway.scripts.init_secrets
 export JWT_SECRET_KEY="$(grep '^JWT_SECRET_KEY=' .env.secrets | cut -d= -f2)"
 export AUTH_ENCRYPTION_SECRET="$(grep '^AUTH_ENCRYPTION_SECRET=' .env.secrets | cut -d= -f2)"
@@ -526,29 +223,21 @@ docker run -d --name mcpgateway \
   -e AUTH_ENCRYPTION_SECRET="${AUTH_ENCRYPTION_SECRET}" \
   -e AUTH_REQUIRED=true \
   -e PLATFORM_ADMIN_EMAIL=admin@example.com \
-  -e PLATFORM_ADMIN_PASSWORD=<strong-password> \
-  -e PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
+  -e PLATFORM_ADMIN_PASSWORD=<强密码> \
   -e DATABASE_URL=sqlite:///./mcp.db \
   -e SECURE_COOKIES=false \
   ghcr.io/ibm/mcp-context-forge:latest
 
-# Tail logs
+# 跟踪日志
 docker logs -f mcpgateway
-
-# Generate API token (using the same secret)
-docker run --rm -it \
-  -e JWT_SECRET_KEY="${JWT_SECRET_KEY}" \
-  ghcr.io/ibm/mcp-context-forge:latest \
-  python3 -m mcpgateway.utils.create_jwt_token \
-  --username admin@example.com --exp 10080 --secret "${JWT_SECRET_KEY}"
 ```
 
-Browse to **[http://localhost:4444/admin](http://localhost:4444/admin)** and login with `PLATFORM_ADMIN_EMAIL` / `PLATFORM_ADMIN_PASSWORD`.
+浏览器访问 **[http://localhost:4444/admin](http://localhost:4444/admin)**，用 `PLATFORM_ADMIN_EMAIL` / `PLATFORM_ADMIN_PASSWORD` 登录。
 
 <details>
-<summary><strong>Advanced: Persistent storage, host networking, airgapped</strong></summary>
+<summary><strong>高级：持久化存储、host 网络、离线部署</strong></summary>
 
-**Persist SQLite database:**
+**持久化 SQLite 数据库：**
 ```bash
 mkdir -p $(pwd)/data && touch $(pwd)/data/mcp.db && chmod 777 $(pwd)/data
 docker run -d --name mcpgateway --restart unless-stopped \
@@ -557,11 +246,11 @@ docker run -d --name mcpgateway --restart unless-stopped \
   -e MCPGATEWAY_UI_ENABLED=true -e MCPGATEWAY_ADMIN_API_ENABLED=true \
   -e HOST=0.0.0.0 -e JWT_SECRET_KEY="${JWT_SECRET_KEY}" \
   -e AUTH_ENCRYPTION_SECRET="${AUTH_ENCRYPTION_SECRET}" \
-  -e PLATFORM_ADMIN_EMAIL=admin@example.com -e PLATFORM_ADMIN_PASSWORD=<strong-password> \
+  -e PLATFORM_ADMIN_EMAIL=admin@example.com -e PLATFORM_ADMIN_PASSWORD=<强密码> \
   ghcr.io/ibm/mcp-context-forge:latest
 ```
 
-**Host networking** (access local MCP servers):
+**Host 网络**（访问本地 MCP 服务器）：
 ```bash
 docker run -d --name mcpgateway --network=host \
   -v $(pwd)/data:/data -e DATABASE_URL=sqlite:////data/mcp.db \
@@ -570,7 +259,7 @@ docker run -d --name mcpgateway --network=host \
   ghcr.io/ibm/mcp-context-forge:latest
 ```
 
-**Airgapped deployment** (no internet):
+**离线部署（无网络）**：
 ```bash
 docker build -f Containerfile -t mcpgateway:airgapped .
 docker run -d --name mcpgateway -p 4444:4444 \
@@ -584,123 +273,18 @@ docker run -d --name mcpgateway -p 4444:4444 \
 
 ---
 
-### 🦭 Podman (rootless-friendly)
+## 安装
 
 ```bash
-podman run -d --name mcpgateway \
-  -p 4444:4444 -e HOST=0.0.0.0 -e DATABASE_URL=sqlite:///./mcp.db \
-  ghcr.io/ibm/mcp-context-forge:1.0.0-RC-3
+make venv install-dev      # 创建 .venv + 安装依赖 + 构建 Admin UI
+make serve                 # gunicorn 监听 :4444
 ```
 
 <details>
-<summary><strong>Advanced: Persistent storage, host networking</strong></summary>
-
-**Persist SQLite:**
-```bash
-mkdir -p $(pwd)/data && chmod 777 $(pwd)/data
-podman run -d --name mcpgateway --restart=on-failure \
-  -p 4444:4444 -v $(pwd)/data:/data \
-  -e DATABASE_URL=sqlite:////data/mcp.db \
-  ghcr.io/ibm/mcp-context-forge:1.0.0-RC-3
-```
-
-**Host networking:**
-```bash
-podman run -d --name mcpgateway --network=host \
-  -v $(pwd)/data:/data -e DATABASE_URL=sqlite:////data/mcp.db \
-  ghcr.io/ibm/mcp-context-forge:1.0.0-RC-3
-```
-
-</details>
-
----
-
-<details>
-<summary><strong>✏️ Docker/Podman tips</strong></summary>
-
-* **.env files** - Put all the `-e FOO=` lines into a file and replace them with `--env-file .env`. See the provided [.env.example](https://github.com/IBM/mcp-context-forge/blob/main/.env.example) for reference.
-* **Pinned tags** - Use an explicit version (e.g. `1.0.0-RC-3`) instead of `latest` for reproducible builds.
-* **JWT tokens** - Generate one in the running container (reads the secret from the container environment):
-
-  ```bash
-  docker exec mcpgateway python3 -m mcpgateway.utils.create_jwt_token \
-    --username admin@example.com --exp 10080 --secret "${JWT_SECRET_KEY}"
-  ```
-* **Upgrades** - Stop, remove, and rerun with the same `-v $(pwd)/data:/data` mount; your DB and config stay intact.
-
-</details>
-
----
-
-<details>
-<summary><strong>🚑 Smoke-test the running container</strong></summary>
+<summary><strong>备选：UV 或 pip</strong></summary>
 
 ```bash
-curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
-     http://localhost:4444/health | jq
-curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
-     http://localhost:4444/tools | jq
-curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
-     http://localhost:4444/version | jq
-```
-
-</details>
-
----
-
-<details>
-<summary><strong>🖧 Running ContextForge stdio wrapper</strong></summary>
-
-The `mcpgateway.wrapper` lets you connect to the gateway over **stdio** while keeping JWT authentication. You should run this from the MCP Client. The example below is just for testing.
-
-```bash
-# JWT_SECRET_KEY must be set — see "Docker (Single Container)" for how to generate it
-export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
-  --username admin@example.com --exp 10080 --secret "${JWT_SECRET_KEY}")
-export MCP_AUTH="Bearer ${MCPGATEWAY_BEARER_TOKEN}"
-export MCP_SERVER_URL='http://localhost:4444/servers/UUID_OF_SERVER_1/mcp'
-export MCP_TOOL_CALL_TIMEOUT=120
-export MCP_WRAPPER_LOG_LEVEL=DEBUG  # or OFF to disable logging
-
-docker run --rm -i \
-  -e MCP_AUTH="${MCP_AUTH}" \
-  -e MCP_SERVER_URL=http://host.docker.internal:4444/servers/UUID_OF_SERVER_1/mcp \
-  -e MCP_TOOL_CALL_TIMEOUT=120 \
-  -e MCP_WRAPPER_LOG_LEVEL=DEBUG \
-  ghcr.io/ibm/mcp-context-forge:latest \
-  python3 -m mcpgateway.wrapper
-```
-
-</details>
-
----
-
-
-## Quick Start: VS Code Dev Container
-
-Clone the repo and open in VS Code—it will detect `.devcontainer` and prompt to **"Reopen in Container"**. The container includes Python 3.11, Docker CLI, and all project dependencies.
-
-For detailed setup, workflows, and GitHub Codespaces instructions, see **[Developer Onboarding](https://ibm.github.io/mcp-context-forge/development/developer-onboarding/)**.
-
----
-
-## Installation
-
-```bash
-make venv install-dev      # create .venv + install deps + build Admin UI
-make serve                 # gunicorn on :4444
-```
-
-Rust workspace note:
-- Workspace-owned Rust crates live under `crates/` and are picked up by the root `Cargo.toml` via `crates/*`.
-- Run `cargo build`, `cargo test`, and `cargo check` from the repo root to cover the shared workspace.
-- `make venv install-dev` creates the root `.venv`, which is also reused by the workspace's PyO3/maturin builds.
-
-<details>
-<summary><strong>Alternative: UV or pip</strong></summary>
-
-```bash
-# UV (faster)
+# UV（更快）
 uv venv && source .venv/bin/activate
 uv pip install -e '.[dev]'
 
@@ -712,203 +296,128 @@ pip install -e ".[dev]"
 </details>
 
 <details>
-<summary><strong>PostgreSQL adapter setup</strong></summary>
+<summary><strong>PostgreSQL 适配器配置</strong></summary>
 
-Install the `psycopg` driver for PostgreSQL:
+为 PostgreSQL 安装 `psycopg` 驱动：
 
 ```bash
-# Install system dependencies first
+# 先安装系统依赖
 # Debian/Ubuntu: sudo apt-get install libpq-dev
 # macOS: brew install libpq
 
-uv pip install 'psycopg[binary]'   # dev (pre-built wheels)
-# or: uv pip install 'psycopg[c]'  # production (requires compiler)
+uv pip install 'psycopg[binary]'   # 开发（预构建 wheel）
+# 或: uv pip install 'psycopg[c]'  # 生产（需要编译器）
 ```
 
-Connection URL format:
+连接 URL 格式：
 ```bash
 DATABASE_URL=postgresql+psycopg://user:password@localhost:5432/mcp
-```
-
-Quick Postgres container:
-```bash
-docker run --name mcp-postgres \
-  -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=mysecretpassword \
-  -e POSTGRES_DB=mcp -p 5432:5432 -d postgres
 ```
 
 </details>
 
 ---
 
-## Upgrading
+## 升级
 
-For upgrade instructions, migration guides, and rollback procedures, see:
+升级说明、迁移指南与回滚步骤，请参见：
 
-- **[Upgrade Guide](https://ibm.github.io/mcp-context-forge/manage/upgrade/)** — General upgrade procedures
-- **[MIGRATION.md](./MIGRATION.md)** — Breaking changes and step-by-step upgrade instructions
-- **[CHANGELOG.md](./CHANGELOG.md)** — Version history and breaking changes
+- **[升级指南](https://ibm.github.io/mcp-context-forge/manage/upgrade/)** —— 通用升级流程
+- **[MIGRATION.md](./MIGRATION.md)** —— 破坏性变更与分步升级说明
+- **[CHANGELOG.md](./CHANGELOG.md)** —— 版本历史与破坏性变更
 
 ---
 
-## Configuration
+## 配置
 
-> ⚠️ If any required `.env` variable is missing or invalid, the gateway will fail fast at startup with a validation error via Pydantic.
+> ⚠️ 如果 `.env` 缺少必需变量或值无效，网关会在启动时通过 Pydantic 快速失败并报错。
 
-Copy the provided [.env.example](https://github.com/IBM/mcp-context-forge/blob/main/.env.example) to `.env` and update the security-sensitive values below.
+复制[.env.example](https://github.com/IBM/mcp-context-forge/blob/main/.env.example)到 `.env`，并更新以下安全敏感的值。
 
-### 🔐 Required: Set Before Starting
+### 🔐 必需：启动前设置
 
-These variables **must be set** before the gateway will start. There are no usable defaults — the application fails at startup if these are missing or placeholder values:
+以下变量**必须在网关启动前设置**。没有可用默认值 —— 缺失或为占位值时应用启动即失败：
 
-| Variable | Description | How to generate |
-|----------|-------------|-----------------|
-| `JWT_SECRET_KEY` | HMAC secret for signing JWTs (32+ chars) | `python3 -m mcpgateway.scripts.init_secrets` |
-| `AUTH_ENCRYPTION_SECRET` | Passphrase for encrypting stored credentials | `python3 -m mcpgateway.scripts.init_secrets` |
+| 变量 | 说明 | 如何生成 |
+|----------|-------------|----------|
+| `JWT_SECRET_KEY` | 用于签名 JWT 的 HMAC 密钥（32+ 字符） | `python3 -m mcpgateway.scripts.init_secrets` |
+| `AUTH_ENCRYPTION_SECRET` | 加密存储凭据的口令 | `python3 -m mcpgateway.scripts.init_secrets` |
 
-These variables have insecure defaults and **should be changed** before production use:
+以下变量有非安全默认值，**生产环境应修改**：
 
-| Variable | Description | Default |
+| 变量 | 说明 | 默认值 |
 |----------|-------------|---------|
-| `BASIC_AUTH_USER` | Username for HTTP Basic auth | `admin` |
-| `BASIC_AUTH_PASSWORD` | Password for HTTP Basic auth | **required — no default; set via `make init-secrets-patch-env`** |
-| `PLATFORM_ADMIN_EMAIL` | Email for bootstrap admin user | `admin@example.com` |
-| `PLATFORM_ADMIN_PASSWORD` | Password for bootstrap admin user | **required — set a strong value before first run** |
-| `PLATFORM_ADMIN_FULL_NAME` | Display name for bootstrap admin | `Admin User` |
+| `BASIC_AUTH_USER` | HTTP Basic 认证用户名 | `admin` |
+| `BASIC_AUTH_PASSWORD` | HTTP Basic 认证密码 | **必填 —— 无默认值；通过 `make init-secrets-patch-env` 设置** |
+| `PLATFORM_ADMIN_EMAIL` | bootstrap 管理员邮箱 | `admin@example.com` |
+| `PLATFORM_ADMIN_PASSWORD` | bootstrap 管理员密码 | **必填 —— 首次运行前设置强密码** |
+| `PLATFORM_ADMIN_FULL_NAME` | bootstrap 管理员显示名 | `Admin User` |
 
-### 🔒 Security Defaults (Secure by Default)
+### 🔒 安全默认（默认即安全）
 
-These settings are enabled by default for security—only disable for backward compatibility:
+这些设置出于安全考虑默认启用，仅向后兼容时关闭：
 
-| Variable | Description | Default |
+| 变量 | 说明 | 默认值 |
 |----------|-------------|---------|
-| `REQUIRE_JTI` | Require JTI claim in tokens for revocation support | `true` |
-| `REQUIRE_TOKEN_EXPIRATION` | Require exp claim in tokens | `true` |
-| `PUBLIC_REGISTRATION_ENABLED` | Allow public user self-registration | `false` |
-### 🛡️ Content Security
+| `REQUIRE_JTI` | 要求 Token 带 JTI 声明以支持撤销 | `true` |
+| `REQUIRE_TOKEN_EXPIRATION` | 要求 Token 带 exp 声明 | `true` |
+| `PUBLIC_REGISTRATION_ENABLED` | 允许公开用户自助注册 | `false` |
 
-Content size limits prevent DoS attacks and ensure system stability:
+### 🌐 UAID 跨网关路由安全
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `CONTENT_MAX_RESOURCE_SIZE` | Maximum resource content size (bytes) | `102400` (100KB) |
-| `CONTENT_MAX_PROMPT_SIZE` | Maximum prompt template size (bytes) | `10240` (10KB) |
+跨网关 UAID 路由需要显式安全配置：
 
-**Note:** Size limits apply only to new create/update operations. Existing content is not retroactively validated.
-
-### 🌐 UAID Cross-Gateway Routing Security
-
-#### UAID Security Configuration
-
-**Production Requirements:**
-
-Cross-gateway UAID routing requires explicit security configuration:
-
-1. **Configure Domain Allowlist:**
+1. **配置域名白名单：**
    ```bash
    UAID_ALLOWED_DOMAINS=["gateway1.example.com", "gateway2.example.com"]
    ```
 
-2. **Ensure JWT Trust:**
-   - Both gateways must trust the same JWT issuer
-   - Option A: Shared secret (same `JWT_SECRET_KEY` on all gateways)
-   - Option B: Federated SSO (Google, GitHub, Entra ID)
+2. **确保 JWT 互信：**
+   - 两个网关必须信任同一个 JWT 签发方
+   - 方案 A：共享密钥（所有网关使用相同的 `JWT_SECRET_KEY`）
+   - 方案 B：联邦 SSO（Google、GitHub、Entra ID）
 
-3. **Enable Authentication:**
+3. **启用认证：**
    ```bash
    AUTH_REQUIRED=true
    UAID_FORWARD_AUTH=true
    ```
 
-**Authentication Flow:**
-
-Cross-gateway calls forward the user's bearer token via the `Authorization` header.
-Remote gateways validate tokens through existing auth middleware, preserving RBAC context.
-
-**Security Features:**
-
-- ✅ Fail-closed default: Empty allowlist blocks all cross-gateway routing
-- ✅ Bearer token forwarding: User authentication preserved across hops
-- ✅ Audit trail: Source gateway and user tracked in headers
-- ✅ Clear error messages: Misconfigurations caught at startup and runtime
-
-**Troubleshooting:**
-
-- **"UAID_ALLOWED_DOMAINS not configured" error:** Add trusted domains to allowlist in .env
-- **401/403 from remote gateway:** Verify both gateways trust same JWT issuer
-- **"proceeding without authentication token" warning:** Check auth middleware extracts token to `request.state.bearer_token`
-
-For detailed security architecture, see `docs/security/uaid-cross-gateway-auth.md`.
-
-### ⚙️ Project Defaults (Dev Setup)
-
-These values differ from code defaults to provide a working local/dev setup:
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `HOST` | Bind address | `0.0.0.0` |
-| `MCPGATEWAY_UI_ENABLED` | Enable Admin UI dashboard | `true` |
-| `MCPGATEWAY_ADMIN_API_ENABLED` | Enable Admin API endpoints | `true` |
-| `DATABASE_URL` | SQLAlchemy connection URL | `sqlite:///./mcp.db` |
-| `SECURE_COOKIES` | Set `false` for HTTP (non-HTTPS) dev | `false` |
-
-### 📚 Full Configuration Reference
-
-For the complete list of 300+ environment variables organized by category (authentication, caching, SSO, observability, etc.), see the **[Configuration Reference](https://ibm.github.io/mcp-context-forge/manage/configuration/)**.
+**安全特性：**
+- ✅ 失败安全默认：空白名单会阻断所有跨网关路由
+- ✅ Bearer Token 转发：跨跳保持用户认证
+- ✅ 审计追踪：在头中记录源网关与用户
+- ✅ 清晰的错误信息：配置错误在启动和运行时都会被捕获
 
 ---
 
-## Running
+## 运行
 
-### Quick Reference
+### 快速参考
 
-| Command | Server | Port | Database | Use Case |
+| 命令 | 服务器 | 端口 | 数据库 | 用途 |
 |---------|--------|------|----------|----------|
-| `make dev` | Uvicorn | **8000** | SQLite | Development (single instance, auto-reload) |
-| `make serve` | Gunicorn | **4444** | SQLite | Production single-node (multi-worker) |
-| `make serve-ssl` | Gunicorn | **4444** | SQLite | Production single-node with HTTPS |
-| `make compose-up` | Docker Compose + Nginx | **8080** | PostgreSQL + Redis | Full stack (3 replicas, load-balanced) |
-| `make compose-sso` | Docker Compose + Keycloak | **8080 / 8180** | PostgreSQL + Redis | Local SSO testing (Keycloak profile) |
-| `make testing-up` | Docker Compose + Nginx | **8080** | PostgreSQL + Redis | Testing environment |
+| `make dev` | Uvicorn | **8000** | SQLite | 开发（单实例，自动重载） |
+| `make serve` | Gunicorn | **4444** | SQLite | 生产单节点（多 worker） |
+| `make serve-ssl` | Gunicorn | **4444** | SQLite | 生产单节点 HTTPS |
+| `make compose-up` | Docker Compose + Nginx | **8080** | PostgreSQL + Redis | 完整栈（3 副本，负载均衡） |
 
-### Development Server (Uvicorn)
+### 开发服务器（Uvicorn）
 
 ```bash
-make dev                 # Uvicorn on :8000 with auto-reload and SQLite
-# or
+make dev                 # Uvicorn 监听 :8000，自动重载，SQLite
+# 或
 ./run.sh --reload --log debug --workers 2
 ```
 
-> `run.sh` is a wrapper around `uvicorn` that loads `.env`, supports reload, and passes arguments to the server.
-
-Key flags:
-
-| Flag             | Purpose          | Example            |
-| ---------------- | ---------------- | ------------------ |
-| `-e, --env FILE` | load env-file    | `--env prod.env`   |
-| `-H, --host`     | bind address     | `--host 127.0.0.1` |
-| `-p, --port`     | listen port      | `--port 8080`      |
-| `-w, --workers`  | gunicorn workers | `--workers 4`      |
-| `-r, --reload`   | auto-reload      | `--reload`         |
-
-### Production Server (Gunicorn)
+### 生产服务器（Gunicorn）
 
 ```bash
-make serve               # Gunicorn on :4444 with multiple workers
-make serve-ssl           # Gunicorn behind HTTPS on :4444 (uses ./certs)
+make serve               # Gunicorn 监听 :4444，多 worker
+make serve-ssl           # Gunicorn 在 HTTPS 之后监听 :4444（使用 ./certs）
 ```
 
-### Docker Compose (Full Stack)
-
-```bash
-make compose-up          # Start full stack: PostgreSQL, Redis, 3 gateway replicas, Nginx on :8080
-make compose-sso         # Start SSO stack with Keycloak on :8180
-make sso-test-login      # Run SSO smoke checks (providers + login URL + test users)
-make compose-logs        # Tail logs from all services
-make compose-down        # Stop the stack
-```
-
-### Manual (Uvicorn)
+### 手动（Uvicorn）
 
 ```bash
 uvicorn mcpgateway.main:app --host 0.0.0.0 --port 4444 --workers 4
@@ -916,171 +425,221 @@ uvicorn mcpgateway.main:app --host 0.0.0.0 --port 4444 --workers 4
 
 ---
 
-## Cloud Deployment
+## 新增功能
 
-ContextForge can be deployed to any major cloud platform:
+本仓库基于上游 ContextForge 增强的三大功能模块：**gRPC 增强（Schema 服务与健康监控）**、**受管外部 SQL 数据 API**、以及**统一 API 调试平台**。三者默认**关闭**（失败安全），需显式开启。
 
-| Platform | Guide |
+### gRPC Schema 服务与健康监控
+
+| 环境变量 | 说明 | 默认 |
+|----------|------|------|
+| `MCPGATEWAY_GRPC_ENABLED` | 启用 gRPC 转 MCP 翻译（实验特性） | `false` |
+| `MCPGATEWAY_GRPC_REFLECTION_ENABLED` | 默认启用 gRPC server reflection | `true` |
+| `MCPGATEWAY_GRPC_HEALTH_ENABLED` | 启用 gRPC 健康监控 | `true` |
+| `MCPGATEWAY_GRPC_HEALTH_INTERVAL` | 健康检查间隔（秒，10–3600） | `60` |
+| `MCPGATEWAY_GRPC_HEALTH_TIMEOUT` | 健康检查超时（秒，1–60） | `5` |
+| `MCPGATEWAY_GRPC_HEALTH_FAILURE_THRESHOLD` | 判定不健康的连续失败次数（1–20） | `3` |
+| `MCPGATEWAY_GRPC_MAX_MESSAGE_SIZE` | gRPC 最大消息字节（默认 4MB） | `4194304` |
+| `MCPGATEWAY_GRPC_TIMEOUT` | gRPC 调用默认超时（秒） | `30` |
+| `MCPGATEWAY_GRPC_TLS_ENABLED` | gRPC 连接默认启用 TLS | `false` |
+
+**Schema 管理端点**（`/admin/grpc/*`）：
+- `GET  /admin/grpc` —— 列出 gRPC 服务
+- `POST /admin/grpc` —— 注册 gRPC 服务
+- `POST /admin/grpc/{service_id}/reflect` —— 反射发现方法
+- `POST /admin/grpc/{service_id}/schemas/import` —— 导入 .proto/zip 产物
+- `POST /admin/grpc/{service_id}/schemas/{artifact_id}/activate` —— 激活已导入 schema
+- `GET  /admin/grpc/{service_id}/schemas/diff` —— 对比 schema 指纹
+- `POST /admin/grpc/{service_id}/health` —— 触发健康检查
+- `GET  /admin/grpc/{service_id}/health/samples` —— 健康样本历史
+- `GET  /admin/grpc/{service_id}/metrics` —— gRPC 健康指标
+- `POST /admin/grpc/{service_id}/delete` —— 删除 gRPC 服务
+
+健康监控在后台按间隔探测，将样本持久化到数据库，并暴露 Prometheus 指标。连续失败达到阈值后服务标记为 `unhealthy`。
+
+### Proto 目录扫描（离线 .proto 发现）
+
+| 环境变量 | 说明 | 默认 |
+|----------|------|------|
+| `MCPGATEWAY_PROTO_SCAN_ENABLED` | 启用基于 manifest 的 Proto 目录扫描 | `false` |
+| `MCPGATEWAY_PROTO_SCAN_ROOTS` | 允许扫描的根目录（含 grpc-service.yaml manifest 的 CSV/JSON 列表） | `[]`（空则禁用） |
+| `MCPGATEWAY_PROTO_SCAN_INTERVAL` | 扫描间隔（秒，10–3600） | `60` |
+| `MCPGATEWAY_PROTO_MAX_UPLOAD_BYTES` | 单个 Proto ZIP/protoset 上传上限 | `8388608` (8MB) |
+| `MCPGATEWAY_PROTO_MAX_ZIP_ENTRIES` | 单个 ZIP 允许的最大条目数 | `1024` |
+| `MCPGATEWAY_PROTO_MAX_UNCOMPRESSED_BYTES` | ZIP 展开后的最大体积 | `33554432` (32MB) |
+
+该功能扫描配置根目录下的 `grpc-service.yaml` manifest，把 .proto 编译为 descriptor 并注入网关 —— 适用于**未启用 gRPC reflection** 的服务器。
+
+### 受管外部 SQL 数据 API
+
+| 环境变量 | 说明 | 默认 |
+|----------|------|------|
+| `MCPGATEWAY_SQL_API_ENABLED` | 启用受管外部 SQL 发现与数据 API | `false` |
+| `MCPGATEWAY_SQL_DEFAULT_LIMIT` | 查询默认行数上限（1–1000） | `100` |
+| `MCPGATEWAY_SQL_MAX_LIMIT` | 查询最大行数上限（1–1000） | `1000` |
+| `MCPGATEWAY_SQL_TIMEOUT` | 外部 SQL 语句超时（秒，1–300） | `30` |
+| `MCPGATEWAY_SQL_MAX_RESPONSE_BYTES` | 序列化响应最大字节 | `4194304` (4MB) |
+| `MCPGATEWAY_SQL_MAX_INCLUDES` | 每次查询最多展开的一跳关联关系（0–5） | `5` |
+| `MCPGATEWAY_SQLITE_ALLOWED_ROOTS` | 允许作为外部 SQLite 数据源的根目录（CSV/JSON）；**空则禁止 file-backed SQLite（失败安全）** | `[]` |
+
+**管理端点**（`/admin/sql/*`）：
+- `GET   /admin/sql/sources` —— 列出数据源
+- `POST  /admin/sql/sources` —— 注册数据源（连接串加密存储）
+- `PUT   /admin/sql/sources/{source_id}` —— 更新数据源
+- `DELETE /admin/sql/sources/{source_id}` —— 删除数据源
+- `POST  /admin/sql/sources/{source_id}/test` —— 测试连通性
+- `POST  /admin/sql/sources/{source_id}/discover` —— 发现表结构
+- `GET   /admin/sql/tables` —— 列出已发现表
+- `PATCH /admin/sql/tables/{table_id}` —— 调整表暴露/操作策略
+- `GET   /admin/sql/relations` —— 列出表关系
+- `GET   /admin/sql/bindings` —— 列出 API 绑定
+
+**数据端点**（`/api/v1/data/{source_slug}/{schema_slug}/{table_slug}`，需权限 `tools.execute`）：
+- `GET   ...` —— 查询（支持 `filter`、`limit`、`offset` 等 URL 参数）
+- `POST  ...` —— 插入一行，body 为 `{"values": {...}}`
+- `PATCH ...` —— 更新一行，URL 参数 `key` 传 URL-encoded JSON 对象（如 `?key={"id":5}`），body 为 `{"values": {...}}`
+- `DELETE ...` —— 删除一行，URL 参数 `key` 传 URL-encoded JSON 对象
+
+> **key 参数契约**：更新/删除必须提供**完整主键或显式唯一键**的 JSON 对象。传裸值或非对象会报 `422 "key must be a non-empty JSON object"`。示例见 `docs/docs/manage/api-usage.md`。
+
+### 统一 API 调试平台
+
+| 环境变量 | 说明 | 默认 |
+|----------|------|------|
+| `MCPGATEWAY_API_DEBUG_ENABLED` | 启用统一 API 调试器 | `false` |
+| `MCPGATEWAY_API_DEBUG_RETENTION_DAYS` | 调试历史保留天数（1–90） | `7` |
+| `MCPGATEWAY_API_DEBUG_MAX_HISTORY` | 每用户最多保留的历史条目（1–1000） | `100` |
+
+**端点**（`/admin/debug/*`）：
+- `GET /admin/debug/stats` —— 调试调用统计
+- `GET /admin/debug/history` —— 调试历史
+- 调起任意已注册 Tool 进行真实调用验证
+
+> 三个新功能（SQL、Debugger、Proto 扫描）默认关闭（`false`），未开启时对应端点返回 404。gRPC 健康监控在 `MCPGATEWAY_GRPC_ENABLED=true` 时默认开启。
+
+---
+
+## 云部署
+
+ContextForge 可以部署到任意主流云平台：
+
+| 平台 | 指南 |
 |----------|-------|
-| **AWS** | [ECS/EKS Deployment](https://ibm.github.io/mcp-context-forge/deployment/aws/) |
-| **Azure** | [AKS Deployment](https://ibm.github.io/mcp-context-forge/deployment/azure/) |
+| **AWS** | [ECS/EKS 部署](https://ibm.github.io/mcp-context-forge/deployment/aws/) |
+| **Azure** | [AKS 部署](https://ibm.github.io/mcp-context-forge/deployment/azure/) |
 | **Google Cloud** | [Cloud Run](https://ibm.github.io/mcp-context-forge/deployment/google-cloud-run/) |
 | **IBM Cloud** | [Code Engine](https://ibm.github.io/mcp-context-forge/deployment/ibm-code-engine/) |
 | **Kubernetes** | [Helm Charts](https://ibm.github.io/mcp-context-forge/deployment/minikube/) |
-| **OpenShift** | [OpenShift Deployment](https://ibm.github.io/mcp-context-forge/deployment/openshift/) |
-
-For comprehensive deployment guides, see **[Deployment Documentation](https://ibm.github.io/mcp-context-forge/deployment/)**.
+| **OpenShift** | [OpenShift 部署](https://ibm.github.io/mcp-context-forge/deployment/openshift/) |
 
 ---
 
-## API Reference
+## API 参考
 
-Interactive API documentation is available when the server is running:
+服务器运行时提供交互式 API 文档：
 
-- **[Swagger UI](http://localhost:4444/docs)** — Try API calls directly in your browser
-- **[ReDoc](http://localhost:4444/redoc)** — Browse the complete endpoint reference
+- **[Swagger UI](http://localhost:4444/docs)** —— 直接在浏览器中调用 API
+- **[ReDoc](http://localhost:4444/redoc)** —— 浏览完整端点参考
 
-**Quick Authentication:**
+**快速认证：**
 ```bash
-# Read JWT_SECRET_KEY from your .env (it must already contain a real secret)
+# 从 .env 读取 JWT_SECRET_KEY
 export JWT_SECRET_KEY=$(grep '^JWT_SECRET_KEY=' .env | cut -d= -f2)
 
-# Generate a JWT token
+# 生成 JWT Token
 export TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
   --username admin@example.com --exp 10080 --secret "$JWT_SECRET_KEY")
 
-# Test API access
+# 测试 API 访问
 curl -H "Authorization: Bearer $TOKEN" http://localhost:4444/health
 ```
 
-For comprehensive curl examples covering all endpoints, see the **[API Usage Guide](https://ibm.github.io/mcp-context-forge/manage/api-usage/)**.
-
 ---
 
-## Testing
+## 测试
 
 ```bash
-make test            # Run unit tests
-make lint            # Run all linters
-make doctest         # Run doctests
-make coverage        # Generate coverage report
+make test            # 运行单元测试
+make lint            # 运行所有 linter
+make doctest         # 运行 doctest
+make coverage        # 生成覆盖率报告
 ```
-
-See [Doctest Coverage Guide](https://ibm.github.io/mcp-context-forge/development/doctest-coverage/) for documentation testing details.
 
 ---
 
-## Project Structure
+## 项目结构
 
 ```
-mcpgateway/          # Core FastAPI application
-├── main.py          # Entry point
-├── config.py        # Pydantic Settings configuration
-├── db.py            # SQLAlchemy ORM models
-├── schemas.py       # Pydantic validation schemas
-├── services/        # Business logic layer (50+ services)
-├── routers/         # HTTP endpoint definitions
-├── middleware/      # Cross-cutting concerns
-└── transports/      # SSE, WebSocket, stdio, streamable HTTP
+mcpgateway/          # 核心 FastAPI 应用
+├── main.py          # 入口
+├── config.py        # Pydantic Settings 配置
+├── db.py            # SQLAlchemy ORM 模型
+├── schemas.py       # Pydantic 校验 schema
+├── services/        # 业务逻辑层（50+ 服务）
+├── routers/         # HTTP 端点定义
+├── middleware/      # 横切关注点
+└── transports/      # SSE、WebSocket、stdio、streamable HTTP
 
-tests/               # Test suite (7,000+ tests)
-docs/docs/           # Full documentation (MkDocs)
+tests/               # 测试套件（7,000+ 测试）
+docs/docs/           # 完整文档（MkDocs）
 charts/              # Kubernetes/Helm charts
-plugins/             # Plugin framework and implementations
-mcp-servers/         # Sample/test MCP servers (see note below)
+plugins/             # 插件框架与实现
+mcp-servers/         # 示例/测试用 MCP 服务器（见下）
 ```
 
-> **Note:** The `mcp-servers/` directory contains **unsupported sample and test servers**,
-> most originating from community contributions, provided for demonstration and integration
-> testing purposes only. They generally lack session management, persistent state,
-> multi-tenancy, authentication, and other production concerns. They do not go through
-> the same review, testing, and security rigor as the core ContextForge codebase and
-> **should not be run in production**.
+> **注意：** `mcp-servers/` 目录包含**不受支持的示例和测试服务器**，仅供演示与集成测试使用。它们通常缺少会话管理、持久状态、多租户、认证等生产关注点，未经过与核心 ContextForge 代码库同等严格的审查，**不应在生产中运行**。
 >
-> **Security:** Never run untrusted MCP servers directly on your local filesystem.
-> Always use a sandbox, container, or microVM (e.g. gVisor, Firecracker) with
-> restricted capabilities. Exercise caution when registering any remote MCP server,
-> including servers from public catalogs — perform your own security evaluation
-> before granting access to your gateway.
-
-For complete structure, see [CONTRIBUTING.md](./CONTRIBUTING.md) or run `tree -L 2`.
+> **安全提示：** 绝不要在本地文件系统直接运行不可信的 MCP 服务器。务必使用沙箱、容器或 microVM（如 gVisor、Firecracker）并限制能力。注册任何远程 MCP 服务器前请自行进行安全评估。
 
 ---
 
-## Development
+## 开发
 
 ```bash
-make dev             # Dev server with auto-reload (:8000)
-make test            # Run test suite
-make lint            # Run all linters
-make coverage        # Generate coverage report
+make dev             # 开发服务器，自动重载（:8000）
+make test            # 运行测试套件
+make lint            # 运行所有 linter
+make coverage        # 生成覆盖率报告
 ```
 
-Run `make` to see all available targets.
-
-For development workflows, see:
-- **[Developer Workstation Setup](https://ibm.github.io/mcp-context-forge/development/developer-workstation/)**
-- **[Building & Packaging](https://ibm.github.io/mcp-context-forge/development/building/)**
+运行 `make` 查看所有可用目标。
 
 ---
 
-## Troubleshooting
+## 故障排查
 
-Common issues and solutions:
+常见问题与解决办法：
 
-| Issue | Quick Fix |
+| 问题 | 快速解决 |
 |-------|-----------|
-| `docker compose up` fails with `cryptography` or dependency resolution error | The local build requires a CI-produced wheel closure. Run `docker pull ghcr.io/ibm/mcp-context-forge:latest && echo 'IMAGE_LOCAL=ghcr.io/ibm/mcp-context-forge:latest' >> .env` then retry |
-| `docker compose up` fails with `SecurityConfigurationError: jwt_secret_key` | `.env` is missing or has `__REPLACE_ME__` placeholders. Run `cp .env.example .env && python3 -m mcpgateway.scripts.init_secrets --patch-env .env` |
-| `docker compose up` fails — `mcpgateway/nginx-cache` pull access denied | nginx image must be built locally: `docker compose build nginx` |
-| `make dev` — nothing on port 8000 | Check terminal for `SecurityConfigurationError` — run `make ensure-secrets` then retry. On WSL2 use `http://127.0.0.1:8000` not `localhost` |
-| SQLite "disk I/O error" on macOS | Avoid iCloud-synced directories; use `~/mcp-context-forge/data` |
-| Port 4444 not accessible on WSL2 | Configure WSL integration in Docker Desktop |
-| Gateway exits immediately | Run `cp .env.example .env && python3 -m mcpgateway.scripts.init_secrets --patch-env .env` |
-| `ModuleNotFoundError` | Run `make install-dev` |
-
-For detailed troubleshooting guides, see **[Troubleshooting Documentation](https://ibm.github.io/mcp-context-forge/manage/troubleshooting/)**.
+| `docker compose up` 报 `cryptography` 或依赖解析错误 | 本地构建需要 CI 生产的 wheel 闭包。运行 `docker pull ghcr.io/ibm/mcp-context-forge:latest && echo 'IMAGE_LOCAL=ghcr.io/ibm/mcp-context-forge:latest' >> .env` 后重试 |
+| `docker compose up` 报 `SecurityConfigurationError: jwt_secret_key` | `.env` 缺失或含 `__REPLACE_ME__` 占位符。运行 `cp .env.example .env && python3 -m mcpgateway.scripts.init_secrets --patch-env .env` |
+| `make dev` —— 8000 端口无响应 | 检查终端是否报 `SecurityConfigurationError` —— 运行 `make ensure-secrets` 后重试。WSL2 上用 `http://127.0.0.1:8000` 而非 `localhost` |
+| SQLite "disk I/O error"（macOS） | 避免 iCloud 同步目录；改用 `~/mcp-context-forge/data` |
+| 网关立即退出 | 运行 `cp .env.example .env && python3 -m mcpgateway.scripts.init_secrets --patch-env .env` |
+| `ModuleNotFoundError` | 运行 `make install-dev` |
 
 ---
 
-## Contributing
+## 参与贡献
 
-1. Fork the repo, create a feature branch.
-2. Run `make lint` and fix any issues.
-3. Keep `make test` green.
-4. Open a PR with signed commits (`git commit -s`).
+1. Fork 仓库，创建功能分支。
+2. 运行 `make lint` 并修复问题。
+3. 保持 `make test` 通过。
+4. 提交带签名的 PR（`git commit -s`）。
 
-See **[CONTRIBUTING.md](CONTRIBUTING.md)** for full guidelines and **[Issue Guide #2502](https://github.com/IBM/mcp-context-forge/issues/2502)** for how to file bugs, request features, and find issues to work on.
+详见 **[CONTRIBUTING.md](CONTRIBUTING.md)** 与 **[Issue Guide #2502](https://github.com/IBM/mcp-context-forge/issues/2502)**。
 
 ---
 
-## Changelog
+## 更新日志
 
-A complete changelog can be found here: [CHANGELOG.md](./CHANGELOG.md)
+完整更新日志见：[CHANGELOG.md](./CHANGELOG.md)
 
-## License
+## 许可证
 
-Licensed under the **Apache License 2.0** - see [LICENSE](./LICENSE)
+基于 **Apache License 2.0** 许可 —— 详见 [LICENSE](./LICENSE)
 
+## 核心作者与维护者
 
-## Core Authors and Maintainers
-
-- [Mihai Criveti](https://www.linkedin.com/in/crivetimihai) - Distinguished Engineer, Agentic AI
-
-Special thanks to our contributors for helping us improve ContextForge:
-
-<a href="https://github.com/ibm/mcp-context-forge/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=ibm/mcp-context-forge&max=100&anon=0&columns=10" alt="Contributors to the mcp-context-forge repository" />
-</a>
-
-## Star History and Project Activity
-
-[![Star History Chart](https://api.star-history.com/svg?repos=ibm/mcp-context-forge&type=Date)](https://www.star-history.com/#ibm/mcp-context-forge&Date)
-
-<!-- === Usage Stats === -->
-[![PyPi Downloads](https://static.pepy.tech/badge/mcp-contextforge-gateway/month)](https://pepy.tech/project/mcp-contextforge-gateway)&nbsp;
-[![Stars](https://img.shields.io/github/stars/ibm/mcp-context-forge?style=social)](https://github.com/ibm/mcp-context-forge/stargazers)&nbsp;
-[![Forks](https://img.shields.io/github/forks/ibm/mcp-context-forge?style=social)](https://github.com/ibm/mcp-context-forge/network/members)&nbsp;
-[![Contributors](https://img.shields.io/github/contributors/ibm/mcp-context-forge)](https://github.com/ibm/mcp-context-forge/graphs/contributors)&nbsp;
-[![Last Commit](https://img.shields.io/github/last-commit/ibm/mcp-context-forge)](https://github.com/ibm/mcp-context-forge/commits)&nbsp;
-[![Open Issues](https://img.shields.io/github/issues/ibm/mcp-context-forge)](https://github.com/ibm/mcp-context-forge/issues)&nbsp;
+- [Mihai Criveti](https://www.linkedin.com/in/crivetimihai) —— 杰出工程师，Agentic AI
