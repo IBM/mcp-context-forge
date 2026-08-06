@@ -9,7 +9,11 @@ import { hasVirtualServerComponents } from "@/components/gateways/utils";
 import { ConfirmDialog } from "@/components/servers/ConfirmDialog";
 import { Loading } from "@/components/ui/loading";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { deleteVirtualServer, updateVirtualServerTags } from "@/api/virtualServers";
+import {
+  deleteVirtualServer,
+  setVirtualServerState,
+  updateVirtualServerTags,
+} from "@/api/virtualServers";
 import { ApiError } from "@/api/client";
 import { useQuery } from "@/hooks/useQuery";
 import { useRouter } from "@/router";
@@ -18,7 +22,7 @@ import { cn } from "@/lib/utils";
 import { extractApiErrorDetail, sanitizeError } from "@/utils/errors";
 
 const DEFAULT_PAGE_SIZE = 12;
-const SERVERS_QUERY_PATH = `/servers?limit=${DEFAULT_PAGE_SIZE}&include_pagination=true`;
+const SERVERS_QUERY_PATH = `/servers?limit=${DEFAULT_PAGE_SIZE}&include_inactive=true&include_pagination=true`;
 const CREATE_SERVER_PATH = "/app/gateways/create-server";
 const EDIT_SERVER_ID_QUERY_PARAM = "editServerId";
 
@@ -31,9 +35,11 @@ function sortServersForLayout(servers: VirtualServer[]): VirtualServer[] {
 export function Gateways() {
   const intl = useIntl();
   const { navigate, path } = useRouter();
-  const { data, error, isLoading, refetch } = useQuery<VirtualServersResponse>(SERVERS_QUERY_PATH);
+  const { data, error, isLoading, refetch, setData } =
+    useQuery<VirtualServersResponse>(SERVERS_QUERY_PATH);
   const headingRef = useRef<HTMLHeadingElement>(null);
   const pendingDeleteServerIdRef = useRef<string | null>(null);
+  const pendingToggleServerIdRef = useRef<string | null>(null);
   const [detailsServer, setDetailsServer] = useState<VirtualServer | null>(null);
   const [detailsServerId, setDetailsServerId] = useState<string | null>(null);
   const [isDetailsPanelOpen, setIsDetailsPanelOpen] = useState(false);
@@ -41,6 +47,9 @@ export function Gateways() {
   const [deleteServer, setDeleteServer] = useState<VirtualServer | null>(null);
   const [deletedServerIds, setDeletedServerIds] = useState<Set<string>>(() => new Set());
   const [pendingDeleteServerId, setPendingDeleteServerId] = useState<string | null>(null);
+  const [deactivateDialogOpen, setDeactivateDialogOpen] = useState(false);
+  const [deactivateServer, setDeactivateServer] = useState<VirtualServer | null>(null);
+  const [pendingToggleServerId, setPendingToggleServerId] = useState<string | null>(null);
   const servers = useMemo(
     () => (data?.servers ?? []).filter((server) => !deletedServerIds.has(server.id)),
     [data?.servers, deletedServerIds],
@@ -51,6 +60,80 @@ export function Gateways() {
     return new URLSearchParams(queryString).get("selected")?.trim() || null;
   }, [path]);
   const isDeletePending = pendingDeleteServerId !== null;
+  const isTogglePending = pendingToggleServerId !== null;
+
+  const setServerState = useCallback(
+    async (server: VirtualServer, activate: boolean) => {
+      if (pendingToggleServerIdRef.current) return false;
+
+      pendingToggleServerIdRef.current = server.id;
+      setPendingToggleServerId(server.id);
+
+      try {
+        const updated = await setVirtualServerState(server.id, activate);
+        setData((previous) =>
+          previous
+            ? {
+                ...previous,
+                servers: (previous.servers ?? []).map((candidate) =>
+                  candidate.id === updated.id ? updated : candidate,
+                ),
+              }
+            : previous,
+        );
+        setDetailsServer((current) => (current?.id === updated.id ? updated : current));
+        toast.success(
+          intl.formatMessage(
+            {
+              id: activate ? "gateways.state.activateSuccess" : "gateways.state.deactivateSuccess",
+            },
+            { name: server.name },
+          ),
+        );
+        return true;
+      } catch (err) {
+        const detail = err instanceof ApiError ? extractApiErrorDetail(err.body) : null;
+        toast.error(
+          detail ||
+            intl.formatMessage({
+              id: activate ? "gateways.state.activateError" : "gateways.state.deactivateError",
+            }),
+        );
+        return false;
+      } finally {
+        pendingToggleServerIdRef.current = null;
+        setPendingToggleServerId(null);
+      }
+    },
+    [intl, setData],
+  );
+
+  const handleToggleStatus = useCallback(
+    (server: VirtualServer) => {
+      if (isTogglePending) return;
+      if (server.enabled) {
+        setDeactivateServer(server);
+        setDeactivateDialogOpen(true);
+        return;
+      }
+      void setServerState(server, true);
+    },
+    [isTogglePending, setServerState],
+  );
+
+  const confirmDeactivate = useCallback(async () => {
+    if (!deactivateServer) return;
+    const succeeded = await setServerState(deactivateServer, false);
+    if (succeeded) {
+      setDeactivateDialogOpen(false);
+      setDeactivateServer(null);
+    }
+  }, [deactivateServer, setServerState]);
+
+  const handleDeactivateDialogOpenChange = useCallback((open: boolean) => {
+    setDeactivateDialogOpen(open);
+    if (!open) setDeactivateServer(null);
+  }, []);
 
   const handleDelete = useCallback(
     (server: VirtualServer) => {
@@ -214,9 +297,16 @@ export function Gateways() {
               onViewDetails={openDetailsPanel}
               onAddComponents={openEditPanel}
               onEdit={openEditPanel}
+              onToggleStatus={handleToggleStatus}
               onDelete={handleDelete}
+              isToggling={pendingToggleServerId === server.id}
+              toggleDisabled={
+                isDeletePending || (isTogglePending && pendingToggleServerId !== server.id)
+              }
               isDeleting={pendingDeleteServerId === server.id}
-              deleteDisabled={isDeletePending && pendingDeleteServerId !== server.id}
+              deleteDisabled={
+                isTogglePending || (isDeletePending && pendingDeleteServerId !== server.id)
+              }
               className={cn(!hasComponents && "col-span-full")}
             />
           );
@@ -232,6 +322,23 @@ export function Gateways() {
           onAddSources={(server) => openEditPanel(server)}
         />
       )}
+
+      <ConfirmDialog
+        open={deactivateDialogOpen}
+        onOpenChange={handleDeactivateDialogOpenChange}
+        title={intl.formatMessage({ id: "gateways.state.deactivateTitle" })}
+        description={intl.formatMessage(
+          { id: "gateways.state.deactivateDescription" },
+          { name: deactivateServer?.name ?? intl.formatMessage({ id: "gateways.title" }) },
+        )}
+        confirmLabel={intl.formatMessage({ id: "gateways.card.deactivate" })}
+        cancelLabel={intl.formatMessage({ id: "common.button.cancel" })}
+        variant="destructive"
+        onConfirm={confirmDeactivate}
+        isLoading={pendingToggleServerId === deactivateServer?.id}
+        loadingLabel={intl.formatMessage({ id: "gateways.state.deactivating" })}
+        closeOnConfirm={false}
+      />
 
       <ConfirmDialog
         open={deleteDialogOpen}

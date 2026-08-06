@@ -344,7 +344,8 @@ test.describe("Virtual Servers page", () => {
     await expect(page.getByText("testVS")).toBeVisible();
 
     const card = page.getByTestId("virtual-server-card").filter({ hasText: "testVS" });
-    await expect(card.getByTestId("enabled-indicator")).toBeVisible();
+    await expect(card.getByTestId("status-indicator")).toHaveClass(/bg-emerald-500/);
+    await expect(card.getByLabel("Enabled")).toBeVisible();
 
     await expect(card.getByTestId("tool-count")).toHaveText("2");
     await expect(card.getByTestId("resource-count")).toHaveText("1");
@@ -356,7 +357,7 @@ test.describe("Virtual Servers page", () => {
     await expect(card.getByTestId("last-updated")).toBeVisible();
   });
 
-  test("opens server actions dropdown menu and hides unavailable actions", async ({ page }) => {
+  test("opens server actions dropdown menu with state action", async ({ page }) => {
     await page.route("**/servers?*", async (route) => {
       await route.fulfill({
         status: 200,
@@ -377,10 +378,106 @@ test.describe("Virtual Servers page", () => {
     const editServer = page.getByRole("menuitem", { name: "Edit server" });
     await expect(editServer).toBeVisible();
     await expect(editServer).not.toHaveAttribute("data-disabled", "");
-    await expect(page.getByRole("menuitem", { name: "Deactivate" })).toHaveCount(0);
+    const deactivateItem = page.getByRole("menuitem", { name: "Deactivate" });
+    await expect(deactivateItem).toBeVisible();
+    await expect(deactivateItem).not.toHaveAttribute("data-disabled", "");
     const deleteItem = page.getByRole("menuitem", { name: "Delete" });
     await expect(deleteItem).toBeVisible();
     await expect(deleteItem).not.toHaveAttribute("data-disabled", "");
+  });
+
+  test("activates a disabled virtual server without confirmation", async ({ page }) => {
+    const disabledServer = { ...MOCK_VIRTUAL_SERVER, enabled: false };
+    let stateRequestCount = 0;
+
+    await page.route("**/servers?*", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ servers: [disabledServer] }),
+      });
+    });
+    await page.route(`**/servers/${MOCK_VIRTUAL_SERVER.id}/state?*`, async (route) => {
+      expect(route.request().method()).toBe("POST");
+      expect(new URL(route.request().url()).searchParams.get("activate")).toBe("true");
+      stateRequestCount += 1;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ ...disabledServer, enabled: true }),
+      });
+    });
+
+    await page.goto(APP.GATEWAYS);
+    await page.waitForLoadState("networkidle");
+
+    const card = page.getByTestId("virtual-server-card").filter({ hasText: "testVS" });
+    await expect(card.getByTestId("status-indicator")).toHaveClass(/bg-red-500/);
+    await expect(card.getByLabel("Disabled")).toBeVisible();
+
+    await page.getByRole("button", { name: "Actions for testVS" }).click();
+    await page.getByRole("menuitem", { name: "Activate" }).click();
+
+    await expect.poll(() => stateRequestCount).toBe(1);
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await expect(card.getByTestId("status-indicator")).toHaveClass(/bg-emerald-500/);
+    await expect(card.getByLabel("Enabled")).toBeVisible();
+    await expect(
+      page.locator("[data-sonner-toast]").filter({ hasText: "testVS activated." }),
+    ).toBeVisible();
+  });
+
+  test("requires confirmation to deactivate and supports cancellation", async ({ page }) => {
+    let stateRequestCount = 0;
+
+    await page.route("**/servers?*", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ servers: [MOCK_VIRTUAL_SERVER] }),
+      });
+    });
+    await page.route(`**/servers/${MOCK_VIRTUAL_SERVER.id}/state?*`, async (route) => {
+      expect(route.request().method()).toBe("POST");
+      expect(new URL(route.request().url()).searchParams.get("activate")).toBe("false");
+      stateRequestCount += 1;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ ...MOCK_VIRTUAL_SERVER, enabled: false }),
+      });
+    });
+
+    await page.goto(APP.GATEWAYS);
+    await page.waitForLoadState("networkidle");
+
+    const card = page.getByTestId("virtual-server-card").filter({ hasText: "testVS" });
+    await page.getByRole("button", { name: "Actions for testVS" }).click();
+    await page.getByRole("menuitem", { name: "Deactivate" }).click();
+
+    const dialog = page.getByRole("dialog", { name: "Deactivate virtual server" });
+    await expect(dialog).toContainText("Are you sure you want to deactivate testVS?");
+    expect(stateRequestCount).toBe(0);
+
+    await dialog.getByRole("button", { name: "Cancel" }).click();
+    await expect(dialog).toHaveCount(0);
+    expect(stateRequestCount).toBe(0);
+    await expect(card.getByTestId("status-indicator")).toHaveClass(/bg-emerald-500/);
+
+    await page.getByRole("button", { name: "Actions for testVS" }).click();
+    await page.getByRole("menuitem", { name: "Deactivate" }).click();
+    await page
+      .getByRole("dialog", { name: "Deactivate virtual server" })
+      .getByRole("button", { name: "Deactivate" })
+      .click();
+
+    await expect.poll(() => stateRequestCount).toBe(1);
+    await expect(dialog).toHaveCount(0);
+    await expect(card.getByTestId("status-indicator")).toHaveClass(/bg-red-500/);
+    await expect(card.getByLabel("Disabled")).toBeVisible();
+    await expect(
+      page.locator("[data-sonner-toast]").filter({ hasText: "testVS deactivated." }),
+    ).toBeVisible();
   });
 
   test("optimistically removes the card before the API responds", async ({ page }) => {

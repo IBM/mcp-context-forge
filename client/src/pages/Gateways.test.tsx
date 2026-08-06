@@ -5,8 +5,14 @@ import { toast } from "sonner";
 import { renderWithProviders } from "@/test/test-utils";
 import { Gateways } from "./Gateways";
 import { useQuery } from "@/hooks/useQuery";
-import { deleteVirtualServer, updateVirtualServerTags } from "@/api/virtualServers";
+import {
+  deleteVirtualServer,
+  setVirtualServerState,
+  updateVirtualServerTags,
+} from "@/api/virtualServers";
 import type { VirtualServer } from "@/types/server";
+import type { Dispatch, SetStateAction } from "react";
+import type { VirtualServersResponse } from "@/types/server";
 
 // Mock the router
 const mockNavigate = vi.fn();
@@ -24,6 +30,7 @@ vi.mock("@/hooks/useQuery", () => ({
 
 vi.mock("@/api/virtualServers", () => ({
   deleteVirtualServer: vi.fn(),
+  setVirtualServerState: vi.fn(),
   updateVirtualServerTags: vi.fn(),
 }));
 
@@ -36,6 +43,7 @@ vi.mock("sonner", () => ({
 
 const mockUseQuery = vi.mocked(useQuery);
 const mockDeleteVirtualServer = vi.mocked(deleteVirtualServer);
+const mockSetVirtualServerState = vi.mocked(setVirtualServerState);
 const mockToastError = vi.mocked(toast.error);
 const mockUpdateVirtualServerTags = vi.mocked(updateVirtualServerTags);
 
@@ -86,7 +94,11 @@ function setupWithServer(
   server: VirtualServer,
   {
     refetch = vi.fn().mockResolvedValue({ servers: [] }),
-  }: { refetch?: () => Promise<{ servers: VirtualServer[] }> } = {},
+    setData = vi.fn(),
+  }: {
+    refetch?: () => Promise<{ servers: VirtualServer[] }>;
+    setData?: Dispatch<SetStateAction<VirtualServersResponse | undefined>>;
+  } = {},
 ) {
   mockUseQuery.mockReturnValue({
     data: { servers: [server] },
@@ -94,7 +106,7 @@ function setupWithServer(
     isLoading: false,
     execute: vi.fn(),
     refetch,
-    setData: vi.fn(),
+    setData: setData as Dispatch<SetStateAction<unknown>>,
   });
 }
 
@@ -104,6 +116,10 @@ describe("Gateways", () => {
     mockToastError.mockClear();
     mockDeleteVirtualServer.mockReset();
     mockDeleteVirtualServer.mockResolvedValue(undefined);
+    mockSetVirtualServerState.mockReset();
+    mockSetVirtualServerState.mockImplementation(async (id, activate) =>
+      makeServer({ id, enabled: activate }),
+    );
     mockUseQuery.mockReturnValue({
       data: { servers: [] },
       error: null,
@@ -117,7 +133,9 @@ describe("Gateways", () => {
   it("requests the servers list on page load", () => {
     renderWithProviders(<Gateways />);
 
-    expect(mockUseQuery).toHaveBeenCalledWith("/servers?limit=12&include_pagination=true");
+    expect(mockUseQuery).toHaveBeenCalledWith(
+      "/servers?limit=12&include_inactive=true&include_pagination=true",
+    );
     expect(mockUseQuery).toHaveBeenCalledTimes(1);
   });
 
@@ -240,7 +258,7 @@ describe("Gateways", () => {
     await user.click(screen.getByRole("button", { name: "Actions for GH repo tasks" }));
 
     expect(await screen.findByRole("menuitem", { name: "View details" })).toBeInTheDocument();
-    expect(screen.queryByRole("menuitem", { name: "Deactivate" })).not.toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Deactivate" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "Delete" })).not.toHaveAttribute("data-disabled");
   });
 
@@ -291,6 +309,86 @@ describe("Gateways", () => {
     await user.click(await screen.findByRole("menuitem", { name: "Edit server" }));
 
     expect(mockNavigate).toHaveBeenCalledWith("/app/gateways/create-server?editServerId=gateway-1");
+  });
+
+  it("activates a disabled virtual server without confirmation", async () => {
+    const user = userEvent.setup();
+    const server = makeServer({ enabled: false });
+    const setData = vi.fn();
+    setupWithServer(server, { setData });
+
+    renderWithProviders(<Gateways />);
+
+    await user.click(screen.getByRole("button", { name: "Actions for GH repo tasks" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Activate" }));
+
+    await waitFor(() => {
+      expect(mockSetVirtualServerState).toHaveBeenCalledWith(server.id, true);
+    });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(toast.success).toHaveBeenCalledWith("GH repo tasks activated.");
+
+    const updateCache = setData.mock.calls[0][0];
+    expect(typeof updateCache).toBe("function");
+    expect(updateCache({ servers: [server] })?.servers?.[0].enabled).toBe(true);
+  });
+
+  it("requires confirmation before deactivating a virtual server", async () => {
+    const user = userEvent.setup();
+    const server = makeServer({ enabled: true });
+    setupWithServer(server);
+
+    renderWithProviders(<Gateways />);
+
+    await user.click(screen.getByRole("button", { name: "Actions for GH repo tasks" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Deactivate" }));
+
+    expect(mockSetVirtualServerState).not.toHaveBeenCalled();
+    expect(screen.getByRole("heading", { name: "Deactivate virtual server" })).toBeInTheDocument();
+    expect(screen.getByText(/deactivate GH repo tasks/i)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Deactivate" }));
+
+    await waitFor(() => {
+      expect(mockSetVirtualServerState).toHaveBeenCalledWith(server.id, false);
+    });
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    });
+    expect(toast.success).toHaveBeenCalledWith("GH repo tasks deactivated.");
+  });
+
+  it("does not deactivate when confirmation is cancelled", async () => {
+    const user = userEvent.setup();
+    setupWithServer(makeServer({ enabled: true }));
+
+    renderWithProviders(<Gateways />);
+
+    await user.click(screen.getByRole("button", { name: "Actions for GH repo tasks" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Deactivate" }));
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+
+    expect(mockSetVirtualServerState).not.toHaveBeenCalled();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("keeps current state and shows an error when activation fails", async () => {
+    const user = userEvent.setup();
+    const server = makeServer({ enabled: false });
+    const setData = vi.fn();
+    mockSetVirtualServerState.mockRejectedValueOnce(new Error("network unavailable"));
+    setupWithServer(server, { setData });
+
+    renderWithProviders(<Gateways />);
+
+    await user.click(screen.getByRole("button", { name: "Actions for GH repo tasks" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Activate" }));
+
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith("Failed to activate virtual server.");
+    });
+    expect(setData).not.toHaveBeenCalled();
+    expect(screen.getByTestId("status-indicator")).toHaveClass("bg-red-500");
   });
 
   it("renders empty virtual servers as full-width add-components rows", () => {

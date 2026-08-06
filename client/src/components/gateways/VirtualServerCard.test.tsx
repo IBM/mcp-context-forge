@@ -77,18 +77,20 @@ describe("VirtualServerCard", () => {
     expect(onViewDetails).toHaveBeenCalledWith(expect.objectContaining({ id: "vs-1" }));
   });
 
-  it("shows enabled indicator for enabled server", () => {
+  it("shows a green enabled indicator for enabled server", () => {
     renderWithProviders(
       <VirtualServerCard server={makeServer({ enabled: true })} onViewDetails={vi.fn()} />,
     );
-    expect(screen.getByTestId("enabled-indicator")).toBeTruthy();
+    expect(screen.getByTestId("status-indicator")).toHaveClass("bg-emerald-500");
+    expect(screen.getByLabelText("Enabled")).toBeTruthy();
   });
 
-  it("does not show enabled indicator for disabled server", () => {
+  it("shows a red disabled indicator for disabled server", () => {
     renderWithProviders(
       <VirtualServerCard server={makeServer({ enabled: false })} onViewDetails={vi.fn()} />,
     );
-    expect(screen.queryByTestId("enabled-indicator")).toBeNull();
+    expect(screen.getByTestId("status-indicator")).toHaveClass("bg-red-500");
+    expect(screen.getByLabelText("Disabled")).toBeTruthy();
   });
 
   it("renders empty state with add components button when no tools/resources/prompts", () => {

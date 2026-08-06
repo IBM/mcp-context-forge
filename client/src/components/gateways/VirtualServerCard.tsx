@@ -26,6 +26,8 @@ export function VirtualServerCard({
   onEdit,
   onDelete,
   onToggleStatus,
+  isToggling = false,
+  toggleDisabled = false,
   isDeleting = false,
   deleteDisabled = false,
   className,
@@ -36,6 +38,8 @@ export function VirtualServerCard({
   onEdit?: (server: VirtualServer) => void;
   onDelete?: (server: VirtualServer) => void;
   onToggleStatus?: (server: VirtualServer) => void;
+  isToggling?: boolean;
+  toggleDisabled?: boolean;
   isDeleting?: boolean;
   deleteDisabled?: boolean;
   className?: string;
@@ -64,13 +68,16 @@ export function VirtualServerCard({
           </span>
           <div className="flex min-w-0 flex-1 items-center gap-2">
             <CardTitle className="truncate">{server.name}</CardTitle>
-            {server.enabled && (
-              <span
-                className="size-1.5 rounded-full bg-emerald-500"
-                data-testid="enabled-indicator"
-                aria-label="Enabled"
-              />
-            )}
+            <span
+              className={cn(
+                "size-1.5 rounded-full",
+                server.enabled ? "bg-emerald-500" : "bg-red-500",
+              )}
+              data-testid="status-indicator"
+              aria-label={intl.formatMessage({
+                id: server.enabled ? "gateways.card.enabled" : "gateways.card.disabled",
+              })}
+            />
           </div>
           <div className="flex shrink-0 items-center gap-1">
             {!isEmptyComposition && (
@@ -115,12 +122,15 @@ export function VirtualServerCard({
                 )}
                 {onToggleStatus && (
                   <DropdownMenuItem
+                    disabled={isToggling || toggleDisabled}
                     onClick={(e) => {
                       e.stopPropagation();
                       onToggleStatus(server);
                     }}
                   >
-                    {server.enabled ? "Deactivate" : "Activate"}
+                    {intl.formatMessage({
+                      id: server.enabled ? "gateways.card.deactivate" : "gateways.card.activate",
+                    })}
                   </DropdownMenuItem>
                 )}
                 {onDelete && (

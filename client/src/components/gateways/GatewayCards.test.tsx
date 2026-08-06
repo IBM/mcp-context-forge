@@ -92,14 +92,14 @@ describe("VirtualServerCard", () => {
     expect(screen.getByText("My Test Server")).toBeTruthy();
   });
 
-  it("shows enabled indicator for enabled server", () => {
+  it("shows green status indicator for enabled server", () => {
     renderWithProviders(<VirtualServerCard server={mockServer} onViewDetails={vi.fn()} />);
-    expect(screen.getByTestId("enabled-indicator")).toBeTruthy();
+    expect(screen.getByTestId("status-indicator")).toHaveClass("bg-emerald-500");
   });
 
-  it("does not show enabled indicator for disabled server", () => {
+  it("shows red status indicator for disabled server", () => {
     renderWithProviders(<VirtualServerCard server={emptyServer} onViewDetails={vi.fn()} />);
-    expect(screen.queryByTestId("enabled-indicator")).toBeNull();
+    expect(screen.getByTestId("status-indicator")).toHaveClass("bg-red-500");
   });
 
   it("calls onViewDetails when card is clicked", () => {
