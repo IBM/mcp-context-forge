@@ -283,9 +283,13 @@ def _assemble_routers(  # noqa: C901 — deliberate single-function assembly, co
             logger.info("Admin router included - Admin API enabled")
 
             # First-Party
+            from mcpgateway.admin import enforce_admin_csrf  # pylint: disable=import-outside-toplevel
             from mcpgateway.routers.runtime_admin_router import runtime_admin_router  # pylint: disable=import-outside-toplevel
 
-            target_router.include_router(runtime_admin_router, prefix="/admin/runtime", tags=["Runtime Admin"])
+            # enforce_admin_csrf is required, not optional: /admin is in
+            # settings.csrf_exempt_paths, so CSRFMiddleware never runs on the legacy
+            # mount and this dependency is the only CSRF control these PATCH routes get.
+            target_router.include_router(runtime_admin_router, prefix="/admin/runtime", tags=["Runtime Admin"], dependencies=[Depends(enforce_admin_csrf)])
 
             # Only the /admin/well-known status endpoint belongs in the versioned
             # router.  The full well_known router (which owns /.well-known/* paths)

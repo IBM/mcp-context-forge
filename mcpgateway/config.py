@@ -428,7 +428,11 @@ class Settings(BaseSettings):
             "/auth/email/register",
             "/auth/email/forgot-password",
             "/auth/email/reset-password",
-            "/admin",  # Exempt: all admin routes use per-route enforce_admin_csrf dependency
+            # Exempt: admin routes carry the per-route enforce_admin_csrf dependency
+            # instead. Enforced by tests/unit/mcpgateway/middleware/
+            # test_admin_csrf_binding.py::test_all_admin_write_routes_enforce_admin_csrf
+            # — do not mount a state-changing router under /admin without it.
+            "/admin",
             "/admin/login",
             "/admin/forgot-password",
             "/admin/reset-password",
