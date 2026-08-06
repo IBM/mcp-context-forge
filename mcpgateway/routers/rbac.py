@@ -25,6 +25,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.orm import Session
 
 # First-Party
+from mcpgateway.auth_context import get_scoped_resource_access_context
 from mcpgateway.common.query_params import QueryIdentifierDotted, QueryScopeId, QueryTeamContext
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.db import Permissions, SessionLocal
@@ -136,6 +137,7 @@ async def list_roles(
     active_only: bool = Query(True, description="Show only active roles"),
     user=Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
+    request: Request = None,
 ):
     """List all roles.
 
@@ -144,6 +146,7 @@ async def list_roles(
         active_only: Whether to show only active roles
         user: Current authenticated user
         db: Database session
+        request: Incoming request, used to resolve Layer-1 token scope.
 
     Returns:
         List[RoleResponse]: List of roles
@@ -159,6 +162,14 @@ async def list_roles(
     try:
         role_service = RoleService(db)
         roles = await role_service.list_roles(scope=scope)
+
+        # Layer 1: a narrowed or public-only admin must not enumerate global roles.
+        # Filtered rather than denied — a 403 on this route would break the admin
+        # UI role picker for every narrowed token.
+        _, token_teams = get_scoped_resource_access_context(request, user)
+        if token_teams is not None:
+            roles = [role for role in roles if role.scope != "global"]
+
         # Release transaction before response serialization
         db.commit()
         db.close()
@@ -172,13 +183,14 @@ async def list_roles(
 
 @router.get("/roles/{role_id}", response_model=RoleResponse)
 @require_permission("admin.user_management")
-async def get_role(role_id: str, user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):
+async def get_role(role_id: str, user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db), request: Request = None):
     """Get role details by ID.
 
     Args:
         role_id: Role identifier
         user: Current authenticated user
         db: Database session
+        request: Incoming request, used to resolve Layer-1 token scope.
 
     Returns:
         RoleResponse: Role details
@@ -196,6 +208,12 @@ async def get_role(role_id: str, user=Depends(get_current_user_with_permissions)
         role = await role_service.get_role_by_id(role_id)
 
         if not role:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Role not found")
+
+        # 404 rather than 403: do not confirm the existence of a role the caller
+        # is not permitted to enumerate. Same detail string as the genuine miss.
+        _, token_teams = get_scoped_resource_access_context(request, user)
+        if token_teams is not None and role.scope == "global":
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Role not found")
 
         db.commit()
