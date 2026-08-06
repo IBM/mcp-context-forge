@@ -193,7 +193,7 @@ class TestGrpcService:
 
         with patch("mcpgateway.services.grpc_service.TeamManagementService") as mock_team_service_class:
             mock_team_instance = mock_team_service_class.return_value
-            mock_team_instance.build_team_filter_clause = AsyncMock(return_value=None)
+            mock_team_instance.get_user_teams = AsyncMock(return_value=[MagicMock(id="team-123")])
 
             with patch("mcpgateway.services.grpc_service.unified_paginate", new_callable=AsyncMock) as mock_paginate:
                 mock_paginate.return_value = ([sample_db_service], None)
@@ -206,7 +206,7 @@ class TestGrpcService:
 
             assert len(result) == 1
             assert next_cursor is None
-            mock_team_instance.build_team_filter_clause.assert_called_once()
+            mock_team_instance.get_user_teams.assert_awaited_once_with("test@example.com")
 
     async def test_list_services_with_team_names(self, service, mock_db, sample_db_service):
         """Test listing services with team name resolution."""

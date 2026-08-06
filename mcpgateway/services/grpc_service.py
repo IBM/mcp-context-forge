@@ -34,7 +34,7 @@ except ImportError:
 # Third-Party
 from google.protobuf.descriptor_pb2 import FileDescriptorSet
 from pydantic import ValidationError
-from sqlalchemy import and_, delete, desc, select, update
+from sqlalchemy import and_, delete, desc, false, or_, select, update
 from sqlalchemy.orm import Session
 
 # First-Party
@@ -179,6 +179,68 @@ class GrpcService:
     def __init__(self):
         """Initialize the gRPC service manager."""
 
+    async def _build_team_visibility_clause(
+        self,
+        db: Session,
+        user_email: Optional[str],
+        team_id: Optional[str],
+    ) -> Any:
+        """Build an access-control WHERE clause for gRPC services.
+
+        Mirrors :meth:`BaseService._apply_visibility_filter` semantics using the
+        visibility/team_id/owner_email columns on :class:`GrpcService`.
+
+        Args:
+            db: Database session
+            user_email: Caller email, or None for no identity
+            team_id: Optional team filter
+
+        Returns:
+            SQLAlchemy clause, or None when no restriction applies
+        """
+        if team_id:
+            user_teams = await TeamManagementService(db).get_user_teams(user_email) if user_email else []
+            if not any(team.id == team_id for team in user_teams):
+                return false()  # no access: deny everything
+
+            access_conditions = [
+                and_(
+                    DbGrpcService.team_id == team_id,
+                    DbGrpcService.visibility.in_(["team", "public"]),
+                ),
+                DbGrpcService.visibility == "public",  # globally public items are always visible
+            ]
+            if user_email:
+                access_conditions.append(
+                    and_(
+                        DbGrpcService.team_id == team_id,
+                        DbGrpcService.owner_email == user_email,
+                        DbGrpcService.visibility == "private",
+                    )
+                )
+            return or_(*access_conditions)
+
+        if not user_email:
+            return None
+
+        user_teams = await TeamManagementService(db).get_user_teams(user_email)
+        team_ids = [team.id for team in user_teams]
+        clauses = [DbGrpcService.visibility == "public"]
+        clauses.append(
+            and_(
+                DbGrpcService.visibility == "private",
+                DbGrpcService.owner_email == user_email,
+            )
+        )
+        if team_ids:
+            clauses.append(
+                and_(
+                    DbGrpcService.team_id.in_(team_ids),
+                    DbGrpcService.visibility.in_(["team", "public"]),
+                )
+            )
+        return or_(*clauses)
+
     async def register_service(
         self,
         db: Session,
@@ -282,13 +344,10 @@ class GrpcService:
         query = select(DbGrpcService).order_by(desc(DbGrpcService.created_at), desc(DbGrpcService.id))
 
         # Apply team filtering
-        if user_email and team_id:
-            team_service = TeamManagementService(db)
-            team_filter = await team_service.build_team_filter_clause(DbGrpcService, user_email, team_id)  # pylint: disable=no-member
+        if user_email or team_id:
+            team_filter = await self._build_team_visibility_clause(db, user_email, team_id)
             if team_filter is not None:
                 query = query.where(team_filter)
-        elif team_id:
-            query = query.where(DbGrpcService.team_id == team_id)
 
         # Apply active filter
         if not include_inactive:
@@ -368,8 +427,7 @@ class GrpcService:
 
         # Apply team access control
         if user_email:
-            team_service = TeamManagementService(db)
-            team_filter = await team_service.build_team_filter_clause(DbGrpcService, user_email, None)  # pylint: disable=no-member
+            team_filter = await self._build_team_visibility_clause(db, user_email, None)
             if team_filter is not None:
                 query = query.where(team_filter)
 
