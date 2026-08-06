@@ -85,6 +85,10 @@ _SECRET_FIELDS: dict[str, int] = {
     "BASIC_AUTH_PASSWORD": 18,  # nosec B105 — patched when "changeme" or placeholder; 18 bytes → 24 chars
 }
 
+# Fields subject to the full compliance predicate (startup hard-fail): length + entropy enforced.
+# BASIC_AUTH_PASSWORD is excluded — Settings only warns on it, never hard-fails.
+_STRONG_SECRET_FIELDS: frozenset[str] = frozenset({"JWT_SECRET_KEY", "AUTH_ENCRYPTION_SECRET"})
+
 
 def _read_env_file(path: str) -> dict[str, str]:
     """Parse KEY=VALUE pairs from an env file, skipping comments and blank lines.
@@ -191,9 +195,6 @@ def ensure_env_file_secrets(
     env_only: dict[str, str] = {}
     # Keys whose weak value came from .env (or was absent) — write to disk + environ.
     file_generated: dict[str, str] = {}
-
-    # Fields subject to the full compliance predicate (startup hard-fail): length + entropy enforced.
-    _STRONG_SECRET_FIELDS = {"JWT_SECRET_KEY", "AUTH_ENCRYPTION_SECRET"}
 
     for field, nbytes in _SECRET_FIELDS.items():
         # os.environ takes priority over .env (mirrors pydantic-settings behaviour)
