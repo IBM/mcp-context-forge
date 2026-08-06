@@ -11,6 +11,7 @@ periodically, reducing DB write pressure under high load.
 # Standard
 import asyncio
 from collections import deque
+from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import logging
@@ -24,6 +25,9 @@ from mcpgateway.db import A2AAgentMetric, fresh_db_session, PromptMetric, Resour
 
 logger = logging.getLogger(__name__)
 
+# Set only around unified debugger calls; ContextVar keeps concurrent requests isolated.
+debug_invocation_context: ContextVar[bool] = ContextVar("debug_invocation_context", default=False)
+
 
 @dataclass
 class BufferedToolMetric:
@@ -34,6 +38,12 @@ class BufferedToolMetric:
     response_time: float
     is_success: bool
     error_message: Optional[str] = None
+    protocol: Optional[str] = None
+    status_code: Optional[str] = None
+    request_bytes: Optional[int] = None
+    response_bytes: Optional[int] = None
+    trace_id: Optional[str] = None
+    is_debug: bool = False
 
 
 @dataclass
@@ -224,6 +234,12 @@ class MetricsBufferService:
         start_time: float,
         success: bool,
         error_message: Optional[str] = None,
+        protocol: Optional[str] = None,
+        status_code: Optional[str] = None,
+        request_bytes: Optional[int] = None,
+        response_bytes: Optional[int] = None,
+        trace_id: Optional[str] = None,
+        is_debug: Optional[bool] = None,
     ) -> None:
         """Buffer a tool metric for later flush.
 
@@ -232,12 +248,21 @@ class MetricsBufferService:
             start_time: The monotonic start time of the invocation.
             success: True if the invocation succeeded.
             error_message: Error message if failed.
+            protocol: Invocation protocol such as REST, MCP, gRPC, or SQL.
+            status_code: Normalized protocol status.
+            request_bytes: Serialized request size when known.
+            response_bytes: Serialized response size when known.
+            trace_id: Distributed trace identifier when available.
+            is_debug: Whether this invocation came from the API debugger.
         """
         if not self.recording_enabled:
             return  # Execution metrics recording disabled
         if not self.enabled:
             # Fall back to immediate write
-            self._write_tool_metric_immediately(tool_id, start_time, success, error_message)
+            if any(value is not None for value in (protocol, status_code, request_bytes, response_bytes, trace_id, is_debug)):
+                self._write_tool_metric_immediately(tool_id, start_time, success, error_message, protocol, status_code, request_bytes, response_bytes, trace_id, is_debug)
+            else:
+                self._write_tool_metric_immediately(tool_id, start_time, success, error_message)
             return
 
         metric = BufferedToolMetric(
@@ -246,6 +271,12 @@ class MetricsBufferService:
             response_time=time.monotonic() - start_time,
             is_success=success,
             error_message=error_message,
+            protocol=protocol,
+            status_code=status_code,
+            request_bytes=request_bytes,
+            response_bytes=response_bytes,
+            trace_id=trace_id,
+            is_debug=debug_invocation_context.get() if is_debug is None else is_debug,
         )
 
         self._ensure_flush_task_started()
@@ -259,6 +290,12 @@ class MetricsBufferService:
         response_time: float,
         success: bool,
         error_message: Optional[str] = None,
+        protocol: Optional[str] = None,
+        status_code: Optional[str] = None,
+        request_bytes: Optional[int] = None,
+        response_bytes: Optional[int] = None,
+        trace_id: Optional[str] = None,
+        is_debug: Optional[bool] = None,
     ) -> None:
         """Buffer a tool metric with pre-calculated response time.
 
@@ -267,11 +304,20 @@ class MetricsBufferService:
             response_time: Pre-calculated response time in seconds.
             success: Whether the operation succeeded.
             error_message: Optional error message if failed.
+            protocol: Invocation protocol such as REST, MCP, gRPC, or SQL.
+            status_code: Normalized protocol status.
+            request_bytes: Serialized request size when known.
+            response_bytes: Serialized response size when known.
+            trace_id: Distributed trace identifier when available.
+            is_debug: Whether this invocation came from the API debugger.
         """
         if not self.recording_enabled:
             return  # Execution metrics recording disabled
         if not self.enabled:
-            self._write_tool_metric_with_duration_immediately(tool_id, response_time, success, error_message)
+            if any(value is not None for value in (protocol, status_code, request_bytes, response_bytes, trace_id, is_debug)):
+                self._write_tool_metric_with_duration_immediately(tool_id, response_time, success, error_message, protocol, status_code, request_bytes, response_bytes, trace_id, is_debug)
+            else:
+                self._write_tool_metric_with_duration_immediately(tool_id, response_time, success, error_message)
             return
 
         metric = BufferedToolMetric(
@@ -280,6 +326,12 @@ class MetricsBufferService:
             response_time=response_time,
             is_success=success,
             error_message=error_message,
+            protocol=protocol,
+            status_code=status_code,
+            request_bytes=request_bytes,
+            response_bytes=response_bytes,
+            trace_id=trace_id,
+            is_debug=debug_invocation_context.get() if is_debug is None else is_debug,
         )
 
         self._ensure_flush_task_started()
@@ -612,6 +664,12 @@ class MetricsBufferService:
                                 "response_time": m.response_time,
                                 "is_success": m.is_success,
                                 "error_message": m.error_message,
+                                "protocol": getattr(m, "protocol", None),
+                                "status_code": getattr(m, "status_code", None),
+                                "request_bytes": getattr(m, "request_bytes", None),
+                                "response_bytes": getattr(m, "response_bytes", None),
+                                "trace_id": getattr(m, "trace_id", None),
+                                "is_debug": getattr(m, "is_debug", False),
                             }
                             for m in tool_metrics
                         ],
@@ -705,6 +763,12 @@ class MetricsBufferService:
         start_time: float,
         success: bool,
         error_message: Optional[str],
+        protocol: Optional[str] = None,
+        status_code: Optional[str] = None,
+        request_bytes: Optional[int] = None,
+        response_bytes: Optional[int] = None,
+        trace_id: Optional[str] = None,
+        is_debug: Optional[bool] = None,
     ) -> None:
         """Write a single tool metric immediately (fallback when buffering disabled).
 
@@ -713,6 +777,12 @@ class MetricsBufferService:
             start_time: Monotonic start time for response_time calculation.
             success: Whether the operation succeeded.
             error_message: Optional error message if failed.
+            protocol: Invocation protocol such as REST, MCP, gRPC, or SQL.
+            status_code: Normalized protocol status.
+            request_bytes: Serialized request size when known.
+            response_bytes: Serialized response size when known.
+            trace_id: Distributed trace identifier when available.
+            is_debug: Whether this invocation came from the API debugger.
         """
         try:
             with fresh_db_session() as db:
@@ -722,6 +792,12 @@ class MetricsBufferService:
                     response_time=time.monotonic() - start_time,
                     is_success=success,
                     error_message=error_message,
+                    protocol=protocol,
+                    status_code=status_code,
+                    request_bytes=request_bytes,
+                    response_bytes=response_bytes,
+                    trace_id=trace_id,
+                    is_debug=debug_invocation_context.get() if is_debug is None else is_debug,
                 )
                 db.add(metric)
         except Exception as e:
@@ -733,6 +809,12 @@ class MetricsBufferService:
         response_time: float,
         success: bool,
         error_message: Optional[str],
+        protocol: Optional[str] = None,
+        status_code: Optional[str] = None,
+        request_bytes: Optional[int] = None,
+        response_bytes: Optional[int] = None,
+        trace_id: Optional[str] = None,
+        is_debug: Optional[bool] = None,
     ) -> None:
         """Write a single tool metric with pre-calculated duration immediately.
 
@@ -741,6 +823,12 @@ class MetricsBufferService:
             response_time: Pre-calculated response time in seconds.
             success: Whether the operation succeeded.
             error_message: Optional error message if failed.
+            protocol: Invocation protocol such as REST, MCP, gRPC, or SQL.
+            status_code: Normalized protocol status.
+            request_bytes: Serialized request size when known.
+            response_bytes: Serialized response size when known.
+            trace_id: Distributed trace identifier when available.
+            is_debug: Whether this invocation came from the API debugger.
         """
         try:
             with fresh_db_session() as db:
@@ -750,6 +838,12 @@ class MetricsBufferService:
                     response_time=response_time,
                     is_success=success,
                     error_message=error_message,
+                    protocol=protocol,
+                    status_code=status_code,
+                    request_bytes=request_bytes,
+                    response_bytes=response_bytes,
+                    trace_id=trace_id,
+                    is_debug=debug_invocation_context.get() if is_debug is None else is_debug,
                 )
                 db.add(metric)
         except Exception as e:
