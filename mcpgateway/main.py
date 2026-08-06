@@ -196,6 +196,7 @@ from mcpgateway.services.mcp_apps import (
     MCPAppsValidationError,
     serialize_resource_content_for_mcp,
 )
+from mcpgateway.services.mcp_method_registry import mcp_method_registry
 from mcpgateway.services.metrics import setup_metrics
 from mcpgateway.services.permission_service import PermissionService
 from mcpgateway.services.prompt_service import PromptError, PromptLockConflictError, PromptNameConflictError, PromptNotFoundError
@@ -10606,50 +10607,125 @@ async def create_mcp_app_session(request: Request, db: Session = Depends(get_db)
     )
 
 
-@utility_router.post("/appbridge/sessions/{app_session_id}/rpc")
-@require_permission("tools.execute")
-async def handle_mcp_app_session_rpc(app_session_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)):
-    """Execute an app-visible tool through a validated AppBridge session."""
-    if not mcp_apps_enabled():
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="MCP Apps are disabled")
+def _app_bridge_request_headers(request: Request) -> Dict[str, str]:
+    """Build the header passthrough for an AppBridge call.
 
-    try:
-        body = orjson.loads(await request.body())
-    except orjson.JSONDecodeError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Parse error") from exc
-    if not isinstance(body, dict):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid request body")
+    The gateway routing header is stripped so an app cannot redirect its own
+    call to a different gateway than the one its session is bound to.
 
-    req_id = body.get("id")
-    method = body.get("method")
-    params = body.get("params") if isinstance(body.get("params"), dict) else {}
-    if method != "tools/call":
-        return {"jsonrpc": "2.0", "error": {"code": -32601, "message": f"Method not found: {method}"}, "id": req_id}
+    Args:
+        request: Incoming AppBridge RPC request.
 
-    mcp_session_id = _extract_mcp_session_id(request, body)
-    if not mcp_session_id:
-        return {"jsonrpc": "2.0", "error": {"code": -32003, "message": _ACCESS_DENIED_MSG}, "id": req_id}
-    try:
-        await _assert_session_owner_or_admin(request, user, mcp_session_id)
-    except HTTPException as exc:
-        error_code = -32002 if exc.status_code == status.HTTP_404_NOT_FOUND else -32003
-        return {"jsonrpc": "2.0", "error": {"code": error_code, "message": str(exc.detail)}, "id": req_id}
+    Returns:
+        Lowercased request headers without the gateway routing header.
+    """
+    request_headers = {k.lower(): v for k, v in request.headers.items()}
+    request_headers.pop("x-context-forge-gateway-id", None)
+    return request_headers
 
-    requester_email, requester_is_admin = get_request_identity(request, user)
-    server_id = params.get("server_id") or params.get("serverId") or body.get("serverId") or body.get("server_id") or request.headers.get("x-contextforge-server-id")
-    app_session = mcp_app_session_service.get_valid_session(
-        db,
-        app_session_id=app_session_id,
-        mcp_session_id=mcp_session_id,
-        user_email=requester_email,
-        server_id=None,
-        is_admin=requester_is_admin,
+
+def _record_app_bridge_log(app_session, params: Dict[str, Any]) -> None:
+    """Record a log notification sent by an MCP App.
+
+    The MCP Apps lifecycle terminates ``notifications/message`` at the host, so
+    the payload is recorded for observability and never proxied upstream. The
+    contents are attacker-influenced, so every field is truncated and logged as
+    data rather than interpolated into the format string.
+
+    Args:
+        app_session: The validated AppBridge session the notification arrived on.
+        params: JSON-RPC params carrying ``level``, optional ``logger`` and ``data``.
+    """
+    level = params.get("level")
+    origin_logger = params.get("logger")
+    data = params.get("data")
+    logger.info(
+        "AppBridge log notification session=%s server=%s level=%.100r logger=%.100r data=%.500r",
+        app_session.id,
+        app_session.server_id,
+        level,
+        origin_logger,
+        data,
     )
-    if app_session is None:
-        return {"jsonrpc": "2.0", "error": {"code": -32003, "message": _ACCESS_DENIED_MSG}, "id": req_id}
-    if not app_session.server_id or (server_id is not None and server_id != app_session.server_id):
-        return {"jsonrpc": "2.0", "error": {"code": -32003, "message": _ACCESS_DENIED_MSG}, "id": req_id}
 
+
+async def _handle_app_bridge_resources_read(db: Session, request: Request, app_session, params: Dict[str, Any], req_id: Any) -> Dict[str, Any]:
+    """Read a resource on behalf of an MCP App through its bound session.
+
+    The read is scoped to the server the AppBridge session is bound to and uses
+    the identity and team scoping captured when the session was created, so an
+    app cannot reach resources its originating user could not read.
+
+    Args:
+        db: Database session.
+        request: Incoming request, used for plugin context and header passthrough.
+        app_session: The validated AppBridge session.
+        params: JSON-RPC params carrying the resource ``uri``.
+        req_id: JSON-RPC request id echoed back to the caller.
+
+    Returns:
+        A JSON-RPC response dictionary with the resource contents or an error.
+    """
+    uri = params.get("uri")
+    if not uri or not isinstance(uri, str):
+        return {"jsonrpc": "2.0", "error": {"code": -32602, "message": "Missing resource URI in parameters"}, "id": req_id}
+
+    token_teams = app_session.token_teams
+    resource_user_email = None if token_teams is None else app_session.user_email
+    request_headers = _app_bridge_request_headers(request)
+
+    try:
+        result = await resource_service.read_resource(
+            db,
+            resource_uri=uri,
+            user=resource_user_email,
+            server_id=app_session.server_id,
+            token_teams=token_teams,
+            plugin_context_table=getattr(request.state, "plugin_context_table", None),
+            plugin_global_context=getattr(request.state, "plugin_global_context", None),
+            meta_data=params.get("_meta"),
+            request_headers=request_headers,
+        )
+    except (ValueError, ResourceNotFoundError) as exc:
+        logger.info("AppBridge resource read failed for %s on server %s: %s", uri, app_session.server_id, exc)
+        return {"jsonrpc": "2.0", "error": {"code": -32002, "message": f"Resource not found: {uri}"}, "id": req_id}
+    except PluginViolationError as exc:
+        error_code = -32602
+        if exc.violation and hasattr(exc.violation, "mcp_error_code") and isinstance(exc.violation.mcp_error_code, int):
+            error_code = exc.violation.mcp_error_code
+        return {"jsonrpc": "2.0", "error": {"code": error_code, "message": str(exc)}, "id": req_id}
+    except PluginError as exc:
+        error_code = -32603
+        if exc.error and hasattr(exc.error, "mcp_error_code") and isinstance(exc.error.mcp_error_code, int):
+            error_code = exc.error.mcp_error_code
+        return {"jsonrpc": "2.0", "error": {"code": error_code, "message": str(exc)}, "id": req_id}
+    except ResourceError as exc:
+        logger.info("AppBridge resource read errored for %s: %s", uri, exc)
+        return {"jsonrpc": "2.0", "error": {"code": -32000, "message": f"Resource read failed: {exc}"}, "id": req_id}
+    except Exception:
+        logger.exception("AppBridge resource read failed for %s", uri)
+        return {"jsonrpc": "2.0", "error": {"code": -32603, "message": "Internal error"}, "id": req_id}
+
+    return {"jsonrpc": "2.0", "result": {"contents": [serialize_resource_content_for_mcp(result, fallback_uri=uri)]}, "id": req_id}
+
+
+async def _handle_app_bridge_tools_call(db: Session, request: Request, app_session, params: Dict[str, Any], req_id: Any, requester_email: Optional[str]) -> Dict[str, Any]:
+    """Invoke an app-visible tool on behalf of an MCP App through its bound session.
+
+    The call is scoped to the server the AppBridge session is bound to and uses the
+    identity and team scoping captured when the session was created.
+
+    Args:
+        db: Database session.
+        request: Incoming request, used for plugin context and header passthrough.
+        app_session: The validated AppBridge session.
+        params: JSON-RPC params carrying the tool ``name`` and ``arguments``.
+        req_id: JSON-RPC request id echoed back to the caller.
+        requester_email: Email of the authenticated caller driving the app.
+
+    Returns:
+        A JSON-RPC response dictionary with the tool result or an error.
+    """
     name = params.get("name")
     if not name:
         return {"jsonrpc": "2.0", "error": {"code": -32602, "message": "Missing tool name in parameters"}, "id": req_id}
@@ -10657,8 +10733,7 @@ async def handle_mcp_app_session_rpc(app_session_id: str, request: Request, db: 
     try:
         token_teams = app_session.token_teams
         tool_user_email = None if token_teams is None else app_session.user_email
-        request_headers = {k.lower(): v for k, v in request.headers.items()}
-        request_headers.pop("x-context-forge-gateway-id", None)
+        request_headers = _app_bridge_request_headers(request)
         result = await tool_service.invoke_tool(
             db=db,
             name=name,
@@ -10697,6 +10772,86 @@ async def handle_mcp_app_session_rpc(app_session_id: str, request: Request, db: 
     except Exception:
         logger.exception("AppBridge tool call failed for %s", name)
         return {"jsonrpc": "2.0", "error": {"code": -32603, "message": "Internal error"}, "id": req_id}
+
+
+@utility_router.post("/appbridge/sessions/{app_session_id}/rpc")
+@require_permission("tools.execute")
+async def handle_mcp_app_session_rpc(app_session_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)):
+    """Execute an app-visible tool or standard MCP message through a validated AppBridge session."""
+    if not mcp_apps_enabled():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="MCP Apps are disabled")
+
+    try:
+        body = orjson.loads(await request.body())
+    except orjson.JSONDecodeError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Parse error") from exc
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid request body")
+
+    req_id = body.get("id")
+    method = body.get("method")
+    params = body.get("params") if isinstance(body.get("params"), dict) else {}
+    if not mcp_method_registry.is_app_bridge_method(method):
+        return {"jsonrpc": "2.0", "error": {"code": -32601, "message": f"Method not found: {method}"}, "id": req_id}
+
+    mcp_session_id = _extract_mcp_session_id(request, body)
+    if not mcp_session_id:
+        return {"jsonrpc": "2.0", "error": {"code": -32003, "message": _ACCESS_DENIED_MSG}, "id": req_id}
+    try:
+        await _assert_session_owner_or_admin(request, user, mcp_session_id)
+    except HTTPException as exc:
+        error_code = -32002 if exc.status_code == status.HTTP_404_NOT_FOUND else -32003
+        return {"jsonrpc": "2.0", "error": {"code": error_code, "message": str(exc.detail)}, "id": req_id}
+
+    requester_email, requester_is_admin = get_request_identity(request, user)
+    server_id = params.get("server_id") or params.get("serverId") or body.get("serverId") or body.get("server_id") or request.headers.get("x-contextforge-server-id")
+    app_session = mcp_app_session_service.get_valid_session(
+        db,
+        app_session_id=app_session_id,
+        mcp_session_id=mcp_session_id,
+        user_email=requester_email,
+        server_id=None,
+        is_admin=requester_is_admin,
+    )
+    if app_session is None:
+        return {"jsonrpc": "2.0", "error": {"code": -32003, "message": _ACCESS_DENIED_MSG}, "id": req_id}
+    if not app_session.server_id or (server_id is not None and server_id != app_session.server_id):
+        return {"jsonrpc": "2.0", "error": {"code": -32003, "message": _ACCESS_DENIED_MSG}, "id": req_id}
+
+    # Session ownership and server binding are enforced above for every bridge
+    # method, so the per-method handlers below inherit the same scoping.
+    if method == "ping":
+        return {"jsonrpc": "2.0", "result": {}, "id": req_id}
+
+    if method == "notifications/message":
+        if "id" in body:
+            # JSON-RPC decides notification vs request on the *presence* of the id member, not
+            # its value: "id": null still makes this a request, which must not go unanswered.
+            # The MCP Apps lifecycle defines notifications/message as terminating at the host
+            # with no reply, so the request form is rejected rather than silently acknowledged
+            # with an empty body the caller is still waiting on.
+            return {
+                "jsonrpc": "2.0",
+                "error": {"code": -32600, "message": "notifications/message must be sent as a JSON-RPC notification, without an 'id' member"},
+                "id": req_id,
+            }
+        _record_app_bridge_log(app_session, params)
+        # A JSON-RPC notification carries no id and MUST NOT receive a JSON-RPC response, so
+        # this is acknowledged at the transport level only: 202 Accepted with an empty body,
+        # matching the Streamable HTTP rule for notification-only input.
+        return Response(status_code=status.HTTP_202_ACCEPTED)
+
+    if method == "resources/read":
+        # RBAC is a layer of its own, separate from the session's token/team scoping: the
+        # endpoint decorator only proves tools.execute, which a caller can retain after
+        # resources.read has been revoked. Authorize the read per method.
+        try:
+            await _ensure_rpc_permission(user, db, "resources.read", method, request=request)
+        except JSONRPCError as exc:
+            return {"jsonrpc": "2.0", "error": exc.to_dict()["error"], "id": req_id}
+        return await _handle_app_bridge_resources_read(db, request, app_session, params, req_id)
+
+    return await _handle_app_bridge_tools_call(db, request, app_session, params, req_id, requester_email)
 
 
 @utility_router.post("/_internal/mcp/tools/call/")
@@ -11679,9 +11834,6 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
             result = {}
         elif method.startswith("extensions/") or method.startswith("io.modelcontextprotocol/"):
             # Check if this is a known MCP Apps method.
-            # First-Party
-            from mcpgateway.services.mcp_method_registry import mcp_method_registry
-
             if not mcp_method_registry.is_known_method(method):
                 raise JSONRPCError(-32601, f"Method not found: {method}", {})
             # Known MCP Apps method but not yet implemented here.
