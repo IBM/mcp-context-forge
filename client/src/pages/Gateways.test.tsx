@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { screen, waitFor, act } from "@testing-library/react";
+import { screen, waitFor, act, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { toast } from "sonner";
 import { renderWithProviders } from "@/test/test-utils";
@@ -178,6 +178,32 @@ describe("Gateways", () => {
         name: "Add tools, resources, and prompts from connected sources",
       }),
     ).not.toBeInTheDocument();
+  });
+
+  describe("virtual servers header tooltip", () => {
+    const TOOLTIP_COPY =
+      "MCP endpoint bundling capabilities from MCP servers, REST APIs, gRPC services, or A2A agents.";
+
+    it("renders a focusable info trigger next to the heading", () => {
+      renderWithProviders(<Gateways />);
+
+      const heading = screen.getByRole("heading", { name: "Virtual servers" });
+      const trigger = screen.getByRole("button", { name: "About virtual servers" });
+
+      expect(heading).toBeInTheDocument();
+      expect(trigger).toBeInTheDocument();
+    });
+
+    it("shows the tooltip copy when the trigger receives keyboard focus", async () => {
+      renderWithProviders(<Gateways />);
+
+      const trigger = screen.getByRole("button", { name: "About virtual servers" });
+      act(() => {
+        fireEvent.focus(trigger);
+      });
+
+      expect((await screen.findAllByText(TOOLTIP_COPY)).length).toBeGreaterThan(0);
+    });
   });
 
   it("renders the virtual server layout when servers exist", async () => {
