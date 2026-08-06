@@ -21,14 +21,14 @@ import logging
 from typing import Generator, List
 
 # Third-Party
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.common.query_params import QueryIdentifierDotted, QueryScopeId, QueryTeamContext
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.db import Permissions, SessionLocal
-from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_admin_permission, require_permission
+from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_global_admin_permission, require_permission
 from mcpgateway.schemas import PermissionCheckRequest, PermissionCheckResponse, PermissionListResponse, RoleCreateRequest, RoleResponse, RoleUpdateRequest, UserRoleAssignRequest, UserRoleResponse
 from mcpgateway.services.permission_service import PermissionService
 from mcpgateway.services.role_service import RoleService
@@ -78,8 +78,8 @@ def get_db() -> Generator[Session, None, None]:
 
 
 @router.post("/roles", response_model=RoleResponse)
-@require_admin_permission()
-async def create_role(role_data: RoleCreateRequest, user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):
+@require_global_admin_permission()
+async def create_role(role_data: RoleCreateRequest, user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db), request: Request = None):
     """Create a new role.
 
     Requires admin permissions to create roles.
@@ -88,6 +88,7 @@ async def create_role(role_data: RoleCreateRequest, user=Depends(get_current_use
         role_data: Role creation data
         user: Current authenticated user
         db: Database session
+        request: Incoming request, used to resolve Layer-1 token scope.
 
     Returns:
         RoleResponse: Created role details
@@ -209,8 +210,8 @@ async def get_role(role_id: str, user=Depends(get_current_user_with_permissions)
 
 
 @router.put("/roles/{role_id}", response_model=RoleResponse)
-@require_admin_permission()
-async def update_role(role_id: str, role_data: RoleUpdateRequest, user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):
+@require_global_admin_permission()
+async def update_role(role_id: str, role_data: RoleUpdateRequest, user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db), request: Request = None):
     """Update an existing role.
 
     Args:
@@ -218,6 +219,7 @@ async def update_role(role_id: str, role_data: RoleUpdateRequest, user=Depends(g
         role_data: Role update data
         user: Current authenticated user
         db: Database session
+        request: Incoming request, used to resolve Layer-1 token scope.
 
     Returns:
         RoleResponse: Updated role details
@@ -256,14 +258,15 @@ async def update_role(role_id: str, role_data: RoleUpdateRequest, user=Depends(g
 
 
 @router.delete("/roles/{role_id}")
-@require_admin_permission()
-async def delete_role(role_id: str, user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):
+@require_global_admin_permission()
+async def delete_role(role_id: str, user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db), request: Request = None):
     """Delete a role.
 
     Args:
         role_id: Role identifier
         user: Current authenticated user
         db: Database session
+        request: Incoming request, used to resolve Layer-1 token scope.
 
     Returns:
         dict: Success message
