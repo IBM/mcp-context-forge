@@ -5660,7 +5660,7 @@ class TestAdminUIRoute:
         grpc_service.model_dump.return_value = {"id": "svc-1", "team_id": "team-1"}
         monkeypatch.setattr("mcpgateway.admin.GRPC_AVAILABLE", True)
         monkeypatch.setattr(settings, "mcpgateway_grpc_enabled", True)
-        monkeypatch.setattr("mcpgateway.admin.grpc_service_mgr", MagicMock(list_services=AsyncMock(return_value=[grpc_service])))
+        monkeypatch.setattr("mcpgateway.admin.grpc_service_mgr", MagicMock(list_services=AsyncMock(return_value=([grpc_service], None))))
 
         response = await admin_ui(
             request=mock_request,
