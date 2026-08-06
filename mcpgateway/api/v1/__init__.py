@@ -275,7 +275,7 @@ def _assemble_routers(  # noqa: C901 — deliberate single-function assembly, co
 
         try:
             # First-Party
-            from mcpgateway.admin import admin_router, set_logging_service, validate_section_permissions  # pylint: disable=import-outside-toplevel
+            from mcpgateway.admin import admin_router, enforce_admin_csrf, set_logging_service, validate_section_permissions  # pylint: disable=import-outside-toplevel
 
             set_logging_service(logging_service)
             target_router.include_router(admin_router)
@@ -283,7 +283,6 @@ def _assemble_routers(  # noqa: C901 — deliberate single-function assembly, co
             logger.info("Admin router included - Admin API enabled")
 
             # First-Party
-            from mcpgateway.admin import enforce_admin_csrf  # pylint: disable=import-outside-toplevel
             from mcpgateway.routers.runtime_admin_router import runtime_admin_router  # pylint: disable=import-outside-toplevel
 
             # enforce_admin_csrf is required, not optional: /admin is in
