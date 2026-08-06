@@ -17,6 +17,9 @@ import pytest
 # Local
 from tests.utils.rbac_mocks import patch_rbac_decorators, restore_rbac_decorators
 
+# First-Party
+from tests.helpers.scope import admin_user_context, scoped_request
+
 _originals = patch_rbac_decorators()
 # First-Party
 from mcpgateway.routers import compliance_router as router_mod  # noqa: E402  # pylint: disable=wrong-import-position
@@ -60,8 +63,13 @@ def _make_report(report_id="rpt-1", framework=ComplianceFramework.FEDRAMP_MODERA
 
 
 def _mock_user():
-    """Return a mock admin user context dict."""
-    return {"email": "admin@example.com", "is_admin": True}
+    """Unrestricted admin context for handler-level calls."""
+    return admin_user_context(None)
+
+
+def _req(path="/compliance/frameworks"):
+    """Request stub carrying unrestricted Layer-1 scope."""
+    return scoped_request(None, path=path)
 
 
 # ---------------------------------------------------------------------------
@@ -72,7 +80,7 @@ def _mock_user():
 @pytest.mark.asyncio
 async def test_list_frameworks_returns_all():
     """Should return all four supported compliance frameworks."""
-    result = await router_mod.list_frameworks(user=_mock_user())
+    result = await router_mod.list_frameworks(request=_req(), user=_mock_user())
 
     assert len(result) == 4
     ids = [f.id for f in result]
@@ -96,7 +104,7 @@ async def test_generate_report_success(monkeypatch):
     monkeypatch.setattr(router_mod, "get_compliance_service", lambda: mock_service)
 
     body = router_mod.GenerateReportRequest(framework=ComplianceFramework.FEDRAMP_MODERATE, period_start=START, period_end=END)
-    result = await router_mod.generate_report(body, user=_mock_user(), db=MagicMock())
+    result = await router_mod.generate_report(body, user=_mock_user(), db=MagicMock(), request=_req())
 
     assert result.id == "rpt-1"
     assert result.framework == ComplianceFramework.FEDRAMP_MODERATE.value
@@ -187,7 +195,7 @@ async def test_list_reports_empty(monkeypatch):
     mock_service.list_reports.return_value = []
     monkeypatch.setattr(router_mod, "get_compliance_service", lambda: mock_service)
 
-    result = await router_mod.list_reports(user=_mock_user(), db=MagicMock())
+    result = await router_mod.list_reports(request=_req(), user=_mock_user(), db=MagicMock())
     assert result == []
 
 
@@ -199,7 +207,7 @@ async def test_list_reports_multiple(monkeypatch):
     mock_service.list_reports.return_value = reports
     monkeypatch.setattr(router_mod, "get_compliance_service", lambda: mock_service)
 
-    result = await router_mod.list_reports(user=_mock_user(), db=MagicMock())
+    result = await router_mod.list_reports(request=_req(), user=_mock_user(), db=MagicMock())
     assert len(result) == 2
     ids = [r.id for r in result]
     assert "r1" in ids
@@ -219,7 +227,7 @@ async def test_get_report_success(monkeypatch):
     mock_service.get_report.return_value = report
     monkeypatch.setattr(router_mod, "get_compliance_service", lambda: mock_service)
 
-    result = await router_mod.get_report("rpt-42", user=_mock_user(), db=MagicMock())
+    result = await router_mod.get_report("rpt-42", user=_mock_user(), db=MagicMock(), request=_req())
     assert result.id == "rpt-42"
 
 
@@ -233,7 +241,7 @@ async def test_get_report_not_found(monkeypatch):
     monkeypatch.setattr(router_mod, "get_compliance_service", lambda: mock_service)
 
     with pytest.raises(HTTPException) as exc_info:
-        await router_mod.get_report("missing-id", user=_mock_user(), db=MagicMock())
+        await router_mod.get_report("missing-id", user=_mock_user(), db=MagicMock(), request=_req())
 
     assert exc_info.value.status_code == 404
 
@@ -252,7 +260,7 @@ async def test_export_report_json(monkeypatch):
     mock_service.export_json.return_value = '{"id": "rpt-e1"}'
     monkeypatch.setattr(router_mod, "get_compliance_service", lambda: mock_service)
 
-    result = await router_mod.export_report("rpt-e1", user=_mock_user(), db=MagicMock(), export_format="json")
+    result = await router_mod.export_report("rpt-e1", user=_mock_user(), db=MagicMock(), export_format="json", request=_req())
 
     assert result.media_type == "application/json"
     assert "rpt-e1" in result.body.decode()
@@ -267,7 +275,7 @@ async def test_export_report_csv(monkeypatch):
     mock_service.export_csv.return_value = "report_id,framework\nrpt-e2,fedramp_moderate\n"
     monkeypatch.setattr(router_mod, "get_compliance_service", lambda: mock_service)
 
-    result = await router_mod.export_report("rpt-e2", user=_mock_user(), db=MagicMock(), export_format="csv")
+    result = await router_mod.export_report("rpt-e2", user=_mock_user(), db=MagicMock(), export_format="csv", request=_req())
 
     assert result.media_type == "text/csv"
     assert "rpt-e2" in result.body.decode()
@@ -284,7 +292,7 @@ async def test_export_report_unsupported_format(monkeypatch):
     monkeypatch.setattr(router_mod, "get_compliance_service", lambda: mock_service)
 
     with pytest.raises(HTTPException) as exc_info:
-        await router_mod.export_report("rpt-e3", user=_mock_user(), db=MagicMock(), export_format="xml")
+        await router_mod.export_report("rpt-e3", user=_mock_user(), db=MagicMock(), export_format="xml", request=_req())
 
     assert exc_info.value.status_code == 400
 
@@ -299,7 +307,7 @@ async def test_export_report_not_found(monkeypatch):
     monkeypatch.setattr(router_mod, "get_compliance_service", lambda: mock_service)
 
     with pytest.raises(HTTPException) as exc_info:
-        await router_mod.export_report("ghost", user=_mock_user(), db=MagicMock(), export_format="json")
+        await router_mod.export_report("ghost", user=_mock_user(), db=MagicMock(), export_format="json", request=_req())
 
     assert exc_info.value.status_code == 404
 
