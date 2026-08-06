@@ -60,7 +60,11 @@ describe("formatLastSeen", () => {
 
   it("is locale-aware", () => {
     const value = new Date(now - 5 * 60_000).toISOString();
-    expect(formatLastSeen(value, { now, locale: "es" })).toBe("hace 5 minutos");
+    const formatted = formatLastSeen(value, { now, locale: "es" });
+    // Spanish output, not the English form. The exact inflection ("minutos" vs
+    // "min") varies by ICU version, so match loosely rather than the full string.
+    expect(formatted).toMatch(/hace\s+5\s+min/);
+    expect(formatted).not.toMatch(/ago/);
   });
 
   it("treats a zoneless datetime as UTC, not local time", () => {

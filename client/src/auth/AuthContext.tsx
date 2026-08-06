@@ -166,7 +166,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const hasPermission = useCallback(
     (perm: string): boolean => {
-      if (perms.error) return false;
+      // Fail closed while permissions are (re)loading or on error, so a team
+      // switch never briefly grants a permission carried over from the previous
+      // team (which could fire admin-only probes or flash gated UI).
+      if (perms.loading || perms.error) return false;
       return perms.permissions.includes("*") || perms.permissions.includes(perm);
     },
     [perms],

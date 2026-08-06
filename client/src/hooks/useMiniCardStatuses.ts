@@ -73,8 +73,8 @@ export function useMiniCardStatuses(): HomeStatus {
   const canViewSystem = hasPermission("admin.system_config");
   const systemHealth = useSystemHealth(undefined, canViewSystem);
   const { data: health, error: healthError } = systemHealth;
-  const { data: mcpServers } = useQuery<ServersResponse>(MCP_REACH_PATH);
-  const { data: a2aAgents } = useQuery<Activatable[]>(A2A_REACH_PATH);
+  const { data: mcpServers, error: mcpServersError } = useQuery<ServersResponse>(MCP_REACH_PATH);
+  const { data: a2aAgents, error: a2aError } = useQuery<Activatable[]>(A2A_REACH_PATH);
   const { items } = useRecentActivity({ pollIntervalMs: 0 });
 
   const derived = useMemo(() => {
@@ -88,7 +88,15 @@ export function useMiniCardStatuses(): HomeStatus {
     // admin-only /version.
     const mcpReachable = countActiveTotal(mcpServers?.gateways).active > 0;
     const a2aReachable = countActiveTotal(a2aAgents).active > 0;
-    const systemReachable = Boolean(health) || mcpServers !== undefined || a2aAgents !== undefined;
+    // The backend is reachable once any probe gets a response: data, or an HTTP
+    // error (`error.status` set — a 403/404 still means the server answered). A
+    // network failure (no status) is the only genuine "unreachable".
+    const systemReachable =
+      Boolean(health) ||
+      mcpServers !== undefined ||
+      a2aAgents !== undefined ||
+      mcpServersError?.status != null ||
+      a2aError?.status != null;
 
     const statuses = computeMiniCardStatuses({
       systemReachable,
@@ -110,7 +118,7 @@ export function useMiniCardStatuses(): HomeStatus {
     };
 
     return { statuses, headlineCondition };
-  }, [health, healthError, mcpServers, a2aAgents, items]);
+  }, [health, healthError, mcpServers, mcpServersError, a2aAgents, a2aError, items]);
 
   return { ...derived, systemHealth };
 }

@@ -144,6 +144,38 @@ describe("useMiniCardStatuses — reachability dots", () => {
     expect(result.current.statuses.a2a).toEqual(OFFLINE);
   });
 
+  it("marks the system Online when a probe responds with an HTTP error (403/404)", () => {
+    admin(false); // no /version
+    // An HTTP error (status set) still means the backend answered -> reachable.
+    mockUseQuery.mockReturnValue({
+      data: undefined,
+      error: { message: "HTTP 403", status: 403 },
+      isLoading: false,
+      execute: vi.fn(),
+      refetch: vi.fn(),
+      setData: vi.fn(),
+    } as unknown as ReturnType<typeof useQuery>);
+    const { result } = renderHook(() => useMiniCardStatuses());
+    expect(result.current.statuses.system).toEqual(ONLINE);
+    expect(result.current.statuses.mcp).toEqual(OFFLINE);
+    expect(result.current.statuses.a2a).toEqual(OFFLINE);
+  });
+
+  it("keeps the system Offline for a network error with no HTTP status", () => {
+    admin(false);
+    // No status -> the backend did not answer -> genuinely unreachable.
+    mockUseQuery.mockReturnValue({
+      data: undefined,
+      error: { message: "Failed to fetch" },
+      isLoading: false,
+      execute: vi.fn(),
+      refetch: vi.fn(),
+      setData: vi.fn(),
+    } as unknown as ReturnType<typeof useQuery>);
+    const { result } = renderHook(() => useMiniCardStatuses());
+    expect(result.current.statuses.system).toEqual(OFFLINE);
+  });
+
   it("is Online for a source with a reachable instance, Offline for one without", () => {
     mockUseQuery.mockImplementation((path: string | null) =>
       typeof path === "string" && path.includes("/gateways")

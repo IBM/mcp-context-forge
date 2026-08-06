@@ -3,6 +3,7 @@ import { screen, render, waitFor } from "@testing-library/react";
 import { AuthProvider, useAuthContext, ApiError } from "./AuthContext";
 import { useAuth } from "./useAuth";
 import { api } from "../api/client";
+import { permissionsApi } from "../api/permissions";
 
 // Mock the API client
 vi.mock("../api/client", () => {
@@ -49,6 +50,18 @@ function TestComponent() {
 function UseAuthTestComponent() {
   const auth = useAuth();
   return <div data-testid="reexport-status">{auth.isAuthenticated ? "yes" : "no"}</div>;
+}
+
+// Probe that reports permission state directly (not gated on loading) so a test
+// can observe the fail-closed window.
+function PermProbe() {
+  const { hasPermission, permissionsLoading } = useAuth();
+  return (
+    <div>
+      <div data-testid="perm-loading">{String(permissionsLoading)}</div>
+      <div data-testid="perm-has">{String(hasPermission("tools.read"))}</div>
+    </div>
+  );
 }
 
 describe("AuthContext", () => {
@@ -248,6 +261,41 @@ describe("AuthContext", () => {
       expect(screen.getByTestId("auth-status")).toHaveTextContent("guest");
       expect(window.location.href).toBe("/app/login");
     });
+  });
+
+  it("fails closed: hasPermission is false while permissions are (re)loading", async () => {
+    const mockUser = {
+      email: "user@example.com",
+      full_name: "Test User",
+      is_admin: false,
+      is_active: true,
+      auth_provider: "local",
+      email_verified: true,
+      password_change_required: false,
+    };
+    vi.mocked(api.get).mockResolvedValueOnce(mockUser);
+
+    // Hold the permissions fetch open so we can observe the loading window.
+    let resolvePerms!: (perms: string[]) => void;
+    const permsPromise = new Promise<string[]>((resolve) => {
+      resolvePerms = resolve;
+    });
+    vi.mocked(permissionsApi.listMine).mockReturnValueOnce(permsPromise);
+
+    render(
+      <AuthProvider>
+        <PermProbe />
+      </AuthProvider>,
+    );
+
+    // Auth has resolved but permissions are still in flight -> deny.
+    await waitFor(() => expect(screen.getByTestId("perm-loading")).toHaveTextContent("true"));
+    expect(screen.getByTestId("perm-has")).toHaveTextContent("false");
+
+    // Once the permissions arrive, the grant applies.
+    resolvePerms(["tools.read"]);
+    await waitFor(() => expect(screen.getByTestId("perm-loading")).toHaveTextContent("false"));
+    expect(screen.getByTestId("perm-has")).toHaveTextContent("true");
   });
 
   it("re-exports useAuth correctly", async () => {
