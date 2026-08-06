@@ -68,6 +68,22 @@ One documented rule per class of record, one shared implementation per rule,
 applied deliberately at every admin-only global-record route, with a test that
 fails when a new route is added without a classification.
 
+### Acceptance-criteria coverage
+
+| Issue AC | Where | Status |
+|---|---|---|
+| Identify admin-only routes managing records without team ownership | Appendix A | met — all ~75 routes over the 48 team-less models |
+| Classify each as global-only, or define a valid team-scoping model | Appendix A + §1 classes; §3.5 defines the team-scoping model for role assignments | met |
+| Reuse a shared scope helper where behavior is equivalent | §2; §3.1 collapses 26 root call sites onto one helper | met |
+| Add tests for unrestricted, team-scoped, and public-only admin contexts | §5 | met |
+| Document exceptions where behavior intentionally differs | Appendix A.3, §4 `EXEMPT` | met |
+
+**Identification and classification are complete; remediation is deliberately
+partial.** This change fixes the four rule-divergent surfaces in A.1. The ~61
+Rule D routes in A.2 are identified, classified, and covered by the drift guard,
+but their guards are changed in a follow-up — see *Out of scope*. #5982 should
+not be closed until that follow-up lands.
+
 ## Design
 
 ### §1 Vocabulary
@@ -298,12 +314,18 @@ Three tests:
 The decorator sets `wrapper.__mcpgateway_scope_class__ = "global_only"` so the
 test inspects behavior-bearing metadata rather than parsing source.
 
-As part of this task, triage the five routers that currently carry no
-permission decorator at all — `metrics_maintenance.py`, `search.py`,
-`server_well_known.py`, `well_known.py`, `reverse_proxy.py` — into `EXEMPT`
-with a stated reason, or into a manifest if they need a guard. `well_known` and
-`server_well_known` are expected to be genuinely public;
-`metrics_maintenance` is the one to look at closely.
+The `GLOBAL_ONLY` manifest is seeded from **Appendix A.1 and A.2 together**, and
+`EXEMPT` from A.3. Populating it with the A.2 routes even though this change does
+not alter their guards is deliberate: it makes the drift guard useful from day
+one and prevents a new LLM-config or observability route from landing
+unclassified while the follow-up is pending.
+
+Of the five routers carrying no permission decorator, `well_known.py`,
+`server_well_known.py`, `search.py`, and `reverse_proxy.py` are expected to be
+genuinely public and go to `EXEMPT` with a stated reason.
+`metrics_maintenance.py` is **not** — see Appendix A.4; it is a missing
+authorization check that needs its own issue, and it goes into neither manifest
+until that issue is resolved.
 
 ### §5 Per-route deny tests
 
@@ -388,11 +410,114 @@ the same anti-pattern the §6 docs fix must sweep up.
   curls `/tools` so it does not break, but it should be corrected alongside the
   docs.
 
+## Appendix A — Full classification of admin routes over global records
+
+This appendix satisfies the issue's first two acceptance criteria. Every route
+here manages a record whose ORM model has **no `team_id` column** (48 of the 66
+models in `db.py` qualify), so all of them are global records by the issue's
+definition.
+
+Paths below are router-local plus the router's own `prefix`; a few routers are
+mounted with an additional prefix at `include_router` time (e.g.
+`llm_proxy_router` under `settings.llm_api_prefix`). The §4 manifests must key
+on the **final mounted path**, resolved from `app.routes` rather than from
+source.
+
+### A.1 Changed in this PR — the four rule-divergent surfaces
+
+| Method + path | Current guard | Class |
+|---|---|---|
+| roots — 26 call sites in `admin.py` / `main.py` | Rule A (duplicated helper) | global-only (dedupe only, §3.1) |
+| `GET /compliance/frameworks` | `require_admin_permission()` | global-only (§3.2) |
+| `POST /compliance/reports` | `require_admin_permission()` | global-only (§3.2) |
+| `GET /compliance/reports` | `require_admin_permission()` | global-only (§3.2) |
+| `GET /compliance/reports/{report_id}` | `require_admin_permission()` | global-only (§3.2) |
+| `GET /compliance/reports/{report_id}/export` | `require_admin_permission()` | global-only (§3.2) |
+| `POST /rbac/roles` | `require_admin_permission()` | global-only (§3.3) |
+| `PUT /rbac/roles/{role_id}` | `require_admin_permission()` | global-only (§3.3) |
+| `DELETE /rbac/roles/{role_id}` | `require_admin_permission()` | global-only (§3.3) |
+| `GET /rbac/roles` | `require_permission("admin.user_management")` | filtered-read (§3.4) |
+| `GET /rbac/roles/{role_id}` | `require_permission("admin.user_management")` | filtered-read (§3.4) |
+| `POST /rbac/users/{user_email}/roles` | `require_permission("admin.user_management")` | team-scopable (§3.5) |
+| `DELETE /rbac/users/{user_email}/roles/{role_id}` | `require_permission("admin.user_management")` | team-scopable (§3.5) |
+| `GET /version` | Rule C, unenforced | global-only (§3.6) |
+
+### A.2 Classified, NOT changed in this PR — the Rule D surface
+
+All of the following guard global records with
+`@require_permission("admin.<something>")`. **Rule D is a fifth variant, and for
+a team-narrowed admin token it behaves exactly like Rule B.**
+`services/permission_service.py:125-132`:
+
+```python
+if token_teams is not None and len(token_teams) == 0:
+    ...                       # public-only: bypass correctly suppressed
+elif allow_admin_bypass and await self._is_user_admin(user_email):
+    return True               # <-- token_teams == ["t1"] lands here
+```
+
+With a non-empty `token_teams` the `elif` fires and returns `True`
+unconditionally, so a narrowed admin token receives full access. This is the
+same divergence from Rule A that §3.2 fixes for compliance, across a much larger
+surface.
+
+| Router (prefix) | Routes | Guard | Records |
+|---|---|---|---|
+| `llm_config_router` | 14 | `admin.system_config` | `LLMProvider`, `LLMModel` |
+| `llm_admin_router` | 13 | `admin.system_config` | `LLMProvider`, `LLMModel` |
+| `observability` (`/observability`) | 8 | `admin.system_config` | `ObservabilityTrace/Span/SavedQuery` |
+| `sso` (`/auth/sso`) | 7 | `admin.sso_providers:*`, `admin.user_management` | `SSOProvider`, `PendingUserApproval` |
+| `siem` (`/admin/siem`) | 5 | `admin.security_audit` | `SecurityEvent`, destinations |
+| `log_search` (`/api/logs`) | 5 | `logs:read`, `security:read`, `audit:read`, `metrics:read` | `StructuredLogEntry`, `SecurityEvent`, `PerformanceMetric` |
+| `runtime_admin_router` | 4 | `admin.system_config` | global runtime mode |
+| `toolops_router` (`/toolops`) | 3 | `admin.system_config` | `ToolOpsTestCases` |
+| `rbac` (`/rbac`) | 2 | `admin.security_audit` | permission introspection |
+
+**~61 routes.** They are recorded in the §4 `GLOBAL_ONLY` manifest so the
+drift-guard test covers them immediately, but their guards are **not** changed
+here — see *Out of scope* for why, and for the follow-up issue this requires.
+
+### A.3 Exempt — documented non-admin surfaces
+
+| Method + path | Reason |
+|---|---|
+| `GET /auth/sso/providers` | Login-page provider list; must be reachable pre-authentication |
+| `GET /auth/sso/login/{provider_id}` | SSO initiation; pre-authentication by definition |
+| `GET /auth/sso/callback/{provider_id}` | SSO callback; authenticated by the IdP handshake, not by a gateway token |
+| `GET /rbac/permissions/available` | Static catalogue of permission strings; no record data |
+| `GET /rbac/my/roles` | Self-scoped — returns only the caller's own assignments |
+| `GET /rbac/my/permissions` | Self-scoped — same |
+
+### A.4 Unguarded — a separate defect, not this issue
+
+`routers/metrics_maintenance.py` carries **no permission decorator on any
+route**:
+
+| Method + path |
+|---|
+| `POST /api/metrics/cleanup` |
+| `POST /api/metrics/rollup` |
+| `GET /api/metrics/stats` |
+| `GET /api/metrics/config` |
+
+Two of these are destructive. This is not a scope-consistency problem — it is a
+missing authorization check, a different and more serious class of defect than
+the one this issue describes. It needs its own issue and its own fix; do not
+fold it into this change. Recording it here so the finding is not lost.
+Whether the router is mounted by default must be confirmed as part of triaging
+that issue.
+
 ## Out of scope
 
-- The full audit of every router under `mcpgateway/routers/`. This change covers
-  the four divergent surfaces plus the drift guard; other routers are classified
-  into manifests but not behaviorally changed.
+- **Changing the ~61 Rule D routes in A.2.** They are identified and classified
+  here, which is what the issue's first two acceptance criteria ask for, but
+  changing them is roughly 14× the blast radius and test rework of the four
+  surfaces in A.1 and would make the PR unreviewable. They need a follow-up
+  issue, and that issue is a prerequisite for calling #5982 fully resolved. The
+  §4 drift-guard test covers them from day one, so nothing regresses in the
+  interim.
+- **The `metrics_maintenance` missing-authorization defect** in A.4 — different
+  defect class, needs its own issue.
 - Merging `check_admin_permission()` and `check_platform_admin_permission()` in
   `permission_service.py`. Both remain; the difference is now expressed at the
   route layer by which decorator is chosen.
