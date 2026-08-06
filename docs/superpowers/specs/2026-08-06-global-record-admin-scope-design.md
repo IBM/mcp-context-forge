@@ -74,19 +74,30 @@ fails when a new route is added without a classification.
 |---|---|---|
 | Identify admin-only routes managing records without team ownership | Appendix A | met — 84 routes over the 48 team-less models, plus the 26 root call sites |
 | Classify each as global-only, or define a valid team-scoping model | Appendix A + §1 classes; §3.5 defines the team-scoping model for role assignments | met |
-| Reuse a shared scope helper where behavior is equivalent | §2; §3.1 collapses 26 root call sites onto one helper | met |
-| Add tests for unrestricted, team-scoped, and public-only admin contexts | §5 | met |
+| Reuse a shared scope helper where behavior is equivalent | §2; §3.1 collapses 26 root call sites onto one helper | **partial** — the 64 deferred routes in A.2/A.4 have equivalent behaviour and keep their own guards until follow-up 1 |
+| Add tests for unrestricted, team-scoped, and public-only admin contexts | §5 | **partial** — the three contexts are tested on the 13 changed routes; deferred routes get classification coverage only (§4), not per-context deny tests |
 | Document exceptions where behavior intentionally differs | Appendix A.3, §4 `EXEMPT` | met |
 
 **Identification and classification are complete; remediation is deliberately
-partial.** This change fixes the four rule-divergent surfaces in A.1. The 65
+partial.** This change fixes the four rule-divergent surfaces in A.1. The 64
 deferred routes in A.2 and A.4 are identified, classified, and covered by the
 drift guard, but their guards are changed in a follow-up — see *Out of scope*
-and *Follow-up issues to file*. #5982 should not be closed until follow-up 1
-lands.
+and *Follow-up issues to file*.
+
+Stated plainly: this PR **applies** the canonical rule to 13 of the 77
+admin routes over global records. Two of the five acceptance criteria are
+therefore only partially satisfied, as marked above. #5982 must stay open until
+follow-up 1 lands. Anyone reviewing this change should read it as "establish the
+rule, the shared helper, and the drift guard, then migrate the highest-risk
+surfaces" — not as a complete discharge of the issue.
+
+Scope creep to be aware of, both deliberate: §3.4's filtered reads are a
+visibility change rather than a scope check, and §6's minting warning plus docs
+sweep are remediation for a defect that predates this issue. Neither is
+requested by #5982; both are justified in place.
 
 Route counts by class: 13 changed here (A.1, plus the 26 root call sites which
-are a refactor only), 65 deferred (A.2 + A.4), 6 exempt (A.3).
+are a refactor only), 64 deferred (A.2 + A.4), 7 exempt (A.3).
 
 ## Design
 
@@ -286,15 +297,24 @@ the one UI path crossing a changed route and must be covered in the test plan.
 
 ### §4 Drift guard
 
-`tests/unit/mcpgateway/test_global_record_scope.py` holds three manifests keyed
+`tests/unit/mcpgateway/test_global_record_scope.py` holds five manifests keyed
 on `(method, path_template)`:
 
 ```python
-GLOBAL_ONLY    = {...}  # expects @require_global_admin_permission or the shared helper
-FILTERED_READ  = {...}  # global records, but narrowing is applied as Layer-1 filtering, not 403
-TEAM_SCOPABLE  = {...}  # record carries a team association; expects a documented per-record check
-EXEMPT         = {...}  # documented non-admin surface, with a reason string
+GLOBAL_ONLY          = {...}  # expects @require_global_admin_permission or the shared helper
+GLOBAL_ONLY_DEFERRED = {...}  # same class, guard NOT yet migrated — see Appendix A.2/A.4
+FILTERED_READ        = {...}  # global records, narrowing applied as Layer-1 filtering, not 403
+TEAM_SCOPABLE        = {...}  # record carries a team association; documented per-record check
+EXEMPT               = {...}  # documented non-admin surface, with a reason string
 ```
+
+`GLOBAL_ONLY_DEFERRED` is load-bearing, not bookkeeping. Without it the manifest
+would have to place the Appendix A.2/A.4 routes in `GLOBAL_ONLY`, and test 2
+below — which asserts every `GLOBAL_ONLY` entry carries the guard — would fail
+on day one for all 64 of them. Splitting the bucket lets test 1 cover the
+deferred routes (so none can drift away unclassified) while test 2 only holds
+the routes this change actually migrates. Follow-up 1 empties
+`GLOBAL_ONLY_DEFERRED` into `GLOBAL_ONLY`; the day it is empty, delete it.
 
 `FILTERED_READ` exists to resolve what would otherwise be a contradiction with
 §1: `GET /rbac/roles` and `GET /rbac/roles/{role_id}` (§3.4) operate on global
@@ -307,22 +327,27 @@ Three tests:
 
 1. `test_every_admin_route_is_classified` — walk `app.routes`, collect every
    route carrying an admin guard or an `admin.*` permission, assert the set is
-   fully covered by the four manifests. A new unclassified route fails CI with
+   fully covered by the five manifests. A new unclassified route fails CI with
    a message pointing at `docs/docs/manage/rbac.md`.
 2. `test_global_only_routes_carry_the_guard` — assert each `GLOBAL_ONLY` entry's
    endpoint has the decorator applied (detected via a marker attribute set by
    `require_global_admin_permission`, not by source inspection).
+   `GLOBAL_ONLY_DEFERRED` is deliberately **excluded** from this assertion.
 3. `test_manifests_are_disjoint` — no `(method, path)` appears in more than one
    manifest, so a route cannot be silently reclassified by adding it twice.
+4. `test_deferred_bucket_only_shrinks` — assert `GLOBAL_ONLY_DEFERRED` has no
+   more entries than the count recorded in Appendix A. A new route may not be
+   added to the deferred bucket to dodge test 2; deferral is a record of
+   existing debt, not an escape hatch for new code.
 
 The decorator sets `wrapper.__mcpgateway_scope_class__ = "global_only"` so the
 test inspects behavior-bearing metadata rather than parsing source.
 
-The `GLOBAL_ONLY` manifest is seeded from **Appendix A.1 and A.2 together**, and
-`EXEMPT` from A.3. Populating it with the A.2 routes even though this change does
-not alter their guards is deliberate: it makes the drift guard useful from day
-one and prevents a new LLM-config or observability route from landing
-unclassified while the follow-up is pending.
+`GLOBAL_ONLY` is seeded from **Appendix A.1**, `GLOBAL_ONLY_DEFERRED` from
+**A.2 and A.4**, and `EXEMPT` from **A.3**. Recording the deferred routes rather
+than omitting them is deliberate: it makes the drift guard useful from day one
+and prevents a new LLM-config or observability route from landing unclassified
+while the follow-up is pending.
 
 **Guard detection must inspect dependencies, not just decorators.** Walk
 `app.routes` and examine each route's resolved `dependencies` alongside its
@@ -439,7 +464,7 @@ file:line references below must be re-verified against the merged code, and the
   - This contradicts `is_unrestricted_platform_admin()`
     (`auth_context.py:788-799`), which rejects any non-`None` `token_teams`. The
     two are the codebase's two answers to the same question.
-  - Affected surface: the 61 Rule D routes in Appendix A.2 plus the four
+  - Affected surface: the 60 Rule D routes in Appendix A.2 plus the four
     router-level-guarded routes in A.4 — LLM config and admin, observability,
     SSO provider management, SIEM destinations, log search, runtime mode,
     toolops, metrics maintenance.
@@ -526,7 +551,7 @@ surface.
 
 | Router (prefix) | Routes | Guard | Records |
 |---|---|---|---|
-| `llm_config_router` | 14 | `admin.system_config` | `LLMProvider`, `LLMModel` |
+| `llm_config_router` | 13 | `admin.system_config` | `LLMProvider`, `LLMModel` |
 | `llm_admin_router` | 13 | `admin.system_config` | `LLMProvider`, `LLMModel` |
 | `observability` (`/observability`) | 8 | `admin.system_config` | `ObservabilityTrace/Span/SavedQuery` |
 | `sso` (`/auth/sso`) | 7 | `admin.sso_providers:*`, `admin.user_management` | `SSOProvider`, `PendingUserApproval` |
@@ -536,7 +561,7 @@ surface.
 | `toolops_router` (`/toolops`) | 3 | `admin.system_config` | `ToolOpsTestCases` |
 | `rbac` (`/rbac`) | 2 | `admin.security_audit` | permission introspection |
 
-**61 routes.** They are recorded in the §4 `GLOBAL_ONLY` manifest so the
+**60 routes.** They are recorded in the §4 `GLOBAL_ONLY_DEFERRED` manifest so the
 drift-guard test covers them immediately, but their guards are **not** changed
 here — see *Out of scope* for why, and for the follow-up issue this requires.
 
@@ -550,6 +575,7 @@ here — see *Out of scope* for why, and for the follow-up issue this requires.
 | `GET /rbac/permissions/available` | Static catalogue of permission strings; no record data |
 | `GET /rbac/my/roles` | Self-scoped — returns only the caller's own assignments |
 | `GET /rbac/my/permissions` | Self-scoped — same |
+| `GET /gateway/models` (`llm_config_router.py:597`) | Feeds the LLM Chat model selector. Guarded by `Depends(get_current_user)` — authenticated but deliberately not admin-scoped, since any user of LLM Chat needs the enabled-model list. Returns only enabled, chat-capable models from enabled providers |
 
 ### A.4 Router-level guard — a sixth pattern
 
@@ -585,7 +611,7 @@ include-time dependency, but it is `enforce_admin_csrf`, not authentication).
 
 ## Out of scope
 
-- **Changing the 65 deferred routes in A.2 and A.4.** They are identified and
+- **Changing the 64 deferred routes in A.2 and A.4.** They are identified and
   classified here, which is what the issue's first two acceptance criteria ask
   for, but changing them is roughly 14× the blast radius and test rework of the
   four surfaces in A.1 and would make the PR unreviewable. They need a follow-up
