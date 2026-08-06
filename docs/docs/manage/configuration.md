@@ -665,7 +665,25 @@ The five settings marked as "middleware-path-only" in the table above govern onl
 !!! info "CSRF_EXEMPT_PATHS and Versioned Route Interaction"
     The middleware exemption uses prefix matching on the raw request path (e.g., `/admin` matches `/admin/llm/*` but not `/v1/admin/llm/*`). This means versioned admin routes at `/v1/admin/*` are validated by both the middleware and the per-route `enforce_admin_csrf` dependency (double validation), while legacy routes at `/admin/*` use only the per-route dependency (exempt from middleware). Cross-validate your paths against both implementations. See [Middleware Ordering and Stacking](../architecture/middleware-ordering.md) for details on how CSRF middleware interacts with other middleware and per-route dependencies.
 
-    This double-validation is also where a known timing gap surfaces: in the window between `/admin/login` and the first dashboard load, the versioned mount's extra `CSRFMiddleware` pass can reject a write that the legacy mount's `enforce_admin_csrf`-only path accepts, because the CSRF cookie has not yet rotated from its opaque pre-login value to its HMAC-bound one. See [IBM/mcp-context-forge#5978](https://github.com/IBM/mcp-context-forge/issues/5978).
+    This double-validation used to expose a timing gap: in the window between `/admin/login` and the first dashboard load, the versioned mount's extra `CSRFMiddleware` pass rejected writes that the legacy mount's `enforce_admin_csrf`-only path accepted, because the CSRF cookie had not yet rotated from its opaque pre-login value to its HMAC-bound one. Fixed in [IBM/mcp-context-forge#5978](https://github.com/IBM/mcp-context-forge/issues/5978) — see *Admin CSRF token lifecycle* below.
+
+#### Admin CSRF token lifecycle
+
+The `mcpgateway_csrf_token` cookie is an HMAC-SHA256 digest bound to `(user email, session JWT jti)`. Every handler that mints a session JWT now issues the bound cookie in the same response:
+
+| Handler | When |
+| --- | --- |
+| `admin_login_handler` | `POST /admin/login`, both the normal and the forced-password-change branch |
+| `change_password_required_handler` | `POST /admin/change-password-required`, which re-mints the JWT with a new `jti` |
+| `admin_ui()` | every `/admin/` dashboard load, which also re-mints and therefore rotates |
+| `/auth/*` login endpoints | `routers/auth.py`, `routers/email_auth.py` |
+
+Because the token is bound to the session, it cannot be replayed across sessions or users, and the unprefixed `/admin/**` and versioned `/v1/admin/**` mounts accept it identically from the first request after login — no dashboard load required.
+
+Unauthenticated pages (`GET /admin/login`, forgot-password, reset-password) still receive an opaque, unbound token. That is correct: there is no session to bind to yet, and neither CSRF layer engages without a session cookie. The bound token replaces it on successful login.
+
+!!! warning "Long sessions can outlive their CSRF token"
+    The admin CSRF cookie's `max_age` is `max(300, TOKEN_EXPIRY * 60)`, but the HMAC is only accepted for the current and previous `CSRF_TOKEN_EXPIRY` window — 1 to 2 hours at the `3600` default. At the shipped `TOKEN_EXPIRY` of 20 minutes the cookie expires first and there is no gap. If you raise `TOKEN_EXPIRY` above 120 minutes, the cookie can outlive its own HMAC, after which `/v1/admin/**` writes fail with `CSRF_TOKEN_INVALID` while `/admin/**` still accepts them. Browsers are unaffected because every dashboard load rotates the cookie; long-lived non-browser cookie clients are not. Keep `CSRF_TOKEN_EXPIRY >= TOKEN_EXPIRY * 60`, or re-authenticate rather than holding one cookie for the full session.
 
 ### Identity Propagation
 
