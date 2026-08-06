@@ -490,10 +490,19 @@ Permissions are defined in the `Permissions` class and control what actions user
 | **Prompts** | prompts.create, prompts.read, prompts.update, prompts.delete, prompts.execute |
 | **Servers** | servers.create, servers.read, servers.use, servers.update, servers.delete, servers.manage |
 | **Tokens** | tokens.create, tokens.read, tokens.update, tokens.revoke |
-| **Admin** | admin.system_config, admin.user_management, admin.security_audit, admin.overview, admin.dashboard, admin.events, admin.grpc, admin.plugins |
+| **Admin** | admin.system_config, admin.user_management, admin.security_audit, admin.overview, admin.dashboard, admin.events, admin.grpc, admin.plugins, admin.oauth_clients:read, admin.oauth_clients:delete |
 | **A2A** | a2a.create, a2a.read, a2a.update, a2a.delete, a2a.invoke |
 | **Tags** | tags.read, tags.create, tags.update, tags.delete |
 | **Wildcard** | `*` (all permissions) |
+
+!!! note "Registered OAuth clients require un-narrowed admin scope"
+    `admin.oauth_clients:read` and `admin.oauth_clients:delete` gate the DCR management routes
+    (`GET /oauth/registered-clients`, `GET /oauth/registered-clients/{gateway_id}`,
+    `DELETE /oauth/registered-clients/{client_id}`). Registered clients are stored globally with no
+    team column, so these routes additionally require an admin identity whose token is **not**
+    team-narrowed — a constraint that cannot be expressed as a permission. Admin bypass is disabled
+    on these routes, so the caller's roles must carry the permission — directly, via `*`, or through
+    role inheritance. The DB `is_admin` flag alone is not sufficient.
 
 ### Token Scope Semantics
 
@@ -724,6 +733,56 @@ If an admin token is unexpectedly restricted:
 2. **Verify `is_admin` flag**: Must be `true` in JWT or database user
 3. **Check middleware logs**: Look for "token_teams" in debug output
 
+### Registered OAuth Client Routes Return 403 After Upgrade
+
+The `/oauth/registered-clients*` routes require `admin.oauth_clients:read` /
+`admin.oauth_clients:delete` with admin bypass disabled, so the DB `is_admin` flag alone no longer
+grants access — the caller's roles must carry the permission (directly, via `*`, or through role
+inheritance).
+
+Every supported path to `is_admin = true` also assigns `DEFAULT_ADMIN_ROLE` (default
+`platform_admin`, permissions `["*"]`), so most deployments are unaffected. Two cases are not
+covered: an `is_admin` flag set by direct SQL, and a custom `DEFAULT_ADMIN_ROLE` with no inherited
+path to `*`.
+
+This query lists every affected admin. It expands role inheritance, so a custom role inheriting
+`platform_admin` is correctly excluded:
+
+```sql
+WITH RECURSIVE effective(role_id, cur_id, perms) AS (
+    SELECT r.id, r.id, r.permissions FROM roles r WHERE r.is_active = 1
+    UNION ALL
+    SELECT e.role_id, p.id, p.permissions
+    FROM effective e
+    JOIN roles c ON c.id = e.cur_id
+    JOIN roles p ON p.id = c.inherits_from AND p.is_active = 1
+)
+SELECT u.email
+FROM email_users u
+WHERE u.is_admin = 1
+  AND NOT EXISTS (
+        SELECT 1
+        FROM user_roles ur
+        JOIN effective e ON e.role_id = ur.role_id
+        WHERE ur.user_email = u.email
+          AND ur.is_active = 1
+          AND (ur.expires_at IS NULL OR ur.expires_at > CURRENT_TIMESTAMP)
+          AND (e.perms LIKE '%"*"%' OR e.perms LIKE '%admin.oauth_clients:read%')
+  );
+```
+
+On PostgreSQL with a `jsonb` permissions column, replace the two `LIKE` comparisons with
+containment tests (`e.perms ? '*'`). The recursion terminates because role creation rejects
+inheritance cycles.
+
+An empty result means no user loses access. For each row returned, either assign a role carrying
+the permissions or add `admin.oauth_clients:read` and `admin.oauth_clients:delete` to the role the
+user already holds.
+
+One case the query cannot report, because it has no `email_users` row: a development gateway
+running with `AUTH_REQUIRED=false` and `ALLOW_UNAUTHENTICATED_ADMIN=true` where
+`PLATFORM_ADMIN_EMAIL` was never seeded. That identity resolves to no roles and receives 403.
+
 ### Inconsistent Results Between Endpoints
 
 If REST and RPC endpoints return different results:
@@ -790,6 +849,7 @@ Create a JSON file containing an array of role definitions:
 | Prompts | `prompts.create`, `prompts.read`, `prompts.update`, `prompts.delete` |
 | Servers | `servers.create`, `servers.read`, `servers.use`, `servers.update`, `servers.delete`, `servers.manage` |
 | Gateways | `gateways.create`, `gateways.read`, `gateways.update`, `gateways.delete` |
+| OAuth clients | `admin.oauth_clients:read`, `admin.oauth_clients:delete` |
 | Teams | `teams.create`, `teams.read`, `teams.update`, `teams.delete`, `teams.join` |
 
 ### Docker Compose Example
