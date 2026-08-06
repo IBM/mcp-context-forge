@@ -3,13 +3,13 @@
  *
  * Polls GET /api/logs/activity every POLL_INTERVAL_MS. When
  * VITE_USE_MOCK_ACTIVITY=true (dev convenience while the backend endpoint is
- * unimplemented), returns the fixture directly without a network call.
+ * unimplemented), returns a lazily-imported fixture without a network call.
+ * The dynamic import keeps the fixture out of the default production bundle.
  */
 
 import { useCallback, useEffect, useState } from "react";
 
 import { activityApi } from "@/api/activity";
-import { RECENT_ACTIVITY_FIXTURE } from "@/mocks/recentActivity";
 import type { ActivityItem } from "@/types/activity";
 
 export const RECENT_ACTIVITY_POLL_INTERVAL_MS = 30_000;
@@ -36,13 +36,16 @@ export function useRecentActivity(options: UseRecentActivityOptions = {}): UseRe
   const { limit = 10, pollIntervalMs = RECENT_ACTIVITY_POLL_INTERVAL_MS } = options;
   const mock = isMockEnabled();
 
-  const [items, setItems] = useState<ActivityItem[]>(mock ? RECENT_ACTIVITY_FIXTURE : []);
-  const [isLoading, setIsLoading] = useState<boolean>(!mock);
+  const [items, setItems] = useState<ActivityItem[]>([]);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<{ message: string } | null>(null);
 
   const fetchOnce = useCallback(
     async (signal?: AbortSignal): Promise<void> => {
       if (mock) {
+        // Loaded lazily so the fixture is tree-shaken out of the production
+        // bundle when VITE_USE_MOCK_ACTIVITY is unset (the default).
+        const { RECENT_ACTIVITY_FIXTURE } = await import("@/mocks/recentActivity");
         setItems(RECENT_ACTIVITY_FIXTURE.slice(0, limit));
         setIsLoading(false);
         setError(null);

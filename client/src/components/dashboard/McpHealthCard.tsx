@@ -33,6 +33,7 @@ import {
   type VersionInfo,
 } from "@/hooks/useSystemHealth";
 import { useMcpServers } from "@/hooks/useMcpServers";
+import { useElementWidth } from "@/hooks/useElementWidth";
 import { cn } from "@/lib/utils";
 import { formatLastSeen } from "@/utils/format";
 import {
@@ -42,7 +43,7 @@ import {
   type SummarySegment,
 } from "./mcpServerRoster";
 import { PermissionDenied } from "./PermissionDenied";
-import { ServerRosterRow } from "./ServerRosterRow";
+import { ServerRosterRow, ServerRosterRowStacked } from "./ServerRosterRow";
 import { StatusDot } from "./StatusDot";
 
 const HEADER_MESSAGE_ID: Record<RosterHeaderKind, string> = {
@@ -109,10 +110,20 @@ function FooterChipsSkeleton() {
   );
 }
 
+// Below this card width the single-line table can't fit name + counts +
+// transport + last-seen without clipping, so the roster switches to the stacked
+// list. Measured on the card, not the viewport. Set just above the table's
+// minimum fitting width (~627px) so the table shows across the card's real
+// desktop range (the dashboard main column caps its content near ~700px); the
+// overflow-x-auto scroller is the safety net for unusually long server names.
+const ROSTER_WIDE_MIN_PX = 640;
+
 export function McpHealthCard({ health: sharedHealth }: { health?: SystemHealthResult } = {}) {
   const intl = useIntl();
   const { hasPermission } = useAuth();
   const { servers, error, isLoading, lastUpdated } = useMcpServers();
+  const [rosterRef, rosterWidth] = useElementWidth<HTMLDivElement>();
+  const rosterIsWide = rosterWidth >= ROSTER_WIDE_MIN_PX;
 
   // Footer chips need the admin-only /version endpoint. Reuse the page-level poll
   // when the home passes it in (it already polls /version for the headline), so
@@ -239,14 +250,48 @@ export function McpHealthCard({ health: sharedHealth }: { health?: SystemHealthR
           </div>
         )}
 
-        <ul
-          role="list"
-          className="grid grid-cols-[auto_auto_1fr_auto] items-center gap-x-6 gap-y-3"
-        >
-          {roster.rows.map((classified) => (
-            <ServerRosterRow key={classified.server.id} classified={classified} />
-          ))}
-        </ul>
+        {/*
+          The roster renders as an aligned <table> when the card is wide enough
+          for one line, and as a stacked list otherwise. We measure the card's
+          own width (not the viewport) and render the shape that fits, rather than
+          morphing one DOM — each shape keeps clean, universally-supported
+          semantics (a real table / a real list; no display:contents).
+        */}
+        <div ref={rosterRef}>
+          {rosterIsWide ? (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="sr-only">
+                  <tr>
+                    <th scope="col">
+                      {intl.formatMessage({ id: "dashboard.home.mcp.column.server" })}
+                    </th>
+                    <th scope="col">
+                      {intl.formatMessage({ id: "dashboard.home.mcp.column.components" })}
+                    </th>
+                    <th scope="col">
+                      {intl.formatMessage({ id: "dashboard.home.mcp.column.transport" })}
+                    </th>
+                    <th scope="col">
+                      {intl.formatMessage({ id: "dashboard.home.mcp.column.lastSeen" })}
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {roster.rows.map((classified) => (
+                    <ServerRosterRow key={classified.server.id} classified={classified} />
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <ul role="list" className="flex flex-col gap-3">
+              {roster.rows.map((classified) => (
+                <ServerRosterRowStacked key={classified.server.id} classified={classified} />
+              ))}
+            </ul>
+          )}
+        </div>
 
         {canViewSystem && health && <FooterChips data={health} />}
         {showFooterSkeleton && <FooterChipsSkeleton />}

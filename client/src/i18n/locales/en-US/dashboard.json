@@ -70,6 +70,10 @@
   "dashboard.home.mcp.row.checking": "checking connection…",
   "dashboard.home.mcp.transport.SSE": "SSE transport",
   "dashboard.home.mcp.transport.STREAMABLEHTTP": "Streamable HTTP transport",
+  "dashboard.home.mcp.column.server": "Server",
+  "dashboard.home.mcp.column.components": "Components",
+  "dashboard.home.mcp.column.transport": "Transport",
+  "dashboard.home.mcp.column.lastSeen": "Last seen",
   "dashboard.home.status.online": "Online",
   "dashboard.home.status.offline": "Offline",
   "dashboard.home.status.activity": "{errors} errors · {warnings} warnings"

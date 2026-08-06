@@ -4,6 +4,7 @@ import { screen } from "@testing-library/react";
 import { renderWithProviders } from "@/test/test-utils";
 import { useSystemHealth, type VersionInfo } from "@/hooks/useSystemHealth";
 import { useMcpServers, type UseMcpServersResult } from "@/hooks/useMcpServers";
+import { useElementWidth } from "@/hooks/useElementWidth";
 import { useAuth } from "@/auth/useAuth";
 import type { MCPServer } from "@/types/server";
 import { McpHealthCard } from "./McpHealthCard";
@@ -13,11 +14,20 @@ vi.mock("@/hooks/useSystemHealth", async (importOriginal) => {
   return { ...actual, useSystemHealth: vi.fn() };
 });
 vi.mock("@/hooks/useMcpServers", () => ({ useMcpServers: vi.fn() }));
+vi.mock("@/hooks/useElementWidth", () => ({ useElementWidth: vi.fn() }));
 vi.mock("@/auth/useAuth", () => ({ useAuth: vi.fn() }));
 
 const mockUseSystemHealth = vi.mocked(useSystemHealth);
 const mockUseMcpServers = vi.mocked(useMcpServers);
+const mockUseElementWidth = vi.mocked(useElementWidth);
 const mockUseAuth = vi.mocked(useAuth);
+
+/** Drive the roster's wide/narrow branch by faking the measured card width. */
+function mockRosterWidth(width: number) {
+  mockUseElementWidth.mockReturnValue([{ current: null }, width] as unknown as ReturnType<
+    typeof useElementWidth
+  >);
+}
 
 function makeServer(over: Partial<MCPServer> = {}): MCPServer {
   return {
@@ -68,6 +78,8 @@ describe("McpHealthCard", () => {
       typeof useAuth
     >);
     mockHealth(undefined);
+    // Default to the narrow (stacked list) shape; wide-branch tests opt in.
+    mockRosterWidth(0);
   });
 
   it("shows the loading copy before the first load", () => {
@@ -136,6 +148,32 @@ describe("McpHealthCard", () => {
     expect(screen.getByText("Reduced coverage")).toBeInTheDocument();
     expect(screen.getByText("alpha")).toBeInTheDocument();
     expect(screen.getByText("bravo")).toBeInTheDocument();
+  });
+
+  it("renders the narrow list (not a table) when the card is not wide", () => {
+    mockRosterWidth(320);
+    mockServers({ servers: [makeServer({ id: "a", name: "alpha", reachable: true })] });
+    renderWithProviders(<McpHealthCard />);
+
+    expect(screen.getByRole("list")).toBeInTheDocument();
+    expect(screen.queryByRole("table")).not.toBeInTheDocument();
+    expect(screen.getByText("alpha")).toBeInTheDocument();
+  });
+
+  it("renders an aligned table with column headers when the card is wide", () => {
+    mockRosterWidth(900);
+    mockServers({
+      servers: [
+        makeServer({ id: "a", name: "alpha", reachable: true, lastSeen: "2026-01-01T00:00:00Z" }),
+      ],
+    });
+    renderWithProviders(<McpHealthCard />);
+
+    expect(screen.getByRole("table")).toBeInTheDocument();
+    expect(screen.queryByRole("list")).not.toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "Server" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "Last seen" })).toBeInTheDocument();
+    expect(screen.getByText("alpha")).toBeInTheDocument();
   });
 
   it("shows 'Refreshed just now' at the moment of a successful poll (0 seconds ago)", () => {
