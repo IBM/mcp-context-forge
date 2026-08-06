@@ -82,13 +82,6 @@ _SECRET_FIELDS: dict[str, int] = {
     "BASIC_AUTH_PASSWORD": 18,  # nosec B105 — patched when "changeme" or placeholder; 18 bytes → 24 chars
 }
 
-# Fields that are written to .env.secrets (--output / --stdout) but are NOT
-# patched into .env by --patch-env / ensure_env_file_secrets().
-# AUTH_ENCRYPTION_SECRET is intentionally excluded from auto-patching: in
-# ENVIRONMENT=development a weak value (e.g. my-test-salt) is allowed, so
-# operators should set it deliberately rather than having it silently replaced.
-_PATCH_ENV_SKIP_FIELDS: frozenset[str] = frozenset({"AUTH_ENCRYPTION_SECRET"})
-
 
 def _read_env_file(path: str) -> dict[str, str]:
     """Parse KEY=VALUE pairs from an env file, skipping comments and blank lines.
@@ -171,16 +164,11 @@ def ensure_env_file_secrets(
     env_file: str = ".env",
     weak_values: frozenset[str] | None = None,
 ) -> dict[str, str]:
-    """Check JWT_SECRET_KEY and BASIC_AUTH_PASSWORD for weak or placeholder values.
+    """Check JWT_SECRET_KEY, AUTH_ENCRYPTION_SECRET, and BASIC_AUTH_PASSWORD for weak or placeholder values.
 
     If weak values are detected, generates cryptographically strong replacements,
     merges them into *env_file* (creating the file if it does not exist), and
     patches ``os.environ`` so the running process picks them up without restart.
-
-    AUTH_ENCRYPTION_SECRET is intentionally NOT patched by this function.
-    In ENVIRONMENT=development a weak value (e.g. ``my-test-salt``) is allowed,
-    so operators should set it deliberately.  Strong values for it are still
-    written to .env.secrets by the --output / --stdout paths.
 
     Set ``MCPGATEWAY_AUTO_INIT_SECRETS=false`` to disable this behaviour (e.g.
     when secrets are injected via Vault or Kubernetes secrets and disk writes
@@ -202,8 +190,6 @@ def ensure_env_file_secrets(
     file_generated: dict[str, str] = {}
 
     for field, nbytes in _SECRET_FIELDS.items():
-        if field in _PATCH_ENV_SKIP_FIELDS:
-            continue  # never auto-patched into .env (see _PATCH_ENV_SKIP_FIELDS)
         # os.environ takes priority over .env (mirrors pydantic-settings behaviour)
         env_val = os.environ.get(field)
         current = env_val if env_val is not None else env_file_values.get(field, "changeme")
@@ -299,11 +285,9 @@ def main() -> None:
         metavar="ENV_FILE",
         default=None,
         help=(
-            "Patch an existing env file in-place: replace only the JWT_SECRET_KEY "
-            "and BASIC_AUTH_PASSWORD lines that still hold placeholder or weak values; "
-            "all other lines are preserved unchanged. No-ops if those keys are already strong. "
-            "AUTH_ENCRYPTION_SECRET is NOT patched — set it manually or use --stdout / "
-            "--output to get a strong value for .env.secrets."
+            "Patch an existing env file in-place: replace only the JWT_SECRET_KEY and "
+            "AUTH_ENCRYPTION_SECRET lines that still hold placeholder or weak values; "
+            "all other lines are preserved unchanged. No-ops if those keys are already strong."
         ),
     )
     args = parser.parse_args()
