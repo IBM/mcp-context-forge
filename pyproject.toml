@@ -256,6 +256,12 @@ postgres = [
     "psycopg[c,binary]>=3.3.4",
 ]
 
+# MySQL adapter for governed external SQL data sources (does not change the
+# ContextForge control-plane database driver).
+mysql = [
+    "PyMySQL>=1.1.2",
+]
+
 llmchat = [
     "langchain-core<=1.4.7",
     "langchain-mcp-adapters>=0.3.0",
@@ -314,6 +320,7 @@ plugins = [
 # Install with: pip install mcp-contextforge-gateway[grpc]
 grpc = [
     "grpcio>=1.81.1",
+    "grpcio-health-checking>=1.81.1",
     "grpcio-reflection>=1.81.1",
     "grpcio-tools>=1.81.1",
     "protobuf>=6.33.6", # grpcio-reflection 1.78.x caps at <7.0.0

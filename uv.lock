@@ -1823,6 +1823,19 @@ wheels = [
 ]
 
 [[package]]
+name = "grpcio-health-checking"
+version = "1.81.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "grpcio" },
+    { name = "protobuf" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/65/46/6b6678b5a922765ae7637205bb6d0618a4da8b35f2ce6116f8bcff262370/grpcio_health_checking-1.81.1.tar.gz", hash = "sha256:ecc61480e25058a4a04e11e4ab6900ad7439b32e60a8ce4ece7d9f219221c85d", size = 17107, upload-time = "2026-06-11T12:58:49.632Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/6e/87/174bbfb5613794862c45b5cdf567fcfb478ad5a3a7b594e11d998656b2f9/grpcio_health_checking-1.81.1-py3-none-any.whl", hash = "sha256:cbc6a4171825ec64389de2f062d296ba129a5c27eefd0dd55fa837909184bdf9", size = 19120, upload-time = "2026-06-11T12:58:38.008Z" },
+]
+
+[[package]]
 name = "grpcio-reflection"
 version = "1.81.1"
 source = { registry = "https://pypi.org/simple" }
@@ -3072,6 +3085,7 @@ dev-all = [
 ]
 grpc = [
     { name = "grpcio" },
+    { name = "grpcio-health-checking" },
     { name = "grpcio-reflection" },
     { name = "grpcio-tools" },
     { name = "protobuf" },
@@ -3083,6 +3097,9 @@ llmchat = [
     { name = "langchain-openai" },
     { name = "langgraph" },
     { name = "langsmith" },
+]
+mysql = [
+    { name = "pymysql" },
 ]
 observability = [
     { name = "opentelemetry-api" },
@@ -3215,6 +3232,7 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.139.0" },
     { name = "filelock", specifier = ">=3.29.4,<3.31.0" },
     { name = "grpcio", marker = "extra == 'grpc'", specifier = ">=1.81.1" },
+    { name = "grpcio-health-checking", marker = "extra == 'grpc'", specifier = ">=1.81.1" },
     { name = "grpcio-reflection", marker = "extra == 'grpc'", specifier = ">=1.81.1" },
     { name = "grpcio-tools", marker = "extra == 'grpc'", specifier = ">=1.81.1" },
     { name = "gunicorn", specifier = ">=26.0.0" },
@@ -3253,6 +3271,7 @@ requires-dist = [
     { name = "pydantic", extras = ["email"], specifier = ">=2.13.4" },
     { name = "pydantic-settings", specifier = ">=2.14.2" },
     { name = "pyjwt", specifier = ">=2.13.0" },
+    { name = "pymysql", marker = "extra == 'mysql'", specifier = ">=1.1.2" },
     { name = "python-json-logger", specifier = ">=4.1.0" },
     { name = "python-multipart", specifier = ">=0.0.32" },
     { name = "pyyaml", specifier = ">=6.0.3" },
@@ -3269,7 +3288,7 @@ requires-dist = [
     { name = "urllib3", specifier = ">=2.7.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.49.0" },
 ]
-provides-extras = ["redis", "redis-pure", "postgres", "llmchat", "observability", "aiosqlite", "asyncpg", "profiling", "templating", "plugins", "grpc", "all", "dev-all"]
+provides-extras = ["redis", "redis-pure", "postgres", "mysql", "llmchat", "observability", "aiosqlite", "asyncpg", "profiling", "templating", "plugins", "grpc", "all", "dev-all"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -4753,6 +4772,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/73/85/24eaf5d0d078fc8799ae6d89faf326d6e4d27d862fc9a710a52ab07b7bb5/pylint_plugin_utils-0.9.0.tar.gz", hash = "sha256:5468d763878a18d5cc4db46eaffdda14313b043c962a263a7d78151b90132055", size = 10474, upload-time = "2025-06-24T07:14:00.534Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/5e/c9/a3b871b0b590c49e38884af6dab58ab9711053bd5c39b8899b72e367b9f6/pylint_plugin_utils-0.9.0-py3-none-any.whl", hash = "sha256:16e9b84e5326ba893a319a0323fcc8b4bcc9c71fc654fcabba0605596c673818", size = 11129, upload-time = "2025-06-24T07:13:58.993Z" },
+]
+
+[[package]]
+name = "pymysql"
+version = "1.2.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/c9/bc/1c6a92f385940f727daeecf3bacaf186e03875dff57197801046c583bcf0/pymysql-1.2.0.tar.gz", hash = "sha256:6c7b17ca686988104d7426c27895b455cdeea3e9d3ceb1270f0c3704fead8c33", size = 49021, upload-time = "2026-05-19T08:26:22.302Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c4/bd/2534e130295c8cfd4f0a2e31623baab7502278f1e97bcfe61db75656a77f/pymysql-1.2.0-py3-none-any.whl", hash = "sha256:62169ce6d5510f08e140c5e7990ee884a9764024e4a9a27b2cc11f1099322ae0", size = 45716, upload-time = "2026-05-19T08:26:20.974Z" },
 ]
 
 [[package]]
