@@ -504,6 +504,21 @@ Permissions are defined in the `Permissions` class and control what actions user
     on these routes, so the caller's roles must carry the permission — directly, via `*`, or through
     role inheritance. The DB `is_admin` flag alone is not sufficient.
 
+    Scoped API tokens cannot yet carry `admin.oauth_clients:read` / `admin.oauth_clients:delete`:
+    `TokenScopeRequest`'s permission-format validator only accepts plain `resource.action` or `*` —
+    colon-form and wildcard-suffix permissions are rejected at token-creation time. So today only
+    session tokens and `*`-scoped tokens reach these routes via Layer 1; the Layer 1 mapping for the
+    colon-form permissions is defensive rather than reachable today, matching the existing
+    `<category>.*` wildcard delegation precedent described in `token_scope_grants()`'s docstring in
+    `mcpgateway/middleware/rbac.py`.
+
+    Grant `admin.oauth_clients:read` / `admin.oauth_clients:delete` via a **global**-scope role
+    (such as `platform_admin`) rather than a team-scoped role. Registered OAuth clients are global
+    resources with no team ownership, and a team-scoped role grant may be evaluated inconsistently
+    between the collection route (`GET /oauth/registered-clients`, always checked against any team)
+    and the per-gateway route (`GET /oauth/registered-clients/{gateway_id}`, which resolves and
+    checks against that gateway's owning team specifically).
+
 ### Token Scope Semantics
 
 An API token carries its own permission list (Layer 1), evaluated *before* the RBAC role
@@ -746,33 +761,41 @@ covered: an `is_admin` flag set by direct SQL, and a custom `DEFAULT_ADMIN_ROLE`
 path to `*`.
 
 This query lists every affected admin. It expands role inheritance, so a custom role inheriting
-`platform_admin` is correctly excluded:
+`platform_admin` is correctly excluded. A role needs at least one of `*`, `:read`, or `:delete` to
+be excluded from the affected-user list, since a role holding only one of `:read` / `:delete` is
+still missing the other and would otherwise 403 on that route:
 
 ```sql
 WITH RECURSIVE effective(role_id, cur_id, perms) AS (
-    SELECT r.id, r.id, r.permissions FROM roles r WHERE r.is_active = 1
+    SELECT r.id, r.id, r.permissions FROM roles r WHERE r.is_active
     UNION ALL
     SELECT e.role_id, p.id, p.permissions
     FROM effective e
     JOIN roles c ON c.id = e.cur_id
-    JOIN roles p ON p.id = c.inherits_from AND p.is_active = 1
+    JOIN roles p ON p.id = c.inherits_from AND p.is_active
 )
 SELECT u.email
 FROM email_users u
-WHERE u.is_admin = 1
+WHERE u.is_admin
   AND NOT EXISTS (
         SELECT 1
         FROM user_roles ur
         JOIN effective e ON e.role_id = ur.role_id
         WHERE ur.user_email = u.email
-          AND ur.is_active = 1
+          AND ur.is_active
           AND (ur.expires_at IS NULL OR ur.expires_at > CURRENT_TIMESTAMP)
-          AND (e.perms LIKE '%"*"%' OR e.perms LIKE '%admin.oauth_clients:read%')
+          AND (e.perms LIKE '%"*"%' OR e.perms LIKE '%admin.oauth_clients:read%' OR e.perms LIKE '%admin.oauth_clients:delete%')
   );
 ```
 
-On PostgreSQL with a `jsonb` permissions column, replace the two `LIKE` comparisons with
-containment tests (`e.perms ? '*'`). The recursion terminates because role creation rejects
+The query above targets SQLite (the default `DATABASE_URL=sqlite:///./mcp.db`) — bare boolean
+columns (`r.is_active`, `u.is_admin`, ...) work identically on SQLite and PostgreSQL, so no `= 1`
+comparisons are needed. `Role.permissions` is a plain `json` column (not `jsonb`) on PostgreSQL, so
+the `?` containment operator does **not** apply here. On PostgreSQL, add a `::text` cast around
+every `e.perms` reference instead: `e.perms::text LIKE '%"*"%'`,
+`e.perms::text LIKE '%admin.oauth_clients:read%'`, and
+`e.perms::text LIKE '%admin.oauth_clients:delete%'` (SQLite does not understand `::text`, so keep
+the bare `LIKE` form above for SQLite). The recursion terminates because role creation rejects
 inheritance cycles.
 
 An empty result means no user loses access. For each row returned, either assign a role carrying
