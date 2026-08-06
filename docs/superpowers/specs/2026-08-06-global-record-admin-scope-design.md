@@ -277,8 +277,15 @@ which already exercise these three contexts against the roots routes.
 - `CLAUDE.md` Security Invariants — one line: global-record admin routes use
   `require_global_admin_permission()` / `require_unrestricted_platform_admin()`;
   do not re-implement the check.
-- Release notes — the breaking-change list from §3.2, §3.3, §3.5, §3.6, with
-  the remediation (use an unrestricted admin token, or omit the `teams` claim).
+- Release notes — the per-caller breaking-change table from the
+  *Breaking-change analysis* section, with the remediation (reissue the token
+  using `--admin`, or create it via the Admin UI without selecting a team).
+  Note that omitting the `teams` claim is **not** a remediation: a missing key
+  normalizes to `[]`, which is public-only.
+- `CLAUDE.md` *MCP Helpers* — add `--admin` to the documented
+  `create_jwt_token` invocation, and audit `README.md`, `docs/docs/`, and
+  `.env.example` for other places the simple form is presented as the way to
+  mint an admin token.
 
 ## Out of scope
 
@@ -291,12 +298,80 @@ which already exercise these three contexts against the roots routes.
 - Any change to `@require_permission()` or `@require_admin_permission()`
   semantics. Existing routes that legitimately use them are untouched.
 
+## Breaking-change analysis
+
+This is a breaking change. The affected population is determined entirely by
+what the caller's JWT `teams` claim normalizes to, so the boundary runs through
+token *minting* paths, not through caller type.
+
+### Callers that break
+
+| Caller | Why | Effect |
+|--------|-----|--------|
+| **Team-narrowed admin tokens** | Admin UI token created with a team selected emits `teams: [team_id]` (`services/token_catalog_service.py:274`); CLI `--teams` does the same (`utils/create_jwt_token.py:509-510`). Normalizes to `["t1"]`. | 403 on `/compliance/*`, role-definition mutation, global role assignment, `/version` |
+| **Simple CLI tokens** | `create_jwt_token` stays in simple-token mode unless one of `--admin` / `--teams` / `--scopes` / `--full_name` is passed (line 495). In simple mode `teams` is `_TEAMS_UNSET`, so the claim is **omitted** (line 162). Omitted → `normalize_token_teams` → `[]` (public-only). | Same 403s |
+
+The second row is the larger population and the less obvious one. These tokens
+pass Rule B **today**: `check_admin_permission()` with `token_teams=[]` calls
+`get_user_permissions(email, token_teams=[])`, and `_get_user_roles()` always
+includes global roles regardless of narrowing, so a platform admin's global `*`
+role is found and the check returns `True`. Under Rule A they are rejected.
+
+### Callers that do not break
+
+| Caller | Why |
+|--------|-----|
+| Admin UI browser sessions | Session token → `resolve_session_teams()` → DB is the authority → `None` → unrestricted |
+| Admin UI API tokens created **without** a team | `teams = [team_id] if team_id else None` → explicit `null` + `is_admin` → unrestricted |
+| CLI tokens created with `--admin` | Rich-token mode sets `teams = None` explicitly (line 508), which serializes as `"teams": null` |
+| Basic auth / dev mode | Non-JWT path keeps unrestricted semantics (`auth_context.py:902`) |
+
+### What softens the impact
+
+Simple CLI tokens are **already** denied by Rule A today at all 26 root call
+sites — `is_unrestricted_platform_admin` returns `False` for `token_teams == []`
+(`auth_context.py:793`). So this change extends an existing, already-shipped
+denial to more routes rather than introducing a new failure class. Anyone whose
+tooling already works against `/roots` will be unaffected everywhere else.
+
+For `/version` specifically, monitoring scrapers using **basic auth** are
+unaffected; only JWT-authenticated scrapers with a narrowed or claim-less token
+break.
+
+### What sharpens it — the documented CLI path produces a breaking token
+
+The command documented in `CLAUDE.md` under *MCP Helpers*:
+
+```bash
+python -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret KEY
+```
+
+passes none of the rich-token flags, so it mints a **public-only** token.
+Following the project's own documentation to create an admin token yields one
+that this change starts rejecting.
+
+This must be resolved before implementation, not discovered after. Two options:
+
+1. **Fix the docs** — add `--admin` to the documented invocation in `CLAUDE.md`
+   and anywhere else the simple form is shown as the way to mint an admin token,
+   and note in the release notes that existing tokens minted the old way need
+   reissuing. Preferred: it keeps Rule A uniform and surfaces a docs bug that
+   already misleads users about roots access.
+2. **Exempt claim-less tokens** — treat a missing `teams` key as unrestricted for
+   admins. Rejected: it contradicts the secure-default in
+   `normalize_token_teams()` (missing key → `[]`) that the whole Layer-1 model
+   rests on, and would silently widen roots access as a side effect.
+
+Option 1 is the design's assumption. Implementation must include the docs fix
+and an audit of other places the simple form is documented.
+
 ## Risks
 
 | Risk | Mitigation |
 |------|------------|
-| Narrowed admin tokens lose access to `/compliance/*`, role mutation, `/version` | Release note with remediation; these are admin-only surfaces with small caller populations |
-| `/version` 403s break monitoring scrapers | Called out explicitly in release notes; the HTML redirect path for browsers is preserved |
+| Callers above lose access to `/compliance/*`, role mutation, `/version` | Release notes with the per-caller table and the reissue instructions |
+| Users following `CLAUDE.md` mint a token this change rejects | Docs fix shipped in the same change; see above |
+| `/version` 403s break JWT-authenticated monitoring scrapers | Called out explicitly in release notes; basic-auth scrapers unaffected; the HTML redirect path for browsers is preserved |
 | Admin UI role picker shows fewer roles for narrowed tokens | Accepted per §3.4; verify the UI degrades gracefully rather than erroring |
 | Decorator requires a `request` kwarg that some endpoints lack | Add the param; the drift-guard test catches a missing one at import time |
 | Manifest drifts out of date | That is what §4's first test prevents |
