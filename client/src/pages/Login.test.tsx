@@ -163,4 +163,16 @@ describe("Login", () => {
       expect(mockNavigate).toHaveBeenCalledWith("/app/tools");
     });
   });
+
+  it("returns an already-authenticated user to the next destination", () => {
+    vi.mocked(resolveNextParam).mockReturnValue("/app/tools?page=2");
+    vi.mocked(useAuth).mockReturnValue({
+      isAuthenticated: true,
+      login: mockLogin,
+    } as unknown as ReturnType<typeof useAuth>);
+
+    renderWithI18n(<Login />);
+
+    expect(mockNavigate).toHaveBeenCalledWith("/app/tools?page=2");
+  });
 });

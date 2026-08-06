@@ -137,6 +137,8 @@ async function requestWithMeta<T>(
       // (the user can't hit Back into an unauthenticated state).
       // Preserve the current page so login can return the user to it; built
       // inline to keep the API layer free of router imports.
+      // Diverges from router.buildLoginPath on purpose: the "/app/" gate below
+      // has a trailing slash, so a bare "/app" location yields no next param.
       const current = window.location.pathname + window.location.search;
       const target =
         current.startsWith("/app/") && !current.startsWith(LOGIN_PATH)

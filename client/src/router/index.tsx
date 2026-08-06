@@ -96,7 +96,9 @@ export function buildLoginPath(from: string): string {
 export function resolveNextParam(search: string): string {
   const next = new URLSearchParams(search).get("next");
   if (next === null) return APP_PREFIX + "/";
-  return validateDestination(next) ?? APP_PREFIX + "/";
+  const safe = validateDestination(next);
+  if (safe === null || safe.split("?")[0] === LOGIN_PATH) return APP_PREFIX + "/";
+  return safe;
 }
 
 // ---------------------------------------------------------------------------
