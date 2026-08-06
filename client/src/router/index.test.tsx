@@ -488,4 +488,13 @@ describe("resolveNextParam", () => {
     expect(resolveNextParam("?next=%2F%2Fevil.com")).toBe("/app/");
     expect(resolveNextParam("?next=%2Fadmin")).toBe("/app/");
   });
+
+  it("preserves a query string carried inside the next param", () => {
+    expect(resolveNextParam("?next=%2Fapp%2Ftools%3Fpage%3D2")).toBe("/app/tools?page=2");
+  });
+
+  it("collapses a login-pointing next to /app/ so re-login cannot loop", () => {
+    expect(resolveNextParam("?next=%2Fapp%2Flogin")).toBe("/app/");
+    expect(resolveNextParam("?next=%2Fapp%2Flogin%3Fnext%3D%252Fapp%252Ftools")).toBe("/app/");
+  });
 });
