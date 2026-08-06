@@ -30,8 +30,10 @@ When enabled, the gateway can:
   server, and UI resource;
 - allow AppBridge RPC calls only to tools marked for app use.
 
-The current AppBridge RPC surface supports `tools/call`. Other MCP methods are
-rejected with JSON-RPC `Method not found`.
+The current AppBridge RPC surface supports `tools/call`, `resources/read`,
+`notifications/message`, and `ping` — see
+[Supported AppBridge Methods](#supported-appbridge-methods). Every other MCP
+method is rejected with JSON-RPC `Method not found`.
 
 ## MCP Capability
 
@@ -47,7 +49,7 @@ For authenticated MCP initialization requests, the gateway advertises:
           "schemes": ["ui://"]
         },
         "bridge": {
-          "methods": ["tools/call"]
+          "methods": ["tools/call", "resources/read", "notifications/message", "ping"]
         }
       }
     }
@@ -313,6 +315,41 @@ Content-Type: application/json
 The RPC endpoint requires `tools.execute`. The tool must resolve within the
 stored server binding and must be app-visible through
 `audience: ["app"]` or `audience: ["model", "app"]`.
+
+RBAC is enforced per method rather than inherited from the endpoint, so
+`resources/read` additionally requires `resources.read`. A caller who keeps
+`tools.execute` after `resources.read` is revoked cannot keep reading resources
+through an existing AppBridge session.
+
+### Supported AppBridge Methods
+
+The RPC endpoint accepts the standard MCP messages an app may send, and rejects
+everything else with `-32601`. Session ownership and the stored server binding
+are validated before any method is dispatched.
+
+| Method | Behaviour |
+| --- | --- |
+| `tools/call` | Invokes an app-visible tool within the bound server. |
+| `resources/read` | Reads a resource within the bound server, using the identity and team scoping stored on the session. Requires `resources.read`. |
+| `notifications/message` | Recorded by the gateway for observability and never proxied upstream. |
+| `ping` | Answered by the gateway without an upstream call. |
+
+`notifications/message` is a JSON-RPC notification: it carries no `id` and must
+not receive a JSON-RPC response. The gateway therefore acknowledges it at the
+transport level with `202 Accepted` and an empty body, matching the Streamable
+HTTP rule for notification-only input. The other three methods are requests and
+return a normal JSON-RPC result or error with the request `id` echoed back.
+
+JSON-RPC distinguishes a notification from a request by the *presence* of the
+`id` member, not by its value, so `"id": null` still makes the message a request
+that requires a response. Because `notifications/message` is defined as
+notification-only, an `id`-bearing form is rejected with `-32600 Invalid Request`
+rather than acknowledged with an empty `202` that would leave the caller waiting
+on a response it will never receive.
+
+Being a core MCP method does not make a method reachable over AppBridge: the
+allowlist is explicit, so `tools/list`, `resources/list`, `prompts/list`, and
+`resources/subscribe` remain rejected.
 
 ## Security Invariants
 
