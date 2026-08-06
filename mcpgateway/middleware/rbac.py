@@ -47,6 +47,11 @@ logger = logging.getLogger(__name__)
 # Generic 403 message — intentionally vague to avoid leaking permission names to callers
 _ACCESS_DENIED_MSG = "Access denied"
 
+# Global-record scope denial. Unlike _ACCESS_DENIED_MSG this names the required
+# token *shape* so an operator can self-diagnose, but never a permission name
+# and never whether the target record exists.
+_GLOBAL_SCOPE_DENIED_MSG = "Access denied: this endpoint requires an unrestricted platform-admin token. Reissue the token with --admin, or create it without selecting a team."
+
 # Wildcard token scope granting every permission (mirrors Permissions.ALL_PERMISSIONS in db.py,
 # duplicated here to keep this module import-light for TokenScopingMiddleware).
 _ALL_PERMISSIONS_SCOPE = "*"
@@ -1097,6 +1102,136 @@ def require_admin_permission():
             # Admin permission granted, execute the original function
             return await func(*args, **kwargs)
 
+        return wrapper
+
+    return decorator
+
+
+def _log_global_scope_denial(user_email: Optional[str], request: Any, token_teams: Any) -> None:
+    """Emit the structured denial record for a failed global-record scope check.
+
+    Kept on one code path so every denial — decorator or raise-helper — is
+    logged identically.
+
+    Args:
+        user_email: Email of the caller whose request was denied.
+        request: Incoming request, used only to resolve the route path.
+        token_teams: The *resolved* Layer-1 scope the rule judged, not the raw claim.
+    """
+    logger.warning(
+        "global-record scope denied: user=%s route=%s token_teams=%r (route requires an unrestricted platform-admin token; reissue with `--admin`, or create the token without selecting a team)",
+        user_email,
+        getattr(getattr(request, "url", None), "path", "unknown"),
+        token_teams,
+    )
+
+
+async def _global_scope_denied(request: Any, user: Any, db: Any) -> bool:
+    """Evaluate the canonical global-record rule.
+
+    Single evaluation point shared by :func:`require_unrestricted_platform_admin`
+    and :func:`require_global_admin_permission`, so the two can never disagree
+    about who would be rejected.
+
+    Args:
+        request: Incoming request context.
+        user: Authenticated user context.
+        db: Database session for the platform-admin lookup.
+
+    Returns:
+        bool: ``True`` when the caller lacks unrestricted platform-admin authority.
+    """
+    # First-Party
+    from mcpgateway.auth_context import is_unrestricted_platform_admin  # pylint: disable=import-outside-toplevel
+
+    return not await is_unrestricted_platform_admin(request, user, db)
+
+
+async def require_unrestricted_platform_admin(request: Any, user: Any, db: Any) -> None:
+    """Require unrestricted platform-admin authority for a global record.
+
+    Raise-form of :func:`mcpgateway.auth_context.is_unrestricted_platform_admin`,
+    for conditional call sites where the guard fires only when the request
+    payload touches a global record (roots inside export/import). Whole-endpoint
+    guards should use :func:`require_global_admin_permission` instead.
+
+    Args:
+        request: Incoming request context.
+        user: Authenticated user context.
+        db: Database session.
+
+    Raises:
+        HTTPException: 403 when the caller is narrowed, public-only, or not a platform admin.
+    """
+    if await _global_scope_denied(request, user, db):
+        # First-Party
+        from mcpgateway.auth_context import get_token_teams_from_request  # pylint: disable=import-outside-toplevel
+
+        resolved = get_token_teams_from_request(request) if request is not None else None
+        _log_global_scope_denial(user.get("email") if isinstance(user, dict) else user, request, resolved)
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_GLOBAL_SCOPE_DENIED_MSG)
+
+
+def require_global_admin_permission():
+    """Decorator requiring unrestricted platform-admin authority for the whole endpoint.
+
+    Mirrors :func:`require_admin_permission` in shape. The decorated endpoint
+    MUST accept a ``request`` kwarg, because Layer-1 narrowing is read from
+    ``request.state``. A ``db`` kwarg is used when present; otherwise a
+    short-lived session is opened.
+
+    Returns:
+        Callable: Decorator enforcing the global-record scope rule.
+    """
+
+    def decorator(func: Callable) -> Callable:
+        """Wrap the endpoint with the global-record scope check.
+
+        Args:
+            func: The endpoint to decorate.
+
+        Returns:
+            Callable: The wrapped endpoint.
+        """
+
+        @wraps(func)
+        async def wrapper(*args, **kwargs):
+            """Enforce the global-record scope rule before invoking the endpoint.
+
+            Args:
+                *args: Positional arguments forwarded to the endpoint.
+                **kwargs: Keyword arguments forwarded to the endpoint.
+
+            Returns:
+                Any: The endpoint's result when the check passes.
+
+            Raises:
+                HTTPException: 401 without a user context, 403 when the scope check fails.
+            """
+            # Named kwargs only (security: never pick up a request body dict)
+            user_context = kwargs.get("user") or kwargs.get("_user") or kwargs.get("current_user") or kwargs.get("current_user_ctx")
+            if not user_context or not isinstance(user_context, dict) or "email" not in user_context:
+                raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User authentication required")
+
+            request = kwargs.get("request")
+            db_session = kwargs.get("db") or user_context.get("db")
+            if db_session:
+                denied = await _global_scope_denied(request, user_context, db_session)
+            else:
+                with fresh_db_session() as db:
+                    denied = await _global_scope_denied(request, user_context, db)
+
+            if denied:
+                # First-Party
+                from mcpgateway.auth_context import get_token_teams_from_request  # pylint: disable=import-outside-toplevel
+
+                resolved = get_token_teams_from_request(request) if request is not None else None
+                _log_global_scope_denial(user_context["email"], request, resolved)
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_GLOBAL_SCOPE_DENIED_MSG)
+
+            return await func(*args, **kwargs)
+
+        wrapper.__mcpgateway_scope_class__ = "global_only"
         return wrapper
 
     return decorator
