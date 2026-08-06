@@ -11,6 +11,8 @@
 **Spec:** `docs/superpowers/specs/2026-08-06-global-record-admin-scope-design.md`
 **Issue:** [IBM/mcp-context-forge#5982](https://github.com/IBM/mcp-context-forge/issues/5982)
 
+**This plan delivers the issue partially, by design.** It applies the canonical rule to 13 of the 77 admin routes over global records, and establishes the rule, the shared helpers and the drift guard. Two of the issue's five acceptance criteria — shared-helper reuse and per-context deny tests — remain partial, because 64 routes with equivalent behaviour keep their existing guards until follow-up issue 1 (Task 12). **#5982 must not be closed when this merges.**
+
 ## Global Constraints
 
 - **Python >= 3.11**, type hints required, strict mypy.
@@ -712,10 +714,10 @@ Then for each of the five endpoints, swap the decorator and add `request: Reques
 ```python
 @router.get("/frameworks", response_model=List[FrameworkInfo])
 @require_global_admin_permission()
-async def list_frameworks(request: Request, user=Depends(get_current_user_with_permissions)) -> List[FrameworkInfo]:  # pylint: disable=unused-argument
+async def list_frameworks(user=Depends(get_current_user_with_permissions), request: Request = None) -> List[FrameworkInfo]:  # pylint: disable=unused-argument
 ```
 
-Apply the same two changes at lines 144, 188, 229, and 272. Each endpoint's docstring needs a `request` entry in its `Args:` block or `make interrogate` and pylint will complain:
+Append `request: Request = None` **last** in every signature — never first. FastAPI injects by annotation regardless of position, and appending with a default keeps existing positional test calls working. Apply the same two changes at lines 144, 188, 229, and 272. Each endpoint's docstring needs a `request` entry in its `Args:` block or `make interrogate` and pylint will complain:
 
 ```
         request: Incoming request, used to resolve Layer-1 token scope.
@@ -809,25 +811,29 @@ from mcpgateway.middleware.rbac import get_current_user_with_permissions, requir
 
 `require_admin_permission` is no longer used in this file after this task — remove it. Add `Request` to the FastAPI import on line 5.
 
-Change line 81, 212, and 259 from `@require_admin_permission()` to `@require_global_admin_permission()`, and add `request: Request` as the first parameter of each handler:
+Change line 81, 212, and 259 from `@require_admin_permission()` to `@require_global_admin_permission()`, and append a `request` parameter to each handler:
+
+**`request` goes LAST, never first.** `tests/unit/mcpgateway/routers/test_rbac_router.py` binds a local named `request` to the Pydantic *body* and passes it positionally — `await rbac_router.create_role(request, user=..., db=...)` at lines 102, 114, 126, and `update_role("r1", request, ...)` at 186, 198. Inserting a `request: Request` parameter first would silently rebind the body into it. FastAPI injects by type annotation regardless of position, and the decorator reads `kwargs.get("request")`, so appending is both safe and sufficient.
 
 ```python
 @router.post("/roles", response_model=RoleResponse)
 @require_global_admin_permission()
-async def create_role(request: Request, role_data: RoleCreateRequest, user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):
+async def create_role(role_data: RoleCreateRequest, user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db), request: Request = None):
 ```
 
 ```python
 @router.put("/roles/{role_id}", response_model=RoleResponse)
 @require_global_admin_permission()
-async def update_role(request: Request, role_id: str, role_data: RoleUpdateRequest, user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):
+async def update_role(role_id: str, role_data: RoleUpdateRequest, user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db), request: Request = None):
 ```
 
 ```python
 @router.delete("/roles/{role_id}")
 @require_global_admin_permission()
-async def delete_role(request: Request, role_id: str, user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):
+async def delete_role(role_id: str, user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db), request: Request = None):
 ```
+
+The `= None` default keeps existing positional test calls working. FastAPI still injects the real `Request` in production because the annotation drives injection, not the default. The guard fails closed when `request` is `None`, which is the correct behaviour for any caller that bypasses FastAPI.
 
 Add a `request:` line to each handler's `Args:` docstring block.
 
@@ -971,7 +977,16 @@ In `mcpgateway/routers/rbac.py`, add to the first-party imports:
 from mcpgateway.auth_context import get_scoped_resource_access_context
 ```
 
-Add `request: Request` as the first parameter of `list_roles` and `get_role`, with a matching `Args:` docstring line.
+Append `request: Request = None` **last** to `list_roles` and `get_role`, with a matching `Args:` docstring line. Never first — see the note in Task 5.
+
+Unlike Tasks 4 and 5, these handlers read `request` in their **body**, so existing direct calls that omit it will fail. Update these four call sites in `tests/unit/mcpgateway/routers/test_rbac_router.py` to pass `request=scoped_request(None)`:
+
+- line 137 — `rbac_router.list_roles(scope=None, active_only=True, user=..., db=...)`
+- line 148 — `rbac_router.get_role("missing", user=..., db=...)`
+- line 160 — `rbac_router.get_role("r1", user=..., db=db)`
+- line 173 — `rbac_router.get_role("r1", user=..., db=...)`
+
+`get_scoped_resource_access_context(None, user)` would raise, so guard the body against a missing request or always pass one from tests. Prefer passing one — a `None` request in production is impossible, and silently treating it as unrestricted would be a security hole.
 
 In `list_roles`, replace:
 
@@ -1234,13 +1249,21 @@ Add `_ACCESS_DENIED_MSG` and `require_unrestricted_platform_admin` to the `mcpga
 
 - [ ] **Step 4: Wire the authorizer into both handlers**
 
-In `assign_role_to_user`, add `request: Request` as the first parameter and insert before `role_service.assign_role_to_user(...)`:
+Append `request: Request = None` **last** to both handlers — never first. `test_rbac_router.py` calls them positionally: `assign_role_to_user("user@example.com", assign_request, ...)` at lines 245, 260, 363 and `revoke_user_role("user@example.com", "r1", scope=..., scope_id=..., ...)` at 248, 284.
+
+Those five call sites need `request=scoped_request(None)` added, because these handlers read `request` in their body. The two `revoke_user_role` calls additionally need `_load_assignment` patched — they currently mock only `RoleService.revoke_role_from_user`, so without a stored row they would now get a 404:
+
+```python
+monkeypatch.setattr(rbac_router, "_load_assignment", lambda db, email, role_id: SimpleNamespace(scope="global", scope_id=None))
+```
+
+In `assign_role_to_user`, insert before `role_service.assign_role_to_user(...)`:
 
 ```python
         await _authorize_assignment_scope(request, user, db, assignment_data.scope, assignment_data.scope_id, user_email)
 ```
 
-In `revoke_user_role`, add `request: Request` as the first parameter and replace the opening of the `try` block so the stored row — not the query params — drives authorization:
+In `revoke_user_role`, replace the opening of the `try` block so the stored row — not the query params — drives authorization:
 
 ```python
         existing = _load_assignment(db, user_email, role_id)
