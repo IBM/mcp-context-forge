@@ -128,6 +128,12 @@ _PERMISSION_PATTERNS: List[Tuple[str, Pattern[str], str]] = [
     ("POST", re.compile(r"^/gateways/[^/]+/"), Permissions.GATEWAYS_UPDATE),  # POST to sub-resources (state, toggle, refresh)
     ("PUT", re.compile(r"^/gateways/[^/]+(?:$|/)"), Permissions.GATEWAYS_UPDATE),
     ("DELETE", re.compile(r"^/gateways/[^/]+(?:$|/)"), Permissions.GATEWAYS_DELETE),
+    # OAuth DCR registered-client management (oauth_router, prefix="/oauth").
+    # Registered clients are global rows with no team column, so these map to
+    # admin-category permissions; the handlers additionally require an
+    # un-narrowed admin token (see _require_unnarrowed_admin).
+    ("GET", re.compile(r"^/oauth/registered-clients(?:$|/)"), Permissions.ADMIN_OAUTH_CLIENTS_READ),
+    ("DELETE", re.compile(r"^/oauth/registered-clients/[^/]+(?:$|/)"), Permissions.ADMIN_OAUTH_CLIENTS_DELETE),
     # MCP Servers REST API (v1 prefix stripped by middleware before matching)
     ("POST", re.compile(r"^/mcp-servers/test(?:$|/)"), Permissions.GATEWAYS_READ),
     # Metrics permissions

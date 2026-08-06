@@ -251,6 +251,32 @@ class TestTokenScopingMiddleware:
         assert result == False, "Should reject non-canonical 'tools.write' permission"
 
     @pytest.mark.asyncio
+    async def test_registered_client_paths_require_oauth_client_permissions(self, middleware):
+        """Layer 1 maps the DCR registered-client routes to admin.oauth_clients permissions."""
+        # Read permission covers both GET routes (collection and per-gateway lookup)
+        assert middleware._check_permission_restrictions("/oauth/registered-clients", "GET", [Permissions.ADMIN_OAUTH_CLIENTS_READ]) is True
+        assert middleware._check_permission_restrictions("/oauth/registered-clients/gw1", "GET", [Permissions.ADMIN_OAUTH_CLIENTS_READ]) is True
+
+        # Delete permission covers the DELETE route
+        assert middleware._check_permission_restrictions("/oauth/registered-clients/c1", "DELETE", [Permissions.ADMIN_OAUTH_CLIENTS_DELETE]) is True
+
+        # Read does not grant delete
+        assert middleware._check_permission_restrictions("/oauth/registered-clients/c1", "DELETE", [Permissions.ADMIN_OAUTH_CLIENTS_READ]) is False
+
+        # Unrelated permissions do not grant access
+        assert middleware._check_permission_restrictions("/oauth/registered-clients", "GET", [Permissions.GATEWAYS_READ]) is False
+
+        # Category wildcard and full wildcard still work
+        assert middleware._check_permission_restrictions("/oauth/registered-clients", "GET", ["admin.*"]) is True
+        assert middleware._check_permission_restrictions("/oauth/registered-clients/c1", "DELETE", ["*"]) is True
+
+    @pytest.mark.asyncio
+    async def test_other_oauth_paths_still_default_deny(self, middleware):
+        """Adding registered-client mappings must not open other /oauth routes to scoped tokens."""
+        assert middleware._check_permission_restrictions("/oauth/authorize/gw1", "GET", [Permissions.ADMIN_OAUTH_CLIENTS_READ]) is False
+        assert middleware._check_permission_restrictions("/oauth/fetch-tools/gw1", "POST", [Permissions.ADMIN_OAUTH_CLIENTS_READ]) is False
+
+    @pytest.mark.asyncio
     async def test_rpc_endpoint_allowed_with_servers_use_permission(self, middleware):
         """POST /rpc must be reachable for tokens that carry servers.use.
 
