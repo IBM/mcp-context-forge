@@ -379,7 +379,7 @@ async def query_data(
 @data_router.post("/{source_slug}/{schema_slug}/{table_slug}")
 @require_permission("tools.execute", allow_admin_bypass=False)
 async def insert_data(
-    source_slug: str, schema_slug: str, table_slug: str, request: Request, values: dict[str, Any] = Body(...), db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)
+    source_slug: str, schema_slug: str, table_slug: str, request: Request, values: dict[str, Any] = Body(..., embed=True), db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)
 ):
     """Insert exactly one row."""
     return await _invoke_data_tool(request, db, user, source_slug, schema_slug, table_slug, "insert", {"values": values})
@@ -388,7 +388,7 @@ async def insert_data(
 @data_router.patch("/{source_slug}/{schema_slug}/{table_slug}")
 @require_permission("tools.execute", allow_admin_bypass=False)
 async def update_data(
-    source_slug: str, schema_slug: str, table_slug: str, request: Request, key: str, values: dict[str, Any] = Body(...), db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)
+    source_slug: str, schema_slug: str, table_slug: str, request: Request, key: str, values: dict[str, Any] = Body(..., embed=True), db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)
 ):
     """Update one row selected by a complete primary/unique key."""
     return await _invoke_data_tool(request, db, user, source_slug, schema_slug, table_slug, "update", {"key": _parse_json_parameter(key, "key"), "values": values})
