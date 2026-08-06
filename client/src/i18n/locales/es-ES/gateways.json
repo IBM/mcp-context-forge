@@ -1,5 +1,7 @@
 {
   "gateways.title": "Servidores virtuales",
+  "gateways.titleTooltip": "Punto de conexión MCP que agrupa capacidades de servidores MCP, APIs REST, servicios gRPC o agentes A2A.",
+  "gateways.titleTooltip.trigger": "Acerca de los servidores virtuales",
   "gateways.notifications": "Notificaciones",
   "gateways.loadingVirtualServers": "Cargando servidores virtuales, espere...",
   "gateways.errorLoadingVirtualServers": "Error al cargar los servidores virtuales",
