@@ -32,7 +32,10 @@ import secrets
 import sys
 
 # First-Party
+from mcpgateway._security_constants import MIN_ENTROPY as _MIN_ENTROPY
+from mcpgateway._security_constants import MIN_SECRET_LENGTH as _MIN_SECRET_LENGTH
 from mcpgateway._security_constants import WEAK_VALUES as _CANONICAL_WEAK_VALUES
+from mcpgateway._security_constants import calculate_entropy
 
 
 def _secure_open_flags(force: bool) -> int:
@@ -189,11 +192,19 @@ def ensure_env_file_secrets(
     # Keys whose weak value came from .env (or was absent) — write to disk + environ.
     file_generated: dict[str, str] = {}
 
+    # Fields subject to the full compliance predicate (startup hard-fail): length + entropy enforced.
+    _STRONG_SECRET_FIELDS = {"JWT_SECRET_KEY", "AUTH_ENCRYPTION_SECRET"}
+
     for field, nbytes in _SECRET_FIELDS.items():
         # os.environ takes priority over .env (mirrors pydantic-settings behaviour)
         env_val = os.environ.get(field)
         current = env_val if env_val is not None else env_file_values.get(field, "changeme")
-        if current.lower() in weak_values or current.lower().startswith("__replace_me__"):
+        # Base checks apply to all fields: empty, known-weak name, placeholder.
+        is_non_compliant = not current.strip() or current.lower() in weak_values or current.lower().startswith("__replace_me__")
+        # Length and entropy checks apply only to secrets that Settings hard-fails on startup.
+        if not is_non_compliant and field in _STRONG_SECRET_FIELDS:
+            is_non_compliant = len(current) < _MIN_SECRET_LENGTH or calculate_entropy(current) < _MIN_ENTROPY
+        if is_non_compliant:
             new_val = generate_token(nbytes)
             if env_val is not None and field not in env_file_values:
                 # Weak value came from os.environ; patching environ is enough.
