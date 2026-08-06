@@ -88,9 +88,10 @@ async def list_catalog_servers(
 @require_permission("gateways.create", allow_admin_bypass=False)
 async def register_catalog_server(
     catalog_id: str,
+    request: Request,
     body: Optional[CatalogServerRegisterBody] = None,
     db: Session = Depends(get_db),
-    _user=Depends(get_current_user_with_permissions),
+    user=Depends(get_current_user_with_permissions),
 ) -> CatalogServerRegisterResponse:
     """Register a catalog server as a gateway for the authenticated API caller.
 
@@ -102,9 +103,10 @@ async def register_catalog_server(
 
     Args:
         catalog_id: Catalog server ID to register.
+        request: FastAPI request object.
         body: Optional overrides (custom name, API key).
         db: Database session.
-        _user: Authenticated user.
+        user: Authenticated user.
 
     Returns:
         Registration result envelope.
@@ -116,9 +118,20 @@ async def register_catalog_server(
     if not settings.mcpgateway_catalog_enabled:
         raise HTTPException(status_code=404, detail="Catalog feature is disabled")
 
-    request = CatalogServerRegisterRequest(server_id=catalog_id, name=body.name, api_key=body.api_key) if body else None
+    service_request = CatalogServerRegisterRequest(server_id=catalog_id, name=body.name, api_key=body.api_key) if body else None
 
-    result = await catalog_service.register_catalog_server(catalog_id=catalog_id, request=request, db=db)
+    user_email, token_teams = get_scoped_resource_access_context(request, user)
+    is_public_only_token = token_teams is not None and len(token_teams) == 0
+    team_id = None if is_public_only_token else getattr(request.state, "team_id", None)
+
+    result = await catalog_service.register_catalog_server(
+        catalog_id=catalog_id,
+        request=service_request,
+        db=db,
+        created_by=user_email,
+        owner_email=user_email,
+        team_id=team_id,
+    )
 
     if not result.success:
         if result.message == CATALOG_REGISTER_NOT_FOUND_MSG:

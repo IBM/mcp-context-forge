@@ -282,13 +282,24 @@ class CatalogService:
 
         return False
 
-    async def register_catalog_server(self, catalog_id: str, request: Optional[CatalogServerRegisterRequest], db: Session) -> CatalogServerRegisterResponse:
+    async def register_catalog_server(
+        self,
+        catalog_id: str,
+        request: Optional[CatalogServerRegisterRequest],
+        db: Session,
+        created_by: Optional[str] = None,
+        owner_email: Optional[str] = None,
+        team_id: Optional[str] = None,
+    ) -> CatalogServerRegisterResponse:
         """Register a catalog server as a gateway.
 
         Args:
             catalog_id: Catalog server ID
             request: Registration request with optional overrides
             db: Database session
+            created_by: Identity of the caller creating the gateway
+            owner_email: Email of the gateway owner
+            team_id: Team the gateway belongs to
 
         Returns:
             Registration response
@@ -407,6 +418,9 @@ class CatalogService:
                     enabled=False,  # Disabled until OAuth is configured
                     created_via="catalog",
                     visibility="public",
+                    created_by=created_by,
+                    owner_email=owner_email,
+                    team_id=team_id,
                     version=1,
                 )
 
@@ -474,6 +488,9 @@ class CatalogService:
                 gateway=gateway_create,
                 created_via="catalog",
                 visibility="public",  # Catalog servers should be public
+                created_by=created_by,
+                owner_email=owner_email,
+                team_id=team_id,
                 initialize_timeout=settings.httpx_admin_read_timeout,
             )
 
