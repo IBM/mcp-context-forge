@@ -125,6 +125,24 @@ extraction, `db` from the endpoint's `db` param or `user_context["db"]`) and
 raises 403 with `_ACCESS_DENIED_MSG`. It requires a `request` kwarg on the
 decorated endpoint, since Layer-1 narrowing is read from `request.state`.
 
+**Denials must be self-diagnosing.** Both raise paths emit one structured log
+line before raising, carrying the caller email, the route, and the *resolved*
+`token_teams` — the value the rule actually judged, not the raw claim — plus the
+remediation. The `HTTPException` detail names the remediation too, without
+leaking whether the record exists:
+
+```
+global-record scope denied: user=%s route=%s token_teams=%r
+  (route requires an unrestricted platform-admin token; reissue with
+   `--admin`, or create the token without selecting a team)
+```
+
+This is deliberate, not incidental. It is what makes immediate enforcement
+tenable in place of a warn-then-enforce flag: an operator who is denied learns
+why and how to fix it from a single line, which was the flag's real value. See
+*Rejected alternatives*. Keep the log line on one code path so enforce-time
+denials and any future audit of them can never disagree.
+
 `require_unrestricted_platform_admin()` — the raise-form of the
 `is_unrestricted_platform_admin` predicate — exists for the **conditional** call
 sites, where the guard fires only when the request payload touches a global
@@ -349,10 +367,26 @@ the same anti-pattern the §6 docs fix must sweep up.
   using `--admin`, or create it via the Admin UI without selecting a team).
   Note that omitting the `teams` claim is **not** a remediation: a missing key
   normalizes to `[]`, which is public-only.
-- `CLAUDE.md` *MCP Helpers* — add `--admin` to the documented
-  `create_jwt_token` invocation, and audit `README.md`, `docs/docs/`, and
-  `.env.example` for other places the simple form is presented as the way to
-  mint an admin token.
+- `mcpgateway/utils/create_jwt_token.py` — when the username resolves to a DB
+  admin and none of `--admin` / `--teams` / `--scopes` / `--full_name` was
+  passed, print a warning: the token will carry no `teams` claim, that
+  normalizes to public-only, and `--admin` is the fix. This is the minting-side
+  half of the mitigation. The claim-less population are people who followed the
+  docs, not people who chose narrowing, so the durable fix is to stop producing
+  those tokens rather than to exempt them.
+- Docs sweep — the simple form is presented as the way to mint an admin token
+  at these known sites, all of which need `--admin`:
+  `CLAUDE.md` *MCP Helpers*; `README.md` (7 occurrences, at lines 213, 245, 425,
+  542, 626, 658, 949); `docs/docs/manage/export-import-reference.md:184`;
+  `docs/docs/manage/export-import-tutorial.md:20`;
+  `docs/docs/manage/sso-adfs-tutorial.md:60`. Also check `.env.example`.
+  Note that `docs/docs/manage/api-usage.md` already gets this right and is the
+  model to follow.
+  The `export-import-*` sites are fixing **live** breakage — those flows touch
+  roots, which Rule A already denies today.
+- `Makefile:5979` (`compose-test-hardened`) uses the same simple form. It only
+  curls `/tools` so it does not break, but it should be corrected alongside the
+  docs.
 
 ## Out of scope
 
@@ -405,42 +439,95 @@ For `/version` specifically, monitoring scrapers using **basic auth** are
 unaffected; only JWT-authenticated scrapers with a narrowed or claim-less token
 break.
 
-### What sharpens it — the documented CLI path produces a breaking token
+### Measured blast radius — no known callers break
 
-The command documented in `CLAUDE.md` under *MCP Helpers*:
+The repository was swept for callers that would actually hit the two rows above
+on the four changed routes. Result: **none found.**
+
+| Probe | Finding |
+|-------|---------|
+| `/compliance/*` callers outside the router and its tests | **zero** — nothing in `charts/`, `docs/`, `mcp-servers/`, `a2a-agents/`, or scripts |
+| Shipped SDK or client library calling admin routes | none exists in-repo |
+| In-repo harnesses hitting `/rbac/roles` and role assignment | all mint unrestricted: `tests/populate/populate.py:85-89` and `tests/loadtest/locustfile_mcp_isolation.py:224` pass `is_admin=True, teams=None`; `tests/loadtest/locustfile.py:610` sets `token_use: "session"`, which resolves through the DB |
+| Helm chart `/version` smoke test (`charts/mcp-stack/values.yaml:1997`) | sends **no auth header at all** — not a narrowed-token caller |
+| Documented `--teams` usage (`docs/docs/manage/api-usage.md:52`) | applies to `user@example.com`, a **non-admin**, labeled DEV/TEST ONLY. The admin example immediately above it already uses `--admin` |
+
+Nothing in the repository documents or performs `--admin` combined with
+`--teams`, which is the exact pairing that would break.
+
+This measurement is what justifies enforcing immediately rather than shipping a
+warn-then-enforce deprecation flag. A flag would add a permanent settings knob,
+a second code path through security-critical helpers, and a sunset that requires
+a human to honour — all to buy a deprecation window for a population the
+codebase gives no evidence exists, while leaving the §3.5 privilege-escalation
+path open for a release. See *Rejected alternatives*.
+
+Caveat: this bounds what is **in the repository**. It cannot see a private
+deployment wiring a narrowed admin token to `/compliance/*`. But there is no
+first-party or documented pattern that would lead an operator there.
+
+### The claim-less docs population is a pre-existing bug, not a new break
+
+The simple `create_jwt_token` form appears in `README.md` (7 sites),
+`docs/docs/manage/export-import-reference.md:184`,
+`docs/docs/manage/export-import-tutorial.md:20`, and
+`docs/docs/manage/sso-adfs-tutorial.md:60`:
 
 ```bash
 python -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret KEY
 ```
 
-passes none of the rich-token flags, so it mints a **public-only** token.
-Following the project's own documentation to create an admin token yields one
-that this change starts rejecting.
+It passes none of the rich-token flags, so it mints a **public-only** token.
 
-This must be resolved before implementation, not discovered after. Two options:
+Crucially, the `export-import-*` documents mint that token *for export/import,
+which touches roots* — already Rule A today. **Those docs are already broken
+before this change.** The remaining README sites cover `/tools`, `/servers`, and
+`/gateways`, none of which this change touches.
 
-1. **Fix the docs** — add `--admin` to the documented invocation in `CLAUDE.md`
-   and anywhere else the simple form is shown as the way to mint an admin token,
-   and note in the release notes that existing tokens minted the old way need
-   reissuing. Preferred: it keeps Rule A uniform and surfaces a docs bug that
-   already misleads users about roots access.
+So the docs defect is real and worth fixing, but it is largely orthogonal to
+this change rather than caused by it. Two options were considered:
+
+1. **Fix the minting side and the docs** — see §6. Preferred: it removes the
+   footgun permanently instead of granting it an exemption, and it repairs
+   breakage that is already live.
 2. **Exempt claim-less tokens** — treat a missing `teams` key as unrestricted for
    admins. Rejected: it contradicts the secure-default in
    `normalize_token_teams()` (missing key → `[]`) that the whole Layer-1 model
    rests on, and would silently widen roots access as a side effect.
 
-Option 1 is the design's assumption. Implementation must include the docs fix
-and an audit of other places the simple form is documented.
+Fixing the minting side and the docs is the design's assumption.
+
+## Rejected alternatives
+
+**Warn-then-enforce deprecation flag.** A `GLOBAL_RECORD_SCOPE_ENFORCEMENT=warn|enforce`
+setting defaulting to permissive for one minor, flipping at a sunset. Rejected
+on measured blast radius: the sweep above found no callers the window would
+protect. Its costs are concrete — a permanent config knob, duplicate code paths
+through the security-critical helpers until removed, doubled deny-path tests,
+and a sunset that no test can *actuate* (only detect, and the cheapest way to
+green a failing sunset test is to bump the sunset constant). Most decisively, it
+would leave the §3.5 privilege-escalation path — a narrowed admin assigning
+themselves a global `*` role — open for an additional release.
+
+The diagnostic value that motivated the flag is retained at near-zero cost by
+the structured denial logging in §2.
+
+**Scoping compliance reports by team instead of denying.** Rejected: reports are
+FedRAMP / SOC 2 control attestations (`AC-2` account management, `AC-3` access
+enforcement, `AC-6` least privilege) built from user inventory, role inventory,
+audit logs, and config snapshot. An attestation scoped to one team is not an
+attestation. The same reasoning rules it out for `/version`, which has no team
+dimension to filter on. Filtering applies only where the data has a team axis —
+`GET /rbac/roles*`, per §3.4.
 
 ## Risks
 
 | Risk | Mitigation |
 |------|------------|
-| Callers above lose access to `/compliance/*`, role mutation, `/version` | Release notes with the per-caller table and the reissue instructions |
-| Users following `CLAUDE.md` mint a token this change rejects | Docs fix shipped in the same change; see above |
-| `/version` 403s break JWT-authenticated monitoring scrapers | Called out explicitly in release notes. Basic-auth scrapers are unaffected **only because §3.6 keeps `require_admin_auth`** — swapping to `get_current_user_with_permissions` would 401 them, since that dependency has no HTTP Basic path |
+| An unmeasured caller exists outside the repo using a narrowed admin token against a changed route | The sweep bounds only in-repo callers and found none. Mitigated by the §2 structured denial log and the remediation in the error detail, so an affected operator self-diagnoses in one line. This is the residual risk accepted by enforcing immediately |
+| Users following `README.md` / `export-import-*` docs mint a token that is rejected | §6 minting warning + docs sweep in the same change. Note the `export-import-*` sites are **already** broken today under Rule A, so this repairs live breakage rather than creating it |
+| `/version` 403s break JWT-authenticated monitoring scrapers | Release notes. Basic-auth scrapers are unaffected **only because §3.6 keeps `require_admin_auth`** — swapping to `get_current_user_with_permissions` would 401 them, since that dependency has no HTTP Basic path |
 | Existing unit suites authenticate with bare dicts that resolve to public-only, so ~80 tests would 403 | §5.1: rework the fixtures to set `request.state.token_teams` or mint real JWTs; budget this as a task, not a cleanup |
-| Decorated endpoints lack the `request`/`db` params the decorator needs | §3.2: add `request` to all five compliance endpoints; decorator falls back to `fresh_db_session()` when no `db` kwarg is present |
+| Decorated endpoints lack the `request`/`db` params the decorator needs | §3.2: add `request` to all five compliance endpoints; decorator falls back to `fresh_db_session()` when no `db` kwarg is present. The §4 drift-guard test catches a missing one at import time |
 | Admin UI role picker shows fewer roles for narrowed tokens | Accepted per §3.4; verify the UI degrades gracefully rather than erroring |
-| Decorator requires a `request` kwarg that some endpoints lack | Add the param; the drift-guard test catches a missing one at import time |
 | Manifest drifts out of date | That is what §4's first test prevents |
