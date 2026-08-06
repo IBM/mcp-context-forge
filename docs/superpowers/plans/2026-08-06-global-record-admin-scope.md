@@ -344,17 +344,38 @@ Refs #5982"
 
 ---
 
-### Task 2: Shared test fixture for route-level scope contexts
+### Task 2: Test infrastructure — decorator mock and scope fixtures
 
 **Files:**
+- Modify: `tests/utils/rbac_mocks.py` (add mock at line ~296, register in `patch_rbac_decorators` line 358 and `restore_rbac_decorators` line 384)
 - Create: `tests/helpers/scope.py`
-- Test: `tests/unit/mcpgateway/middleware/test_global_scope_helpers.py` (extend — verify the fixture itself)
+- Test: `tests/unit/mcpgateway/middleware/test_global_scope_helpers.py` (extend)
 
 **Interfaces:**
 - Consumes: nothing from Task 1 at runtime.
-- Produces: `admin_user_context(token_teams, email="admin@example.com") -> dict` and `scoped_request(token_teams, path="/") -> MagicMock`, used by every route task (3–8).
+- Produces: `mock_require_global_admin_permission()`; `admin_user_context(token_teams, email="admin@example.com") -> dict`; `scoped_request(token_teams, path="/") -> MagicMock`.
 
-**Why this exists:** spec §5.1. The existing suites override `get_current_user_with_permissions` with a bare dict such as `{"email": "admin@example.com", "is_admin": True}` (`tests/unit/mcpgateway/routers/test_compliance_router.py:64`). That dict carries no `request.state.token_teams`, so `get_rpc_filter_context()` falls back to `normalize_token_teams()` on an absent payload and resolves to `[]` — public-only. Every such test would 403 once the guard lands. One shared fixture prevents 80 individual fixes from drifting apart.
+**This task must land before any route task or 26 test files break.**
+
+**How route tests actually work in this codebase — read this before writing any route test.** They do **not** use `TestClient`, `app`, or `dependency_overrides`. `tests/unit/mcpgateway/routers/test_compliance_router.py:18-24` does this at module import time:
+
+```python
+from tests.utils.rbac_mocks import patch_rbac_decorators, restore_rbac_decorators
+
+_originals = patch_rbac_decorators()
+from mcpgateway.routers import compliance_router as router_mod  # noqa: E402
+restore_rbac_decorators(_originals)
+```
+
+The decorators are swapped for no-ops, the router is imported so its handlers are baked with those no-ops, then the originals are restored. Tests then call handlers directly: `await router_mod.list_frameworks(user=_mock_user())`.
+
+Two consequences that shaped the rest of this plan:
+
+1. **`patch_rbac_decorators` knows nothing about `require_global_admin_permission`.** Once a route carries it, the real guard survives the patch. `_mock_user()` supplies no `request` kwarg, so `request` is `None`, `is_unrestricted_platform_admin` fails closed, and every affected test gets a 403. That is why the mock is registered here, in the first task that touches tests.
+
+2. **Route-level deny tests through direct calls are unreliable.** A router module is imported once per session; whichever test module imports it first decides whether its decorators are real or mocked. A deny test in a second module would silently pass or fail on import order. **So decorator behaviour is proven in Task 1 (unit tests against the real decorator) and route coverage is proven in Task 9 (the drift guard asserts each `GLOBAL_ONLY` route carries the marker).** Route-level tests are written only for handler-*body* logic — the filtering in Task 6 and the assignment authorizer in Task 7 — which is ordinary code unaffected by decorator mocking.
+
+Do not "improve" this by adding TestClient-based deny tests for the decorated routes. They will appear to work and then rot into order-dependent flakes.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -363,6 +384,7 @@ Append to `tests/unit/mcpgateway/middleware/test_global_scope_helpers.py`:
 ```python
 # First-Party
 from tests.helpers.scope import admin_user_context, scoped_request
+from tests.utils.rbac_mocks import patch_rbac_decorators, restore_rbac_decorators
 
 
 def test_scope_fixture_shapes():
@@ -378,14 +400,74 @@ def test_scope_fixture_shapes():
     req = scoped_request(["team-a"], path="/compliance/reports")
     assert req.state.token_teams == ["team-a"]
     assert req.url.path == "/compliance/reports"
+
+
+@pytest.mark.asyncio
+async def test_patch_rbac_decorators_covers_the_global_guard():
+    """26 suites import routers under this patch; the new guard must be mocked too."""
+    # First-Party
+    import mcpgateway.middleware.rbac as rbac_module
+
+    originals = patch_rbac_decorators()
+    try:
+        assert rbac_module.require_global_admin_permission is not None
+
+        @rbac_module.require_global_admin_permission()
+        async def endpoint(user=None):
+            return "ok"
+
+        # No request kwarg and no scope: the real guard would 403 here.
+        assert await endpoint(user={"email": "a@x.com"}) == "ok"
+    finally:
+        restore_rbac_decorators(originals)
+
+    # Restoration must put the real guard back, or later suites silently lose coverage.
+    assert rbac_module.require_global_admin_permission.__module__ == "mcpgateway.middleware.rbac"
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [ ] **Step 2: Run tests to verify they fail**
 
-Run: `pytest tests/unit/mcpgateway/middleware/test_global_scope_helpers.py::test_scope_fixture_shapes -v`
-Expected: FAIL — `ModuleNotFoundError: No module named 'tests.helpers.scope'`
+Run: `pytest tests/unit/mcpgateway/middleware/test_global_scope_helpers.py -k "fixture_shapes or patch_rbac" -v`
+Expected: FAIL — `ModuleNotFoundError: No module named 'tests.helpers.scope'`, and the patch test allows the real guard through
 
-- [ ] **Step 3: Create the fixture module**
+- [ ] **Step 3: Register the decorator mock**
+
+In `tests/utils/rbac_mocks.py`, add after `mock_require_admin_permission` (ends line ~307):
+
+```python
+def mock_require_global_admin_permission():
+    """Mock version of require_global_admin_permission that always allows access.
+
+    Suites that import a router under :func:`patch_rbac_decorators` supply no
+    ``request`` kwarg, so the real guard would fail closed and 403 every test.
+
+    Returns:
+        Callable: A decorator that performs no scope checking.
+    """
+
+    def decorator(func):
+        # Return the function unchanged - no global-record scope checking
+        return func
+
+    return decorator
+```
+
+In `patch_rbac_decorators` (line 358), add to the `originals` dict and the replacement block:
+
+```python
+        "require_global_admin_permission": rbac_module.require_global_admin_permission,
+```
+```python
+    rbac_module.require_global_admin_permission = mock_require_global_admin_permission
+```
+
+In `restore_rbac_decorators` (line 384), add:
+
+```python
+    rbac_module.require_global_admin_permission = originals["require_global_admin_permission"]
+```
+
+- [ ] **Step 4: Create the scope fixture module**
 
 Create `tests/helpers/scope.py`:
 
@@ -439,21 +521,29 @@ def scoped_request(token_teams: Optional[List[str]], path: str = "/") -> MagicMo
     return request
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [ ] **Step 5: Run tests to verify they pass**
 
 Run: `pytest tests/unit/mcpgateway/middleware/test_global_scope_helpers.py -v`
-Expected: PASS (9 tests)
+Expected: PASS (10 tests)
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Confirm no existing suite regressed**
+
+Run: `pytest tests/unit/mcpgateway/routers/ -q`
+Expected: same pass count as before Task 1. If anything 403s, the mock is not registered correctly.
+
+- [ ] **Step 7: Commit**
 
 ```bash
-git add tests/helpers/scope.py tests/unit/mcpgateway/middleware/test_global_scope_helpers.py
-git commit -s -m "test: add shared Layer-1 scope fixtures for route tests
+git add tests/utils/rbac_mocks.py tests/helpers/scope.py tests/unit/mcpgateway/middleware/test_global_scope_helpers.py
+git commit -s -m "test: mock the global-record guard and add Layer-1 scope fixtures
 
-Route suites that override the auth dependency with a bare dict resolve to
-public-only, because the scope resolver falls back to normalize_token_teams() on
-an absent JWT payload. One shared constructor for the three admin contexts keeps
-the ~80 affected tests from drifting apart as they are migrated.
+Twenty-six suites import routers under patch_rbac_decorators, which knew nothing
+about require_global_admin_permission — the real guard would survive the patch,
+find no request kwarg, fail closed and 403 every test on a guarded route. The
+decorator now has a mock registered alongside the others.
+
+Adds shared constructors for the three admin scope contexts so route tests build
+them identically.
 
 Refs #5982"
 ```
@@ -573,56 +663,39 @@ Refs #5982"
 
 All five endpoints need a `request` parameter added; none has one. `list_frameworks` also has no `db` — Task 1's decorator opens its own session for that case.
 
-- [ ] **Step 1: Write the failing tests**
+- [ ] **Step 1: Update the existing suite for the new signatures**
 
-Replace the auth fixtures in `tests/unit/mcpgateway/routers/test_compliance_router.py` and add scope coverage. Add near the top:
+The 17 tests in `tests/unit/mcpgateway/routers/test_compliance_router.py` call handlers directly — `await router_mod.list_frameworks(user=_mock_user())`. Adding a `request` parameter breaks none of them, because `request` will have a default of `None` only if we give it one, and we deliberately do **not**: FastAPI needs it as a required parameter to inject the real request.
+
+So every call site in that file needs the kwarg. Update `_mock_user()` at line 62 to return the shared context, and add a request stub:
 
 ```python
 # First-Party
-from mcpgateway.middleware.rbac import get_current_user_with_permissions
-from tests.helpers.scope import admin_user_context
-
-COMPLIANCE_ROUTES = [
-    ("GET", "/compliance/frameworks"),
-    ("POST", "/compliance/reports"),
-    ("GET", "/compliance/reports"),
-    ("GET", "/compliance/reports/some-id"),
-    ("GET", "/compliance/reports/some-id/export"),
-]
+from tests.helpers.scope import admin_user_context, scoped_request
 
 
-@pytest.mark.parametrize("method,path", COMPLIANCE_ROUTES)
-@pytest.mark.parametrize("token_teams", [[], ["team-a"]])
-def test_narrowed_and_public_only_admins_are_denied(app, client, method, path, token_teams):
-    """Compliance reports aggregate every team; a narrowed token must not read them."""
-    app.dependency_overrides[get_current_user_with_permissions] = lambda: admin_user_context(token_teams)
-    try:
-        response = client.request(method, path, json={} if method == "POST" else None)
-        assert response.status_code == 403
-        assert "--admin" in response.json()["detail"]
-    finally:
-        app.dependency_overrides.pop(get_current_user_with_permissions, None)
+def _mock_user():
+    """Unrestricted admin context for handler-level calls."""
+    return admin_user_context(None)
 
 
-@pytest.mark.parametrize("method,path", COMPLIANCE_ROUTES)
-def test_unrestricted_admin_is_not_denied_by_scope(app, client, method, path):
-    """Unrestricted admins pass the scope gate; any non-403 status is acceptable here."""
-    app.dependency_overrides[get_current_user_with_permissions] = lambda: admin_user_context(None)
-    try:
-        response = client.request(method, path, json={} if method == "POST" else None)
-        assert response.status_code != 403
-    finally:
-        app.dependency_overrides.pop(get_current_user_with_permissions, None)
+def _req(path="/compliance/frameworks"):
+    """Request stub carrying unrestricted Layer-1 scope."""
+    return scoped_request(None, path=path)
 ```
 
-Then update the two existing overrides so they no longer resolve to public-only:
-- line 64: replace the returned dict with `admin_user_context(None)`
-- line 325 (`no_auth`) and line 349 (`non_admin_user`): keep their intent, but build them from `admin_user_context([])` / a non-admin dict so the resolved scope is explicit rather than accidental.
+Then add `request=_req()` to all 17 handler invocations, e.g.:
+
+```python
+result = await router_mod.list_frameworks(request=_req(), user=_mock_user())
+```
+
+**Deny coverage is not written here** — see Task 2's explanation. This file imports the router under `patch_rbac_decorators`, so the guard is a no-op inside it by construction. The decorator's deny behaviour is proven in Task 1; the fact that *these specific routes* carry it is proven in Task 9.
 
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `pytest tests/unit/mcpgateway/routers/test_compliance_router.py -v`
-Expected: the new deny tests FAIL with 200/404 instead of 403
+Expected: FAIL — `TypeError: ... got an unexpected keyword argument 'request'`, because the handlers do not accept it yet
 
 - [ ] **Step 3: Apply the guard and add `request` params**
 
@@ -650,8 +723,8 @@ Apply the same two changes at lines 144, 188, 229, and 272. Each endpoint's docs
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `pytest tests/unit/mcpgateway/routers/test_compliance_router.py -v`
-Expected: PASS (all, including the 10 new deny cases and 5 allow cases)
+Run: `pytest tests/unit/mcpgateway/routers/test_compliance_router.py tests/unit/mcpgateway/test_global_record_scope.py -v`
+Expected: PASS (17 existing tests; the drift guard arrives in Task 9 and will then assert these five routes carry the marker)
 
 - [ ] **Step 5: Lint and commit**
 
@@ -688,7 +761,7 @@ Refs #5982"
 
 - [ ] **Step 1: Write the failing test**
 
-Create `tests/unit/mcpgateway/routers/test_rbac_scope.py`:
+Create `tests/unit/mcpgateway/routers/test_rbac_scope.py`. This file imports the router **without** `patch_rbac_decorators`, so handler bodies run for real. It does not attempt route-level deny assertions on the decorator — see Task 2.
 
 ```python
 # -*- coding: utf-8 -*-
@@ -696,51 +769,35 @@ Create `tests/unit/mcpgateway/routers/test_rbac_scope.py`:
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
 
-Layer-1 scope behavior for the RBAC role routes.
+Layer-1 scope behavior in the RBAC role handler bodies.
+
+Imported WITHOUT patch_rbac_decorators so handler-body logic runs for real.
+Decorator behaviour itself is covered by
+tests/unit/mcpgateway/middleware/test_global_scope_helpers.py, and the fact that
+specific routes carry the guard is covered by
+tests/unit/mcpgateway/test_global_record_scope.py.
 """
 
 # Third-Party
 import pytest
 
 # First-Party
-from mcpgateway.middleware.rbac import get_current_user_with_permissions
-from tests.helpers.scope import admin_user_context
-
-ROLE_MUTATIONS = [
-    ("POST", "/rbac/roles", {"name": "r", "description": "d", "scope": "team", "permissions": []}),
-    ("PUT", "/rbac/roles/some-id", {"description": "d"}),
-    ("DELETE", "/rbac/roles/some-id", None),
-]
+from mcpgateway.routers import rbac as rbac_router
 
 
-@pytest.mark.parametrize("method,path,body", ROLE_MUTATIONS)
-@pytest.mark.parametrize("token_teams", [[], ["team-a"]])
-def test_role_definition_mutations_deny_narrowed_admin(app, client, method, path, body, token_teams):
-    """Role definitions are global records even when scope='team' — the row has no team_id."""
-    app.dependency_overrides[get_current_user_with_permissions] = lambda: admin_user_context(token_teams)
-    try:
-        response = client.request(method, path, json=body)
-        assert response.status_code == 403
-        assert "--admin" in response.json()["detail"]
-    finally:
-        app.dependency_overrides.pop(get_current_user_with_permissions, None)
-
-
-@pytest.mark.parametrize("method,path,body", ROLE_MUTATIONS)
-def test_role_definition_mutations_allow_unrestricted_admin(app, client, method, path, body):
-    app.dependency_overrides[get_current_user_with_permissions] = lambda: admin_user_context(None)
-    try:
-        assert client.request(method, path, json=body).status_code != 403
-    finally:
-        app.dependency_overrides.pop(get_current_user_with_permissions, None)
+def test_module_imports_with_real_decorators():
+    """Guard against this file accidentally being imported under the mocks."""
+    assert rbac_router.create_role.__mcpgateway_scope_class__ == "global_only"
+    assert rbac_router.update_role.__mcpgateway_scope_class__ == "global_only"
+    assert rbac_router.delete_role.__mcpgateway_scope_class__ == "global_only"
 ```
 
-If `app` and `client` fixtures are not already available at this path, reuse the pattern from `tests/unit/mcpgateway/routers/test_compliance_router.py` — copy its fixture definitions rather than inventing new ones.
+That marker assertion is the whole test for this task. It proves the three mutation routes carry the canonical guard, which — combined with Task 1's proof of what the guard does — is the coverage the spec asks for, without an order-dependent deny test.
 
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `pytest tests/unit/mcpgateway/routers/test_rbac_scope.py -v`
-Expected: FAIL — narrowed admin gets a non-403 status
+Expected: FAIL — `AttributeError: 'function' object has no attribute '__mcpgateway_scope_class__'`
 
 - [ ] **Step 3: Apply the guard**
 
@@ -776,14 +833,14 @@ Add a `request:` line to each handler's `Args:` docstring block.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `pytest tests/unit/mcpgateway/routers/test_rbac_scope.py -v`
-Expected: PASS (8 tests)
+Run: `pytest tests/unit/mcpgateway/routers/test_rbac_scope.py tests/unit/mcpgateway/routers/ -q`
+Expected: PASS. Any existing rbac-router suite that calls these three handlers directly needs `request=` added to its invocations, the same change Task 4 made for compliance. Find them with `grep -rn "create_role(\|update_role(\|delete_role(" tests/`.
 
 - [ ] **Step 5: Commit**
 
 ```bash
 make pre-commit
-git add mcpgateway/routers/rbac.py tests/unit/mcpgateway/routers/test_rbac_scope.py
+git add mcpgateway/routers/rbac.py tests/unit/mcpgateway/routers/test_rbac_scope.py tests/
 git commit -s -m "fix(rbac): require unrestricted platform admin for role definition changes
 
 Role has no team_id — a scope='team' role is an unbound template assignable
@@ -813,73 +870,98 @@ Filtering goes in the router, not `RoleService`, so the service stays a plain da
 
 - [ ] **Step 1: Write the failing test**
 
+These two handlers are **not** decorated with the new guard, so direct calls exercise the real filtering logic with no import-order hazard.
+
+`list_roles` returns `[RoleResponse.model_validate(role) for role in roles]`, so mock rows must satisfy every `RoleResponse` field: `id`, `name`, `description`, `scope`, `permissions`, `effective_permissions`, `inherits_from`, `created_by`, `is_system_role`, `is_active`, `created_at`, `updated_at`. A bare `SimpleNamespace(id=..., scope=...)` will fail validation — build complete rows.
+
 Append to `tests/unit/mcpgateway/routers/test_rbac_scope.py`:
 
 ```python
-def test_list_roles_hides_global_roles_from_narrowed_admin(app, client, monkeypatch):
-    """Narrowed admins see non-global roles only — a 403 here would break the UI role picker."""
-    # Standard
-    from types import SimpleNamespace
-    from unittest.mock import AsyncMock
+# Standard
+from datetime import datetime, timezone
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
 
-    rows = [
-        SimpleNamespace(id="1", name="platform_admin", scope="global"),
-        SimpleNamespace(id="2", name="team_admin", scope="team"),
-    ]
-    monkeypatch.setattr("mcpgateway.services.role_service.RoleService.list_roles", AsyncMock(return_value=rows))
+# Third-Party
+from fastapi import HTTPException
 
-    app.dependency_overrides[get_current_user_with_permissions] = lambda: admin_user_context(["team-a"])
-    try:
-        response = client.get("/rbac/roles")
-        assert response.status_code == 200
-        scopes = {r["scope"] for r in response.json()}
-        assert "global" not in scopes
-    finally:
-        app.dependency_overrides.pop(get_current_user_with_permissions, None)
+# First-Party
+from tests.helpers.scope import admin_user_context, scoped_request
+
+_NOW = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
 
-def test_list_roles_shows_everything_to_unrestricted_admin(app, client, monkeypatch):
-    # Standard
-    from types import SimpleNamespace
-    from unittest.mock import AsyncMock
-
-    rows = [
-        SimpleNamespace(id="1", name="platform_admin", scope="global"),
-        SimpleNamespace(id="2", name="team_admin", scope="team"),
-    ]
-    monkeypatch.setattr("mcpgateway.services.role_service.RoleService.list_roles", AsyncMock(return_value=rows))
-
-    app.dependency_overrides[get_current_user_with_permissions] = lambda: admin_user_context(None)
-    try:
-        response = client.get("/rbac/roles")
-        assert response.status_code == 200
-        assert len(response.json()) == 2
-    finally:
-        app.dependency_overrides.pop(get_current_user_with_permissions, None)
-
-
-def test_get_global_role_returns_404_for_narrowed_admin(app, client, monkeypatch):
-    """404, not 403 — do not confirm the existence of a role the caller may not enumerate."""
-    # Standard
-    from types import SimpleNamespace
-    from unittest.mock import AsyncMock
-
-    monkeypatch.setattr(
-        "mcpgateway.services.role_service.RoleService.get_role_by_id",
-        AsyncMock(return_value=SimpleNamespace(id="1", name="platform_admin", scope="global")),
+def _role_row(role_id, name, scope):
+    """Build a row satisfying every RoleResponse field."""
+    return SimpleNamespace(
+        id=role_id,
+        name=name,
+        description="d",
+        scope=scope,
+        permissions=[],
+        effective_permissions=[],
+        inherits_from=None,
+        created_by="admin@example.com",
+        is_system_role=False,
+        is_active=True,
+        created_at=_NOW,
+        updated_at=_NOW,
     )
 
-    app.dependency_overrides[get_current_user_with_permissions] = lambda: admin_user_context(["team-a"])
-    try:
-        assert client.get("/rbac/roles/1").status_code == 404
-    finally:
-        app.dependency_overrides.pop(get_current_user_with_permissions, None)
+
+@pytest.mark.asyncio
+async def test_list_roles_hides_global_roles_from_narrowed_admin(monkeypatch):
+    """Narrowed admins see non-global roles only — a 403 here would break the UI role picker."""
+    rows = [_role_row("1", "platform_admin", "global"), _role_row("2", "team_admin", "team")]
+    monkeypatch.setattr("mcpgateway.services.role_service.RoleService.list_roles", AsyncMock(return_value=rows))
+
+    result = await rbac_router.list_roles(
+        request=scoped_request(["team-a"], path="/rbac/roles"),
+        user=admin_user_context(["team-a"]),
+        db=MagicMock(),
+    )
+
+    assert {r.scope for r in result} == {"team"}
+
+
+@pytest.mark.asyncio
+async def test_list_roles_shows_everything_to_unrestricted_admin(monkeypatch):
+    rows = [_role_row("1", "platform_admin", "global"), _role_row("2", "team_admin", "team")]
+    monkeypatch.setattr("mcpgateway.services.role_service.RoleService.list_roles", AsyncMock(return_value=rows))
+
+    result = await rbac_router.list_roles(
+        request=scoped_request(None, path="/rbac/roles"),
+        user=admin_user_context(None),
+        db=MagicMock(),
+    )
+
+    assert len(result) == 2
+
+
+@pytest.mark.asyncio
+async def test_get_global_role_returns_404_for_narrowed_admin(monkeypatch):
+    """404, not 403 — do not confirm the existence of a role the caller may not enumerate."""
+    monkeypatch.setattr(
+        "mcpgateway.services.role_service.RoleService.get_role_by_id",
+        AsyncMock(return_value=_role_row("1", "platform_admin", "global")),
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await rbac_router.get_role(
+            request=scoped_request(["team-a"], path="/rbac/roles/1"),
+            role_id="1",
+            user=admin_user_context(["team-a"]),
+            db=MagicMock(),
+        )
+
+    assert exc.value.status_code == 404
+    assert exc.value.detail == "Role not found"
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `pytest tests/unit/mcpgateway/routers/test_rbac_scope.py -k "list_roles or get_global_role" -v`
-Expected: FAIL — global role is present in the narrowed list, and the detail route returns 200
+Expected: FAIL — `TypeError: ... unexpected keyword argument 'request'`
 
 - [ ] **Step 3: Add the filtering**
 
@@ -943,7 +1025,7 @@ with:
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `pytest tests/unit/mcpgateway/routers/test_rbac_scope.py -v`
-Expected: PASS (11 tests)
+Expected: PASS (all filtering tests plus the marker test from Task 5)
 
 - [ ] **Step 5: Commit**
 
@@ -989,67 +1071,105 @@ On DELETE the scope comes from the **existing `UserRole` row**, never from clien
 
 - [ ] **Step 1: Write the failing test**
 
+These handlers keep `@require_permission("admin.user_management")` — the per-record check lives in the handler body, so direct calls exercise it. Test `_authorize_assignment_scope` directly for the matrix, plus one end-to-end revoke test proving the stored row wins over the request.
+
 Append to `tests/unit/mcpgateway/routers/test_rbac_scope.py`:
 
 ```python
-def test_narrowed_admin_cannot_assign_global_role(app, client):
+@pytest.mark.asyncio
+async def test_narrowed_admin_cannot_authorize_global_assignment(monkeypatch):
     """The escalation path: a narrowed admin minting themselves a global '*' role."""
-    app.dependency_overrides[get_current_user_with_permissions] = lambda: admin_user_context(["team-a"])
-    try:
-        response = client.post(
-            "/rbac/users/victim@example.com/roles",
-            json={"role_id": "platform-admin-role", "scope": "global", "scope_id": None},
+    monkeypatch.setattr("mcpgateway.auth_context.is_unrestricted_platform_admin", AsyncMock(return_value=False))
+
+    with pytest.raises(HTTPException) as exc:
+        await rbac_router._authorize_assignment_scope(
+            scoped_request(["team-a"]), admin_user_context(["team-a"]), MagicMock(), "global", None, "victim@example.com"
         )
-        assert response.status_code == 403
-    finally:
-        app.dependency_overrides.pop(get_current_user_with_permissions, None)
+
+    assert exc.value.status_code == 403
 
 
-def test_narrowed_admin_cannot_assign_into_uncovered_team(app, client):
-    app.dependency_overrides[get_current_user_with_permissions] = lambda: admin_user_context(["team-a"])
-    try:
-        response = client.post(
-            "/rbac/users/victim@example.com/roles",
-            json={"role_id": "r", "scope": "team", "scope_id": "team-b"},
+@pytest.mark.asyncio
+async def test_unrestricted_admin_may_authorize_global_assignment(monkeypatch):
+    monkeypatch.setattr("mcpgateway.auth_context.is_unrestricted_platform_admin", AsyncMock(return_value=True))
+
+    assert (
+        await rbac_router._authorize_assignment_scope(
+            scoped_request(None), admin_user_context(None), MagicMock(), "global", None, "victim@example.com"
         )
-        assert response.status_code == 403
-    finally:
-        app.dependency_overrides.pop(get_current_user_with_permissions, None)
+        is None
+    )
 
 
-def test_narrowed_admin_may_assign_within_covered_team(app, client):
-    app.dependency_overrides[get_current_user_with_permissions] = lambda: admin_user_context(["team-a"])
-    try:
-        response = client.post(
-            "/rbac/users/member@example.com/roles",
-            json={"role_id": "r", "scope": "team", "scope_id": "team-a"},
-        )
-        assert response.status_code != 403
-    finally:
-        app.dependency_overrides.pop(get_current_user_with_permissions, None)
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "scope,scope_id,target,expected_denied",
+    [
+        ("team", "team-b", "victim@example.com", True),   # team not covered by the token
+        ("team", None, "victim@example.com", True),        # team scope with no scope_id fails closed
+        ("team", "team-a", "member@example.com", False),   # covered team
+        ("personal", None, "victim@example.com", True),    # someone else's personal scope
+        ("personal", None, "admin@example.com", False),    # self
+        ("nonsense", None, "victim@example.com", True),    # unknown scope fails closed
+    ],
+)
+async def test_assignment_scope_matrix(scope, scope_id, target, expected_denied):
+    request = scoped_request(["team-a"])
+    user = admin_user_context(["team-a"])
+
+    if expected_denied:
+        with pytest.raises(HTTPException) as exc:
+            await rbac_router._authorize_assignment_scope(request, user, MagicMock(), scope, scope_id, target)
+        assert exc.value.status_code == 403
+    else:
+        assert await rbac_router._authorize_assignment_scope(request, user, MagicMock(), scope, scope_id, target) is None
 
 
-def test_revoke_reads_scope_from_the_stored_row_not_the_request(app, client, monkeypatch):
+@pytest.mark.asyncio
+async def test_revoke_reads_scope_from_the_stored_row_not_the_request(monkeypatch):
     """A client must not be able to relabel a global assignment to get it revoked."""
-    # Standard
-    from types import SimpleNamespace
+    monkeypatch.setattr("mcpgateway.auth_context.is_unrestricted_platform_admin", AsyncMock(return_value=False))
+    monkeypatch.setattr(rbac_router, "_load_assignment", lambda db, email, role_id: SimpleNamespace(scope="global", scope_id=None))
 
-    stored = SimpleNamespace(scope="global", scope_id=None)
-    monkeypatch.setattr("mcpgateway.routers.rbac._load_assignment", lambda db, email, role_id: stored)
+    with pytest.raises(HTTPException) as exc:
+        # Caller claims team scope; the stored row says global, so this must be denied.
+        await rbac_router.revoke_user_role(
+            request=scoped_request(["team-a"]),
+            user_email="victim@example.com",
+            role_id="r",
+            scope="team",
+            scope_id="team-a",
+            user=admin_user_context(["team-a"]),
+            db=MagicMock(),
+        )
 
-    app.dependency_overrides[get_current_user_with_permissions] = lambda: admin_user_context(["team-a"])
-    try:
-        # Client claims team scope; the stored row says global, so this must be denied.
-        response = client.delete("/rbac/users/victim@example.com/roles/r?scope=team&scope_id=team-a")
-        assert response.status_code == 403
-    finally:
-        app.dependency_overrides.pop(get_current_user_with_permissions, None)
+    assert exc.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_revoke_returns_404_when_assignment_absent(monkeypatch):
+    monkeypatch.setattr(rbac_router, "_load_assignment", lambda db, email, role_id: None)
+
+    with pytest.raises(HTTPException) as exc:
+        await rbac_router.revoke_user_role(
+            request=scoped_request(None),
+            user_email="nobody@example.com",
+            role_id="r",
+            scope="team",
+            scope_id="team-a",
+            user=admin_user_context(None),
+            db=MagicMock(),
+        )
+
+    assert exc.value.status_code == 404
 ```
+
+Confirm `revoke_user_role`'s real parameter names and order with `sed -n '399,412p' mcpgateway/routers/rbac.py` before writing the two revoke calls, and match them exactly.
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `pytest tests/unit/mcpgateway/routers/test_rbac_scope.py -k "assign or revoke" -v`
-Expected: FAIL — assignments succeed and `_load_assignment` does not exist
+Run: `pytest tests/unit/mcpgateway/routers/test_rbac_scope.py -k "assign or revoke or matrix" -v`
+Expected: FAIL — `AttributeError: module has no attribute '_authorize_assignment_scope'`
 
 - [ ] **Step 3: Add the scope authorizer and the row loader**
 
@@ -1141,7 +1261,7 @@ In `revoke_user_role`, add `request: Request` as the first parameter and replace
 - [ ] **Step 5: Run tests to verify they pass**
 
 Run: `pytest tests/unit/mcpgateway/routers/test_rbac_scope.py -v`
-Expected: PASS (15 tests)
+Expected: PASS (marker, filtering, scope-matrix and revoke tests)
 
 - [ ] **Step 6: Commit**
 
@@ -1718,7 +1838,20 @@ Refs #5982"
 
 ## Self-Review Notes
 
-**Spec coverage:** §1 → Tasks 9, 11. §2 → Task 1. §3.1 → Task 3. §3.2 → Task 4. §3.3 → Task 5. §3.4 → Task 6. §3.5 → Task 7. §3.6 → Task 8. §4 → Task 9. §5 → Tasks 4–8. §5.1 → Task 2 plus the fixture rework inside Tasks 4 and 8. §5.2 → Task 12 Step 1. §6 → Tasks 10, 11. Appendix A → Task 9 manifests. Follow-up issues → Task 12.
+**Spec coverage:** §1 → Tasks 9, 11. §2 → Task 1. §3.1 → Task 3. §3.2 → Task 4. §3.3 → Task 5. §3.4 → Task 6. §3.5 → Task 7. §3.6 → Task 8. §4 → Task 9. §5 → Tasks 1, 6, 7, 8, 9 (see the testing-strategy note below). §5.1 → Task 2 plus the call-site updates in Tasks 4 and 5. §5.2 → Task 12 Step 1. §6 → Tasks 10, 11. Appendix A → Task 9 manifests. Follow-up issues → Task 12.
+
+**Testing strategy, and why it is not one deny test per route.** Router modules are imported once per session, and 26 suites import them under `patch_rbac_decorators`, which swaps the RBAC decorators for no-ops. Whichever module imports a router first decides whether its decorators are real. A route-level deny test in a second module would pass or fail on import order — an order-dependent flake dressed up as coverage.
+
+So the spec's three admin contexts (unrestricted / team-scoped / public-only) are covered in layers:
+
+| Layer | Where | Proves |
+|---|---|---|
+| Decorator behaviour | Task 1 — real decorator, all three contexts, mocked predicate | What the guard does |
+| Route carries the guard | Tasks 5, 9 — `__mcpgateway_scope_class__` marker assertions | That these routes use it |
+| Handler-body logic | Tasks 6, 7 — direct calls, no decorator involvement | Filtering and the assignment scope matrix |
+| Raise-helper call sites | Task 3 — roots suites | Conditional guards still fire |
+
+Together these give the same guarantee as per-route deny tests, without the import-order hazard.
 
 **Deliberately deferred:** the 64 A.2/A.4 routes are classified in Task 9 but not remediated — follow-up issue 1.
 
