@@ -53,7 +53,12 @@ import {
   updateHashForTab,
 } from "./tabs.js";
 import { initToolSelect } from "./tools.js";
-import { bindMcpAppMimeHelper, fetchWithTimeout, isAdminUser, safeGetElement } from "./utils.js";
+import {
+  bindMcpAppMimeHelper,
+  fetchWithTimeout,
+  isAdminUser,
+  safeGetElement,
+} from "./utils.js";
 import { debouncedServerSideTokenSearch, getTeamNameById } from "./tokens.js";
 import {
   closeGlobalSearchModal,
@@ -71,6 +76,7 @@ import {
   serverSideToolSearch,
 } from "./search.js";
 import { PANEL_SEARCH_CONFIG } from "./constants.js";
+import { initializeDataOperations } from "./dataOperations.js";
 
 // Separate initialization functions
 export const initializeCodeMirrorEditors = function () {
@@ -236,6 +242,7 @@ export const initializeEventListeners = function () {
   setupFormHandlers();
   setupSchemaModeHandlers();
   setupIntegrationTypeHandlers();
+  initializeDataOperations();
   console.log("✅ All event listeners initialized");
 };
 
@@ -368,7 +375,12 @@ const setupAuthenticationToggles = function () {
  * @param {Function} submitHandler - The submit event handler
  * @param {boolean} includeRefreshOnClick - Whether to add click handler for editor refresh
  */
-export const registerFormListeners = function (formId, submitHandler, includeRefreshOnClick = false, mcpMimeHelpers=[]) {
+export const registerFormListeners = function (
+  formId,
+  submitHandler,
+  includeRefreshOnClick = false,
+  mcpMimeHelpers = []
+) {
   const form = safeGetElement(formId);
   if (!form) return;
 
@@ -384,7 +396,7 @@ export const registerFormListeners = function (formId, submitHandler, includeRef
       }
     });
   }
-}
+};
 
 export const setupFormHandlers = function () {
   const gatewayForm = safeGetElement("add-gateway-form");
@@ -434,7 +446,7 @@ export const setupFormHandlers = function () {
     bindMcpAppMimeHelper(
       "resource-uri",
       "resource-mime-type",
-      "resource-mime-helper",
+      "resource-mime-helper"
     );
   }
 
@@ -497,7 +509,11 @@ export const setupFormHandlers = function () {
   registerFormListeners("edit-resource-form", handleEditResFormSubmit, true);
   registerFormListeners("edit-tool-form", handleEditToolFormSubmit, true);
   registerFormListeners("edit-gateway-form", handleEditGatewayFormSubmit, true);
-  registerFormListeners("edit-a2a-agent-form", handleEditA2AAgentFormSubmit, true);
+  registerFormListeners(
+    "edit-a2a-agent-form",
+    handleEditA2AAgentFormSubmit,
+    true
+  );
   registerFormListeners("add-grpc-service-form", handleGrpcServiceFormSubmit);
 
   // Setup search functionality for selectors
@@ -710,11 +726,7 @@ export const initializeSearchInputs = function () {
       searchInput.value = searchState.query;
     }
 
-    if (
-      tagInput &&
-      searchState.tags &&
-      tagInput.value !== searchState.tags
-    ) {
+    if (tagInput && searchState.tags && tagInput.value !== searchState.tags) {
       tagInput.value = searchState.tags;
     }
 

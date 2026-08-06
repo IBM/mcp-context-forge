@@ -8,7 +8,12 @@ import {
   validateUrl,
 } from "./security";
 import { getEditSelections } from "./servers";
-import { isInactiveChecked, safeGetElement, showErrorMessage, showSkippedToolsWarning } from "./utils";
+import {
+  isInactiveChecked,
+  safeGetElement,
+  showErrorMessage,
+  showSkippedToolsWarning,
+} from "./utils";
 
 // ===================================================================
 // ENHANCED FORM HANDLERS with Input Validation
@@ -355,7 +360,6 @@ export const handleEditPromptFormSubmit = async function (e) {
     }
 
     navigateAdmin("prompts", searchParams);
-
   } catch (error) {
     console.error("Error:", error);
     showErrorMessage(error.message);
@@ -590,7 +594,6 @@ export const handleA2AFormSubmit = async function (e) {
       }
 
       navigateAdmin("a2a-agents", searchParams);
-
     }
   } catch (error) {
     console.error("Add A2A Agent Error:", error);
@@ -754,7 +757,6 @@ export const handleEditToolFormSubmit = async function (event) {
       }
 
       navigateAdmin("tools", searchParams);
-
     }
   } catch (error) {
     console.error("Fetch error:", error);
@@ -848,7 +850,6 @@ export const handleEditGatewayFormSubmit = async function (e) {
     }
 
     navigateAdmin("gateways", searchParams);
-
   } catch (error) {
     console.error("Error:", error);
     showErrorMessage(error.message);
@@ -1049,7 +1050,6 @@ export const handleEditServerFormSubmit = async function (e) {
       }
 
       navigateAdmin("catalog", searchParams); // Virtual Servers tab
-
     }
   } catch (error) {
     console.error("Error:", error);
@@ -1124,7 +1124,6 @@ export const handleEditResFormSubmit = async function (e) {
       }
 
       navigateAdmin("resources", searchParams);
-
     }
   } catch (error) {
     console.error("Error:", error);
@@ -1177,10 +1176,16 @@ export const handleGrpcServiceFormSubmit = async function (e) {
       target,
       description: formData.get("description") || null,
       reflection_enabled: formData.get("reflection_enabled") === "on",
+      discovery_mode: formData.get("discovery_mode") || "auto",
       tls_enabled: formData.get("tls_enabled") === "on",
       tls_cert_path: formData.get("tls_cert_path") || null,
       tls_key_path: formData.get("tls_key_path") || null,
       grpc_metadata: {},
+      health_check_enabled: formData.get("health_check_enabled") === "on",
+      health_check_interval: Number(
+        formData.get("health_check_interval") || 60
+      ),
+      health_check_timeout: Number(formData.get("health_check_timeout") || 5),
       tags: [],
       visibility: formData.get("visibility") || "public",
     };
@@ -1219,7 +1224,6 @@ export const handleGrpcServiceFormSubmit = async function (e) {
     }
 
     navigateAdmin("grpc-services", searchParams);
-
   } catch (error) {
     console.error("Add gRPC Service Error:", error);
     if (status) {
