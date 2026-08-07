@@ -72,6 +72,7 @@ vi.mock("../../../mcpgateway/admin_ui/utils", () => ({
 afterEach(() => {
   document.body.innerHTML = "";
   delete window.ROOT_PATH;
+  delete window.USER_TEAMS_DATA;
   vi.clearAllMocks();
 });
 
@@ -261,6 +262,150 @@ describe("editGateway", () => {
     await editGateway("bad-gw");
 
     expect(showErrorMessage).toHaveBeenCalled();
+  });
+});
+
+describe("editGateway team selector", () => {
+  function createGatewayTeamEditHTML() {
+    return `
+      <form id="edit-gateway-form">
+        <input id="edit-gateway-name" />
+        <input id="edit-gateway-url" />
+        <textarea id="edit-gateway-description"></textarea>
+        <input id="edit-gateway-tags" />
+        <input id="edit-gateway-visibility-public" type="radio" name="visibility" value="public" />
+        <input id="edit-gateway-visibility-team" type="radio" name="visibility" value="team" />
+        <input id="edit-gateway-visibility-private" type="radio" name="visibility" value="private" />
+        <div id="edit-gateway-team-container" class="hidden">
+          <select id="edit-gateway-team-id" name="team_id" disabled></select>
+        </div>
+        <p id="edit-gateway-team-message"></p>
+        <select id="edit-gateway-transport"><option value="SSE">SSE</option></select>
+        <select id="auth-type-gw-edit"><option value="">None</option></select>
+        <input id="edit-gateway-passthrough-headers" />
+      </form>
+      <div id="gateway-edit-modal" class="hidden"></div>
+    `;
+  }
+
+  function mockGatewayEditResponse(overrides = {}) {
+    fetchWithTimeout.mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          name: "Team Gateway",
+          url: "http://localhost:8080",
+          visibility: "team",
+          transport: "SSE",
+          authType: "",
+          tags: [],
+          ...overrides,
+        }),
+    });
+  }
+
+  test("lists only owner teams and selects the current owned team", async () => {
+    document.body.innerHTML = createGatewayTeamEditHTML();
+    window.USER_TEAMS_DATA = [
+      { id: "team-owner-1", name: "Owner One", role: "owner" },
+      { id: "team-member", name: "Member Team", role: "member" },
+      { id: "team-owner-2", name: "Owner Two", role: "owner" },
+    ];
+    mockGatewayEditResponse({ teamId: "team-owner-2" });
+
+    await editGateway("gw-team");
+
+    const teamSelect = document.getElementById("edit-gateway-team-id");
+    expect(
+      Array.from(teamSelect.options).map((option) => option.value)
+    ).toEqual(["", "team-owner-1", "team-owner-2"]);
+    expect(teamSelect.value).toBe("team-owner-2");
+    expect(teamSelect.disabled).toBe(false);
+    expect(
+      document
+        .getElementById("edit-gateway-team-container")
+        .classList.contains("hidden")
+    ).toBe(false);
+  });
+
+  test("keeps the placeholder selected when the current team is not owned", async () => {
+    document.body.innerHTML = createGatewayTeamEditHTML();
+    window.USER_TEAMS_DATA = [
+      { id: "team-owner", name: "Owner Team", role: "owner" },
+      { id: "team-member", name: "Member Team", role: "member" },
+    ];
+    mockGatewayEditResponse({ teamId: "team-member" });
+
+    await editGateway("gw-member-team");
+
+    const teamSelect = document.getElementById("edit-gateway-team-id");
+    expect(teamSelect.value).toBe("");
+    expect(teamSelect.options[0].textContent).toBe("— Select a team —");
+  });
+
+  test("disables and omits team_id outside team visibility", async () => {
+    document.body.innerHTML = createGatewayTeamEditHTML();
+    window.USER_TEAMS_DATA = [
+      { id: "team-owner", name: "Owner Team", role: "owner" },
+    ];
+    mockGatewayEditResponse({
+      visibility: "private",
+      teamId: "team-owner",
+    });
+
+    await editGateway("gw-private");
+
+    const form = document.getElementById("edit-gateway-form");
+    const teamSelect = document.getElementById("edit-gateway-team-id");
+    expect(teamSelect.disabled).toBe(true);
+    expect(
+      document
+        .getElementById("edit-gateway-team-container")
+        .classList.contains("hidden")
+    ).toBe(true);
+    expect(new FormData(form).has("team_id")).toBe(false);
+  });
+
+  test("updates selector state when visibility changes", async () => {
+    document.body.innerHTML = createGatewayTeamEditHTML();
+    window.USER_TEAMS_DATA = [
+      { id: "team-owner", name: "Owner Team", role: "owner" },
+    ];
+    mockGatewayEditResponse({ visibility: "private", teamId: "team-owner" });
+    await editGateway("gw-toggle");
+
+    const teamRadio = document.getElementById("edit-gateway-visibility-team");
+    const teamSelect = document.getElementById("edit-gateway-team-id");
+    teamRadio.checked = true;
+    teamRadio.dispatchEvent(new Event("change"));
+
+    expect(teamSelect.disabled).toBe(false);
+    expect(
+      document
+        .getElementById("edit-gateway-team-container")
+        .classList.contains("hidden")
+    ).toBe(false);
+    expect(
+      new FormData(document.getElementById("edit-gateway-form")).get("team_id")
+    ).toBe("team-owner");
+  });
+
+  test("disables team visibility when the user owns no teams", async () => {
+    document.body.innerHTML = createGatewayTeamEditHTML();
+    window.USER_TEAMS_DATA = [
+      { id: "team-member", name: "Member Team", role: "member" },
+    ];
+    mockGatewayEditResponse({ teamId: "team-member" });
+
+    await editGateway("gw-no-owner");
+
+    expect(
+      document.getElementById("edit-gateway-visibility-team").disabled
+    ).toBe(true);
+    expect(document.getElementById("edit-gateway-team-id").disabled).toBe(true);
+    expect(
+      document.getElementById("edit-gateway-team-message").textContent
+    ).toContain("no teams you own");
   });
 });
 
