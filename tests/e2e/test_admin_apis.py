@@ -989,7 +989,7 @@ class TestAdminRootAPIs:
 
     async def test_admin_root_lifecycle(self, client: AsyncClient, mock_settings, monkeypatch):
         """Test complete root lifecycle through admin UI."""
-        monkeypatch.setattr("mcpgateway.admin.is_unrestricted_platform_admin", AsyncMock(return_value=True))
+        monkeypatch.setattr("mcpgateway.auth_context.is_unrestricted_platform_admin", AsyncMock(return_value=True))
         monkeypatch.setattr(settings, "root_allow_file_scheme", True, raising=False)
         monkeypatch.setattr(settings, "root_allowed_file_prefixes", ["/test/admin"], raising=False)
         # Add a root

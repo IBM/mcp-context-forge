@@ -1568,14 +1568,14 @@ class TestRootAPIs:
 
     async def test_list_roots_empty(self, client: AsyncClient, mock_auth, monkeypatch):
         """Test GET /roots returns empty list initially."""
-        monkeypatch.setattr("mcpgateway.main.is_unrestricted_platform_admin", AsyncMock(return_value=True))
+        monkeypatch.setattr("mcpgateway.auth_context.is_unrestricted_platform_admin", AsyncMock(return_value=True))
         response = await client.get("/roots", headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
         assert response.json() == []
 
     async def test_add_root(self, client: AsyncClient, mock_auth, monkeypatch):
         """Test POST /roots - add filesystem root."""
-        monkeypatch.setattr("mcpgateway.main.is_unrestricted_platform_admin", AsyncMock(return_value=True))
+        monkeypatch.setattr("mcpgateway.auth_context.is_unrestricted_platform_admin", AsyncMock(return_value=True))
         monkeypatch.setattr(settings, "root_allow_file_scheme", True, raising=False)
         monkeypatch.setattr(settings, "root_allowed_file_prefixes", ["/test"], raising=False)
         root_data = {"uri": "file:///test/path", "name": "Test Root"}
@@ -1589,7 +1589,7 @@ class TestRootAPIs:
 
     async def test_list_roots_after_add(self, client: AsyncClient, mock_auth, monkeypatch):
         """Test GET /roots after adding roots."""
-        monkeypatch.setattr("mcpgateway.main.is_unrestricted_platform_admin", AsyncMock(return_value=True))
+        monkeypatch.setattr("mcpgateway.auth_context.is_unrestricted_platform_admin", AsyncMock(return_value=True))
         monkeypatch.setattr(settings, "root_allow_file_scheme", True, raising=False)
         monkeypatch.setattr(settings, "root_allowed_file_prefixes", ["/path1", "/path2"], raising=False)
         # Add multiple roots
@@ -1606,7 +1606,7 @@ class TestRootAPIs:
 
     async def test_remove_root(self, client: AsyncClient, mock_auth, monkeypatch):
         """Test DELETE /roots/{uri:path}."""
-        monkeypatch.setattr("mcpgateway.main.is_unrestricted_platform_admin", AsyncMock(return_value=True))
+        monkeypatch.setattr("mcpgateway.auth_context.is_unrestricted_platform_admin", AsyncMock(return_value=True))
         monkeypatch.setattr(settings, "root_allow_file_scheme", True, raising=False)
         monkeypatch.setattr(settings, "root_allowed_file_prefixes", ["/test"], raising=False)
         # Add a root
@@ -1745,8 +1745,18 @@ class TestMetricsAPIs:
 class TestVersionAndDocs:
     """Test version and documentation endpoints."""
 
-    async def test_get_version_with_admin_auth(self, client: AsyncClient):
+    async def test_get_version_with_admin_auth(self, client: AsyncClient, monkeypatch):
         """Test GET /version with admin auth succeeds."""
+        # /version's _user dependency (require_admin_auth) is already replaced by
+        # temp_db's app.dependency_overrides, so the JWT header content plays no
+        # role in authentication here. What broke this test is unrelated: the
+        # scope guard inside version_endpoint calls is_unrestricted_platform_admin()
+        # with a real DB session from fresh_db_session(), which resolves via
+        # mcpgateway.db's own unpatched SessionLocal — a different, unmigrated
+        # database from this fixture's TestSessionLocal — and 503s. Mocking the
+        # predicate directly is the same pattern the sibling roots tests in this
+        # class already use for the identical reason.
+        monkeypatch.setattr("mcpgateway.auth_context.is_unrestricted_platform_admin", AsyncMock(return_value=True))
         response = await client.get("/version", headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
         result = response.json()
