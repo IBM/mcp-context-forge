@@ -1,5 +1,5 @@
 {
-  "users.createUser": "Create User",
+  "users.createUser": "Create user",
   "users.date.never": "Never",
   "users.empty.title": "No users found",
   "users.emptyState.description": "Create user accounts with email and password authentication.",
@@ -13,6 +13,7 @@
   "users.form.confirmPassword": "Confirm Password",
   "users.form.description": "Create a new user account with email and password authentication.",
   "users.form.email.placeholder": "user@example.com",
+  "users.form.email.readonly": "Email address can't be changed",
   "users.form.email": "Email",
   "users.form.error.createFailed": "Failed to create user. Please try again.",
   "users.form.error.emailInvalid": "Invalid email address",

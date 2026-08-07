@@ -56,14 +56,14 @@ beforeEach(() => {
 
 describe("useTeamForm", () => {
   describe("Initial State", () => {
-    it("initializes with defaults and a single owner member row", () => {
+    it("initializes with defaults and a single member row", () => {
       const { result } = renderHook(() => useTeamForm());
 
       expect(result.current.name).toBe("");
       expect(result.current.description).toBe("");
       expect(result.current.visibility).toBe("private");
       expect(result.current.maxMembers).toBe("100");
-      expect(result.current.members).toEqual([{ email: "", role: "owner" }]);
+      expect(result.current.members).toEqual([{ email: "", role: "member" }]);
       expect(result.current.error).toBeNull();
       expect(result.current.isSubmitting).toBe(false);
     });
@@ -183,7 +183,7 @@ describe("useTeamForm", () => {
 
       act(() => {
         result.current.setName("Engineering");
-        result.current.handleMemberEmailChange(0, "owner@example.com");
+        result.current.handleMemberEmailChange(0, "member@example.com");
       });
 
       await act(async () => {
@@ -191,7 +191,7 @@ describe("useTeamForm", () => {
       });
 
       await waitFor(() => expect(memberBodies).toHaveLength(1));
-      expect(memberBodies[0]).toMatchObject({ email: "owner@example.com", role: "owner" });
+      expect(memberBodies[0]).toMatchObject({ email: "member@example.com", role: "member" });
     });
 
     it("closes the form and warns via toast when a member add fails", async () => {

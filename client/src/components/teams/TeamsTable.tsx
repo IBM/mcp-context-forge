@@ -63,7 +63,7 @@ export function TeamsTable({
         <TableCaption className="sr-only">
           {intl.formatMessage({ id: "teams.table.caption" })}
         </TableCaption>
-        <TableHeader className="bg-white dark:bg-transparent">
+        <TableHeader className="bg-main">
           <TableRow className="border-none hover:bg-transparent">
             <TableHead className="border-b border-border h-12 px-4 text-xs font-medium text-neutral-600 dark:text-neutral-400">
               {intl.formatMessage({ id: "teams.table.name" })}
@@ -92,7 +92,7 @@ export function TeamsTable({
             return (
               <TableRow
                 key={team.id}
-                className="bg-neutral-50 dark:bg-neutral-800 hover:bg-neutral-100 dark:hover:bg-neutral-700/60 [&>td:first-child]:rounded-l-lg [&>td:last-child]:rounded-r-lg"
+                className="bg-white dark:bg-neutral-800 hover:bg-neutral-100 dark:hover:bg-neutral-700/60 [&>td:first-child]:rounded-l-lg [&>td:last-child]:rounded-r-lg"
               >
                 <TableCell className="px-4 py-2.5">
                   <div className="flex items-center gap-3">

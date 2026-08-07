@@ -1,5 +1,5 @@
 import React from "react";
-import { ChevronDown, User } from "lucide-react";
+import { ChevronDown, Lock, User } from "lucide-react";
 import { useIntl } from "react-intl";
 import { BackButton } from "@/components/ui/back-button";
 import { Button } from "@/components/ui/button";
@@ -110,6 +110,12 @@ export function UserForm({
 
   const [advancedOpen, setAdvancedOpen] = React.useState(isEditMode);
 
+  // In create mode, keep the submit button disabled until every required field
+  // (email + both password fields) has a value. Edit mode has no such gate:
+  // email is fixed and the password is optional.
+  const requiredFieldsMissing =
+    !isEditMode && (!email.trim() || password.length === 0 || confirmPassword.length === 0);
+
   const onSubmit = (event: React.FormEvent<HTMLFormElement>) => {
     handleSubmit(
       event,
@@ -133,14 +139,14 @@ export function UserForm({
 
       <div className="rounded-xl border border-neutral-200 bg-inherit p-0 shadow-[0_12px_40px_rgba(15,23,42,0.12)] dark:border-neutral-800">
         <div className="flex flex-col gap-8 p-6 sm:p-8">
-          <div className="flex flex-col gap-4">
-            <div className="flex items-center gap-3">
-              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-sm bg-blue-500 text-white shadow-sm">
-                <User className="h-5 w-5" />
+          <div className="flex flex-col gap-3">
+            <div className="flex items-center gap-2.5">
+              <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-sm bg-emerald-500 shadow-sm">
+                <User className="h-4 w-4 text-white" />
               </div>
               <h2
                 id="user-form-title"
-                className="text-2xl font-semibold tracking-tight text-neutral-950 dark:text-neutral-50"
+                className="align-middle text-base font-semibold leading-6 tracking-normal text-neutral-950 dark:text-neutral-50"
               >
                 {intl.formatMessage({
                   id: isEditMode ? "users.edit.dialog.title" : "users.form.title",
@@ -162,8 +168,19 @@ export function UserForm({
                   <p className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
                     {intl.formatMessage({ id: "users.form.email" })}
                   </p>
-                  <p className="rounded-md border border-neutral-200 bg-neutral-50 px-4 py-2 text-sm text-neutral-600 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-400">
-                    {user?.email}
+                  <div
+                    className="flex h-10 cursor-not-allowed items-center justify-between gap-2 rounded-md border border-neutral-300 bg-neutral-50 px-4 text-sm text-neutral-500 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-400"
+                    title={intl.formatMessage({ id: "users.form.email.readonly" })}
+                    aria-disabled="true"
+                  >
+                    <span className="truncate">{user?.email}</span>
+                    <Lock
+                      className="h-4 w-4 shrink-0 text-neutral-400 dark:text-neutral-500"
+                      aria-hidden="true"
+                    />
+                  </div>
+                  <p className="text-xs text-neutral-500 dark:text-neutral-400">
+                    {intl.formatMessage({ id: "users.form.email.readonly" })}
                   </p>
                 </>
               ) : (
@@ -180,7 +197,7 @@ export function UserForm({
                     value={email}
                     onChange={(event) => setEmail(event.target.value)}
                     placeholder={intl.formatMessage({ id: "users.form.email.placeholder" })}
-                    className="rounded-md border-neutral-300 bg-white px-4 text-sm text-neutral-900 shadow-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-0 placeholder:text-neutral-400 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-100 dark:placeholder:text-neutral-500"
+                    className="h-10 border-neutral-300 shadow-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-0 dark:border-neutral-700"
                     aria-invalid={!!errors.email}
                     aria-describedby={errors.email ? "user-email-error" : undefined}
                   />
@@ -200,7 +217,7 @@ export function UserForm({
                 value={fullName}
                 onChange={(event) => setFullName(event.target.value)}
                 placeholder={intl.formatMessage({ id: "users.form.fullName.placeholder" })}
-                className="rounded-md border-neutral-300 bg-white px-4 text-sm text-neutral-900 shadow-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-0 placeholder:text-neutral-400 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-100 dark:placeholder:text-neutral-500"
+                className="h-10 border-neutral-300 shadow-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-0 dark:border-neutral-700"
                 aria-invalid={!!errors.fullName}
                 aria-describedby={errors.fullName ? "user-full-name-error" : undefined}
               />
@@ -240,7 +257,7 @@ export function UserForm({
                 type="button"
                 variant="ghost"
                 onClick={() => setAdvancedOpen((current) => !current)}
-                className="inline-flex w-full items-center gap-2 rounded-md border border-neutral-200 px-3 py-2 text-sm font-medium text-neutral-600 transition hover:text-neutral-950 dark:border-neutral-800 dark:text-neutral-400 dark:hover:text-neutral-300"
+                className="inline-flex w-full items-center justify-start gap-2 rounded-md border border-neutral-200 px-3 py-2 text-sm font-medium text-neutral-600 transition hover:text-neutral-950 dark:border-neutral-800 dark:text-neutral-400 dark:hover:text-neutral-300"
                 aria-expanded={advancedOpen}
                 aria-controls="advanced-settings-region"
               >
@@ -295,20 +312,11 @@ export function UserForm({
                 </div>
               )}
 
-              <div className="flex items-center justify-end gap-3 pt-6">
-                <Button
-                  type="button"
-                  variant="ghost"
-                  onClick={onToggle}
-                  className="h-10 rounded-md px-3 text-sm font-medium text-neutral-700 hover:bg-neutral-100 hover:text-neutral-950 dark:text-neutral-300 dark:hover:bg-neutral-800 dark:hover:text-neutral-100"
-                >
+              <div className="flex justify-end gap-3 pt-2">
+                <Button type="button" variant="ghost" onClick={onToggle} disabled={isSubmitting}>
                   {intl.formatMessage({ id: "users.form.button.cancel" })}
                 </Button>
-                <Button
-                  type="submit"
-                  disabled={isSubmitting}
-                  className="h-10 rounded-md bg-neutral-950 px-4 text-sm font-medium text-white hover:enabled:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-neutral-100 dark:text-neutral-950 dark:hover:enabled:bg-neutral-200"
-                >
+                <Button type="submit" disabled={isSubmitting || requiredFieldsMissing}>
                   {isSubmitting
                     ? intl.formatMessage({
                         id: isEditMode ? "users.form.button.saving" : "users.form.button.creating",

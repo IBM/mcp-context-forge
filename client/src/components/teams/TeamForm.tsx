@@ -115,7 +115,7 @@ export function TeamForm({ isOpen, onToggle, onSuccess, team }: TeamFormProps) {
                 onChange={(e) => setName(e.target.value)}
                 placeholder={intl.formatMessage({ id: "teams.create.namePlaceholder" })}
                 disabled={isSubmitting}
-                className="h-10 border-neutral-300 dark:border-neutral-700"
+                className="h-10 border-neutral-300 shadow-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-0 dark:border-neutral-700"
               />
               <p className="text-xs text-neutral-500 dark:text-neutral-400">
                 {intl.formatMessage({ id: "teams.create.nameHint" })}
@@ -130,7 +130,7 @@ export function TeamForm({ isOpen, onToggle, onSuccess, team }: TeamFormProps) {
               aria-label={intl.formatMessage({ id: "teams.create.descriptionLabel" })}
               disabled={isSubmitting}
               rows={3}
-              className="resize-none border-neutral-300 dark:border-neutral-700"
+              className="resize-none border-neutral-300 focus-visible:ring-1 focus-visible:ring-offset-0 dark:border-neutral-700"
             />
 
             {/* Visibility */}
@@ -208,7 +208,7 @@ export function TeamForm({ isOpen, onToggle, onSuccess, team }: TeamFormProps) {
                         emptyText={intl.formatMessage({ id: "teams.create.memberPlaceholder" })}
                         allowCustomValue={false}
                         disabled={isSubmitting}
-                        className="h-10 border-neutral-300 dark:border-neutral-700"
+                        className="h-10 border-neutral-300 shadow-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-0 dark:border-neutral-700"
                       />
                       <Select
                         value={member.role}
@@ -217,7 +217,7 @@ export function TeamForm({ isOpen, onToggle, onSuccess, team }: TeamFormProps) {
                         }
                         disabled={isSubmitting}
                       >
-                        <SelectTrigger className="h-10 w-full border-neutral-300 dark:border-neutral-700">
+                        <SelectTrigger className="h-10 w-full border-neutral-300 shadow-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-0 dark:border-neutral-700">
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
@@ -269,7 +269,7 @@ export function TeamForm({ isOpen, onToggle, onSuccess, team }: TeamFormProps) {
               <Select value={maxMembers} onValueChange={setMaxMembers} disabled={isSubmitting}>
                 <SelectTrigger
                   id="max-members"
-                  className="h-10 w-full border-neutral-300 dark:border-neutral-700"
+                  className="h-10 w-full border-neutral-300 shadow-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-0 dark:border-neutral-700"
                 >
                   <SelectValue />
                 </SelectTrigger>

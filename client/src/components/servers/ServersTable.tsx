@@ -160,7 +160,7 @@ export function ServersTable({
     <div className="overflow-hidden">
       <Table className="min-w-full border-separate border-spacing-y-1.5">
         <TableCaption className="sr-only">List of MCP servers with status and actions</TableCaption>
-        <TableHeader className="bg-white dark:bg-transparent">
+        <TableHeader className="bg-main">
           <TableRow className="border-none hover:bg-transparent">
             <TableHead className="border-b border-border h-12 px-4 text-xs font-medium text-neutral-600 dark:text-neutral-400">
               Name
@@ -200,7 +200,7 @@ export function ServersTable({
             return (
               <TableRow
                 key={server.id}
-                className="bg-neutral-50 dark:bg-neutral-800 hover:bg-neutral-100 dark:hover:bg-neutral-700/60 [&>td:first-child]:rounded-l-lg [&>td:last-child]:rounded-r-lg"
+                className="bg-white dark:bg-neutral-800 hover:bg-neutral-100 dark:hover:bg-neutral-700/60 [&>td:first-child]:rounded-l-lg [&>td:last-child]:rounded-r-lg"
               >
                 <TableCell className="px-4 py-2.5">
                   <div className="flex items-center gap-3">
