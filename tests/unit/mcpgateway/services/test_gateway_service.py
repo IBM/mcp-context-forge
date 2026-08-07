@@ -7330,6 +7330,31 @@ class TestListGatewaysTokenTeams:
         assert cursor is None
 
     @pytest.mark.asyncio
+    async def test_admin_specific_team_is_an_exact_filter(self, gateway_service, monkeypatch):
+        """Admin team_id filtering excludes public gateways assigned to other teams."""
+        db = MagicMock()
+        mock_cache = MagicMock()
+        mock_cache.get = AsyncMock(return_value=None)
+        mock_cache.set = AsyncMock()
+        mock_cache.hash_filters = MagicMock(return_value="h")
+        monkeypatch.setattr("mcpgateway.services.gateway_service._get_registry_cache", lambda: mock_cache)
+
+        mock_paginate = AsyncMock(return_value=([], None))
+        monkeypatch.setattr("mcpgateway.services.gateway_service.unified_paginate", mock_paginate)
+        monkeypatch.setattr("mcpgateway.services.base_service.is_user_admin", MagicMock(return_value=True))
+
+        await gateway_service.list_gateways(
+            db,
+            user_email="admin@test.com",
+            token_teams=None,
+            team_id="team-1",
+        )
+
+        query = mock_paginate.await_args.kwargs["query"]
+        compiled = str(query.compile(compile_kwargs={"literal_binds": True}))
+        assert "AND gateways.team_id = 'team-1'" in compiled
+
+    @pytest.mark.asyncio
     async def test_page_based_pagination(self, gateway_service, monkeypatch):
         """Page-based pagination returns dict format."""
         db = MagicMock()
