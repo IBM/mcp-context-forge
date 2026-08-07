@@ -52,6 +52,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 import secrets
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 # Third-Party
@@ -153,6 +154,20 @@ def _auth_headers() -> dict:
     """
     token = make_test_jwt(ADMIN_EMAIL, is_admin=True)
     return make_auth_headers(token)
+
+
+def _mock_outbound_rest_request(monkeypatch, mock_request: AsyncMock) -> None:
+    """Route mocked upstream sends through the REST tool invocation client.
+
+    The SSRF connection-pinning path swaps ``tool_service._http_client`` for a
+    freshly built pinned client, so patching ``_http_client.request`` alone
+    leaves a real (unmocked) network call that burns the full tool timeout.
+    """
+
+    def build_client():
+        return SimpleNamespace(request=mock_request, get=AsyncMock(), aclose=AsyncMock())
+
+    monkeypatch.setattr("mcpgateway.services.tool_service._build_pinned_rest_http_client", build_client)
 
 
 # ---------------------------------------------------------------------------
@@ -277,7 +292,9 @@ async def control_telemetry_app(monkeypatch, tmp_path):
         json={"content": [{"type": "text", "text": "hello from upstream"}], "isError": False},
         request=httpx.Request("POST", CONTROL_UPSTREAM_URL),
     )
-    monkeypatch.setattr(tool_service._http_client, "request", AsyncMock(return_value=upstream_response))
+    mock_request = AsyncMock(return_value=upstream_response)
+    monkeypatch.setattr(tool_service._http_client, "request", mock_request)
+    _mock_outbound_rest_request(monkeypatch, mock_request)
 
     transport = ASGITransport(app=test_app)
     async with AsyncClient(transport=transport, base_url="http://e2e-test") as client:
@@ -700,7 +717,9 @@ async def denying_plugin_app(monkeypatch, tmp_path):
         json={"content": [{"type": "text", "text": "hello"}], "isError": False},
         request=httpx.Request("POST", CONTROL_UPSTREAM_URL),
     )
-    monkeypatch.setattr(tool_service._http_client, "request", AsyncMock(return_value=upstream_response))
+    mock_request = AsyncMock(return_value=upstream_response)
+    monkeypatch.setattr(tool_service._http_client, "request", mock_request)
+    _mock_outbound_rest_request(monkeypatch, mock_request)
 
     transport = ASGITransport(app=test_app)
     async with AsyncClient(transport=transport, base_url="http://e2e-test") as client:
