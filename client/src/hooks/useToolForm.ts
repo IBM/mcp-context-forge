@@ -394,6 +394,8 @@ export function useToolForm({
       }
     };
 
+    const cleanTags = tags.map((t) => sanitizeString(t, 200)).filter(Boolean);
+
     const tool: ApiToolPayload["tool"] = {
       name: sanitizeString(name, 100),
       url: sanitizeUrl(url, 2000),
@@ -403,7 +405,7 @@ export function useToolForm({
       inputSchema: parseSchemaJson(inputSchema),
       outputSchema: parseSchemaJson(outputSchema),
       jsonpath_filter: responseFilter ? sanitizeString(responseFilter, 500) : undefined,
-      tags: tags.length > 0 ? tags : undefined,
+      tags: cleanTags.length > 0 ? cleanTags : undefined,
       visibility: visibility || undefined,
     };
 

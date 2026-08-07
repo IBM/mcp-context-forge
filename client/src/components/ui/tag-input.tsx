@@ -1,4 +1,4 @@
-import { useId, useMemo, useRef, useState } from "react";
+import { useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ClipboardEvent, KeyboardEvent } from "react";
 import { useIntl } from "react-intl";
 import { X } from "lucide-react";
@@ -41,6 +41,7 @@ export function TagInput({
   const [activeIndex, setActiveIndex] = useState(-1);
   const [focused, setFocused] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const pendingFocusRef = useRef(false);
   const listboxId = useId();
   const optionPrefix = useId();
 
@@ -65,10 +66,19 @@ export function TagInput({
     setActiveIndex(-1);
   };
 
+  // At maxTags the input is still disabled until the parent re-render commits,
+  // so focus() must wait for the layout effect or it lands on a disabled input.
   const removeAt = (index: number) => {
     onChange(value.filter((_, i) => i !== index));
-    inputRef.current?.focus();
+    pendingFocusRef.current = true;
   };
+
+  useLayoutEffect(() => {
+    if (pendingFocusRef.current) {
+      pendingFocusRef.current = false;
+      inputRef.current?.focus();
+    }
+  });
 
   const options = useMemo<Suggestion[]>(() => {
     const query = text.trim().toLowerCase();

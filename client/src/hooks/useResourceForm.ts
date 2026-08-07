@@ -117,6 +117,7 @@ export function useResourceForm(options: ResourceFormOptions = {}): UseResourceF
   const isSubmitting = isCreating || isUpdating;
 
   const getFormData = useCallback((): BodyCreateResourceV1ResourcesPost => {
+    const cleanTags = tags.map((t) => sanitizeString(t, 200)).filter(Boolean);
     return {
       resource: {
         uri: sanitizeString(uri, 2000),
@@ -124,7 +125,7 @@ export function useResourceForm(options: ResourceFormOptions = {}): UseResourceF
         content,
         description: description ? sanitizeString(description, 500) : undefined,
         mimeType: mimeType ? sanitizeString(mimeType, 200) : undefined,
-        tags: tags.length > 0 ? tags : undefined,
+        tags: cleanTags.length > 0 ? cleanTags : undefined,
         visibility,
       },
     };
