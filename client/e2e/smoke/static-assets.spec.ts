@@ -9,7 +9,7 @@ import { APP } from "../utils/paths";
  */
 test.describe("Static assets (smoke)", () => {
   test("no 4xx/5xx for JS, CSS, or fonts on initial load", async ({ page, apiMock }) => {
-    await apiMock.mockMe({ status: 401 });
+    await apiMock.mockSession({ authenticated: false });
 
     const failures: string[] = [];
     page.on("response", (response) => {

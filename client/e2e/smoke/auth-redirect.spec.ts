@@ -3,7 +3,7 @@ import { APP, TOKEN_STORAGE_KEY } from "../utils/paths";
 
 test.describe("Unauthenticated access (smoke)", () => {
   test.beforeEach(async ({ page, apiMock }) => {
-    await apiMock.mockMe({ status: 401 });
+    await apiMock.mockSession({ authenticated: false });
     await page.addInitScript((key) => {
       window.sessionStorage.removeItem(key);
     }, TOKEN_STORAGE_KEY);

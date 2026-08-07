@@ -75,7 +75,7 @@ const MOCK_MCP_SERVER_2 = {
 test.describe("Virtual Servers page", () => {
   test.beforeEach(async ({ page, apiMock }) => {
     // Mock authentication
-    await apiMock.mockMe();
+    await apiMock.mockSession();
 
     // Set auth token in sessionStorage
     await page.addInitScript(() => {

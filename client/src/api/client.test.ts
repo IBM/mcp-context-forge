@@ -417,7 +417,7 @@ describe("api client", () => {
       expect(requestUrl).not.toContain("/api/api/tools");
     });
 
-    it("leaves /auth/* paths unprefixed (BFF-owned, not proxied)", async () => {
+    it("leaves the BFF's own auth routes unprefixed (login/logout/session)", async () => {
       let requestUrl: string | null = null;
       server.use(
         http.get("*/auth/session", ({ request }) => {
@@ -430,6 +430,23 @@ describe("api client", () => {
 
       expect(requestUrl).not.toContain("/api/auth");
       expect(requestUrl).toContain("/auth/session");
+    });
+
+    it("prefixes /auth/email/admin/users — a real FastAPI endpoint, not a BFF-owned auth route", async () => {
+      // Regression: an earlier version exempted anything starting with
+      // "/auth/" from prefixing, which silently broke user management
+      // (FastAPI mounts admin user endpoints under /auth/email/admin/*).
+      let requestUrl: string | null = null;
+      server.use(
+        http.get("*/api/auth/email/admin/users", ({ request }) => {
+          requestUrl = request.url;
+          return HttpResponse.json({ users: [] });
+        }),
+      );
+
+      await api.get("/auth/email/admin/users");
+
+      expect(requestUrl).toContain("/api/auth/email/admin/users");
     });
   });
 

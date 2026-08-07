@@ -75,7 +75,7 @@ const TOOL_B1 = makeTool("send_message", "slack-server");
 
 test.describe("Tools page", () => {
   test.beforeEach(async ({ page, apiMock }) => {
-    await apiMock.mockMe();
+    await apiMock.mockSession();
 
     await page.addInitScript(() => {
       sessionStorage.setItem("mcpgateway_token", "mock-token-12345");
@@ -721,13 +721,13 @@ test.describe("Tools page", () => {
   const authScenarios: Array<{
     label: string;
     authLabelFor: string | null;
-    fillCreds: (page: Page) => Promise<void>;
-    expectAuth: (tool: Record<string, unknown>) => void;
+    fillCreds: (page: Page) => Promise<void>; // pragma: allowlist secret
+    expectAuth: (tool: Record<string, unknown>) => void; // pragma: allowlist secret
   }> = [
     {
       label: "no authentication",
       authLabelFor: null,
-      fillCreds: async () => {},
+      fillCreds: async () => {}, // pragma: allowlist secret
       expectAuth: (tool) => {
         expect(tool.auth_type).toBeUndefined();
       },
@@ -735,7 +735,8 @@ test.describe("Tools page", () => {
     {
       label: "basic authentication",
       authLabelFor: "auth-basic",
-      fillCreds: async (page) => {
+      // prettier-ignore
+      fillCreds: async (page) => { // pragma: allowlist secret
         await page.locator("#basic-auth-username").fill("api_user");
         await page.locator("#basic-auth-password").fill("s3cret_pass");
       },
@@ -748,7 +749,8 @@ test.describe("Tools page", () => {
     {
       label: "bearer token authentication",
       authLabelFor: "auth-bearer",
-      fillCreds: async (page) => {
+      // prettier-ignore
+      fillCreds: async (page) => { // pragma: allowlist secret
         await page.locator("#bearer-token").fill("tok_abc123");
       },
       expectAuth: (tool) => {
@@ -759,7 +761,8 @@ test.describe("Tools page", () => {
     {
       label: "custom header authentication",
       authLabelFor: "auth-custom",
-      fillCreds: async (page) => {
+      // prettier-ignore
+      fillCreds: async (page) => { // pragma: allowlist secret
         await page.getByRole("button", { name: "Add header" }).click();
         await page.locator("#header-key-0").fill("X-API-Key");
         await page.locator("#header-value-0").fill("key_value_123");

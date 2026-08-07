@@ -8,9 +8,13 @@
  *    the token itself is handed to us in the JSON body of /auth/login and
  *    /auth/session and kept in memory here (setCsrfToken), then echoed back
  *    via X-CSRF-Token on mutating requests. See client/server/src/plugins/csrf.ts.
- *  - Every path except /auth/* is routed through the BFF's /api/* proxy —
- *    resolveApiPath prepends /api automatically, so callers keep writing
- *    bare paths like "/tools" or "/servers/:id".
+ *  - Every path except the three BFF-owned auth routes is routed through the
+ *    BFF's /api/* proxy — resolveApiPath prepends /api automatically, so
+ *    callers keep writing bare paths like "/tools" or "/servers/:id". This
+ *    must be an exact-match set, not a "/auth/*" prefix check: FastAPI's own
+ *    user-management endpoints live under /auth/email/admin/users and need
+ *    the /api prefix like everything else — only login/logout/session are
+ *    the BFF's own routes.
  *  - Content-Type and X-Requested-With are always set on JSON requests.
  *  - Non-2xx responses throw a typed ApiError; callers never handle raw text.
  *  - Protected 401 responses redirect to /app/login.
@@ -18,8 +22,8 @@
 
 const LOGIN_PATH = "/app/login";
 const API_PREFIX = "/api";
-const AUTH_PREFIX = "/auth/";
 const SESSION_CHECK_PATH = "/auth/session";
+const BFF_OWNED_AUTH_PATHS = new Set(["/auth/login", "/auth/logout", SESSION_CHECK_PATH]);
 
 export class ApiError extends Error {
   constructor(
@@ -57,10 +61,10 @@ function isAbsoluteUrl(path: string): boolean {
   return /^https?:\/\//i.test(path);
 }
 
-/** Bare paths get /api/* (BFF proxy to the API); /auth/* and absolute URLs pass through untouched. */
+/** Bare paths get /api/* (BFF proxy to the API); the BFF's own auth routes and absolute URLs pass through untouched. */
 function resolveApiPath(path: string): string {
   if (isAbsoluteUrl(path)) return path;
-  if (path === "/auth" || path.startsWith(AUTH_PREFIX)) return path;
+  if (BFF_OWNED_AUTH_PATHS.has(path)) return path;
   if (path === API_PREFIX || path.startsWith(`${API_PREFIX}/`)) return path;
   return path.startsWith("/") ? `${API_PREFIX}${path}` : `${API_PREFIX}/${path}`;
 }

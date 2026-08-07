@@ -48,7 +48,7 @@ export default async function loginRoute(fastify: FastifyInstance): Promise<void
         return reply.code(upstreamResponse.status).send({ error: "login_failed", detail });
       }
 
-      const auth = (await upstreamResponse.json()) as UpstreamAuthenticationResponse;  // pragma: allowlist secret
+      const auth = (await upstreamResponse.json()) as UpstreamAuthenticationResponse; // pragma: allowlist secret
 
       // The BFF session/cookie must not outlive the bearer token it wraps —
       // use the upstream JWT's own lifetime, not a fixed BFF-side default.

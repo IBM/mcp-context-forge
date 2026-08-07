@@ -39,7 +39,7 @@ const MOCK_USER_ROUTE = `**/auth/email/admin/users/${encodeURIComponent(MOCK_USE
 
 test.describe("Users page", () => {
   test.beforeEach(async ({ page, apiMock }) => {
-    await apiMock.mockMe();
+    await apiMock.mockSession();
 
     await page.addInitScript(() => {
       sessionStorage.setItem("mcpgateway_token", "mock-token-12345");
@@ -78,7 +78,8 @@ test.describe("Users page", () => {
     await page.goto("/app/users");
 
     await expect(page).toHaveURL(/\/app\/settings\/users/);
-    await expect(page.getByRole("heading", { name: "Users" })).toBeVisible();
+    // exact: "Users" is a substring of the empty-state heading "No users found".
+    await expect(page.getByRole("heading", { name: "Users", exact: true })).toBeVisible();
   });
 
   test("loads more users when pagination cursor is present", async ({ page }) => {
