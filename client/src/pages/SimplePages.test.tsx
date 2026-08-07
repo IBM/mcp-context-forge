@@ -1,6 +1,26 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { renderWithProviders } from "@/test/test-utils";
 import { RouterProvider } from "@/router";
+
+// Dashboard is rendered here as a smoke test, without an AuthProvider; stub the
+// status hook (which reads auth/health) so it renders standalone.
+vi.mock("@/hooks/useMiniCardStatuses", () => ({
+  useMiniCardStatuses: () => {
+    const offline = { kind: "dot", tone: "muted", labelId: "dashboard.home.status.offline" };
+    return {
+      statuses: {
+        system: offline,
+        activity: { kind: "activity", errors: 0, warnings: 0 },
+        mcp: offline,
+        a2a: offline,
+        rest: offline,
+        grpc: offline,
+      },
+      headlineCondition: {},
+    };
+  },
+}));
+
 import { Agents } from "./Agents";
 import { ChangePassword } from "./ChangePassword";
 import { Dashboard } from "./Dashboard";

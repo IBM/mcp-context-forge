@@ -73,6 +73,9 @@
   /* Selection / emphasis accent (source cards, highlights) */
   --color-selection: var(--selection);
 
+  /* Status-headline icon accent */
+  --color-status-icon: var(--status-icon);
+
   --radius-xl: calc(var(--radius) * 1.4);
   --radius-2xl: calc(var(--radius) * 1.8);
   --radius-3xl: calc(var(--radius) * 2.2);
@@ -127,6 +130,9 @@
   --tool-badge-fg: var(--color-neutral-800);
   --tool-add-icon-bg: var(--color-neutral-900);
   --tool-add-icon-fg: var(--color-white);
+  /* Status-headline icon accent — cyan for the light background; the .dark
+     override restores the brand cyan (#70f9ff). */
+  --status-icon: var(--color-cyan-500);
   --chart-1: oklch(0.87 0 0);
   --chart-2: oklch(0.556 0 0);
   --chart-3: oklch(0.439 0 0);
@@ -177,6 +183,8 @@
   --tool-add-icon-bg: var(--color-white);
   --tool-add-icon-fg: var(--color-neutral-900);
   --selection: var(--color-orange-500);
+  /* Status-headline icon accent (brand cyan) — bright on the dark background. */
+  --status-icon: #70f9ff;
 }
 /*
  ---break---
