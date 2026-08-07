@@ -728,8 +728,8 @@ async def get_hidden_sections_for_user(
     return hidden
 
 
-# UI Action Permissions Mapping
-# Maps UI permission flags to required RBAC permissions
+# UI Permissions Mapping
+# Maps UI action and capability flags to required RBAC permissions
 UI_ACTION_PERMISSIONS = {
     # Create actions
     "can_create_team": "teams.create",
@@ -741,6 +741,8 @@ UI_ACTION_PERMISSIONS = {
     "can_create_user": "admin.user_management",
     "can_create_token": "tokens.read",  # Token creation uses tokens.read, setting nosec cause this is false positive as router uses this permission key.  # nosec B105
     "can_create_agent": "a2a.create",
+    # Page capabilities
+    "can_access_admin_events": "admin.events",
 }
 
 
@@ -750,9 +752,9 @@ async def get_user_action_permissions(
     is_admin: bool,
     token_teams: Optional[List[str]],
 ) -> Dict[str, bool]:
-    """Batch-check all UI action permissions for a user.
+    """Batch-check all UI permissions for a user.
 
-    Returns a dictionary mapping permission flags to boolean values.
+    Returns a dictionary mapping UI action and capability flags to boolean values.
     Platform admins with unrestricted tokens get all permissions.
 
     Args:

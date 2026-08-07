@@ -23,7 +23,7 @@ class TestUIActionPermissions:
     def test_ui_action_permissions_structure(self):
         """UI_ACTION_PERMISSIONS should have correct structure."""
         assert isinstance(UI_ACTION_PERMISSIONS, dict)
-        assert len(UI_ACTION_PERMISSIONS) == 9  # Only create actions
+        assert len(UI_ACTION_PERMISSIONS) == 10
 
     def test_ui_action_permissions_keys(self):
         """UI_ACTION_PERMISSIONS should have expected keys."""
@@ -37,6 +37,7 @@ class TestUIActionPermissions:
             "can_create_user",
             "can_create_token",
             "can_create_agent",
+            "can_access_admin_events",
         }
         assert set(UI_ACTION_PERMISSIONS.keys()) == expected_keys
 
@@ -52,6 +53,7 @@ class TestUIActionPermissions:
             "can_create_user": "admin.user_management",
             "can_create_token": "tokens.read",
             "can_create_agent": "a2a.create",
+            "can_access_admin_events": "admin.events",
         }
         assert UI_ACTION_PERMISSIONS == expected_mappings
 
@@ -71,7 +73,7 @@ class TestGetUserActionPermissions:
         )
 
         # Should get all permissions
-        assert len(result) == 9
+        assert len(result) == 10
         assert all(result.values()), "All permissions should be True"
         assert result["can_create_team"] is True
         assert result["can_create_server"] is True
@@ -95,7 +97,7 @@ class TestGetUserActionPermissions:
             )
 
             # Should check permissions (not bypass)
-            assert mock_service.check_permission.call_count == 9
+            assert mock_service.check_permission.call_count == 10
             assert all(result.values())
 
     @pytest.mark.asyncio
@@ -115,9 +117,9 @@ class TestGetUserActionPermissions:
                 token_teams=["team1"],
             )
 
-            assert len(result) == 9
+            assert len(result) == 10
             assert all(result.values())
-            assert mock_service.check_permission.call_count == 9
+            assert mock_service.check_permission.call_count == 10
 
     @pytest.mark.asyncio
     async def test_regular_user_with_no_permissions(self):
@@ -136,7 +138,7 @@ class TestGetUserActionPermissions:
                 token_teams=["team1"],
             )
 
-            assert len(result) == 9
+            assert len(result) == 10
             assert not any(result.values()), "All permissions should be False"
             assert result["can_create_team"] is False
             assert result["can_create_server"] is False
@@ -185,7 +187,7 @@ class TestGetUserActionPermissions:
                 token_teams=[],  # Public-only
             )
 
-            assert len(result) == 9
+            assert len(result) == 10
             assert not any(result.values())
 
     @pytest.mark.asyncio
@@ -206,7 +208,7 @@ class TestGetUserActionPermissions:
             )
 
             # All permissions should be False due to errors
-            assert len(result) == 9
+            assert len(result) == 10
             assert not any(result.values()), "Should fail closed on errors"
 
     @pytest.mark.asyncio
@@ -230,7 +232,7 @@ class TestGetUserActionPermissions:
             mock_service_class.assert_called_once_with(db, audit_enabled=False)
 
             # Verify check_permission calls
-            assert mock_service.check_permission.call_count == 9
+            assert mock_service.check_permission.call_count == 10
 
             # Check first call parameters
             first_call = mock_service.check_permission.call_args_list[0]
@@ -241,7 +243,7 @@ class TestGetUserActionPermissions:
 
     @pytest.mark.asyncio
     async def test_all_permission_flags_checked(self):
-        """All 9 permission flags should be checked."""
+        """All 10 permission flags should be checked."""
         db = Mock()
 
         with patch("mcpgateway.admin.PermissionService") as mock_service_class:
@@ -274,9 +276,10 @@ class TestGetUserActionPermissions:
                 "admin.user_management",
                 "tokens.read",
                 "a2a.create",
+                "admin.events",
             }
             assert set(checked_permissions) == expected_permissions
-            assert len(result) == 9
+            assert len(result) == 10
 
     @pytest.mark.asyncio
     async def test_mixed_permission_errors(self):
@@ -304,8 +307,8 @@ class TestGetUserActionPermissions:
                 token_teams=["team1"],
             )
 
-            # Should have results for all 9 permissions
-            assert len(result) == 9
+            # Should have results for all 10 permissions
+            assert len(result) == 10
             # Some should be True, some False (from errors)
             assert any(result.values()), "Some permissions should succeed"
             assert not all(result.values()), "Some permissions should fail"
