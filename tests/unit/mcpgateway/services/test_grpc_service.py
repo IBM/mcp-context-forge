@@ -1207,6 +1207,7 @@ class TestReflectionPublicationProtection:
         test_db.commit()
         _, active_bytes = _fds("DoStuff")
         GrpcSchemaService.import_artifact(test_db, service, active_bytes, "active.protoset", created_by="system", activate=True)
+        test_db.commit()
         test_db.refresh(service)
         active_artifact_id = service.active_artifact_id
         tool = DbTool(
@@ -1258,6 +1259,7 @@ class TestReflectionPublicationProtection:
         test_db.commit()
         _, active_bytes = _fds("DoStuff")
         GrpcSchemaService.import_artifact(test_db, service, active_bytes, "active.protoset", created_by="system", activate=True)
+        test_db.commit()
         test_db.refresh(service)
         active_artifact_id = service.active_artifact_id
         tool = DbTool(
@@ -1374,6 +1376,57 @@ class TestReflectionPublicationProtection:
         assert existing_tool.enabled is True
         assert existing_tool.deprecated is False
         assert existing_tool.reachable is True
+
+
+class TestSchemaActivationTransaction:
+    """Schema activation and tool synchronization must share one DB transaction.
+
+    import_schema(activate=True) runs artifact activation and tool sync without an
+    internal commit, so a tool-sync failure rolls back the schema activation too.
+    """
+
+    @pytest.mark.asyncio
+    async def test_import_activate_commits_schema_and_tools_together(self, test_db):
+        """A successful import+activate persists both the artifact and its tools."""
+        service = DbGrpcService(name="txn-svc", slug="txn-svc", target="localhost:50051")
+        test_db.add(service)
+        test_db.commit()
+
+        artifact = await GrpcService().import_schema(
+            test_db, service.id, _fds("DoStuff")[1], "schema.protoset", user_email=None, activate=True
+        )
+
+        test_db.refresh(service)
+        assert service.active_artifact_id == artifact.id
+        assert service.active_schema_hash == artifact.content_hash
+        tools = test_db.query(DbTool).filter_by(grpc_service_id=service.id).all()
+        assert {tool.original_name for tool in tools} == {"testpkg.TestService.DoStuff"}
+        assert all(tool.enabled for tool in tools)
+
+    @pytest.mark.asyncio
+    async def test_import_activate_rolls_back_schema_when_tool_sync_fails(self, test_db):
+        """A tool-sync failure must roll back the schema activation (single transaction)."""
+        from mcpgateway.db import GrpcSchemaArtifact
+
+        service = DbGrpcService(name="txn-fail-svc", slug="txn-fail-svc", target="localhost:50051")
+        test_db.add(service)
+        test_db.commit()
+
+        with patch.object(GrpcService, "_sync_tools_from_reflection", side_effect=RuntimeError("tool write failed")):
+            with pytest.raises(RuntimeError, match="tool write failed"):
+                await GrpcService().import_schema(
+                    test_db, service.id, _fds("DoStuff")[1], "schema.protoset", user_email=None, activate=True
+                )
+
+        # Router's get_db rolls back the whole transaction on exception.
+        test_db.rollback()
+
+        test_db.refresh(service)
+        assert service.active_artifact_id is None
+        assert service.candidate_artifact_id is None
+        assert service.method_count == 0
+        assert test_db.query(DbTool).filter_by(grpc_service_id=service.id).count() == 0
+        assert test_db.query(GrpcSchemaArtifact).filter_by(grpc_service_id=service.id).count() == 0
 
 
 class TestSecurityHardening:

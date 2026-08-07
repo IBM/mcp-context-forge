@@ -345,8 +345,8 @@ class GrpcSchemaService:
         else:
             service.candidate_artifact_id = existing.id
             service.schema_drift = bool(service.active_schema_hash and service.active_schema_hash != content_hash)
-        db.commit()
-        db.refresh(existing)
+        # No commit here: the caller owns the transaction so schema activation and
+        # tool synchronization land in the same commit (or roll back together).
         return existing
 
     @classmethod

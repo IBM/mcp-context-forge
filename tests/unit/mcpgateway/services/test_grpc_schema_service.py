@@ -117,6 +117,7 @@ def test_migrate_legacy_descriptors_creates_artifact_and_sets_active(test_db):
     assert artifact is not None
     assert artifact.source_type == "legacy"
     assert artifact.is_active is True
+    test_db.commit()
 
     test_db.refresh(service)
     assert service.active_artifact_id == artifact.id
@@ -155,6 +156,7 @@ def test_import_artifact_as_candidate_sets_candidate_pointer(test_db):
     artifact = GrpcSchemaService.import_artifact(
         test_db, service, _descriptor_set(), "candidate.protoset", created_by="system", activate=False, source_type="reflection"
     )
+    test_db.commit()
     test_db.refresh(service)
     assert artifact.is_active is False
     assert service.candidate_artifact_id == artifact.id
@@ -174,6 +176,7 @@ def test_activate_artifact_refuses_empty_catalog_when_methods_exist(test_db):
     active = GrpcSchemaService.import_artifact(
         test_db, service, _descriptor_set(), "active.protoset", created_by="system", activate=True
     )
+    test_db.commit()
     test_db.refresh(service)
     assert active.is_active is True
     assert service.method_count > 0
@@ -181,6 +184,7 @@ def test_activate_artifact_refuses_empty_catalog_when_methods_exist(test_db):
     empty = GrpcSchemaService.import_artifact(
         test_db, service, _empty_descriptor_set(), "empty.protoset", created_by="system", activate=False
     )
+    test_db.commit()
     test_db.refresh(service)
     assert service.candidate_artifact_id == empty.id
 
@@ -208,6 +212,7 @@ def test_activate_artifact_promotes_candidate_and_clears_pointer(test_db):
     active = GrpcSchemaService.import_artifact(
         test_db, service, _descriptor_set(), "active.protoset", created_by="system", activate=True
     )
+    test_db.commit()
     test_db.refresh(service)
     assert active.is_active is True
     assert service.active_artifact_id == active.id
@@ -215,6 +220,7 @@ def test_activate_artifact_promotes_candidate_and_clears_pointer(test_db):
     candidate = GrpcSchemaService.import_artifact(
         test_db, service, _variant_descriptor_set(), "candidate.protoset", created_by="system", activate=False
     )
+    test_db.commit()
     test_db.refresh(service)
     assert candidate.id != active.id
     assert candidate.is_active is False

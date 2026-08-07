@@ -808,6 +808,9 @@ class GrpcService:
 
         except Exception as e:
             logger.error("Reflection error for %s: %s", service.target, e)
+            # Undo any schema activation or tool sync started in this transaction,
+            # then persist only the failure state so a partial publish never lands.
+            db.rollback()
             service.reachable = False
             service.last_reflection_error = str(e)[:1000]
             db.commit()
@@ -987,7 +990,7 @@ class GrpcService:
         if activate:
             service.grpc_metadata = _encrypt_metadata(service.grpc_metadata or {})
             self._sync_tools_from_reflection(db, service)
-            db.commit()
+        db.commit()
         return artifact
 
     async def list_schemas(self, db: Session, service_id: str) -> List[GrpcSchemaArtifact]:
