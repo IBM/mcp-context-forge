@@ -374,6 +374,9 @@ class LoggingService:
         # Redact sensitive query parameters from httpx/httpcore log messages
         self._install_httpx_url_sanitize_filter()
 
+        # Suppress high-volume health check and readiness probe logs
+        self._install_uvicorn_health_check_filter()
+
     async def shutdown(self) -> None:
         """Shutdown logging service.
 
@@ -480,6 +483,84 @@ class LoggingService:
 
         target_logger = logging.getLogger("mcp.server.streamable_http")
         target_logger.addFilter(_SuppressClosedResourceErrorFilter())
+
+    @staticmethod
+    def _install_uvicorn_health_check_filter() -> None:
+        """Install a filter to suppress health check and readiness probe logs from uvicorn.access.
+
+        Kubernetes and other orchestrators frequently poll /health and /ready endpoints,
+        generating high-volume, low-value access logs. This filter suppresses those logs
+        to reduce noise while preserving logs for other endpoints.
+
+        The filter checks the formatted message string for /health and /ready patterns.
+
+        Examples:
+            >>> import asyncio, logging
+            >>> service = LoggingService()
+            >>> asyncio.run(service.initialize())
+            >>> filt = [f for f in logging.getLogger('uvicorn.access').filters
+            ...         if f.__class__.__name__ == '_UvicornHealthCheckFilter'][0]
+            >>> rec = logging.LogRecord(
+            ...     name='uvicorn.access', level=logging.INFO, pathname='', lineno=0,
+            ...     msg='10.254.16.2:53664 - "GET /ready HTTP/1.1" 200',
+            ...     args=(),
+            ...     exc_info=None
+            ... )
+            >>> filt.filter(rec)
+            False
+            >>> rec2 = logging.LogRecord(
+            ...     name='uvicorn.access', level=logging.INFO, pathname='', lineno=0,
+            ...     msg='10.254.16.2:53664 - "GET /health HTTP/1.1" 200',
+            ...     args=(),
+            ...     exc_info=None
+            ... )
+            >>> filt.filter(rec2)
+            False
+            >>> rec3 = logging.LogRecord(
+            ...     name='uvicorn.access', level=logging.INFO, pathname='', lineno=0,
+            ...     msg='10.254.20.2:34444 - "GET /api/tools HTTP/1.1" 200',
+            ...     args=(),
+            ...     exc_info=None
+            ... )
+            >>> filt.filter(rec3)
+            True
+            >>> asyncio.run(service.shutdown())
+
+        """
+
+        class _UvicornHealthCheckFilter(logging.Filter):
+            """Filter to suppress health check and readiness probe logs from uvicorn.access.
+
+            Checks the formatted log message for /health and /ready endpoint patterns.
+            """
+
+            def filter(self, record: logging.LogRecord) -> bool:  # noqa: D401
+                """Filter log records to suppress health/ready endpoint access logs.
+
+                Args:
+                    record: The log record to evaluate.
+
+                Returns:
+                    True to allow the record through, False to suppress it
+
+                """
+                # Only apply to uvicorn.access logger
+                if not record.name.startswith("uvicorn.access"):
+                    return True
+
+                try:
+                    # Check the formatted message for health/ready endpoints
+                    if hasattr(record, "getMessage"):
+                        msg = record.getMessage()
+                        # Match patterns like: 'GET /health HTTP' or '"GET /ready HTTP"'
+                        if "GET /health" in msg or "GET /ready" in msg:
+                            return False
+                except Exception:
+                    pass  # nosec B110 - Never break logging due to filter failure
+                return True
+
+        uvicorn_access_logger = logging.getLogger("uvicorn.access")
+        uvicorn_access_logger.addFilter(_UvicornHealthCheckFilter())
 
     @staticmethod
     def _install_httpx_url_sanitize_filter() -> None:
