@@ -1477,7 +1477,9 @@ services:
   fast_time_server:
     image: ${FAST_TIME_IMAGE:-ghcr.io/ibm/cfex-mcp-fast-time-server:latest}
     restart: unless-stopped
+    profiles: ["fast-time"]
     networks: [mcpnet]
+
     ports:
       - "8888:9080"    # Map host port 8888 to container port 9080
     # Configured via environment variables (Streamable HTTP at /mcp)
@@ -1502,6 +1504,7 @@ services:
 
     # This is a one-shot container that exits after registration
     restart: "no"
+    profiles: ["fast-time"]
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
@@ -1857,6 +1860,111 @@ services:
         "
         echo "✅ Registration complete!"
     profiles: ["resilience"]
+
+  ###############################################################################
+  # Everything Server - MCP conformance reference implementation
+  ###############################################################################
+  everything_server:
+    build:
+      context: ./infra/conformance
+      dockerfile: Dockerfile
+    image: mcpgateway/mcp-conformance-everything-server:local
+    restart: unless-stopped
+    networks: [mcpnet]
+    ports:
+      - "3000:3000"
+    environment:
+      - PORT=3000
+    profiles: ["conformance"]
+
+  ###############################################################################
+  # Auto-registration service - registers everything_server with the gateway
+  ###############################################################################
+  register_everything:
+    image: ${IMAGE_LOCAL:-mcpgateway/mcpgateway:latest}
+    networks: [mcpnet]
+    depends_on:
+      gateway:
+        condition: service_healthy
+      everything_server:
+        condition: service_started
+    environment:
+      - "JWT_SECRET_KEY=${JWT_SECRET_KEY:?JWT_SECRET_KEY is not set. Run: make setup}"
+      - "AUTH_ENCRYPTION_SECRET=${AUTH_ENCRYPTION_SECRET:?AUTH_ENCRYPTION_SECRET is not set. Run: make setup}"
+    restart: "no"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+
+        echo "Waiting for everything_server..."
+        python3 -c "
+        import socket, time
+        for attempt in range(45):
+            try:
+                socket.create_connection(('everything_server', 3000), 2).close()
+                print('everything_server is reachable')
+                break
+            except OSError:
+                time.sleep(2)
+        else:
+            raise SystemExit('everything_server did not start')
+        "
+
+        export MCPGATEWAY_BEARER_TOKEN=$$(python3 -m mcpgateway.utils.create_jwt_token \
+          --username admin@example.com \
+          --admin \
+          --exp 10080 \
+          --secret "$$JWT_SECRET_KEY" \
+          --algo HS256 2>/dev/null)
+
+        python3 -c "
+        import json, os, time, urllib.request
+
+        token = os.environ['MCPGATEWAY_BEARER_TOKEN']
+
+        def request(method, path, payload=None):
+            req = urllib.request.Request(
+                'http://gateway:4444' + path,
+                method=method,
+                headers={
+                    'Authorization': 'Bearer ' + token,
+                    'Content-Type': 'application/json',
+                },
+                data=json.dumps(payload).encode() if payload else None,
+            )
+            with urllib.request.urlopen(req, timeout=30) as response:
+                return json.loads(response.read().decode())
+
+        for attempt in range(45):
+            try:
+                gateways = request('GET', '/gateways')
+                break
+            except Exception:
+                time.sleep(2)
+        else:
+            raise SystemExit('gateway did not become ready')
+
+        existing = next(
+            (gateway for gateway in gateways if gateway.get('name') == 'everything'),
+            None,
+        )
+
+        if existing:
+            print('Reusing existing everything gateway: ' + existing['id'])
+        else:
+            result = request(
+                'POST',
+                '/gateways',
+                {
+                    'name': 'everything',
+                    'url': 'http://everything_server:3000/mcp',
+                    'transport': 'STREAMABLEHTTP',
+                },
+            )
+            print('Registered everything_server: ' + result['id'])
+        "
+    profiles: ["conformance"]
 
   ###############################################################################
   # Fast Test Server - Ultra-fast Rust MCP server for performance testing
