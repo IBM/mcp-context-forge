@@ -112,7 +112,7 @@ Then in a separate terminal:
 
 ```bash
 TOKEN=$(python -m mcpgateway.utils.create_jwt_token \
-        --username admin@example.com --exp 60 --secret KEY)
+        --username admin@example.com --admin --exp 60 --secret KEY)
 SID=<paste-the-mcp-session-id-from-inspector>
 
 # 1. Open the GET stream — holds open with text/event-stream

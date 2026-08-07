@@ -1124,7 +1124,7 @@ Create a token for API and client access:
 export JWT_SECRET_KEY=$(grep '^JWT_SECRET_KEY=' .env | cut -d= -f2-)
 
 export MCPGATEWAY_BEARER_TOKEN=$(python -m mcpgateway.utils.create_jwt_token \
-  --username admin@example.com \
+  --username admin@example.com --admin \
   --exp 10080 \
   --secret "$JWT_SECRET_KEY")
 
