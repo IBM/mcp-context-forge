@@ -4810,7 +4810,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                                     async with lock:
                                         await self._refresh_gateway_tools_resources_prompts(
                                             gateway_id=gateway_id,
-                                            _user_email=user_email,
+                                            user_email=user_email,
                                             created_via="health_check",
                                             pre_auth_headers=headers if headers else None,
                                             gateway=gateway,
@@ -6148,7 +6148,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
     async def _refresh_gateway_tools_resources_prompts(
         self,
         gateway_id: str,
-        _user_email: Optional[str] = None,
+        user_email: Optional[str] = None,
         created_via: str = "health_check",
         pre_auth_headers: Optional[Dict[str, str]] = None,
         gateway: Optional[DbGateway] = None,
@@ -6166,7 +6166,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
         Args:
             gateway_id: ID of the gateway to refresh
-            _user_email: Optional user email for OAuth token lookup (unused currently)
+            user_email: Optional user email for OAuth token lookup on authorization_code gateways
             created_via: String indicating creation source (default: "health_check")
             pre_auth_headers: Pre-authenticated headers from health check to avoid duplicate OAuth token fetch
             gateway: Optional DbGateway object to avoid redundant DB lookup
@@ -6309,8 +6309,25 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             if auth_query_params_decrypted:
                 gateway_url = apply_query_param_auth(gateway_url, auth_query_params_decrypted)
 
+        # For authorization_code OAuth gateways, empty responses may indicate incomplete auth flow
+        is_auth_code_gateway = gateway_oauth_config and isinstance(gateway_oauth_config, dict) and gateway_oauth_config.get("grant_type") == "authorization_code"
+
         # Fetch tools/resources/prompts from MCP server (no DB connection held)
         try:
+            if created_via == "manual_refresh" and is_auth_code_gateway:
+                # A manual refresh has an authenticated caller, so resolve their stored OAuth
+                # token. Supplying pre_auth_headers also bypasses the authorization_code early
+                # return in _initialize_gateway, so the refresh reaches the MCP server instead
+                # of silently returning empty lists.
+                oauth_headers = await self._resolve_auth_code_refresh_headers(
+                    gateway_id=gateway_id,
+                    gateway_name=gateway_name,
+                    gateway_url=gateway_base_url,
+                    oauth_config=gateway_oauth_config,
+                    user_email=user_email,
+                )
+                pre_auth_headers = {**(pre_auth_headers or {}), **oauth_headers}
+
             # Decrypt client_key for refresh initialization
             _refresh_key = refresh_client_key
             if _refresh_key:
@@ -6341,9 +6358,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
         result["validation_errors"] = validation_errors
 
-        # For authorization_code OAuth gateways, empty responses may indicate incomplete auth flow
         # Skip only if it's an auth_code gateway with no data (user may not have completed authorization)
-        is_auth_code_gateway = gateway_oauth_config and isinstance(gateway_oauth_config, dict) and gateway_oauth_config.get("grant_type") == "authorization_code"
         if not tools and not resources and not prompts and is_auth_code_gateway:
             logger.debug("No tools/resources/prompts returned from auth_code gateway %s (user may not have authorized)", gateway_name)
             return result
@@ -6597,7 +6612,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
             result = await self._refresh_gateway_tools_resources_prompts(
                 gateway_id=gateway_id,
-                _user_email=user_email,
+                user_email=user_email,
                 created_via="manual_refresh",
                 pre_auth_headers=pre_auth_headers,
                 gateway=gateway,
