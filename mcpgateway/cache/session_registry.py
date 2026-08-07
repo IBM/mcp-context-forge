@@ -2366,11 +2366,28 @@ class SessionRegistry(SessionBackend):
                         headers=headers,
                     )
                     logger.info(f"SSE RPC: Got response status {rpc_response.status_code}")
-                    result = rpc_response.json()
-                    logger.info(f"SSE RPC: Response content: {result}")
-                    result = result.get("result", {})
+                    rpc_payload = rpc_response.json()
+                    logger.info(f"SSE RPC: Response content: {rpc_payload}")
 
-                response = {"jsonrpc": "2.0", "result": result, "id": req_id}
+                if isinstance(rpc_payload, dict) and "error" in rpc_payload:
+                    # Propagate JSON-RPC error objects (plugin violations, RBAC
+                    # denials, upstream failures) back to the SSE client instead
+                    # of collapsing them into an empty ``result: {}`` — which
+                    # both hides the failure reason and breaks strict MCP SDK
+                    # clients that validate ``CallToolResult`` (missing
+                    # ``content``).
+                    response = {"jsonrpc": "2.0", "error": rpc_payload["error"], "id": req_id}
+                elif isinstance(rpc_payload, dict) and "result" in rpc_payload:
+                    response = {"jsonrpc": "2.0", "result": rpc_payload["result"], "id": req_id}
+                else:
+                    # Not a JSON-RPC envelope at all — e.g. an auth/authz
+                    # middleware body like ``{"detail": "..."}`` from a 401/403
+                    # on the internal /rpc hop. Surface it as a JSON-RPC error
+                    # rather than a silent empty result.
+                    status_code = getattr(rpc_response, "status_code", None)
+                    detail = rpc_payload.get("detail") if isinstance(rpc_payload, dict) else None
+                    message_text = str(detail) if detail else f"Internal RPC call failed (HTTP {status_code})"
+                    response = {"jsonrpc": "2.0", "error": {"code": -32000, "message": message_text}, "id": req_id}
             except JSONRPCError as e:
                 logger.error(f"SSE RPC: JSON-RPC error: {e}")
                 result = e.to_dict()
