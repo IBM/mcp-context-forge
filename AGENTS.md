@@ -192,6 +192,7 @@ ContextForge implements a **two-layer security model**:
 - A `token-exchange` OAuth grant (RFC 8693 / On-Behalf-Of) exists for gateways; with it, the user's inbound JWT is exchanged with a trusted Authorization Server and **never forwarded upstream** — only the exchanged token is sent to the downstream MCP server.
 - `token_url` on a `token-exchange` gateway is an SSRF / egress boundary: the user's ContextForge JWT is POSTed to it as the `subject_token`, it is validated at config time, and creating or modifying token-exchange gateways is a privileged action.
 - Audit token-exchange operations via the structured logging sink with a `correlation_id`; never log raw subject tokens or exchanged tokens.
+- Do not re-implement the global-record admin scope check. Use `require_global_admin_permission()` for whole-endpoint guards and `require_unrestricted_platform_admin()` for conditional call sites (both in `mcpgateway/middleware/rbac.py`). New admin routes over records with no team association must be classified in `tests/unit/mcpgateway/test_global_record_scope.py`; the drift guard fails the build otherwise.
 
 #### UAID Cross-Gateway Security
 
