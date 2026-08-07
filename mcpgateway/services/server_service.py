@@ -200,6 +200,7 @@ class ServerNameConflictError(ServerError):
         self.name = name
         self.enabled = enabled
         self.server_id = server_id
+        self.visibility = visibility
         message = f"{visibility.capitalize()} Server already exists with name: {name}"
         if not enabled:
             message += f" (currently inactive, ID: {server_id})"
@@ -1306,6 +1307,9 @@ class ServerService(BaseService):
             # Update tags if provided
             if server_update.tags is not None:
                 server.tags = server_update.tags
+
+            if getattr(server_update, "enabled", None) is not None:
+                server.enabled = server_update.enabled
 
             # Update OAuth 2.0 configuration if provided
             # Track if OAuth is being explicitly disabled to prevent config re-assignment

@@ -758,6 +758,74 @@ class TestServerService:
         assert "Server not found" in str(exc.value)
 
     @pytest.mark.asyncio
+    async def test_update_server_enabled_field_disable(self, server_service, mock_server, test_db):
+        """ServerUpdate(enabled=False) disables the server via the standard update path."""
+        mock_server.enabled = True
+        mock_server.team_id = None
+        mock_server.visibility = "public"
+        mock_server.owner_email = "user@example.com"
+
+        test_db.get = Mock(return_value=mock_server)
+        # get_for_update (with eager-loading options) resolves via db.execute
+        test_db.execute = Mock(return_value=Mock(scalar_one_or_none=Mock(return_value=mock_server)))
+        test_db.commit = Mock()
+        test_db.refresh = Mock()
+
+        server_service._notify_server_updated = AsyncMock()
+        server_service.convert_server_to_read = Mock(return_value="server_read")
+
+        with patch("mcpgateway.services.permission_service.PermissionService.check_resource_ownership", new=AsyncMock(return_value=True)):
+            await server_service.update_server(test_db, "550e8400e29b41d4a716446655440001", ServerUpdate(enabled=False), "user@example.com")  # pragma: allowlist secret
+
+        assert mock_server.enabled is False
+        test_db.commit.assert_called_once()
+        server_service._notify_server_updated.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_update_server_enabled_field_enable(self, server_service, mock_server, test_db):
+        """ServerUpdate(enabled=True) re-enables a disabled server."""
+        mock_server.enabled = False
+        mock_server.team_id = None
+        mock_server.visibility = "public"
+        mock_server.owner_email = "user@example.com"
+
+        test_db.get = Mock(return_value=mock_server)
+        test_db.execute = Mock(return_value=Mock(scalar_one_or_none=Mock(return_value=mock_server)))
+        test_db.commit = Mock()
+        test_db.refresh = Mock()
+
+        server_service._notify_server_updated = AsyncMock()
+        server_service.convert_server_to_read = Mock(return_value="server_read")
+
+        with patch("mcpgateway.services.permission_service.PermissionService.check_resource_ownership", new=AsyncMock(return_value=True)):
+            await server_service.update_server(test_db, "550e8400e29b41d4a716446655440001", ServerUpdate(enabled=True), "user@example.com")  # pragma: allowlist secret
+
+        assert mock_server.enabled is True
+        test_db.commit.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_update_server_enabled_unset_preserves_state(self, server_service, mock_server, test_db):
+        """An update without the enabled field leaves the current state untouched."""
+        mock_server.enabled = True
+        mock_server.team_id = None
+        mock_server.visibility = "public"
+        mock_server.owner_email = "user@example.com"
+
+        test_db.get = Mock(return_value=mock_server)
+        test_db.execute = Mock(return_value=Mock(scalar_one_or_none=Mock(return_value=mock_server)))
+        test_db.commit = Mock()
+        test_db.refresh = Mock()
+
+        server_service._notify_server_updated = AsyncMock()
+        server_service.convert_server_to_read = Mock(return_value="server_read")
+
+        with patch("mcpgateway.services.permission_service.PermissionService.check_resource_ownership", new=AsyncMock(return_value=True)):
+            await server_service.update_server(test_db, "550e8400e29b41d4a716446655440001", ServerUpdate(description="new description"), "user@example.com")  # pragma: allowlist secret
+
+        assert mock_server.enabled is True
+        assert mock_server.description == "new description"
+
+    @pytest.mark.asyncio
     async def test_update_server_ignores_client_owner_email(self, server_service, mock_server):
         """Client-supplied owner_email must not transfer server ownership."""
         db = MagicMock()
