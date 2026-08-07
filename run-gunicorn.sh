@@ -389,12 +389,8 @@ cmd+=(
     --error-logfile -
     --forwarded-allow-ips="*"
     --pid "${LOCK_FILE}"  # Use lock file as PID file
+    --worker-tmp-dir /tmp  # Use /tmp for worker temporary files (fixes permission issues in read-only containers)
 )
-
-if gunicorn --help 2>/dev/null | grep -q -- "--no-control-socket"; then
-    cmd+=( --no-control-socket )
-    echo "🚫  Gunicorn control socket disabled for read-only container filesystem"
-fi
 
 # Add developer mode flags if enabled
 if [[ "${GUNICORN_DEV_MODE}" == "true" ]]; then
