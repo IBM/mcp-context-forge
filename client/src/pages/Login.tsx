@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useIntl } from "react-intl";
 import { useAuth } from "../auth/useAuth";
-import { useRouter } from "../router";
+import { useRouter, resolveNextParam } from "../router";
 import { ApiError } from "../api/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -15,12 +15,13 @@ export function Login() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const returnTo = resolveNextParam(window.location.search);
 
   useEffect(() => {
     if (isAuthenticated) {
-      navigate("/app/");
+      navigate(returnTo);
     }
-  }, [isAuthenticated, navigate]);
+  }, [isAuthenticated, navigate, returnTo]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -28,7 +29,7 @@ export function Login() {
     setLoading(true);
     try {
       await login(email, password);
-      navigate("/app/");
+      navigate(returnTo);
     } catch (err) {
       if (err instanceof ApiError) {
         setError(
