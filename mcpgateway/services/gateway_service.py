@@ -6088,6 +6088,63 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             prompts_removed=prompts_removed,
         )
 
+    async def _resolve_auth_code_refresh_headers(
+        self,
+        gateway_id: str,
+        gateway_name: str,
+        gateway_url: str,
+        oauth_config: Dict[str, Any],
+        user_email: Optional[str],
+    ) -> Dict[str, str]:
+        """Build the Authorization header for refreshing an authorization_code OAuth gateway.
+
+        Args:
+            gateway_id: Gateway identifier used for the per-user token lookup.
+            gateway_name: Gateway name, used in error and log messages.
+            gateway_url: Gateway URL (before any auth mutation), used as the fallback audience.
+            oauth_config: The gateway's OAuth configuration dict.
+            user_email: Authenticated caller's email; required to locate the stored token.
+
+        Returns:
+            Mapping with a single ``Authorization`` bearer header.
+
+        Raises:
+            GatewayConnectionError: If no caller identity is available, no token is stored for
+                this caller, or the stored token's claims are definitively mismatched.
+        """
+        # First-Party
+        from mcpgateway.services.token_storage_service import TokenStorageService  # pylint: disable=import-outside-toplevel
+        from mcpgateway.services.token_validation_service import validate_oauth_token_claims  # pylint: disable=import-outside-toplevel
+
+        if not user_email:
+            raise GatewayConnectionError(f"User authentication required for OAuth gateway {gateway_name}")
+
+        with fresh_db_session() as token_db:
+            token_storage = TokenStorageService(token_db)
+            access_token = await token_storage.get_user_token(gateway_id, user_email)
+            if not access_token:
+                raise GatewayConnectionError(
+                    f"No OAuth tokens found for user {user_email} on gateway {gateway_name}. Please complete the OAuth authorization flow first at /oauth/authorize/{gateway_id}"
+                )
+            learned_aud, _learned_iss = await token_storage.get_user_learned_audience(gateway_id, user_email)
+
+        token_validation = validate_oauth_token_claims(
+            access_token=access_token,
+            oauth_config=oauth_config,
+            gateway_url=gateway_url,
+            gateway_name=gateway_name,
+            learned_aud=learned_aud,
+        )
+        for warning in token_validation.warnings:
+            logger.warning("OAuth token validation for gateway %s: %s", gateway_name, warning)
+
+        blocking = token_validation.blocking_errors
+        if blocking:
+            detail = "; ".join(blocking)
+            raise GatewayConnectionError(f"Refusing to forward OAuth token for gateway '{gateway_name}': {detail}. Fix oauth_config (resource/scopes/issuer) or the IdP token request.")
+
+        return {"Authorization": f"Bearer {access_token}"}
+
     async def _refresh_gateway_tools_resources_prompts(
         self,
         gateway_id: str,

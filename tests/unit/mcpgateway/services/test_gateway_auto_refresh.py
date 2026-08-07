@@ -11,6 +11,7 @@ from __future__ import annotations
 
 # Standard
 import asyncio
+import logging
 from typing import Any, Dict
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -22,7 +23,7 @@ from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import Tool as DbTool
-from mcpgateway.services.gateway_service import GatewayService
+from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayService
 
 
 @pytest.fixture(autouse=True)
@@ -97,6 +98,41 @@ def _make_mock_prompt(prompt_id: str, name: str, created_via: str = "health_chec
     mock.original_name = name
     mock.created_via = created_via
     return mock
+
+
+_AUTH_CODE_CONFIG: Dict[str, Any] = {
+    "grant_type": "authorization_code",
+    "client_id": "cid",
+    "authorization_url": "https://auth.example.com/authorize",
+    "token_url": "https://auth.example.com/token",
+}
+
+
+def _make_auth_code_gateway(gateway_id: str = "gw-123", name: str = "monday") -> MagicMock:
+    """Create a mock gateway configured for the OAuth authorization_code grant."""
+    mock = _make_mock_gateway(gateway_id=gateway_id, name=name, oauth_config=dict(_AUTH_CODE_CONFIG))
+    mock.auth_query_params = None
+    mock.client_cert = None
+    mock.client_key = None
+    return mock
+
+
+def _patch_token_storage(token: Any, learned_aud: Any = None):
+    """Patch TokenStorageService so the helper resolves a fixed stored token.
+
+    The helper imports TokenStorageService function-locally, so the patch target is the
+    definition module rather than gateway_service.
+    """
+    storage = MagicMock()
+    storage.get_user_token = AsyncMock(return_value=token)
+    storage.get_user_learned_audience = AsyncMock(return_value=(learned_aud, None))
+    return patch("mcpgateway.services.token_storage_service.TokenStorageService", return_value=storage)
+
+
+def _patch_claim_validation(warnings: Any = None, blocking_errors: Any = None):
+    """Patch validate_oauth_token_claims with a canned TokenValidationResult stand-in."""
+    validation = MagicMock(warnings=warnings or [], blocking_errors=blocking_errors or [])
+    return patch("mcpgateway.services.token_validation_service.validate_oauth_token_claims", return_value=validation)
 
 
 class TestAutoRefreshGatewayToolsResourcesPrompts:
@@ -396,3 +432,86 @@ class TestCacheInvalidationPerType:
         # Resources and prompts cache should NOT be invalidated (no changes)
         mock_cache.invalidate_resources.assert_not_called()
         mock_cache.invalidate_prompts.assert_not_called()
+
+
+class TestResolveAuthCodeRefreshHeaders:
+    """Tests for _resolve_auth_code_refresh_headers."""
+
+    @staticmethod
+    async def _call(gateway_service: GatewayService, user_email: Any = "user@example.com") -> Dict[str, str]:
+        """Invoke the helper with the standard authorization_code fixture arguments."""
+        return await gateway_service._resolve_auth_code_refresh_headers(
+            gateway_id="gw-123",
+            gateway_name="monday",
+            gateway_url="https://mcp.monday.com/sse",
+            oauth_config=dict(_AUTH_CODE_CONFIG),
+            user_email=user_email,
+        )
+
+    @pytest.mark.asyncio
+    async def test_raises_when_no_user_email(self, gateway_service):
+        """No authenticated caller means there is no per-user token to look up."""
+        with pytest.raises(GatewayConnectionError) as exc:
+            await self._call(gateway_service, user_email=None)
+
+        assert "User authentication required for OAuth gateway monday" in str(exc.value)
+
+    @pytest.mark.asyncio
+    async def test_raises_with_authorize_url_when_no_token_stored(self, gateway_service):
+        """The unauthorized case from issue #5247 must name the authorization endpoint."""
+        with _patch_token_storage(None):
+            with pytest.raises(GatewayConnectionError) as exc:
+                await self._call(gateway_service)
+
+        message = str(exc.value)
+        assert "No OAuth tokens found for user user@example.com on gateway monday" in message
+        assert "/oauth/authorize/gw-123" in message
+
+    @pytest.mark.asyncio
+    async def test_returns_bearer_header_for_valid_token(self, gateway_service):
+        """A stored token that passes claim validation becomes an Authorization header."""
+        with _patch_token_storage("tok-abc"), _patch_claim_validation():
+            headers = await self._call(gateway_service)
+
+        assert headers == {"Authorization": "Bearer tok-abc"}
+
+    @pytest.mark.asyncio
+    async def test_raises_on_blocking_claim_errors(self, gateway_service):
+        """A definitively mismatched claim must stop the token from being forwarded."""
+        with _patch_token_storage("tok-abc"), _patch_claim_validation(blocking_errors=["audience 'x' != 'y'"]):
+            with pytest.raises(GatewayConnectionError) as exc:
+                await self._call(gateway_service)
+
+        message = str(exc.value)
+        assert "Refusing to forward OAuth token for gateway 'monday'" in message
+        assert "audience 'x' != 'y'" in message
+
+    @pytest.mark.asyncio
+    async def test_blocking_error_does_not_leak_the_token(self, gateway_service):
+        """The access token must never appear in an error surfaced to the caller."""
+        with _patch_token_storage("SUPERSECRETTOKEN"), _patch_claim_validation(blocking_errors=["audience mismatch"]):
+            with pytest.raises(GatewayConnectionError) as exc:
+                await self._call(gateway_service)
+
+        assert "SUPERSECRETTOKEN" not in str(exc.value)
+
+    @pytest.mark.asyncio
+    async def test_non_blocking_warnings_are_logged_and_token_still_returned(self, gateway_service, caplog):
+        """Advisory warnings are surfaced in logs but must not fail the refresh."""
+        with _patch_token_storage("tok-abc"), _patch_claim_validation(warnings=["issuer claim absent"]):
+            with caplog.at_level(logging.WARNING, logger="mcpgateway.services.gateway_service"):
+                headers = await self._call(gateway_service)
+
+        assert headers == {"Authorization": "Bearer tok-abc"}
+        assert "issuer claim absent" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_learned_audience_is_passed_to_claim_validation(self, gateway_service):
+        """The caller's learned audience must reach validate_oauth_token_claims."""
+        with _patch_token_storage("tok-abc", learned_aud="https://api.monday.com"):
+            with patch("mcpgateway.services.token_validation_service.validate_oauth_token_claims") as mock_validate:
+                mock_validate.return_value = MagicMock(warnings=[], blocking_errors=[])
+                await self._call(gateway_service)
+
+        assert mock_validate.call_args.kwargs["learned_aud"] == "https://api.monday.com"
+        assert mock_validate.call_args.kwargs["gateway_url"] == "https://mcp.monday.com/sse"
