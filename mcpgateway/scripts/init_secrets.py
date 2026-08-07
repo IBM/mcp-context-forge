@@ -89,6 +89,28 @@ _SECRET_FIELDS: dict[str, int] = {
 # BASIC_AUTH_PASSWORD is excluded — Settings only warns on it, never hard-fails.
 _STRONG_SECRET_FIELDS: frozenset[str] = frozenset({"JWT_SECRET_KEY", "AUTH_ENCRYPTION_SECRET"})
 
+# Fields where auto-rotation without a data-migration is irreversible.
+# If the shell environment carries a weak value but .env already holds a strong
+# value for one of these fields, ensure_env_file_secrets() must NOT silently
+# overwrite the .env value — doing so rotates the AES key and makes all stored
+# encrypted credentials permanently unreadable.
+_ROTATION_GUARDED_FIELDS: frozenset[str] = frozenset({"AUTH_ENCRYPTION_SECRET"})
+
+
+def _is_strong_value(val: str, weak_values: frozenset[str]) -> bool:
+    """Return True when *val* passes all startup compliance checks.
+
+    Mirrors the predicate in :func:`ensure_env_file_secrets` so the rotation-guard
+    check uses identical criteria.
+    """
+    if not val.strip():
+        return False
+    if val.lower() in weak_values or val.lower().startswith("__replace_me__"):
+        return False
+    if len(val) < _MIN_SECRET_LENGTH or calculate_entropy(val) < _MIN_ENTROPY:
+        return False
+    return True
+
 
 def _read_env_file(path: str) -> dict[str, str]:
     """Parse KEY=VALUE pairs from an env file, skipping comments and blank lines.
@@ -211,6 +233,21 @@ def ensure_env_file_secrets(
                 # Weak value came from os.environ; patching environ is enough.
                 # Writing to .env would shadow subsequent env-var injections (Docker/K8s).
                 env_only[field] = new_val
+            elif env_val is not None and field in _ROTATION_GUARDED_FIELDS and _is_strong_value(env_file_values.get(field, ""), weak_values):
+                # The shell environment holds a weak value, but .env already contains a
+                # strong value for a rotation-guarded key (AUTH_ENCRYPTION_SECRET).
+                # Overwriting the .env value would silently rotate the AES encryption key
+                # and make all stored encrypted credentials permanently unreadable.
+                # Raise an actionable error instead of proceeding.
+                raise ValueError(
+                    f"{field}: shell environment holds a weak/non-compliant value that would "
+                    f"overwrite the strong value already present in {env_file!r}. "
+                    "Silently rotating this key would make all stored encrypted credentials "
+                    "permanently unreadable. To fix, choose one of:\n"
+                    f"  unset {field}           # let the strong .env value take effect\n"
+                    f"  export {field}=<strong> # set a strong value in your shell that matches {env_file!r}\n"
+                    "  run a migration-aware key rotation before changing this secret"
+                )
             else:
                 file_generated[field] = new_val
 

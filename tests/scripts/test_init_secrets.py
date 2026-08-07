@@ -282,6 +282,30 @@ class TestEnsureEnvFileSecrets:
 
         assert generated == {}
 
+    def test_weak_env_var_strong_env_file_raises_for_rotation_guarded_field(self, tmp_path, monkeypatch):
+        """Weak shell var + strong .env must raise, not silently overwrite AES key.
+
+        Regression test for the data-loss defect where ensure_env_file_secrets()
+        evaluated os.environ precedence first (current = env_val = weak), detected
+        is_non_compliant=True, then fell through to file_generated because
+        field IN env_file_values — silently overwriting the strong .env value with a
+        freshly generated key.  For AUTH_ENCRYPTION_SECRET that rotation makes every
+        stored encrypted credential permanently unreadable.
+        """
+        strong = "x3Kp_mQ8rZvN2wLsA5dYfB7cEjGhTuIo_X3K"  # pragma: allowlist secret
+        env = tmp_path / ".env"
+        env.write_text(f"AUTH_ENCRYPTION_SECRET={strong}\n", encoding="utf-8")  # pragma: allowlist secret
+        # Shell carries a weak / non-compliant value for the guarded field.
+        monkeypatch.setenv("AUTH_ENCRYPTION_SECRET", "changeme")  # pragma: allowlist secret
+        monkeypatch.setenv("MCPGATEWAY_AUTO_INIT_SECRETS", "true")
+
+        with pytest.raises(ValueError, match="AUTH_ENCRYPTION_SECRET"):
+            ensure_env_file_secrets(env_file=str(env))
+
+        # The .env file must be unchanged — the strong key must not have been rotated.
+        content = env.read_text(encoding="utf-8")
+        assert strong in content
+
     def test_ensure_disabled_by_env_var(self, tmp_path, monkeypatch):
         env = tmp_path / ".env"
         env.write_text("JWT_SECRET_KEY=changeme\n", encoding="utf-8")
