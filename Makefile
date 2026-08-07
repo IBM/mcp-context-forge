@@ -1866,7 +1866,7 @@ inspector-up:                              ## Start MCP Inspector (interactive M
 	@echo ""
 	@echo "   Generate a JWT token:"
 	@echo "      python -m mcpgateway.utils.create_jwt_token \\"
-	@echo "        --username admin@example.com --exp 10080 --secret my-test-key-but-now-longer-than-32-bytes --algo HS256"
+	@echo "        --username admin@example.com --admin --exp 10080 --secret my-test-key-but-now-longer-than-32-bytes --algo HS256"
 	@echo ""
 
 inspector-down:                            ## Stop MCP Inspector
@@ -5976,7 +5976,7 @@ compose-test-hardened: compose-validate
 	else \
 		SECRET="$(JWT_SECRET_KEY)"; \
 	fi; \
-	TOKEN=$$(python -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 60 --secret "$$SECRET" 2>/dev/null || echo ""); \
+	TOKEN=$$(python -m mcpgateway.utils.create_jwt_token --username admin@example.com --admin --exp 60 --secret "$$SECRET" 2>/dev/null || echo ""); \
 	if [ -z "$$TOKEN" ]; then \
 		echo "⚠️  Could not generate JWT token (python module may not be available)"; \
 		echo "   Skipping authenticated endpoint test"; \

@@ -314,10 +314,10 @@ OTEL_EXPORTER_OTLP_ENDPOINT=          # .env.example sets http://localhost:4317
 
 ```bash
 # Generate JWT token
-python -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret KEY
+python -m mcpgateway.utils.create_jwt_token --username admin@example.com --admin --exp 10080 --secret KEY
 
 # Export for API calls
-export MCPGATEWAY_BEARER_TOKEN=$(python -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 0 --secret KEY)
+export MCPGATEWAY_BEARER_TOKEN=$(python -m mcpgateway.utils.create_jwt_token --username admin@example.com --admin --exp 0 --secret KEY)
 
 # Expose stdio server via HTTP/SSE
 python -m mcpgateway.translate --stdio "uvx mcp-server-git" --port 9000
