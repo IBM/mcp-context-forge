@@ -11,16 +11,15 @@ exclude-newer = "0001-01-01T00:00:00Z" # This has no effect and is included for 
 exclude-newer-span = "P10D"
 
 [options.exclude-newer-package]
-mcp-types = "2026-07-19T23:59:59Z"
+mcp-types = "2026-07-29T23:59:59Z"
 langchain-core = "2026-07-27T23:59:59Z"
 sse-starlette = "2026-07-27T23:59:59Z"
+grpcio-tools = "2026-07-27T23:59:59Z"
 cpex = "2026-07-30T23:59:59Z"
 cpex-retry-with-backoff = "2026-07-27T23:59:59Z"
-grpcio-tools = "2026-07-27T23:59:59Z"
 cpex-pii-filter = "2026-07-27T23:59:59Z"
 cpex-url-reputation = "2026-07-27T23:59:59Z"
 cpex-rate-limiter = "2026-07-27T23:59:59Z"
-cpex-sql-sanitizer = "2026-07-21T23:59:59Z"
 cryptography = "2026-08-01T23:59:59Z"
 langchain-openai = "2026-07-27T23:59:59Z"
 starlette-compress = "2026-07-27T23:59:59Z"
@@ -28,12 +27,11 @@ langsmith = "2026-07-27T23:59:59Z"
 fastapi = "2026-07-27T23:59:59Z"
 grpcio-reflection = "2026-07-27T23:59:59Z"
 prometheus-fastapi-instrumentator = "2026-07-27T23:59:59Z"
-grpcio = "2026-07-27T23:59:59Z"
 cpex-secrets-detection = "2026-07-27T23:59:59Z"
+grpcio = "2026-07-27T23:59:59Z"
 filelock = "2026-07-27T23:59:59Z"
-langgraph = "2026-05-12T23:59:59Z"
+mcp = "2026-07-29T23:59:59Z"
 prometheus-client = "2026-07-27T23:59:59Z"
-mcp = "2026-07-19T23:59:59Z"
 cpex-encoded-exfil-detection = "2026-07-27T23:59:59Z"
 
 [[package]]
@@ -871,8 +869,8 @@ toml = [
 
 [[package]]
 name = "cpex"
-version = "0.1.1"
-source = { git = "https://github.com/contextforge-org/cpex?branch=0.1.x-mcp-2.0.0#8078691f02325315ace661a5225cd4b8714d4c7c" }
+version = "0.1.2"
+source = { git = "https://github.com/contextforge-org/cpex?branch=0.1.x-mcp-2.0.0#78f8effae3267c32b5aa034db75b35dd6fa53fc4" }
 dependencies = [
     { name = "fastapi" },
     { name = "httpx", extra = ["http2"] },
@@ -2806,7 +2804,7 @@ wheels = [
 
 [[package]]
 name = "mcp"
-version = "2.0.0b2"
+version = "2.0.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
@@ -2815,7 +2813,6 @@ dependencies = [
     { name = "mcp-types" },
     { name = "opentelemetry-api" },
     { name = "pydantic" },
-    { name = "pydantic-settings" },
     { name = "pyjwt", extra = ["crypto"] },
     { name = "python-multipart" },
     { name = "pywin32", marker = "sys_platform == 'win32'" },
@@ -2825,9 +2822,9 @@ dependencies = [
     { name = "typing-inspection" },
     { name = "uvicorn", marker = "sys_platform != 'emscripten'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/a1/aa/c5d38e0199304494be6370667d04d93d8681d9bdc864d56678250dbd3f3b/mcp-2.0.0b2.tar.gz", hash = "sha256:0528d0d38ae798fbff251616ec687faaaa8f5309571e0b2bc553c530fa10b8b1", size = 1590650, upload-time = "2026-07-14T16:47:57.897Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/74/33/32d4dff2c95bb5d897c3ef4c83649a08996b17b58f0a326d2495d4c81179/mcp-2.0.0.tar.gz", hash = "sha256:0f440e735c13ece8bb19bc62cf0b86f4313448432fbb77d35e14034f4e050728", size = 1662284, upload-time = "2026-07-28T13:45:32.346Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a7/90/187d6283a304acc6954987992ef17e2515739a649f148dc8b67b302e1bbd/mcp-2.0.0b2-py3-none-any.whl", hash = "sha256:9c50ae5afa08960ab76d50aa3adab3184952d9bea7ef87f4a4a5ba68bdefcf0a", size = 334286, upload-time = "2026-07-14T16:47:54.768Z" },
+    { url = "https://files.pythonhosted.org/packages/67/72/7d7897418912c1d12e87556630dfb7bf0eac71160e9bef8b447960804ee3/mcp-2.0.0-py3-none-any.whl", hash = "sha256:1cb4c75d2d2c7b8c1d756355e5d82a39f2822cc7f13e22a2051d7ca3592349d6", size = 349980, upload-time = "2026-07-28T13:45:28.853Z" },
 ]
 
 [[package]]
@@ -3058,10 +3055,10 @@ requires-dist = [
     { name = "langgraph", marker = "extra == 'llmchat'", specifier = "<=1.2.0" },
     { name = "langsmith", marker = "extra == 'llmchat'", specifier = ">=0.10.10" },
     { name = "mako", specifier = ">=1.3.12" },
-    { name = "mcp", specifier = "==2.0.0b2" },
+    { name = "mcp", specifier = ">=2.0.0" },
     { name = "mcp-contextforge-gateway", extras = ["redis"], marker = "extra == 'all'", specifier = ">=1.0.7" },
     { name = "mcp-contextforge-gateway", extras = ["redis", "dev", "plugins"], marker = "extra == 'dev-all'", specifier = ">=1.0.7" },
-    { name = "mcp-types", specifier = "==2.0.0b2" },
+    { name = "mcp-types", specifier = ">=2.0.0" },
     { name = "memray", marker = "extra == 'profiling'", specifier = ">=1.19.3" },
     { name = "msgpack", specifier = ">=1.2.1" },
     { name = "opentelemetry-api", marker = "extra == 'observability'", specifier = ">=1.44.0" },
@@ -3175,15 +3172,15 @@ dev = [
 
 [[package]]
 name = "mcp-types"
-version = "2.0.0b2"
+version = "2.0.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pydantic" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/ad/21/db529130ac8edd1d844fc322862afeceaf2b7f610a591fa528002b022e07/mcp_types-2.0.0b2.tar.gz", hash = "sha256:094fa7160106819ab39a1586179c3a9f070bfd833d0a6f8fcb30a54a986cc402", size = 65877, upload-time = "2026-07-14T16:47:59.198Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/bb/56/9b8e1c152f61f6c6b07c4b5896c88c7d0ae90bac6ee6306f852fcc5c1eb0/mcp_types-2.0.0.tar.gz", hash = "sha256:d7d939b9285c9961ae8866ba75ef85da34d12bafe276efbf4eb6a131786d8379", size = 66632, upload-time = "2026-07-28T13:45:33.804Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/1e/e1/c466ceacdaa929396d35ad45176398acd0c416fead0970d3ad22618a19d7/mcp_types-2.0.0b2-py3-none-any.whl", hash = "sha256:35c9c33abb90a77dc6ad1daecaa6407c788c2f32d14d52dad8f843c4f008eae2", size = 68944, upload-time = "2026-07-14T16:47:56.493Z" },
+    { url = "https://files.pythonhosted.org/packages/f5/4c/c78d78c3d52b0ac594ad7cc8ef5972adfe070e3597a8a4c6ce0cd39196ea/mcp_types-2.0.0-py3-none-any.whl", hash = "sha256:6b2de797ca2797f568b79529e1b25948e34de511bcc0bd82fef1039a6d1b8eb0", size = 69649, upload-time = "2026-07-28T13:45:30.713Z" },
 ]
 
 [[package]]
