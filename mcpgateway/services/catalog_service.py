@@ -11,6 +11,7 @@ easily registered with one-click from the admin UI.
 
 # Standard
 import asyncio
+from dataclasses import dataclass
 from datetime import datetime, timezone
 import logging
 from pathlib import Path
@@ -35,11 +36,24 @@ from mcpgateway.schemas import (
     CatalogServerRegisterResponse,
     CatalogServerStatusResponse,
 )
+from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.gateway_service import GatewayService
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.validation.tags import validate_tags_field
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class CatalogRegistrationContext:
+    """Authenticated ownership and audit context for catalog registration."""
+
+    created_by: str
+    owner_email: str
+    created_from_ip: Optional[str] = None
+    created_via: Optional[str] = "catalog"
+    created_user_agent: Optional[str] = None
+    team_id: Optional[str] = None
 
 
 class CatalogService:
@@ -50,6 +64,7 @@ class CatalogService:
         self._catalog_cache: Optional[Dict[str, Any]] = None
         self._cache_timestamp: float = 0
         self._gateway_service = GatewayService()
+        self._audit_trail = get_audit_trail_service()
 
     async def load_catalog(self, force_reload: bool = False) -> Dict[str, Any]:
         """Load catalog from YAML file.
@@ -278,13 +293,21 @@ class CatalogService:
 
         return False
 
-    async def register_catalog_server(self, catalog_id: str, request: Optional[CatalogServerRegisterRequest], db: Session) -> CatalogServerRegisterResponse:
+    async def register_catalog_server(
+        self,
+        catalog_id: str,
+        request: Optional[CatalogServerRegisterRequest],
+        db: Session,
+        *,
+        context: CatalogRegistrationContext,
+    ) -> CatalogServerRegisterResponse:
         """Register a catalog server as a gateway.
 
         Args:
             catalog_id: Catalog server ID
             request: Registration request with optional overrides
             db: Database session
+            context: Authenticated ownership and audit context
 
         Returns:
             Registration response
@@ -399,7 +422,12 @@ class CatalogService:
                     capabilities={},
                     auth_type="oauth",  # Mark as OAuth so it can be identified after page refresh
                     enabled=False,  # Disabled until OAuth is configured
-                    created_via="catalog",
+                    created_by=context.created_by,
+                    created_from_ip=context.created_from_ip,
+                    created_via=context.created_via,
+                    created_user_agent=context.created_user_agent,
+                    team_id=context.team_id,
+                    owner_email=context.owner_email,
                     visibility="public",
                     version=1,
                 )
@@ -407,6 +435,28 @@ class CatalogService:
                 db.add(db_gateway)
                 db.commit()
                 db.refresh(db_gateway)
+
+                self._audit_trail.log_action(
+                    user_id=context.created_by,
+                    action="create_gateway",
+                    resource_type="gateway",
+                    resource_id=str(db_gateway.id),
+                    resource_name=db_gateway.name,
+                    user_email=context.owner_email,
+                    team_id=context.team_id,
+                    client_ip=context.created_from_ip,
+                    user_agent=context.created_user_agent,
+                    new_values={
+                        "name": db_gateway.name,
+                        "url": db_gateway.url,
+                        "visibility": db_gateway.visibility,
+                        "transport": db_gateway.transport,
+                        "tools_count": 0,
+                        "resources_count": 0,
+                        "prompts_count": 0,
+                    },
+                    context={"created_via": context.created_via},
+                )
 
                 # First-Party
                 from mcpgateway.schemas import GatewayRead  # pylint: disable=import-outside-toplevel
@@ -443,6 +493,10 @@ class CatalogService:
                     "version": db_gateway.version,
                     "team_id": db_gateway.team_id,
                     "owner_email": db_gateway.owner_email,
+                    "created_by": db_gateway.created_by,
+                    "created_from_ip": db_gateway.created_from_ip,
+                    "created_via": db_gateway.created_via,
+                    "created_user_agent": db_gateway.created_user_agent,
                 }
 
                 gateway_read = GatewayRead.model_validate(gateway_dict)
@@ -466,7 +520,12 @@ class CatalogService:
             gateway_read = await self._gateway_service.register_gateway(
                 db=db,
                 gateway=gateway_create,
-                created_via="catalog",
+                created_by=context.created_by,
+                created_from_ip=context.created_from_ip,
+                created_via=context.created_via,
+                created_user_agent=context.created_user_agent,
+                team_id=context.team_id,
+                owner_email=context.owner_email,
                 visibility="public",  # Catalog servers should be public
                 initialize_timeout=settings.httpx_admin_read_timeout,
             )
@@ -577,12 +636,19 @@ class CatalogService:
             logger.error("Failed to check server status for %s: %s", catalog_id, e)
             return CatalogServerStatusResponse(server_id=catalog_id, is_available=False, is_registered=False, error=str(e))
 
-    async def bulk_register_servers(self, request: CatalogBulkRegisterRequest, db: Session) -> CatalogBulkRegisterResponse:
+    async def bulk_register_servers(
+        self,
+        request: CatalogBulkRegisterRequest,
+        db: Session,
+        *,
+        context: CatalogRegistrationContext,
+    ) -> CatalogBulkRegisterResponse:
         """Register multiple catalog servers.
 
         Args:
             request: Bulk registration request
             db: Database session
+            context: Authenticated ownership and audit context
 
         Returns:
             Bulk registration response
@@ -592,7 +658,12 @@ class CatalogService:
 
         for server_id in request.server_ids:
             try:
-                response = await self.register_catalog_server(catalog_id=server_id, request=None, db=db)
+                response = await self.register_catalog_server(
+                    catalog_id=server_id,
+                    request=None,
+                    db=db,
+                    context=context,
+                )
 
                 if response.success:
                     successful.append(server_id)

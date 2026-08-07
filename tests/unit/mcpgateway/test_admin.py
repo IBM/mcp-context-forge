@@ -274,6 +274,7 @@ from mcpgateway.schemas import (
     ToolMetrics,
 )
 from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService
+from mcpgateway.services.catalog_service import CatalogRegistrationContext
 from mcpgateway.services.export_service import ExportError, ExportService
 from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayLookupConflictError, GatewayNotFoundError, GatewayService
 from mcpgateway.services.import_service import ImportError as ImportServiceError
@@ -20283,12 +20284,41 @@ class TestCatalogEndpoints:
     async def test_register_catalog_server_json_response(self, monkeypatch, allow_permission, mock_db):
         monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_catalog_enabled", True, raising=False)
         reg_result = SimpleNamespace(success=True, message="Registered", oauth_required=False, error=None)
-        monkeypatch.setattr("mcpgateway.admin.catalog_service.register_catalog_server", AsyncMock(return_value=reg_result))
+        register_catalog_server_mock = AsyncMock(return_value=reg_result)
+        monkeypatch.setattr("mcpgateway.admin.catalog_service.register_catalog_server", register_catalog_server_mock)
+        team_service = MagicMock()
+        team_service.verify_team_for_user = AsyncMock(return_value="personal-team")
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda _db: team_service)
+        monkeypatch.setattr(
+            "mcpgateway.admin.MetadataCapture.extract_creation_metadata",
+            MagicMock(
+                return_value={
+                    "created_by": "admin@test.com",
+                    "created_from_ip": "192.0.2.20",
+                    "created_via": "ui",
+                    "created_user_agent": "test-agent",
+                }
+            ),
+        )
 
         request = MagicMock(spec=Request)
         request.headers = {}
         result = await register_catalog_server("srv-1", request, db=mock_db, _user={"email": "admin@test.com"})
         assert result == reg_result
+        register_catalog_server_mock.assert_awaited_once()
+        call_kwargs = register_catalog_server_mock.await_args.kwargs
+        assert call_kwargs["catalog_id"] == "srv-1"
+        assert call_kwargs["request"] is None
+        assert call_kwargs["db"] is mock_db
+        context = call_kwargs["context"]
+        assert context == CatalogRegistrationContext(
+            created_by="admin@test.com",
+            owner_email="admin@test.com",
+            created_from_ip="192.0.2.20",
+            created_via="ui",
+            created_user_agent="test-agent",
+            team_id="personal-team",
+        )
 
     @pytest.mark.asyncio
     async def test_register_catalog_server_htmx_success(self, monkeypatch, allow_permission, mock_db):
@@ -20325,8 +20355,9 @@ class TestCatalogEndpoints:
         from mcpgateway.schemas import CatalogBulkRegisterRequest
 
         req = CatalogBulkRegisterRequest(server_ids=["a", "b"])
+        http_request = MagicMock(spec=Request)
         with pytest.raises(HTTPException) as exc_info:
-            await bulk_register_catalog_servers(req, db=mock_db, _user={"email": "admin@test.com"})
+            await bulk_register_catalog_servers(req, http_request, db=mock_db, _user={"email": "admin@test.com"})
         assert exc_info.value.status_code == 404
 
     @pytest.mark.asyncio
@@ -20339,7 +20370,8 @@ class TestCatalogEndpoints:
         from mcpgateway.schemas import CatalogBulkRegisterRequest
 
         req = CatalogBulkRegisterRequest(server_ids=["a", "b"])
-        result = await bulk_register_catalog_servers(req, db=mock_db, _user={"email": "admin@test.com"})
+        http_request = MagicMock(spec=Request)
+        result = await bulk_register_catalog_servers(req, http_request, db=mock_db, _user={"email": "admin@test.com"})
         assert result == bulk_result
 
 
