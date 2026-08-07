@@ -4,7 +4,7 @@ Copyright contributors to the MCP-CONTEXT-FORGE project.
 SPDX-License-Identifier: Apache-2.0
 
 Spike tests codifying the invariants of the installed MCP SDK's high-level
-``mcp.client.Client`` (mcp 2.0.0b2) that a pending migration of mcpgateway's
+``mcp.client.Client`` (mcp 2.0.0) that a pending migration of mcpgateway's
 federation path relies on.
 
 All tests use an in-process stub server / mocked dispatcher — NO network,
@@ -56,7 +56,7 @@ class _SpyHandler:
 async def _make_inproc_client(
     mode: str = "2026-07-28",
     message_handler: Any = None,
-    cache: Any = False,
+    cache: Any = None,
 ) -> SDKClient:
     """Build a Client around an empty in-process stub server for modern-mode tests."""
     stub = SDKServer(name="test-stub")
@@ -298,7 +298,7 @@ async def test_dispatcher_closed_after_teardown() -> None:
 @pytest.mark.asyncio
 async def test_message_handler_reaches_session_unwrapped() -> None:
     """When ``Client`` is constructed with a user ``message_handler`` and
-    ``cache=False`` (no response cache), the handler reaches the underlying
+    ``cache=None`` (no response cache), the handler reaches the underlying
     ``ClientSession`` without wrapping.
 
     This is verified by checking that ``session._message_handler`` is the
@@ -308,7 +308,7 @@ async def test_message_handler_reaches_session_unwrapped() -> None:
         server=SDKServer(name="test-stub"),
         mode="2026-07-28",
         message_handler=spy,
-        cache=False,  # Explicitly disable caching to bypass _evicting_message_handler
+        cache=None,  # Explicitly disable caching to bypass _evicting_message_handler
     )
 
     async with client:
