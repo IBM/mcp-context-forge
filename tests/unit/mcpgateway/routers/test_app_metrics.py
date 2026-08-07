@@ -242,6 +242,34 @@ def test_metrics_unauthenticated_returns_401():
     assert client.get("/app/observability/metrics/percentiles").status_code == 401
 
 
+@pytest.mark.parametrize(
+    "endpoint,params",
+    [
+        ("timeseries", {"hours": 0}),
+        ("timeseries", {"hours": 169}),
+        ("timeseries", {"interval_minutes": 4}),
+        ("timeseries", {"interval_minutes": 1441}),
+        ("percentiles", {"hours": 0}),
+        ("percentiles", {"hours": 169}),
+        ("percentiles", {"interval_minutes": 4}),
+        ("percentiles", {"interval_minutes": 1441}),
+    ],
+)
+def test_metrics_reject_out_of_range_query_params(endpoint, params):
+    """Look-back and bucket width are bounded, so a caller cannot ask for an unbounded scan."""
+    api = FastAPI()
+    api.include_router(app_module.app_router)
+
+    async def allow_auth():
+        return {"email": "user@example.com", "db": MagicMock(spec=Session)}
+
+    api.dependency_overrides[get_current_user_with_permissions] = allow_auth
+    api.dependency_overrides[get_db] = lambda: MagicMock(spec=Session)
+
+    client = TestClient(api)
+    assert client.get(f"/app/observability/metrics/{endpoint}", params=params).status_code == 422
+
+
 def test_postgres_buckets_normalized_to_utc():
     """Postgres rows tagged with a session timezone serialize as UTC, matching the SQLite path."""
     est = timezone(timedelta(hours=-5))
