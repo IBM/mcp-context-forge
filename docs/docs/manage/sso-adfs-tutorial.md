@@ -58,7 +58,7 @@ Check that the ADFS provider is registered in the database:
 ```bash
 # Get JWT token for admin access
 export MCPGATEWAY_BEARER_TOKEN=$(python -m mcpgateway.utils.create_jwt_token \
-  --username admin@example.com \
+  --username admin@example.com --admin \
   --exp 10080 \
   --secret YOUR_JWT_SECRET_KEY)
 

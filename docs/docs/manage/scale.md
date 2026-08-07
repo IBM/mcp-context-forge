@@ -1748,7 +1748,7 @@ brew install k6            # macOS
 ```bash
 # Get JWT token
 export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
-  --username admin@example.com --exp 10080 --secret my-test-key-but-now-longer-than-32-bytes)
+  --username admin@example.com --admin --exp 10080 --secret my-test-key-but-now-longer-than-32-bytes)
 
 # Create test payload
 cat > payload.json <<EOF

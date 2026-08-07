@@ -411,6 +411,28 @@ def _payload_from_cli(args) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
+def _warn_if_simple_token_for_admin(username: str, rich_mode: bool, is_known_admin: bool) -> None:
+    """Warn when a simple token is minted for a user who is a platform admin.
+
+    Simple-token mode omits the ``teams`` claim entirely, and a missing key
+    normalizes to ``[]`` — public-only. A token minted this way for an admin does
+    not carry admin authority and will be rejected by global-record routes.
+
+    Args:
+        username: Token subject.
+        rich_mode: Whether one of ``--admin`` / ``--teams`` / ``--scopes`` / ``--full-name`` was passed.
+        is_known_admin: Whether the subject resolves to a platform admin.
+    """
+    if rich_mode or not is_known_admin:
+        return
+    print(
+        f"⚠️  WARNING: '{username}' is a platform admin, but this token omits the `teams` claim,\n"
+        "   which normalizes to public-only scope. It will be rejected by routes that\n"
+        "   manage global records. Pass --admin to mint an unrestricted admin token.",
+        file=sys.stderr,
+    )
+
+
 def main() -> None:  # pragma: no cover
     """Entry point for JWT command line interface.
 
@@ -492,7 +514,14 @@ def main() -> None:  # pragma: no cover
     teams: object = _TEAMS_UNSET
     scopes_dict = None
 
-    if args.admin or args.teams or args.scopes or args.full_name:
+    rich_mode = bool(args.admin or args.teams or args.scopes or args.full_name)
+    try:
+        is_known_admin = bool(args.username) and args.username == settings.platform_admin_email
+    except Exception:  # nosec B110 - defensive fallback if settings cannot be loaded
+        is_known_admin = False
+    _warn_if_simple_token_for_admin(username=args.username or "", rich_mode=rich_mode, is_known_admin=is_known_admin)
+
+    if rich_mode:
         user_email = payload.get("sub") or payload.get("username", "admin@example.com")
 
         # Build user data
