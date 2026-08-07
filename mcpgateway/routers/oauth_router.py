@@ -268,17 +268,20 @@ oauth_router = APIRouter(prefix="/oauth", tags=["oauth"])
 
 
 def _require_admin_user(current_user: EmailUserResponse) -> None:
-    """Require admin context for DCR management endpoints.
+    """Require un-narrowed admin context for DCR management endpoints.
 
     Args:
         current_user: Authenticated user context from RBAC dependency.
 
     Raises:
-        HTTPException: If requester is not an admin user.
+        HTTPException: If requester is not an admin user or has a narrowed token scope.
     """
     is_admin = current_user.is_admin if hasattr(current_user, "is_admin") else current_user.get("is_admin", False)
     if not is_admin:
         raise HTTPException(status_code=403, detail="Admin permissions required")
+    token_teams = current_user.token_teams if hasattr(current_user, "token_teams") else current_user.get("token_teams")
+    if token_teams is not None:
+        raise HTTPException(status_code=403, detail="DCR management requires un-narrowed admin access")
 
 
 def _require_unnarrowed_admin(request: Request, current_user: EmailUserResponse) -> None:
