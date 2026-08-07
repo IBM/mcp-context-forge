@@ -1,7 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { useState } from "react";
-import { render, screen, within } from "@testing-library/react";
+import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { renderWithProviders as render } from "@/test/test-utils";
 import { TagInput } from "./tag-input";
 
 function Harness({
@@ -111,5 +112,43 @@ describe("TagInput", () => {
     render(<Harness initial={["a"]} disabled />);
     expect(screen.getByRole("combobox")).toBeDisabled();
     expect(screen.getByRole("button", { name: "Remove a" })).toBeDisabled();
+  });
+
+  it("selects the highlighted suggestion with ArrowDown then Enter", async () => {
+    const user = userEvent.setup();
+    render(<Harness suggestions={["production", "profiling"]} />);
+    await user.type(screen.getByRole("combobox"), "pro");
+    await screen.findByRole("listbox");
+    await user.keyboard("{ArrowDown}{Enter}");
+    expect(screen.getByText("production")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Remove production" })).toBeInTheDocument();
+  });
+
+  it("commits pending text as a chip on Tab", async () => {
+    const user = userEvent.setup();
+    render(<Harness />);
+    await user.type(screen.getByRole("combobox"), "drafted");
+    await user.keyboard("{Tab}");
+    expect(screen.getByRole("button", { name: "Remove drafted" })).toBeInTheDocument();
+    expect(screen.getByRole("combobox")).toHaveValue("");
+  });
+
+  it("commits pending text as a chip on blur", async () => {
+    const user = userEvent.setup();
+    render(<Harness />);
+    await user.type(screen.getByRole("combobox"), "abandoned");
+    await user.click(document.body);
+    expect(screen.getByRole("button", { name: "Remove abandoned" })).toBeInTheDocument();
+  });
+
+  it("caps a paste at the remaining maxTags capacity and shows the max message", async () => {
+    const user = userEvent.setup();
+    render(<Harness maxTags={2} />);
+    await user.click(screen.getByRole("combobox"));
+    await user.paste("a, b, c");
+    expect(screen.getByRole("button", { name: "Remove a" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Remove b" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Remove c" })).not.toBeInTheDocument();
+    expect(screen.getByText("Maximum 2 tags reached.")).toBeInTheDocument();
   });
 });

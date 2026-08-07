@@ -163,7 +163,7 @@ describe("ResourceForm", () => {
       let capturedBody: { resource?: { tags?: string[] } } | undefined;
       server.use(
         http.post("*/resources", async ({ request }) => {
-          capturedBody = await request.json();
+          capturedBody = (await request.json()) as { resource?: { tags?: string[] } };
           return HttpResponse.json({ id: "resource-1", name: "My Resource" }, { status: 201 });
         }),
       );
