@@ -496,7 +496,7 @@ uv run python scripts/demo_a2a_agent.py
 
 # Optional: Generate a token for the curl test commands below
 export TOKEN=$(python -m mcpgateway.utils.create_jwt_token \
-  --username "admin@example.com" --exp 60)
+  --username "admin@example.com" --admin --exp 60)
 ```
 
 Note: The script reads `JWT_SECRET_KEY` and `PLATFORM_ADMIN_EMAIL` from environment variables (defaults: `my-test-key…` and `admin@example.com`).
@@ -522,7 +522,7 @@ The demo agent supports these query formats:
 ```bash
 # Get a token
 export TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
-  --username admin@example.com --exp 60)
+  --username admin@example.com --admin --exp 60)
 
 curl -X POST "http://localhost:8000/a2a/demo-calculator-agent/invoke" \
   -H "Authorization: Bearer $TOKEN" \
@@ -542,7 +542,7 @@ uv run python __main__.py  # Starts on port 9999
 
 # Register with ContextForge (in another terminal)
 export TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
-  --username admin@example.com --exp 60 --secret my-test-key-but-now-longer-than-32-bytes)
+  --username admin@example.com --admin --exp 60 --secret my-test-key-but-now-longer-than-32-bytes)
 
 curl -X POST "http://localhost:8000/a2a" \
   -H "Authorization: Bearer $TOKEN" \

@@ -428,7 +428,7 @@ curl -sk https://$ROUTE/health
 ```bash
 TOKEN=$(oc -n contextforge exec deploy/contextforge-mcp-stack-mcpgateway -- \
   python3 -m mcpgateway.utils.create_jwt_token \
-  --username admin@example.com --exp 60 \
+  --username admin@example.com --admin --exp 60 \
   --secret "<your-jwt-key>")
 
 curl -s http://localhost:4444/servers -H "Authorization: Bearer $TOKEN" | python3 -m json.tool

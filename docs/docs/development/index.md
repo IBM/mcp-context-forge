@@ -123,7 +123,7 @@ Admin UI uses email/password authentication (`PLATFORM_ADMIN_EMAIL`/`PASSWORD`).
 To generate a JWT token:
 
 ```bash
-export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key-but-now-longer-than-32-bytes)
+export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --admin --exp 10080 --secret my-test-key-but-now-longer-than-32-bytes)
 echo $MCPGATEWAY_BEARER_TOKEN
 ```
 

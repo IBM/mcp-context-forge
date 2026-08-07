@@ -33,7 +33,7 @@ Generate a token:
 
 ```bash
 export TOKEN=$(python -m mcpgateway.utils.create_jwt_token \
-  --username admin@example.com --exp 10080 --secret "$JWT_SECRET_KEY")
+  --username admin@example.com --admin --exp 10080 --secret "$JWT_SECRET_KEY")
 ```
 
 ### Required permissions
