@@ -33,16 +33,14 @@ import json
 import os
 import subprocess
 import sys
-from datetime import timedelta
 from typing import Any
 
 # Third-Party
 import httpx
+import httpx2
 import pytest
-from mcp import ClientSession
-from mcp.client.streamable_http import streamablehttp_client
-from mcp.shared.exceptions import McpError
-from mcp.types import InitializeResult
+from mcp import ClientSession, MCPError as McpError
+from mcp.client.streamable_http import create_mcp_http_client, streamable_http_client
 
 # Local
 from ..helpers.mcp_test_helpers import (
@@ -90,23 +88,20 @@ def mcp_url() -> str:
 _CLIENT_TIMEOUT = float(os.getenv("MCP_E2E_CLIENT_TIMEOUT", "5.0"))
 
 
-class GatewayClientSession(ClientSession):
-    """``ClientSession`` that retains the ``InitializeResult`` for assertions."""
-
-    initialize_result: InitializeResult
-
-    async def initialize(self) -> InitializeResult:
-        """Initialize the session and stash the result on the instance."""
-        self.initialize_result = await super().initialize()
-        return self.initialize_result
+# mcp v2: ``ClientSession`` caches the handshake and exposes it via the
+# read-only ``initialize_result`` property (plus ``protocol_version``,
+# ``server_info`` and ``server_capabilities`` accessors), so the v1-era
+# retaining subclass is unnecessary. Keep the name as an alias for the
+# test annotations below.
+GatewayClientSession = ClientSession
 
 
 @pytest.fixture
 async def client(jwt_token: str, mcp_url: str):
-    timeout = timedelta(seconds=_CLIENT_TIMEOUT)
+    timeout = httpx2.Timeout(_CLIENT_TIMEOUT)
     headers = {"Authorization": f"Bearer {jwt_token}"}
 
-    # anyio task groups (inside streamablehttp_client / ClientSession) must be
+    # anyio task groups (inside streamable_http_client / ClientSession) must be
     # entered and exited from the same task. pytest-asyncio drives async-gen
     # fixture setup and teardown in separate tasks, so run the whole session
     # lifecycle in a dedicated runner task and hand the session to the test.
@@ -116,8 +111,8 @@ async def client(jwt_token: str, mcp_url: str):
 
     async def _session_runner() -> None:
         try:
-            async with streamablehttp_client(mcp_url, headers=headers, timeout=timeout, sse_read_timeout=timeout) as (read_stream, write_stream, _):
-                async with GatewayClientSession(read_stream, write_stream, read_timeout_seconds=timeout) as session:
+            async with streamable_http_client(mcp_url, http_client=create_mcp_http_client(headers=headers, timeout=timeout)) as (read_stream, write_stream):
+                async with GatewayClientSession(read_stream, write_stream, read_timeout_seconds=_CLIENT_TIMEOUT) as session:
                     await session.initialize()
                     holder["session"] = session
                     ready.set()
@@ -147,12 +142,12 @@ class TestConnectivity:
         print("    -> ping OK")
 
     async def test_initialize_reports_server_info(self, client: GatewayClientSession) -> None:
-        """Initialize exposes protocolVersion, capabilities, and serverInfo."""
+        """Initialize exposes protocol_version, capabilities, and server_info."""
         init = client.initialize_result
-        assert init.protocolVersion, f"missing protocolVersion: {init}"
+        assert init.protocol_version, f"missing protocolVersion: {init}"
         assert init.capabilities, f"missing capabilities: {init}"
-        assert init.serverInfo, f"missing serverInfo: {init}"
-        print(f"    -> Protocol: {init.protocolVersion}, Server: {init.serverInfo.name} v{init.serverInfo.version}")
+        assert init.server_info, f"missing serverInfo: {init}"
+        print(f"    -> Protocol: {init.protocol_version}, Server: {init.server_info.name} v{init.server_info.version}")
 
     async def test_server_capabilities_include_core_surfaces(self, client: GatewayClientSession) -> None:
         """Gateway advertises tools, resources, and prompts capabilities."""
@@ -188,7 +183,7 @@ class TestTools:
         for tool in tools:
             assert tool.name, f"tool missing name: {tool}"
             assert tool.description, f"tool {tool.name} missing description"
-            assert tool.inputSchema is not None, f"tool {tool.name} missing inputSchema"
+            assert tool.input_schema is not None, f"tool {tool.name} missing inputSchema"
         print(f"    -> all {len(tools)} tools have name/description/inputSchema")
 
     async def test_tools_include_gateway_prefixed(self, client: GatewayClientSession) -> None:
@@ -200,7 +195,7 @@ class TestTools:
 
     async def test_tool_input_schemas_are_json_schema_objects(self, client: GatewayClientSession) -> None:
         for tool in (await client.list_tools()).tools:
-            schema = tool.inputSchema
+            schema = tool.input_schema
             if schema:
                 assert schema.get("type") == "object", f"tool {tool.name} inputSchema not type=object: {schema}"
         print("    -> all tool inputSchemas validated as type=object")
@@ -285,7 +280,7 @@ class TestToolCalls:
 
     async def test_get_system_time(self, client: GatewayClientSession) -> None:
         result = await client.call_tool("fast-time-get-system-time", {"timezone": "UTC"})
-        assert result.isError is False, f"get-system-time returned error (upstream may be down): {result.content}"
+        assert result.is_error is False, f"get-system-time returned error (upstream may be down): {result.content}"
         assert result.content and result.content[0].type == "text"
         text = result.content[0].text
         assert text
@@ -294,7 +289,7 @@ class TestToolCalls:
     async def test_echo(self, client: GatewayClientSession) -> None:
         test_message = "hello-from-mcp-protocol-e2e"
         result = await client.call_tool("fast-test-echo", {"message": test_message})
-        assert result.isError is False, f"echo returned error (upstream may be down): {result.content}"
+        assert result.is_error is False, f"echo returned error (upstream may be down): {result.content}"
         text = result.content[0].text
         assert test_message in text, f"echo did not return message: {text}"
         print(f"    -> echo('{test_message}') = {text}")
@@ -304,13 +299,13 @@ class TestToolCalls:
             "fast-time-convert-time",
             {"time": "2025-01-15T12:00:00Z", "source_timezone": "UTC", "target_timezone": "America/New_York"},
         )
-        assert result.isError is False, f"convert-time returned error (upstream may be down): {result.content}"
+        assert result.is_error is False, f"convert-time returned error (upstream may be down): {result.content}"
         assert result.content[0].type == "text"
         print(f"    -> convert-time(UTC->NY) = {result.content[0].text}")
 
     async def test_get_stats(self, client: GatewayClientSession) -> None:
         result = await client.call_tool("fast-test-get-stats", {})
-        assert result.isError is False, f"get-stats returned error (upstream may be down): {result.content}"
+        assert result.is_error is False, f"get-stats returned error (upstream may be down): {result.content}"
         print(f"    -> get-stats = {result.content[0].text[:120]}")
 
     async def test_schema_error_preserves_payload(self, client: GatewayClientSession) -> None:
@@ -336,7 +331,7 @@ class TestToolCalls:
         tool = await self._require_declared_output_schema(client, "fast-test-schema-error")
         assert tool is not None
         result = await client.call_tool("fast-test-schema-error", {})
-        assert result.isError is True, f"expected isError=true, got: {result}"
+        assert result.is_error is True, f"expected isError=true, got: {result}"
         text = result.content[0].text if result.content else ""
         assert "200 points" in text, f"expected original error text preserved, got: {text!r}"
         assert '"validator"' not in text and '"required"' not in text, f"error payload appears to have been replaced by a validation error (regression of #4202): {text!r}"
@@ -358,10 +353,10 @@ class TestToolCalls:
         tool = await self._require_declared_output_schema(client, "fast-test-schema-success")
         assert tool is not None
         result = await client.call_tool("fast-test-schema-success", {})
-        assert result.isError is False, f"expected success, got: {result}"
+        assert result.is_error is False, f"expected success, got: {result}"
         payload = json.loads(result.content[0].text)
         assert payload.get("recognitionId") == "rec-123", f"unexpected payload: {payload}"
-        structured = result.structuredContent
+        structured = result.structured_content
         assert structured is not None, f"expected structured content on successful validation: {result}"
         assert structured.get("recognitionId") == "rec-123", f"unexpected structured content: {structured}"
         print(f"    -> schema_success validated: {payload}")
@@ -373,7 +368,7 @@ class TestToolCalls:
         except McpError as exc:
             print(f"    -> McpError (expected): {exc}")
             return
-        assert result.isError is True, f"expected error for non-existent tool: {result}"
+        assert result.is_error is True, f"expected error for non-existent tool: {result}"
         print(f"    -> isError=True (expected): {result.content[0].text[:100] if result.content else ''}")
 
     @staticmethod
@@ -390,7 +385,7 @@ class TestToolCalls:
         assert match is not None, (
             f"Tool {tool_name!r} is not registered in the gateway. " f"Rebuild the fast_test_server image and restart docker-compose so " f"register_fast_test picks up the new schema fixtures."
         )
-        schema = match.outputSchema
+        schema = match.output_schema
         assert schema, (
             f"Tool {tool_name!r} has no outputSchema declared in the gateway: {match}. " "Check that the upstream tool declares an output_schema and that the gateway sync completed successfully."
         )
