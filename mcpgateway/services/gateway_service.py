@@ -7194,7 +7194,7 @@ async def test_gateway_connectivity(
         )
         latency_ms = int((time.monotonic() - start_time) * 1000)
         # Generic error message - don't expose allowlist or validation details
-        return GatewayTestResponse(status_code=400, latency_ms=latency_ms, body={"error": "Invalid gateway URL"})
+        return GatewayTestResponse(status_code=400, latency_ms=latency_ms, body={"error": "The MCP server URL is not allowed for testing. Confirm the URL is correct and the host is permitted by your test policy."})
 
     validated_base_url = validated_gateway_target["validated_url"]
     validated_hostname = validated_gateway_target["hostname"]
@@ -7253,7 +7253,7 @@ async def test_gateway_connectivity(
                     if not user_email:
                         latency_ms = int((time.monotonic() - start_time) * 1000)
                         return GatewayTestResponse(
-                            status_code=401, latency_ms=latency_ms, body={"error": f"User authentication required for OAuth-protected gateway '{gateway.name}'. Please ensure you are authenticated."}
+                            status_code=401, latency_ms=latency_ms, body={"error": f"Sign in with an email-bound account to test OAuth-protected MCP server '{gateway.name}'. API tokens without an email cannot complete the OAuth user flow."}
                         )
 
                     access_token: str = await token_storage.get_user_token(gateway.id, user_email)
@@ -7263,12 +7263,12 @@ async def test_gateway_connectivity(
                     else:
                         latency_ms = int((time.monotonic() - start_time) * 1000)
                         return GatewayTestResponse(
-                            status_code=401, latency_ms=latency_ms, body={"error": f"Please authorize {gateway.name} first. Visit /oauth/authorize/{gateway.id} to complete OAuth flow."}
+                            status_code=401, latency_ms=latency_ms, body={"error": f"Authorize '{gateway.name}' before testing. Open /oauth/authorize/{gateway.id} to complete the OAuth flow."}
                         )
                 except Exception as e:
                     logger.error(f"Failed to obtain stored OAuth token for gateway {gateway.name}: {e}")
                     latency_ms = int((time.monotonic() - start_time) * 1000)
-                    return GatewayTestResponse(status_code=500, latency_ms=latency_ms, body={"error": f"OAuth token retrieval failed for gateway: {str(e)}"})
+                    return GatewayTestResponse(status_code=500, latency_ms=latency_ms, body={"error": f"Token retrieval failed for MCP server '{gateway.name}': {str(e)}. Check the OAuth client credentials and token URL."})
             else:
                 # For Client Credentials flow, get token directly
                 try:
@@ -7280,7 +7280,7 @@ async def test_gateway_connectivity(
                 except Exception as e:
                     logger.error(f"Failed to obtain OAuth access token for gateway {gateway.name}: {e}")
                     latency_ms = int((time.monotonic() - start_time) * 1000)
-                    return GatewayTestResponse(status_code=502, latency_ms=latency_ms, body={"error": "OAuth token retrieval failed for gateway"})
+                    return GatewayTestResponse(status_code=502, latency_ms=latency_ms, body={"error": f"Token retrieval failed for MCP server '{gateway.name}': {str(e)}. Check the OAuth client credentials and token URL."})
         elif gateway and gateway.auth_type in ("basic", "bearer", "authheaders") and gateway.auth_value:
             if isinstance(gateway.auth_value, dict):
                 headers.update(gateway.auth_value)
@@ -7361,7 +7361,7 @@ async def test_gateway_connectivity(
             },
         )
 
-        return GatewayTestResponse(status_code=502, latency_ms=latency_ms, body={"error": "Request failed", "details": str(e)})
+        return GatewayTestResponse(status_code=502, latency_ms=latency_ms, body={"error": "The MCP server request failed. Verify the MCP server is running and reachable from this host.", "details": str(e)})
 
 
 # Lazy singleton - created on first access, not at module import time.
