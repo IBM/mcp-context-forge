@@ -31,6 +31,8 @@ Environment Variables:
     MCP_BENCHMARK_TOOL_DENYLIST: Comma-sep tool names to exclude
                                (default: schema_error,flaky — deliberate
                                 failure fixtures; set to "" to include them)
+    MCP_BENCHMARK_TOOL_POOL_SIZE: Max tools each user may call
+                               (default: 0 = all discovered tools)
     JWT_SECRET_KEY:            JWT signing secret     (default: my-test-key-but-now-longer-than-32-bytes)
     JWT_ALGORITHM:             JWT algorithm          (default: HS256)
     JWT_AUDIENCE:              JWT audience           (default: mcpgateway-api)
@@ -109,6 +111,12 @@ MCP_TOOL_NAMES_STR = _cfg("MCP_TOOL_NAMES", "")
 MCP_TOOL_DENYLIST: set[str] = {
     entry.strip().lower().replace("-", "_") for entry in _cfg("MCP_BENCHMARK_TOOL_DENYLIST", "schema_error,flaky").split(",") if entry.strip()
 }
+# Maximum number of discovered tools each user may call. 0 = no cap (default).
+# Set MCP_BENCHMARK_TOOL_POOL_SIZE=6 to reproduce the original 6-tool agent scenario.
+try:
+    MCP_TOOL_POOL_SIZE: int = max(0, int(_cfg("MCP_BENCHMARK_TOOL_POOL_SIZE", "0") or 0))
+except ValueError:
+    MCP_TOOL_POOL_SIZE = 0
 LOCUST_LOG_LEVEL = os.environ.get("LOCUST_LOG_LEVEL", _ENV.get("LOCUST_LOG_LEVEL", "INFO")).upper()
 
 logging.basicConfig(level=getattr(logging, LOCUST_LOG_LEVEL, logging.INFO))
@@ -650,6 +658,20 @@ def _is_denied(tool_name: str) -> bool:
     return any(normalized == denied or normalized.endswith(f"_{denied}") for denied in MCP_TOOL_DENYLIST)
 
 
+def _limit_pool(tool_names: list[str]) -> list[str]:
+    """Apply the configured tool-pool ceiling.
+
+    Args:
+        tool_names: Discovered tool names.
+
+    Returns:
+        The same list, truncated when ``MCP_TOOL_POOL_SIZE`` is greater than zero.
+    """
+    if MCP_TOOL_POOL_SIZE > 0:
+        return tool_names[:MCP_TOOL_POOL_SIZE]
+    return tool_names
+
+
 # =============================================================================
 # Base MCP User — handles session init, auth, and request mechanics
 # =============================================================================
@@ -788,6 +810,14 @@ class BaseMCPUser(FastHttpUser):
         """
         return _build_tool_args(tool_name, self._tool_schemas.get(tool_name))
 
+    def _tool_pool(self) -> list[str]:
+        """Return the tools this user may call, honoring the configured ceiling.
+
+        Returns:
+            Callable tool names for the assigned server target.
+        """
+        return _limit_pool(self._tool_names)
+
 
 # =============================================================================
 # User 1: MCPAgentUser — Realistic agent with 6 tools (customer scenario)
@@ -795,12 +825,16 @@ class BaseMCPUser(FastHttpUser):
 
 
 class MCPAgentUser(BaseMCPUser):
-    """Simulates a realistic AI agent that uses 6 MCP tools.
+    """Simulates a realistic AI agent that uses the server's MCP tools.
 
-    Matches the customer scenario: an agent with 6 tools at 150 RPS target.
+    Matches the customer scenario at a 150 RPS target. Set
+    MCP_BENCHMARK_TOOL_POOL_SIZE=6 to restrict the agent to 6 tools exactly as
+    the original customer configuration did; the default is every discovered
+    tool.
+
     Each "turn" the agent:
       1. Calls tools/list (periodic discovery)
-      2. Calls 1-3 tools per turn (random selection from available tools)
+      2. Calls 1-3 tools per turn (random selection from the tool pool)
       3. Occasionally lists resources/prompts
 
     Weight: 10 (dominant — this is the primary scenario to measure)
@@ -810,8 +844,19 @@ class MCPAgentUser(BaseMCPUser):
     wait_time = between(0.05, 0.3)
 
     def _pick_tools(self, n: int = 1) -> list[str]:
-        """Pick n random tools from the discovered set (cap at 6 like the customer)."""
-        pool = self._tool_names[:6] if len(self._tool_names) > 6 else self._tool_names
+        """Pick n random tools from the discovered set.
+
+        The pool is the full discovered tool list unless
+        ``MCP_BENCHMARK_TOOL_POOL_SIZE`` caps it (set it to 6 to reproduce the
+        original 6-tool customer agent scenario).
+
+        Args:
+            n: Number of distinct tools to pick.
+
+        Returns:
+            Up to n tool names, or an empty list when no tools are available.
+        """
+        pool = self._tool_pool()
         if not pool:
             return []
         return random.sample(pool, min(n, len(pool)))
@@ -895,9 +940,10 @@ class MCPToolCallerUser(BaseMCPUser):
     @tag("toolcall", "call")
     def call_tool(self):
         """Call a random tool rapidly."""
-        if not self._tool_names:
+        pool = self._tool_pool()
+        if not pool:
             return
-        tool = random.choice(self._tool_names[:6] if len(self._tool_names) > 6 else self._tool_names)
+        tool = random.choice(pool)
         args = self._build_tool_args(tool)
         self._mcp_request("tools/call", {"name": tool, "arguments": args}, "MCP tools/call [rapid]")
 
@@ -1001,8 +1047,9 @@ class MCPSessionChurnUser(BaseMCPUser):
         self._mcp_request("tools/list", {}, "MCP tools/list [churn]")
 
         # Call a tool
-        if self._tool_names:
-            tool = random.choice(self._tool_names[:6] if len(self._tool_names) > 6 else self._tool_names)
+        pool = self._tool_pool()
+        if pool:
+            tool = random.choice(pool)
             args = self._build_tool_args(tool)
             self._mcp_request("tools/call", {"name": tool, "arguments": args}, "MCP tools/call [churn]")
 
@@ -1026,9 +1073,11 @@ class MCPStressUser(BaseMCPUser):
     @task(10)
     @tag("stress", "call")
     def stress_call_tool(self):
-        if not self._tool_names:
+        """Call a random tool at constant throughput."""
+        pool = self._tool_pool()
+        if not pool:
             return
-        tool = random.choice(self._tool_names[:6] if len(self._tool_names) > 6 else self._tool_names)
+        tool = random.choice(pool)
         args = self._build_tool_args(tool)
         self._mcp_request("tools/call", {"name": tool, "arguments": args}, "MCP tools/call [stress]")
 
@@ -1093,9 +1142,10 @@ class RESTBaselineUser(FastHttpUser):
     @tag("baseline", "rpc", "call")
     def rpc_call_tool(self):
         """tools/call via /rpc (REST JSON-RPC)."""
-        if not _tool_names:
+        pool = _limit_pool(_tool_names)
+        if not pool:
             return
-        tool = random.choice(_tool_names[:6] if len(_tool_names) > 6 else _tool_names)
+        tool = random.choice(pool)
         args = _build_tool_args(tool)
         payload = _jsonrpc("tools/call", {"name": tool, "arguments": args})
         with self.client.post(
