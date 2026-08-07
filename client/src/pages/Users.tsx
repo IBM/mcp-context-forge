@@ -175,7 +175,7 @@ export function Users() {
   const { query, setQuery, results } = useLocalSearch(allUsers, getUserText);
 
   return (
-    <main className="p-6">
+    <div>
       {isFormOpen ? (
         <UserForm
           key={userToEdit?.email ?? "create"}
@@ -206,9 +206,9 @@ export function Users() {
       ) : (
         <div className="space-y-6">
           <header className="flex items-center justify-between">
-            <h1 className="text-xl font-semibold text-foreground">
+            <h2 className="text-xl font-semibold text-foreground">
               {intl.formatMessage({ id: "users.title" })}
-            </h1>
+            </h2>
             <div className="flex items-center gap-3">
               <ListSearch
                 value={query}
@@ -337,6 +337,6 @@ export function Users() {
           onConfirm={handleDeleteConfirm}
         />
       )}
-    </main>
+    </div>
   );
 }

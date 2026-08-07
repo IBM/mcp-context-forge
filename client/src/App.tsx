@@ -18,8 +18,6 @@ import { Prompts } from "./pages/Prompts";
 import { Agents } from "./pages/Agents";
 import { RestApi } from "./pages/RestApi";
 import { Grpc } from "./pages/Grpc";
-import { Users } from "./pages/Users";
-import { Teams } from "./pages/Teams";
 import { Tokens } from "./pages/Tokens";
 import { LLMProviders } from "./pages/LLMProviders";
 import { LLMModels } from "./pages/LLMModels";
@@ -30,6 +28,14 @@ import { Performance } from "./pages/Performance";
 import { Maintenance } from "./pages/Maintenance";
 import { Settings } from "./pages/Settings";
 import { NotFound } from "./pages/NotFound";
+
+function LegacyRedirect({ to }: { to: string }) {
+  const { path } = useRouter();
+  const query = path.split("?")[1];
+  return <Redirect to={query ? `${to}?${query}` : to} />;
+}
+const UsersRedirect = () => <LegacyRedirect to="/app/settings/users" />;
+const TeamsRedirect = () => <LegacyRedirect to="/app/settings/teams" />;
 
 // ---------------------------------------------------------------------------
 // Unauthenticated shell (full-page, no sidebar/header)
@@ -62,8 +68,8 @@ function PrivateRoutes() {
         <Route path="/app/agents" component={Agents} />
         <Route path="/app/rest-api" component={RestApi} />
         <Route path="/app/grpc" component={Grpc} />
-        <Route path="/app/users" component={Users} />
-        <Route path="/app/teams" component={Teams} />
+        <Route path="/app/users" component={UsersRedirect} />
+        <Route path="/app/teams" component={TeamsRedirect} />
         <Route path="/app/tokens" component={Tokens} />
         <Route path="/app/llm/providers" component={LLMProviders} />
         <Route path="/app/llm/models" component={LLMModels} />
@@ -73,6 +79,7 @@ function PrivateRoutes() {
         <Route path="/app/performance" component={Performance} />
         <Route path="/app/maintenance" component={Maintenance} />
         <Route path="/app/settings" component={Settings} />
+        <Route path="/app/settings/:tab" component={Settings} />
         <Route path="/app/not-found" component={NotFound} />
         <Route path="/app/server-catalog" component={ServerCatalog} />
       </AppShell>

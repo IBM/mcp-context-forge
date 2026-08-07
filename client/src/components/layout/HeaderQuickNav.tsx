@@ -35,8 +35,8 @@ const ENTITY_ROUTE: Record<SearchEntityType, string> = {
   resources: "/app/resources",
   prompts: "/app/prompts",
   agents: "/app/agents",
-  teams: "/app/teams",
-  users: "/app/users",
+  teams: "/app/settings/teams",
+  users: "/app/settings/users",
 };
 
 const ENTITY_LABEL_KEY: Record<SearchEntityType, string> = {
