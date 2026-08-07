@@ -48,3 +48,24 @@ async def test_basic_auth_string_identity_is_still_accepted(monkeypatch):
     response = await version_endpoint(scoped_request(None, path="/version"), _user="basic-auth-user@example.com")
 
     assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_admin_scope_check_failure_denies_cleanly(monkeypatch):
+    """A DB/predicate failure during the admin-scope check must fail closed, not 500.
+
+    is_unrestricted_platform_admin() ultimately reads the DB (PermissionService).
+    If that call raises (DB down, connection error, etc.) the handler must never
+    let the request through, and must not let the exception propagate as an
+    unhandled 500 - it should be caught, logged, and turned into a clean denial.
+    """
+    monkeypatch.setattr(
+        "mcpgateway.auth_context.is_unrestricted_platform_admin",
+        AsyncMock(side_effect=RuntimeError("database connection refused")),
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await version_endpoint(scoped_request(None, path="/version"), _user="admin@example.com")
+
+    # Fails closed with a clean, handled status - not an unhandled 500 traceback.
+    assert exc.value.status_code == 503
