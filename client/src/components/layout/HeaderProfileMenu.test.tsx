@@ -114,6 +114,21 @@ describe("HeaderProfileMenu", () => {
     expect(localStorage.getItem("theme-preference")).toBe("system");
   });
 
+  it("does not scroll-lock the body while the menu is open", async () => {
+    // Regression: a modal dropdown wraps its content in react-remove-scroll,
+    // which locks the body (overflow:hidden + compensating padding) on open and
+    // shifts centered header content sideways. modal={false} must avoid this.
+    const user = userEvent.setup();
+    renderMenu();
+
+    await user.click(screen.getByRole("button", { name: "Bobo Example" }));
+    // Menu is open (its items are rendered).
+    expect(screen.getByText("Settings")).toBeInTheDocument();
+
+    expect(document.body).not.toHaveAttribute("data-scroll-locked");
+    expect(document.body.style.overflow).not.toBe("hidden");
+  });
+
   it("renders null when user is not logged in", () => {
     mockUser = null;
     const { container } = renderMenu();

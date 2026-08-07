@@ -24,7 +24,7 @@ export function HeaderProfileMenu() {
   const displayName = user.full_name || user.email || "Profile";
 
   return (
-    <DropdownMenu>
+    <DropdownMenu modal={false}>
       <DropdownMenuTrigger asChild>
         {/* TODO: User photo/avatar data is not currently available, using fallback for now. */}
         <Button
