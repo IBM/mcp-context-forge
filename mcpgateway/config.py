@@ -65,6 +65,8 @@ from pydantic import AliasChoices, Field, field_validator, HttpUrl, model_valida
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 # First-Party
+from mcpgateway._security_constants import MIN_ENTROPY as _MIN_ENTROPY
+from mcpgateway._security_constants import MIN_SECRET_LENGTH as _MIN_SECRET_LENGTH
 from mcpgateway._security_constants import WEAK_VALUES as _CANONICAL_WEAK_VALUES
 from mcpgateway._security_constants import calculate_entropy
 
@@ -1238,7 +1240,7 @@ class Settings(BaseSettings):
     }
 
     # Security validation thresholds
-    min_secret_length: int = 32
+    min_secret_length: int = Field(default=_MIN_SECRET_LENGTH, ge=_MIN_SECRET_LENGTH)
     min_password_length: int = 12
     require_strong_secrets: bool = Field(
         default=False,
@@ -1537,9 +1539,9 @@ class Settings(BaseSettings):
             if not val.strip():
                 raise SecurityConfigurationError(f"{field_name}: secret is empty. Set a real value (run 'python -m mcpgateway.scripts.init_secrets').")
 
-            if len(val) < self.min_secret_length:
+            if len(val) < _MIN_SECRET_LENGTH:
                 raise SecurityConfigurationError(
-                    f"{field_name}: too short ({len(val)} chars, minimum {self.min_secret_length}). "
+                    f"{field_name}: too short ({len(val)} chars, minimum {_MIN_SECRET_LENGTH}). "
                     "Run 'python -m mcpgateway.scripts.init_secrets' to generate strong values, "
                     "or use 'make init-secrets-patch-env' to write them directly into .env."
                 )
@@ -1547,7 +1549,7 @@ class Settings(BaseSettings):
             is_placeholder = val.lower().startswith("__replace_me__")
             is_weak = val.lower() in weak_secrets
             entropy = calculate_entropy(val)
-            is_low_entropy = entropy < 3.5
+            is_low_entropy = entropy < _MIN_ENTROPY
 
             if is_placeholder or is_weak or is_low_entropy:
                 if is_placeholder:
@@ -1555,7 +1557,7 @@ class Settings(BaseSettings):
                 elif is_weak:
                     reason = "known-weak/default value"
                 else:
-                    reason = f"low entropy (score {entropy:.2f} < 3.5)"
+                    reason = f"low entropy (score {entropy:.2f} < {_MIN_ENTROPY})"
                 raise SecurityConfigurationError(
                     f"{field_name}: {reason} rejected in every environment (including '{env}'). "
                     "Cross-process token consistency requires operators to supply a real secret before startup — "
