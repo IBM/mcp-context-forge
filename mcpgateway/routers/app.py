@@ -8,14 +8,17 @@ Endpoints:
 - GET /app/auth/me - Get current user info from cookie
 - POST /app/auth/logout - Clear authentication cookie
 - GET /app/* - Serve React SPA (catch-all)
+- GET /app/observability/metrics/timeseries - Execution counts over time
+- GET /app/observability/metrics/percentiles - Latency percentiles over time
 """
 
 import asyncio
+from datetime import datetime, timedelta, timezone
 import logging
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.orm import Session
@@ -24,6 +27,7 @@ from mcpgateway.admin import rate_limit
 from mcpgateway.auth import get_current_user_from_cookie
 from mcpgateway.config import settings
 from mcpgateway.db import EmailUser, get_db
+from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
 from mcpgateway.routers.email_auth import create_access_token
 from mcpgateway.schemas import EmailUserResponse
 from mcpgateway.services.csrf_service import CSRF_TOKEN_LENGTH, clear_csrf_cookie, get_csrf_service
@@ -37,6 +41,8 @@ logger = logging.getLogger(__name__)
 
 # Module-level constants
 JWT_COOKIE_PATH = "/"
+
+observability_service = ObservabilityService()
 
 
 def _validate_csrf_token_length() -> None:
@@ -81,6 +87,22 @@ class LoginResponse(BaseModel):
 
     user: EmailUserResponse
     mcpgateway_csrf_token: str
+
+
+class TimeseriesResponse(BaseModel):
+    """Execution counts bucketed over time."""
+
+    buckets: list[str]
+    values: list[int]
+
+
+class PercentilesResponse(BaseModel):
+    """Latency percentiles (ms) bucketed over time."""
+
+    buckets: list[str]
+    p50: list[float]
+    p95: list[float]
+    p99: list[float]
 
 
 @app_router.post("/auth/login", response_model=LoginResponse)
@@ -220,6 +242,80 @@ async def logout(
 
     logger.debug("User logged out via cookie auth")
     return {"message": "Logged out successfully"}
+
+
+@app_router.get("/observability/metrics/timeseries", response_model=TimeseriesResponse)
+@require_permission("metrics:read", allow_admin_bypass=False)
+async def get_metrics_timeseries(
+    request: Request,  # pylint: disable=unused-argument
+    hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
+    interval_minutes: int = Query(60, ge=5, le=1440, description="Aggregation interval in minutes"),
+    user=Depends(get_current_user_with_permissions),  # pylint: disable=unused-argument
+    db: Session = Depends(get_db),
+) -> TimeseriesResponse:
+    """Get execution counts bucketed over time.
+
+    Args:
+        request: FastAPI request object (required by the permission decorator)
+        hours: Number of hours to look back (1-168)
+        interval_minutes: Aggregation interval in minutes (5-1440)
+        user: Authenticated user context (required by the permission decorator)
+        db: Database session
+
+    Returns:
+        TimeseriesResponse: Sparse buckets with one execution count each. Empty
+        series when observability is disabled.
+
+    Raises:
+        HTTPException: 500 if aggregation fails
+    """
+    if not settings.observability_enabled:
+        return TimeseriesResponse(buckets=[], values=[])
+
+    try:
+        cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
+        data = observability_service.get_execution_timeseries(db, cutoff_time, interval_minutes)
+        return TimeseriesResponse(**data)
+    except Exception as e:
+        logger.error(f"Failed to calculate timeseries metrics: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to calculate timeseries metrics")
+
+
+@app_router.get("/observability/metrics/percentiles", response_model=PercentilesResponse)
+@require_permission("metrics:read", allow_admin_bypass=False)
+async def get_metrics_percentiles(
+    request: Request,  # pylint: disable=unused-argument
+    hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
+    interval_minutes: int = Query(60, ge=5, le=1440, description="Aggregation interval in minutes"),
+    user=Depends(get_current_user_with_permissions),  # pylint: disable=unused-argument
+    db: Session = Depends(get_db),
+) -> PercentilesResponse:
+    """Get latency percentiles (p50/p95/p99) bucketed over time.
+
+    Args:
+        request: FastAPI request object (required by the permission decorator)
+        hours: Number of hours to look back (1-168)
+        interval_minutes: Aggregation interval in minutes (5-1440)
+        user: Authenticated user context (required by the permission decorator)
+        db: Database session
+
+    Returns:
+        PercentilesResponse: Sparse buckets with p50/p95/p99 latency in
+        milliseconds. Empty series when observability is disabled.
+
+    Raises:
+        HTTPException: 500 if aggregation fails
+    """
+    if not settings.observability_enabled:
+        return PercentilesResponse(buckets=[], p50=[], p95=[], p99=[])
+
+    try:
+        cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
+        data = observability_service.get_latency_percentiles(db, cutoff_time, interval_minutes)
+        return PercentilesResponse(**data)
+    except Exception as e:
+        logger.error(f"Failed to calculate latency percentiles: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to calculate latency percentiles")
 
 
 # ---------------------------------------------------------------------------
