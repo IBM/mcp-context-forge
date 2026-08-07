@@ -52,6 +52,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 import secrets
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 # Third-Party
@@ -117,7 +118,6 @@ from mcpgateway.plugins import (  # noqa: E402
 from mcpgateway.plugins.policy import HOOK_PAYLOAD_POLICIES  # noqa: E402
 from mcpgateway.routers.observability import router as observability_router  # noqa: E402
 from mcpgateway.services.observability_service import ObservabilityService  # noqa: E402
-from mcpgateway.services.tool_service import tool_service  # noqa: E402
 from mcpgateway.utils.create_jwt_token import get_jwt_token  # noqa: E402
 from mcpgateway.utils.verify_credentials import require_admin_auth, require_auth  # noqa: E402
 
@@ -153,6 +153,29 @@ def _auth_headers() -> dict:
     """
     token = make_test_jwt(ADMIN_EMAIL, is_admin=True)
     return make_auth_headers(token)
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _mock_outbound_rest_request(monkeypatch, mock_request: AsyncMock) -> None:
+    """Patch ``_build_pinned_rest_http_client`` so the SSRF-pinning path returns a stub.
+
+    The SSRF connection-pinning path in ``ToolService.invoke_tool`` calls
+    ``_build_pinned_rest_http_client()`` to get a *fresh* client, bypassing any
+    direct patch to ``tool_service._http_client``.  We must patch the factory
+    function itself to intercept the outbound REST call and avoid a real network
+    attempt (which would burn the full 60-second ``asyncio.wait_for`` timeout).
+
+    Mirrors the identical helper in ``test_otel_plugin_metadata_e2e.py``.
+    """
+
+    def build_client():
+        return SimpleNamespace(request=mock_request, get=AsyncMock(), aclose=AsyncMock())
+
+    monkeypatch.setattr("mcpgateway.services.tool_service._build_pinned_rest_http_client", build_client)
 
 
 # ---------------------------------------------------------------------------
@@ -272,12 +295,15 @@ async def control_telemetry_app(monkeypatch, tmp_path):
     test_app.dependency_overrides[get_permission_service] = mock_get_permission_service
 
     # Mock only the outbound HTTP call to the fictitious upstream tool backend.
+    # Patch the factory function so the SSRF-pinning path also returns a stub
+    # client instead of making a real network connection (which would burn the
+    # full 60-second asyncio.wait_for timeout on the .invalid fixture host).
     upstream_response = httpx.Response(
         200,
         json={"content": [{"type": "text", "text": "hello from upstream"}], "isError": False},
         request=httpx.Request("POST", CONTROL_UPSTREAM_URL),
     )
-    monkeypatch.setattr(tool_service._http_client, "request", AsyncMock(return_value=upstream_response))
+    _mock_outbound_rest_request(monkeypatch, AsyncMock(return_value=upstream_response))
 
     transport = ASGITransport(app=test_app)
     async with AsyncClient(transport=transport, base_url="http://e2e-test") as client:
@@ -695,12 +721,13 @@ async def denying_plugin_app(monkeypatch, tmp_path):
     test_app.dependency_overrides[get_jwt_token] = mock_get_jwt_token
     test_app.dependency_overrides[get_permission_service] = mock_get_permission_service
 
+    # Patch the factory so the SSRF-pinning path returns a stub client.
     upstream_response = httpx.Response(
         200,
         json={"content": [{"type": "text", "text": "hello"}], "isError": False},
         request=httpx.Request("POST", CONTROL_UPSTREAM_URL),
     )
-    monkeypatch.setattr(tool_service._http_client, "request", AsyncMock(return_value=upstream_response))
+    _mock_outbound_rest_request(monkeypatch, AsyncMock(return_value=upstream_response))
 
     transport = ASGITransport(app=test_app)
     async with AsyncClient(transport=transport, base_url="http://e2e-test") as client:
