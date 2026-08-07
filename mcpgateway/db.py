@@ -5490,13 +5490,33 @@ class EmailApiToken(Base):
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     tags: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True, default=list)
 
-    # Unique constraint for user+name+team_id combination (per-team scope).
-    # The composite UniqueConstraint handles non-NULL team_id rows.  SQL NULL != NULL
-    # semantics mean it cannot protect global-scope tokens (team_id IS NULL), so we add
-    # a partial unique index for that case — matching the pattern used by resources/prompts.
+    # Token names must be unique per user per team scope, but only among ACTIVE tokens.
+    # Revocation is a soft delete (is_active = false), so the uniqueness rule must ignore
+    # revoked rows or a deleted token blocks its name forever.  This matches the
+    # service-level duplicate check in TokenCatalogService.create_token(), which already
+    # filters on is_active.  Partial unique indexes (WHERE is_active) replace the previous
+    # UniqueConstraint — same pattern as uq_roles_name_scope_active on the roles table.
+    # The team-scoped index handles non-NULL team_id rows; SQL NULL != NULL semantics mean
+    # it cannot protect global-scope tokens (team_id IS NULL), so a second partial index
+    # covers that case.  Index names are kept stable because error handlers match on them.
     __table_args__ = (
-        UniqueConstraint("user_email", "name", "team_id", name="uq_email_api_tokens_user_name_team"),
-        Index("uq_email_api_tokens_user_name_global", "user_email", "name", unique=True, postgresql_where=text("team_id IS NULL"), sqlite_where=text("team_id IS NULL")),
+        Index(
+            "uq_email_api_tokens_user_name_team",
+            "user_email",
+            "name",
+            "team_id",
+            unique=True,
+            postgresql_where=text("team_id IS NOT NULL AND is_active = true"),
+            sqlite_where=text("team_id IS NOT NULL AND is_active = 1"),
+        ),
+        Index(
+            "uq_email_api_tokens_user_name_global",
+            "user_email",
+            "name",
+            unique=True,
+            postgresql_where=text("team_id IS NULL AND is_active = true"),
+            sqlite_where=text("team_id IS NULL AND is_active = 1"),
+        ),
         Index("idx_email_api_tokens_user_email", "user_email"),
         Index("idx_email_api_tokens_jti", "jti"),
         Index("idx_email_api_tokens_expires_at", "expires_at"),
