@@ -377,6 +377,19 @@ describe("useToolForm", () => {
       expect(payload.tool.description?.length).toBe(500);
     });
 
+    it("sanitizes tags in getFormData", () => {
+      const { result } = renderHook(() => useToolForm());
+
+      act(() => {
+        result.current.setName("my-tool");
+        result.current.setUrl("https://api.example.com");
+        result.current.setTags(["  clean  ", "evil\r\ninject", "x".repeat(250), "\x00\x07"]);
+      });
+
+      const payload = result.current.getFormData();
+      expect(payload.tool.tags).toEqual(["clean", "evilinject", "x".repeat(200)]);
+    });
+
     it("is true with valid name, url, and valid schema JSON", () => {
       const { result } = renderHook(() => useToolForm());
 
@@ -682,7 +695,7 @@ describe("useToolForm", () => {
       expect(capturedBody?.auth_password).toBeUndefined();
     });
 
-    it("processes tags with commas and removes empty tags", async () => {
+    it("passes tags through to the submit payload", async () => {
       let capturedBody: Record<string, unknown> | undefined;
       server.use(
         http.post("*/tools", async ({ request }) => {
@@ -696,7 +709,7 @@ describe("useToolForm", () => {
       act(() => {
         result.current.setName("my-tool");
         result.current.setUrl("https://api.example.com");
-        result.current.setTags(" tag1 , , tag2 ");
+        result.current.setTags(["tag1", "tag2"]);
       });
 
       await act(async () => {

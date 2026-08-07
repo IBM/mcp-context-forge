@@ -10,6 +10,7 @@ import { ConfirmDialog } from "@/components/servers/ConfirmDialog";
 import { useToolForm, type RequestType, type SchemaMode, type AuthType } from "@/hooks/useToolForm";
 import type { Tool } from "@/types/tool";
 import type { Visibility } from "@/types/server";
+import { getTagLabels } from "@/utils/tags";
 
 const AUTH_TYPE_FROM_API: Partial<Record<string, AuthType>> = {
   basic: "basic",
@@ -35,7 +36,7 @@ function toolToInitialValues(tool: Tool) {
     inputSchema: tool.inputSchema ? JSON.stringify(tool.inputSchema, null, 2) : "",
     outputSchema: tool.outputSchema ? JSON.stringify(tool.outputSchema, null, 2) : "",
     schemaMode: (tool.inputSchema || tool.outputSchema ? "manual" : "none") as SchemaMode,
-    tags: (tool.tags || []).map((t) => (typeof t === "string" ? t : t.label)).join(", "),
+    tags: getTagLabels(tool.tags || []),
     visibility: (tool.visibility || "public") as Visibility,
     teamId: tool.teamId ?? "",
     authType,

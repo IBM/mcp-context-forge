@@ -21,7 +21,7 @@ interface PromptFormValues {
   template: string;
   arguments: string;
   description: string;
-  tags: string;
+  tags: string[];
   teamId?: string;
 }
 
@@ -31,7 +31,7 @@ export interface PromptFormInitialValues {
   template?: string;
   arguments?: string;
   description?: string;
-  tags?: string;
+  tags?: string[];
   /**
    * The prompt's existing team (edit mode). When set, a `team`-visibility edit
    * keeps this team instead of forcing the caller to (re)select one in the
@@ -68,7 +68,7 @@ export interface UsePromptFormReturn {
   template: string;
   arguments: string;
   description: string;
-  tags: string;
+  tags: string[];
   errors: PromptFormErrors;
   isValid: boolean;
   isSubmitting: boolean;
@@ -77,7 +77,7 @@ export interface UsePromptFormReturn {
   setTemplate: (value: string) => void;
   setArguments: (value: string) => void;
   setDescription: (value: string) => void;
-  setTags: (value: string) => void;
+  setTags: (value: string[]) => void;
   validateField: (field: keyof PromptFormErrors, value: string) => void;
   validateForm: () => boolean;
   resetForm: () => void;
@@ -91,17 +91,8 @@ const initialState: PromptFormValues = {
   template: "",
   arguments: "",
   description: "",
-  tags: "",
+  tags: [],
 };
-
-function parseTags(value?: string): string[] | undefined {
-  const tags = value
-    ?.split(",")
-    .map((tag) => sanitizeString(tag, 200))
-    .filter(Boolean);
-
-  return tags && tags.length > 0 ? tags : undefined;
-}
 
 const createPromptFormSchema = (intl: ReturnType<typeof useIntl>, templateRequired: boolean) =>
   z
@@ -143,7 +134,7 @@ const createPromptFormSchema = (intl: ReturnType<typeof useIntl>, templateRequir
         .string()
         .transform((value) => sanitizeString(value, 500))
         .optional(),
-      tags: z.string().optional().transform(parseTags),
+      tags: z.array(z.string().transform((t) => sanitizeString(t, 200))).optional(),
       teamId: z.string().optional(),
     })
     .superRefine((data, ctx) => {
@@ -218,7 +209,7 @@ export function usePromptForm(options: UsePromptFormOptions = {}): UsePromptForm
   const [description, setDescriptionState] = useState(
     initialValues?.description ?? initialState.description,
   );
-  const [tags, setTagsState] = useState(initialValues?.tags ?? initialState.tags);
+  const [tags, setTagsState] = useState<string[]>(initialValues?.tags ?? initialState.tags);
   const [errors, setErrors] = useState<PromptFormErrors>({});
   const [isUpdating, setIsUpdating] = useState(false);
   // In edit mode, keep the prompt's own team; only fall back to the sidebar
@@ -342,10 +333,15 @@ export function usePromptForm(options: UsePromptFormOptions = {}): UsePromptForm
     (value: string) => updateField("description", value, setDescriptionState),
     [updateField],
   );
-  const setTags = useCallback(
-    (value: string) => updateField("tags", value, setTagsState),
-    [updateField],
-  );
+  const setTags = useCallback((value: string[]) => {
+    setTagsState(value);
+    setErrors((current) => {
+      if (!current.submit) return current;
+      const nextErrors = { ...current };
+      delete nextErrors.submit;
+      return nextErrors;
+    });
+  }, []);
 
   const validateForm = useCallback((): boolean => {
     const result = schema.safeParse(getFormValues());
@@ -377,7 +373,7 @@ export function usePromptForm(options: UsePromptFormOptions = {}): UsePromptForm
     const { prompt } = schema.parse(getFormValues());
     const payload: NonNullable<PromptUpdate> = {
       name: prompt.name,
-      tags: prompt.tags ?? null,
+      tags: prompt.tags ?? undefined,
       teamId: prompt.teamId,
       visibility: prompt.visibility,
     };
