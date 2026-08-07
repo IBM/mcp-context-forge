@@ -325,18 +325,46 @@ async def delete_role(role_id: str, user=Depends(get_current_user_with_permissio
 # ===== User Role Assignment Endpoints =====
 
 
-def _load_assignment(db: Session, user_email: str, role_id: str) -> Optional[UserRole]:
+def _load_assignment(db: Session, user_email: str, role_id: str, scope: Optional[str] = None, scope_id: Optional[str] = None) -> Optional[UserRole]:
     """Load the active role assignment for a user, for authorization decisions.
+
+    ``scope``/``scope_id`` are lookup filters used only to disambiguate WHICH row
+    to load — never trusted directly for authorization. A user can legitimately
+    hold the same ``role_id`` active under multiple scopes at once (e.g. a
+    "developer" role granted separately in team-a and team-b — the unique index
+    on ``user_roles`` explicitly permits this per (user, role, scope, scope_id)).
+    Filtering only by ``user_email``/``role_id`` and calling ``.first()`` would
+    let a caller's ``scope``/``scope_id`` hint silently load and act on the WRONG
+    row when more than one is active. Mirrors the exact-match semantics of
+    :meth:`mcpgateway.services.role_service.RoleService.get_user_role_assignment`:
+    when ``scope`` is omitted, the query becomes an ``IS NULL`` comparison against
+    a non-nullable column and matches nothing, so an ambiguous caller gets a 404
+    rather than an arbitrarily-selected row.
+
+    The row this returns is what the caller must authorize against via its own
+    ``.scope``/``.scope_id`` fields (see ``_authorize_assignment_scope``) — the
+    ``scope``/``scope_id`` arguments here are a lookup key, not an authorization
+    decision.
 
     Args:
         db: Database session.
         user_email: Email of the user whose assignment is being acted on.
         role_id: Role identifier.
+        scope: Optional scope filter, used to disambiguate between multiple
+            active assignments of the same role. Omitting it while such
+            assignments exist yields no match (fail closed), matching
+            ``RoleService.get_user_role_assignment``.
+        scope_id: Optional scope-id filter, paired with ``scope`` for
+            team-scoped assignments. Falsy values match rows where
+            ``scope_id IS NULL``.
 
     Returns:
-        Optional[UserRole]: The active assignment, or ``None`` when absent.
+        Optional[UserRole]: The active assignment matching the given lookup
+        filters, or ``None`` when absent or ambiguous filters match nothing.
     """
-    return db.query(UserRole).filter(UserRole.user_email == user_email, UserRole.role_id == role_id, UserRole.is_active.is_(True)).first()
+    query = db.query(UserRole).filter(UserRole.user_email == user_email, UserRole.role_id == role_id, UserRole.scope == scope, UserRole.is_active.is_(True))
+    query = query.filter(UserRole.scope_id == scope_id) if scope_id else query.filter(UserRole.scope_id.is_(None))
+    return query.first()
 
 
 async def _authorize_assignment_scope(request, user, db: Session, scope: str, scope_id: Optional[str], target_email: str) -> None:
@@ -512,7 +540,7 @@ async def revoke_user_role(
         True
     """
     try:
-        existing = _load_assignment(db, user_email, role_id)
+        existing = _load_assignment(db, user_email, role_id, scope, scope_id)
         if existing is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Role assignment not found")
 

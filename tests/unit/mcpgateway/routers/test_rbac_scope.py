@@ -40,6 +40,7 @@ sys.modules.pop("mcpgateway.routers.rbac", None)
 
 # First-Party
 rbac_router = importlib.import_module("mcpgateway.routers.rbac")
+from mcpgateway.db import UserRole  # noqa: E402
 from tests.helpers.scope import admin_user_context, scoped_request  # noqa: E402
 
 
@@ -209,7 +210,7 @@ async def test_assignment_scope_matrix(scope, scope_id, target, expected_denied)
 async def test_revoke_reads_scope_from_the_stored_row_not_the_request(monkeypatch):
     """A client must not be able to relabel a global assignment to get it revoked."""
     monkeypatch.setattr("mcpgateway.auth_context.is_unrestricted_platform_admin", AsyncMock(return_value=False))
-    monkeypatch.setattr(rbac_router, "_load_assignment", lambda db, email, role_id: SimpleNamespace(scope="global", scope_id=None))
+    monkeypatch.setattr(rbac_router, "_load_assignment", lambda db, email, role_id, scope=None, scope_id=None: SimpleNamespace(scope="global", scope_id=None))
 
     with pytest.raises(HTTPException) as exc:
         # Caller claims team scope; the stored row says global, so this must be denied.
@@ -228,7 +229,7 @@ async def test_revoke_reads_scope_from_the_stored_row_not_the_request(monkeypatc
 
 @pytest.mark.asyncio
 async def test_revoke_returns_404_when_assignment_absent(monkeypatch):
-    monkeypatch.setattr(rbac_router, "_load_assignment", lambda db, email, role_id: None)
+    monkeypatch.setattr(rbac_router, "_load_assignment", lambda db, email, role_id, scope=None, scope_id=None: None)
 
     with pytest.raises(HTTPException) as exc:
         await rbac_router.revoke_user_role(
@@ -242,3 +243,107 @@ async def test_revoke_returns_404_when_assignment_absent(monkeypatch):
         )
 
     assert exc.value.status_code == 404
+
+
+def _active_team_role(user_email, role_id, scope_id):
+    """Build an active, team-scoped ``UserRole`` row for the disambiguation tests below.
+
+    Args:
+        user_email: Email the assignment belongs to.
+        role_id: Role identifier held under the given team.
+        scope_id: Team the role is scoped to.
+
+    Returns:
+        UserRole: An unsaved ORM instance, ready to be added to a session.
+    """
+    return UserRole(user_email=user_email, role_id=role_id, scope="team", scope_id=scope_id, granted_by="admin@example.com", is_active=True)
+
+
+def test_load_assignment_disambiguates_by_scope_id_when_role_held_in_multiple_teams(test_db):
+    """The bug this closes: a user can hold the SAME role active under different
+    teams at once (the user_roles unique index explicitly permits this per
+    (user, role, scope, scope_id)). Without a scope/scope_id filter, ``.first()``
+    would return whichever row the DB happens to return first — potentially
+    revoking (or authorizing against) a team the caller never targeted. This
+    exercises the real SQLAlchemy query, not a mock, so it would have caught the
+    original ``.first()``-with-no-filter bug.
+
+    Uses per-test-unique (user_email, role_id) identifiers because ``test_db``'s
+    underlying engine is session-scoped (shared across tests in this module,
+    not rolled back between them) while ``user_roles`` enforces a real DB unique
+    constraint on (user_email, role_id, scope, scope_id) for active rows —
+    reusing the same identifiers across test functions would collide.
+    """
+    team_a = _active_team_role("bob-disambiguate@example.com", "developer", "team-a")
+    team_b = _active_team_role("bob-disambiguate@example.com", "developer", "team-b")
+    test_db.add_all([team_a, team_b])
+    test_db.commit()
+
+    result_a = rbac_router._load_assignment(test_db, "bob-disambiguate@example.com", "developer", scope="team", scope_id="team-a")
+    result_b = rbac_router._load_assignment(test_db, "bob-disambiguate@example.com", "developer", scope="team", scope_id="team-b")
+
+    assert result_a is not None and result_a.scope_id == "team-a"
+    assert result_b is not None and result_b.scope_id == "team-b"
+    assert result_a.id != result_b.id
+
+
+def test_load_assignment_omitted_scope_is_ambiguous_and_fails_closed(test_db):
+    """Mirrors ``RoleService.get_user_role_assignment``: when the caller doesn't
+    supply ``scope`` to disambiguate and multiple active assignments exist, the
+    query must match nothing (fail closed to a 404 upstream) rather than
+    arbitrarily picking one of the caller's teams.
+    """
+    team_a = _active_team_role("bob-ambiguous@example.com", "developer", "team-a")
+    team_b = _active_team_role("bob-ambiguous@example.com", "developer", "team-b")
+    test_db.add_all([team_a, team_b])
+    test_db.commit()
+
+    assert rbac_router._load_assignment(test_db, "bob-ambiguous@example.com", "developer") is None
+
+
+def test_load_assignment_scope_id_mismatch_returns_none(test_db):
+    """A scope_id that doesn't match any active row must not fall back to an
+    unrelated row for the same (user, role, scope).
+    """
+    team_a = _active_team_role("bob-mismatch@example.com", "developer", "team-a")
+    test_db.add(team_a)
+    test_db.commit()
+
+    assert rbac_router._load_assignment(test_db, "bob-mismatch@example.com", "developer", scope="team", scope_id="team-c") is None
+
+
+@pytest.mark.asyncio
+async def test_revoke_disambiguates_via_query_params_when_role_held_in_multiple_teams(test_db):
+    """End-to-end: revoke on team-b must not touch the team-a grant, and must
+    authorize (and act) against the row it actually loaded — never the raw
+    request scope — even though in this case they happen to agree.
+
+    Uses ``_jwt_scoped_request`` (not a bare ``scoped_request``) so the caller is
+    a genuinely narrowed admin whose token only covers team-b, exercising real
+    Layer-1 narrowing together with the disambiguation fix, rather than the
+    non-JWT admin-bypass path described on ``_jwt_scoped_request`` above.
+    """
+    team_a = _active_team_role("bob-revoke@example.com", "developer", "team-a")
+    team_b = _active_team_role("bob-revoke@example.com", "developer", "team-b")
+    test_db.add_all([team_a, team_b])
+    test_db.commit()
+    # `revoke_user_role` commits and closes `db` on success, detaching (and
+    # expiring the attributes of) `team_a`/`team_b` — capture the ids up front
+    # rather than reading them off the detached instances afterward.
+    team_a_id, team_b_id = team_a.id, team_b.id
+
+    result = await rbac_router.revoke_user_role(
+        request=_jwt_scoped_request(["team-b"], path="/rbac/users/bob-revoke@example.com/roles/developer"),
+        user_email="bob-revoke@example.com",
+        role_id="developer",
+        scope="team",
+        scope_id="team-b",
+        user=admin_user_context(["team-b"]),
+        db=test_db,
+    )
+
+    assert result["message"] == "Role revoked successfully"
+    after_a = test_db.query(UserRole).filter(UserRole.id == team_a_id).one()
+    after_b = test_db.query(UserRole).filter(UserRole.id == team_b_id).one()
+    assert after_a.is_active is True
+    assert after_b.is_active is False
