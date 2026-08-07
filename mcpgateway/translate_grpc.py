@@ -77,6 +77,10 @@ class GrpcEndpoint:
         tls_cert_path: Optional[str] = None,
         tls_key_path: Optional[str] = None,
         metadata: Optional[Dict[str, str]] = None,
+        channel: Optional[grpc.Channel] = None,
+        pool: Optional[Any] = None,
+        method_class_cache: Optional[Dict[str, Any]] = None,
+        owns_channel: bool = True,
     ):
         """Initialize gRPC endpoint.
 
@@ -87,6 +91,16 @@ class GrpcEndpoint:
             tls_cert_path: Path to TLS certificate
             tls_key_path: Path to TLS key
             metadata: gRPC metadata headers
+            channel: Optional pre-created channel to reuse instead of building
+                one in ``start``. When given, ``owns_channel`` controls whether
+                ``close`` may tear it down.
+            pool: Optional pre-created descriptor pool (used by the runtime
+                cache). Defaults to a fresh per-endpoint private pool.
+            method_class_cache: Optional shared ``{full_type_name: MessageClass}``
+                mapping so message classes built from a cached pool are reused
+                across invocations instead of rebuilt per call.
+            owns_channel: When False, ``close`` never closes the injected
+                channel (the owner retains lifecycle control).
         """
         self._target = target
         self._reflection_enabled = reflection_enabled
@@ -94,14 +108,17 @@ class GrpcEndpoint:
         self._tls_cert_path = tls_cert_path
         self._tls_key_path = tls_key_path
         self._metadata = metadata or {}
-        self._channel: Optional[grpc.Channel] = None
+        self._channel: Optional[grpc.Channel] = channel
+        self._injected_channel = channel is not None
+        self._owns_channel = owns_channel
         self._services: Dict[str, Any] = {}
         self._descriptors: Dict[str, Any] = {}
         self._last_call_metadata: Dict[str, Any] = {"headers": {}, "trailers": {}, "status": None}
         # Per-endpoint private descriptor pool. NEVER use ``descriptor_pool.Default()``: reflected
         # descriptors come from untrusted upstream services, and adding them to the process-wide
         # default pool can cause cross-request type confusion or symbol collisions.
-        self._pool = descriptor_pool.DescriptorPool()
+        self._pool = pool if pool is not None else descriptor_pool.DescriptorPool()
+        self._method_class_cache = method_class_cache if method_class_cache is not None else {}
         self._factory = message_factory.MessageFactory(pool=self._pool)
 
     @staticmethod
@@ -162,7 +179,11 @@ class GrpcEndpoint:
         logger.info(f"Starting gRPC endpoint connection to {self._target}")
 
         # Create channel
-        if self._tls_enabled:
+        if self._channel is not None:
+            # An injected channel (runtime cache hit) is reused as-is; the owner
+            # retains lifecycle control, so start() must not rebuild it.
+            logger.debug("Reusing injected gRPC channel for %s", self._target)
+        elif self._tls_enabled:
             if self._tls_cert_path and self._tls_key_path:
                 cert = await asyncio.to_thread(Path(self._tls_cert_path).read_bytes)
                 key = await asyncio.to_thread(Path(self._tls_key_path).read_bytes)
@@ -336,9 +357,10 @@ class GrpcEndpoint:
             raise ValueError(f"Message type not found in descriptor pool: {e}")
 
         # protobuf>=5.x removed MessageFactory.GetPrototype; use the module-level helper bound
-        # to our private pool instead.
-        request_class = message_factory.GetMessageClass(input_desc)
-        response_class = message_factory.GetMessageClass(output_desc)
+        # to our private pool instead. Message classes are cached (per endpoint, or shared via
+        # the injected cache) so repeated invocations skip the class-build cost.
+        request_class = self._message_class(input_type, input_desc)
+        response_class = self._message_class(output_type, output_desc)
 
         # Convert JSON to protobuf message
         request_msg = json_format.ParseDict(request_data, request_class())
@@ -424,8 +446,8 @@ class GrpcEndpoint:
             raise ValueError(f"Message type not found in descriptor pool: {e}")
 
         # protobuf>=5.x removed MessageFactory.GetPrototype; module-level helper used here too.
-        request_class = message_factory.GetMessageClass(input_desc)
-        response_class = message_factory.GetMessageClass(output_desc)
+        request_class = self._message_class(input_type, input_desc)
+        response_class = self._message_class(output_type, output_desc)
 
         # Convert JSON to protobuf message
         request_msg = json_format.ParseDict(request_data, request_class())
@@ -492,10 +514,30 @@ class GrpcEndpoint:
         logger.debug(f"Streaming complete for {service}.{method}")
 
     async def close(self) -> None:
-        """Close the gRPC channel."""
-        if self._channel:
+        """Close the gRPC channel when this endpoint owns it."""
+        if self._channel is not None and self._owns_channel:
             self._channel.close()
             logger.info("Closed gRPC connection to %s", self._target)
+
+    def _message_class(self, type_name: str, message_descriptor: Any) -> Any:
+        """Return a cached MessageClass for ``type_name`` bound to this pool.
+
+        Message classes are derived from pool descriptors by protobuf's message
+        factory. Caching them (per-endpoint, or in the shared runtime cache)
+        avoids rebuilding a class on every invocation of the same RPC.
+
+        Args:
+            type_name: Full protobuf message type name.
+            message_descriptor: Resolved descriptor for ``type_name``.
+
+        Returns:
+            The message class.
+        """
+        cached = self._method_class_cache.get(type_name)
+        if cached is None:
+            cached = message_factory.GetMessageClass(message_descriptor)
+            self._method_class_cache[type_name] = cached
+        return cached
 
     def load_file_descriptors(self, file_descriptor_protos: Sequence[bytes]) -> None:
         """Load serialized FileDescriptorProto bytes into the descriptor pool.

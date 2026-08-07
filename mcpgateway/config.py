@@ -1151,6 +1151,12 @@ class Settings(BaseSettings):
     mcpgateway_grpc_health_timeout: int = Field(default=5, ge=1, le=60, description="Default gRPC health-check timeout in seconds")
     mcpgateway_grpc_health_failure_threshold: int = Field(default=3, ge=1, le=20, description="Consecutive failures before a gRPC service is unhealthy")
 
+    # Process-local runtime cache for outbound gRPC connections. Reuses the
+    # channel + descriptor pool across invocations of the same registered
+    # service/schema, avoiding per-call channel construction.
+    grpc_runtime_cache_enabled: bool = Field(default=True, description="Enable process-local reuse of gRPC channels and descriptor pools")
+    grpc_runtime_cache_max_entries: int = Field(default=64, ge=1, le=1024, description="Maximum live gRPC runtime cache entries per worker")
+
     # Proto artifact discovery. Directory scanning is fail-closed and only accepts
     # service manifests below explicitly configured roots.
     mcpgateway_proto_scan_enabled: bool = Field(default=False, description="Enable manifest-based Proto directory scanning")
