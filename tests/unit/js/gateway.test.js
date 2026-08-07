@@ -75,6 +75,79 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
+describe("initGatewaySelect persisted selection", () => {
+  test("restores real and local gateway selections and keeps later changes", () => {
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    document.body.innerHTML = `
+      <div id="edit-gateways" data-selected-gateway-ids='["gw-a","null"]'>
+        <label class="tool-item">
+          <input type="checkbox" value="gw-a" />
+          <span>Gateway A</span>
+        </label>
+        <label class="tool-item">
+          <input type="checkbox" value="gw-b" />
+          <span>Gateway B</span>
+        </label>
+        <label class="tool-item">
+          <input type="checkbox" value="" data-gateway-null="true" />
+          <span>REST/A2A</span>
+        </label>
+      </div>
+      <div id="edit-pills"></div>
+      <div id="edit-warning"></div>
+    `;
+
+    initGatewaySelect(
+      "edit-gateways",
+      "edit-pills",
+      "edit-warning",
+      12,
+      null,
+      null,
+      null
+    );
+
+    const [gatewayA, gatewayB, local] = document.querySelectorAll(
+      '#edit-gateways input[type="checkbox"]'
+    );
+    expect(gatewayA.checked).toBe(true);
+    expect(gatewayB.checked).toBe(false);
+    expect(local.checked).toBe(true);
+    expect(document.getElementById("edit-pills").children).toHaveLength(2);
+
+    gatewayA.checked = false;
+    gatewayA.dispatchEvent(new Event("change", { bubbles: true }));
+
+    expect(
+      JSON.parse(
+        document.getElementById("edit-gateways").dataset.selectedGatewayIds
+      )
+    ).toEqual(["null"]);
+
+    const container = document.getElementById("edit-gateways");
+    container.innerHTML = `
+      <input type="checkbox" value="gw-a" />
+      <input type="checkbox" value="" data-gateway-null="true" />
+    `;
+    initGatewaySelect(
+      "edit-gateways",
+      "edit-pills",
+      "edit-warning",
+      12,
+      null,
+      null,
+      null
+    );
+
+    const [reloadedGateway, reloadedLocal] = container.querySelectorAll(
+      'input[type="checkbox"]'
+    );
+    expect(reloadedGateway.checked).toBe(false);
+    expect(reloadedLocal.checked).toBe(true);
+    consoleSpy.mockRestore();
+  });
+});
+
 // ---------------------------------------------------------------------------
 // viewGateway
 // ---------------------------------------------------------------------------

@@ -15,6 +15,7 @@ import { fetchWithTimeout } from "../../../mcpgateway/admin_ui/utils";
 import { openModal } from "../../../mcpgateway/admin_ui/modals";
 import { AppState } from "../../../mcpgateway/admin_ui/appState.js";
 import { fetchWithAuth } from "../../../mcpgateway/admin_ui/tokens.js";
+import { initGatewaySelect } from "../../../mcpgateway/admin_ui/gateways.js";
 
 vi.mock("../../../mcpgateway/admin_ui/appState.js", () => ({
   AppState: {
@@ -216,6 +217,44 @@ describe("viewServer", () => {
 // editServer
 // ---------------------------------------------------------------------------
 describe("editServer", () => {
+  test("seeds gateway selection for the edit modal", async () => {
+    window.ROOT_PATH = "";
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    document.body.innerHTML = `
+      <form id="edit-server-form"></form>
+      <div id="associatedEditGateways"></div>
+    `;
+
+    fetchWithTimeout.mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          id: "s1",
+          name: "test-server",
+          associatedGateways: ["gw-a", "gw-b"],
+        }),
+    });
+
+    await editServer("s1");
+
+    expect(
+      JSON.parse(
+        document.getElementById("associatedEditGateways").dataset
+          .selectedGatewayIds
+      )
+    ).toEqual(["gw-a", "gw-b"]);
+    expect(initGatewaySelect).toHaveBeenCalledWith(
+      "associatedEditGateways",
+      "selectedEditGatewayPills",
+      "selectedEditGatewayWarning",
+      12,
+      "selectAllEditGatewayBtn",
+      "clearAllEditGatewayBtn",
+      "searchEditGateways"
+    );
+    consoleSpy.mockRestore();
+  });
+
   test("fetches server data for editing", async () => {
     window.ROOT_PATH = "";
     const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
