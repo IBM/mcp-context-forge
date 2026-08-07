@@ -343,6 +343,7 @@ class GrpcSchemaService:
         if activate:
             cls.activate_artifact(db, service, existing, catalog=catalog)
         else:
+            service.candidate_artifact_id = existing.id
             service.schema_drift = bool(service.active_schema_hash and service.active_schema_hash != content_hash)
         db.commit()
         db.refresh(existing)
@@ -361,15 +362,19 @@ class GrpcSchemaService:
             raise GrpcServiceError("Schema artifact belongs to another gRPC service")
         if catalog is None:
             _normalized, catalog = cls.normalize_descriptor_set(artifact.descriptor_set)
+        method_count = sum(len(item.get("methods", [])) for item in catalog.values())
+        if method_count == 0 and service.active_artifact_id and (service.method_count or 0) > 0:
+            raise GrpcServiceError("Refusing to activate empty schema while an active schema with methods exists")
         db.execute(update(GrpcSchemaArtifact).where(GrpcSchemaArtifact.grpc_service_id == service.id).values(is_active=False, activated_at=None))
         artifact.is_active = True
         artifact.activated_at = datetime.now(timezone.utc)
         service.active_artifact_id = artifact.id
         service.active_schema_hash = artifact.content_hash
+        service.candidate_artifact_id = None
         service.schema_drift = bool(service.reflected_schema_hash and service.reflected_schema_hash != artifact.content_hash)
         service.discovered_services = catalog
         service.service_count = len(catalog)
-        service.method_count = sum(len(item.get("methods", [])) for item in catalog.values())
+        service.method_count = method_count
         service.updated_at = datetime.now(timezone.utc)
 
     @classmethod

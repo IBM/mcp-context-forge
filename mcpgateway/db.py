@@ -5441,6 +5441,7 @@ class GrpcService(Base):
     grpc_metadata: Mapped[Dict[str, str]] = mapped_column(JSON, default=dict)  # gRPC metadata headers
     discovery_mode: Mapped[str] = mapped_column(String(20), default="auto", nullable=False)
     active_artifact_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    candidate_artifact_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
     active_schema_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     reflected_schema_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     schema_drift: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
@@ -5466,6 +5467,7 @@ class GrpcService(Base):
     method_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     discovered_services: Mapped[Dict[str, Any]] = mapped_column(JSON, default=dict)  # Service descriptors
     last_reflection: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    last_reflection_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     # Tags for categorization
     tags: Mapped[List[str]] = mapped_column(JSON, default=list, nullable=False)

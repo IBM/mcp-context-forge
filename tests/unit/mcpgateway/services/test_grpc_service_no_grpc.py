@@ -775,7 +775,13 @@ async def test_perform_reflection_builds_discovery(monkeypatch, service, db):
         reflected.discovered_services = catalog
         reflected.service_count = len(catalog)
         reflected.method_count = sum(len(item["methods"]) for item in catalog.values())
-        return SimpleNamespace(source_type="reflection")
+        return SimpleNamespace(
+            id=uuid.uuid4().hex,
+            grpc_service_id=reflected.id,
+            content_hash=uuid.uuid4().hex,
+            source_type="reflection",
+            source_info={"catalog": catalog},
+        )
 
     monkeypatch.setattr(module.GrpcSchemaService, "import_artifact", persist_artifact)
 

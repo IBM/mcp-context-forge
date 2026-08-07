@@ -617,6 +617,8 @@ class GrpcService:
         except Exception as e:
             logger.error("Reflection failed for %s: %s", service.name, e)
             service.reachable = False
+            if not getattr(service, "last_reflection_error", None):
+                service.last_reflection_error = str(e)[:1000]
             db.commit()
             raise GrpcServiceError(f"Reflection failed: {str(e)}")
 
@@ -759,28 +761,47 @@ class GrpcService:
             discovery_mode = getattr(service, "discovery_mode", None) or "auto"
             active_source_type = getattr(active_artifact, "source_type", None) if active_artifact is not None else None
             activate_reflection = discovery_mode == "reflection" or active_artifact is None or active_source_type in {"reflection", "legacy"}
-            if file_descriptor_bytes_set:
-                GrpcSchemaService.import_artifact(
+            now = datetime.now(timezone.utc)
+            if not file_descriptor_bytes_set:
+                # Empty/partial reflection must never disable published tools.
+                service.last_reflection = now
+                if active_artifact is None:
+                    service.discovered_services = {}
+                    service.service_count = 0
+                    service.method_count = 0
+                    service.reachable = True
+                    service.last_reflection_error = None
+                else:
+                    service.reachable = True  # transport worked; schema empty/partial
+                    service.last_reflection_error = "Reflection returned empty descriptor set; keeping active schema"
+            else:
+                # Always land a candidate first; promote only when activation
+                # policy allows and the catalog is non-empty.
+                artifact = GrpcSchemaService.import_artifact(
                     db,
                     service,
                     descriptor_set.SerializeToString(),
                     "reflection.protoset",
                     created_by="system",
-                    activate=activate_reflection,
+                    activate=False,
                     source_type="reflection",
                 )
-            elif active_artifact is None:
-                service.discovered_services = {}
-                service.service_count = 0
-                service.method_count = 0
-            service.last_reflection = datetime.now(timezone.utc)
-            service.reachable = True
-
-            # Only an activated artifact changes the executable catalog. A
-            # conflicting uploaded artifact remains authoritative and drift is
-            # displayed for an administrator to resolve.
-            if activate_reflection:
-                self._sync_tools_from_reflection(db, service)
+                service.candidate_artifact_id = artifact.id
+                service.last_reflection = now
+                service.reachable = True
+                catalog = (artifact.source_info or {}).get("catalog") or {}
+                method_count = sum(len(item.get("methods", [])) for item in catalog.values())
+                if activate_reflection and method_count == 0 and (service.method_count or 0) > 0:
+                    service.last_reflection_error = "Reflected schema has no methods; keeping active schema"
+                elif activate_reflection and (method_count > 0 or active_artifact is None):
+                    GrpcSchemaService.activate_artifact(db, service, artifact, catalog=catalog)
+                    service.last_reflection_error = None
+                    self._sync_tools_from_reflection(db, service)
+                else:
+                    # A conflicting uploaded artifact remains authoritative and drift is
+                    # displayed for an administrator to resolve.
+                    service.schema_drift = bool(service.active_schema_hash and service.active_schema_hash != artifact.content_hash)
+                    service.last_reflection_error = None
 
             db.commit()
             reflection_outcome = "success"
@@ -788,6 +809,7 @@ class GrpcService:
         except Exception as e:
             logger.error("Reflection error for %s: %s", service.target, e)
             service.reachable = False
+            service.last_reflection_error = str(e)[:1000]
             db.commit()
             raise
 
@@ -823,6 +845,16 @@ class GrpcService:
         # Fetch existing tools for this gRPC service
         existing_tools = db.execute(select(DbTool).where(DbTool.grpc_service_id == service.id)).scalars().all()
         existing_tools_map = {tool.original_name: tool for tool in existing_tools}
+
+        # Last-line defense: an empty catalog over published tools would soft-disable
+        # everything. Reflection now guards this upstream, but keep the sync itself safe.
+        if not expected_tool_names and existing_tools:
+            logger.warning(
+                "Skipping tool sync for %s: empty catalog would disable %d existing tools",
+                service.name,
+                len(existing_tools),
+            )
+            return
 
         # Preserve IDs, server relations, and metrics when a method disappears.
         # Reappearing methods are re-enabled below.

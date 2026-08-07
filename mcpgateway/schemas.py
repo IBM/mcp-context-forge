@@ -8032,6 +8032,7 @@ class GrpcServiceRead(BaseModel):
     grpc_metadata: Dict[str, str] = Field(default_factory=dict, description="gRPC metadata")
     discovery_mode: Literal["auto", "reflection", "artifact"] = Field(default="auto", description="Descriptor discovery mode")
     active_artifact_id: Optional[str] = Field(None, description="Active descriptor artifact ID")
+    candidate_artifact_id: Optional[str] = Field(None, description="Latest non-activated candidate schema artifact ID")
     active_schema_hash: Optional[str] = Field(None, description="Active descriptor SHA-256")
     reflected_schema_hash: Optional[str] = Field(None, description="Latest reflection descriptor SHA-256")
     schema_drift: bool = Field(default=False, description="Reflection and active artifact differ")
@@ -8055,6 +8056,7 @@ class GrpcServiceRead(BaseModel):
     method_count: int = Field(default=0, description="Number of methods discovered")
     discovered_services: Dict[str, Any] = Field(default_factory=dict, description="Discovered service descriptors")
     last_reflection: Optional[datetime] = Field(None, description="Last reflection timestamp")
+    last_reflection_error: Optional[str] = Field(None, description="Last reflection failure reason; null on success")
 
     # Tags
     tags: List[str] = Field(default_factory=list, description="Service tags")
