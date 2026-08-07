@@ -20,7 +20,7 @@ import { MAX_TAGS } from "@/utils/tags";
 import { getTagDisplay } from "@/components/gateways/utils";
 import type { PromptRead } from "@/generated/types";
 import type { Visibility } from "@/types/server";
-import { VisibilityInfoTooltip } from "@/components/common/VisibilityInfoTooltip";
+import { VisibilityInfoPopover } from "@/components/common/VisibilityInfoPopover";
 
 interface PromptFormProps {
   isOpen: boolean;
@@ -154,7 +154,7 @@ export function PromptForm({ isOpen, onToggle, onSuccess, prompt }: PromptFormPr
                     {intl.formatMessage({ id: "prompts.add.required" })}
                   </span>
                 </Label>
-                <VisibilityInfoTooltip />
+                <VisibilityInfoPopover />
               </div>
               <Select
                 value={form.visibility}

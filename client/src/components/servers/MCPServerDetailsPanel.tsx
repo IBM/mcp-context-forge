@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import type { ReactNode } from "react";
+import { useIntl } from "react-intl";
 import {
   Activity,
   Box,
@@ -14,7 +15,7 @@ import {
   Wrench,
 } from "lucide-react";
 import { MCPIcon } from "@/components/icons/MCPIcon";
-import { VisibilityInfoTooltip } from "@/components/common/VisibilityInfoTooltip";
+import { VisibilityInfoPopover } from "@/components/common/VisibilityInfoPopover";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { InlineTagAdd } from "@/components/ui/inline-tag-add";
@@ -261,12 +262,17 @@ export function MCPServerDetailsPanel({
     return filtered;
   }, [toolsData, resourcesData, promptsData, activeTab, searchQuery]);
 
-  const getVisibilityLabel = useCallback((value?: string) => {
-    if (value === "team") return "Team";
-    if (value === "public") return "Internal";
-    if (value === "private") return "Private";
-    return "Not available";
-  }, []);
+  const intl = useIntl();
+
+  const getVisibilityLabel = useCallback(
+    (value?: string) => {
+      if (value === "team") return intl.formatMessage({ id: "common.visibility.team" });
+      if (value === "public") return intl.formatMessage({ id: "common.visibility.internal" });
+      if (value === "private") return intl.formatMessage({ id: "common.visibility.private" });
+      return "Not available";
+    },
+    [intl],
+  );
 
   const getTransportLabel = useCallback((transport?: string) => {
     if (transport === "SSE") return "Server-Sent Events (SSE)";
@@ -553,7 +559,7 @@ export function MCPServerDetailsPanel({
                     <span className="flex items-center gap-2">
                       <Users className="size-3.5 text-muted-foreground" />
                       {getVisibilityLabel(server.visibility)}
-                      <VisibilityInfoTooltip side="left" />
+                      <VisibilityInfoPopover side="left" />
                     </span>
                   </DetailRow>
                   <DetailRow label="Transport">

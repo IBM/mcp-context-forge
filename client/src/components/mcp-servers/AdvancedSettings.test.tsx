@@ -84,6 +84,12 @@ describe("AdvancedSettings", () => {
     mockUseAuthContext.mockReturnValue(makeAuthContext());
   });
 
+  it("renders the visibility info popover trigger", () => {
+    render(<AdvancedSettings {...makeProps()} />);
+
+    expect(screen.getByRole("button", { name: "About visibility levels" })).toBeInTheDocument();
+  });
+
   describe("team visibility — teamId sync (issue #5077)", () => {
     it("syncs teamId with selectedTeamId on mount when visibility is team and teamId is unset", () => {
       mockUseAuthContext.mockReturnValue(makeAuthContext("team-A"));

@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { useIntl } from "react-intl";
 import { Info, TriangleAlert } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
@@ -18,7 +19,7 @@ import { OAuth2Auth } from "@/components/mcp-servers/OAuth2Auth";
 import { QueryParameterAuth } from "@/components/mcp-servers/QueryParameterAuth";
 import { useAuthContext } from "@/auth/AuthContext";
 import type { Visibility } from "@/types/server";
-import { VisibilityInfoTooltip } from "@/components/common/VisibilityInfoTooltip";
+import { VisibilityInfoPopover } from "@/components/common/VisibilityInfoPopover";
 
 export type { CustomHeader };
 
@@ -126,6 +127,7 @@ export function AdvancedSettings({
   oauthErrors,
 }: AdvancedSettingsProps) {
   const { selectedTeamId } = useAuthContext();
+  const intl = useIntl();
 
   useEffect(() => {
     if (visibility === "team") {
@@ -211,7 +213,7 @@ export function AdvancedSettings({
           >
             Visibility
           </label>
-          <VisibilityInfoTooltip />
+          <VisibilityInfoPopover />
         </div>
         <Select value={visibility} onValueChange={onVisibilityChange}>
           <SelectTrigger
@@ -221,9 +223,15 @@ export function AdvancedSettings({
             <SelectValue placeholder="Select visibility" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="public">Internal</SelectItem>
-            <SelectItem value="private">Private</SelectItem>
-            <SelectItem value="team">Team</SelectItem>
+            <SelectItem value="public">
+              {intl.formatMessage({ id: "common.visibility.internal" })}
+            </SelectItem>
+            <SelectItem value="private">
+              {intl.formatMessage({ id: "common.visibility.private" })}
+            </SelectItem>
+            <SelectItem value="team">
+              {intl.formatMessage({ id: "common.visibility.team" })}
+            </SelectItem>
           </SelectContent>
         </Select>
         {visibility === "team" && (

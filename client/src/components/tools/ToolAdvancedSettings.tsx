@@ -17,7 +17,7 @@ import { ToolBearerTokenAuth } from "@/components/tools/ToolBearerTokenAuth";
 import { CustomHeadersAuth, type CustomHeader } from "@/components/mcp-servers/CustomHeadersAuth";
 import { useAuthContext } from "@/auth/AuthContext";
 import type { Visibility } from "@/types/server";
-import { VisibilityInfoTooltip } from "@/components/common/VisibilityInfoTooltip";
+import { VisibilityInfoPopover } from "@/components/common/VisibilityInfoPopover";
 
 export type { CustomHeader };
 
@@ -120,7 +120,7 @@ export function ToolAdvancedSettings({
           >
             Visibility
           </label>
-          <VisibilityInfoTooltip />
+          <VisibilityInfoPopover />
         </div>
         <Select value={visibility} onValueChange={onVisibilityChange}>
           <SelectTrigger
@@ -130,9 +130,15 @@ export function ToolAdvancedSettings({
             <SelectValue placeholder="Select visibility" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="public">Internal</SelectItem>
-            <SelectItem value="private">Private</SelectItem>
-            <SelectItem value="team">Team</SelectItem>
+            <SelectItem value="public">
+              {intl.formatMessage({ id: "common.visibility.internal" })}
+            </SelectItem>
+            <SelectItem value="private">
+              {intl.formatMessage({ id: "common.visibility.private" })}
+            </SelectItem>
+            <SelectItem value="team">
+              {intl.formatMessage({ id: "common.visibility.team" })}
+            </SelectItem>
           </SelectContent>
         </Select>
         {visibility === "team" && (

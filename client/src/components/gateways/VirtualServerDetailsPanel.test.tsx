@@ -268,6 +268,21 @@ describe("VirtualServerDetailsPanel render variants", () => {
     expect(await screen.findByText("Internal")).toBeInTheDocument();
   });
 
+  it("renders the visibility info popover trigger", async () => {
+    render(
+      <VirtualServerDetailsPanel
+        server={makeServer({ visibility: "public" })}
+        error={null}
+        open
+        onClose={vi.fn()}
+        onAddSources={vi.fn()}
+      />,
+    );
+    expect(
+      await screen.findByRole("button", { name: "About visibility levels" }),
+    ).toBeInTheDocument();
+  });
+
   it("shows the private visibility label", async () => {
     render(
       <VirtualServerDetailsPanel

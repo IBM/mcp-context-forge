@@ -56,11 +56,11 @@ function getServerStatus(server: MCPServer): ServerStatus {
 function getVisibilityConfig(visibility: MCPServer["visibility"]) {
   switch (visibility) {
     case "private":
-      return { label: "Private", Icon: Lock };
+      return { labelId: "common.visibility.private", Icon: Lock };
     case "team":
-      return { label: "Team", Icon: Shield };
+      return { labelId: "common.visibility.team", Icon: Shield };
     default:
-      return { label: "Internal", Icon: Building2 };
+      return { labelId: "common.visibility.internal", Icon: Building2 };
   }
 }
 
@@ -245,7 +245,7 @@ export function ServersTable({
                 <TableCell className="px-4 py-2.5">
                   <div className="inline-flex items-center gap-1.5 text-xs text-neutral-600 dark:text-neutral-400">
                     <VisibilityIcon className="h-3.5 w-3.5" aria-hidden="true" focusable="false" />
-                    <span>{visibility.label}</span>
+                    <span>{intl.formatMessage({ id: visibility.labelId })}</span>
                   </div>
                 </TableCell>
                 <TableCell className="px-4 py-2.5">

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { Activity, Building2, MessageSquareCode, PanelRightClose } from "lucide-react";
 import { useIntl } from "react-intl";
-import { VisibilityInfoTooltip } from "@/components/common/VisibilityInfoTooltip";
+import { VisibilityInfoPopover } from "@/components/common/VisibilityInfoPopover";
 import type { PromptRead } from "@/generated/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -291,7 +291,7 @@ export function PromptDetailsPanel({
                             : selected.visibility === "private"
                               ? intl.formatMessage({ id: "prompts.details.visibility.private" })
                               : intl.formatMessage({ id: "prompts.details.notAvailable" })}
-                        <VisibilityInfoTooltip side="left" />
+                        <VisibilityInfoPopover side="left" />
                       </span>
                     </DetailRow>
                     <DetailRow
