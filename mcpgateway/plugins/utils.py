@@ -12,10 +12,11 @@ import itertools
 import logging
 import math
 import re
+from collections.abc import Mapping
 from typing import Any, Dict, List, Optional, Tuple
 
 # Third-Party
-from cpex.framework.extensions import Extensions, RequestExtension
+from cpex.framework.extensions import Extensions, HttpExtension, RequestExtension
 
 logger = logging.getLogger(__name__)
 
@@ -433,6 +434,52 @@ def build_request_extensions() -> Optional[Extensions]:
         return None
 
 
+def build_hook_extensions(headers: Mapping[str, str] | None = None) -> Optional[Extensions]:
+    """Build hook ``Extensions`` with optional HTTP headers merged onto request/trace context.
+
+    Prefer this over putting headers on deprecated payload ``.headers`` fields.
+    Headers land on ``extensions.http.headers`` (``HttpExtension``). When ``headers``
+    is empty/None, behaves like :func:`build_request_extensions`.
+
+    Args:
+        headers: Optional HTTP headers to expose to plugins via ``extensions.http``.
+
+    Returns:
+        ``Extensions`` with ``http`` and/or ``request`` populated, or ``None`` when
+        there is neither a trace context nor headers.
+    """
+    base = build_request_extensions()
+    if not headers:
+        return base
+    http = HttpExtension(headers={str(k): str(v) for k, v in headers.items()})
+    if base is None:
+        return Extensions(http=http)
+    return base.model_copy(update={"http": http})
+
+
+def headers_from_modified_extensions(result: Any) -> Optional[Dict[str, str]]:
+    """Extract ``extensions.http.headers`` from a plugin hook result, if present.
+
+    Returns ``None`` when the result has no real ``modified_extensions.http``
+    (including MagicMock stand-ins used in unit tests), so callers can fall back
+    to legacy ``modified_payload`` paths.
+
+    Args:
+        result: Plugin hook result (``PluginResult`` or test double).
+
+    Returns:
+        Header dict, or ``None`` if unavailable.
+    """
+    ext = getattr(result, "modified_extensions", None)
+    if not isinstance(ext, Extensions):
+        return None
+    http = getattr(ext, "http", None)
+    if not isinstance(http, HttpExtension):
+        return None
+    return dict(http.headers)
+
+
+def apply_attribute_mapping(attributes: dict[str, Any], mapping: dict[str, str]) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # Wildcard-aware attribute policy helpers
 # ---------------------------------------------------------------------------

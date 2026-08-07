@@ -13,7 +13,6 @@ from cpex.framework.constants import GATEWAY_METADATA, TOOL_METADATA
 from cpex.framework import (
     PluginContext,
     Plugin,
-    HttpHeaderPayload,
     PromptPosthookPayload,
     PromptPosthookResult,
     PromptPrehookPayload,
@@ -27,6 +26,7 @@ from cpex.framework import (
     ToolPreInvokePayload,
     ToolPreInvokeResult,
 )
+from cpex.framework.extensions import Extensions, HttpExtension
 
 logger = logging.getLogger("header_plugin")
 
@@ -56,12 +56,13 @@ class HeadersMetaDataPlugin(Plugin):
         """
         raise ValueError("Sadly! Prompt postfetch is broken!")
 
-    async def tool_pre_invoke(self, payload: ToolPreInvokePayload, context: PluginContext) -> ToolPreInvokeResult:
+    async def tool_pre_invoke(self, payload: ToolPreInvokePayload, context: PluginContext, extensions: Extensions | None = None) -> ToolPreInvokeResult:
         """Plugin hook run before a tool is invoked.
 
         Args:
             payload: The tool payload to be analyzed.
             context: Contextual information about the hook call.
+            extensions: Hook extensions (headers on ``extensions.http``).
 
         Returns:
             The result of the plugin's analysis, including whether the tool can proceed.
@@ -71,11 +72,11 @@ class HeadersMetaDataPlugin(Plugin):
         assert tool_meta.original_name == "test_tool"
         assert tool_meta.url.host == "example.com"
         assert tool_meta.integration_type == "REST" or tool_meta.integration_type == "MCP"
-        headers = payload.headers.model_dump() if payload.headers else {}
+        headers = dict(extensions.http.headers) if extensions and extensions.http else {}
         if tool_meta.integration_type == "REST":
-            assert payload.headers
-            assert "Content-Type" in payload.headers
-            assert payload.headers["Content-Type"] == "application/json"
+            assert headers
+            assert "Content-Type" in headers
+            assert headers["Content-Type"] == "application/json"
         elif tool_meta.integration_type == "MCP":
             assert GATEWAY_METADATA in context.global_context.metadata
             gateway_meta = context.global_context.metadata[GATEWAY_METADATA]
@@ -85,9 +86,11 @@ class HeadersMetaDataPlugin(Plugin):
 
         headers["User-Agent"] = "Mozilla/5.0"
         headers["Connection"] = "keep-alive"
-        modified_payload = payload.model_copy(update={"headers": HttpHeaderPayload(headers)})
 
-        return ToolPreInvokeResult(continue_processing=True, modified_payload=modified_payload)
+        return ToolPreInvokeResult(
+            continue_processing=True,
+            modified_extensions=Extensions(http=HttpExtension(headers=headers)),
+        )
 
     async def tool_post_invoke(self, payload: ToolPostInvokePayload, context: PluginContext) -> ToolPostInvokeResult:
         """Plugin hook run after a tool is invoked.
@@ -162,24 +165,27 @@ class HeadersPlugin(Plugin):
         """
         raise ValueError("Sadly! Prompt postfetch is broken!")
 
-    async def tool_pre_invoke(self, payload: ToolPreInvokePayload, context: PluginContext) -> ToolPreInvokeResult:
+    async def tool_pre_invoke(self, payload: ToolPreInvokePayload, context: PluginContext, extensions: Extensions | None = None) -> ToolPreInvokeResult:
         """Plugin hook run before a tool is invoked.
 
         Args:
             payload: The tool payload to be analyzed.
             context: Contextual information about the hook call.
+            extensions: Hook extensions (headers on ``extensions.http``).
 
         Returns:
             The result of the plugin's analysis, including whether the tool can proceed.
         """
-        headers = payload.headers.model_dump() if payload.headers else {}
-        if payload.headers:
-            assert "Content-Type" in payload.headers
-            assert payload.headers["Content-Type"] == "application/json"
+        headers = dict(extensions.http.headers) if extensions and extensions.http else {}
+        if headers:
+            assert "Content-Type" in headers
+            assert headers["Content-Type"] == "application/json"
         headers["User-Agent"] = "Mozilla/5.0"
         headers["Connection"] = "keep-alive"
-        modified_payload = payload.model_copy(update={"headers": HttpHeaderPayload(headers)})
-        return ToolPreInvokeResult(continue_processing=True, modified_payload=modified_payload)
+        return ToolPreInvokeResult(
+            continue_processing=True,
+            modified_extensions=Extensions(http=HttpExtension(headers=headers)),
+        )
 
     async def tool_post_invoke(self, payload: ToolPostInvokePayload, context: PluginContext) -> ToolPostInvokeResult:
         """Plugin hook run after a tool is invoked.

@@ -6327,8 +6327,8 @@ class TestInvokeToolRestTimeout:
         plugin_manager.has_hooks_for = MagicMock(return_value=True)
         plugin_manager.invoke_hook = AsyncMock(
             side_effect=[
-                (SimpleNamespace(modified_payload=None, metadata=None), context_table),  # pre-invoke
-                (SimpleNamespace(modified_payload=None, retry_delay_ms=0, metadata=None), context_table),  # post-invoke (timeout handler)
+                (SimpleNamespace(modified_payload=None, modified_extensions=None, metadata=None), context_table),  # pre-invoke
+                (SimpleNamespace(modified_payload=None, modified_extensions=None, retry_delay_ms=0, metadata=None), context_table),  # post-invoke (timeout handler)
             ]
         )
 
@@ -6487,7 +6487,7 @@ class TestInvokeToolRestPreInvokeModifiedPayload:
 
         plugin_manager.has_hooks_for = MagicMock(side_effect=_has_hooks_for)
         modified_payload = SimpleNamespace(name="test_tool", args={"k": "v"}, headers=None)
-        plugin_manager.invoke_hook = AsyncMock(return_value=(SimpleNamespace(modified_payload=modified_payload, metadata=None), {}))
+        plugin_manager.invoke_hook = AsyncMock(return_value=(SimpleNamespace(modified_payload=modified_payload, modified_extensions=None, metadata=None), {}))
 
         mock_response = MagicMock()
         mock_response.status_code = 200
@@ -7565,7 +7565,7 @@ class TestInvokeToolPluginPostInvokeSerialization:
         plugin_manager.has_hooks_for = MagicMock(return_value=True)
         plugin_manager.invoke_hook = AsyncMock(
             side_effect=[
-                (SimpleNamespace(modified_payload=None, retry_delay_ms=0, metadata=None), {}),  # pre-invoke
+                (SimpleNamespace(modified_payload=None, modified_extensions=None, retry_delay_ms=0, metadata=None), {}),  # pre-invoke
                 (SimpleNamespace(modified_payload=SimpleNamespace(result={"status": "transformed", "valid": False}), retry_delay_ms=0, metadata=None), {}),  # post-invoke
             ]
         )
@@ -7618,7 +7618,7 @@ class TestInvokeToolPluginPostInvokeSerialization:
         plugin_manager.has_hooks_for = MagicMock(return_value=True)
         plugin_manager.invoke_hook = AsyncMock(
             side_effect=[
-                (SimpleNamespace(modified_payload=None, retry_delay_ms=0, metadata=None), {}),  # pre-invoke
+                (SimpleNamespace(modified_payload=None, modified_extensions=None, retry_delay_ms=0, metadata=None), {}),  # pre-invoke
                 (SimpleNamespace(modified_payload=SimpleNamespace(result={"unserializable", "set", "values"}), retry_delay_ms=0, metadata=None), {}),  # post-invoke
             ]
         )
@@ -8116,12 +8116,24 @@ class TestInvokeToolA2A:
             return hook_type == ToolHookType.TOOL_PRE_INVOKE
 
         plugin_manager.has_hooks_for = MagicMock(side_effect=_has_hooks_for)
+        # Third-Party
+        from cpex.framework.extensions import Extensions, HttpExtension
+
         modified_payload = SimpleNamespace(
             name="test_tool",
             args={"interaction_type": "query", "foo": "bar"},
-            headers=SimpleNamespace(model_dump=lambda: {"Content-Type": "application/json", "X-Test": "1"}),
+            headers=None,
         )
-        plugin_manager.invoke_hook = AsyncMock(return_value=(SimpleNamespace(modified_payload=modified_payload, metadata=None), {}))
+        plugin_manager.invoke_hook = AsyncMock(
+            return_value=(
+                SimpleNamespace(
+                    modified_payload=modified_payload,
+                    modified_extensions=Extensions(http=HttpExtension(headers={"Content-Type": "application/json", "X-Test": "1"})),
+                    metadata=None,
+                ),
+                {},
+            )
+        )
 
         captured = {}
         mock_http_response = MagicMock()
@@ -8225,14 +8237,15 @@ class TestInvokeToolA2A:
             )
 
         assert result is not None
-        payload = plugin_manager.invoke_hook.await_args.kwargs["payload"]
-        assert payload.headers.root == {
+        extensions = plugin_manager.invoke_hook.await_args.kwargs.get("extensions")
+        hook_headers = extensions.http.headers if extensions and extensions.http else {}
+        assert hook_headers == {
             "Content-Type": "application/json",
             "X-Tenant-Id": "tenant-123",
         }
-        assert "Authorization" not in payload.headers.root
-        assert "X-Global-Id" not in payload.headers.root
-        assert "X-Blocked" not in payload.headers.root
+        assert "Authorization" not in hook_headers
+        assert "X-Global-Id" not in hook_headers
+        assert "X-Blocked" not in hook_headers
         assert captured_headers["Authorization"] == "Bearer client-token"
         assert captured_headers["X-Tenant-Id"] == "tenant-123"
 
@@ -8298,12 +8311,13 @@ class TestInvokeToolA2A:
             )
 
         assert result is not None
-        payload = plugin_manager.invoke_hook.await_args.kwargs["payload"]
-        assert payload.headers.root == {
+        extensions = plugin_manager.invoke_hook.await_args.kwargs.get("extensions")
+        hook_headers = extensions.http.headers if extensions and extensions.http else {}
+        assert hook_headers == {
             "Content-Type": "application/json",
             "X-Tenant-Id": "tenant-123",
         }
-        assert "Authorization" not in payload.headers.root
+        assert "Authorization" not in hook_headers
         assert "Authorization" not in captured_headers
         assert captured_headers["X-Tenant-Id"] == "tenant-123"
 
@@ -8325,18 +8339,32 @@ class TestInvokeToolA2A:
 
         plugin_manager = MagicMock()
         plugin_manager.has_hooks_for = MagicMock(side_effect=lambda hook_type: hook_type == ToolHookType.TOOL_PRE_INVOKE)
+        # Third-Party
+        from cpex.framework.extensions import Extensions, HttpExtension
+
         modified_payload = SimpleNamespace(
             name="test_tool",
             args={"interaction_type": "query"},
-            headers=SimpleNamespace(
-                model_dump=lambda: {
-                    "Authorization": "Bearer plugin-token",
-                    "X-Tenant-Id": "tenant-from-plugin",
-                    "X-Other": "drop-me",
-                }
-            ),
+            headers=None,
         )
-        plugin_manager.invoke_hook = AsyncMock(return_value=(PluginResult(modified_payload=modified_payload), {}))
+        plugin_manager.invoke_hook = AsyncMock(
+            return_value=(
+                SimpleNamespace(
+                    modified_payload=modified_payload,
+                    modified_extensions=Extensions(
+                        http=HttpExtension(
+                            headers={
+                                "Authorization": "Bearer plugin-token",
+                                "X-Tenant-Id": "tenant-from-plugin",
+                                "X-Other": "drop-me",
+                            }
+                        )
+                    ),
+                    metadata=None,
+                ),
+                {},
+            )
+        )
 
         captured_headers = {}
         mock_http_response = MagicMock()
@@ -8385,6 +8413,7 @@ class TestInvokeToolA2A:
         """A2A tool invocation matches the direct A2A default-deny behavior when the agent allowlist is unset."""
         # Third-Party
         from cpex.framework import PluginResult, ToolHookType
+        from cpex.framework.extensions import Extensions, HttpExtension
 
         tp = _make_tool_payload(
             integration_type="A2A",
@@ -8401,15 +8430,26 @@ class TestInvokeToolA2A:
         modified_payload = SimpleNamespace(
             name="test_tool",
             args={"interaction_type": "query"},
-            headers=SimpleNamespace(
-                model_dump=lambda: {
-                    "Authorization": "Bearer plugin-token",
-                    "X-Tenant-Id": "tenant-from-plugin",
-                    "X-Other": "drop-me",
-                }
-            ),
+            headers=None,
         )
-        plugin_manager.invoke_hook = AsyncMock(return_value=(PluginResult(modified_payload=modified_payload), {}))
+        plugin_manager.invoke_hook = AsyncMock(
+            return_value=(
+                SimpleNamespace(
+                    modified_payload=modified_payload,
+                    modified_extensions=Extensions(
+                        http=HttpExtension(
+                            headers={
+                                "Authorization": "Bearer plugin-token",
+                                "X-Tenant-Id": "tenant-from-plugin",
+                                "X-Other": "drop-me",
+                            }
+                        )
+                    ),
+                    metadata=None,
+                ),
+                {},
+            )
+        )
 
         captured_headers = {}
         mock_http_response = MagicMock()
@@ -8449,8 +8489,9 @@ class TestInvokeToolA2A:
                 request_headers={"X-Tenant-Id": "tenant-from-request"},
             )
 
-        payload = plugin_manager.invoke_hook.await_args.kwargs["payload"]
-        assert payload.headers.root == {"Content-Type": "application/json"}
+        extensions = plugin_manager.invoke_hook.await_args.kwargs.get("extensions")
+        hook_headers = extensions.http.headers if extensions and extensions.http else {}
+        assert hook_headers == {"Content-Type": "application/json"}
         assert "X-Tenant-Id" not in captured_headers
         assert "Authorization" not in captured_headers
         assert "X-Other" not in captured_headers
@@ -8887,7 +8928,7 @@ class TestInvokeToolA2A:
             return hook_type == ToolHookType.TOOL_POST_INVOKE
 
         plugin_manager.has_hooks_for = MagicMock(side_effect=_has_hooks_for)
-        plugin_manager.invoke_hook = AsyncMock(return_value=(SimpleNamespace(modified_payload=None, retry_delay_ms=0, metadata=None), context_table))
+        plugin_manager.invoke_hook = AsyncMock(return_value=(SimpleNamespace(modified_payload=None, modified_extensions=None, retry_delay_ms=0, metadata=None), context_table))
 
         with (
             _setup_cache_for_invoke(tp),
@@ -9118,7 +9159,8 @@ class TestInvokeToolMcpSse:
         plugin-injected value.
         """
         # Third-Party
-        from cpex.framework import HttpHeaderPayload, PluginResult, ToolPreInvokePayload
+        from cpex.framework import PluginResult, ToolPreInvokePayload
+        from cpex.framework.extensions import Extensions, HttpExtension
 
         tp = _make_tool_payload(integration_type="MCP", request_type="SSE", gateway_id="gw-uuid-1", jsonpath_filter="")
         gp = _make_gateway_payload(auth_type="oauth", oauth_config={"grant_type": "authorization_code"})
@@ -9157,10 +9199,17 @@ class TestInvokeToolMcpSse:
         async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False, extensions=None):  # noqa: ARG001
             if hook_type != ToolHookType.TOOL_PRE_INVOKE:
                 return PluginResult(modified_payload=None, continue_processing=True), {}
-            new_headers = dict(payload.headers.root) if payload.headers else {}
+            new_headers = dict(extensions.http.headers) if extensions and extensions.http else {}
             new_headers["Authorization"] = "Bearer plugin-injected-token"
-            modified = ToolPreInvokePayload(name=payload.name, args=payload.args, headers=HttpHeaderPayload(new_headers))
-            return PluginResult(modified_payload=modified, continue_processing=True), {}
+            modified = ToolPreInvokePayload(name=payload.name, args=payload.args)
+            return (
+                PluginResult(
+                    modified_payload=modified,
+                    modified_extensions=Extensions(http=HttpExtension(headers=new_headers)),
+                    continue_processing=True,
+                ),
+                {},
+            )
 
         mock_pm.invoke_hook = mock_invoke_hook
 
@@ -9790,7 +9839,7 @@ class TestInvokeToolMcpSseTimeoutAndErrors:
             return hook_type == ToolHookType.TOOL_POST_INVOKE
 
         plugin_manager.has_hooks_for = MagicMock(side_effect=_has_hooks_for)
-        plugin_manager.invoke_hook = AsyncMock(return_value=(SimpleNamespace(modified_payload=None, retry_delay_ms=0, metadata=None), context_table))
+        plugin_manager.invoke_hook = AsyncMock(return_value=(SimpleNamespace(modified_payload=None, modified_extensions=None, retry_delay_ms=0, metadata=None), context_table))
 
         def fake_sse_client(*, url=None, headers=None, httpx_client_factory=None, **_kw):
             class _CM:
@@ -9916,7 +9965,7 @@ class TestInvokeToolMcpStreamableHttpCoverage:
             return hook_type == ToolHookType.TOOL_PRE_INVOKE
 
         plugin_manager.has_hooks_for = MagicMock(side_effect=_has_hooks_for)
-        plugin_manager.invoke_hook = AsyncMock(return_value=(SimpleNamespace(modified_payload=None, metadata=None), {}))
+        plugin_manager.invoke_hook = AsyncMock(return_value=(SimpleNamespace(modified_payload=None, modified_extensions=None, metadata=None), {}))
 
         def fake_streamablehttp_client(*, url=None, headers=None, httpx_client_factory=None, **_kw):
             class _CM:
@@ -9988,7 +10037,7 @@ class TestInvokeToolMcpStreamableHttpCoverage:
 
         plugin_manager.has_hooks_for = MagicMock(side_effect=_has_hooks_for)
         modified_payload = SimpleNamespace(name="test_tool", args={}, headers=None)
-        plugin_manager.invoke_hook = AsyncMock(return_value=(SimpleNamespace(modified_payload=modified_payload, metadata=None), {}))
+        plugin_manager.invoke_hook = AsyncMock(return_value=(SimpleNamespace(modified_payload=modified_payload, modified_extensions=None, metadata=None), {}))
 
         upstream_session = AsyncMock()
         upstream_session.call_tool = AsyncMock(return_value=ToolResult(content=[TextContent(type="text", text="ok")], is_error=False))
@@ -10048,7 +10097,7 @@ class TestInvokeToolMcpStreamableHttpCoverage:
             return hook_type == ToolHookType.TOOL_POST_INVOKE
 
         plugin_manager.has_hooks_for = MagicMock(side_effect=_has_hooks_for)
-        plugin_manager.invoke_hook = AsyncMock(return_value=(SimpleNamespace(modified_payload=None, retry_delay_ms=0, metadata=None), None))
+        plugin_manager.invoke_hook = AsyncMock(return_value=(SimpleNamespace(modified_payload=None, modified_extensions=None, retry_delay_ms=0, metadata=None), None))
 
         def fake_streamablehttp_client(*, url=None, headers=None, httpx_client_factory=None, **_kw):
             class _CM:

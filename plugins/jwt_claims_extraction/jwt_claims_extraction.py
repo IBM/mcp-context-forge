@@ -45,6 +45,7 @@ from cpex.framework import (
     PluginContext,
     PluginResult,
 )
+from cpex.framework.extensions import Extensions
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +86,7 @@ class JwtClaimsExtractionPlugin(Plugin):
         self,
         payload: HttpAuthResolveUserPayload,
         context: PluginContext,
+        extensions: Extensions | None = None,
     ) -> PluginResult[dict]:
         """Extract JWT claims and store in global context state.
 
@@ -95,12 +97,13 @@ class JwtClaimsExtractionPlugin(Plugin):
         Args:
             payload: Auth payload with credentials and headers.
             context: Plugin execution context with global_context.
+            extensions: Hook extensions (headers on ``extensions.http``).
 
         Returns:
             PluginResult with continue_processing=True (passthrough).
         """
         try:
-            token = self._extract_token(payload)
+            token = self._extract_token(payload, extensions)
 
             if not token:
                 logger.debug("No JWT token found in request, skipping claims extraction")
@@ -130,11 +133,12 @@ class JwtClaimsExtractionPlugin(Plugin):
                 metadata={"jwt_claims_extracted": False},
             )
 
-    def _extract_token(self, payload: HttpAuthResolveUserPayload) -> Optional[str]:
+    def _extract_token(self, payload: HttpAuthResolveUserPayload, extensions: Extensions | None = None) -> Optional[str]:
         """Extract JWT token from request credentials or Authorization header.
 
         Args:
             payload: Auth payload with credentials and headers.
+            extensions: Hook extensions (preferred source for headers).
 
         Returns:
             JWT token string or None if not found.
@@ -146,8 +150,11 @@ class JwtClaimsExtractionPlugin(Plugin):
                 if token:
                     return token
 
-        # Fallback to Authorization header
-        headers_dict = getattr(payload.headers, "root", {})
+        # Prefer extensions.http.headers; fall back to dual-written payload.headers
+        if extensions and extensions.http:
+            headers_dict = extensions.http.headers
+        else:
+            headers_dict = getattr(payload.headers, "root", {})
         if headers_dict:
             auth_header = headers_dict.get("authorization") or headers_dict.get("Authorization")
             if auth_header and auth_header.startswith("Bearer "):

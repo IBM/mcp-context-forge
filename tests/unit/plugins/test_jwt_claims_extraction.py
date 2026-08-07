@@ -19,6 +19,7 @@ from cpex.framework import (
     PluginConfig,
     PluginContext,
 )
+from cpex.framework.extensions import Extensions, HttpExtension
 from cpex.framework.hooks.http import (
     HttpAuthResolveUserPayload,
     HttpHeaderPayload,
@@ -65,6 +66,11 @@ def _make_context(request_id: str = "test-123") -> PluginContext:
     return PluginContext(global_context=GlobalContext(request_id=request_id))
 
 
+def _empty_ext() -> Extensions:
+    """Empty HTTP extensions for dual-write schema calls."""
+    return Extensions(http=HttpExtension(headers={}))
+
+
 class TestJwtClaimsExtractionPlugin:
     """Test JWT claims extraction plugin."""
 
@@ -77,7 +83,7 @@ class TestJwtClaimsExtractionPlugin:
         )
         ctx = _make_context("test-creds")
 
-        result = await plugin.http_auth_resolve_user(payload, ctx)
+        result = await plugin.http_auth_resolve_user(payload, ctx, _empty_ext())
 
         assert result.continue_processing is True
         claims = ctx.global_context.state["jwt_claims"]
@@ -91,13 +97,16 @@ class TestJwtClaimsExtractionPlugin:
     @pytest.mark.asyncio
     async def test_extract_claims_from_authorization_header(self, plugin: JwtClaimsExtractionPlugin, sample_jwt_token: str) -> None:
         """Test extracting claims from Authorization header fallback."""
+        auth_headers = {"Authorization": f"Bearer {sample_jwt_token}"}
+        # Dual-write: schema still requires payload.headers; real data lives on extensions.
         payload = HttpAuthResolveUserPayload(
             credentials=None,
-            headers=HttpHeaderPayload(root={"Authorization": f"Bearer {sample_jwt_token}"}),
+            headers=HttpHeaderPayload(root={}),
         )
         ctx = _make_context("test-header")
+        ext = Extensions(http=HttpExtension(headers=auth_headers))
 
-        result = await plugin.http_auth_resolve_user(payload, ctx)
+        result = await plugin.http_auth_resolve_user(payload, ctx, ext)
 
         assert result.continue_processing is True
         assert ctx.global_context.state["jwt_claims"]["sub"] == "user123"
@@ -111,7 +120,7 @@ class TestJwtClaimsExtractionPlugin:
         )
         ctx = _make_context("test-empty")
 
-        result = await plugin.http_auth_resolve_user(payload, ctx)
+        result = await plugin.http_auth_resolve_user(payload, ctx, _empty_ext())
 
         assert result.continue_processing is True
         assert "jwt_claims" not in ctx.global_context.state
@@ -139,7 +148,7 @@ class TestJwtClaimsExtractionPlugin:
         )
         ctx = _make_context("test-rfc9396")
 
-        await plugin.http_auth_resolve_user(payload, ctx)
+        await plugin.http_auth_resolve_user(payload, ctx, _empty_ext())
 
         claims = ctx.global_context.state["jwt_claims"]
         assert "authorization_details" in claims
@@ -154,7 +163,7 @@ class TestJwtClaimsExtractionPlugin:
         )
         ctx = _make_context("test-error")
 
-        result = await plugin.http_auth_resolve_user(payload, ctx)
+        result = await plugin.http_auth_resolve_user(payload, ctx, _empty_ext())
 
         assert result.continue_processing is True
         assert result.metadata["jwt_claims_extracted"] is False
@@ -169,7 +178,7 @@ class TestJwtClaimsExtractionPlugin:
         )
         ctx = _make_context("test-basic")
 
-        result = await plugin.http_auth_resolve_user(payload, ctx)
+        result = await plugin.http_auth_resolve_user(payload, ctx, _empty_ext())
 
         assert result.continue_processing is True
         assert "jwt_claims" not in ctx.global_context.state
@@ -194,7 +203,7 @@ class TestJwtClaimsExtractionPlugin:
         )
         ctx = _make_context("test-custom-key")
 
-        await custom_plugin.http_auth_resolve_user(payload, ctx)
+        await custom_plugin.http_auth_resolve_user(payload, ctx, _empty_ext())
 
         assert "custom_claims" in ctx.global_context.state
         assert ctx.global_context.state["custom_claims"]["sub"] == "user123"

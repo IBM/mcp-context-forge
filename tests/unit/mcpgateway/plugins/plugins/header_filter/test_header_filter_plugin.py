@@ -13,13 +13,13 @@ import pytest
 from cpex.framework import (
     AgentPreInvokePayload,
     GlobalContext,
-    HttpHeaderPayload,
     PluginConfig,
     PluginContext,
     PluginMode,
     ToolHookType,
     ToolPreInvokePayload,
 )
+from cpex.framework.extensions import Extensions, HttpExtension
 
 # Import the Header Filter plugin
 from plugins.header_filter.header_filter_plugin import HeaderFilter, HeaderFilterConfig
@@ -41,6 +41,7 @@ class TestHeaderFilterPluginFunctionality:
             tags=["test", "header_filter"],
             mode=PluginMode.SEQUENTIAL,
             priority=20,
+            capabilities=["write_headers"],
             config={
                 "filter_headers": ["Authorization", "Cookie", "X-API-Key"],
                 "log_filtered_headers": True,
@@ -60,97 +61,97 @@ class TestHeaderFilterPluginFunctionality:
     async def test_no_headers_returns_empty_result(self, plugin_config, plugin_context):
         """Test that missing headers returns empty result."""
         plugin = HeaderFilter(plugin_config)
-        payload = ToolPreInvokePayload(name="test_tool", args={}, headers=None)
+        payload = ToolPreInvokePayload(name="test_tool", args={})
 
-        result = await plugin.tool_pre_invoke(payload, plugin_context)
+        result = await plugin.tool_pre_invoke(payload, plugin_context, None)
 
-        assert result.modified_payload is None
+        assert result.modified_extensions is None
         assert result.continue_processing
 
     @pytest.mark.asyncio
     async def test_authorization_header_is_filtered(self, plugin_config, plugin_context):
         """Test that Authorization header is filtered."""
         plugin = HeaderFilter(plugin_config)
-        payload = ToolPreInvokePayload(
-            name="test_tool",
-            args={},
-            headers=HttpHeaderPayload({"Content-Type": "application/json", "Authorization": "Bearer secret_token"}),
-        )
+        payload = ToolPreInvokePayload(name="test_tool", args={})
+        ext = Extensions(http=HttpExtension(headers={"Content-Type": "application/json", "Authorization": "Bearer secret_token"}))
 
-        result = await plugin.tool_pre_invoke(payload, plugin_context)
+        result = await plugin.tool_pre_invoke(payload, plugin_context, ext)
 
-        assert result.modified_payload is not None
-        assert "Authorization" not in result.modified_payload.headers.root
-        assert "Content-Type" in result.modified_payload.headers.root
+        assert result.modified_extensions is not None
+        assert result.modified_extensions.http is not None
+        hdrs = result.modified_extensions.http.headers
+        assert "Authorization" not in hdrs
+        assert "Content-Type" in hdrs
         assert result.continue_processing
 
     @pytest.mark.asyncio
     async def test_cookie_header_is_filtered(self, plugin_config, plugin_context):
         """Test that Cookie header is filtered."""
         plugin = HeaderFilter(plugin_config)
-        payload = ToolPreInvokePayload(
-            name="test_tool",
-            args={},
-            headers=HttpHeaderPayload({"Content-Type": "application/json", "Cookie": "session=abc123"}),
-        )
+        payload = ToolPreInvokePayload(name="test_tool", args={})
+        ext = Extensions(http=HttpExtension(headers={"Content-Type": "application/json", "Cookie": "session=abc123"}))
 
-        result = await plugin.tool_pre_invoke(payload, plugin_context)
+        result = await plugin.tool_pre_invoke(payload, plugin_context, ext)
 
-        assert result.modified_payload is not None
-        assert "Cookie" not in result.modified_payload.headers.root
-        assert "Content-Type" in result.modified_payload.headers.root
+        assert result.modified_extensions is not None
+        assert result.modified_extensions.http is not None
+        hdrs = result.modified_extensions.http.headers
+        assert "Cookie" not in hdrs
+        assert "Content-Type" in hdrs
 
     @pytest.mark.asyncio
     async def test_multiple_sensitive_headers_filtered(self, plugin_config, plugin_context):
         """Test that multiple sensitive headers are filtered."""
         plugin = HeaderFilter(plugin_config)
-        payload = ToolPreInvokePayload(
-            name="test_tool",
-            args={},
-            headers=HttpHeaderPayload(
-                {
+        payload = ToolPreInvokePayload(name="test_tool", args={})
+        ext = Extensions(
+            http=HttpExtension(
+                headers={
                     "Content-Type": "application/json",
                     "Authorization": "Bearer token",
                     "Cookie": "session=xyz",
                     "X-API-Key": "secret_key",  # pragma: allowlist secret
                     "User-Agent": "TestClient/1.0",
                 }
-            ),
+            )
         )
 
-        result = await plugin.tool_pre_invoke(payload, plugin_context)
+        result = await plugin.tool_pre_invoke(payload, plugin_context, ext)
 
-        assert result.modified_payload is not None
-        assert "Authorization" not in result.modified_payload.headers.root
-        assert "Cookie" not in result.modified_payload.headers.root
-        assert "X-API-Key" not in result.modified_payload.headers.root
-        assert "Content-Type" in result.modified_payload.headers.root
-        assert "User-Agent" in result.modified_payload.headers.root
+        assert result.modified_extensions is not None
+        assert result.modified_extensions.http is not None
+        hdrs = result.modified_extensions.http.headers
+        assert "Authorization" not in hdrs
+        assert "Cookie" not in hdrs
+        assert "X-API-Key" not in hdrs
+        assert "Content-Type" in hdrs
+        assert "User-Agent" in hdrs
 
     @pytest.mark.asyncio
     async def test_case_insensitive_filtering(self, plugin_config, plugin_context):
         """Test that header filtering is case-insensitive."""
         plugin = HeaderFilter(plugin_config)
-        payload = ToolPreInvokePayload(
-            name="test_tool",
-            args={},
-            headers=HttpHeaderPayload(
-                {
+        payload = ToolPreInvokePayload(name="test_tool", args={})
+        ext = Extensions(
+            http=HttpExtension(
+                headers={
                     "content-type": "application/json",
                     "authorization": "Bearer token",
                     "COOKIE": "session=xyz",
                     "X-Api-Key": "secret",
                 }
-            ),
+            )
         )
 
-        result = await plugin.tool_pre_invoke(payload, plugin_context)
+        result = await plugin.tool_pre_invoke(payload, plugin_context, ext)
 
-        assert result.modified_payload is not None
-        assert "authorization" not in result.modified_payload.headers.root
-        assert "COOKIE" not in result.modified_payload.headers.root
-        assert "X-Api-Key" not in result.modified_payload.headers.root
-        assert "content-type" in result.modified_payload.headers.root
+        assert result.modified_extensions is not None
+        assert result.modified_extensions.http is not None
+        hdrs = result.modified_extensions.http.headers
+        assert "authorization" not in hdrs
+        assert "COOKIE" not in hdrs
+        assert "X-Api-Key" not in hdrs
+        assert "content-type" in hdrs
 
     @pytest.mark.asyncio
     async def test_passthrough_headers_not_filtered(self, plugin_context):
@@ -165,68 +166,64 @@ class TestHeaderFilterPluginFunctionality:
             tags=["test"],
             mode=PluginMode.SEQUENTIAL,
             priority=20,
+            capabilities=["write_headers"],
             config={
                 "filter_headers": ["Authorization", "Cookie"],
                 "allow_passthrough_headers": ["Authorization"],
             },
         )
         plugin = HeaderFilter(config)
-        payload = ToolPreInvokePayload(
-            name="test_tool",
-            args={},
-            headers=HttpHeaderPayload({"Authorization": "Bearer token", "Cookie": "session=xyz"}),
-        )
+        payload = ToolPreInvokePayload(name="test_tool", args={})
+        ext = Extensions(http=HttpExtension(headers={"Authorization": "Bearer token", "Cookie": "session=xyz"}))
 
-        result = await plugin.tool_pre_invoke(payload, plugin_context)
+        result = await plugin.tool_pre_invoke(payload, plugin_context, ext)
 
-        assert result.modified_payload is not None
-        assert "Authorization" in result.modified_payload.headers.root
-        assert "Cookie" not in result.modified_payload.headers.root
+        assert result.modified_extensions is not None
+        assert result.modified_extensions.http is not None
+        hdrs = result.modified_extensions.http.headers
+        assert "Authorization" in hdrs
+        assert "Cookie" not in hdrs
 
     @pytest.mark.asyncio
     async def test_no_filtered_headers_returns_empty_result(self, plugin_config, plugin_context):
         """Test that when no headers are filtered, empty result is returned."""
         plugin = HeaderFilter(plugin_config)
-        payload = ToolPreInvokePayload(
-            name="test_tool",
-            args={},
-            headers=HttpHeaderPayload({"Content-Type": "application/json", "User-Agent": "TestClient/1.0"}),
-        )
+        payload = ToolPreInvokePayload(name="test_tool", args={})
+        ext = Extensions(http=HttpExtension(headers={"Content-Type": "application/json", "User-Agent": "TestClient/1.0"}))
 
-        result = await plugin.tool_pre_invoke(payload, plugin_context)
+        result = await plugin.tool_pre_invoke(payload, plugin_context, ext)
 
-        assert result.modified_payload is None
+        assert result.modified_extensions is None
         assert result.continue_processing
 
     @pytest.mark.asyncio
     async def test_empty_headers_dict_returns_empty_result(self, plugin_config, plugin_context):
         """Test that empty headers dict returns empty result."""
         plugin = HeaderFilter(plugin_config)
-        payload = ToolPreInvokePayload(name="test_tool", args={}, headers=HttpHeaderPayload({}))
+        payload = ToolPreInvokePayload(name="test_tool", args={})
+        ext = Extensions(http=HttpExtension(headers={}))
 
-        result = await plugin.tool_pre_invoke(payload, plugin_context)
+        result = await plugin.tool_pre_invoke(payload, plugin_context, ext)
 
-        assert result.modified_payload is None
+        assert result.modified_extensions is None
         assert result.continue_processing
 
     @pytest.mark.asyncio
     async def test_original_payload_not_mutated(self, plugin_config, plugin_context):
-        """Test that the original payload is not mutated (frozen model compliance)."""
+        """Test that the original extensions headers are not mutated (frozen model compliance)."""
         plugin = HeaderFilter(plugin_config)
         original_headers = {"Content-Type": "application/json", "Authorization": "Bearer token"}
-        payload = ToolPreInvokePayload(
-            name="test_tool",
-            args={},
-            headers=HttpHeaderPayload(original_headers.copy()),
-        )
+        payload = ToolPreInvokePayload(name="test_tool", args={})
+        ext = Extensions(http=HttpExtension(headers=original_headers.copy()))
 
-        result = await plugin.tool_pre_invoke(payload, plugin_context)
+        result = await plugin.tool_pre_invoke(payload, plugin_context, ext)
 
-        # Original payload should still have Authorization
-        assert "Authorization" in payload.headers.root
-        # Modified payload should not
-        assert result.modified_payload is not None
-        assert "Authorization" not in result.modified_payload.headers.root
+        # Original extensions should still have Authorization
+        assert "Authorization" in ext.http.headers
+        # Modified extensions should not
+        assert result.modified_extensions is not None
+        assert result.modified_extensions.http is not None
+        assert "Authorization" not in result.modified_extensions.http.headers
 
     # ── agent_pre_invoke tests ────────────────────────────────────────
 
@@ -234,35 +231,36 @@ class TestHeaderFilterPluginFunctionality:
     async def test_agent_no_headers_returns_empty_result(self, plugin_config, plugin_context):
         """Test agent_pre_invoke with no headers."""
         plugin = HeaderFilter(plugin_config)
-        payload = AgentPreInvokePayload(agent_id="test-agent", messages=[], headers=None)
+        payload = AgentPreInvokePayload(agent_id="test-agent", messages=[])
 
-        result = await plugin.agent_pre_invoke(payload, plugin_context)
+        result = await plugin.agent_pre_invoke(payload, plugin_context, None)
 
-        assert result.modified_payload is None
+        assert result.modified_extensions is None
         assert result.continue_processing
 
     @pytest.mark.asyncio
     async def test_agent_headers_filtered(self, plugin_config, plugin_context):
         """Test agent_pre_invoke filters sensitive headers."""
         plugin = HeaderFilter(plugin_config)
-        payload = AgentPreInvokePayload(
-            agent_id="test-agent",
-            messages=[],
-            headers=HttpHeaderPayload(
-                {
+        payload = AgentPreInvokePayload(agent_id="test-agent", messages=[])
+        ext = Extensions(
+            http=HttpExtension(
+                headers={
                     "Content-Type": "application/json",
                     "Authorization": "Bearer secret",
                     "Cookie": "session=abc",
                 }
-            ),
+            )
         )
 
-        result = await plugin.agent_pre_invoke(payload, plugin_context)
+        result = await plugin.agent_pre_invoke(payload, plugin_context, ext)
 
-        assert result.modified_payload is not None
-        assert "Authorization" not in result.modified_payload.headers.root
-        assert "Cookie" not in result.modified_payload.headers.root
-        assert "Content-Type" in result.modified_payload.headers.root
+        assert result.modified_extensions is not None
+        assert result.modified_extensions.http is not None
+        hdrs = result.modified_extensions.http.headers
+        assert "Authorization" not in hdrs
+        assert "Cookie" not in hdrs
+        assert "Content-Type" in hdrs
 
     @pytest.mark.asyncio
     async def test_agent_passthrough_headers(self, plugin_context):
@@ -277,37 +275,34 @@ class TestHeaderFilterPluginFunctionality:
             tags=["test"],
             mode=PluginMode.SEQUENTIAL,
             priority=20,
+            capabilities=["write_headers"],
             config={
                 "filter_headers": ["Authorization", "Cookie"],
                 "allow_passthrough_headers": ["Authorization"],
             },
         )
         plugin = HeaderFilter(config)
-        payload = AgentPreInvokePayload(
-            agent_id="test-agent",
-            messages=[],
-            headers=HttpHeaderPayload({"Authorization": "Bearer token", "Cookie": "session=xyz"}),
-        )
+        payload = AgentPreInvokePayload(agent_id="test-agent", messages=[])
+        ext = Extensions(http=HttpExtension(headers={"Authorization": "Bearer token", "Cookie": "session=xyz"}))
 
-        result = await plugin.agent_pre_invoke(payload, plugin_context)
+        result = await plugin.agent_pre_invoke(payload, plugin_context, ext)
 
-        assert result.modified_payload is not None
-        assert "Authorization" in result.modified_payload.headers.root
-        assert "Cookie" not in result.modified_payload.headers.root
+        assert result.modified_extensions is not None
+        assert result.modified_extensions.http is not None
+        hdrs = result.modified_extensions.http.headers
+        assert "Authorization" in hdrs
+        assert "Cookie" not in hdrs
 
     @pytest.mark.asyncio
     async def test_agent_no_filtered_headers_returns_empty_result(self, plugin_config, plugin_context):
         """Test agent_pre_invoke returns empty result when no headers filtered."""
         plugin = HeaderFilter(plugin_config)
-        payload = AgentPreInvokePayload(
-            agent_id="test-agent",
-            messages=[],
-            headers=HttpHeaderPayload({"Content-Type": "application/json"}),
-        )
+        payload = AgentPreInvokePayload(agent_id="test-agent", messages=[])
+        ext = Extensions(http=HttpExtension(headers={"Content-Type": "application/json"}))
 
-        result = await plugin.agent_pre_invoke(payload, plugin_context)
+        result = await plugin.agent_pre_invoke(payload, plugin_context, ext)
 
-        assert result.modified_payload is None
+        assert result.modified_extensions is None
         assert result.continue_processing
 
     # ── Config and initialization tests ───────────────────────────────
@@ -325,21 +320,20 @@ class TestHeaderFilterPluginFunctionality:
             tags=["test"],
             mode=PluginMode.SEQUENTIAL,
             priority=20,
+            capabilities=["write_headers"],
             config=None,
         )
         plugin = HeaderFilter(config)
 
-        payload = ToolPreInvokePayload(
-            name="test_tool",
-            args={},
-            headers=HttpHeaderPayload({"Authorization": "Bearer token", "Content-Type": "application/json"}),
-        )
+        payload = ToolPreInvokePayload(name="test_tool", args={})
+        ext = Extensions(http=HttpExtension(headers={"Authorization": "Bearer token", "Content-Type": "application/json"}))
 
-        result = await plugin.tool_pre_invoke(payload, plugin_context)
+        result = await plugin.tool_pre_invoke(payload, plugin_context, ext)
 
         # Default config should filter Authorization
-        assert result.modified_payload is not None
-        assert "Authorization" not in result.modified_payload.headers.root
+        assert result.modified_extensions is not None
+        assert result.modified_extensions.http is not None
+        assert "Authorization" not in result.modified_extensions.http.headers
 
     @pytest.mark.asyncio
     async def test_default_config_when_config_causes_validation_error(self, plugin_context):
@@ -354,21 +348,20 @@ class TestHeaderFilterPluginFunctionality:
             tags=["test"],
             mode=PluginMode.SEQUENTIAL,
             priority=20,
+            capabilities=["write_headers"],
             config={"filter_headers": "not-a-list", "log_filtered_headers": "not-a-bool"},
         )
         plugin = HeaderFilter(config)
 
-        payload = ToolPreInvokePayload(
-            name="test_tool",
-            args={},
-            headers=HttpHeaderPayload({"Authorization": "Bearer token", "Content-Type": "application/json"}),
-        )
+        payload = ToolPreInvokePayload(name="test_tool", args={})
+        ext = Extensions(http=HttpExtension(headers={"Authorization": "Bearer token", "Content-Type": "application/json"}))
 
-        result = await plugin.tool_pre_invoke(payload, plugin_context)
+        result = await plugin.tool_pre_invoke(payload, plugin_context, ext)
 
         # Default config fallback should filter Authorization
-        assert result.modified_payload is not None
-        assert "Authorization" not in result.modified_payload.headers.root
+        assert result.modified_extensions is not None
+        assert result.modified_extensions.http is not None
+        assert "Authorization" not in result.modified_extensions.http.headers
 
     def test_header_filter_config_defaults(self):
         """Test HeaderFilterConfig has sensible defaults."""
@@ -445,33 +438,35 @@ class TestHeaderFilterPluginFunctionality:
             tags=["test"],
             mode=PluginMode.SEQUENTIAL,
             priority=20,
+            capabilities=["write_headers"],
             config={
                 "filter_headers": ["Authorization", "Cookie", "X-API-Key"],
                 "allow_passthrough_headers": ["Authorization"],
             },
         )
         plugin = HeaderFilter(config)
-        payload = ToolPreInvokePayload(
-            name="test_tool",
-            args={},
-            headers=HttpHeaderPayload(
-                {
+        payload = ToolPreInvokePayload(name="test_tool", args={})
+        ext = Extensions(
+            http=HttpExtension(
+                headers={
                     "Authorization": "Bearer vault_token",
                     "Cookie": "session=abc",
                     "X-API-Key": "secret_key",  # pragma: allowlist secret
                     "Content-Type": "application/json",
                 }
-            ),
+            )
         )
 
-        result = await plugin.tool_pre_invoke(payload, plugin_context)
+        result = await plugin.tool_pre_invoke(payload, plugin_context, ext)
 
-        assert result.modified_payload is not None
-        assert "Authorization" in result.modified_payload.headers.root
-        assert result.modified_payload.headers.root["Authorization"] == "Bearer vault_token"
-        assert "Cookie" not in result.modified_payload.headers.root
-        assert "X-API-Key" not in result.modified_payload.headers.root
-        assert "Content-Type" in result.modified_payload.headers.root
+        assert result.modified_extensions is not None
+        assert result.modified_extensions.http is not None
+        hdrs = result.modified_extensions.http.headers
+        assert "Authorization" in hdrs
+        assert hdrs["Authorization"] == "Bearer vault_token"
+        assert "Cookie" not in hdrs
+        assert "X-API-Key" not in hdrs
+        assert "Content-Type" in hdrs
 
     @pytest.mark.asyncio
     async def test_multiple_passthrough_headers(self, plugin_context):
@@ -486,32 +481,34 @@ class TestHeaderFilterPluginFunctionality:
             tags=["test"],
             mode=PluginMode.SEQUENTIAL,
             priority=20,
+            capabilities=["write_headers"],
             config={
                 "filter_headers": ["Authorization", "Cookie", "X-API-Key", "X-Custom-Header"],
                 "allow_passthrough_headers": ["Authorization", "X-Custom-Header"],
             },
         )
         plugin = HeaderFilter(config)
-        payload = ToolPreInvokePayload(
-            name="test_tool",
-            args={},
-            headers=HttpHeaderPayload(
-                {
+        payload = ToolPreInvokePayload(name="test_tool", args={})
+        ext = Extensions(
+            http=HttpExtension(
+                headers={
                     "Authorization": "Bearer token",
                     "Cookie": "session=xyz",
                     "X-API-Key": "api_key",
                     "X-Custom-Header": "custom_value",
                 }
-            ),
+            )
         )
 
-        result = await plugin.tool_pre_invoke(payload, plugin_context)
+        result = await plugin.tool_pre_invoke(payload, plugin_context, ext)
 
-        assert result.modified_payload is not None
-        assert "Authorization" in result.modified_payload.headers.root
-        assert "X-Custom-Header" in result.modified_payload.headers.root
-        assert "Cookie" not in result.modified_payload.headers.root
-        assert "X-API-Key" not in result.modified_payload.headers.root
+        assert result.modified_extensions is not None
+        assert result.modified_extensions.http is not None
+        hdrs = result.modified_extensions.http.headers
+        assert "Authorization" in hdrs
+        assert "X-Custom-Header" in hdrs
+        assert "Cookie" not in hdrs
+        assert "X-API-Key" not in hdrs
 
     @pytest.mark.asyncio
     async def test_passthrough_case_insensitive(self, plugin_context):
@@ -526,28 +523,30 @@ class TestHeaderFilterPluginFunctionality:
             tags=["test"],
             mode=PluginMode.SEQUENTIAL,
             priority=20,
+            capabilities=["write_headers"],
             config={
                 "filter_headers": ["Authorization", "Cookie"],
                 "allow_passthrough_headers": ["authorization"],
             },
         )
         plugin = HeaderFilter(config)
-        payload = ToolPreInvokePayload(
-            name="test_tool",
-            args={},
-            headers=HttpHeaderPayload(
-                {
+        payload = ToolPreInvokePayload(name="test_tool", args={})
+        ext = Extensions(
+            http=HttpExtension(
+                headers={
                     "Authorization": "Bearer token",
                     "COOKIE": "session=xyz",
                 }
-            ),
+            )
         )
 
-        result = await plugin.tool_pre_invoke(payload, plugin_context)
+        result = await plugin.tool_pre_invoke(payload, plugin_context, ext)
 
-        assert result.modified_payload is not None
-        assert "Authorization" in result.modified_payload.headers.root
-        assert "COOKIE" not in result.modified_payload.headers.root
+        assert result.modified_extensions is not None
+        assert result.modified_extensions.http is not None
+        hdrs = result.modified_extensions.http.headers
+        assert "Authorization" in hdrs
+        assert "COOKIE" not in hdrs
 
     # ── Shutdown test ─────────────────────────────────────────────────
 
@@ -575,24 +574,24 @@ class TestHeaderFilterPluginFunctionality:
             tags=["test"],
             mode=PluginMode.SEQUENTIAL,
             priority=20,
+            capabilities=["write_headers"],
             config={
                 "filter_headers": ["Authorization"],
                 "log_filtered_headers": False,
             },
         )
         plugin = HeaderFilter(config)
-        payload = ToolPreInvokePayload(
-            name="test_tool",
-            args={},
-            headers=HttpHeaderPayload({"Authorization": "Bearer token", "Content-Type": "application/json"}),
-        )
+        payload = ToolPreInvokePayload(name="test_tool", args={})
+        ext = Extensions(http=HttpExtension(headers={"Authorization": "Bearer token", "Content-Type": "application/json"}))
 
-        result = await plugin.tool_pre_invoke(payload, plugin_context)
+        result = await plugin.tool_pre_invoke(payload, plugin_context, ext)
 
         # Should still filter even with logging disabled
-        assert result.modified_payload is not None
-        assert "Authorization" not in result.modified_payload.headers.root
-        assert "Content-Type" in result.modified_payload.headers.root
+        assert result.modified_extensions is not None
+        assert result.modified_extensions.http is not None
+        hdrs = result.modified_extensions.http.headers
+        assert "Authorization" not in hdrs
+        assert "Content-Type" in hdrs
 
 
 if __name__ == "__main__":

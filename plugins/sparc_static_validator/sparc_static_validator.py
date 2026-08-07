@@ -415,7 +415,6 @@ class SPARCStaticValidatorPlugin(Plugin):
                 modified_payload = ToolPreInvokePayload(
                     name=payload.name,
                     args=correction,
-                    headers=payload.headers,
                 )
                 return ToolPreInvokeResult(
                     continue_processing=True,

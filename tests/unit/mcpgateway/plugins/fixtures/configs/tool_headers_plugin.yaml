@@ -9,6 +9,7 @@ plugins:
     tags: ["plugin", "headers"]
     mode: "sequential"  # sequential | transform | disabled
     priority: 150
+    capabilities: ["read_headers", "write_headers"]
     conditions:
       # Apply to specific tools/servers
       - prompts: []
