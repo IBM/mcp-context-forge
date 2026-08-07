@@ -54,6 +54,10 @@ _state_lock = asyncio.Lock()
 # State TTL in seconds (5 minutes)
 STATE_TTL_SECONDS = 300
 
+# Prefix added to the state token when the authorization flow was initiated
+# from the React UI popup; the callback uses it to respond with postMessage.
+POPUP_STATE_PREFIX = "popup."
+
 # Redis client for distributed state storage (uses shared factory)
 _redis_client: Optional[Any] = None
 _REDIS_INITIALIZED = False
@@ -1056,7 +1060,7 @@ class OAuthManager:
             Opaque random state token, optionally prefixed with ``popup.``
         """
         state = secrets.token_urlsafe(48)
-        return f"popup.{state}" if popup else state
+        return f"{POPUP_STATE_PREFIX}{state}" if popup else state
 
     @staticmethod
     def _extract_legacy_state_payload(state: str) -> Optional[Dict[str, Any]]:

@@ -38,7 +38,7 @@ from mcpgateway.middleware.token_scoping import ResourceOwnershipResult, token_s
 from mcpgateway.schemas import EmailUserResponse
 from mcpgateway.services.dcr_service import DcrError, DcrService
 from mcpgateway.services.encryption_service import protect_oauth_config_for_storage
-from mcpgateway.services.oauth_manager import OAuthError, OAuthManager
+from mcpgateway.services.oauth_manager import OAuthError, OAuthManager, POPUP_STATE_PREFIX
 from mcpgateway.services.token_storage_service import TokenStorageService
 
 # First-Party - CSP nonce support
@@ -210,6 +210,18 @@ async def _persist_learned_audience(gateway: Gateway, oauth_result: Dict[str, An
     logger.info("Learned OAuth audience from IdP token for gateway %s; persisted as resource", gateway.name)
 
 
+# Mapping of characters that must be escaped when embedding a JSON payload in an
+# inline <script> tag: prevents script-tag breakout and JS line-terminator syntax
+# errors (U+2028/U+2029 are valid in JSON but terminate JS string literals).
+_SCRIPT_PAYLOAD_ESCAPES = {
+    "<": "\\u003c",
+    ">": "\\u003e",
+    "&": "\\u0026",
+    "\u2028": "\\\\u2028",  # U+2028 LINE SEPARATOR
+    "\u2029": "\\\\u2029",  # U+2029 PARAGRAPH SEPARATOR
+}
+
+
 def _popup_notification_script(nonce: str, payload: dict) -> str:
     """Build an inline script that posts the OAuth result to window.opener and closes the popup.
 
@@ -226,14 +238,9 @@ def _popup_notification_script(nonce: str, payload: dict) -> str:
     Returns:
         HTML ``<script>`` tag string safe for embedding in an HTML body.
     """
-    safe_payload = (
-        json.dumps(payload)
-        .replace("<", "\\u003c")
-        .replace(">", "\\u003e")
-        .replace("&", "\\u0026")
-        .replace("\u2028", "\\\\u2028")  # U+2028 LINE SEPARATOR
-        .replace("\u2029", "\\\\u2029")  # U+2029 PARAGRAPH SEPARATOR
-    )
+    safe_payload = json.dumps(payload)
+    for char, escaped in _SCRIPT_PAYLOAD_ESCAPES.items():
+        safe_payload = safe_payload.replace(char, escaped)
     safe_nonce = escape(nonce, quote=True)
     # targetOrigin is "*" rather than window.location.origin because in production
     # the API server and the React app may run on different origins (e.g.
@@ -262,6 +269,27 @@ def _popup_callback_response(nonce: str, payload: dict, status_code: int = 200, 
         content=(f"<!DOCTYPE html><html><head><title>{title}</title></head><body>" + _popup_notification_script(nonce, payload) + extra_body + "</body></html>"),
         status_code=status_code,
     )
+
+
+def _build_callback_response(is_popup: bool, nonce: str, payload: dict, html_content: str, status_code: int = 400) -> HTMLResponse:
+    """Return the popup postMessage response or the legacy HTML page for a callback result.
+
+    Centralizes the repeated ``is_popup`` branch in the OAuth callback: popup
+    flows get the postMessage script, legacy admin-UI flows get the full HTML page.
+
+    Args:
+        is_popup: Whether the callback was initiated from the React UI popup.
+        nonce: CSP nonce for the inline script tag (popup flow only).
+        payload: Dict to send as the postMessage data (popup flow only).
+        html_content: HTML body for the legacy admin-UI response.
+        status_code: HTTP status code for the response.
+
+    Returns:
+        HTMLResponse for either the popup or the legacy flow.
+    """
+    if is_popup:
+        return _popup_callback_response(nonce, payload, status_code=status_code)
+    return HTMLResponse(content=html_content, status_code=status_code)
 
 
 oauth_router = APIRouter(prefix="/oauth", tags=["oauth"])
@@ -678,7 +706,7 @@ async def oauth_callback(
     # Determine early whether this callback was initiated from the React UI popup.
     # The authorize endpoint prefixes the state token with "popup." when popup=True,
     # so we can detect it here without any additional storage lookups.
-    is_popup = bool(state and isinstance(state, str) and state.startswith("popup."))
+    is_popup = bool(state and isinstance(state, str) and state.startswith(POPUP_STATE_PREFIX))
     csp_nonce = get_csp_nonce_from_request(request)
 
     try:
@@ -692,14 +720,11 @@ async def oauth_callback(
             description_text = escape(error_description or "OAuth provider returned an authorization error.")
             # Sanitize untrusted query parameters before logging to prevent log injection
             logger.warning(f"OAuth provider returned error callback: error={sanitize_for_log(error)}, description={sanitize_for_log(error_description)}")
-            if is_popup:
-                return _popup_callback_response(
-                    csp_nonce,
-                    {"type": "oauth_callback", "status": "error", "error": error, "errorDescription": error_description or "OAuth provider returned an authorization error."},
-                    status_code=400,
-                )
-            return HTMLResponse(
-                content=f"""
+            return _build_callback_response(
+                is_popup,
+                csp_nonce,
+                {"type": "oauth_callback", "status": "error", "error": error, "errorDescription": error_description or "OAuth provider returned an authorization error."},
+                f"""
                 <!DOCTYPE html>
                 <html>
                 <head><title>OAuth Authorization Failed</title></head>
@@ -716,12 +741,11 @@ async def oauth_callback(
 
         if not code:
             logger.warning("OAuth callback missing authorization code")
-            if is_popup:
-                return _popup_callback_response(
-                    csp_nonce, {"type": "oauth_callback", "status": "error", "error": "missing_code", "errorDescription": "Missing authorization code in callback response."}, status_code=400
-                )
-            return HTMLResponse(
-                content=f"""
+            return _build_callback_response(
+                is_popup,
+                csp_nonce,
+                {"type": "oauth_callback", "status": "error", "error": "missing_code", "errorDescription": "Missing authorization code in callback response."},
+                f"""
                 <!DOCTYPE html>
                 <html>
                 <head><title>OAuth Authorization Failed</title></head>
@@ -741,12 +765,11 @@ async def oauth_callback(
             Returns:
                 HTMLResponse: A 400 error page describing the invalid state.
             """
-            if is_popup:
-                return _popup_callback_response(
-                    csp_nonce, {"type": "oauth_callback", "status": "error", "error": "invalid_state", "errorDescription": "Invalid OAuth state parameter."}, status_code=400
-                )
-            return HTMLResponse(
-                content=f"""
+            return _build_callback_response(
+                is_popup,
+                csp_nonce,
+                {"type": "oauth_callback", "status": "error", "error": "invalid_state", "errorDescription": "Invalid OAuth state parameter."},
+                f"""
                 <!DOCTYPE html>
                 <html>
                 <head><title>OAuth Authorization Failed</title></head>
@@ -942,10 +965,11 @@ async def oauth_callback(
 
     except OAuthError as e:
         logger.error(f"OAuth callback failed: {str(e)}")
-        if is_popup:
-            return _popup_callback_response(csp_nonce, {"type": "oauth_callback", "status": "error", "error": "oauth_error", "errorDescription": str(e)}, status_code=400)
-        return HTMLResponse(
-            content=f"""
+        return _build_callback_response(
+            is_popup,
+            csp_nonce,
+            {"type": "oauth_callback", "status": "error", "error": "oauth_error", "errorDescription": str(e)},
+            f"""
         <!DOCTYPE html>
         <html>
         <head>
@@ -978,12 +1002,11 @@ async def oauth_callback(
 
     except Exception as e:
         logger.error(f"Unexpected error in OAuth callback: {str(e)}")
-        if is_popup:
-            return _popup_callback_response(
-                csp_nonce, {"type": "oauth_callback", "status": "error", "error": "server_error", "errorDescription": "An unexpected error occurred during authorization."}, status_code=500
-            )
-        return HTMLResponse(
-            content=f"""
+        return _build_callback_response(
+            is_popup,
+            csp_nonce,
+            {"type": "oauth_callback", "status": "error", "error": "server_error", "errorDescription": "An unexpected error occurred during authorization."},
+            f"""
         <!DOCTYPE html>
         <html>
         <head>

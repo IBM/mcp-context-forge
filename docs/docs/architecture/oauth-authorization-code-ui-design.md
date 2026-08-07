@@ -216,10 +216,11 @@ Error payload:
 - CSP nonce is embedded in the inline script for strict CSP compliance
 
 **Implementation Notes**:
-- State prefix detection: `oauth_router.py:605` checks `state.startswith("popup.")`
-- State generation: `oauth_manager.py:1033` adds prefix when `popup=True`
-- Callback script: `oauth_router.py:189-221` (`_popup_notification_script`)
-- CSP nonce extraction: `oauth_router.py:605` (`get_csp_nonce_from_request`)
+
+- State prefix detection: `oauth_router.py:663` checks `state.startswith(POPUP_STATE_PREFIX)`
+- State generation: `oauth_manager.py:1021-1037` adds prefix when `popup=True`
+- Callback script: `oauth_router.py:201-228` (`_popup_notification_script`)
+- CSP nonce extraction: `oauth_router.py:664` (`get_csp_nonce_from_request`)
 
 ```mermaid
 sequenceDiagram
