@@ -275,7 +275,7 @@ def _assemble_routers(  # noqa: C901 — deliberate single-function assembly, co
 
         try:
             # First-Party
-            from mcpgateway.admin import admin_router, set_logging_service, validate_section_permissions  # pylint: disable=import-outside-toplevel
+            from mcpgateway.admin import admin_router, enforce_admin_csrf, set_logging_service, validate_section_permissions  # pylint: disable=import-outside-toplevel
 
             set_logging_service(logging_service)
             target_router.include_router(admin_router)
@@ -285,7 +285,10 @@ def _assemble_routers(  # noqa: C901 — deliberate single-function assembly, co
             # First-Party
             from mcpgateway.routers.runtime_admin_router import runtime_admin_router  # pylint: disable=import-outside-toplevel
 
-            target_router.include_router(runtime_admin_router, prefix="/admin/runtime", tags=["Runtime Admin"])
+            # enforce_admin_csrf is required, not optional: /admin is in
+            # settings.csrf_exempt_paths, so CSRFMiddleware never runs on the legacy
+            # mount and this dependency is the only CSRF control these PATCH routes get.
+            target_router.include_router(runtime_admin_router, prefix="/admin/runtime", tags=["Runtime Admin"], dependencies=[Depends(enforce_admin_csrf)])
 
             # Only the /admin/well-known status endpoint belongs in the versioned
             # router.  The full well_known router (which owns /.well-known/* paths)
