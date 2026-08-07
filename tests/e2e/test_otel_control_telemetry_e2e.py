@@ -163,13 +163,22 @@ def _auth_headers() -> dict:
 def _mock_outbound_rest_request(monkeypatch, mock_request: AsyncMock) -> None:
     """Patch ``_build_pinned_rest_http_client`` so the SSRF-pinning path returns a stub.
 
-    The SSRF connection-pinning path in ``ToolService.invoke_tool`` calls
-    ``_build_pinned_rest_http_client()`` to get a *fresh* client, bypassing any
-    direct patch to ``tool_service._http_client``.  We must patch the factory
-    function itself to intercept the outbound REST call and avoid a real network
-    attempt (which would burn the full 60-second ``asyncio.wait_for`` timeout).
+    TEMPORARY WORKAROUND — reduces CI execution time while a proper solution is designed.
 
-    Mirrors the identical helper in ``test_otel_plugin_metadata_e2e.py``.
+    Ideally these tests would exercise a real upstream backend (a local stub HTTP server)
+    rather than mocking the transport layer.  Mocking the outbound HTTP client is
+    architecturally wrong for an E2E suite whose purpose is to validate the full gateway
+    request pipeline; the correct fix is to stand up a lightweight test server that the
+    fixture tool URL points at.  That work is tracked separately.
+
+    Why this patch is needed in the interim: ``ToolService.invoke_tool``'s SSRF
+    connection-pinning path calls ``_build_pinned_rest_http_client()`` to build a *fresh*
+    ``ResilientHttpClient``, completely bypassing any direct patch to
+    ``tool_service._http_client``.  Without patching the factory, the ``_deterministic_dns``
+    conftest stub resolves ``*.invalid`` to a real public IP, the pinning branch is entered,
+    and the real ``asyncio.wait_for(..., timeout=60)`` fires — burning 60 seconds per test.
+
+    Mirrors the identical helper already present in ``test_otel_plugin_metadata_e2e.py``.
     """
 
     def build_client():
@@ -294,10 +303,8 @@ async def control_telemetry_app(monkeypatch, tmp_path):
     test_app.dependency_overrides[get_jwt_token] = mock_get_jwt_token
     test_app.dependency_overrides[get_permission_service] = mock_get_permission_service
 
-    # Mock only the outbound HTTP call to the fictitious upstream tool backend.
-    # Patch the factory function so the SSRF-pinning path also returns a stub
-    # client instead of making a real network connection (which would burn the
-    # full 60-second asyncio.wait_for timeout on the .invalid fixture host).
+    # TEMPORARY WORKAROUND: mock the outbound HTTP call to avoid 60-second timeouts.
+    # See _mock_outbound_rest_request() docstring for rationale and the proper long-term fix.
     upstream_response = httpx.Response(
         200,
         json={"content": [{"type": "text", "text": "hello from upstream"}], "isError": False},
@@ -721,7 +728,8 @@ async def denying_plugin_app(monkeypatch, tmp_path):
     test_app.dependency_overrides[get_jwt_token] = mock_get_jwt_token
     test_app.dependency_overrides[get_permission_service] = mock_get_permission_service
 
-    # Patch the factory so the SSRF-pinning path returns a stub client.
+    # TEMPORARY WORKAROUND: mock the outbound HTTP call to avoid 60-second timeouts.
+    # See _mock_outbound_rest_request() docstring for rationale and the proper long-term fix.
     upstream_response = httpx.Response(
         200,
         json={"content": [{"type": "text", "text": "hello"}], "isError": False},
