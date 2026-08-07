@@ -46,6 +46,7 @@ from cpex.framework import (
 )
 from cpex.framework.constants import GATEWAY_METADATA, TOOL_METADATA
 import httpx
+import httpx2
 import jsonschema
 from jsonschema import Draft4Validator, Draft6Validator, Draft7Validator, validators
 import mcp_types as types
@@ -6104,10 +6105,10 @@ class ToolService(BaseService):
 
                     def get_httpx_client_factory(
                         headers: dict[str, str] | None = None,
-                        timeout: httpx.Timeout | None = None,
-                        auth: httpx.Auth | None = None,
-                    ) -> httpx.AsyncClient:
-                        """Factory function to create httpx.AsyncClient with optional CA certificate.
+                        timeout: httpx2.Timeout | None = None,
+                        auth: httpx2.Auth | None = None,
+                    ) -> httpx2.AsyncClient:
+                        """Factory function to create httpx2.AsyncClient with optional CA certificate.
 
                         Args:
                             headers: Optional headers for the client
@@ -6115,7 +6116,7 @@ class ToolService(BaseService):
                             auth: Optional auth for the client
 
                         Returns:
-                            httpx.AsyncClient: Configured HTTPX async client
+                            httpx2.AsyncClient: Configured HTTPX async client
 
                         Raises:
                             Exception: If CA certificate signature is invalid
@@ -6150,13 +6151,13 @@ class ToolService(BaseService):
                         # This ensures the underlying client waits at least as long as the tool configuration requires
                         factory_timeout = timeout if timeout else get_http_timeout(read_timeout=effective_timeout)
 
-                        return httpx.AsyncClient(
+                        return httpx2.AsyncClient(
                             verify=ctx if ctx else get_default_verify(),
                             follow_redirects=False,
                             headers=headers,
                             timeout=factory_timeout,
                             auth=auth,
-                            limits=httpx.Limits(
+                            limits=httpx2.Limits(
                                 max_connections=settings.httpx_max_connections,
                                 max_keepalive_connections=settings.httpx_max_keepalive_connections,
                                 keepalive_expiry=settings.httpx_keepalive_expiry,
