@@ -158,17 +158,17 @@ describe("TeamForm", () => {
         expect(memberInput).toHaveValue("Alice (alice@example.com)");
       });
 
-      // Change the role from owner -> member (fires the role change handler).
+      // Change the role from member -> owner (fires the role change handler).
       // The member row's role Select is the first select-trigger in the form.
       const roleTrigger = document.querySelectorAll<HTMLElement>('[data-slot="select-trigger"]')[0];
-      expect(roleTrigger).toHaveTextContent("owner");
+      expect(roleTrigger).toHaveTextContent("member");
 
       await user.click(roleTrigger);
-      const memberOption = await screen.findByRole("option", { name: /^member$/i });
-      await user.click(memberOption);
+      const ownerOption = await screen.findByRole("option", { name: /^owner$/i });
+      await user.click(ownerOption);
 
       await waitFor(() => {
-        expect(roleTrigger).toHaveTextContent("member");
+        expect(roleTrigger).toHaveTextContent("owner");
       });
     });
 
@@ -176,7 +176,7 @@ describe("TeamForm", () => {
       const user = userEvent.setup();
       renderForm();
 
-      // Starts with one owner row -> one Remove button.
+      // Starts with one member row -> one Remove button.
       expect(screen.getAllByRole("button", { name: /remove/i })).toHaveLength(1);
 
       await user.click(screen.getByRole("button", { name: /add team member/i }));

@@ -67,7 +67,7 @@ export interface UseTeamFormReturn {
   handleSubmit: (event: FormEvent<HTMLFormElement>, onSuccess?: () => void) => Promise<void>;
 }
 
-const INITIAL_MEMBERS: TeamMember[] = [{ email: "", role: "owner" }];
+const INITIAL_MEMBERS: TeamMember[] = [{ email: "", role: "member" }];
 const DEFAULT_MAX_MEMBERS = "100";
 const MAX_MEMBERS_PRESETS = ["10", "25", "50", "100", "250", "500"];
 
@@ -140,12 +140,12 @@ export function useTeamForm(team?: Team): UseTeamFormReturn {
     setDescription(team?.description ?? "");
     setVisibility(team?.visibility ?? "private");
     setMaxMembers(initialMaxMembers(team));
-    setMembers([{ email: "", role: "owner" }]);
+    setMembers([{ email: "", role: "member" }]);
     setError(null);
   }, [team]);
 
   const handleAddMember = useCallback(() => {
-    setMembers((prev) => [...prev, { email: "", role: "owner" }]);
+    setMembers((prev) => [...prev, { email: "", role: "member" }]);
   }, []);
 
   const handleRemoveMember = useCallback((index: number) => {
