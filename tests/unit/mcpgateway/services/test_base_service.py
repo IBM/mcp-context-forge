@@ -425,3 +425,14 @@ class TestApplyVisibilityFilter:
         sql = _compile_where(result)
         # The standalone public condition must be present in addition to the team-scoped one
         assert "visibility = 'public'" in sql
+
+    def test_team_scoped_multi_team_user_sees_only_requested_team(self, service, base_query):
+        """A user in two teams requesting team_id='team-1' must not leak team-2 team resources.
+
+        Regression test: the team-scoped branch must filter team resources by the
+        requested team_id only, never by the full token_teams membership list.
+        """
+        result = service._apply_visibility_filter(base_query, user_email=None, token_teams=["team-1", "team-2"], team_id="team-1")
+        sql = _compile_where(result)
+        assert "team_id = 'team-1'" in sql
+        assert "team-2" not in sql
