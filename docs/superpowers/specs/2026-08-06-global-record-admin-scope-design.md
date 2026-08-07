@@ -553,6 +553,7 @@ source.
 | `DELETE /rbac/roles/{role_id}` | `require_admin_permission()` | global-only (§3.3) |
 | `GET /rbac/roles` | `require_permission("admin.user_management")` | filtered-read (§3.4) |
 | `GET /rbac/roles/{role_id}` | `require_permission("admin.user_management")` | filtered-read (§3.4) |
+| `GET /rbac/users/{user_email}/roles` | `require_permission("admin.user_management")` | team-scopable (§3.5) — added by Task 9's drift-guard audit; missing from this table in the original appendix despite carrying the identical guard and `UserRole.scope_id` record class as its POST/DELETE siblings below |
 | `POST /rbac/users/{user_email}/roles` | `require_permission("admin.user_management")` | team-scopable (§3.5) |
 | `DELETE /rbac/users/{user_email}/roles/{role_id}` | `require_permission("admin.user_management")` | team-scopable (§3.5) |
 | `GET /version` | Rule C, unenforced | global-only (§3.6) |
@@ -602,7 +603,7 @@ here — see *Out of scope* for why, and for the follow-up issue this requires.
 | `GET /rbac/permissions/available` | Static catalogue of permission strings; no record data |
 | `GET /rbac/my/roles` | Self-scoped — returns only the caller's own assignments |
 | `GET /rbac/my/permissions` | Self-scoped — same |
-| `GET /gateway/models` (`llm_config_router.py:597`) | Feeds the LLM Chat model selector. Guarded by `Depends(get_current_user)` — authenticated but deliberately not admin-scoped, since any user of LLM Chat needs the enabled-model list. Returns only enabled, chat-capable models from enabled providers |
+| `GET /llm/gateway/models` (`llm_config_router.py:597`) | Feeds the LLM Chat model selector. Guarded by `Depends(get_current_user)` — authenticated but deliberately not admin-scoped, since any user of LLM Chat needs the enabled-model list. Returns only enabled, chat-capable models from enabled providers. Path corrected by Task 9's drift-guard audit: this table originally listed the router-local path (`/gateway/models`) rather than the final mounted path under `llm_config_router`'s `/llm` include-time prefix, which this appendix's own rule ("manifests key on the final mounted path") requires |
 
 ### A.4 Router-level guard — a sixth pattern
 
