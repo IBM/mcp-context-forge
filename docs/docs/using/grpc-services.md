@@ -185,17 +185,11 @@ The gateway translates between protocols automatically:
 # Enable/disable gRPC support globally
 MCPGATEWAY_GRPC_ENABLED=true
 
-# Enable server reflection by default
-MCPGATEWAY_GRPC_REFLECTION_ENABLED=true
-
 # Maximum message size (bytes)
 MCPGATEWAY_GRPC_MAX_MESSAGE_SIZE=4194304  # 4MB
 
 # Default timeout for gRPC calls (seconds)
 MCPGATEWAY_GRPC_TIMEOUT=30
-
-# Enable TLS by default
-MCPGATEWAY_GRPC_TLS_ENABLED=false
 ```
 
 ### Service Configuration

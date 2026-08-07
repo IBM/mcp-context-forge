@@ -463,7 +463,6 @@ OAUTH_REQUEST_TIMEOUT=30
 OAUTH_MAX_RETRIES=3
 
 # PKCE settings
-OAUTH_DISCOVERY_ENABLED=true
 OAUTH_PREFERRED_CODE_CHALLENGE_METHOD=S256
 
 # Secret for signing state (CRITICAL - must be consistent across instances)

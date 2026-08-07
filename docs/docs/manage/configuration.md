@@ -544,7 +544,6 @@ ContextForge implements **OAuth 2.0 Dynamic Client Registration (RFC 7591)** and
 | `DCR_METADATA_CACHE_TTL`                   | AS metadata cache TTL in seconds                               | `3600`                         | int           |
 | `DCR_CLIENT_NAME_TEMPLATE`                 | Template for client_name in DCR requests                       | `ContextForge ({gateway_name})` | string        |
 | `DCR_REQUEST_REFRESH_TOKEN_WHEN_UNSUPPORTED` | Request refresh_token when AS omits grant_types_supported    | `false`                        | bool          |
-| `OAUTH_DISCOVERY_ENABLED`                  | Enable AS metadata discovery (RFC 8414)                        | `true`                         | bool          |
 | `OAUTH_PREFERRED_CODE_CHALLENGE_METHOD`    | PKCE code challenge method                                     | `S256`                         | `S256`, `plain` |
 
 ### Personal Teams Configuration
@@ -568,7 +567,6 @@ ContextForge implements **OAuth 2.0 Dynamic Client Registration (RFC 7591)** and
 | ------------------------------------ | ------------------------------------------------ | ------------------ | ------- |
 | `MCPGATEWAY_CATALOG_ENABLED`        | Enable MCP server catalog feature                | `true`             | bool    |
 | `MCPGATEWAY_CATALOG_FILE`           | Path to catalog configuration file               | `mcp-catalog.yml`  | string  |
-| `MCPGATEWAY_CATALOG_AUTO_HEALTH_CHECK` | Automatically health check catalog servers    | `true`             | bool    |
 | `MCPGATEWAY_CATALOG_CACHE_TTL`      | Catalog cache TTL in seconds                     | `3600`             | int > 0 |
 | `MCPGATEWAY_CATALOG_PAGE_SIZE`      | Number of catalog servers per page               | `12`               | int > 0 |
 
