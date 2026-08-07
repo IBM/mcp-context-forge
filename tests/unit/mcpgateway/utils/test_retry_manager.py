@@ -77,6 +77,43 @@ async def test_retry_after_header_respected(client):
 
 
 @pytest.mark.asyncio
+async def test_request_retry_after_http_date_does_not_crash(client):
+    """RFC 9110 §10.2.3 allows Retry-After as an HTTP-date, not only delay-seconds.
+
+    request() must not raise ValueError on the date form. The sibling stream()
+    path already guards this (test_stream_429_retry_after_invalid_value); request()
+    should behave the same, falling through to normal backoff and returning the 429.
+    """
+    mock_resp = httpx.Response(429, headers={"Retry-After": "Wed, 21 Oct 2026 07:28:00 GMT"})
+
+    with patch.object(client.client, "request", new=AsyncMock(return_value=mock_resp)) as mock_req:
+        with patch("asyncio.sleep", new=AsyncMock()):
+            resp = await client.get("http://retry-after-http-date.com")
+
+    assert resp.status_code == 429
+    assert mock_req.call_count == client.max_retries
+
+
+@pytest.mark.asyncio
+async def test_request_retry_after_zero_retries_immediately(client):
+    """Retry-After: 0 is a valid delay-seconds value meaning retry immediately.
+
+    Guards the truthiness check: `if retry_after_sec:` would treat 0.0 as falsy and
+    skip the retry path, so the header must be tested with `is not None`. The client
+    should sleep(0) and keep retrying up to max_retries.
+    """
+    mock_resp = httpx.Response(429, headers={"Retry-After": "0"})
+
+    with patch.object(client.client, "request", new=AsyncMock(return_value=mock_resp)) as mock_req:
+        with patch("asyncio.sleep", new=AsyncMock()) as mock_sleep:
+            resp = await client.get("http://retry-after-zero.com")
+
+    assert resp.status_code == 429
+    assert mock_sleep.call_args_list[0][0][0] == 0.0
+    assert mock_req.call_count == client.max_retries
+
+
+@pytest.mark.asyncio
 async def test_max_retry_reached_raises_exception(client):
     failing_func = AsyncMock(side_effect=httpx.ConnectTimeout("Connection failed"))
 
