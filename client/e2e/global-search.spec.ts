@@ -3,7 +3,7 @@ import { APP } from "./utils/paths";
 
 test.describe("Global search", () => {
   test.beforeEach(async ({ apiMock }) => {
-    await apiMock.mockMe();
+    await apiMock.mockSession();
   });
 
   test("searches globally from the header and navigates to the selected result", async ({

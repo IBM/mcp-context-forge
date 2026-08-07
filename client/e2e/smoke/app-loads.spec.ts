@@ -3,9 +3,9 @@ import { APP } from "../utils/paths";
 
 test.describe("App loading (smoke)", () => {
   test("loads /app without JavaScript errors", async ({ page, apiMock }) => {
-    // Unauthenticated entry point: auth guard checks /app/auth/me and then
-    // redirects to /app/login when no cookie session exists.
-    await apiMock.mockMe({ status: 401 });
+    // Unauthenticated entry point: auth guard checks /auth/session and then
+    // redirects to /app/login when no session cookie exists.
+    await apiMock.mockSession({ authenticated: false });
 
     const consoleErrors: string[] = [];
     const pageErrors: string[] = [];
@@ -28,7 +28,7 @@ test.describe("App loading (smoke)", () => {
   });
 
   test("bare /app redirects into /app/ then to /app/login", async ({ page, apiMock }) => {
-    await apiMock.mockMe({ status: 401 });
+    await apiMock.mockSession({ authenticated: false });
 
     await page.goto("/app");
     await expect(page).toHaveURL(/\/app\/login\?next=%2Fapp%2F$/);

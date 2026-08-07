@@ -2,10 +2,11 @@
  * Playwright fixture that exposes a typed API mock helper.
  *
  * Uses `page.route()` so tests run without a live backend. The payload
- * shapes mirror `client/src/auth/AuthContext.tsx` (`User`, `LoginResponse`).
+ * shapes mirror the BFF's auth routes (client/server/src/routes/auth/) and
+ * `client/src/auth/AuthContext.tsx` (`User`, `LoginResponse`, `SessionResponse`).
  */
 
-import { test as base, expect, type Page, type Route } from "@playwright/test";
+import { test as base, expect, type Page } from "@playwright/test";
 
 export interface MockUser {
   email: string;
@@ -31,7 +32,14 @@ export const MOCK_CSRF_TOKEN = "mock-csrf-token";
 
 export interface ApiMock {
   mockLogin(options?: { user?: MockUser; status?: number; detail?: string }): Promise<void>;
-  mockMe(options?: { user?: MockUser; status?: number }): Promise<void>;
+  /**
+   * Mocks GET /auth/session, the SPA's bootstrap probe. Unlike the old
+   * cookie-auth /app/auth/me, the BFF's /auth/session never 401s — it
+   * always returns 200 with an `authenticated` flag. Pass
+   * `authenticated: false` for the logged-out case; a bare call defaults to
+   * a logged-in DEFAULT_TEST_USER.
+   */
+  mockSession(options?: { user?: MockUser; authenticated?: boolean }): Promise<void>;
   mockUnauthorized(urlPattern: string | RegExp): Promise<void>;
 }
 
@@ -42,14 +50,14 @@ export function createApiMock(page: Page): ApiMock {
       status = 200,
       detail = "Invalid credentials",
     } = {}) {
-      await page.route("**/app/auth/login", async (route) => {
+      await page.route("**/auth/login", async (route) => {
         if (status === 200) {
           await route.fulfill({
             status,
             contentType: "application/json",
             body: JSON.stringify({
               user,
-              mcpgateway_csrf_token: MOCK_CSRF_TOKEN,
+              csrfToken: MOCK_CSRF_TOKEN,
             }),
           });
           return;
@@ -57,31 +65,23 @@ export function createApiMock(page: Page): ApiMock {
         await route.fulfill({
           status,
           contentType: "application/json",
-          body: JSON.stringify({ detail }),
+          body: JSON.stringify({ error: "login_failed", detail }),
         });
       });
     },
 
-    async mockMe({ user = DEFAULT_TEST_USER, status = 200 } = {}) {
-      const fulfillUser = async (route: Route) => {
-        if (status === 200) {
-          await route.fulfill({
-            status,
-            contentType: "application/json",
-            body: JSON.stringify(user),
-          });
-          return;
-        }
+    async mockSession({ user = DEFAULT_TEST_USER, authenticated = true } = {}) {
+      await page.route("**/auth/session", async (route) => {
         await route.fulfill({
-          status,
+          status: 200,
           contentType: "application/json",
-          body: JSON.stringify({ detail: "Unauthorized" }),
+          body: JSON.stringify(
+            authenticated
+              ? { authenticated: true, user, csrfToken: MOCK_CSRF_TOKEN }
+              : { authenticated: false },
+          ),
         });
-      };
-
-      await page.route("**/app/auth/me", fulfillUser);
-      await page.route("**/auth/email/me", fulfillUser);
-      await page.route("**/auth/me", fulfillUser);
+      });
     },
 
     async mockUnauthorized(urlPattern) {

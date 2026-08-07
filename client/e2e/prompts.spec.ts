@@ -43,7 +43,7 @@ function makePrompt(id: string, gatewaySlug: string, overrides: Partial<Prompt> 
 
 test.describe("Prompts page", () => {
   test.beforeEach(async ({ page, apiMock }) => {
-    await apiMock.mockMe();
+    await apiMock.mockSession();
     await page.addInitScript(() => {
       sessionStorage.setItem("mcpgateway_token", "mock-token-12345");
     });

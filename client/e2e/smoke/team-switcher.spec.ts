@@ -4,7 +4,7 @@ import { APP } from "../utils/paths";
 test.describe("TeamSwitcher component (smoke)", () => {
   test("renders and displays teams from API", async ({ page, apiMock }) => {
     // Mock authenticated user
-    await apiMock.mockMe();
+    await apiMock.mockSession();
 
     // Mock /teams endpoint
     await page.route("**/teams", async (route) => {
@@ -41,7 +41,7 @@ test.describe("TeamSwitcher component (smoke)", () => {
 
   test("displays error message when teams fail to load", async ({ page, apiMock }) => {
     // Mock authenticated user
-    await apiMock.mockMe();
+    await apiMock.mockSession();
 
     // Mock /teams endpoint with error
     await page.route("**/teams", async (route) => {

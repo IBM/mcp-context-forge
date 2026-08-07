@@ -3,7 +3,7 @@ import { APP, TOKEN_STORAGE_KEY } from "../utils/paths";
 
 test.describe("Login flow", () => {
   test.beforeEach(async ({ page, apiMock }) => {
-    await apiMock.mockMe({ status: 401 });
+    await apiMock.mockSession({ authenticated: false });
     await page.addInitScript((key) => {
       window.sessionStorage.removeItem(key);
     }, TOKEN_STORAGE_KEY);
@@ -57,7 +57,7 @@ test.describe("Login flow", () => {
 
   test("submit button shows loading state during request", async ({ page }) => {
     // Delay the response so the loading state is observable.
-    await page.route("**/app/auth/login", async (route) => {
+    await page.route("**/auth/login", async (route) => {
       await new Promise((resolve) => setTimeout(resolve, 500));
       await route.fulfill({
         status: 200,
@@ -72,7 +72,7 @@ test.describe("Login flow", () => {
             email_verified: true,
             password_change_required: false,
           },
-          mcpgateway_csrf_token: "mock-csrf-token",
+          csrfToken: "mock-csrf-token",
         }),
       });
     });

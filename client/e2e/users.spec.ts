@@ -39,7 +39,7 @@ const MOCK_USER_ROUTE = `**/auth/email/admin/users/${encodeURIComponent(MOCK_USE
 
 test.describe("Users page", () => {
   test.beforeEach(async ({ page, apiMock }) => {
-    await apiMock.mockMe();
+    await apiMock.mockSession();
 
     await page.addInitScript(() => {
       sessionStorage.setItem("mcpgateway_token", "mock-token-12345");
