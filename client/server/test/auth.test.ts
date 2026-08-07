@@ -4,6 +4,7 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { config } from "../src/config.js";
 import { buildTestApp, type TestApp } from "./helpers/build-app.js";
 
 function mockUpstreamLogin(ok: boolean, body: unknown, status = ok ? 200 : 401): void {
@@ -204,5 +205,61 @@ describe("POST /auth/logout", () => {
 
     expect(first.statusCode).toBe(200);
     expect(second.statusCode).toBe(200);
+  });
+
+  it("revokes the upstream JWT via FastAPI's bearer-token logout, not just the BFF session", async () => {
+    const app = await buildTestApp();
+    const { cookies, csrfToken } = await login(app);
+
+    const fetchCalls: Array<{ url: string; authorization: string | undefined }> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        const headers = init?.headers as Record<string, string> | undefined;
+        fetchCalls.push({ url: String(url), authorization: headers?.authorization });
+        return { ok: true, status: 200, json: async () => ({}), text: async () => "" };
+      }),
+    );
+
+    const response = await app.fastify.inject({
+      method: "POST",
+      url: "/auth/logout",
+      headers: { cookie: cookies.join("; "), "x-csrf-token": csrfToken },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const revokeCall = fetchCalls.find((call) => call.url === `${config.fastapiUrl}/auth/logout`);
+    expect(revokeCall).toBeTruthy();
+    // The stored bearer token, minted at login — never a session/cookie value.
+    expect(revokeCall?.authorization).toBe("Bearer upstream-jwt");
+  });
+
+  it("still clears the BFF session even when upstream token revocation fails", async () => {
+    const app = await buildTestApp();
+    const { cookies, csrfToken } = await login(app);
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new Error("upstream unreachable");
+      }),
+    );
+
+    const response = await app.fastify.inject({
+      method: "POST",
+      url: "/auth/logout",
+      headers: { cookie: cookies.join("; "), "x-csrf-token": csrfToken },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const cleared = response.cookies.find((c) => c.name === "bff_sid");
+    expect(cleared?.value).toBe("");
+
+    const followUp = await app.fastify.inject({
+      method: "GET",
+      url: "/auth/session",
+      headers: { cookie: cookies.join("; ") },
+    });
+    expect(followUp.json()).toEqual({ authenticated: false });
   });
 });
