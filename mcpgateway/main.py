@@ -76,6 +76,7 @@ from mcpgateway import __version__
 from mcpgateway import version as version_module
 from mcpgateway.auth import get_current_user, get_user_team_roles, TokenValidationError, validate_token_user
 from mcpgateway.auth_context import (
+    configuration_export_includes_roots,
     decode_internal_mcp_auth_context,
     encode_internal_mcp_auth_context,
     get_internal_mcp_auth_context,
@@ -84,8 +85,11 @@ from mcpgateway.auth_context import (
     get_scoped_resource_access_context,
     get_token_teams_from_request,
     get_user_email,
+    import_envelope_includes_roots,
     INTERNAL_MCP_SESSION_VALIDATED_HEADER,
+    is_unrestricted_platform_admin,
     is_trusted_internal_mcp_request,
+    selective_selection_includes_roots,
 )
 from mcpgateway.cache import ResourceCache, SessionRegistry
 from mcpgateway.common.models import InitializeResult
@@ -101,6 +105,7 @@ from mcpgateway.db import refresh_slugs_on_startup, SessionLocal
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.deprecations import RUST_MCP_RUNTIME_DEPRECATION_MESSAGE, VALIDATION_MIDDLEWARE_DEPRECATION_MESSAGE
 from mcpgateway.handlers.sampling import SamplingError, SamplingHandler
+from mcpgateway.middleware.auth_context_stack import register_auth_context_middleware
 from mcpgateway.middleware.client_disconnect import ClientDisconnectMiddleware
 from mcpgateway.middleware.compression import SSEAwareCompressMiddleware
 from mcpgateway.middleware.correlation_id import CorrelationIDMiddleware
@@ -155,6 +160,8 @@ from mcpgateway.schemas import (
     ResourceRead,
     ResourceSubscription,
     ResourceUpdate,
+    RootCreate,
+    RootUpdate,
     RPCRequest,
     ServerCreate,
     ServerRead,
@@ -189,6 +196,7 @@ from mcpgateway.services.mcp_apps import (
     MCPAppsValidationError,
     serialize_resource_content_for_mcp,
 )
+from mcpgateway.services.mcp_method_registry import mcp_method_registry
 from mcpgateway.services.metrics import setup_metrics
 from mcpgateway.services.permission_service import PermissionService
 from mcpgateway.services.prompt_service import PromptError, PromptLockConflictError, PromptNameConflictError, PromptNotFoundError
@@ -251,7 +259,7 @@ if settings.plugins.enabled:
 from mcpgateway.services.gateway_service import gateway_service  # noqa: E402
 from mcpgateway.services.prompt_service import prompt_service  # noqa: E402
 from mcpgateway.services.resource_service import resource_service  # noqa: E402
-from mcpgateway.services.root_service import root_service, RootServiceNotFoundError  # noqa: E402
+from mcpgateway.services.root_service import root_service, RootServiceError, RootServiceNotFoundError, RootServiceValidationError  # noqa: E402
 from mcpgateway.services.server_service import server_service  # noqa: E402
 from mcpgateway.services.tool_service import tool_service  # noqa: E402
 
@@ -3376,49 +3384,8 @@ if settings.correlation_id_enabled:
     app.add_middleware(CorrelationIDMiddleware)
     logger.info(f"✅ Correlation ID tracking enabled (header: {settings.correlation_id_header})")
 
-# Add authentication context middleware if security logging is enabled OR password change enforcement is enabled
-# This middleware extracts user context and logs security events (authentication attempts)
-# Note: SIEM export can also require auth event capture even when DB security logging is off.
-# Note: Password change enforcement also requires user context to be available
-# IMPORTANT: Middleware runs in REVERSE order of addition in Starlette/FastAPI
-# Add PasswordChangeEnforcementMiddleware FIRST so it runs AFTER AuthContextMiddleware
-_siem_auth_source_enabled = settings.siem_export_enabled and "auth" in {str(item).lower() for item in getattr(settings, "siem_export_event_sources", [])}
 
-# Add password change enforcement middleware FIRST (runs SECOND due to reverse order)
-# This middleware enforces mandatory password changes for users with password_change_required flag
-# Note: Runs after AuthContextMiddleware (added below) so request.state.user is available
-if settings.password_change_enforcement_enabled:
-    # First-Party
-    from mcpgateway.middleware.password_change_enforcement import PasswordChangeEnforcementMiddleware
-
-    app.add_middleware(PasswordChangeEnforcementMiddleware)
-    logger.info("🔒 Password change enforcement middleware enabled - blocking access for users requiring password change")
-else:
-    logger.info("🔒 Password change enforcement middleware disabled")
-
-# Add authentication context middleware SECOND (runs FIRST due to reverse order)
-# This populates request.state.user for downstream middleware and handlers
-_auth_context_required = settings.security_logging_enabled or _siem_auth_source_enabled or settings.mcpgateway_admin_api_enabled or settings.password_change_enforcement_enabled
-if _auth_context_required:
-    # First-Party
-    from mcpgateway.middleware.auth_middleware import AuthContextMiddleware
-
-    app.add_middleware(AuthContextMiddleware)
-    logger.info("🔐 Authentication context middleware enabled - capturing authentication security events")
-else:
-    logger.info("🔐 Security event logging disabled")
-
-# Add CSRF protection middleware
-# This validates CSRF tokens on state-changing requests to prevent Cross-Site Request Forgery attacks
-# Note: Runs after AuthContextMiddleware so request.state.user is available for token validation
-if settings.csrf_enabled:
-    # First-Party
-    from mcpgateway.middleware.csrf_middleware import CSRFMiddleware
-
-    app.add_middleware(CSRFMiddleware)
-    logger.info("🛡️  CSRF protection middleware enabled - validating tokens on state-changing requests")
-else:
-    logger.info("🛡️  CSRF protection middleware disabled")
+register_auth_context_middleware(app)
 
 # Add token usage logging middleware
 # This tracks API token usage for analytics and security monitoring
@@ -6633,6 +6600,10 @@ async def update_resource(
         raise HTTPException(status_code=409, detail=ErrorFormatter.format_database_error(e))
     except ResourceURIConflictError as e:
         raise HTTPException(status_code=409, detail=str(e))
+    except ResourceValidationError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except ResourceError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except ContentSizeError as e:
         logger.error(f"Content size exceeded in updating resource: {e}")
         raise HTTPException(status_code=413, detail={"error": f"{e.content_type} size limit exceeded", "message": str(e), "actual_size": e.actual_size, "max_size": e.max_size})
@@ -7698,21 +7669,37 @@ async def refresh_gateway_tools(
 ##############
 # Root APIs  #
 ##############
+async def _require_unrestricted_root_admin(request: Request, user: Any, db: Session) -> None:
+    """Require unrestricted platform-admin authority for global roots."""
+    if not await is_unrestricted_platform_admin(request, user, db):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_ACCESS_DENIED_MSG)
+
+
+def _root_validation_http_error(exc: RootServiceValidationError) -> HTTPException:
+    """Map root policy failures to safe REST details."""
+    return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail={"message": "Root URI rejected by policy", "reason_code": exc.reason_code})
+
+
 @root_router.get("", response_model=List[Root])
 @root_router.get("/", response_model=List[Root])
 @require_permission("admin.system_config")
 async def list_roots(
+    request: Request,
+    db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> List[Root]:
     """
     Retrieve a list of all registered roots.
 
     Args:
+        request: Current request object.
+        db: Database session.
         user: Authenticated user.
 
     Returns:
         List of Root objects.
     """
+    await _require_unrestricted_root_admin(request, user, db)
     logger.debug(f"User '{safe_log_user(user)}' requested list of roots")
     return await root_service.list_roots()
 
@@ -7721,6 +7708,8 @@ async def list_roots(
 @require_permission("admin.system_config")
 async def export_root(
     uri: str,
+    request: Request = None,
+    db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Dict[str, Any]:
     """
@@ -7728,6 +7717,8 @@ async def export_root(
 
     Args:
         uri: Root URI to export (query parameter)
+        request: Current request object.
+        db: Database session.
         user: Authenticated user
 
     Returns:
@@ -7737,7 +7728,8 @@ async def export_root(
         HTTPException: If root not found or export fails
     """
     try:
-        logger.info(f"User {safe_log_user(user)} requested root export for URI: {uri}")
+        await _require_unrestricted_root_admin(request, user, db)
+        logger.info("User %s requested root export", safe_log_user(user))
 
         # Extract username from user
         username: Optional[str] = None
@@ -7768,6 +7760,10 @@ async def export_root(
     except RootServiceNotFoundError as e:
         logger.error(f"Root not found for export by user {safe_log_user(user)}: {str(e)}")
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except RootServiceValidationError as e:
+        raise _root_validation_http_error(e) from e
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Unexpected root export error for user {safe_log_user(user)}: {str(e)}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Root export failed")
@@ -7776,17 +7772,22 @@ async def export_root(
 @root_router.get("/changes")
 @require_permission("admin.system_config")
 async def subscribe_roots_changes(
+    request: Request,
+    db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> StreamingResponse:
     """
     Subscribe to real-time changes in root list via Server-Sent Events (SSE).
 
     Args:
+        request: Current request object.
+        db: Database session.
         user: Authenticated user.
 
     Returns:
         StreamingResponse with event-stream media type.
     """
+    await _require_unrestricted_root_admin(request, user, db)
     logger.debug(f"User '{safe_log_user(user)}' subscribed to root changes stream")
 
     async def generate_events():
@@ -7805,6 +7806,8 @@ async def subscribe_roots_changes(
 @require_permission("admin.system_config")
 async def get_root_by_uri(
     root_uri: str,
+    request: Request = None,
+    db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Root:
     """
@@ -7812,6 +7815,8 @@ async def get_root_by_uri(
 
     Args:
         root_uri: URI of the root to retrieve.
+        request: Current request object.
+        db: Database session.
         user: Authenticated user.
 
     Returns:
@@ -7821,12 +7826,15 @@ async def get_root_by_uri(
         HTTPException: If the root is not found.
         Exception: For any other unexpected errors.
     """
-    logger.debug(f"User '{safe_log_user(user)}' requested root with URI: {root_uri}")
+    await _require_unrestricted_root_admin(request, user, db)
+    logger.debug("User '%s' requested root", safe_log_user(user))
     try:
         root = await root_service.get_root_by_uri(root_uri)
         return root
     except RootServiceNotFoundError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except RootServiceValidationError as e:
+        raise _root_validation_http_error(e) from e
     except Exception as e:
         logger.error(f"Error getting root {root_uri}: {e}")
         raise e
@@ -7836,28 +7844,40 @@ async def get_root_by_uri(
 @root_router.post("/", response_model=Root)
 @require_permission("admin.system_config")
 async def add_root(
-    root: Root,  # Accept JSON body using the Root model from models.py
+    root_data: RootCreate,
+    request: Request = None,
+    db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Root:
     """
     Add a new root.
 
     Args:
-        root: Root object containing URI and name.
+        root_data: Root payload containing URI and name.
+        request: Current request object.
+        db: Database session.
         user: Authenticated user.
 
     Returns:
         The added Root object.
     """
-    logger.debug(f"User '{safe_log_user(user)}' requested to add root: {root}")
-    return await root_service.add_root(str(root.uri), root.name)
+    await _require_unrestricted_root_admin(request, user, db)
+    logger.debug("User '%s' requested to add root", safe_log_user(user))
+    try:
+        return await root_service.add_root(root_data.uri, root_data.name)
+    except RootServiceValidationError as e:
+        raise _root_validation_http_error(e) from e
+    except RootServiceError as e:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Root already exists") from e
 
 
 @root_router.put("/{root_uri:path}", response_model=Root)
 @require_permission("admin.system_config")
 async def update_root(
     root_uri: str,
-    root: Root,
+    root_data: RootUpdate,
+    request: Request = None,
+    db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Root:
     """
@@ -7865,7 +7885,9 @@ async def update_root(
 
     Args:
         root_uri: URI of the root to update.
-        root: Root object with updated information.
+        root_data: Root update payload.
+        request: Current request object.
+        db: Database session.
         user: Authenticated user.
 
     Returns:
@@ -7875,12 +7897,15 @@ async def update_root(
         HTTPException: If the root is not found.
         Exception: For any other unexpected errors.
     """
-    logger.debug(f"User '{safe_log_user(user)}' requested to update root with URI: {root_uri}")
+    await _require_unrestricted_root_admin(request, user, db)
+    logger.debug("User '%s' requested to update root", safe_log_user(user))
     try:
-        root = await root_service.update_root(root_uri, root.name)
+        root = await root_service.update_root(root_uri, root_data.name)
         return root
     except RootServiceNotFoundError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except RootServiceValidationError as e:
+        raise _root_validation_http_error(e) from e
     except Exception as e:
         logger.error(f"Error updating root {root_uri}: {e}")
         raise e
@@ -7890,6 +7915,8 @@ async def update_root(
 @require_permission("admin.system_config")
 async def remove_root(
     uri: str,
+    request: Request = None,
+    db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Dict[str, str]:
     """
@@ -7897,20 +7924,25 @@ async def remove_root(
 
     Args:
         uri: URI of the root to remove.
+        request: Current request object.
+        db: Database session.
         user: Authenticated user.
 
     Returns:
         Status message indicating result.
     """
-    logger.debug(f"User '{safe_log_user(user)}' requested to remove root with URI: {uri}")
+    await _require_unrestricted_root_admin(request, user, db)
+    logger.debug("User '%s' requested to remove root", safe_log_user(user))
     try:
         await root_service.remove_root(uri)
     except RootServiceNotFoundError as e:
-        raise HTTPException(status_code=404, detail=str(e)) from e
+        raise HTTPException(status_code=404, detail="Root not found") from e
+    except RootServiceValidationError as e:
+        raise _root_validation_http_error(e) from e
     except Exception as e:
-        logger.error(f"Failed to remove root {uri}: {e}")
+        logger.error("Failed to remove root")
         raise HTTPException(status_code=500, detail="Internal error removing root") from e
-    return {"status": "success", "message": f"Root {uri} removed"}
+    return {"status": "success", "message": "Root removed"}
 
 
 ##################
@@ -8922,7 +8954,7 @@ async def handle_internal_mcp_roots_list(request: Request):
     db = SessionLocal()
     req_id = None
     try:
-        _build_internal_mcp_forwarded_user(request)
+        user = _build_internal_mcp_forwarded_user(request)
         try:
             body = orjson.loads(await request.body())
         except orjson.JSONDecodeError:
@@ -8953,6 +8985,8 @@ async def handle_internal_mcp_roots_list(request: Request):
             method="roots/list",
             server_id=None,
         )
+        if not await is_unrestricted_platform_admin(request, user, db):
+            raise JSONRPCError(-32003, _ACCESS_DENIED_MSG, {"method": "roots/list"})
         roots = await root_service.list_roots()
         payload = {"roots": [r.model_dump(by_alias=True, exclude_none=True) for r in roots]}
         if db.is_active and db.in_transaction() is not None:
@@ -10573,50 +10607,125 @@ async def create_mcp_app_session(request: Request, db: Session = Depends(get_db)
     )
 
 
-@utility_router.post("/appbridge/sessions/{app_session_id}/rpc")
-@require_permission("tools.execute")
-async def handle_mcp_app_session_rpc(app_session_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)):
-    """Execute an app-visible tool through a validated AppBridge session."""
-    if not mcp_apps_enabled():
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="MCP Apps are disabled")
+def _app_bridge_request_headers(request: Request) -> Dict[str, str]:
+    """Build the header passthrough for an AppBridge call.
 
-    try:
-        body = orjson.loads(await request.body())
-    except orjson.JSONDecodeError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Parse error") from exc
-    if not isinstance(body, dict):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid request body")
+    The gateway routing header is stripped so an app cannot redirect its own
+    call to a different gateway than the one its session is bound to.
 
-    req_id = body.get("id")
-    method = body.get("method")
-    params = body.get("params") if isinstance(body.get("params"), dict) else {}
-    if method != "tools/call":
-        return {"jsonrpc": "2.0", "error": {"code": -32601, "message": f"Method not found: {method}"}, "id": req_id}
+    Args:
+        request: Incoming AppBridge RPC request.
 
-    mcp_session_id = _extract_mcp_session_id(request, body)
-    if not mcp_session_id:
-        return {"jsonrpc": "2.0", "error": {"code": -32003, "message": _ACCESS_DENIED_MSG}, "id": req_id}
-    try:
-        await _assert_session_owner_or_admin(request, user, mcp_session_id)
-    except HTTPException as exc:
-        error_code = -32002 if exc.status_code == status.HTTP_404_NOT_FOUND else -32003
-        return {"jsonrpc": "2.0", "error": {"code": error_code, "message": str(exc.detail)}, "id": req_id}
+    Returns:
+        Lowercased request headers without the gateway routing header.
+    """
+    request_headers = {k.lower(): v for k, v in request.headers.items()}
+    request_headers.pop("x-context-forge-gateway-id", None)
+    return request_headers
 
-    requester_email, requester_is_admin = get_request_identity(request, user)
-    server_id = params.get("server_id") or params.get("serverId") or body.get("serverId") or body.get("server_id") or request.headers.get("x-contextforge-server-id")
-    app_session = mcp_app_session_service.get_valid_session(
-        db,
-        app_session_id=app_session_id,
-        mcp_session_id=mcp_session_id,
-        user_email=requester_email,
-        server_id=None,
-        is_admin=requester_is_admin,
+
+def _record_app_bridge_log(app_session, params: Dict[str, Any]) -> None:
+    """Record a log notification sent by an MCP App.
+
+    The MCP Apps lifecycle terminates ``notifications/message`` at the host, so
+    the payload is recorded for observability and never proxied upstream. The
+    contents are attacker-influenced, so every field is truncated and logged as
+    data rather than interpolated into the format string.
+
+    Args:
+        app_session: The validated AppBridge session the notification arrived on.
+        params: JSON-RPC params carrying ``level``, optional ``logger`` and ``data``.
+    """
+    level = params.get("level")
+    origin_logger = params.get("logger")
+    data = params.get("data")
+    logger.info(
+        "AppBridge log notification session=%s server=%s level=%.100r logger=%.100r data=%.500r",
+        app_session.id,
+        app_session.server_id,
+        level,
+        origin_logger,
+        data,
     )
-    if app_session is None:
-        return {"jsonrpc": "2.0", "error": {"code": -32003, "message": _ACCESS_DENIED_MSG}, "id": req_id}
-    if not app_session.server_id or (server_id is not None and server_id != app_session.server_id):
-        return {"jsonrpc": "2.0", "error": {"code": -32003, "message": _ACCESS_DENIED_MSG}, "id": req_id}
 
+
+async def _handle_app_bridge_resources_read(db: Session, request: Request, app_session, params: Dict[str, Any], req_id: Any) -> Dict[str, Any]:
+    """Read a resource on behalf of an MCP App through its bound session.
+
+    The read is scoped to the server the AppBridge session is bound to and uses
+    the identity and team scoping captured when the session was created, so an
+    app cannot reach resources its originating user could not read.
+
+    Args:
+        db: Database session.
+        request: Incoming request, used for plugin context and header passthrough.
+        app_session: The validated AppBridge session.
+        params: JSON-RPC params carrying the resource ``uri``.
+        req_id: JSON-RPC request id echoed back to the caller.
+
+    Returns:
+        A JSON-RPC response dictionary with the resource contents or an error.
+    """
+    uri = params.get("uri")
+    if not uri or not isinstance(uri, str):
+        return {"jsonrpc": "2.0", "error": {"code": -32602, "message": "Missing resource URI in parameters"}, "id": req_id}
+
+    token_teams = app_session.token_teams
+    resource_user_email = None if token_teams is None else app_session.user_email
+    request_headers = _app_bridge_request_headers(request)
+
+    try:
+        result = await resource_service.read_resource(
+            db,
+            resource_uri=uri,
+            user=resource_user_email,
+            server_id=app_session.server_id,
+            token_teams=token_teams,
+            plugin_context_table=getattr(request.state, "plugin_context_table", None),
+            plugin_global_context=getattr(request.state, "plugin_global_context", None),
+            meta_data=params.get("_meta"),
+            request_headers=request_headers,
+        )
+    except (ValueError, ResourceNotFoundError) as exc:
+        logger.info("AppBridge resource read failed for %s on server %s: %s", uri, app_session.server_id, exc)
+        return {"jsonrpc": "2.0", "error": {"code": -32002, "message": f"Resource not found: {uri}"}, "id": req_id}
+    except PluginViolationError as exc:
+        error_code = -32602
+        if exc.violation and hasattr(exc.violation, "mcp_error_code") and isinstance(exc.violation.mcp_error_code, int):
+            error_code = exc.violation.mcp_error_code
+        return {"jsonrpc": "2.0", "error": {"code": error_code, "message": str(exc)}, "id": req_id}
+    except PluginError as exc:
+        error_code = -32603
+        if exc.error and hasattr(exc.error, "mcp_error_code") and isinstance(exc.error.mcp_error_code, int):
+            error_code = exc.error.mcp_error_code
+        return {"jsonrpc": "2.0", "error": {"code": error_code, "message": str(exc)}, "id": req_id}
+    except ResourceError as exc:
+        logger.info("AppBridge resource read errored for %s: %s", uri, exc)
+        return {"jsonrpc": "2.0", "error": {"code": -32000, "message": f"Resource read failed: {exc}"}, "id": req_id}
+    except Exception:
+        logger.exception("AppBridge resource read failed for %s", uri)
+        return {"jsonrpc": "2.0", "error": {"code": -32603, "message": "Internal error"}, "id": req_id}
+
+    return {"jsonrpc": "2.0", "result": {"contents": [serialize_resource_content_for_mcp(result, fallback_uri=uri)]}, "id": req_id}
+
+
+async def _handle_app_bridge_tools_call(db: Session, request: Request, app_session, params: Dict[str, Any], req_id: Any, requester_email: Optional[str]) -> Dict[str, Any]:
+    """Invoke an app-visible tool on behalf of an MCP App through its bound session.
+
+    The call is scoped to the server the AppBridge session is bound to and uses the
+    identity and team scoping captured when the session was created.
+
+    Args:
+        db: Database session.
+        request: Incoming request, used for plugin context and header passthrough.
+        app_session: The validated AppBridge session.
+        params: JSON-RPC params carrying the tool ``name`` and ``arguments``.
+        req_id: JSON-RPC request id echoed back to the caller.
+        requester_email: Email of the authenticated caller driving the app.
+
+    Returns:
+        A JSON-RPC response dictionary with the tool result or an error.
+    """
     name = params.get("name")
     if not name:
         return {"jsonrpc": "2.0", "error": {"code": -32602, "message": "Missing tool name in parameters"}, "id": req_id}
@@ -10624,8 +10733,7 @@ async def handle_mcp_app_session_rpc(app_session_id: str, request: Request, db: 
     try:
         token_teams = app_session.token_teams
         tool_user_email = None if token_teams is None else app_session.user_email
-        request_headers = {k.lower(): v for k, v in request.headers.items()}
-        request_headers.pop("x-context-forge-gateway-id", None)
+        request_headers = _app_bridge_request_headers(request)
         result = await tool_service.invoke_tool(
             db=db,
             name=name,
@@ -10664,6 +10772,86 @@ async def handle_mcp_app_session_rpc(app_session_id: str, request: Request, db: 
     except Exception:
         logger.exception("AppBridge tool call failed for %s", name)
         return {"jsonrpc": "2.0", "error": {"code": -32603, "message": "Internal error"}, "id": req_id}
+
+
+@utility_router.post("/appbridge/sessions/{app_session_id}/rpc")
+@require_permission("tools.execute")
+async def handle_mcp_app_session_rpc(app_session_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)):
+    """Execute an app-visible tool or standard MCP message through a validated AppBridge session."""
+    if not mcp_apps_enabled():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="MCP Apps are disabled")
+
+    try:
+        body = orjson.loads(await request.body())
+    except orjson.JSONDecodeError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Parse error") from exc
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid request body")
+
+    req_id = body.get("id")
+    method = body.get("method")
+    params = body.get("params") if isinstance(body.get("params"), dict) else {}
+    if not mcp_method_registry.is_app_bridge_method(method):
+        return {"jsonrpc": "2.0", "error": {"code": -32601, "message": f"Method not found: {method}"}, "id": req_id}
+
+    mcp_session_id = _extract_mcp_session_id(request, body)
+    if not mcp_session_id:
+        return {"jsonrpc": "2.0", "error": {"code": -32003, "message": _ACCESS_DENIED_MSG}, "id": req_id}
+    try:
+        await _assert_session_owner_or_admin(request, user, mcp_session_id)
+    except HTTPException as exc:
+        error_code = -32002 if exc.status_code == status.HTTP_404_NOT_FOUND else -32003
+        return {"jsonrpc": "2.0", "error": {"code": error_code, "message": str(exc.detail)}, "id": req_id}
+
+    requester_email, requester_is_admin = get_request_identity(request, user)
+    server_id = params.get("server_id") or params.get("serverId") or body.get("serverId") or body.get("server_id") or request.headers.get("x-contextforge-server-id")
+    app_session = mcp_app_session_service.get_valid_session(
+        db,
+        app_session_id=app_session_id,
+        mcp_session_id=mcp_session_id,
+        user_email=requester_email,
+        server_id=None,
+        is_admin=requester_is_admin,
+    )
+    if app_session is None:
+        return {"jsonrpc": "2.0", "error": {"code": -32003, "message": _ACCESS_DENIED_MSG}, "id": req_id}
+    if not app_session.server_id or (server_id is not None and server_id != app_session.server_id):
+        return {"jsonrpc": "2.0", "error": {"code": -32003, "message": _ACCESS_DENIED_MSG}, "id": req_id}
+
+    # Session ownership and server binding are enforced above for every bridge
+    # method, so the per-method handlers below inherit the same scoping.
+    if method == "ping":
+        return {"jsonrpc": "2.0", "result": {}, "id": req_id}
+
+    if method == "notifications/message":
+        if "id" in body:
+            # JSON-RPC decides notification vs request on the *presence* of the id member, not
+            # its value: "id": null still makes this a request, which must not go unanswered.
+            # The MCP Apps lifecycle defines notifications/message as terminating at the host
+            # with no reply, so the request form is rejected rather than silently acknowledged
+            # with an empty body the caller is still waiting on.
+            return {
+                "jsonrpc": "2.0",
+                "error": {"code": -32600, "message": "notifications/message must be sent as a JSON-RPC notification, without an 'id' member"},
+                "id": req_id,
+            }
+        _record_app_bridge_log(app_session, params)
+        # A JSON-RPC notification carries no id and MUST NOT receive a JSON-RPC response, so
+        # this is acknowledged at the transport level only: 202 Accepted with an empty body,
+        # matching the Streamable HTTP rule for notification-only input.
+        return Response(status_code=status.HTTP_202_ACCEPTED)
+
+    if method == "resources/read":
+        # RBAC is a layer of its own, separate from the session's token/team scoping: the
+        # endpoint decorator only proves tools.execute, which a caller can retain after
+        # resources.read has been revoked. Authorize the read per method.
+        try:
+            await _ensure_rpc_permission(user, db, "resources.read", method, request=request)
+        except JSONRPCError as exc:
+            return {"jsonrpc": "2.0", "error": exc.to_dict()["error"], "id": req_id}
+        return await _handle_app_bridge_resources_read(db, request, app_session, params, req_id)
+
+    return await _handle_app_bridge_tools_call(db, request, app_session, params, req_id, requester_email)
 
 
 @utility_router.post("/_internal/mcp/tools/call/")
@@ -11287,6 +11475,8 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
                 result["nextCursor"] = next_cursor
         elif method == "list_roots":
             await _ensure_rpc_permission(user, db, "admin.system_config", method, request=request)
+            if not await is_unrestricted_platform_admin(request, user, db):
+                raise JSONRPCError(-32003, _ACCESS_DENIED_MSG, {"method": method})
             roots = await root_service.list_roots()
             result = {"roots": [r.model_dump(by_alias=True, exclude_none=True) for r in roots]}
         elif method == "resources/list":
@@ -11490,6 +11680,8 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
         elif method == "roots/list":
             # MCP spec-compliant method name
             await _ensure_rpc_permission(user, db, "admin.system_config", method, request=request)
+            if not await is_unrestricted_platform_admin(request, user, db):
+                raise JSONRPCError(-32003, _ACCESS_DENIED_MSG, {"method": method})
             roots = await root_service.list_roots()
             result = {"roots": [r.model_dump(by_alias=True, exclude_none=True) for r in roots]}
         elif method.startswith("roots/"):
@@ -11642,9 +11834,6 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
             result = {}
         elif method.startswith("extensions/") or method.startswith("io.modelcontextprotocol/"):
             # Check if this is a known MCP Apps method.
-            # First-Party
-            from mcpgateway.services.mcp_method_registry import mcp_method_registry
-
             if not mcp_method_registry.is_known_method(method):
                 raise JSONRPCError(-32601, f"Method not found: {method}", {})
             # Known MCP Apps method but not yet implemented here.
@@ -12493,6 +12682,9 @@ async def export_configuration(
         if tags:
             tags_list = [t.strip() for t in tags.split(",") if t.strip()]
 
+        if configuration_export_includes_roots(include_types, exclude_types_list):
+            await _require_unrestricted_root_admin(request, user, db)
+
         # Extract username from user (which is now an EmailUser object)
         if hasattr(user, "email"):
             username = getattr(user, "email", None)
@@ -12526,6 +12718,8 @@ async def export_configuration(
     except ExportError as e:
         logger.error(f"Export failed for user {safe_log_user(user)}: {str(e)}")
         raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Unexpected export error for user {safe_log_user(user)}: {str(e)}")
         raise HTTPException(status_code=500, detail="Export failed")
@@ -12562,6 +12756,9 @@ async def export_selective_configuration(
     try:
         logger.info(f"User {safe_log_user(user)} requested selective configuration export")
 
+        if selective_selection_includes_roots(entity_selections):
+            await _require_unrestricted_root_admin(request, user, db)
+
         username: Optional[str] = None
         # Extract username from user (which is now an EmailUser object)
         if hasattr(user, "email"):
@@ -12590,6 +12787,8 @@ async def export_selective_configuration(
     except ExportError as e:
         logger.error(f"Selective export failed for user {safe_log_user(user)}: {str(e)}")
         raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Unexpected selective export error for user {safe_log_user(user)}: {str(e)}")
         raise HTTPException(status_code=500, detail="Export failed")
@@ -12598,6 +12797,7 @@ async def export_selective_configuration(
 @export_import_router.post("/import", response_model=Dict[str, Any])
 @require_permission("admin.import")
 async def import_configuration(
+    request: Request = None,
     import_data: Dict[str, Any] = Body(...),
     conflict_strategy: str = Body("update"),
     dry_run: bool = Body(False),
@@ -12610,6 +12810,7 @@ async def import_configuration(
     Import configuration data with conflict resolution.
 
     Args:
+        request: Current request object.
         import_data: The configuration data to import
         conflict_strategy: How to handle conflicts: skip, update, rename, fail
         dry_run: If true, validate but don't make changes
@@ -12629,6 +12830,9 @@ async def import_configuration(
             raise HTTPException(status_code=400, detail="Missing 'import_data' in request body")
 
         logger.info(f"User {safe_log_user(user)} requested configuration import (dry_run={dry_run})")
+
+        if import_envelope_includes_roots(import_data, selected_entities):
+            await _require_unrestricted_root_admin(request, user, db)
 
         # Validate conflict strategy
         try:

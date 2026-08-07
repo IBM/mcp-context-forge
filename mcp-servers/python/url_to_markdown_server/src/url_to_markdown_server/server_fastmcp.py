@@ -12,6 +12,7 @@ HTML, PDF, and document conversion capabilities.
 """
 
 import asyncio
+import contextvars
 import logging
 import mimetypes
 import os
@@ -22,9 +23,106 @@ from typing import Any
 from urllib.parse import urljoin, urlparse
 from uuid import uuid4
 
+import httpcore
 import httpx
 from fastmcp import FastMCP
+from httpcore._backends.auto import AutoBackend
 from pydantic import Field
+
+from .ssrf import SsrfBlockedError, _env_bool, validate_url
+
+# Per-task pin of the validated destination IP for the in-flight fetch, read by
+# _PinnedNetworkBackend.connect_tcp() below. A contextvar (not a converter
+# attribute) is required because concurrent batch_convert() fetches share one
+# converter/session but run as independent asyncio tasks, each needing its own
+# pinned target.
+_pinned_ip: contextvars.ContextVar[str | None] = contextvars.ContextVar("_pinned_ip", default=None)
+
+
+class _PinnedNetworkBackend(httpcore.AsyncNetworkBackend):
+    """TCP backend that connects to a per-request pinned IP instead of re-resolving DNS.
+
+    The connection pool's request URL - and therefore its origin, connection-pool
+    cache key, default TLS SNI, ``Host`` header, and cookie-jar scoping - stays the
+    caller's real hostname; only the raw socket destination is substituted here via
+    ``_pinned_ip``. Without this indirection, pinning by embedding the resolved IP
+    directly in the request URL (the pre-fix approach) makes the IP itself the
+    connection's origin: two different hostnames that validate_url() resolves to
+    the *same* IP then collapse onto the same pooled origin, so a TLS connection
+    handshaked and certificate-validated for the first hostname can be silently
+    reused - via HTTPX/httpcore's own keep-alive pooling - to serve a request
+    actually addressed to the second hostname, whose certificate was never
+    checked. Keeping the origin as the hostname means HTTPX's per-origin pooling
+    naturally stays scoped per hostname, exactly like an unpinned client; only the
+    DNS step is substituted with the address ``ssrf.py`` already validated,
+    closing the DNS-rebinding window between validation and connect.
+    """
+
+    def __init__(self) -> None:
+        """Wrap a fresh AutoBackend for the real connect/TLS/sleep work."""
+        self._backend: httpcore.AsyncNetworkBackend = AutoBackend()
+
+    async def connect_tcp(
+        self,
+        host: str,
+        port: int,
+        timeout: float | None = None,
+        local_address: str | None = None,
+        socket_options: Any = None,
+    ) -> httpcore.AsyncNetworkStream:
+        """Connect to the pinned IP for the in-flight request, if one is set."""
+        pinned = _pinned_ip.get()
+        target_host = pinned if pinned is not None else host
+        return await self._backend.connect_tcp(
+            target_host,
+            port,
+            timeout=timeout,
+            local_address=local_address,
+            socket_options=socket_options,
+        )
+
+    async def connect_unix_socket(
+        self,
+        path: str,
+        timeout: float | None = None,
+        socket_options: Any = None,
+    ) -> httpcore.AsyncNetworkStream:
+        """Delegate unix-socket connects unchanged (not used by this server)."""
+        return await self._backend.connect_unix_socket(
+            path, timeout=timeout, socket_options=socket_options
+        )
+
+    async def sleep(self, seconds: float) -> None:
+        """Delegate retry backoff sleeps to plain asyncio."""
+        await asyncio.sleep(seconds)
+
+
+def _environment_proxy_mounts() -> dict[str, str | None] | None:
+    """Return HTTPX's own environment-proxy mount map, or ``None`` if unavailable.
+
+    ``httpx._utils.get_environment_proxies()`` is the exact function ``httpx.AsyncClient``
+    uses internally to turn ``HTTP_PROXY``/``HTTPS_PROXY``/``ALL_PROXY``/``NO_PROXY`` into a
+    ``{url_pattern: proxy_url_or_None}`` map - a ``None`` value means "use the default
+    transport for this pattern instead of a proxy" (this is how ``NO_PROXY`` entries are
+    represented). Reusing it, rather than re-parsing the env vars ourselves, guarantees the
+    per-destination proxy decision in ``get_session()`` matches HTTPX's own request routing
+    exactly, including ``NO_PROXY``'s CIDR/wildcard/``localhost`` handling.
+
+    This is a private API. If a future HTTPX release removes it, fail closed: ignore the
+    proxy environment variables and keep IP pinning on every destination, rather than
+    silently reintroducing the DNS-rebinding gap this guards against.
+    """
+    try:
+        from httpx._utils import get_environment_proxies  # pylint: disable=import-outside-toplevel
+
+        return get_environment_proxies()
+    except Exception:  # pylint: disable=broad-except
+        logger.error(
+            "Could not read environment proxy configuration via httpx; ignoring "
+            "HTTP_PROXY/HTTPS_PROXY/ALL_PROXY/NO_PROXY and keeping IP pinning for all destinations."
+        )
+        return None
+
 
 # Configure logging to stderr to avoid MCP protocol interference
 logging.basicConfig(
@@ -51,6 +149,10 @@ class UrlToMarkdownConverter:
     def __init__(self):
         """Initialize the converter."""
         self.session = None
+        # The pinned direct transport built by get_session(), used to tell whether a
+        # given request actually went out pinned or via an unpinned proxy mount - see
+        # fetch_url_content(). None until the first get_session() call.
+        self._pinned_transport: httpx.AsyncHTTPTransport | None = None
         self.html_engines = self._check_html_engines()
         self.document_converters = self._check_document_converters()
 
@@ -123,10 +225,34 @@ class UrlToMarkdownConverter:
         return converters
 
     async def get_session(self) -> httpx.AsyncClient:
-        """Get or create HTTP session."""
+        """Get or create HTTP session.
+
+        The client's default transport is always the pinned ``AsyncHTTPTransport``
+        (network backend swapped for ``_PinnedNetworkBackend``), so any destination not
+        otherwise routed - including every ``NO_PROXY``-excluded host - gets its raw TCP
+        connect pinned to the IP ``ssrf.py`` already validated.
+
+        When ``HTTP_PROXY``/``HTTPS_PROXY``/``ALL_PROXY`` are configured, the matching
+        destinations are additionally mounted onto dedicated, unpinned proxy transports
+        (mirroring HTTPX's own environment-proxy routing - see
+        ``_environment_proxy_mounts()``): the socket for those requests would be opened
+        to the proxy, which performs its own name resolution for the real destination,
+        so the validated address cannot be enforced end-to-end on that specific path.
+        The mount is still built unconditionally - so the session's routing accurately
+        reflects the operator's proxy configuration, and ``NO_PROXY``/unmatched
+        destinations are unaffected either way - but ``fetch_url_content()`` refuses to
+        actually send a request over it unless ``MARKDOWN_ALLOW_UNSAFE_PROXY_PINNING`` is
+        set: silently falling back to a direct connection instead would bypass whatever
+        egress policy (audit logging, DLP, destination allowlisting) the operator
+        configured the proxy to enforce, which is its own kind of control bypass distinct
+        from the DNS-rebinding risk pinning addresses. ``NO_PROXY`` entries are mounted
+        back onto the pinned default transport instead of being left to fall through to
+        a broader proxy mount, so a proxy configured for some destinations never weakens
+        pinning for destinations that bypass it.
+        """
         if self.session is None or self.session.is_closed:
-            self.session = httpx.AsyncClient(
-                headers={
+            client_kwargs: dict[str, Any] = {
+                "headers": {
                     "User-Agent": DEFAULT_USER_AGENT,
                     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
                     "Accept-Language": "en-US,en;q=0.5",
@@ -134,59 +260,180 @@ class UrlToMarkdownConverter:
                     "Connection": "keep-alive",
                     "Upgrade-Insecure-Requests": "1",
                 },
-                timeout=httpx.Timeout(DEFAULT_TIMEOUT),
-                follow_redirects=True,
-                max_redirects=MAX_REDIRECT_HOPS,
+                "timeout": httpx.Timeout(DEFAULT_TIMEOUT),
+                # Redirects are followed manually in fetch_url_content so every hop can be
+                # re-validated against the SSRF guard - a public host
+                # that 302s to an internal address must not bypass validation on the second hop.
+                "follow_redirects": False,
+            }
+
+            transport = httpx.AsyncHTTPTransport()
+            # HTTPX's AsyncHTTPTransport has no public constructor option to inject a
+            # custom network backend, so swapping the pool's backend after construction
+            # is the only way to pin the raw TCP destination (see _PinnedNetworkBackend)
+            # without reimplementing the transport's SSL/UDS setup ourselves.
+            transport._pool._network_backend = (
+                _PinnedNetworkBackend()
+            )  # pylint: disable=protected-access
+            self._pinned_transport = transport
+
+            mounts: dict[str, httpx.AsyncBaseTransport | None] = {}
+            proxied_patterns = []
+            for pattern, proxy_url in (_environment_proxy_mounts() or {}).items():
+                if proxy_url is None:
+                    # A NO_PROXY-derived entry: pin this pattern explicitly to the
+                    # default transport instead of letting it fall through to a
+                    # broader proxy mount (e.g. "all://") that would otherwise match it.
+                    mounts[pattern] = None
+                else:
+                    proxied_patterns.append(pattern)
+                    # Unpinned: the proxy resolves the real destination itself, so
+                    # connect-time IP pinning cannot be enforced end-to-end here.
+                    # fetch_url_content() refuses to actually use this mount unless
+                    # MARKDOWN_ALLOW_UNSAFE_PROXY_PINNING is set.
+                    mounts[pattern] = httpx.AsyncHTTPTransport(proxy=proxy_url)
+
+            if proxied_patterns:
+                logger.warning(
+                    f"Egress proxy configured for {', '.join(sorted(proxied_patterns))}: "
+                    "matching requests are refused before any network I/O unless "
+                    "MARKDOWN_ALLOW_UNSAFE_PROXY_PINNING is set, since connect-time IP "
+                    "pinning cannot be enforced on that path (the proxy resolves the "
+                    "destination itself). With that opt-in, matching requests are "
+                    "routed through the proxy instead, unpinned. NO_PROXY-excluded and "
+                    "otherwise-unmatched destinations keep IP pinning either way."
+                )
+
+            self.session = httpx.AsyncClient(
+                transport=transport, mounts=mounts or None, **client_kwargs
             )
         return self.session
 
     async def fetch_url_content(self, url: str, timeout: int = DEFAULT_TIMEOUT) -> dict[str, Any]:
-        """Fetch content from URL with comprehensive error handling."""
+        """Fetch content from URL with comprehensive error handling.
+
+        Every hop of a redirect chain is independently re-validated against the SSRF
+        guard. The request is made to the original hostname (so HTTPX's connection
+        pool, TLS SNI, ``Host`` header, and cookie jar all stay keyed by hostname as
+        usual) while the raw TCP connect is pinned to the resolved IP via
+        ``_pinned_ip``/``_PinnedNetworkBackend``, closing the DNS-rebinding window
+        between validation and connect without letting two hostnames that share a
+        resolved IP collapse onto the same pooled connection. The response body is
+        streamed and the transfer is aborted as soon as it exceeds
+        ``MAX_CONTENT_SIZE`` rather than buffered in full first.
+
+        A destination that matches a configured egress proxy is refused - before any
+        connection to either the proxy or the destination - unless
+        ``MARKDOWN_ALLOW_UNSAFE_PROXY_PINNING`` is set: routing it through the proxy
+        would leave its connect unpinned (see ``get_session()``), and falling back to a
+        direct connection instead would silently bypass whatever egress policy the
+        operator configured the proxy to enforce. ``NO_PROXY``-excluded and otherwise-
+        unmatched destinations always get their connect pinned and are unaffected by
+        this flag. Validation and per-hop re-validation are unchanged either way.
+        """
+        session = await self.get_session()
+        current_url = url
+        allow_unsafe_proxy_pinning = _env_bool("MARKDOWN_ALLOW_UNSAFE_PROXY_PINNING", False)
+
         try:
-            session = await self.get_session()
+            for _ in range(MAX_REDIRECT_HOPS + 1):
+                try:
+                    target = await validate_url(current_url, timeout=timeout)
+                except SsrfBlockedError as e:
+                    logger.warning(f"Blocked URL (SSRF guard): {current_url}")
+                    return {"success": False, "error": str(e)}
 
-            logger.info(f"Fetching URL: {url}")
+                pinned = (
+                    session._transport_for_url(  # pylint: disable=protected-access
+                        httpx.URL(target.validated_url)
+                    )
+                    is self._pinned_transport
+                )
+                if not pinned and not allow_unsafe_proxy_pinning:
+                    logger.warning(
+                        f"Blocked URL (egress proxy without MARKDOWN_ALLOW_UNSAFE_PROXY_PINNING): "
+                        f"{target.hostname}"
+                    )
+                    return {"success": False, "error": "URL is not allowed"}
 
-            response = await session.get(url, timeout=timeout)
-            response.raise_for_status()
+                mode = "pinned" if pinned else "via proxy, unpinned"
+                logger.info(f"Fetching URL ({mode}): {target.hostname} -> {target.resolved_ip}")
 
-            # Check content size
-            content_length = response.headers.get("content-length")
-            if content_length and int(content_length) > MAX_CONTENT_SIZE:
-                return {
-                    "success": False,
-                    "error": f"Content too large: {content_length} bytes (max: {MAX_CONTENT_SIZE})",
-                }
+                pin_token = _pinned_ip.set(target.resolved_ip)
+                try:
+                    async with session.stream(
+                        "GET",
+                        target.validated_url,
+                        timeout=timeout,
+                    ) as response:
+                        if response.status_code in (301, 302, 303, 307, 308):
+                            location = response.headers.get("location")
+                            if not location:
+                                return {
+                                    "success": False,
+                                    "error": "Redirect missing Location header",
+                                }
+                            current_url = urljoin(target.validated_url, location)
+                            continue
 
-            content = response.content
-            if len(content) > MAX_CONTENT_SIZE:
-                return {
-                    "success": False,
-                    "error": f"Content too large: {len(content)} bytes (max: {MAX_CONTENT_SIZE})",
-                }
+                        response.raise_for_status()
 
-            # Determine content type
-            content_type = response.headers.get("content-type", "").lower()
-            detected_type = self._detect_content_type(content, content_type, url)
+                        # Check content size
+                        content_length = response.headers.get("content-length")
+                        if content_length and int(content_length) > MAX_CONTENT_SIZE:
+                            return {
+                                "success": False,
+                                "error": (
+                                    f"Content too large: {content_length} bytes "
+                                    f"(max: {MAX_CONTENT_SIZE})"
+                                ),
+                            }
 
-            return {
-                "success": True,
-                "content": content,
-                "content_type": detected_type,
-                "original_content_type": content_type,
-                "url": str(response.url),  # Final URL after redirects
-                "status_code": response.status_code,
-                "headers": dict(response.headers),
-                "size": len(content),
-            }
+                        chunks: list[bytes] = []
+                        total = 0
+                        async for chunk in response.aiter_bytes():
+                            total += len(chunk)
+                            if total > MAX_CONTENT_SIZE:
+                                return {
+                                    "success": False,
+                                    "error": (
+                                        f"Content too large: exceeded {MAX_CONTENT_SIZE} "
+                                        "bytes while streaming"
+                                    ),
+                                }
+                            chunks.append(chunk)
+                        content = b"".join(chunks)
 
-        except httpx.TimeoutException:
-            return {"success": False, "error": f"Request timeout after {timeout} seconds"}
-        except httpx.HTTPStatusError as e:
-            return {
-                "success": False,
-                "error": f"HTTP {e.response.status_code}: {e.response.reason_phrase}",
-            }
+                        # Determine content type
+                        content_type = response.headers.get("content-type", "").lower()
+                        detected_type = self._detect_content_type(
+                            content, content_type, target.validated_url
+                        )
+
+                        return {
+                            "success": True,
+                            "content": content,
+                            "content_type": detected_type,
+                            "original_content_type": content_type,
+                            "url": target.validated_url,  # Final URL after redirects
+                            "status_code": response.status_code,
+                            "headers": dict(response.headers),
+                            "size": len(content),
+                        }
+                except httpx.TimeoutException:
+                    return {"success": False, "error": f"Request timeout after {timeout} seconds"}
+                except httpx.HTTPStatusError as e:
+                    return {
+                        "success": False,
+                        "error": f"HTTP {e.response.status_code}: {e.response.reason_phrase}",
+                    }
+                finally:
+                    # Never let one hop's pin leak into the next hop's connect - each
+                    # redirect target is revalidated and gets its own pinned IP above.
+                    _pinned_ip.reset(pin_token)
+
+            return {"success": False, "error": f"Too many redirects (max {MAX_REDIRECT_HOPS})"}
+
         except Exception as e:
             logger.error(f"Error fetching URL {url}: {e}")
             return {"success": False, "error": str(e)}
@@ -858,9 +1105,11 @@ async def convert_file(
 
 @mcp.tool(description="Convert multiple URLs to markdown in parallel")
 async def batch_convert(
-    urls: list[str] = Field(..., description="List of URLs to convert to markdown"),
-    timeout: int = Field(DEFAULT_TIMEOUT, description="Request timeout per URL"),
-    max_concurrent: int = Field(5, le=10, description="Maximum concurrent requests"),
+    urls: list[str] = Field(
+        ..., max_length=50, description="List of URLs to convert to markdown (max 50 per batch)"
+    ),
+    timeout: int = Field(DEFAULT_TIMEOUT, le=MAX_TIMEOUT, description="Request timeout per URL"),
+    max_concurrent: int = Field(5, ge=1, le=10, description="Maximum concurrent requests"),
     include_images: bool = Field(False, description="Include images in markdown"),
     clean_content: bool = Field(True, description="Clean and optimize content"),
 ) -> dict[str, Any]:

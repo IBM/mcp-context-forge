@@ -71,7 +71,8 @@ from mcpgateway.db import get_for_update, server_tool_association
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import ToolMetric, ToolMetricsHourly
 from mcpgateway.observability import create_child_span, create_span, inject_trace_context_headers, otel_context_active, set_span_attribute, set_span_error
-from mcpgateway.plugins.utils import build_hook_extensions, build_request_extensions, headers_from_modified_extensions, record_plugin_metrics
+from mcpgateway.plugins.control_telemetry import ControlTelemetryAccumulator, record_control_telemetry
+from mcpgateway.plugins.utils import build_request_extensions, record_plugin_metrics
 from mcpgateway.schemas import AuthenticationValues, ToolCreate, ToolMetrics, ToolRead, ToolUpdate, TopPerformer
 from mcpgateway.services.a2a_protocol import prepare_a2a_invocation
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
@@ -228,6 +229,26 @@ def _sync_meta_traceparent(
     updated_meta = dict(meta_data or {})
     updated_meta["traceparent"] = traceparent
     return updated_meta
+
+
+def _pin_url_to_resolved_ip(url: str, resolved_ip: str) -> str:
+    """Return ``url`` with only its network location replaced by ``resolved_ip``."""
+    parsed = urlparse(url)
+    pinned_host = f"[{resolved_ip}]" if ":" in resolved_ip else resolved_ip
+    pinned_netloc = f"{pinned_host}:{parsed.port}" if parsed.port is not None else pinned_host
+    return parsed._replace(netloc=pinned_netloc).geturl()
+
+
+def _build_pinned_rest_http_client() -> ResilientHttpClient:
+    """Build an isolated client for IP-pinned REST requests."""
+    return ResilientHttpClient(
+        client_args={
+            "timeout": settings.federation_timeout,
+            "verify": not settings.skip_ssl_verify,
+            "limits": httpx.Limits(max_connections=1, max_keepalive_connections=0),
+            "cookies": {},
+        }
+    )
 
 
 # Initialize performance tracker, structured logger, audit trail, and metrics buffer for tool operations
@@ -4447,6 +4468,14 @@ class ToolService(BaseService):
 
         # Run tool_pre_invoke hooks so that plugins (e.g. wxo_connections) can
         # inject credentials and clean arguments before the Rust direct call.
+        #
+        # NOTE: CPEX control-execution telemetry is intentionally not emitted from this
+        # path.  prepare_rust_mcp_tool_execution() builds an execution plan and returns
+        # before the actual tool invocation — there is no downstream flush point where
+        # record_control_telemetry() can be called.  When the Rust runtime falls back to
+        # the Python invoke_tool() path (e.g. post-invoke hooks configured, ineligible
+        # transport) the Python path's own accumulator will capture all telemetry.
+        # Tracked in the Phase 5 attribute-policy follow-on issue.
         modified_args = arguments
         if has_pre_invoke and arguments is not None:
             ext_in = build_hook_extensions(runtime_headers)
@@ -4652,6 +4681,7 @@ class ToolService(BaseService):
         global_context: Any,
         context_table: Any,
         plugin_manager: Any = None,
+        ctl_acc: Optional["ControlTelemetryAccumulator"] = None,
     ) -> None:
         """Invoke post-invoke plugins after a timeout and raise with retry signal if requested.
 
@@ -4667,6 +4697,9 @@ class ToolService(BaseService):
             global_context: Plugin global context for cross-hook state.
             context_table: Plugin local context table for per-plugin state.
             plugin_manager: Optional pre-fetched plugin manager to avoid redundant lookups.
+            ctl_acc: Optional invocation-local control-telemetry accumulator.  When provided,
+                the post-invoke hook's execution records are added here so they are included
+                in the telemetry emitted on the timeout path.
 
         Raises:
             ToolTimeoutError: When the retry plugin requests a delayed retry.
@@ -4686,6 +4719,8 @@ class ToolService(BaseService):
                 extensions=build_request_extensions(),
             )
             record_plugin_metrics(current_trace_id.get(), timeout_post_result.metadata if timeout_post_result else None)
+            if ctl_acc is not None:
+                ctl_acc.add(timeout_post_result, hook="post")
             if timeout_post_result and timeout_post_result.retry_delay_ms > 0:
                 raise ToolTimeoutError(f"Tool invocation timed out after {effective_timeout}s", retry_delay_ms=timeout_post_result.retry_delay_ms)
 
@@ -5237,6 +5272,34 @@ class ToolService(BaseService):
             content_type = request_headers.get("content-type") if request_headers else None
             global_context = GlobalContext(request_id=request_id, server_id=context_server_id, tenant_id=payload_tenant_id, user=app_user_email, content_type=content_type)
 
+        # Per-invocation accumulator for CPEX control-execution telemetry.
+        # Declared here (before the try/with block) so it survives into the
+        # exception handlers and the finally block for partial pre-deny telemetry.
+        _ctl_acc = ControlTelemetryAccumulator()
+        # Tracks which hook a PluginError propagated from so mark_plugin_error(hook=)
+        # can report the correct enforcement point even when no records were appended.
+        # Updated to "post" immediately before each post-hook invoke_hook call.
+        _ctl_last_hook: str = "pre"
+
+        def _emit_ctl_telemetry() -> None:
+            """Flush CPEX control-execution telemetry for this invocation (best-effort).
+
+            Thin wrapper that captures the invocation-local ``_ctl_acc``, ``name``,
+            and identity fields so all five exit paths (normal return, PluginViolationError,
+            PluginError, ToolTimeoutError, BaseException) call a single canonical site.
+            Identity mapping is provisional — see issue #5785 follow-on for a dedicated
+            agent-identity model:
+              agent_id     = app_user_email ?? user_email  (authenticated caller email)
+              binding_name = gateway_name ?? server_id     (closest proxy for binding context)
+            """
+            record_control_telemetry(
+                trace_id=current_trace_id.get(),
+                accumulator=_ctl_acc,
+                tool_name=name,
+                agent_id=app_user_email or user_email or "",
+                binding_name=gateway_name or server_id or "",
+            )
+
         start_time = time.monotonic()
         success = False
         error_message = None
@@ -5371,6 +5434,26 @@ class ToolService(BaseService):
                         )
                         record_plugin_metrics(current_trace_id.get(), pre_result.metadata)
                         _log_tool_pre_invoke_result(name, arguments, headers, pre_result, ext_in)
+                        pre_invoke_headers = HttpHeaderPayload(root=headers)
+                        try:
+                            pre_result, context_table = await plugin_manager.invoke_hook(
+                                ToolHookType.TOOL_PRE_INVOKE,
+                                payload=ToolPreInvokePayload(name=name, args=arguments, headers=pre_invoke_headers),
+                                global_context=global_context,
+                                local_contexts=context_table,  # Pass context from previous hooks
+                                violations_as_exceptions=True,
+                                extensions=build_request_extensions(),
+                            )
+                        except PluginViolationError:
+                            # Deliberate policy denial: mark so telemetry emits result.allowed=False.
+                            # PluginError (outage) is not caught here — it propagates to the outer
+                            # except PluginError handler without mark_denied(), keeping enforcement
+                            # denials and plugin crashes distinguishable in downstream dashboards.
+                            _ctl_acc.mark_denied(hook="pre")
+                            raise
+                        record_plugin_metrics(current_trace_id.get(), pre_result.metadata)
+                        _ctl_acc.add(pre_result, hook="pre")
+                        _log_tool_pre_invoke_result(name, arguments, pre_invoke_headers, pre_result)
                         if pre_result.modified_payload:
                             payload = pre_result.modified_payload
                             name = payload.name
@@ -5447,13 +5530,57 @@ class ToolService(BaseService):
                             final_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
                             _url_query_params = {k: v[0] for k, v in parse_qs(parsed.query).items()}
 
+                    rest_request_extensions: dict[str, str] = {}
+                    rest_http_client = self._http_client
+                    pinned_rest_http_client: Optional[ResilientHttpClient] = None
+                    try:
+                        validated_target = await SecurityValidator.validate_url_for_connection_pinning(final_url, "Tool URL")
+                    except ValueError as validation_error:
+                        safe_url = sanitize_url_for_logging(final_url)
+                        logger.warning(
+                            "REST tool outbound URL validation failed for tool %s (%s), url=%s, correlation_id=%s: %s",
+                            SecurityValidator.sanitize_log_message(tool_name_computed),
+                            SecurityValidator.sanitize_log_message(tool_id),
+                            safe_url,
+                            get_correlation_id(),
+                            SecurityValidator.sanitize_log_message(str(validation_error)),
+                        )
+                        raise ToolInvocationError("Outbound URL blocked by URL policy") from validation_error
+
+                    resolved_ip = validated_target.get("resolved_ip")
+                    original_hostname = validated_target.get("hostname")
+                    original_authority = validated_target.get("original_authority")
+                    if settings.ssrf_protection_enabled and not (resolved_ip and original_hostname and original_authority):
+                        safe_url = sanitize_url_for_logging(final_url)
+                        logger.warning(
+                            "REST tool outbound URL validation did not return a pinned target for tool %s (%s), url=%s, correlation_id=%s",
+                            SecurityValidator.sanitize_log_message(tool_name_computed),
+                            SecurityValidator.sanitize_log_message(tool_id),
+                            safe_url,
+                            get_correlation_id(),
+                        )
+                        raise ToolInvocationError("Outbound URL blocked by URL policy")
+                    if resolved_ip and original_hostname and original_authority:
+                        final_url = _pin_url_to_resolved_ip(final_url, resolved_ip)
+                        headers = {hk: hv for hk, hv in headers.items() if hk.lower() != "host"}
+                        headers["Host"] = original_authority
+                        rest_request_extensions["sni_hostname"] = original_hostname
+                        pinned_rest_http_client = _build_pinned_rest_http_client()
+                        rest_http_client = pinned_rest_http_client
+
                     with create_child_span("tool.gateway_call", {"tool.name": name, "tool.id": tool_id, "tool.integration_type": "REST"}):
                         rest_start_time = time.time()
 
                         async def _send(call_headers: dict) -> Any:
                             """Issue the REST upstream call with the given headers (B2 retry hook)."""
+                            request_options = {"headers": call_headers}
+                            if rest_request_extensions:
+                                request_options["extensions"] = rest_request_extensions
                             if method == "GET":
-                                return await asyncio.wait_for(self._http_client.get(final_url, params=payload, headers=call_headers), timeout=effective_timeout)
+                                return await asyncio.wait_for(
+                                    rest_http_client.get(final_url, params=payload, **request_options),
+                                    timeout=effective_timeout,
+                                )
                             if _ct_base == "application/x-www-form-urlencoded":
                                 # NOTE: Intentional asymmetry with the JSON/default path below.
                                 # Form-encoded bodies use params= to keep URL query params on the
@@ -5462,18 +5589,38 @@ class ToolService(BaseService):
                                 # backward compatibility and signed-URL support.
                                 form_payload = {k: self._form_value_to_str(v) for k, v in payload.items()}
                                 return await asyncio.wait_for(
-                                    self._http_client.request(method, final_url, data=form_payload, params=_url_query_params, headers=call_headers), timeout=effective_timeout
+                                    rest_http_client.request(
+                                        method,
+                                        final_url,
+                                        data=form_payload,
+                                        params=_url_query_params,
+                                        **request_options,
+                                    ),
+                                    timeout=effective_timeout,
                                 )
                             if _ct_base == "multipart/form-data":
                                 # Strip Content-Type so httpx can set it with the correct boundary parameter.
                                 # URL query params forwarded via params= (same asymmetry as form-urlencoded above).
                                 headers_mp = {k: v for k, v in call_headers.items() if k.lower() != "content-type"}
+                                multipart_request_options = {"headers": headers_mp}
+                                if rest_request_extensions:
+                                    multipart_request_options["extensions"] = rest_request_extensions
                                 files_payload = {k: (None, self._form_value_to_str(v)) for k, v in payload.items()}
                                 return await asyncio.wait_for(
-                                    self._http_client.request(method, final_url, files=files_payload, params=_url_query_params, headers=headers_mp), timeout=effective_timeout
+                                    rest_http_client.request(
+                                        method,
+                                        final_url,
+                                        files=files_payload,
+                                        params=_url_query_params,
+                                        **multipart_request_options,
+                                    ),
+                                    timeout=effective_timeout,
                                 )
                             # For POST/PUT/PATCH/DELETE (JSON body, default path)
-                            return await asyncio.wait_for(self._http_client.request(method, final_url, json=payload, headers=call_headers), timeout=effective_timeout)
+                            return await asyncio.wait_for(
+                                rest_http_client.request(method, final_url, json=payload, **request_options),
+                                timeout=effective_timeout,
+                            )
 
                         try:
                             if method == "GET":
@@ -5500,18 +5647,22 @@ class ToolService(BaseService):
                             # else: No mappings (None or empty) - preserve query params in URL for signed URL support
                             # (Azure SAS, AWS presigned URLs, webhook signatures, etc.)
 
-                            response = await self._send_with_token_exchange_retry(
-                                _send,
-                                headers,
-                                gateway_oauth_config if (has_gateway and gateway_grant_type == "token-exchange") else None,
-                                gateway_id_str,
-                                gateway_name,
-                                app_user_email,
-                                request_headers or {},
-                                ca_certificate=gateway_ca_cert,
-                                client_cert=gateway_client_cert,
-                                client_key=gateway_client_key,
-                            )
+                            try:
+                                response = await self._send_with_token_exchange_retry(
+                                    _send,
+                                    headers,
+                                    gateway_oauth_config if (has_gateway and gateway_grant_type == "token-exchange") else None,
+                                    gateway_id_str,
+                                    gateway_name,
+                                    app_user_email,
+                                    request_headers or {},
+                                    ca_certificate=gateway_ca_cert,
+                                    client_cert=gateway_client_cert,
+                                    client_key=gateway_client_key,
+                                )
+                            finally:
+                                if pinned_rest_http_client is not None:
+                                    await pinned_rest_http_client.aclose()
                         except (asyncio.TimeoutError, httpx.TimeoutException):
                             rest_elapsed_ms = (time.time() - rest_start_time) * 1000
                             structured_logger.log(
@@ -5537,7 +5688,7 @@ class ToolService(BaseService):
                                     exc_info=True,
                                 )
                             if plugin_manager:
-                                await self._run_timeout_post_invoke(name, effective_timeout, global_context, context_table, plugin_manager)
+                                await self._run_timeout_post_invoke(name, effective_timeout, global_context, context_table, plugin_manager, ctl_acc=_ctl_acc)
 
                             raise ToolTimeoutError(f"Tool invocation timed out after {effective_timeout}s")
                         try:
@@ -5979,7 +6130,7 @@ class ToolService(BaseService):
                                 )
 
                             if plugin_manager:
-                                await self._run_timeout_post_invoke(name, effective_timeout, global_context, context_table, plugin_manager)
+                                await self._run_timeout_post_invoke(name, effective_timeout, global_context, context_table, plugin_manager, ctl_acc=_ctl_acc)
 
                             raise ToolTimeoutError(f"Tool invocation timed out after {effective_timeout}s")
                         except asyncio.CancelledError:
@@ -6166,7 +6317,7 @@ class ToolService(BaseService):
                                 )
 
                             if plugin_manager:
-                                await self._run_timeout_post_invoke(name, effective_timeout, global_context, context_table, plugin_manager)
+                                await self._run_timeout_post_invoke(name, effective_timeout, global_context, context_table, plugin_manager, ctl_acc=_ctl_acc)
 
                             raise ToolTimeoutError(f"Tool invocation timed out after {effective_timeout}s")
                         except asyncio.CancelledError:
@@ -6204,17 +6355,24 @@ class ToolService(BaseService):
                             global_context.metadata[TOOL_METADATA] = tool_metadata
                         if gateway_metadata:
                             global_context.metadata[GATEWAY_METADATA] = gateway_metadata
-                        ext_in = build_hook_extensions(headers)
-                        pre_result, context_table = await plugin_manager.invoke_hook(
-                            ToolHookType.TOOL_PRE_INVOKE,
-                            payload=ToolPreInvokePayload(name=name, args=arguments),
-                            global_context=global_context,
-                            local_contexts=None,
-                            violations_as_exceptions=True,
-                            extensions=ext_in,
-                        )
+                        pre_invoke_headers = HttpHeaderPayload(root=headers)
+                        try:
+                            pre_result, context_table = await plugin_manager.invoke_hook(
+                                ToolHookType.TOOL_PRE_INVOKE,
+                                payload=ToolPreInvokePayload(name=name, args=arguments, headers=pre_invoke_headers),
+                                global_context=global_context,
+                                local_contexts=None,
+                                violations_as_exceptions=True,
+                                extensions=build_request_extensions(),
+                            )
+                        except PluginViolationError:
+                            # Deliberate policy denial: mark so telemetry emits result.allowed=False.
+                            # PluginError propagates to the outer handler without mark_denied().
+                            _ctl_acc.mark_denied(hook="pre")
+                            raise
                         record_plugin_metrics(current_trace_id.get(), pre_result.metadata)
-                        _log_tool_pre_invoke_result(name, arguments, headers, pre_result, ext_in)
+                        _ctl_acc.add(pre_result, hook="pre")
+                        _log_tool_pre_invoke_result(name, arguments, pre_invoke_headers, pre_result)
                         if pre_result.modified_payload:
                             payload = pre_result.modified_payload
                             name = payload.name
@@ -6302,6 +6460,24 @@ class ToolService(BaseService):
                         )
                         record_plugin_metrics(current_trace_id.get(), pre_result.metadata)
                         _log_tool_pre_invoke_result(name, arguments, plugin_headers, pre_result, ext_in)
+                        pre_invoke_headers = HttpHeaderPayload(root=plugin_headers)
+                        try:
+                            pre_result, context_table = await plugin_manager.invoke_hook(
+                                ToolHookType.TOOL_PRE_INVOKE,
+                                payload=ToolPreInvokePayload(name=name, args=arguments, headers=pre_invoke_headers),
+                                global_context=global_context,
+                                local_contexts=context_table,
+                                violations_as_exceptions=True,
+                                extensions=build_request_extensions(),
+                            )
+                        except PluginViolationError:
+                            # Deliberate policy denial: mark so telemetry emits result.allowed=False.
+                            # PluginError propagates to the outer handler without mark_denied().
+                            _ctl_acc.mark_denied(hook="pre")
+                            raise
+                        record_plugin_metrics(current_trace_id.get(), pre_result.metadata)
+                        _ctl_acc.add(pre_result, hook="pre")
+                        _log_tool_pre_invoke_result(name, arguments, pre_invoke_headers, pre_result)
                         if pre_result.modified_payload:
                             payload = pre_result.modified_payload
                             name = payload.name
@@ -6362,7 +6538,7 @@ class ToolService(BaseService):
 
                             # Trigger circuit breaker on timeout
                             if plugin_manager:
-                                await self._run_timeout_post_invoke(name, effective_timeout, global_context, context_table, plugin_manager)
+                                await self._run_timeout_post_invoke(name, effective_timeout, global_context, context_table, plugin_manager, ctl_acc=_ctl_acc)
 
                             raise ToolTimeoutError(f"Tool invocation timed out after {effective_timeout}s")
                         if status_code == 200:
@@ -6403,7 +6579,7 @@ class ToolService(BaseService):
                     except (asyncio.TimeoutError, ToolTimeoutError) as timeout_err:
                         logger.warning("gRPC tool invocation timed out for %s after %ss", tool_name_original, effective_timeout, exc_info=True)
                         if plugin_manager:
-                            await self._run_timeout_post_invoke(name, effective_timeout, global_context, context_table, plugin_manager)
+                            await self._run_timeout_post_invoke(name, effective_timeout, global_context, context_table, plugin_manager, ctl_acc=_ctl_acc)
                         raise ToolTimeoutError(f"Tool invocation timed out after {effective_timeout}s") from timeout_err
                     except Exception as grpc_err:
                         logger.error("gRPC tool invocation failed for %s: %s", tool_name_original, grpc_err, exc_info=True)
@@ -6416,15 +6592,23 @@ class ToolService(BaseService):
                     # Plugin hook: tool post-invoke
                     plugin_manager = await self._get_plugin_manager(plugin_context_id)
                     if plugin_manager and plugin_manager.has_hooks_for(ToolHookType.TOOL_POST_INVOKE):
-                        post_result, _ = await plugin_manager.invoke_hook(
-                            ToolHookType.TOOL_POST_INVOKE,
-                            payload=ToolPostInvokePayload(name=name, result=tool_result.model_dump(by_alias=True)),
-                            global_context=global_context,
-                            local_contexts=context_table,
-                            violations_as_exceptions=True,
-                            extensions=build_request_extensions(),
-                        )
+                        _ctl_last_hook = "post"  # update hook tracker before the call
+                        try:
+                            post_result, _ = await plugin_manager.invoke_hook(
+                                ToolHookType.TOOL_POST_INVOKE,
+                                payload=ToolPostInvokePayload(name=name, result=tool_result.model_dump(by_alias=True)),
+                                global_context=global_context,
+                                local_contexts=context_table,
+                                violations_as_exceptions=True,
+                                extensions=build_request_extensions(),
+                            )
+                        except PluginViolationError:
+                            # Deliberate policy denial: mark so telemetry emits result.allowed=False.
+                            # PluginError propagates to the outer handler without mark_denied().
+                            _ctl_acc.mark_denied(hook="post")
+                            raise
                         record_plugin_metrics(current_trace_id.get(), post_result.metadata)
+                        _ctl_acc.add(post_result, hook="post")
                         # Use modified payload if provided
                         if post_result.modified_payload:
                             # Reconstruct ToolResult from modified result
@@ -6467,12 +6651,38 @@ class ToolService(BaseService):
                             path_label="success",
                         )
 
+                # Emit CPEX control-execution telemetry for this invocation (best-effort).
+                # Placed here on the normal-return path so both pre and post records are
+                # accumulated before emitting.  Exception paths below also call this helper
+                # so partial pre-deny / error telemetry is never lost.
+                # Identity mapping rationale: see _emit_ctl_telemetry() docstring above.
+                _emit_ctl_telemetry()
                 return tool_result
-            except (PluginError, PluginViolationError):
+            except PluginViolationError:
+                # Deliberate policy denial — emit partial telemetry so the summary span captures
+                # result.allowed=False and any pre-denial execution records.
+                # Note: when violations_as_exceptions=True, CPEX raises PluginViolationError
+                # *before* appending a ControlExecutionRecord for the denying plugin to the
+                # executions list (see cpex/framework/manager.py:680-682).  _ctl_acc therefore
+                # contains only records from plugins that ran before the denier.
+                # Upstream CPEX gap tracked in issue #5785 follow-on.
+                _emit_ctl_telemetry()
+                raise
+            except PluginError:
+                # Plugin outage (crash/timeout/misconfiguration) — mark the accumulator so
+                # the summary span carries cpex.control.plugin_error=True, emit partial
+                # telemetry (even when the accumulator is empty, e.g. first-plugin failure),
+                # and do NOT treat this as a policy denial (effective_allowed stays True).
+                # hook= is derived from _ctl_last_hook which is "pre" by default and updated
+                # to "post" immediately before the post-hook invoke_hook call.
+                _ctl_acc.mark_plugin_error(hook=_ctl_last_hook)
+                _emit_ctl_telemetry()
                 raise
             except ToolTimeoutError as e:
                 # ToolTimeoutError is raised by timeout handlers which already called tool_post_invoke.
                 # Do NOT call post_invoke again — the retry_delay_ms signal is carried on the exception.
+                # Emit partial telemetry before retrying or re-raising so timeout records are not lost.
+                _emit_ctl_telemetry()
                 error_message = str(e)
                 if span:
                     set_span_error(span, error_message)
@@ -6535,8 +6745,12 @@ class ToolService(BaseService):
                             extensions=build_request_extensions(),
                         )
                         record_plugin_metrics(current_trace_id.get(), exc_post_result.metadata if exc_post_result else None)
+                        _ctl_acc.add(exc_post_result, hook="post")
                     except Exception as plugin_exc:
                         logger.debug("Failed to invoke post-invoke plugins on exception: %s", plugin_exc)
+
+                # Emit partial telemetry for unhandled exceptions (post-hook records already added above).
+                _emit_ctl_telemetry()
 
                 # Retry if the plugin requested a delayed retry and we haven't hit the ceiling.
                 # Same counting convention as the success path: retry_attempt is 0-based,

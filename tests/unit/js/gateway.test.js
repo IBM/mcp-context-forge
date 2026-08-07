@@ -1118,6 +1118,7 @@ describe("editGateway - auth types", () => {
       <input id="oauth-authorization-url-gw-edit" />
       <input id="oauth-redirect-uri-gw-edit" />
       <input id="oauth-scopes-gw-edit" />
+      <input id="oauth-resource-gw-edit" />
       <div id="oauth-auth-code-fields-gw-edit" style="display:none"></div>
       <div id="auth-query_param-fields-gw-edit" style="display:none">
         <input name="auth_query_param_key" />
@@ -1210,6 +1211,72 @@ describe("editGateway - auth types", () => {
     expect(document.getElementById("oauth-token-url-gw-edit").value).toBe("http://auth/token");
     expect(document.getElementById("oauth-scopes-gw-edit").value).toBe("api");
     expect(document.getElementById("edit-gateway-visibility-private").checked).toBe(true);
+  });
+
+  test("populates OAuth resource field from string shape for gateway edit", async () => {
+    // RFC 8707 allows a single resource as a string; edit dialog must round-trip it verbatim.
+    window.ROOT_PATH = "";
+    document.body.innerHTML = createGatewayEditHTML();
+
+    fetchWithTimeout.mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          name: "OAuth GW",
+          url: "http://localhost:8080",
+          visibility: "public",
+          transport: "SSE",
+          authType: "oauth",
+          oauthConfig: {
+            grant_type: "client_credentials",
+            client_id: "cid",
+            token_url: "http://auth/token",
+            resource: "https://api.example.com/mcp",
+          },
+          tags: [],
+        }),
+    });
+
+    await editGateway("gw-oauth-res-str");
+
+    expect(document.getElementById("oauth-resource-gw-edit").value).toBe(
+      "https://api.example.com/mcp"
+    );
+  });
+
+  test("populates OAuth resource field from list shape for gateway edit", async () => {
+    // RFC 8707 also allows resource as a list; edit dialog must render it comma-space joined
+    // so the operator can edit it in the same shape the admin form parses on submit.
+    window.ROOT_PATH = "";
+    document.body.innerHTML = createGatewayEditHTML();
+
+    fetchWithTimeout.mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          name: "OAuth GW",
+          url: "http://localhost:8080",
+          visibility: "public",
+          transport: "SSE",
+          authType: "oauth",
+          oauthConfig: {
+            grant_type: "client_credentials",
+            client_id: "cid",
+            token_url: "http://auth/token",
+            resource: [
+              "https://api-a.example.com/mcp",
+              "https://api-b.example.com/mcp",
+            ],
+          },
+          tags: [],
+        }),
+    });
+
+    await editGateway("gw-oauth-res-list");
+
+    expect(document.getElementById("oauth-resource-gw-edit").value).toBe(
+      "https://api-a.example.com/mcp, https://api-b.example.com/mcp"
+    );
   });
 
   test("populates query_param auth fields for gateway edit", async () => {

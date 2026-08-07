@@ -7,12 +7,13 @@ Gateway-side plugin utilities.
 """
 
 # Standard
+import functools
 import itertools
 import logging
 import math
 import re
 from collections.abc import Mapping
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 # Third-Party
 from cpex.framework.extensions import Extensions, HttpExtension, RequestExtension
@@ -479,11 +480,219 @@ def headers_from_modified_extensions(result: Any) -> Optional[Dict[str, str]]:
 
 
 def apply_attribute_mapping(attributes: dict[str, Any], mapping: dict[str, str]) -> dict[str, Any]:
+# ---------------------------------------------------------------------------
+# Wildcard-aware attribute policy helpers
+# ---------------------------------------------------------------------------
+#
+# Rules:
+#   - Exact keys (no ``*``) take precedence over wildcard rules.
+#   - ``*`` matches exactly one dot-delimited path segment.
+#   - No arbitrary user-supplied regular expressions (no catastrophic backtracking).
+#   - Mappings into reserved ``otel.*`` names are rejected at compile time.
+#   - Empty source / destination keys are rejected at compile time.
+#   - Rules are compiled once at startup (``_compile_wildcard_rule``), not per invocation.
+
+# Pre-compiled sentinel: a capturing [^.]+ group replacing one ``*`` segment.
+# Using a capturing group lets _apply_one_mapping_rename extract wildcard
+# segments directly via match.group(N) instead of a manual split-and-scan.
+_SEGMENT_PATTERN = r"([^.]+)"
+
+
+# Cache for compile_attribute_policy results, keyed on (mapping items, removals).
+# Populated lazily on first call; subsequent identical configs are O(1).
+@functools.lru_cache(maxsize=256)
+def _cached_compile_attribute_policy(mapping_items: tuple, removals_tuple: tuple) -> "Tuple[list, list]":
+    """Return a cached compile_attribute_policy result for the given frozen config.
+
+    Args:
+        mapping_items: Frozen tuple of (src, dst) pairs from the mapping dict.
+        removals_tuple: Frozen tuple of removal keys.
+
+    Returns:
+        2-tuple (compiled_mappings, compiled_removals) as produced by
+        ``compile_attribute_policy``.
+
+    Raises:
+        ValueError: Propagated from ``compile_attribute_policy`` on invalid config.
+    """
+    return compile_attribute_policy(dict(mapping_items), list(removals_tuple))
+
+
+def _compile_wildcard_rule(src: str) -> "re.Pattern[str]":
+    r"""Compile a single wildcard rule source key into a regex Pattern.
+
+    Only ``*`` is treated specially — it maps to ``[^.]+`` (one dot-delimited
+    segment).  All other regex metacharacters in the source key are escaped, so
+    there is no possibility of catastrophic backtracking from user-supplied
+    patterns.
+
+    Args:
+        src: Source attribute key with zero or more ``*`` segments
+             (e.g. ``"cpex.control.results.*.result.reason"``).
+
+    Returns:
+        A compiled regex that matches the full attribute key when the ``*``
+        positions contain exactly one non-dot segment.
+
+    Example:
+        >>> import re
+        >>> p = _compile_wildcard_rule("cpex.control.results.*.result.reason")
+        >>> bool(p.fullmatch("cpex.control.results.pii-guard.result.reason"))
+        True
+        >>> bool(p.fullmatch("cpex.control.results.a.b.result.reason"))
+        False
+    """
+    # Split on literal ``*``, escape surrounding parts, join with segment pattern.
+    parts = src.split("*")
+    regex = _SEGMENT_PATTERN.join(re.escape(p) for p in parts)
+    return re.compile(r"\A" + regex + r"\Z")
+
+
+def compile_attribute_policy(
+    mapping: Dict[str, str],
+    removals: List[str],
+) -> "Tuple[List[Tuple[bool, Any, str, str]], List[Tuple[bool, Any, str]]]":
+    """Compile attribute mapping and removal rules for efficient per-invocation use.
+
+    Rules are compiled **once** at startup (e.g. inside a plugin ``__init__``).
+    Calling this per-invocation is unnecessary and wasteful.
+
+    Rule precedence:
+    - Exact rules (no ``*``) take precedence over wildcard rules.
+    - Among wildcard rules, the first matching rule wins.
+    - Removal is evaluated after rename.
+
+    Safety:
+    - ``otel.*`` destination names are rejected.
+    - Empty source or destination keys are rejected.
+    - No user-supplied regular expressions (``*`` only).
+
+    Args:
+        mapping: Rename rules ``{source_key: dest_key}``.
+        removals: List of source keys to drop from attributes.
+
+    Returns:
+        A 2-tuple ``(compiled_mappings, compiled_removals)``.
+
+        Each mapping entry is a 4-tuple
+        ``(is_exact: bool, pattern: Optional[re.Pattern], src: str, dst: str)``.
+
+        Each removal entry is a 3-tuple
+        ``(is_exact: bool, pattern: Optional[re.Pattern], src: str)``.
+
+    Raises:
+        ValueError: On empty keys, reserved destinations, or invalid patterns.
+
+    Example:
+        >>> mappings, removals = compile_attribute_policy(
+        ...     {"cpex.control.result.allowed": "controls.result.allow"},
+        ...     ["cpex.control.config.keys"],
+        ... )
+        >>> len(mappings)
+        1
+        >>> len(removals)
+        1
+    """
+    compiled_mappings: List[Tuple[bool, Any, str, str]] = []
+    compiled_removals: List[Tuple[bool, Any, str]] = []
+
+    for src, dst in mapping.items():
+        if not src or not dst:
+            raise ValueError(f"Attribute mapping keys must be non-empty: {src!r} -> {dst!r}")
+        if dst.startswith("otel."):
+            raise ValueError(f"Mapping into reserved 'otel.*' namespace is not allowed: {dst!r}")
+        if len(src) > 256 or len(dst) > 256:
+            raise ValueError(f"Attribute mapping key exceeds 256 characters: {src!r} -> {dst!r}")
+        if "*" in src:
+            pattern = _compile_wildcard_rule(src)
+            compiled_mappings.append((False, pattern, src, dst))
+        else:
+            compiled_mappings.append((True, None, src, dst))
+
+    for src in removals:
+        if not src:
+            continue
+        if len(src) > 256:
+            raise ValueError(f"Remove-attribute key exceeds 256 characters: {src!r}")
+        if "*" in src:
+            pattern = _compile_wildcard_rule(src)
+            compiled_removals.append((False, pattern, src))
+        else:
+            compiled_removals.append((True, None, src))
+
+    return compiled_mappings, compiled_removals
+
+
+def _apply_one_mapping_rename(
+    key: str,
+    compiled_mappings: "List[Tuple[bool, Any, str, str]]",
+) -> str:
+    """Return the renamed key after applying compiled mapping rules.
+
+    Exact rules take precedence over wildcard rules.  The first matching
+    wildcard rule wins.  If no rule matches, the key is returned unchanged.
+
+    ``*`` captured segments are substituted into the destination template at
+    the same position.
+
+    Args:
+        key: Original attribute key.
+        compiled_mappings: Output of ``compile_attribute_policy``.
+
+    Returns:
+        Renamed key, or the original key when no rule matches.
+    """
+    # Pass 1: exact rules (is_exact=True)
+    for is_exact, _pattern, src, dst in compiled_mappings:
+        if is_exact and src == key:
+            return dst
+
+    # Pass 2: wildcard rules (is_exact=False)
+    for is_exact, pattern, src, dst in compiled_mappings:
+        if is_exact:
+            continue
+        m = pattern.fullmatch(key) if pattern else None
+        if m:
+            # _compile_wildcard_rule builds the pattern with one capturing group
+            # per ``*`` (``_SEGMENT_PATTERN = r"([^.]+)"``), so match.group(N)
+            # directly yields the captured segment — no manual split-and-scan needed.
+            dst_parts = dst.split("*")
+            n_wildcards = dst.count("*")
+            if src.count("*") != n_wildcards:
+                # Mismatched wildcard counts — skip (misconfiguration)
+                continue
+            result = dst_parts[0]
+            for i, dpart in enumerate(dst_parts[1:]):
+                result += m.group(i + 1) + dpart
+            return result
+    return key
+
+
+def apply_attribute_mapping(attributes: dict, mapping: dict) -> dict:
     """Apply attribute name mapping (renaming) to a dictionary of attributes.
+
+    Supports both exact key renames and single-``*`` wildcard renames.
+    Exact rules take precedence over wildcard rules.
+
+    Collision behaviour (two source keys map to the same destination):
+    The last source key processed wins — ``dict`` assignment overwrites the
+    earlier value silently.  This is documented deterministic behaviour: since
+    exact rules are evaluated first and wildcard rules are evaluated in
+    insertion order, the outcome is predictable.  Compile-time collision
+    detection (rejecting ambiguous configs at startup) is planned for the
+    Phase 5 attribute-policy wiring.
+
+    Fallback on invalid mapping:
+    If ``compile_attribute_policy`` raises ``ValueError`` (e.g. ``otel.*``
+    destination, empty key, key > 256 chars), the function returns the
+    attributes **unchanged** rather than applying a partially-validated
+    mapping.  This is intentional fail-closed behaviour — no attribute will
+    ever be renamed into a reserved namespace on an invalid config.
 
     Args:
         attributes: Dictionary of attributes to rename.
         mapping: Dictionary mapping old attribute names to new names.
+                 Wildcard rules use ``*`` to match one dot-delimited segment.
 
     Returns:
         New dictionary with renamed attributes.
@@ -493,13 +702,34 @@ def apply_attribute_mapping(attributes: dict[str, Any], mapping: dict[str, str])
         >>> mapping = {"tool.name": "controls.artifact.name"}
         >>> apply_attribute_mapping(attrs, mapping)
         {'controls.artifact.name': 'weather', 'tool.version': '1.0'}
+
+        >>> attrs2 = {"cpex.control.results.pii.result.allowed": True}
+        >>> mapping2 = {"cpex.control.results.*.result.allowed": "controls.results.*.result.allowed"}
+        >>> result2 = apply_attribute_mapping(attrs2, mapping2)
+        >>> "controls.results.pii.result.allowed" in result2
+        True
     """
     if not mapping:
         return dict(attributes)
 
-    renamed_attributes = {}
+    try:
+        # Preserve insertion order — sorting changes wildcard-rule precedence because the
+        # documented contract is "first matching wildcard wins" (compile_attribute_policy
+        # evaluates rules in the order they appear in the mapping dict).  Sorting would
+        # silently reorder rules and change which wildcard match is returned for overlapping
+        # patterns.  Using tuple(mapping.items()) keeps the caller's declared order.
+        compiled_mappings, _ = _cached_compile_attribute_policy(tuple(mapping.items()), ())
+    except ValueError:
+        # Misconfigured mapping at runtime (e.g. otel.* destination, empty key, key > 256 chars).
+        # Fail-closed: return attributes unchanged rather than applying a partially-validated
+        # mapping that may have bypassed safety checks (e.g. reserved otel.* namespace).
+        # Warn (not just debug) so operators discover bad config at test time, not in production.
+        logger.warning("apply_attribute_mapping: invalid mapping config; returning attributes unchanged", exc_info=True)
+        return dict(attributes)
+
+    renamed_attributes: dict = {}
     for old_name, value in attributes.items():
-        new_name = mapping.get(old_name, old_name)
+        new_name = _apply_one_mapping_rename(old_name, compiled_mappings)
         renamed_attributes[new_name] = value
 
     logger.debug("Applied %d attribute name mappings", len(mapping))

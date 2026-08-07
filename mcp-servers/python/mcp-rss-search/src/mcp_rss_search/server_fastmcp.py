@@ -11,8 +11,10 @@ Advanced RSS feed parsing, searching, filtering, and statistical analysis server
 Filters out XML noise and provides clean, structured access to RSS feed content.
 """
 
+import ipaddress
 import logging
 import re
+import socket
 import sys
 from collections import Counter, defaultdict
 from datetime import datetime
@@ -42,6 +44,87 @@ def _dump_json(payload: Any) -> str:
     return orjson.dumps(payload, option=orjson.OPT_INDENT_2).decode()
 
 
+# Maximum number of redirects to follow when fetching a feed. Each hop is
+# independently re-validated, so this bounds both redirect loops and the
+# number of SSRF checks performed per request.
+_MAX_REDIRECTS = 5
+
+
+def _is_blocked_ip(ip: str) -> bool:
+    """Return True if the address must not be reached from the server.
+
+    Blocks loopback, private, link-local (covers the cloud metadata endpoint
+    169.254.169.254), CGNAT-shared, reserved, multicast, and unspecified ranges.
+    """
+    addr = ipaddress.ip_address(ip)
+    return (
+        addr.is_private
+        or addr.is_loopback
+        or addr.is_link_local
+        or addr.is_reserved
+        or addr.is_multicast
+        or addr.is_unspecified
+    )
+
+
+def _resolve_and_validate(url: str) -> tuple[str, str, int | None]:
+    """Validate a URL against SSRF rules and pin it to a resolved address.
+
+    Rejects non-HTTP(S) schemes, resolves the hostname, and refuses the request
+    if *any* resolved address is non-public. Returns ``(pinned_ip, host, port)``
+    where ``pinned_ip`` is a validated address the caller connects to directly,
+    eliminating the DNS-rebinding window between validation and connection.
+
+    Args:
+        url: The URL to validate.
+
+    Returns:
+        Tuple of the validated IP to connect to, the original hostname, and the
+        explicit port (or None).
+
+    Raises:
+        ValueError: If the scheme is unsupported, the host is missing/unresolvable,
+            or any resolved address is non-public.
+    """
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError(f"Unsupported URL scheme: {parsed.scheme!r}")
+
+    host = parsed.hostname
+    if not host:
+        raise ValueError("URL has no host")
+
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    try:
+        infos = socket.getaddrinfo(host, port, proto=socket.IPPROTO_TCP)
+    except socket.gaierror as exc:
+        raise ValueError(f"Could not resolve host {host!r}: {exc}") from exc
+
+    resolved = [info[4][0] for info in infos]
+    for ip in resolved:
+        if _is_blocked_ip(ip):
+            raise ValueError(f"Blocked non-public address for {host!r}: {ip}")
+
+    if not resolved:
+        raise ValueError(f"Could not resolve host {host!r}")
+
+    return resolved[0], host, parsed.port
+
+
+def _pin_url(url: str, pinned_ip: str) -> str:
+    """Rewrite ``url`` so its host is the already-validated ``pinned_ip``.
+
+    Connecting to the literal IP prevents httpx from re-resolving the hostname
+    (and thereby prevents a rebinding attack from swapping in an internal
+    address). The original hostname is preserved for the Host header and TLS SNI
+    by the caller.
+    """
+    parsed = urlparse(url)
+    host_part = f"[{pinned_ip}]" if ipaddress.ip_address(pinned_ip).version == 6 else pinned_ip
+    netloc = host_part if parsed.port is None else f"{host_part}:{parsed.port}"
+    return parsed._replace(netloc=netloc).geturl()
+
+
 class RSSParser:
     """Advanced RSS feed parser with search and analysis capabilities."""
 
@@ -68,10 +151,7 @@ class RSSParser:
 
             # Fetch feed
             logger.info(f"Fetching RSS feed from {url}")
-            async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
-                response = await client.get(url)
-                response.raise_for_status()
-                feed_content = response.text
+            feed_content = await self._fetch_content(url)
 
             # Parse feed
             feed = feedparser.parse(feed_content)
@@ -88,12 +168,63 @@ class RSSParser:
 
             return result
 
+        except ValueError as e:
+            # SSRF / URL-validation rejection (see _resolve_and_validate)
+            logger.warning(f"Rejected feed URL: {e}")
+            return {"success": False, "error": f"Invalid or disallowed URL: {e}"}
         except httpx.HTTPError as e:
             logger.error(f"HTTP error fetching feed: {e}")
             return {"success": False, "error": f"HTTP error: {str(e)}"}
         except Exception as e:
             logger.error(f"Error fetching feed: {e}")
             return {"success": False, "error": str(e)}
+
+    async def _fetch_content(self, url: str) -> str:
+        """Fetch a URL with SSRF protection, following redirects safely.
+
+        Redirects are followed manually (``follow_redirects=False``) so that every
+        hop is re-validated and pinned to a checked IP address — auto-following
+        would let a redirect bounce the request to an internal target after the
+        initial check. TLS SNI and certificate verification continue to use the
+        real hostname via the ``sni_hostname`` request extension.
+
+        Args:
+            url: The feed URL to fetch.
+
+        Returns:
+            The response body text of the final (non-redirect) response.
+
+        Raises:
+            ValueError: If a URL fails SSRF validation or the redirect chain is
+                too long or malformed.
+            httpx.HTTPError: On transport or HTTP status errors.
+        """
+        async with httpx.AsyncClient(timeout=30.0, follow_redirects=False) as client:
+            current = url
+            for _ in range(_MAX_REDIRECTS + 1):
+                pinned_ip, host, port = _resolve_and_validate(current)
+                pinned_url = _pin_url(current, pinned_ip)
+                host_header = host if port is None else f"{host}:{port}"
+
+                response = await client.get(
+                    pinned_url,
+                    headers={"Host": host_header},
+                    extensions={"sni_hostname": host},
+                )
+
+                if response.is_redirect:
+                    location = response.headers.get("location")
+                    if not location:
+                        raise ValueError("Redirect response missing Location header")
+                    # Resolve the redirect target against the real (hostname) URL,
+                    # not the IP-pinned one, so relative redirects behave correctly.
+                    current = str(httpx.URL(current).join(location))
+                    continue
+
+                response.raise_for_status()
+                return response.text
+
+            raise ValueError(f"Too many redirects (>{_MAX_REDIRECTS})")
 
     def _extract_feed_data(self, feed: Any, url: str) -> dict[str, Any]:
         """Extract clean, structured data from feedparser feed object."""

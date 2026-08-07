@@ -4,6 +4,23 @@
 
 import { validateInputName, validateUrl } from "./security.js";
 
+/**
+ * Tailwind utility classes applied to an input to signal a field-level error.
+ *
+ * Shared so that client-side validation and server-side error attribution
+ * (formSubmitHandlers.js) render identically. ``modals.js`` clears this exact
+ * set when resetting a form *inside a modal*; forms rendered inline on a page
+ * must clear it themselves.
+ *
+ * @type {ReadonlyArray<string>}
+ */
+export const FIELD_ERROR_CLASSES = [
+  "border-red-500",
+  "focus:ring-red-500",
+  "dark:border-red-500",
+  "dark:ring-red-500",
+];
+
 export const setupFormValidation = function () {
   // Add validation to all forms on the page
   const forms = document.querySelectorAll("form");
@@ -39,12 +56,7 @@ export const setupFormValidation = function () {
         );
         if (!validation.valid) {
           this.setCustomValidity(validation.error);
-          this.classList.add(
-            "border-red-500",
-            "focus:ring-red-500",
-            "dark:border-red-500",
-            "dark:ring-red-500",
-          );
+          this.classList.add(...FIELD_ERROR_CLASSES);
           if (errorMessageElement) {
             errorMessageElement.innerText = validation.error;
             errorMessageElement.classList.remove("invisible");
@@ -52,12 +64,7 @@ export const setupFormValidation = function () {
         } else {
           this.setCustomValidity("");
           this.value = validation.value;
-          this.classList.remove(
-            "border-red-500",
-            "focus:ring-red-500",
-            "dark:border-red-500",
-            "dark:ring-red-500",
-          );
+          this.classList.remove(...FIELD_ERROR_CLASSES);
           if (errorMessageElement) {
             errorMessageElement.classList.add("invisible");
           }
@@ -74,12 +81,7 @@ export const setupFormValidation = function () {
         // Skip validation for empty optional URL fields
         if (!this.value && !this.required) {
           this.setCustomValidity("");
-          this.classList.remove(
-            "border-red-500",
-            "focus:ring-red-500",
-            "dark:border-red-500",
-            "dark:ring-red-500",
-          );
+          this.classList.remove(...FIELD_ERROR_CLASSES);
           const errorMessageElement = this.parentNode?.querySelector(
             'p[data-error-message-for="url"]',
           );
@@ -101,12 +103,7 @@ export const setupFormValidation = function () {
         );
         if (!validation.valid) {
           this.setCustomValidity(validation.error);
-          this.classList.add(
-            "border-red-500",
-            "focus:ring-red-500",
-            "dark:border-red-500",
-            "dark:ring-red-500",
-          );
+          this.classList.add(...FIELD_ERROR_CLASSES);
           if (errorMessageElement) {
             errorMessageElement.innerText = validation.error;
             errorMessageElement.classList.remove("invisible");
@@ -114,12 +111,7 @@ export const setupFormValidation = function () {
         } else {
           this.setCustomValidity("");
           this.value = validation.value;
-          this.classList.remove(
-            "border-red-500",
-            "focus:ring-red-500",
-            "dark:border-red-500",
-            "dark:ring-red-500",
-          );
+          this.classList.remove(...FIELD_ERROR_CLASSES);
           if (errorMessageElement) {
             errorMessageElement.classList.add("invisible");
           }

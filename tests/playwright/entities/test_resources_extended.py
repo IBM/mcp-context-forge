@@ -312,7 +312,12 @@ class TestResourcesViewModal:
         expect(resources_page.resource_details_content).to_contain_text(first_name)
         resources_page.close_resource_modal()
 
-        # View second resource
+        # View second resource. Re-assert the table is settled first: closing the
+        # first modal can race with an HTMX table re-render (e.g. another worker's
+        # CRUD), so the row count checked above may no longer hold by this point.
+        resources_page.wait_for_resources_table_loaded()
+        if resources_page.get_resource_count() < 2:
+            pytest.skip("Need at least 2 resources to test different views")
         second_row = resources_page.get_resource_row(1)
         second_name = second_row.locator("td").nth(2).text_content().strip()
         resources_page.open_resource_view_modal(1)

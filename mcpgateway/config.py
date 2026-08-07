@@ -52,7 +52,7 @@ from importlib.resources import files
 import logging
 import math
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import re
 import sys
 from typing import Annotated, Any, ClassVar, Dict, List, Literal, NotRequired, Optional, Self, Set, TypedDict
@@ -101,6 +101,8 @@ def _normalize_env_list_vars() -> None:
         "SIEM_EXPORT_EVENT_SOURCES",
         "SIEM_EXPORT_URL_ALLOWLIST",
         "SIEM_EXPORT_REDACT_FIELDS",
+        "ROOT_ALLOWED_SCHEMES",
+        "ROOT_ALLOWED_FILE_PREFIXES",
     ]
     for key in keys:
         raw = os.environ.get(key)
@@ -403,7 +405,10 @@ class Settings(BaseSettings):
 
     # CSRF Protection Configuration
     csrf_enabled: bool = Field(default=True, description="Enable CSRF protection for state-changing operations")
-    csrf_secret_key: str = Field(default="", description="Secret key for CSRF token generation (falls back to jwt_secret_key if empty)")
+    csrf_secret_key: SecretStr = Field(
+        default=SecretStr(""),
+        description="Secret key for CSRF token generation. Falls back to jwt_secret_key when unset; set explicitly so the two keys can be rotated independently.",
+    )
     csrf_token_name: str = Field(default="X-CSRF-Token", description="HTTP header name for CSRF token")
     csrf_cookie_name: str = Field(default="mcpgateway_csrf_token", description="Cookie name for CSRF token")
     csrf_token_expiry: int = Field(default=3600, description="CSRF token expiration time in seconds")
@@ -678,7 +683,7 @@ class Settings(BaseSettings):
         default=False,
         description="Sign propagated user claims with HMAC for verification",
     )
-    identity_claims_secret: Optional[str] = Field(
+    identity_claims_secret: Optional[SecretStr] = Field(
         default=None,
         description="Secret key for signing propagated identity claims (uses JWT_SECRET_KEY if unset)",
     )
@@ -703,6 +708,8 @@ class Settings(BaseSettings):
             # Link-local (often used for cloud metadata)
             "169.254.0.0/16",  # Full link-local IPv4 range
             "fe80::/10",  # IPv6 link-local
+            # Shared/internal address space not classified as private by ipaddress
+            "100.64.0.0/10",  # RFC 6598 carrier-grade NAT
         ],
         description=(
             "CIDR ranges to block for SSRF protection. These are ALWAYS blocked regardless of other settings. Default blocks cloud metadata endpoints. Add private ranges for stricter security."
@@ -927,6 +934,18 @@ class Settings(BaseSettings):
     # OAuth Configuration
     oauth_request_timeout: int = Field(default=30, description="OAuth request timeout in seconds")
     oauth_max_retries: int = Field(default=3, description="Maximum retries for OAuth token requests")
+    oauth_require_configured_resource: bool = Field(
+        default=False,
+        description=(
+            "When true, treat audience mismatches as blocking even when the expected "
+            "resource was auto-derived from the gateway URL (no explicit resource "
+            "configured and none learned from a prior IdP token). Default false keeps "
+            "the auto-derived audience check advisory so brand-new gateways forward "
+            "tokens for upstream validation. Enable in strict environments where the "
+            "gateway must reject cross-resource tokens itself rather than relying on "
+            "the upstream MCP server to validate ``aud``."
+        ),
+    )
 
     # ===================================
     # Dynamic Client Registration (DCR) - Client Mode
@@ -1500,14 +1519,19 @@ class Settings(BaseSettings):
     def validate_security_combinations(self) -> Self:
         """Validate security setting combinations and raise on unsafe secrets.
 
-        Placeholder and weak/known secrets are rejected unconditionally in every
-        environment (development, staging, and production alike).  Some compose
-        sibling containers (e.g. ``register_fast_time``, ``prometheus_token``)
+        ``jwt_secret_key`` is rejected unconditionally in every environment
+        (development, staging, and production) when it is empty, a placeholder,
+        known-weak, too short, or low-entropy.  Some compose sibling containers
         sign tokens with the raw ``JWT_SECRET_KEY`` environment variable outside
         this validator, so per-process random generation cannot be used as a
         fallback — gateway and sibling containers must share the same secret.
-        The only safe option is an unconditional hard-fail that forces operators
-        to provide a real secret before the process will start.
+
+        ``auth_encryption_secret`` follows the same rules in staging and
+        production.  In ``ENVIRONMENT=development``, weak/short/low-entropy
+        values are downgraded to a loud WARNING so local PoC workflows can use
+        a simple value like ``AUTH_ENCRYPTION_SECRET=my-test-salt``.  The
+        ``__REPLACE_ME__`` placeholder is still rejected unconditionally for
+        both fields in every environment — it has no runtime meaning.
 
         Run ``python -m mcpgateway.scripts.init_secrets`` (or ``make init-secrets``
         for interactive use, ``make init-secrets-patch-env`` to write directly into
@@ -1517,14 +1541,24 @@ class Settings(BaseSettings):
             Itself.
 
         Raises:
-            SecurityConfigurationError: If jwt_secret_key or auth_encryption_secret
-                is unset (placeholder), matches a known-weak value, is shorter than
-                ``min_secret_length`` characters, or has low per-character entropy.
+            SecurityConfigurationError: If either secret is empty (both fields,
+                all environments), or if ``jwt_secret_key`` is the
+                ``__REPLACE_ME__`` placeholder, known-weak, too short, or has
+                low per-character entropy (all environments).
+                ``auth_encryption_secret`` only warns for ALL of these in
+                ``ENVIRONMENT=development`` — including the placeholder.
+                Full enforcement applies to ``auth_encryption_secret`` in
+                staging and production.
         """
-        # client_mode is intentionally NOT exempted — secret-strength enforcement
-        # is always active regardless of deployment profile.
         weak_secrets = {v.lower() for v in self.WEAK_VALUES}
         env = str(self.environment).lower()
+        is_dev = env == "development"
+
+        # jwt_secret_key:          unconditional hard-fail in every environment.
+        # auth_encryption_secret:  ALL non-compliant values (placeholder, insufficient
+        #                          length, known-default, low entropy) are WARNING-only
+        #                          in ENVIRONMENT=development. Full enforcement in
+        #                          staging and production.
         for field_name, secret_field in (
             ("jwt_secret_key", self.jwt_secret_key),
             ("auth_encryption_secret", self.auth_encryption_secret),
@@ -1532,27 +1566,58 @@ class Settings(BaseSettings):
             val = secret_field.get_secret_value()
 
             if not val.strip():
-                raise SecurityConfigurationError(f"{field_name}: secret is empty. Set a real value (run 'python -m mcpgateway.scripts.init_secrets').")
-
-            if len(val) < self.min_secret_length:
                 raise SecurityConfigurationError(
-                    f"{field_name}: too short ({len(val)} chars, minimum {self.min_secret_length}). "
-                    "Run 'python -m mcpgateway.scripts.init_secrets' to generate strong values, "
-                    "or use 'make init-secrets-patch-env' to write them directly into .env."
+                    f"{field_name}: secret is empty. "
+                    "To fix, choose one of:\n"
+                    "  make setup                  # recommended: auto-creates .env and patches secrets in-place\n"
+                    "  make init-secrets           # writes secrets to .env.secrets for review, then copy into .env\n"
+                    "  make init-secrets-patch-env # patches secrets directly into an existing .env"
                 )
 
             is_placeholder = val.lower().startswith("__replace_me__")
             is_weak = val.lower() in weak_secrets
             entropy = calculate_entropy(val)
             is_low_entropy = entropy < 3.5
+            is_too_short = len(val) < self.min_secret_length
 
-            if is_placeholder or is_weak or is_low_entropy:
-                if is_placeholder:
-                    reason = "unset placeholder (__REPLACE_ME__)"
-                elif is_weak:
-                    reason = "known-weak/default value"
-                else:
-                    reason = f"low entropy (score {entropy:.2f} < 3.5)"
+            # auth_encryption_secret in development: ALL non-compliant values are
+            # downgraded to a WARNING — including the __REPLACE_ME__ placeholder.
+            # Production and staging always enforce full cryptographic strength.
+            if field_name == "auth_encryption_secret" and is_dev:
+                if is_placeholder or is_too_short or is_weak or is_low_entropy:
+                    logger.warning(
+                        "🔓 SECURITY WARNING - %s: value does not meet minimum cryptographic "
+                        "strength requirements (placeholder, insufficient length, known-default, "
+                        "or low entropy). Permitted only in ENVIRONMENT=development for local "
+                        "PoC use. This configuration MUST NOT be used in staging or production "
+                        "— replace with a cryptographically secure value before any "
+                        "non-development deployment.",
+                        field_name,
+                    )
+                continue
+
+            # For jwt_secret_key and auth_encryption_secret outside development:
+            # placeholder, too-short, weak, and low-entropy all hard-fail.
+            if is_placeholder:
+                raise SecurityConfigurationError(
+                    f"{field_name}: unset placeholder (__REPLACE_ME__) rejected in every environment (including '{env}'). "
+                    "To fix, choose one of:\n"
+                    "  make setup                  # recommended: auto-creates .env and patches secrets in-place\n"
+                    "  make init-secrets           # writes secrets to .env.secrets for review, then copy into .env\n"
+                    "  make init-secrets-patch-env # patches secrets directly into an existing .env"
+                )
+
+            if is_too_short:
+                raise SecurityConfigurationError(
+                    f"{field_name}: too short ({len(val)} chars, minimum {self.min_secret_length}). "
+                    "To fix, choose one of:\n"
+                    "  make setup                  # recommended: auto-creates .env and patches secrets in-place\n"
+                    "  make init-secrets           # writes secrets to .env.secrets for review, then copy into .env\n"
+                    "  make init-secrets-patch-env # patches secrets directly into an existing .env"
+                )
+
+            if is_weak or is_low_entropy:
+                reason = "known-weak/default value" if is_weak else f"low entropy (score {entropy:.2f} < 3.5)"
                 raise SecurityConfigurationError(
                     f"{field_name}: {reason} rejected in every environment (including '{env}'). "
                     "Cross-process token consistency requires operators to supply a real secret before startup — "
@@ -1574,9 +1639,46 @@ class Settings(BaseSettings):
             if self.debug and not self.dev_mode:
                 logger.warning("🐛 SECURITY WARNING: Debug mode is enabled in non-dev mode. This may leak sensitive information! Set DEBUG=false for production.")
 
-        # CSRF secret key fallback to JWT secret key
-        if not self.csrf_secret_key:
-            self.csrf_secret_key = self.jwt_secret_key.get_secret_value()
+        # CSRF secret key fallback to JWT secret key.
+        # NOTE: SecretStr("") is truthy, so the emptiness check must go through
+        # get_secret_value(); `if not self.csrf_secret_key` would never fire and
+        # CSRF tokens would end up signed with an empty key. Settings does not
+        # set validate_assignment, so the assigned value is not coerced and has
+        # to be wrapped in SecretStr explicitly.
+        if not self.csrf_secret_key.get_secret_value():
+            self.csrf_secret_key = SecretStr(self.jwt_secret_key.get_secret_value())
+
+        # CSRF_COOKIE_NAME / CSRF_TOKEN_NAME govern CSRFMiddleware only. Every
+        # other consumer -- enforce_admin_csrf (admin.py), enforce_fetch_tools_csrf
+        # (routers/oauth_router.py), the Admin UI JavaScript, and the server-rendered
+        # login/password templates -- hardcodes the default names. Overriding either
+        # setting desynchronizes the middleware from all of them, which surfaces as
+        # intermittent 403 CSRF_TOKEN_INVALID on non-/admin browser writes rather
+        # than as an obvious failure. Warn loudly at startup instead.
+        #
+        # Comparison is asymmetric by design. HTTP header names are
+        # case-insensitive (RFC 7230) and Starlette normalizes them, so
+        # CSRF_TOKEN_NAME=x-csrf-token is functionally identical to the default
+        # and must not warn. Cookie names are case-sensitive (RFC 6265), so a
+        # cookie name differing only in case is a genuine desync and must warn.
+        if self.csrf_enabled:
+            for setting_name, configured, default, case_sensitive in (
+                ("CSRF_COOKIE_NAME", self.csrf_cookie_name, "mcpgateway_csrf_token", True),
+                ("CSRF_TOKEN_NAME", self.csrf_token_name, "X-CSRF-Token", False),
+            ):
+                differs = configured != default if case_sensitive else configured.casefold() != default.casefold()
+                if differs:
+                    logger.warning(
+                        "⚠️  CSRF CONFIGURATION WARNING: %s is set to %r but the Admin UI and the "
+                        "per-route CSRF dependencies hardcode %r. Browser-based writes outside /admin "
+                        "will intermittently fail with 403 CSRF_TOKEN_INVALID. Set %s=%s (or unset it) "
+                        "unless you have verified every client sends the custom name.",
+                        setting_name,
+                        configured,
+                        default,
+                        setting_name,
+                        default,
+                    )
 
         # Validate header passthrough feature flag dependencies
         # Fail if sensitive passthrough is enabled without base feature
@@ -1965,6 +2067,72 @@ class Settings(BaseSettings):
     plugin_metrics_db_spans_enabled: bool = Field(default=True, description="Record plugin metadata as internal observability DB spans (plugin.metrics.<name>)")
     plugin_metrics_db_numeric_rows_enabled: bool = Field(default=True, description="Additionally record numeric plugin metadata fields as internal ObservabilityMetric rows")
     plugin_metrics_max_numeric_per_call: int = Field(default=16, ge=0, description="Max numeric ObservabilityMetric rows written per invoke_hook() call, across all plugins")
+
+    # CPEX control-execution telemetry (G2: ControlExecutionRecord -> observability).
+    # Enabled only when the installed CPEX version exposes ControlExecutionRecord (>=0.1.2).
+    # A no-op when execution_records_supported() returns False (older CPEX build).
+    cpex_control_telemetry_enabled: bool = Field(
+        default=False,
+        description=(
+            "Emit structured CPEX control-execution telemetry on tool invocations. "
+            "Disabled by default — each traced tool call creates up to 1 summary + "
+            "CPEX_CONTROL_TELEMETRY_MAX_RESULTS result DB spans. Enable only after "
+            "reviewing storage and cardinality implications. "
+            "No-op when CPEX execution records are unavailable (CPEX < 0.1.2). "
+            "Env: CPEX_CONTROL_TELEMETRY_ENABLED."
+        ),
+    )
+    cpex_control_telemetry_db_enabled: bool = Field(
+        default=True,
+        description=("Write cpex.control.summary and cpex.control.result DB spans for each tool invocation. Env: CPEX_CONTROL_TELEMETRY_DB_ENABLED."),
+    )
+    cpex_control_telemetry_flatten_results: bool = Field(
+        default=False,
+        description=(
+            "Also emit flattened cpex.control.results.<name>.* attributes on the summary span. "
+            "Bounded by cpex_control_telemetry_max_results. "
+            "Use only when downstream tooling requires dynamic key names. "
+            "Env: CPEX_CONTROL_TELEMETRY_FLATTEN_RESULTS."
+        ),
+    )
+    cpex_control_telemetry_max_results: int = Field(
+        default=32,
+        ge=0,
+        le=128,
+        description=("Max per-control result records exported per tool invocation. Env: CPEX_CONTROL_TELEMETRY_MAX_RESULTS."),
+    )
+    cpex_control_telemetry_max_attributes: int = Field(
+        default=256,
+        ge=0,
+        description=(
+            "Informational cap on total span attributes across all control telemetry per "
+            "invocation. Not enforced gateway-side; intended as a hint for external "
+            "OTel-collector attribute-limit configuration (e.g. transform/attributes "
+            "processor). Gateway-side enforcement is planned alongside Phase 5 "
+            "attribute-policy wiring. Until then, the internal DB sink is unbounded. "
+            "Env: CPEX_CONTROL_TELEMETRY_MAX_ATTRIBUTES."
+        ),
+    )
+    cpex_control_telemetry_emit_reason: bool = Field(
+        default=False,
+        description=(
+            "Emit cpex.control.result.reason and cpex.control.result.error_code on "
+            "per-control spans. Disabled by default because these fields may contain "
+            "PII, tool argument values, or exception content. Enable only when the "
+            "observability sink is appropriately secured and a redaction boundary is "
+            "in place. Env: CPEX_CONTROL_TELEMETRY_EMIT_REASON."
+        ),
+    )
+    cpex_control_telemetry_emit_agent_id: bool = Field(
+        default=False,
+        description=(
+            "Emit cpex.control.agent.id on the summary span. Disabled by default "
+            "because the value is the authenticated caller email — a high-cardinality "
+            "PII field with GDPR/data-residency implications. Enable only when the "
+            "observability sink is appropriately secured and a redaction boundary is "
+            "in place. Env: CPEX_CONTROL_TELEMETRY_EMIT_AGENT_ID."
+        ),
+    )
 
     # Correlation ID Settings
     correlation_id_enabled: bool = Field(default=True, description="Enable automatic correlation ID tracking for requests")
@@ -2633,6 +2801,9 @@ class Settings(BaseSettings):
 
     # Default Roots
     default_roots: List[str] = []
+    root_allowed_schemes: List[str] = []
+    root_allow_file_scheme: bool = False
+    root_allowed_file_prefixes: List[str] = []
 
     # Database
     db_driver: str = "postgresql+psycopg"
@@ -3068,6 +3239,8 @@ Disallow: /
         "mcpgateway_ui_hide_sections_admin",
         "mcpgateway_ui_hide_header_items_admin",
         "tool_description_forbidden_patterns",
+        "root_allowed_schemes",
+        "root_allowed_file_prefixes",
         mode="before",
     )
     @classmethod
@@ -3103,6 +3276,59 @@ Disallow: /
             # CSV fallback
             return [item.strip() for item in s.split(",") if item.strip()]
         raise ValueError("Invalid type for list field")
+
+    @field_validator("root_allowed_schemes", mode="after")
+    @classmethod
+    def _validate_root_allowed_schemes(cls, value: list[str]) -> list[str]:
+        """Validate root URI schemes supported by root policy."""
+        supported_schemes = {"http", "https", "ws", "wss"}
+        scheme_pattern = re.compile(r"^[a-z][a-z0-9+.-]*$")
+        normalized: list[str] = []
+        for raw_scheme in value:
+            if not isinstance(raw_scheme, str):
+                raise ValueError("ROOT_ALLOWED_SCHEMES entries must be strings")
+            scheme = raw_scheme.lower()
+            if scheme != raw_scheme.strip().lower() or not scheme_pattern.fullmatch(scheme):
+                raise ValueError("ROOT_ALLOWED_SCHEMES entries must be lowercase URI scheme names without whitespace, ':' or '/'")
+            if scheme == "file":
+                raise ValueError("ROOT_ALLOWED_SCHEMES must not include file; use ROOT_ALLOW_FILE_SCHEME")
+            if scheme not in supported_schemes:
+                raise ValueError(f"Unsupported ROOT_ALLOWED_SCHEMES entry: {scheme}")
+            if scheme not in normalized:
+                normalized.append(scheme)
+        return normalized
+
+    @field_validator("root_allowed_file_prefixes", mode="after")
+    @classmethod
+    def _validate_root_allowed_file_prefixes(cls, value: list[str]) -> list[str]:
+        """Validate POSIX file-root prefixes."""
+        normalized: list[str] = []
+        for raw_prefix in value:
+            if not isinstance(raw_prefix, str):
+                raise ValueError("ROOT_ALLOWED_FILE_PREFIXES entries must be strings")
+            if not raw_prefix:
+                raise ValueError("ROOT_ALLOWED_FILE_PREFIXES entries must not be empty")
+            if any(ord(ch) < 32 or ord(ch) == 127 for ch in raw_prefix) or "\x00" in raw_prefix:
+                raise ValueError("ROOT_ALLOWED_FILE_PREFIXES entries must not contain control characters")
+            parsed = urlparse(raw_prefix)
+            if parsed.scheme or parsed.netloc or parsed.query or parsed.fragment:
+                raise ValueError("ROOT_ALLOWED_FILE_PREFIXES entries must be absolute POSIX paths without URI components")
+            if "\\" in raw_prefix or not raw_prefix.startswith("/"):
+                raise ValueError("ROOT_ALLOWED_FILE_PREFIXES entries must be absolute POSIX paths")
+            parts = PurePosixPath(raw_prefix).parts
+            if "." in parts or ".." in parts:
+                raise ValueError("ROOT_ALLOWED_FILE_PREFIXES entries must not contain '.' or '..' segments")
+            prefix = "/" if parts == ("/",) else "/" + "/".join(part for part in parts if part != "/")
+            if prefix not in normalized:
+                normalized.append(prefix)
+        return normalized
+
+    @model_validator(mode="after")
+    def _validate_root_file_policy(self) -> "Settings":
+        """Validate cross-field root file policy consistency."""
+        if self.root_allow_file_scheme and not self.root_allowed_file_prefixes:
+            raise ValueError("ROOT_ALLOW_FILE_SCHEME=true requires ROOT_ALLOWED_FILE_PREFIXES")
+        return self
 
     @field_validator("tool_description_forbidden_patterns", mode="after")
     @classmethod
