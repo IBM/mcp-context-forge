@@ -31,6 +31,6 @@ test.describe("App loading (smoke)", () => {
     await apiMock.mockMe({ status: 401 });
 
     await page.goto("/app");
-    await expect(page).toHaveURL(/\/app\/login$/);
+    await expect(page).toHaveURL(/\/app\/login\?next=%2Fapp%2F$/);
   });
 });
