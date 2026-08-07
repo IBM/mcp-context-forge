@@ -49,7 +49,9 @@ export function TagInput({
   const addTags = (raw: string[]) => {
     const seen = new Set(value.map((tag) => tag.toLowerCase()));
     const next = [...value];
-    for (const candidate of raw) {
+    // Split here, not just on paste: a programmatic value set (Playwright fill,
+    // browser autofill) reaches the blur commit without any comma keydown.
+    for (const candidate of raw.flatMap((entry) => entry.split(SPLIT_PATTERN))) {
       const tag = candidate.trim();
       if (!tag) continue;
       if (maxTags !== undefined && next.length >= maxTags) break;

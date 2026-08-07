@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { useState } from "react";
-import { screen, within } from "@testing-library/react";
+import { fireEvent, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderWithProviders as render } from "@/test/test-utils";
 import { TagInput } from "./tag-input";
@@ -150,5 +150,16 @@ describe("TagInput", () => {
     expect(screen.getByRole("button", { name: "Remove b" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Remove c" })).not.toBeInTheDocument();
     expect(screen.getByText("Maximum 2 tags reached.")).toBeInTheDocument();
+  });
+
+  it("splits a programmatically filled value on blur", async () => {
+    const user = userEvent.setup();
+    render(<Harness />);
+    const input = screen.getByRole("combobox");
+    await user.click(input);
+    fireEvent.change(input, { target: { value: "security, qa" } });
+    await user.click(document.body);
+    expect(screen.getByRole("button", { name: "Remove security" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Remove qa" })).toBeInTheDocument();
   });
 });
