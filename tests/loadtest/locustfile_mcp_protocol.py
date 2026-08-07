@@ -615,7 +615,7 @@ def _build_tool_args(tool_name: str, schema: dict | None = None) -> dict:
     """
     if schema is None:
         schema = _tool_schemas.get(tool_name)
-    if isinstance(schema, dict) and (schema.get("required") or schema.get("properties")):
+    if isinstance(schema, dict) and ("required" in schema or "properties" in schema):
         return _args_from_schema(schema)
     return _legacy_name_args(tool_name)
 
