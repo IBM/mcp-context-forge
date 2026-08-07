@@ -777,6 +777,7 @@ class ToolCreate(BaseModel):
     team_id: Optional[str] = Field(None, description="Team ID for resource organization")
     owner_email: Optional[str] = Field(None, description="Email of the tool owner")
     visibility: Optional[Literal["private", "team", "public"]] = Field(default=None, description="Visibility level: private, team, or public")
+    auto_approval_status: Optional[bool] = Field(default=False, description="Auto-approval status for tool")
 
     # Passthrough REST fields
     base_url: Optional[str] = Field(None, description="Base URL for REST passthrough")
@@ -1347,6 +1348,7 @@ class ToolUpdate(BaseModelWithConfigDict):
     tags: Optional[List[str]] = Field(None, description="Tags for categorizing the tool")
     deprecated: Optional[bool] = Field(None, description="Whether the tool is deprecated (visible but non-executable)")
     visibility: Optional[Literal["private", "team", "public"]] = Field(None, description="Visibility level: private, team, or public")
+    auto_approval_status: Optional[bool] = Field(default=False, description="Auto-approval status for tool")
 
     # Passthrough REST fields
     base_url: Optional[str] = Field(None, description="Base URL for REST passthrough")
@@ -1823,7 +1825,8 @@ class ToolRead(BaseModelWithConfigDict):
     team: Optional[str] = Field(None, description="Name of the team that owns this resource")
     owner_email: Optional[str] = Field(None, description="Email of the user who owns this resource")
     visibility: Optional[Literal["private", "team", "public"]] = Field(default="public", description="Visibility level: private, team, or public")
-
+    auto_approval_status: Optional[bool] = Field(default=False, description="Auto-approval status for tool")
+    
     # Passthrough REST fields
     base_url: Optional[str] = Field(None, description="Base URL for REST passthrough")
     path_template: Optional[str] = Field(None, description="Path template for REST passthrough")
