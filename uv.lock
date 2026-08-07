@@ -2803,7 +2803,7 @@ requires-dist = [
     { name = "mcp", specifier = ">=2.0" },
     { name = "mcp-contextforge-gateway", extras = ["redis"], marker = "extra == 'all'", specifier = ">=1.0.8" },
     { name = "mcp-contextforge-gateway", extras = ["redis", "dev", "plugins"], marker = "extra == 'dev-all'", specifier = ">=1.0.8" },
-    { name = "mcp-types", specifier = ">=2.0" },
+    { name = "mcp-types", specifier = ">=2.0.0" },
     { name = "memray", marker = "extra == 'profiling'", specifier = ">=1.19.3" },
     { name = "msgpack", specifier = ">=1.2.1" },
     { name = "opentelemetry-api", marker = "extra == 'observability'", specifier = ">=1.44.0" },

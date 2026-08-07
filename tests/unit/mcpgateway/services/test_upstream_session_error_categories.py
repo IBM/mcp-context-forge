@@ -87,7 +87,7 @@ async def test_connection_refused_error_category(monkeypatch):
     def fake_stream(**_kw):
         return _FakeTransportCtx(enter_exc=ConnectionRefusedError("Connection refused"))
 
-    monkeypatch.setattr(usr, "streamablehttp_client", fake_stream)
+    monkeypatch.setattr(usr, "streamable_http_client", fake_stream)
     monkeypatch.setattr(usr, "ClientSession", _FakeClientSessionCM)
 
     req = _make_request()
@@ -108,7 +108,7 @@ async def test_timeout_error_category(monkeypatch):
     def fake_stream(**_kw):
         return _FakeTransportCtx(enter_exc=asyncio.TimeoutError("Connection timeout"))
 
-    monkeypatch.setattr(usr, "streamablehttp_client", fake_stream)
+    monkeypatch.setattr(usr, "streamable_http_client", fake_stream)
     monkeypatch.setattr(usr, "ClientSession", _FakeClientSessionCM)
 
     req = _make_request()
@@ -129,7 +129,7 @@ async def test_ssl_error_category(monkeypatch):
     def fake_stream(**_kw):
         return _FakeTransportCtx(enter_exc=ssl.SSLError("certificate verify failed"))
 
-    monkeypatch.setattr(usr, "streamablehttp_client", fake_stream)
+    monkeypatch.setattr(usr, "streamable_http_client", fake_stream)
     monkeypatch.setattr(usr, "ClientSession", _FakeClientSessionCM)
 
     req = _make_request()
@@ -155,7 +155,7 @@ async def test_http_401_auth_error_category(monkeypatch):
     def fake_stream(**_kw):
         return _FakeTransportCtx(enter_exc=http_error)
 
-    monkeypatch.setattr(usr, "streamablehttp_client", fake_stream)
+    monkeypatch.setattr(usr, "streamable_http_client", fake_stream)
     monkeypatch.setattr(usr, "ClientSession", _FakeClientSessionCM)
 
     req = _make_request()
@@ -180,7 +180,7 @@ async def test_http_403_auth_error_category(monkeypatch):
     def fake_stream(**_kw):
         return _FakeTransportCtx(enter_exc=http_error)
 
-    monkeypatch.setattr(usr, "streamablehttp_client", fake_stream)
+    monkeypatch.setattr(usr, "streamable_http_client", fake_stream)
     monkeypatch.setattr(usr, "ClientSession", _FakeClientSessionCM)
 
     req = _make_request()
@@ -205,7 +205,7 @@ async def test_http_500_server_error_category(monkeypatch):
     def fake_stream(**_kw):
         return _FakeTransportCtx(enter_exc=http_error)
 
-    monkeypatch.setattr(usr, "streamablehttp_client", fake_stream)
+    monkeypatch.setattr(usr, "streamable_http_client", fake_stream)
     monkeypatch.setattr(usr, "ClientSession", _FakeClientSessionCM)
 
     req = _make_request()
@@ -226,7 +226,7 @@ async def test_dns_resolution_error_category(monkeypatch):
     def fake_stream(**_kw):
         return _FakeTransportCtx(enter_exc=OSError("[Errno -2] Name or service not known"))
 
-    monkeypatch.setattr(usr, "streamablehttp_client", fake_stream)
+    monkeypatch.setattr(usr, "streamable_http_client", fake_stream)
     monkeypatch.setattr(usr, "ClientSession", _FakeClientSessionCM)
 
     req = _make_request()
@@ -247,7 +247,7 @@ async def test_connection_reset_error_category(monkeypatch):
     def fake_stream(**_kw):
         return _FakeTransportCtx(enter_exc=OSError("[Errno 54] Connection reset by peer"))
 
-    monkeypatch.setattr(usr, "streamablehttp_client", fake_stream)
+    monkeypatch.setattr(usr, "streamable_http_client", fake_stream)
     monkeypatch.setattr(usr, "ClientSession", _FakeClientSessionCM)
 
     req = _make_request()
@@ -268,7 +268,7 @@ async def test_httpx_connect_error_category(monkeypatch):
     def fake_stream(**_kw):
         return _FakeTransportCtx(enter_exc=httpx.ConnectError("Failed to connect"))
 
-    monkeypatch.setattr(usr, "streamablehttp_client", fake_stream)
+    monkeypatch.setattr(usr, "streamable_http_client", fake_stream)
     monkeypatch.setattr(usr, "ClientSession", _FakeClientSessionCM)
 
     req = _make_request()
@@ -294,7 +294,7 @@ async def test_exception_group_unwrapping(monkeypatch):
     def fake_stream(**_kw):
         return _FakeTransportCtx(enter_exc=outer_group)
 
-    monkeypatch.setattr(usr, "streamablehttp_client", fake_stream)
+    monkeypatch.setattr(usr, "streamable_http_client", fake_stream)
     monkeypatch.setattr(usr, "ClientSession", _FakeClientSessionCM)
 
     req = _make_request()
@@ -323,7 +323,7 @@ async def test_http_404_not_found_error_category(monkeypatch):
     def fake_stream(**_kw):
         return _FakeTransportCtx(enter_exc=http_error)
 
-    monkeypatch.setattr(usr, "streamablehttp_client", fake_stream)
+    monkeypatch.setattr(usr, "streamable_http_client", fake_stream)
     monkeypatch.setattr(usr, "ClientSession", _FakeClientSessionCM)
 
     req = _make_request()
@@ -348,7 +348,7 @@ async def test_http_other_status_error_category(monkeypatch):
     def fake_stream(**_kw):
         return _FakeTransportCtx(enter_exc=http_error)
 
-    monkeypatch.setattr(usr, "streamablehttp_client", fake_stream)
+    monkeypatch.setattr(usr, "streamable_http_client", fake_stream)
     monkeypatch.setattr(usr, "ClientSession", _FakeClientSessionCM)
 
     req = _make_request()
@@ -376,7 +376,7 @@ async def test_http_status_error_no_status_code(monkeypatch):
     def fake_stream(**_kw):
         return _FakeTransportCtx(enter_exc=http_error)
 
-    monkeypatch.setattr(usr, "streamablehttp_client", fake_stream)
+    monkeypatch.setattr(usr, "streamable_http_client", fake_stream)
     monkeypatch.setattr(usr, "ClientSession", _FakeClientSessionCM)
 
     req = _make_request()
@@ -397,7 +397,7 @@ async def test_oserror_generic_network_error_category(monkeypatch):
     def fake_stream(**_kw):
         return _FakeTransportCtx(enter_exc=OSError("[Errno 99] Some other network error"))
 
-    monkeypatch.setattr(usr, "streamablehttp_client", fake_stream)
+    monkeypatch.setattr(usr, "streamable_http_client", fake_stream)
     monkeypatch.setattr(usr, "ClientSession", _FakeClientSessionCM)
 
     req = _make_request()
@@ -429,7 +429,7 @@ async def test_structured_logger_exception_handling(monkeypatch):
                 raise RuntimeError("Structured logger is broken!")
         return BrokenLogger()
 
-    monkeypatch.setattr(usr, "streamablehttp_client", fake_stream)
+    monkeypatch.setattr(usr, "streamable_http_client", fake_stream)
     monkeypatch.setattr(usr, "ClientSession", _FakeClientSessionCM)
 
     # Patch get_structured_logger in the module where it will be imported
@@ -470,7 +470,7 @@ async def test_logger_error_call_without_exc_info(monkeypatch, caplog):
     def fake_stream(**_kw):
         return _FakeTransportCtx(enter_exc=ConnectionRefusedError("Connection refused"))
 
-    monkeypatch.setattr(usr, "streamablehttp_client", fake_stream)
+    monkeypatch.setattr(usr, "streamable_http_client", fake_stream)
     monkeypatch.setattr(usr, "ClientSession", _FakeClientSessionCM)
 
     req = _make_request()
@@ -516,7 +516,7 @@ async def test_structured_logger_metadata_payload(monkeypatch):
                 structured_log_calls.append(kwargs)
         return MockStructuredLogger()
 
-    monkeypatch.setattr(usr, "streamablehttp_client", fake_stream)
+    monkeypatch.setattr(usr, "streamable_http_client", fake_stream)
     monkeypatch.setattr(usr, "ClientSession", _FakeClientSessionCM)
 
     import mcpgateway.services.structured_logger
@@ -570,7 +570,7 @@ async def test_cross_layer_error_message_consistency(monkeypatch):
     def fake_stream(**_kw):
         return _FakeTransportCtx(enter_exc=ConnectionRefusedError("Connection refused by server"))
 
-    monkeypatch.setattr(usr, "streamablehttp_client", fake_stream)
+    monkeypatch.setattr(usr, "streamable_http_client", fake_stream)
     monkeypatch.setattr(usr, "ClientSession", _FakeClientSessionCM)
 
     req = _make_request()
@@ -621,7 +621,7 @@ async def test_httpx_connect_timeout_category(monkeypatch):
     def fake_stream(**_kw):
         return _FakeTransportCtx(enter_exc=connect_timeout)
 
-    monkeypatch.setattr(usr, "streamablehttp_client", fake_stream)
+    monkeypatch.setattr(usr, "streamable_http_client", fake_stream)
     monkeypatch.setattr(usr, "ClientSession", _FakeClientSessionCM)
 
     req = _make_request()
@@ -646,7 +646,7 @@ async def test_httpx_read_timeout_category(monkeypatch):
     def fake_stream(**_kw):
         return _FakeTransportCtx(enter_exc=read_timeout)
 
-    monkeypatch.setattr(usr, "streamablehttp_client", fake_stream)
+    monkeypatch.setattr(usr, "streamable_http_client", fake_stream)
     monkeypatch.setattr(usr, "ClientSession", _FakeClientSessionCM)
 
     req = _make_request()
@@ -670,7 +670,7 @@ async def test_httpx_connect_error_with_refused_message(monkeypatch):
     def fake_stream(**_kw):
         return _FakeTransportCtx(enter_exc=connect_error)
 
-    monkeypatch.setattr(usr, "streamablehttp_client", fake_stream)
+    monkeypatch.setattr(usr, "streamable_http_client", fake_stream)
     monkeypatch.setattr(usr, "ClientSession", _FakeClientSessionCM)
 
     req = _make_request()
@@ -694,7 +694,7 @@ async def test_httpx_connect_error_generic(monkeypatch):
     def fake_stream(**_kw):
         return _FakeTransportCtx(enter_exc=connect_error)
 
-    monkeypatch.setattr(usr, "streamablehttp_client", fake_stream)
+    monkeypatch.setattr(usr, "streamable_http_client", fake_stream)
     monkeypatch.setattr(usr, "ClientSession", _FakeClientSessionCM)
 
     req = _make_request()
@@ -725,7 +725,7 @@ async def test_credential_sanitization_in_http_error(monkeypatch):
     def fake_stream(**_kw):
         return _FakeTransportCtx(enter_exc=http_error)
 
-    monkeypatch.setattr(usr, "streamablehttp_client", fake_stream)
+    monkeypatch.setattr(usr, "streamable_http_client", fake_stream)
     monkeypatch.setattr(usr, "ClientSession", _FakeClientSessionCM)
 
     req = _make_request()
@@ -759,7 +759,7 @@ async def test_credential_sanitization_with_bearer_token(monkeypatch):
     def fake_stream(**_kw):
         return _FakeTransportCtx(enter_exc=http_error)
 
-    monkeypatch.setattr(usr, "streamablehttp_client", fake_stream)
+    monkeypatch.setattr(usr, "streamable_http_client", fake_stream)
     monkeypatch.setattr(usr, "ClientSession", _FakeClientSessionCM)
 
     req = _make_request()
@@ -774,20 +774,18 @@ async def test_credential_sanitization_with_bearer_token(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_mcp_protocol_error_category(monkeypatch):
-    """McpError should be categorized as 'mcp_protocol_error'."""
+    """MCPError should be categorized as 'mcp_protocol_error'."""
     # First-Party
     from mcpgateway.services import upstream_session_registry as usr
-    from mcp import McpError
-    from mcp.types import ErrorData
+    from mcp import MCPError
 
-    # Create ErrorData and wrap it in McpError (MCP SDK pattern)
-    error_data = ErrorData(code=-32000, message="Session initialization failed: unsupported capability")
-    mcp_error = McpError(error_data)
+    # mcp 2.x MCPError carries the JSON-RPC code/message directly
+    mcp_error = MCPError(code=-32000, message="Session initialization failed: unsupported capability")
 
     def fake_stream(**_kw):
         return _FakeTransportCtx(enter_exc=mcp_error)
 
-    monkeypatch.setattr(usr, "streamablehttp_client", fake_stream)
+    monkeypatch.setattr(usr, "streamable_http_client", fake_stream)
     monkeypatch.setattr(usr, "ClientSession", _FakeClientSessionCM)
 
     req = _make_request()
@@ -796,7 +794,7 @@ async def test_mcp_protocol_error_category(monkeypatch):
 
     error_msg = str(exc_info.value)
     assert "[mcp_protocol_error]" in error_msg
-    assert "McpError" in error_msg
+    assert "MCPError" in error_msg
 
 
 @pytest.mark.asyncio
@@ -810,7 +808,7 @@ async def test_ssl_error_category_with_isinstance_check(monkeypatch):
     def fake_stream(**_kw):
         return _FakeTransportCtx(enter_exc=ssl_error)
 
-    monkeypatch.setattr(usr, "streamablehttp_client", fake_stream)
+    monkeypatch.setattr(usr, "streamable_http_client", fake_stream)
     monkeypatch.setattr(usr, "ClientSession", _FakeClientSessionCM)
 
     req = _make_request()
@@ -836,7 +834,7 @@ async def test_exception_group_with_multiple_exceptions_logged(monkeypatch, capl
     def fake_stream(**_kw):
         return _FakeTransportCtx(enter_exc=group)
 
-    monkeypatch.setattr(usr, "streamablehttp_client", fake_stream)
+    monkeypatch.setattr(usr, "streamable_http_client", fake_stream)
     monkeypatch.setattr(usr, "ClientSession", _FakeClientSessionCM)
 
     req = _make_request()

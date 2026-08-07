@@ -3557,9 +3557,8 @@ class TestGatewayRefresh:
         resource and a resource template that each carry only the deprecated flat key.
         """
         mock_session = AsyncMock()
-        mock_init = MagicMock()
-        mock_init.capabilities.model_dump.return_value = {"resources": {"subscribe": False}}
-        mock_session.initialize.return_value = mock_init
+        mock_session.server_capabilities = MagicMock()
+        mock_session.server_capabilities.model_dump = MagicMock(return_value={"resources": {"subscribe": False}})
 
         tool = MagicMock()
         tool.model_dump.return_value = {"name": "valid_tool", "description": "ok", "inputSchema": {}}
@@ -3584,22 +3583,15 @@ class TestGatewayRefresh:
             "_meta": {"ui/resourceUri": "ui://widgets/customer-record"},
         }
         mock_list_templates = MagicMock()
-        mock_list_templates.resourceTemplates = [template]
+        mock_list_templates.resource_templates = [template]
         mock_session.list_resource_templates.return_value = mock_list_templates
 
-        mock_session.list_prompts.return_value = MagicMock(prompts=[])
+        mock_proxy_cm = AsyncMock()
+        mock_proxy_cm.__aenter__.return_value = mock_session
+        mock_proxy_cm.__aexit__.return_value = None
 
-        mock_sse_cm = AsyncMock()
-        mock_sse_cm.__aenter__.return_value = (MagicMock(), MagicMock())
-        mock_sse_cm.__aexit__.return_value = None
-
-        mock_client_cm = AsyncMock()
-        mock_client_cm.__aenter__.return_value = mock_session
-        mock_client_cm.__aexit__.return_value = None
-
-        with patch("mcpgateway.services.gateway_service.sse_client", return_value=mock_sse_cm):
-            with patch("mcpgateway.services.gateway_service.ClientSession", return_value=mock_client_cm):
-                _capabilities, _tools, resources, _prompts, _errors = await gateway_service.connect_to_sse_server("https://test.example.com")
+        with patch("mcpgateway.services.gateway_service.mcp_proxy_client", return_value=mock_proxy_cm):
+            _capabilities, _tools, resources, _prompts, _errors = await gateway_service.connect_to_sse_server("https://test.example.com")
 
         by_name = {resource.name: resource for resource in resources}
         assert by_name["customer_data"].extension_metadata == {MCP_UI_EXTENSION: {"resourceUri": "ui://widgets/customer-search"}}

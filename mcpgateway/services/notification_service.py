@@ -52,11 +52,11 @@ import time
 from typing import Any, Awaitable, Callable, Dict, Optional, Set, TYPE_CHECKING
 
 # Third-Party
-from mcp.shared.session import RequestResponder
 import mcp_types
 
 # First-Party
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.utils.session_compat import RequestResponder
 
 if TYPE_CHECKING:
     # First-Party
