@@ -82,7 +82,7 @@ from mcpgateway.services.content_security import ContentSecurityService
 from mcpgateway.services.event_service import EventService
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.mcp_apps import is_app_visible_tool, is_model_visible_tool, mcp_apps_enabled, optional_extension_metadata, validate_extension_metadata
-from mcpgateway.services.metrics_buffer_service import get_metrics_buffer_service
+from mcpgateway.services.metrics_buffer_service import debug_invocation_context, get_metrics_buffer_service
 from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batches, pause_rollup_during_purge
 from mcpgateway.services.metrics_query_service import get_top_performers_combined
 from mcpgateway.services.oauth_manager import OAuthManager
@@ -1194,6 +1194,8 @@ class ToolService(BaseService):
             "display_name": tool.display_name,
             "gateway_id": str(tool.gateway_id) if tool.gateway_id else None,
             "grpc_service_id": str(tool.grpc_service_id) if tool.grpc_service_id else None,
+            "sql_table_id": str(tool.sql_table_id) if getattr(tool, "sql_table_id", None) else None,
+            "source_operation": getattr(tool, "source_operation", None),
             "enabled": bool(tool.enabled),
             "deprecated": bool(tool.deprecated),
             "reachable": bool(tool.reachable),
@@ -4734,6 +4736,7 @@ class ToolService(BaseService):
         context_table: Any,
         global_context: Any,
         meta_data: Optional[Dict[str, Any]],
+        timeout_override: Optional[float],
         *,
         skip_pre_invoke: bool,
         require_app_visible: bool,
@@ -4759,6 +4762,7 @@ class ToolService(BaseService):
             context_table: Plugin local context table.
             global_context: Plugin global context.
             meta_data: Optional metadata dictionary.
+            timeout_override: Optional caller-controlled timeout in seconds.
             skip_pre_invoke: Whether to skip pre-invoke hooks.
             require_app_visible: Whether the retried invocation must resolve an app-visible tool.
             require_model_visible: Whether the retried invocation must resolve a model-visible tool.
@@ -4789,6 +4793,7 @@ class ToolService(BaseService):
                 plugin_context_table=context_table,
                 plugin_global_context=global_context,
                 meta_data=meta_data,
+                timeout_override=timeout_override,
                 skip_pre_invoke=skip_pre_invoke,
                 require_app_visible=require_app_visible,
                 require_model_visible=require_model_visible,
@@ -4808,6 +4813,7 @@ class ToolService(BaseService):
         plugin_context_table: Optional[PluginContextTable] = None,
         plugin_global_context: Optional[GlobalContext] = None,
         meta_data: Optional[Dict[str, Any]] = None,
+        timeout_override: Optional[float] = None,
         skip_pre_invoke: bool = False,
         require_app_visible: bool = False,
         require_model_visible: bool = False,
@@ -4833,6 +4839,8 @@ class ToolService(BaseService):
             plugin_context_table: Optional plugin context table from previous hooks for cross-hook state sharing.
             plugin_global_context: Optional global context from middleware for consistency across hooks.
             meta_data: Optional metadata dictionary for additional context (e.g., request ID).
+            timeout_override: Optional timeout in seconds for trusted internal callers such as
+                the API debugger. Values must be greater than zero and no more than 600 seconds.
             skip_pre_invoke: When True, skip TOOL_PRE_INVOKE hooks (used by trusted Rust fallback path).
             require_app_visible: When True, deny execution unless the resolved tool is MCP Apps app-visible.
             require_model_visible: When True, deny execution unless the resolved tool is model-visible.
@@ -5081,6 +5089,8 @@ class ToolService(BaseService):
                 tool_oauth_config = runtime_tool_oauth_config
         tool_gateway_id = tool_payload.get("gateway_id")
         tool_grpc_service_id = tool_payload.get("grpc_service_id")
+        tool_sql_table_id = tool_payload.get("sql_table_id")
+        tool_source_operation = tool_payload.get("source_operation")
         tool_query_mapping = tool_payload.get("query_mapping") if isinstance(tool_payload.get("query_mapping"), dict) else None
         if tool_query_mapping is not None:
             tool_query_mapping = _validate_mapping_contents(tool_query_mapping, "query_mapping", name)
@@ -5092,6 +5102,10 @@ class ToolService(BaseService):
         # timeout_ms is stored in milliseconds, convert to seconds
         tool_timeout_ms = tool_payload.get("timeout_ms")
         effective_timeout = (tool_timeout_ms / 1000) if tool_timeout_ms else settings.tool_timeout
+        if timeout_override is not None:
+            if not 0 < timeout_override <= 600:
+                raise ToolInvocationError("timeout_override must be greater than zero and no more than 600 seconds")
+            effective_timeout = timeout_override
 
         # Save gateway existence as local boolean BEFORE db.close()
         # to avoid checking ORM object truthiness after session is closed
@@ -5299,7 +5313,9 @@ class ToolService(BaseService):
         start_time = time.monotonic()
         success = False
         error_message = None
+        metric_status_code: Optional[str] = None
         tool_result: Optional[ToolResult] = None
+        deferred_grpc_stream_callback: Optional[Callable[[Dict[str, Any]], Awaitable[None]]] = None
         tool_team_scope = format_trace_team_scope(token_teams)
 
         # Get trace_id from context for database span creation
@@ -5647,6 +5663,7 @@ class ToolService(BaseService):
                             finally:
                                 if pinned_rest_http_client is not None:
                                     await pinned_rest_http_client.aclose()
+                            metric_status_code = str(response.status_code)
                         except (asyncio.TimeoutError, httpx.TimeoutException):
                             rest_elapsed_ms = (time.time() - rest_start_time) * 1000
                             structured_logger.log(
@@ -6486,6 +6503,7 @@ class ToolService(BaseService):
                                 timeout=effective_timeout,
                             )
                             status_code = http_response.status_code
+                            metric_status_code = str(status_code)
                             response_data = http_response.json() if status_code == 200 else None
                             response_text = http_response.text
                         except (asyncio.TimeoutError, httpx.TimeoutException):
@@ -6532,14 +6550,35 @@ class ToolService(BaseService):
                     try:
                         # First-Party
                         # NOTE: lazy import to avoid circular dependency
-                        from mcpgateway.services.grpc_service import GrpcService as GrpcServiceManager  # pylint: disable=import-outside-toplevel
+                        from mcpgateway.services.grpc_service import grpc_status_context, GrpcService as GrpcServiceManager  # pylint: disable=import-outside-toplevel
 
                         grpc_manager = GrpcServiceManager()
-                        with fresh_db_session() as grpc_db:
-                            response = await asyncio.wait_for(
-                                grpc_manager.invoke_method(grpc_db, tool_grpc_service_id, tool_name_original, arguments or {}, timeout=effective_timeout),
-                                timeout=effective_timeout,
-                            )
+                        requested_stream_callback = (meta_data or {}).get("grpc_stream_callback")
+                        requested_stream_callback = requested_stream_callback if callable(requested_stream_callback) else None
+                        # TOOL_POST_INVOKE may redact or reject output. Buffer stream items
+                        # until that hook completes so SSE cannot bypass output governance.
+                        if requested_stream_callback and plugin_manager and plugin_manager.has_hooks_for(ToolHookType.TOOL_POST_INVOKE):
+                            deferred_grpc_stream_callback = requested_stream_callback
+                            requested_stream_callback = None
+                        grpc_status_token = grpc_status_context.set(None)
+                        try:
+                            with fresh_db_session() as grpc_db:
+                                response = await asyncio.wait_for(
+                                    grpc_manager.invoke_method(
+                                        grpc_db,
+                                        tool_grpc_service_id,
+                                        tool_name_original,
+                                        arguments or {},
+                                        timeout=effective_timeout,
+                                        metadata_override=(meta_data or {}).get("grpc_metadata") if isinstance((meta_data or {}).get("grpc_metadata"), dict) else None,
+                                        stream_callback=requested_stream_callback,
+                                        capture_call_metadata=bool((meta_data or {}).get("capture_grpc_call_metadata")),
+                                    ),
+                                    timeout=effective_timeout,
+                                )
+                        finally:
+                            metric_status_code = grpc_status_context.get()
+                            grpc_status_context.reset(grpc_status_token)
                         serialized = orjson.dumps(response, option=orjson.OPT_INDENT_2)
                         tool_result = ToolResult(content=[TextContent(type="text", text=serialized.decode())])
                         success = True
@@ -6549,6 +6588,7 @@ class ToolService(BaseService):
                         # PR #3202 review B7.
                         raise
                     except (asyncio.TimeoutError, ToolTimeoutError) as timeout_err:
+                        metric_status_code = metric_status_code or "DEADLINE_EXCEEDED"
                         logger.warning("gRPC tool invocation timed out for %s after %ss", tool_name_original, effective_timeout, exc_info=True)
                         if plugin_manager:
                             await self._run_timeout_post_invoke(name, effective_timeout, global_context, context_table, plugin_manager, ctl_acc=_ctl_acc)
@@ -6556,6 +6596,35 @@ class ToolService(BaseService):
                     except Exception as grpc_err:
                         logger.error("gRPC tool invocation failed for %s: %s", tool_name_original, grpc_err, exc_info=True)
                         tool_result = ToolResult(content=[TextContent(type="text", text=f"gRPC invocation error: {grpc_err}")], is_error=True)
+                elif tool_integration_type == "SQL" and tool_sql_table_id and tool_source_operation:
+                    # REST and MCP SQL calls share this in-process execution path,
+                    # including the same visibility, plugin, audit, and metrics chain.
+                    try:
+                        # First-Party
+                        from mcpgateway.services.sql_data_service import SQLDataError, SQLDataService  # pylint: disable=import-outside-toplevel
+
+                        def _invoke_sql():
+                            """Execute governed SQL with an independent worker-thread session."""
+                            with fresh_db_session() as sql_db:
+                                return SQLDataService.execute(sql_db, tool_sql_table_id, tool_source_operation, arguments or {}, timeout=effective_timeout)
+
+                        # SQLDataService applies the deadline inside the database driver. Do not
+                        # cancel this worker thread from asyncio: cancellation could return a
+                        # timeout while a write transaction continues and commits in the background.
+                        response = await asyncio.to_thread(_invoke_sql)
+                        serialized = orjson.dumps(response, option=orjson.OPT_INDENT_2, default=str)
+                        tool_result = ToolResult(content=[TextContent(type="text", text=serialized.decode())])
+                        success = True
+                    except asyncio.CancelledError:
+                        raise
+                    except SQLDataError as sql_err:
+                        error_message = str(sql_err)
+                        logger.warning("Governed SQL tool invocation rejected for %s: %s", tool_name_original, sql_err)
+                        tool_result = ToolResult(content=[TextContent(type="text", text=f"SQL invocation error: {sql_err}")], is_error=True)
+                    except Exception as sql_err:
+                        error_message = "SQL database operation failed"
+                        logger.error("SQL tool invocation failed for %s (%s)", tool_name_original, type(sql_err).__name__)
+                        tool_result = ToolResult(content=[TextContent(type="text", text="SQL invocation error: database operation failed")], is_error=True)
                 else:
                     tool_result = ToolResult(content=[TextContent(type="text", text="Invalid tool type")], is_error=True)
 
@@ -6617,11 +6686,26 @@ class ToolService(BaseService):
                             context_table,
                             global_context,
                             meta_data,
+                            timeout_override,
                             skip_pre_invoke=skip_pre_invoke,
                             require_app_visible=require_app_visible,
                             require_model_visible=require_model_visible,
                             path_label="success",
                         )
+
+                    if deferred_grpc_stream_callback and tool_result and not tool_result.is_error:
+                        for content_block in tool_result.content:
+                            text_value = getattr(content_block, "text", None)
+                            if not isinstance(text_value, str):
+                                continue
+                            try:
+                                streamed_result = orjson.loads(text_value)
+                            except orjson.JSONDecodeError:
+                                continue
+                            if isinstance(streamed_result, dict) and isinstance(streamed_result.get("items"), list):
+                                for stream_item in streamed_result["items"]:
+                                    if isinstance(stream_item, dict):
+                                        await deferred_grpc_stream_callback(stream_item)
 
                 # Emit CPEX control-execution telemetry for this invocation (best-effort).
                 # Placed here on the normal-return path so both pre and post records are
@@ -6674,6 +6758,7 @@ class ToolService(BaseService):
                         context_table,
                         global_context,
                         meta_data,
+                        timeout_override,
                         skip_pre_invoke=skip_pre_invoke,
                         require_app_visible=require_app_visible,
                         require_model_visible=require_model_visible,
@@ -6741,6 +6826,7 @@ class ToolService(BaseService):
                         context_table,
                         global_context,
                         meta_data,
+                        timeout_override,
                         skip_pre_invoke=skip_pre_invoke,
                         require_app_visible=require_app_visible,
                         require_model_visible=require_model_visible,
@@ -6788,9 +6874,33 @@ class ToolService(BaseService):
                             start_time=start_time,
                             success=success,
                             error_message=error_message,
+                            protocol=tool_integration_type,
+                            status_code=metric_status_code or ("OK" if success else "ERROR"),
+                            request_bytes=len(orjson.dumps(arguments or {}, default=str)),
+                            response_bytes=len(orjson.dumps(tool_result.model_dump(by_alias=True), default=str)) if tool_result else 0,
+                            trace_id=current_trace_id.get(),
                         )
                     except Exception as metric_error:
                         logger.warning("Failed to record tool metric: %s", metric_error)
+
+                if tool_integration_type == "SQL" and tool_sql_table_id:
+                    audit_trail.log_action(
+                        user_id=app_user_email or user_email or "system",
+                        user_email=app_user_email or user_email,
+                        action="execute_sql_table",
+                        resource_type="sql_table",
+                        resource_id=tool_sql_table_id,
+                        resource_name=tool_name_original,
+                        team_id=_tool_team_id,
+                        success=success,
+                        error_message=error_message if not success else None,
+                        context={
+                            "tool_id": tool_id,
+                            "operation": tool_source_operation,
+                            "protocol": "SQL",
+                            "debug": debug_invocation_context.get(),
+                        },
+                    )
 
                 # Record server metrics ONLY when invoked through a specific virtual server
                 # When server_id is provided, it means the tool was called via a virtual server endpoint

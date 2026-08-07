@@ -383,6 +383,26 @@
           </div>
           {% endif %}
 
+          {% if (sql_api_enabled and ('sql.tables.read' in user_permissions or is_admin)) or (api_debug_enabled and ('tools.read' in user_permissions or is_admin)) %}
+          <div class="sidebar-section mt-4" x-show="!sidebarCollapsed">
+            <span class="px-3 text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">API Operations</span>
+          </div>
+          <div class="space-y-1 px-2">
+            {% if sql_api_enabled and ('sql.tables.read' in user_permissions or is_admin) %}
+            <a href="#sql-data" id="tab-sql-data" data-testid="sql-data-tab" class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors" :class="{ 'justify-center': sidebarCollapsed }" data-action-click="showTab" data-arg0="sql-data">
+              <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">🗄️</span>
+              <span x-show="!sidebarCollapsed">SQL Data</span>
+            </a>
+            {% endif %}
+            {% if api_debug_enabled and ('tools.read' in user_permissions or is_admin) %}
+            <a href="#api-debug" id="tab-api-debug" data-testid="api-debug-tab" class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors" :class="{ 'justify-center': sidebarCollapsed }" data-action-click="showTab" data-arg0="api-debug">
+              <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">🧪</span>
+              <span x-show="!sidebarCollapsed">API Debugger</span>
+            </a>
+            {% endif %}
+          </div>
+          {% endif %}
+
           <!-- LLM Section -->
           {% if llmchat_enabled or 'settings' not in hidden_sections %}
           <div class="sidebar-section mt-4" x-show="!sidebarCollapsed">
@@ -7517,6 +7537,105 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
       </div>
       {% endif %}
 
+      {% if sql_api_enabled and ('sql.tables.read' in user_permissions or is_admin) %}
+      <div id="sql-data-panel" class="tab-panel hidden">
+        <div class="flex justify-between items-center mb-4">
+          <div>
+            <h2 class="text-2xl font-bold dark:text-gray-200">SQL Data Catalog</h2>
+            <p class="text-sm text-gray-600 dark:text-gray-400">Discover external tables and expose only approved operations.</p>
+          </div>
+          <button id="sql-refresh-catalog" type="button" class="px-3 py-2 text-sm rounded-md bg-indigo-600 text-white hover:bg-indigo-700">Refresh</button>
+        </div>
+        {% if is_admin %}
+        <form id="sql-source-form" class="bg-white shadow rounded-lg p-6 mb-6 dark:bg-gray-800">
+          <h3 class="text-lg font-medium text-gray-900 dark:text-gray-200 mb-4">Add encrypted data source</h3>
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <input id="sql-source-name" name="name" required placeholder="Source name" class="px-3 py-2 rounded-md border dark:bg-gray-900 dark:border-gray-700 dark:text-gray-200" />
+            <input id="sql-source-url" name="connection_url" required type="password" autocomplete="off" placeholder="postgresql+psycopg://user@host/database" class="px-3 py-2 rounded-md border dark:bg-gray-900 dark:border-gray-700 dark:text-gray-200" />
+          </div>
+          <button type="submit" class="mt-4 px-4 py-2 rounded-md bg-indigo-600 text-white hover:bg-indigo-700">Create source</button>
+          <p id="sql-source-status" class="mt-2 text-sm text-gray-600 dark:text-gray-400" aria-live="polite"></p>
+        </form>
+        <div class="bg-white shadow rounded-lg p-6 mb-6 dark:bg-gray-800">
+          <h3 class="text-lg font-medium text-gray-900 dark:text-gray-200 mb-4">Sources</h3>
+          <div id="sql-source-list" class="space-y-3"></div>
+        </div>
+        {% endif %}
+        <div class="bg-white shadow rounded-lg p-6 mb-6 dark:bg-gray-800">
+          <h3 class="text-lg font-medium text-gray-900 dark:text-gray-200 mb-4">Tables and operation policy</h3>
+          <div id="sql-table-list" class="space-y-3"></div>
+        </div>
+        <div class="bg-white shadow rounded-lg p-6 dark:bg-gray-800">
+          <h3 class="text-lg font-medium text-gray-900 dark:text-gray-200 mb-4">Single-hop relations</h3>
+          <div id="sql-relation-list" class="space-y-3"></div>
+        </div>
+      </div>
+      {% endif %}
+
+      {% if api_debug_enabled and ('tools.read' in user_permissions or is_admin) %}
+      <div id="api-debug-panel" class="tab-panel hidden">
+        <div class="mb-4">
+          <h2 class="text-2xl font-bold dark:text-gray-200">Unified API Debugger</h2>
+          <p class="text-sm text-gray-600 dark:text-gray-400">Invoke visible REST, MCP, gRPC, and SQL tools through the production ToolService pipeline.</p>
+        </div>
+        <div class="grid grid-cols-1 xl:grid-cols-2 gap-6">
+          <form id="api-debug-form" class="bg-white shadow rounded-lg p-6 dark:bg-gray-800 space-y-4">
+            <div>
+              <label for="api-debug-tool" class="block text-sm font-medium dark:text-gray-300">Tool</label>
+              <select id="api-debug-tool" required class="mt-1 px-3 py-2 w-full rounded-md border dark:bg-gray-900 dark:border-gray-700 dark:text-gray-200"></select>
+            </div>
+            <pre id="api-debug-schema" class="p-3 max-h-48 overflow-auto rounded bg-gray-100 dark:bg-gray-900 text-xs dark:text-gray-300"></pre>
+            <div class="space-y-2">
+              <div class="flex items-center justify-between">
+                <span class="text-sm font-medium dark:text-gray-300">Generated parameters</span>
+                <button id="api-debug-apply-generated" type="button" class="px-2 py-1 text-xs rounded bg-indigo-100 text-indigo-800">Apply to JSON</button>
+              </div>
+              <div id="api-debug-generated-fields" class="p-3 max-h-72 overflow-auto rounded border border-gray-200 dark:border-gray-700 space-y-3"></div>
+            </div>
+            <div>
+              <label for="api-debug-arguments" class="block text-sm font-medium dark:text-gray-300">Arguments JSON</label>
+              <textarea id="api-debug-arguments" rows="8" class="mt-1 px-3 py-2 w-full font-mono text-sm rounded-md border dark:bg-gray-900 dark:border-gray-700 dark:text-gray-200">{}</textarea>
+            </div>
+            <div>
+              <label for="api-debug-headers" class="block text-sm font-medium dark:text-gray-300">HTTP headers JSON</label>
+              <textarea id="api-debug-headers" rows="3" class="mt-1 px-3 py-2 w-full font-mono text-sm rounded-md border dark:bg-gray-900 dark:border-gray-700 dark:text-gray-200">{}</textarea>
+            </div>
+            <div>
+              <label for="api-debug-metadata" class="block text-sm font-medium dark:text-gray-300">gRPC metadata JSON</label>
+              <textarea id="api-debug-metadata" rows="3" class="mt-1 px-3 py-2 w-full font-mono text-sm rounded-md border dark:bg-gray-900 dark:border-gray-700 dark:text-gray-200">{}</textarea>
+            </div>
+            <div>
+              <label for="api-debug-deadline" class="block text-sm font-medium dark:text-gray-300">Deadline (seconds)</label>
+              <input id="api-debug-deadline" type="number" min="0.1" max="600" step="0.1" value="30" class="mt-1 px-3 py-2 rounded-md border dark:bg-gray-900 dark:border-gray-700 dark:text-gray-200" />
+            </div>
+            <div class="flex gap-2">
+              <button type="submit" class="px-4 py-2 rounded-md bg-indigo-600 text-white hover:bg-indigo-700">Invoke</button>
+              <button id="api-debug-stream" type="button" class="px-4 py-2 rounded-md bg-green-100 text-green-800">Stream</button>
+              <button id="api-debug-repeat" type="button" class="px-4 py-2 rounded-md bg-gray-200 dark:bg-gray-700 dark:text-gray-200">Repeat</button>
+            </div>
+          </form>
+          <div class="space-y-6">
+            <div class="bg-white shadow rounded-lg p-6 dark:bg-gray-800">
+              <h3 class="text-lg font-medium dark:text-gray-200">Response</h3>
+              <div id="api-debug-meta" class="my-2 text-sm text-gray-600 dark:text-gray-400"></div>
+              <pre id="api-debug-output" class="p-3 min-h-48 max-h-[32rem] overflow-auto rounded bg-gray-100 dark:bg-gray-900 text-xs dark:text-gray-300"></pre>
+            </div>
+            <div class="bg-white shadow rounded-lg p-6 dark:bg-gray-800">
+              <h3 class="text-lg font-medium dark:text-gray-200">Last 24 hours</h3>
+              <pre id="api-debug-stats" class="mt-2 p-3 overflow-auto rounded bg-gray-100 dark:bg-gray-900 text-xs dark:text-gray-300"></pre>
+            </div>
+            <div class="bg-white shadow rounded-lg p-6 dark:bg-gray-800">
+              <div class="flex items-center justify-between mb-2">
+                <h3 class="text-lg font-medium dark:text-gray-200">History</h3>
+                <button id="api-debug-load-history" type="button" class="px-2 py-1 text-xs rounded bg-gray-200 dark:bg-gray-700 dark:text-gray-200">Refresh</button>
+              </div>
+              <div id="api-debug-history-list" class="space-y-2 max-h-64 overflow-auto"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      {% endif %}
+
       <!-- gRPC Services Panel -->
       {% if grpc_enabled and 'grpc-services' not in hidden_sections %}
       <div id="grpc-services-panel" class="tab-panel hidden">
@@ -7617,6 +7736,30 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                   class="ml-2 block text-sm text-gray-900 dark:text-gray-400"
                   >Enable Server Reflection</label
                 >
+              </div>
+
+              <div>
+                <label for="grpc-discovery-mode" class="block text-sm font-medium text-gray-700 dark:text-gray-400">Discovery mode</label>
+                <select id="grpc-discovery-mode" name="discovery_mode" class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300">
+                  <option value="auto">Auto (reflection, then artifact)</option>
+                  <option value="reflection">Reflection only</option>
+                  <option value="artifact">Uploaded artifact only</option>
+                </select>
+              </div>
+
+              <div class="flex items-center">
+                <input type="checkbox" id="grpc-health-check-enabled" name="health_check_enabled" checked class="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded" />
+                <label for="grpc-health-check-enabled" class="ml-2 block text-sm text-gray-900 dark:text-gray-400">Enable health monitoring</label>
+              </div>
+
+              <div>
+                <label for="grpc-health-check-interval" class="block text-sm font-medium text-gray-700 dark:text-gray-400">Health interval (seconds)</label>
+                <input type="number" id="grpc-health-check-interval" name="health_check_interval" min="10" max="3600" value="60" class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300" />
+              </div>
+
+              <div>
+                <label for="grpc-health-check-timeout" class="block text-sm font-medium text-gray-700 dark:text-gray-400">Health timeout (seconds)</label>
+                <input type="number" id="grpc-health-check-timeout" name="health_check_timeout" min="1" max="60" value="5" class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300" />
               </div>
 
               <!-- TLS Certificate Path (hidden by default) -->
@@ -7748,13 +7891,26 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                         TLS
                       </span>
                       {% endif %}
+                      <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium {% if service.health_status == 'healthy' %}bg-green-100 text-green-800{% elif service.health_status == 'unhealthy' %}bg-red-100 text-red-800{% else %}bg-yellow-100 text-yellow-800{% endif %}">
+                        Health: {{ service.health_status }}
+                      </span>
+                      {% if service.schema_drift %}
+                      <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-orange-100 text-orange-800">Schema drift</span>
+                      {% endif %}
                     </div>
                     <div class="mt-2 text-sm text-gray-600 dark:text-gray-400">
                       <p><strong>Target:</strong> {{ service.target }}</p>
                       <p><strong>Services:</strong> {{ service.service_count }} | <strong>Methods:</strong> {{ service.method_count }}</p>
+                      <p><strong>Discovery:</strong> {{ service.discovery_mode }} | <strong>Failures:</strong> {{ service.consecutive_failures }}</p>
+                      {% if service.active_schema_hash %}<p><strong>Schema:</strong> {{ service.active_schema_hash[:12] }}</p>{% endif %}
+                      {% if service.last_health_check %}<p><strong>Last health check:</strong> {{ service.last_health_check }}</p>{% endif %}
                       {% if service.last_reflection %}
                       <p><strong>Last Reflection:</strong> {{ service.last_reflection }}</p>
                       {% endif %}
+                      <details class="mt-2">
+                        <summary class="cursor-pointer font-medium">24-hour calls, latency, statuses and trend</summary>
+                        <pre class="grpc-metrics-summary mt-2 p-2 max-h-48 overflow-auto rounded bg-gray-100 dark:bg-gray-900 text-xs" data-service-id="{{ service.id }}">Loading…</pre>
+                      </details>
                     </div>
                   </div>
                   <div class="flex flex-col space-y-2 ml-4">
@@ -7780,6 +7936,12 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                     >
                       View Methods
                     </button>
+                    <button type="button" class="grpc-health-check px-3 py-1 text-sm font-medium bg-green-100 text-green-800 rounded-md hover:bg-green-200" data-service-id="{{ service.id }}">Check Health</button>
+                    <form class="grpc-schema-upload space-y-1" data-service-id="{{ service.id }}">
+                      <input type="file" name="artifact" required accept=".proto,.zip,.protoset,.pb,.bin" class="block w-48 text-xs text-gray-600 dark:text-gray-300" />
+                      <label class="block text-xs text-gray-600 dark:text-gray-300"><input type="checkbox" name="activate" checked /> Activate</label>
+                      <button type="submit" class="px-3 py-1 text-sm font-medium bg-indigo-100 text-indigo-800 rounded-md hover:bg-indigo-200">Import Schema</button>
+                    </form>
                     <form action="{{ root_path }}/admin/grpc/{{ service.id }}/delete" method="POST" class="inline" data-action-submit="confirmAction" data-arg0="Are you sure you want to delete this gRPC service?" data-prevent-default="false">
                       <button
                         type="submit"

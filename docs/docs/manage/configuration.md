@@ -206,6 +206,31 @@ For detailed guidance on embedding and section customization, see [Admin UI Cust
     [MCP Apps](../architecture/mcp-apps.md) for the security model and
     AppBridge flow.
 
+### gRPC, Proto Discovery, SQL Data, and Debugging
+
+| Setting | Description | Default |
+| --- | --- | --- |
+| `MCPGATEWAY_GRPC_ENABLED` | Enable registered gRPC services and gRPC-to-MCP tools | `false` |
+| `MCPGATEWAY_GRPC_HEALTH_ENABLED` | Start standard gRPC health monitoring when gRPC is enabled | `true` |
+| `MCPGATEWAY_GRPC_HEALTH_INTERVAL` | Default health interval in seconds | `60` |
+| `MCPGATEWAY_GRPC_HEALTH_TIMEOUT` | Default health deadline in seconds | `5` |
+| `MCPGATEWAY_GRPC_HEALTH_FAILURE_THRESHOLD` | Consecutive failures before unhealthy | `3` |
+| `MCPGATEWAY_PROTO_SCAN_ENABLED` | Scan allowed roots for `grpc-service.yaml` manifests | `false` |
+| `MCPGATEWAY_PROTO_SCAN_ROOTS` | CSV/JSON list of allowed scan roots | `[]` |
+| `MCPGATEWAY_PROTO_SCAN_INTERVAL` | Primary-worker scan interval in seconds | `60` |
+| `MCPGATEWAY_SQL_API_ENABLED` | Enable encrypted external SQL sources, discovery, and data tools | `false` |
+| `MCPGATEWAY_SQL_DEFAULT_LIMIT` | Default rows returned by a query | `100` |
+| `MCPGATEWAY_SQL_MAX_LIMIT` | Maximum rows returned by a query | `1000` |
+| `MCPGATEWAY_SQL_TIMEOUT` | External connection/statement timeout in seconds | `30` |
+| `MCPGATEWAY_SQL_MAX_RESPONSE_BYTES` | Maximum serialized SQL response size | `4194304` |
+| `MCPGATEWAY_SQL_MAX_INCLUDES` | Maximum enabled one-hop relations per query | `5` |
+| `MCPGATEWAY_SQLITE_ALLOWED_ROOTS` | Allowed file roots for external SQLite; empty rejects file-backed SQLite | `[]` |
+| `MCPGATEWAY_API_DEBUG_ENABLED` | Enable the unified REST/MCP/gRPC/SQL debugger | `false` |
+| `MCPGATEWAY_API_DEBUG_RETENTION_DAYS` | Per-user redacted debug-history retention | `7` |
+| `MCPGATEWAY_API_DEBUG_MAX_HISTORY` | Maximum retained debugger entries per user | `100` |
+
+The SQL and debugger features are intentionally opt-in. External connection strings and stored gRPC metadata are encrypted with `AUTH_ENCRYPTION_SECRET`; API responses and logs expose only masked values. Proto scanning and file-backed SQLite both fail closed until explicit allowed roots are configured.
+
 ### A2A (Agent-to-Agent) Features
 
 | Setting                        | Description                            | Default | Options |

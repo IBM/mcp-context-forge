@@ -24,10 +24,12 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def _table_names(bind) -> set[str]:
+    """Return all table names visible to the migration connection."""
     return set(sa.inspect(bind).get_table_names())
 
 
 def _column_names(bind, table_name: str) -> set[str]:
+    """Return reflected column names for one migration table."""
     return {column["name"] for column in sa.inspect(bind).get_columns(table_name)}
 
 

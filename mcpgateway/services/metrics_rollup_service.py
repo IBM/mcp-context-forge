@@ -38,6 +38,8 @@ from mcpgateway.db import (
     A2AAgentMetric,
     A2AAgentMetricsHourly,
     fresh_db_session,
+    GrpcMetricsHourly,
+    GrpcService,
     Prompt,
     PromptMetric,
     PromptMetricsHourly,
@@ -505,6 +507,14 @@ class MetricsRollupService:
                             rollups_updated += updated
                             records_aggregated += agg.total_count
 
+                        if table_name == "tool_metrics":
+                            try:
+                                self._rollup_grpc_hour(db, current, hour_end)
+                            except Exception as grpc_rollup_error:  # pylint: disable=broad-except
+                                # The protocol-specific summary is best effort and must not
+                                # prevent the existing generic hourly rollup from advancing.
+                                logger.warning("Failed to build gRPC hourly rollup for %s: %s", current, grpc_rollup_error, exc_info=True)
+
                         hours_processed += 1
 
                         # Delete raw metrics if configured
@@ -537,6 +547,57 @@ class MetricsRollupService:
             duration_seconds=duration,
             error=error_msg,
         )
+
+    def _rollup_grpc_hour(self, db: Session, hour_start: datetime, hour_end: datetime) -> None:
+        """Build service/method/status gRPC rollups before raw tool metrics are deleted."""
+        rows = db.execute(
+            select(
+                Tool.grpc_service_id,
+                GrpcService.name,
+                Tool.original_name,
+                ToolMetric.response_time,
+                ToolMetric.is_success,
+                ToolMetric.status_code,
+                ToolMetric.request_bytes,
+                ToolMetric.response_bytes,
+            )
+            .join(Tool, Tool.id == ToolMetric.tool_id)
+            .join(GrpcService, GrpcService.id == Tool.grpc_service_id)
+            .where(
+                Tool.integration_type == "gRPC",
+                ToolMetric.timestamp >= hour_start,
+                ToolMetric.timestamp < hour_end,
+            )
+        ).all()
+        grouped: Dict[Tuple[str, str, str], list] = {}
+        for row in rows:
+            grouped.setdefault((row.grpc_service_id, row.name, row.original_name), []).append(row)
+        for (service_id, service_name, method_name), samples in grouped.items():
+            response_times = sorted(float(sample.response_time) for sample in samples)
+            success_count = sum(1 for sample in samples if sample.is_success)
+            status_counts: Dict[str, int] = {}
+            for sample in samples:
+                status = sample.status_code or ("OK" if sample.is_success else "ERROR")
+                status_counts[status] = status_counts.get(status, 0) + 1
+            rollup = db.execute(
+                select(GrpcMetricsHourly).where(
+                    GrpcMetricsHourly.grpc_service_id == service_id,
+                    GrpcMetricsHourly.method_name == method_name,
+                    GrpcMetricsHourly.hour_start == hour_start,
+                )
+            ).scalar_one_or_none()
+            if rollup is None:
+                rollup = GrpcMetricsHourly(grpc_service_id=service_id, service_name=service_name, method_name=method_name, hour_start=hour_start)
+                db.add(rollup)
+            rollup.total_count = len(samples)
+            rollup.success_count = success_count
+            rollup.failure_count = len(samples) - success_count
+            rollup.status_counts = status_counts
+            rollup.p50_response_time = self._percentile(response_times, 50)
+            rollup.p95_response_time = self._percentile(response_times, 95)
+            rollup.p99_response_time = self._percentile(response_times, 99)
+            rollup.request_bytes = sum(sample.request_bytes or 0 for sample in samples)
+            rollup.response_bytes = sum(sample.response_bytes or 0 for sample in samples)
 
     def _aggregate_hour(
         self,

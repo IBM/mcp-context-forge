@@ -680,6 +680,51 @@ class TestRollupInternals:
         assert result.rollups_created == 1
         assert result.raw_deleted == 2
 
+    def test_rollup_grpc_hour_groups_status_latency_and_bytes(self):
+        service = MetricsRollupService()
+        rows = [
+            SimpleNamespace(
+                grpc_service_id="grpc-1",
+                name="Greeter",
+                original_name="demo.Greeter.SayHello",
+                response_time=0.1,
+                is_success=True,
+                status_code="OK",
+                request_bytes=10,
+                response_bytes=20,
+            ),
+            SimpleNamespace(
+                grpc_service_id="grpc-1",
+                name="Greeter",
+                original_name="demo.Greeter.SayHello",
+                response_time=0.3,
+                is_success=False,
+                status_code="UNAVAILABLE",
+                request_bytes=None,
+                response_bytes=5,
+            ),
+        ]
+        db = MagicMock()
+        db.execute.side_effect = [
+            SimpleNamespace(all=lambda: rows),
+            SimpleNamespace(scalar_one_or_none=lambda: None),
+        ]
+        hour_start = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
+
+        service._rollup_grpc_hour(db, hour_start, hour_start + timedelta(hours=1))
+
+        db.add.assert_called_once()
+        rollup = db.add.call_args.args[0]
+        assert rollup.grpc_service_id == "grpc-1"
+        assert rollup.method_name == "demo.Greeter.SayHello"
+        assert rollup.total_count == 2
+        assert rollup.success_count == 1
+        assert rollup.failure_count == 1
+        assert rollup.status_counts == {"OK": 1, "UNAVAILABLE": 1}
+        assert rollup.p50_response_time == pytest.approx(0.2)
+        assert rollup.request_bytes == 10
+        assert rollup.response_bytes == 25
+
     def test_upsert_rollup_sqlite_path(self, monkeypatch):
         service = MetricsRollupService()
 

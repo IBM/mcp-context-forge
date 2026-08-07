@@ -3,7 +3,7 @@
 !!! warning "Experimental Feature"
     gRPC support is an **experimental opt-in feature** that is disabled by default. It requires additional dependencies and explicit enablement.
 
-ContextForge supports automatic translation of gRPC services into MCP tools via the gRPC Server Reflection Protocol. This enables seamless integration of gRPC microservices into your MCP ecosystem without manual schema definition.
+ContextForge translates reflected or imported gRPC descriptors into governed MCP tools. Services that do not expose reflection can import a `.proto`, safe ZIP, or binary `FileDescriptorSet`; every normalized descriptor is stored as an immutable SHA-256 version.
 
 ## Installation & Setup
 
@@ -24,10 +24,11 @@ mcp-contextforge-gateway[grpc]>=0.9.0
 
 This installs the following packages:
 
-- `grpcio>=1.62.0,<1.68.0`
-- `grpcio-reflection>=1.62.0,<1.68.0`
-- `grpcio-tools>=1.62.0,<1.68.0`
-- `protobuf>=4.25.0`
+- `grpcio>=1.81.1`
+- `grpcio-reflection>=1.81.1`
+- `grpcio-tools>=1.81.1`
+- `grpcio-health-checking>=1.81.1`
+- `protobuf>=6.33.6`
 
 ### 2. Enable the Feature
 
@@ -66,18 +67,20 @@ Check that gRPC support is enabled:
 
 1. Navigate to the Admin UI at `http://localhost:4444/admin`
 2. Look for the **🔌 gRPC Services** tab (only visible when enabled)
-3. Or check the API: `curl http://localhost:4444/grpc` (should not return 404)
+3. Or check the API: `curl http://localhost:4444/admin/grpc` (should not return 404)
 
 ## Overview
 
 The gRPC-to-MCP translation feature allows you to:
 
 - **Automatically discover** gRPC services via server reflection
+- **Import and version** `.proto`, ZIP, and protoset artifacts when reflection is unavailable
 - **Expose gRPC methods** as MCP tools with zero configuration
 - **Translate protocols** between gRPC/Protobuf and MCP/JSON
 - **Manage services** through the Admin UI or REST API
 - **Support TLS** for secure gRPC connections
 - **Track metadata** with comprehensive audit logging
+- **Monitor health** through `grpc.health.v1.Health/Check` with channel-readiness fallback on `UNIMPLEMENTED`
 
 ## Quick Start
 
@@ -126,7 +129,7 @@ python3 -m mcpgateway.translate \
 
 ```bash
 # Register a gRPC service
-curl -X POST http://localhost:4444/grpc \
+curl -X POST http://localhost:4444/admin/grpc \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer YOUR_JWT_TOKEN" \
   -d '{
@@ -134,6 +137,7 @@ curl -X POST http://localhost:4444/grpc \
     "target": "payments.example.com:50051",
     "description": "Payment processing gRPC service",
     "reflection_enabled": true,
+    "discovery_mode": "auto",
     "tls_enabled": true,
     "tls_cert_path": "/etc/certs/payment-service.pem",
     "tags": ["payments", "financial"]
@@ -196,6 +200,17 @@ MCPGATEWAY_GRPC_TIMEOUT=30
 
 # Enable TLS by default
 MCPGATEWAY_GRPC_TLS_ENABLED=false
+
+# Standards-based health checks
+MCPGATEWAY_GRPC_HEALTH_ENABLED=true
+MCPGATEWAY_GRPC_HEALTH_INTERVAL=60
+MCPGATEWAY_GRPC_HEALTH_TIMEOUT=5
+MCPGATEWAY_GRPC_HEALTH_FAILURE_THRESHOLD=3
+
+# Optional primary-worker manifest scanning
+MCPGATEWAY_PROTO_SCAN_ENABLED=false
+MCPGATEWAY_PROTO_SCAN_ROOTS='["/srv/contextforge/proto-services"]'
+MCPGATEWAY_PROTO_SCAN_INTERVAL=60
 ```
 
 ### Service Configuration
@@ -208,10 +223,14 @@ Each gRPC service supports the following configuration:
 | `target` | string | Yes | gRPC server address (host:port) |
 | `description` | string | No | Human-readable description |
 | `reflection_enabled` | boolean | No | Enable automatic discovery (default: true) |
+| `discovery_mode` | string | No | `auto`, `reflection`, or `artifact` |
 | `tls_enabled` | boolean | No | Use TLS connection (default: false) |
 | `tls_cert_path` | string | No | Path to TLS certificate |
 | `tls_key_path` | string | No | Path to TLS private key |
 | `grpc_metadata` | object | No | gRPC metadata headers |
+| `health_check_enabled` | boolean | No | Periodically check service health |
+| `health_check_interval` | integer | No | Check interval in seconds |
+| `health_check_timeout` | integer | No | Per-check timeout in seconds |
 | `tags` | array | No | Tags for categorization |
 | `team_id` | string | No | Team ownership |
 | `visibility` | string | No | public/private/team (default: public) |
@@ -227,6 +246,12 @@ The gRPC Services tab displays:
 - **Configuration**: TLS enabled, Reflection enabled
 - **Discovery stats**: Number of services and methods discovered
 - **Last reflection time**: When the service was last introspected
+- **Active schema and drift**: Selected descriptor hash and reflection mismatch state
+- **Health**: Current state, consecutive failures, latest sample, and latency
+
+### Streaming Boundaries
+
+Unary methods return one JSON object. Server-streaming methods are emitted through the debugger SSE endpoint; MCP invocation aggregates at most 100 messages within the configured deadline and returns `{ "items": [...], "truncated": true|false }`. Client-streaming and bidirectional methods remain visible in the catalog but do not generate executable MCP tools.
 
 ### Re-Reflect a Service
 
@@ -266,7 +291,7 @@ Click **Delete** to permanently remove a service:
 ### List gRPC Services
 
 ```bash
-GET /grpc?include_inactive=false&team_id=TEAM_ID
+GET /admin/grpc?include_inactive=false&team_id=TEAM_ID
 ```
 
 **Response:**
@@ -288,13 +313,13 @@ GET /grpc?include_inactive=false&team_id=TEAM_ID
 ### Get Service Details
 
 ```bash
-GET /grpc/{service_id}
+GET /admin/grpc/{service_id}
 ```
 
 ### Create Service
 
 ```bash
-POST /grpc
+POST /admin/grpc
 Content-Type: application/json
 
 {
@@ -304,10 +329,58 @@ Content-Type: application/json
 }
 ```
 
+`discovery_mode` accepts `auto`, `reflection`, or `artifact`. `auto` tries reflection first and uses the active artifact if reflection fails. If a reflected schema differs from an administrator-uploaded active artifact, ContextForge reports schema drift and does not silently replace the uploaded version.
+
+### 4. Import a Schema Without Reflection
+
+```bash
+curl -X POST http://localhost:4444/admin/grpc/SERVICE_ID/schemas/import \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -F "artifact=@service-protos.zip" \
+  -F "activate=true"
+
+curl -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  http://localhost:4444/admin/grpc/SERVICE_ID/schemas
+```
+
+Activating a version resynchronizes generated tools while preserving their IDs, custom names, descriptions, virtual-server relationships, and historical metrics. Methods removed from the active schema are disabled and marked deprecated rather than deleted.
+
+### 5. Scan Explicitly Allowed Proto Directories
+
+Directory scanning is disabled by default and only considers `grpc-service.yaml` below configured allowed roots. Each service directory contains a manifest and its Proto tree:
+
+```yaml
+service_name: payment-service
+target: payments.example.com:443
+reflection_mode: auto
+proto_root: proto
+entry:
+  - payment/v1/payment.proto
+tls_cert_path: /etc/ssl/contextforge/payment-ca.pem
+metadata_env:
+  authorization: PAYMENT_GRPC_AUTH
+tags: [payments]
+team: payments-team
+visibility: team
+```
+
+Manifest metadata must reference environment variables. Plaintext credentials and Proto paths escaping the service directory are rejected. Only the primary worker scans, and a service is synchronized only when its manifest/Proto content hash changes.
+
+### Service Health and Call Trends
+
+The Admin UI combines persisted closed-hour rollups with live current-hour samples. The same data is available through:
+
+```bash
+curl -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  "http://localhost:4444/admin/grpc/SERVICE_ID/metrics?hours=24"
+```
+
+The response includes calls, successes/failures, gRPC status distribution, bytes, P50/P95/P99, and per-method hourly trend. Aggregate percentiles spanning closed-hour rollups are marked as estimated; each trend bucket retains its stored percentile values.
+
 ### Update Service
 
 ```bash
-PUT /grpc/{service_id}
+PUT /admin/grpc/{service_id}
 Content-Type: application/json
 
 {
@@ -319,19 +392,19 @@ Content-Type: application/json
 ### Toggle Service
 
 ```bash
-POST /grpc/{service_id}/state
+POST /admin/grpc/{service_id}/state
 ```
 
 ### Delete Service
 
 ```bash
-POST /grpc/{service_id}/delete
+POST /admin/grpc/{service_id}/delete
 ```
 
 ### Trigger Reflection
 
 ```bash
-POST /grpc/{service_id}/reflect
+POST /admin/grpc/{service_id}/reflect
 ```
 
 **Response:**
@@ -349,7 +422,7 @@ POST /grpc/{service_id}/reflect
 ### Get Service Methods
 
 ```bash
-GET /grpc/{service_id}/methods
+GET /admin/grpc/{service_id}/methods
 ```
 
 **Response:**
@@ -494,7 +567,7 @@ python3 -m mcpgateway.translate \
 
 ```bash
 # Register a production gRPC service with TLS
-curl -X POST http://localhost:4444/grpc \
+curl -X POST http://localhost:4444/admin/grpc \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $TOKEN" \
   -d '{
@@ -524,7 +597,7 @@ services = [
 
 for svc in services:
     response = requests.post(
-        "http://localhost:4444/grpc",
+        "http://localhost:4444/admin/grpc",
         json={
             **svc,
             "reflection_enabled": True,

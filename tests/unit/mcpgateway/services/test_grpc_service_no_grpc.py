@@ -8,8 +8,7 @@ Tests for GrpcService without requiring grpc packages.
 
 # Standard
 from datetime import datetime, timezone
-import sys
-from types import ModuleType, SimpleNamespace
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 import uuid
 
@@ -284,7 +283,7 @@ async def test_list_services_team_filter(service, db):
     db.commit = MagicMock()
 
     with patch("mcpgateway.services.grpc_service.TeamManagementService") as mock_team:
-        mock_team.return_value.build_team_filter_clause = AsyncMock(return_value=DbGrpcService.id == "svc-1")
+        mock_team.return_value.get_user_teams = AsyncMock(return_value=[MagicMock(id="team-1")])
         with patch("mcpgateway.services.grpc_service.GrpcServiceRead.model_validate", side_effect=lambda svc: svc):
             with patch("mcpgateway.services.grpc_service.unified_paginate", new_callable=AsyncMock) as mock_paginate:
                 mock_paginate.return_value = ([mock_svc], None)
@@ -315,7 +314,7 @@ async def test_get_service_with_team_filter(service, db):
     db.execute.return_value.scalar_one_or_none.return_value = MagicMock()
 
     with patch("mcpgateway.services.grpc_service.TeamManagementService") as mock_team:
-        mock_team.return_value.build_team_filter_clause = AsyncMock(return_value=DbGrpcService.id == "svc-1")
+        mock_team.return_value.get_user_teams = AsyncMock(return_value=[MagicMock(id="team-1")])
         with patch("mcpgateway.services.grpc_service.GrpcServiceRead.model_validate", side_effect=lambda svc: svc):
             result = await service.get_service(db, "svc-1", user_email="user@example.com")
 
@@ -707,6 +706,19 @@ async def test_perform_reflection_builds_discovery(monkeypatch, service, db):
     # First-Party
     from mcpgateway.services import grpc_service as module
 
+    # Third-Party
+    from google.protobuf.descriptor_pb2 import FileDescriptorProto
+
+    descriptor = FileDescriptorProto(name="service.proto", package="pkg")
+    descriptor.message_type.add(name="PingReq")
+    descriptor.message_type.add(name="PingResp")
+    reflected_service = descriptor.service.add(name="MyService")
+    reflected_method = reflected_service.method.add(name="Ping")
+    reflected_method.input_type = ".pkg.PingReq"
+    reflected_method.output_type = ".pkg.PingResp"
+    reflected_method.server_streaming = True
+    descriptor_bytes = descriptor.SerializeToString()
+
     class FakeChannel:
         def close(self):
             return None
@@ -738,16 +750,19 @@ async def test_perform_reflection_builds_discovery(monkeypatch, service, db):
                 return self._file_descriptor_bytes is not None
             return False
 
+    reflection_timeouts = []
+
     class FakeStub:
         def __init__(self, _channel):
             return None
 
-        def ServerReflectionInfo(self, request_iter):
+        def ServerReflectionInfo(self, request_iter, timeout=None):
+            reflection_timeouts.append(timeout)
             req = next(iter(request_iter))
             if req.list_services is not None:
                 return iter([FakeResponse(list_services=["MyService", "BadService", "grpc.reflection.v1alpha.ServerReflection"])])
             if req.file_containing_symbol == "MyService":
-                return iter([FakeResponse(file_descriptor_bytes=[b"dummy"])])
+                return iter([FakeResponse(file_descriptor_bytes=[descriptor_bytes])])
             if req.file_containing_symbol == "BadService":
                 raise RuntimeError("boom")
             return iter([])
@@ -755,28 +770,20 @@ async def test_perform_reflection_builds_discovery(monkeypatch, service, db):
     module.reflection_pb2 = SimpleNamespace(ServerReflectionRequest=FakeRequest)
     module.reflection_pb2_grpc = SimpleNamespace(ServerReflectionStub=FakeStub)
 
-    class FakeMethod:
-        name = "Ping"
-        input_type = "PingReq"
-        output_type = "PingResp"
-        client_streaming = False
-        server_streaming = True
+    def persist_artifact(_db, reflected, payload, _filename, **_kwargs):
+        _normalized, catalog = module.GrpcSchemaService.normalize_descriptor_set(payload)
+        reflected.discovered_services = catalog
+        reflected.service_count = len(catalog)
+        reflected.method_count = sum(len(item["methods"]) for item in catalog.values())
+        return SimpleNamespace(
+            id=uuid.uuid4().hex,
+            grpc_service_id=reflected.id,
+            content_hash=uuid.uuid4().hex,
+            source_type="reflection",
+            source_info={"catalog": catalog},
+        )
 
-    class FakeServiceDesc:
-        name = "MyService"
-        method = [FakeMethod()]
-
-    class FakeFileDescriptorProto:
-        def __init__(self):
-            self.service = []
-            self.package = "pkg"
-
-        def ParseFromString(self, _data):
-            self.service = [FakeServiceDesc()]
-
-    fake_descriptor = ModuleType("google.protobuf.descriptor_pb2")
-    fake_descriptor.FileDescriptorProto = FakeFileDescriptorProto
-    monkeypatch.setitem(sys.modules, "google.protobuf.descriptor_pb2", fake_descriptor)
+    monkeypatch.setattr(module.GrpcSchemaService, "import_artifact", persist_artifact)
 
     db.commit = MagicMock()
 
@@ -805,10 +812,11 @@ async def test_perform_reflection_builds_discovery(monkeypatch, service, db):
     await service._perform_reflection(db, db_service)
 
     assert "pkg.MyService" in db_service.discovered_services
-    assert "BadService" in db_service.discovered_services
-    assert db_service.service_count == 2
+    assert "BadService" not in db_service.discovered_services
+    assert db_service.service_count == 1
     assert db_service.method_count == 1
     assert db_service.reachable is True
+    assert reflection_timeouts and all(value == float(module.settings.tool_timeout) for value in reflection_timeouts)
 
 
 @pytest.mark.asyncio
@@ -842,7 +850,10 @@ async def test_perform_reflection_tls_cert_missing(monkeypatch, service, db):
         visibility="public",
     )
 
-    with patch("pathlib.Path.read_bytes", side_effect=FileNotFoundError("missing")):
+    with (
+        patch("pathlib.Path.read_bytes", side_effect=FileNotFoundError("missing")),
+        patch("mcpgateway.services.grpc_service.asyncio.to_thread", new_callable=AsyncMock, side_effect=lambda callback: callback()),
+    ):
         with pytest.raises(GrpcServiceError):
             await service._perform_reflection(db, db_service)
 
@@ -871,7 +882,7 @@ async def test_perform_reflection_tls_default_creds(monkeypatch, service, db):
         def __init__(self, _channel):
             return None
 
-        def ServerReflectionInfo(self, _requests):
+        def ServerReflectionInfo(self, _requests, timeout=None):  # pylint: disable=unused-argument
             return iter([])
 
     monkeypatch.setattr(module, "reflection_pb2", SimpleNamespace(ServerReflectionRequest=FakeRequest))
@@ -929,7 +940,7 @@ async def test_perform_reflection_tls_reads_cert_and_key(monkeypatch, service, d
         def __init__(self, _channel):
             return None
 
-        def ServerReflectionInfo(self, _requests):
+        def ServerReflectionInfo(self, _requests, timeout=None):  # pylint: disable=unused-argument
             return iter([])
 
     monkeypatch.setattr(module, "reflection_pb2", SimpleNamespace(ServerReflectionRequest=FakeRequest))
@@ -959,7 +970,10 @@ async def test_perform_reflection_tls_reads_cert_and_key(monkeypatch, service, d
         visibility="public",
     )
 
-    with patch("mcpgateway.utils.grpc_validation.Path.read_bytes", side_effect=[b"cert", b"key"]):
+    with (
+        patch("mcpgateway.utils.grpc_validation.Path.read_bytes", side_effect=[b"cert", b"key"]),
+        patch("mcpgateway.services.grpc_service.asyncio.to_thread", new_callable=AsyncMock, side_effect=lambda callback: callback()),
+    ):
         await service._perform_reflection(db, db_service)
 
     assert db_service.reachable is True
@@ -996,7 +1010,10 @@ async def test_perform_reflection_tls_missing_cert(monkeypatch, service, db):
         visibility="public",
     )
 
-    with patch("mcpgateway.utils.grpc_validation.Path.read_bytes", side_effect=FileNotFoundError("missing")):
+    with (
+        patch("mcpgateway.utils.grpc_validation.Path.read_bytes", side_effect=FileNotFoundError("missing")),
+        patch("mcpgateway.services.grpc_service.asyncio.to_thread", new_callable=AsyncMock, side_effect=lambda callback: callback()),
+    ):
         with pytest.raises(GrpcServiceError):
             await service._perform_reflection(db, db_service)
 

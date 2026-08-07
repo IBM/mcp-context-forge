@@ -501,6 +501,15 @@ async def test_invoke_and_invoke_streaming_without_grpc(monkeypatch):
     # First-Party
     import mcpgateway.translate_grpc as tg
 
+    class ImmediateExecutorLoop:
+        @staticmethod
+        async def run_in_executor(_executor, callback, *args):
+            return callback(*args)
+
+    immediate_loop = ImmediateExecutorLoop()
+    monkeypatch.setattr(tg.asyncio, "get_event_loop", lambda: immediate_loop)
+    monkeypatch.setattr(tg.asyncio, "get_running_loop", lambda: immediate_loop)
+
     class DummyRequest:
         def SerializeToString(self):
             return b"req"
@@ -522,6 +531,8 @@ async def test_invoke_and_invoke_streaming_without_grpc(monkeypatch):
     endpoint._pool = MagicMock()
     endpoint._pool.FindMessageTypeByName.side_effect = [object(), object(), object(), object()]
     endpoint._factory = MagicMock()
+    endpoint._metadata = {}
+    endpoint._last_call_metadata = {"headers": {}, "trailers": {}, "status": None}
 
     # protobuf>=5 uses module-level message_factory.GetMessageClass(); patch it instead of MessageFactory.GetPrototype.
     proto_classes = iter([DummyRequest, DummyResponse, DummyRequest, DummyResponse])
@@ -529,14 +540,47 @@ async def test_invoke_and_invoke_streaming_without_grpc(monkeypatch):
 
     class DummyChannel:
         def unary_unary(self, _path, request_serializer=None, response_deserializer=None):
-            def call(_req, timeout=None):
-                return DummyResponse()
+            class UnaryCall:
+                @staticmethod
+                def with_call(_req, timeout=None, metadata=None):
+                    call = SimpleNamespace(
+                        initial_metadata=lambda: (("x-header", "one"),),
+                        trailing_metadata=lambda: (("x-trailer", "two"),),
+                        code=lambda: SimpleNamespace(name="OK"),
+                    )
+                    return DummyResponse(), call
 
-            return call
+            return UnaryCall()
 
         def unary_stream(self, _path, request_serializer=None, response_deserializer=None):
-            def call(_req):
-                return [DummyResponse(), DummyResponse()]
+            def call(_req, timeout=None, metadata=None):
+                class StreamCall:
+                    def __init__(self):
+                        self._items = iter([DummyResponse(), DummyResponse()])
+
+                    def __iter__(self):
+                        return self
+
+                    def __next__(self):
+                        return next(self._items)
+
+                    @staticmethod
+                    def initial_metadata():
+                        return (("x-header", "one"),)
+
+                    @staticmethod
+                    def trailing_metadata():
+                        return (("x-trailer", "two"),)
+
+                    @staticmethod
+                    def code():
+                        return SimpleNamespace(name="OK")
+
+                    @staticmethod
+                    def cancel():
+                        return None
+
+                return StreamCall()
 
             return call
 
@@ -553,6 +597,7 @@ async def test_invoke_and_invoke_streaming_without_grpc(monkeypatch):
 
     result = await endpoint.invoke("TestService", "Unary", {"a": 1})
     assert result == {"ok": True}
+    assert endpoint.get_call_metadata() == {"headers": {"x-header": ["one"]}, "trailers": {"x-trailer": ["two"]}, "status": "OK"}
 
     chunks = []
     async for item in endpoint.invoke_streaming("TestService", "Stream", {"a": 1}):
@@ -759,15 +804,29 @@ async def test_invoke_streaming_rpc_error(monkeypatch):
     endpoint._pool = MagicMock()
     endpoint._pool.FindMessageTypeByName.side_effect = [object(), object()]
     endpoint._factory = MagicMock()
+    endpoint._metadata = {}
+    endpoint._last_call_metadata = {"headers": {}, "trailers": {}, "status": None}
     proto_classes = iter([DummyRequest, DummyResponse])
     monkeypatch.setattr(tg.message_factory, "GetMessageClass", lambda _desc: next(proto_classes))
 
     class DummyChannel:
         def unary_stream(self, _path, request_serializer=None, response_deserializer=None):
-            def call(_req):
+            def call(_req, timeout=None, metadata=None):
                 class _Stream:
                     def __iter__(self_inner):
                         raise DummyRpcError("boom")
+
+                    @staticmethod
+                    def trailing_metadata():
+                        return ()
+
+                    @staticmethod
+                    def code():
+                        return None
+
+                    @staticmethod
+                    def cancel():
+                        return None
 
                 return _Stream()
 

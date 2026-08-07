@@ -169,6 +169,20 @@ histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by 
 histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket[5m])) by (le))
 ```
 
+### gRPC Service Metrics
+
+When registered gRPC support is enabled, ContextForge exports bounded service/method/status labels:
+
+```text
+grpc_client_calls_total{service="payments",method="payment.v1.Payment/Get",status="OK"}
+grpc_client_duration_seconds_bucket{service="payments",method="payment.v1.Payment/Get",le="0.5"}
+grpc_health_checks_total{service="payments",check_type="health",outcome="success"}
+grpc_health_status{service="payments"} 1
+grpc_reflection_total{service="payments",outcome="success"}
+```
+
+Health checks call the standard `grpc.health.v1.Health/Check` service. A server returning `UNIMPLEMENTED` is checked with channel readiness; reflection is never used as a health probe. Tool metrics additionally persist protocol, normalized status, request/response bytes, trace ID, and whether the invocation originated in the debugger.
+
 ### Error Metrics
 
 ```

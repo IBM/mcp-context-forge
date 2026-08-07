@@ -3023,7 +3023,7 @@ class TestToolService:
             mock_grpc_service_class.return_value = mock_grpc_manager
 
             # Invoke the tool
-            result = await tool_service.invoke_tool(test_db, "test_tool", {"input": "value"}, request_headers=None)
+            result = await tool_service.invoke_tool(test_db, "test_tool", {"input": "value"}, request_headers=None, timeout_override=12.5)
 
             # Verify GrpcServiceManager.invoke_method was called
             mock_grpc_manager.invoke_method.assert_awaited_once()
@@ -3034,11 +3034,61 @@ class TestToolService:
             assert call_args[0][1] == "grpc-svc-123"  # service_id (positional arg 1)
             assert call_args[0][2] == "test.Service.Method"  # method_name (positional arg 2)
             assert call_args[0][3] == {"input": "value"}  # request_data (positional arg 3)
+            assert call_args.kwargs["timeout"] == 12.5
 
             # Verify the result is properly JSON-serialized
             assert result.content[0].type == "text"
             result_json = json.loads(result.content[0].text)
             assert result_json == mock_grpc_response
+
+    @pytest.mark.asyncio
+    async def test_grpc_stream_waits_for_post_invoke_output_governance(self, tool_service, mock_tool, mock_global_config_obj, test_db):
+        """A post-invoke plugin must inspect stream items before the debugger receives them."""
+        # Third-Party
+        from cpex.framework import PluginResult, ToolHookType
+
+        mock_tool.integration_type = "gRPC"
+        mock_tool.grpc_service_id = "grpc-svc-123"
+        mock_tool.original_name = "test.Service.Stream"
+        mock_tool.jsonpath_filter = ""
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+        stream_callback = AsyncMock()
+
+        modified_payload = Mock()
+        modified_payload.result = {
+            "content": [{"type": "text", "text": json.dumps({"items": [{"value": "filtered"}], "truncated": False})}],
+            "isError": False,
+        }
+        post_result = Mock(continue_processing=True, violation=None, modified_payload=modified_payload, retry_delay_ms=0)
+        post_result.metadata = None
+        plugin_manager = Mock()
+        plugin_manager.has_hooks_for = Mock(return_value=True)
+
+        async def invoke_hook(hook_type, *_args, **_kwargs):
+            if hook_type == ToolHookType.TOOL_PRE_INVOKE:
+                return PluginResult(continue_processing=True), None
+            return post_result, None
+
+        plugin_manager.invoke_hook = AsyncMock(side_effect=invoke_hook)
+
+        with (
+            patch("mcpgateway.services.grpc_service.GrpcService") as grpc_service_class,
+            patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=plugin_manager)),
+        ):
+            grpc_manager = AsyncMock()
+            grpc_manager.invoke_method = AsyncMock(return_value={"items": [{"value": "raw"}], "truncated": False})
+            grpc_service_class.return_value = grpc_manager
+
+            await tool_service.invoke_tool(
+                test_db,
+                "test_tool",
+                {},
+                request_headers=None,
+                meta_data={"grpc_stream_callback": stream_callback},
+            )
+
+        assert grpc_manager.invoke_method.await_args.kwargs["stream_callback"] is None
+        stream_callback.assert_awaited_once_with({"value": "filtered"})
 
     @pytest.mark.asyncio
     async def test_invoke_tool_mcp_streamablehttp(self, tool_service, mock_tool, test_db):
