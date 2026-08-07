@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""End-to-end verification for GitHub issue #5247 against a live mcpgateway instance.
+# -*- coding: utf-8 -*-
+"""Location: ./tests/e2e/issue_5247/manual/run_e2e.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
+SPDX-License-Identifier: Apache-2.0
+
+End-to-end verification for GitHub issue #5247 against a live mcpgateway instance.
 
 Reproduces the reported bug against the real HTTP API (POST /gateways/{id}/tools/refresh)
 on a fresh SQLite-backed gateway, and proves the fix by exercising:
@@ -11,17 +16,17 @@ on a fresh SQLite-backed gateway, and proves the fix by exercising:
      OAuthToken row backing a real FastMCP server over SSE) must actually connect
      and populate tools -- proving the fix doesn't just report failure correctly,
      it makes the previously-permanent no-op work when authorized.
+     c. The upstream server genuinely rejects a wrong/missing bearer token,
+        proving the forwarded header is the real, live-resolved token --
+        not a hardcoded stub.
   3. SURROUNDING BEHAVIOR IS UNCHANGED:
      a. A non-OAuth gateway with wrong credentials still reports success=false
         (this path already worked before the fix; must still work after).
      b. The background health-check path still returns success=true without
         connecting for an unauthorized auth_code gateway (must not start
         flapping gateways unreachable or spamming a real upstream with 401s).
-     c. The upstream server genuinely rejects a wrong/missing bearer token,
-        proving the forwarded header is the real, live-resolved token --
-        not a hardcoded stub.
 
-All calls in sections 1-3a/3c go through real HTTP to the real FastAPI app,
+All calls in sections 1-3a/2c go through real HTTP to the real FastAPI app,
 a real SQLite database, and (for the authorized case) a real MCP server
 speaking real SSE -- no gateway_service internals are mocked here.
 """
@@ -37,14 +42,14 @@ from pathlib import Path
 import httpx
 
 SCRATCH = Path(__file__).resolve().parent
-REPO_ROOT = SCRATCH.parents[2]  # tests/e2e/issue_5247/run_e2e.py -> repo root
+REPO_ROOT = SCRATCH.parents[3]  # tests/e2e/issue_5247/manual/run_e2e.py -> repo root
 DB_PATH = SCRATCH / "e2e.db"
 GATEWAY_BASE = "http://127.0.0.1:48444"
 UPSTREAM_PORT = 48001
 UPSTREAM_TOKEN = "e2e-authorized-token-abc123"  # nosec B105 -- test-only fixture token, not a real credential
 
-JWT_SECRET = "e2e-jwt-secret-DO-NOT-USE-IN-PRODUCTION-32plus-chars"
-ENC_SECRET = "e2e-enc-secret-DO-NOT-USE-IN-PRODUCTION-32plus"
+JWT_SECRET = "e2e-jwt-secret-DO-NOT-USE-IN-PRODUCTION-32plus-chars"  # pragma: allowlist secret
+ENC_SECRET = "e2e-enc-secret-DO-NOT-USE-IN-PRODUCTION-32plus"  # pragma: allowlist secret
 
 RESULTS = []
 
@@ -81,9 +86,6 @@ def register_gateway(client, token, *, name, url, transport="SSE", auth_type=Non
     payload = {"name": name, "url": url, "transport": transport}
     if auth_type:
         payload["auth_type"] = auth_type
-    if auth_type == "basic":
-        payload["auth_username"] = "wronguser"
-        payload["auth_password"] = "wrongpass"
     if oauth_config:
         payload["oauth_config"] = oauth_config
     resp = client.post(f"{GATEWAY_BASE}/gateways/", json=payload, headers={"Authorization": f"Bearer {token}"})
@@ -117,7 +119,7 @@ def register_local_gateway(name, url, auth_type, auth_json):
             "DATABASE_URL": f"sqlite:///{DB_PATH}",
             "JWT_SECRET_KEY": JWT_SECRET,
             "AUTH_ENCRYPTION_SECRET": ENC_SECRET,
-            "BASIC_AUTH_PASSWORD": "e2e-admin-password-32chars-min!!",
+            "BASIC_AUTH_PASSWORD": "e2e-admin-password-32chars-min!!",  # pragma: allowlist secret
         },
         timeout=30,
         check=False,
@@ -164,7 +166,7 @@ sys.path.insert(0, {str(REPO_ROOT)!r})
 os.environ["DATABASE_URL"] = "sqlite:///{DB_PATH}"
 os.environ["JWT_SECRET_KEY"] = "{JWT_SECRET}"
 os.environ["AUTH_ENCRYPTION_SECRET"] = "{ENC_SECRET}"
-os.environ["BASIC_AUTH_PASSWORD"] = "e2e-admin-password-32chars-min!!"
+os.environ["BASIC_AUTH_PASSWORD"] = "e2e-admin-password-32chars-min!!"  # pragma: allowlist secret
 from mcpgateway.services.gateway_service import GatewayService
 
 async def main():
@@ -209,7 +211,7 @@ def main():
         oauth_config={
             "grant_type": "authorization_code",
             "client_id": "e2e-client-id",
-            "client_secret": "e2e-client-secret",
+            "client_secret": "e2e-client-secret",  # pragma: allowlist secret
             "authorization_url": "https://example.com/authorize",
             "token_url": "https://example.com/token",
             "redirect_uri": "https://example.com/oauth/callback",
@@ -250,7 +252,7 @@ def main():
             {
                 "grant_type": "authorization_code",
                 "client_id": "e2e-client-id",
-                "client_secret": "e2e-client-secret",
+                "client_secret": "e2e-client-secret",  # pragma: allowlist secret
                 "authorization_url": f"http://127.0.0.1:{UPSTREAM_PORT}/authorize",
                 "token_url": f"http://127.0.0.1:{UPSTREAM_PORT}/token",
                 "redirect_uri": "https://example.com/oauth/callback",
@@ -277,7 +279,7 @@ def main():
             {
                 "grant_type": "authorization_code",
                 "client_id": "e2e-client-id",
-                "client_secret": "e2e-client-secret",
+                "client_secret": "e2e-client-secret",  # pragma: allowlist secret
                 "authorization_url": f"http://127.0.0.1:{UPSTREAM_PORT}/authorize",
                 "token_url": f"http://127.0.0.1:{UPSTREAM_PORT}/token",
                 "redirect_uri": "https://example.com/oauth/callback",
@@ -306,7 +308,7 @@ def main():
                 f"e2e-basic-wrongcreds-{run_tag}",
                 f"http://127.0.0.1:{UPSTREAM_PORT}/sse?run={run_tag}-basic",
                 "basic",
-                {"username": "wronguser", "password": "wrongpass"},
+                {"username": "wronguser", "password": "wrongpass"},  # pragma: allowlist secret
             )
             record("3a. Non-OAuth gateway with wrong credentials reports failure (no regression)", False, "registration unexpectedly succeeded")
         except RuntimeError as exc:

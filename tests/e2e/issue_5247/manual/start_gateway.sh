@@ -5,7 +5,7 @@
 set -euo pipefail
 
 SCRATCH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO="$(cd "$SCRATCH/../../.." && pwd)"  # tests/e2e/issue_5247/ -> repo root
+REPO="$(cd "$SCRATCH/../../../.." && pwd)"  # tests/e2e/issue_5247/manual/ -> repo root
 
 rm -f "$SCRATCH/e2e.db"
 

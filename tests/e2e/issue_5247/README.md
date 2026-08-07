@@ -22,18 +22,18 @@ internals are mocked.
 
 ```bash
 # 1. Start an isolated gateway instance (fresh SQLite DB, port 48444)
-bash tests/e2e/issue_5247/start_gateway.sh &
+bash tests/e2e/issue_5247/manual/start_gateway.sh &
 
 # 2. Wait for it to come up, then run the verification
 curl -sf http://127.0.0.1:48444/health
-./.venv/bin/python tests/e2e/issue_5247/run_e2e.py
+./.venv/bin/python tests/e2e/issue_5247/manual/run_e2e.py
 
 # 3. Stop the gateway
 pkill -f "uvicorn mcpgateway.main:app"
 ```
 
 Exit code is `0` when all scenarios pass, `1` otherwise. Full per-scenario detail is
-also written to `e2e_results.json` (git-ignored) next to this script.
+also written to `manual/e2e_results.json` (git-ignored) next to the script.
 
 Safe to run repeatedly against the same long-lived instance — every gateway it registers
 carries a random per-run tag so re-runs never collide on name/URL uniqueness constraints.
@@ -55,8 +55,8 @@ endpoint in every scenario.
 
 | File | Purpose |
 |---|---|
-| `start_gateway.sh` | Boots `mcpgateway.main:app` on an isolated SQLite DB and port 48444 |
-| `e2e.env.example` | Template env vars for the isolated instance (copied to `e2e.env` on first run) |
-| `run_e2e.py` | The verification script; prints PASS/FAIL per scenario and an overall summary |
-| `register_local_gateway.py` | Registration bypass for locally-hosted test targets (see above) |
-| `mock_upstream_mcp.py` | A real one-tool `FastMCP` server over SSE, gated on a bearer token, used as the "authorized upstream" |
+| `manual/start_gateway.sh` | Boots `mcpgateway.main:app` on an isolated SQLite DB and port 48444 |
+| `manual/e2e.env.example` | Template env vars for the isolated instance (copied to `e2e.env` on first run) |
+| `manual/run_e2e.py` | The verification script; prints PASS/FAIL per scenario and an overall summary |
+| `manual/register_local_gateway.py` | Registration bypass for locally-hosted test targets (see above) |
+| `manual/mock_upstream_mcp.py` | A real one-tool `FastMCP` server over SSE, gated on a bearer token, used as the "authorized upstream" |
