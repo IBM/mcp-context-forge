@@ -944,7 +944,13 @@ def _form_team_id(form: Any) -> Optional[str]:
     return str(raw).strip() or None
 
 
-async def _assemble_oauth_config_from_fields(fields: Any, *, encrypt_secret: bool, include_resource: bool = True) -> Optional[Dict[str, Any]]:
+async def _assemble_oauth_config_from_fields(
+    fields: Any,
+    *,
+    encrypt_secret: bool,
+    include_resource: bool = True,
+    existing_config: Optional[Dict[str, Any]] = None,
+) -> Optional[Dict[str, Any]]:
     """Assemble an ``oauth_config`` dict from individual OAuth form/JSON fields.
 
     Shared by all four admin OAuth form handlers (gateway create/edit, A2A
@@ -961,12 +967,15 @@ async def _assemble_oauth_config_from_fields(fields: Any, *, encrypt_secret: boo
     * ``encrypt_secret=True`` encrypts ``client_secret`` before storage
       (UI edit/add handlers); ``False`` stores it as submitted (the gateway
       create path, where encryption happens downstream in the service layer).
+    * On edit, ``existing_config`` preserves stored credentials when password
+      inputs are intentionally left blank rather than echoing secrets to the UI.
 
     Args:
         fields: Mapping with ``.get()`` (a form dict or parsed JSON body)
             containing the ``oauth_*`` keys.
         encrypt_secret: Whether to encrypt a submitted ``client_secret``.
         include_resource: Whether to read and emit ``oauth_resource``.
+        existing_config: Existing stored OAuth configuration for edit requests.
 
     Returns:
         Assembled ``oauth_config`` dict, or ``None`` when no meaningful OAuth
@@ -1007,10 +1016,14 @@ async def _assemble_oauth_config_from_fields(fields: Any, *, encrypt_secret: boo
             oauth_config["client_secret"] = await encryption.encrypt_secret_async(oauth_client_secret)
         else:
             oauth_config["client_secret"] = oauth_client_secret
+    elif existing_config and existing_config.get("client_secret"):
+        oauth_config["client_secret"] = existing_config["client_secret"]
     if oauth_username:
         oauth_config["username"] = oauth_username
     if oauth_password:
         oauth_config["password"] = oauth_password
+    elif oauth_grant_type == "password" and existing_config and existing_config.get("password"):
+        oauth_config["password"] = existing_config["password"]
     if oauth_audience:
         oauth_config["audience"] = oauth_audience
     if oauth_scopes_str:
@@ -13103,6 +13116,11 @@ async def admin_edit_gateway(
         else:
             passthrough_headers = None
 
+        existing_gateway = db.get(DbGateway, gateway_id)
+        existing_oauth_config = getattr(existing_gateway, "oauth_config", None)
+        if not isinstance(existing_oauth_config, dict):
+            existing_oauth_config = None
+
         # Parse OAuth configuration - support both JSON string and individual form fields
         oauth_config_json = str(form.get("oauth_config"))
         oauth_config: Optional[dict[str, Any]] = None
@@ -13121,7 +13139,7 @@ async def admin_edit_gateway(
 
         # Option 2: Assemble from individual UI form fields
         if not oauth_config:
-            oauth_config = await _assemble_oauth_config_from_fields(form, encrypt_secret=True)
+            oauth_config = await _assemble_oauth_config_from_fields(form, encrypt_secret=True, existing_config=existing_oauth_config)
             if oauth_config:
                 LOGGER.info(f"✅ Assembled OAuth config from UI form fields (edit): grant_type={oauth_config.get('grant_type')}, issuer={oauth_config.get('issuer')}")
 
@@ -13130,7 +13148,6 @@ async def admin_edit_gateway(
         # Without this guard, verify_team_for_user() falls back to the user's
         # personal team, silently reassigning the gateway on every edit.
         if not team_id:
-            existing_gateway = db.get(DbGateway, gateway_id)
             existing_team = getattr(existing_gateway, "team_id", None) if existing_gateway else None
             if isinstance(existing_team, str) and existing_team:
                 team_id = existing_team
@@ -16338,6 +16355,11 @@ async def admin_edit_a2a_agent(
         else:
             passthrough_headers = None
 
+        existing_agent = db.get(DbA2AAgent, agent_id)
+        existing_oauth_config = getattr(existing_agent, "oauth_config", None)
+        if not isinstance(existing_oauth_config, dict):
+            existing_oauth_config = None
+
         # Parse OAuth configuration - support both JSON string and individual form fields
         oauth_config_json = str(form.get("oauth_config"))
         oauth_config: Optional[dict[str, Any]] = None
@@ -16359,7 +16381,7 @@ async def admin_edit_a2a_agent(
         # (no per-user token storage / audience validation on the A2A path), so the
         # field is not offered on A2A forms and is not assembled here.
         if not oauth_config:
-            oauth_config = await _assemble_oauth_config_from_fields(form, encrypt_secret=True, include_resource=False)
+            oauth_config = await _assemble_oauth_config_from_fields(form, encrypt_secret=True, include_resource=False, existing_config=existing_oauth_config)
             if oauth_config:
                 LOGGER.info(f"✅ Assembled OAuth config from UI form fields (edit): grant_type={oauth_config.get('grant_type')}, issuer={oauth_config.get('issuer')}")
 
@@ -16369,7 +16391,6 @@ async def admin_edit_a2a_agent(
         # Without this guard, verify_team_for_user() falls back to the user's
         # personal team, silently reassigning the agent on every edit.
         if not team_id:
-            existing_agent = db.get(DbA2AAgent, agent_id)
             existing_team = getattr(existing_agent, "team_id", None) if existing_agent else None
             if isinstance(existing_team, str) and existing_team:
                 team_id = existing_team
