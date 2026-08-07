@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { useIntl } from "react-intl";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -66,6 +67,7 @@ export function ToolAdvancedSettings({
   description,
   onDescriptionChange,
 }: ToolAdvancedSettingsProps) {
+  const intl = useIntl();
   const { selectedTeamId } = useAuthContext();
   const tagSuggestions = useTagSuggestions();
 
@@ -215,7 +217,7 @@ export function ToolAdvancedSettings({
           onChange={onTagsChange}
           suggestions={tagSuggestions}
           maxTags={MAX_TAGS}
-          placeholder="Add optional tags separated with commas"
+          placeholder={intl.formatMessage({ id: "common.tagInput.placeholder" })}
         />
       </div>
 
