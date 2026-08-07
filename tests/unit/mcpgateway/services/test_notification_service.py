@@ -521,7 +521,7 @@ class TestServerInitiatedRequestCorrelation:
         # MCP v2: RequestResponder is a type stub; it cannot be instantiated.
         # Build a simple proxy object that exposes the attributes the
         # notification_service code reads, plus context-manager + respond/cancel.
-        from mcp.shared.session import RequestResponder
+        from mcpgateway.utils.session_compat import RequestResponder
         from mcp_types import ListRootsRequest
 
         request = ListRootsRequest(method=method, params=None)
@@ -1300,7 +1300,7 @@ class TestForwardRequestHolderBranches:
         # code path works. Make __exit__ raise to test the done-callback
         # logs the exception (the old on_complete semantics — same outcome,
         # just no longer via a callback).
-        from mcp.shared.session import RequestResponder
+        from mcpgateway.utils.session_compat import RequestResponder
 
         class _FakeResponder(RequestResponder):
             request_id = "req-exit-shadow"
@@ -1382,7 +1382,7 @@ class TestHolderExitShadowsPrimary:
 
         # MCP v2: RequestResponder is a type stub.  Build a fake responder
         # whose ``__exit__`` raises so the shadow-exception log branch fires.
-        from mcp.shared.session import RequestResponder
+        from mcpgateway.utils.session_compat import RequestResponder
 
         class _FakeResponder(RequestResponder):
             _completed = False

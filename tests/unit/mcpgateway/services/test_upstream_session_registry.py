@@ -1385,9 +1385,9 @@ async def test_default_session_factory_passes_httpx_factory(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_default_session_factory_message_handler_factory_success(monkeypatch):
-    """The handler from message_handler_factory reaches the Client unwrapped, and cache=False is passed.
+    """The handler from message_handler_factory reaches the Client unwrapped, and cache=None is passed.
 
-    cache=False is load-bearing: the SDK default (cache=None) builds a
+    cache=None is load-bearing: the SDK default (a CacheConfig instance) builds a
     ClientResponseCache that WRAPS message_handler in an evicting layer,
     which would change ADR-052 notification/RequestResponder behaviour.
     """
@@ -1410,7 +1410,7 @@ async def test_default_session_factory_message_handler_factory_success(monkeypat
     assert factory_calls == [(req.url, req.gateway_id, req.downstream_session_id)]
     client = _FakeClient.instances[-1]
     assert client.message_handler is sentinel_handler
-    assert client.cache is False, "factory must pass cache=False so the message handler is not wrapped by the response cache"
+    assert client.cache is None, "factory must pass cache=None so the message handler is not wrapped by the response cache"
 
     lifecycle.shutdown_event.set()
     await lifecycle.owner_task
@@ -1435,7 +1435,7 @@ async def test_default_session_factory_message_handler_factory_failure_is_logged
     client = _FakeClient.instances[-1]
     assert client.handshake_done is True
     assert client.message_handler is None
-    assert client.cache is False
+    assert client.cache is None
     assert any("Failed to build message handler" in rec.getMessage() for rec in caplog.records)
 
     lifecycle.shutdown_event.set()
@@ -1645,7 +1645,7 @@ async def test_default_session_factory_constructs_client_with_configured_connect
 
     client = _FakeClient.instances[-1]
     assert client.mode == mode
-    assert client.cache is False
+    assert client.cache is None
 
     lifecycle.shutdown_event.set()
     await lifecycle.owner_task
