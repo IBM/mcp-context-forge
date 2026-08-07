@@ -8139,6 +8139,82 @@ class GrpcSchemaDiff(BaseModel):
     changed_methods: List[str] = Field(default_factory=list)
 
 
+class GrpcRegistrySchemaVersionRead(BaseModel):
+    """One schema version in the registry view, without descriptor bytes."""
+
+    artifact_id: str
+    version: int
+    source_type: Literal["reflection", "proto", "zip", "protoset", "legacy"]
+    content_hash: str
+    is_active: bool
+    created_by: Optional[str] = None
+    created_at: datetime
+    activated_at: Optional[datetime] = None
+    method_count: int = Field(default=0, description="Methods described by this schema version")
+
+
+class GrpcRegistryMethodRead(BaseModel):
+    """One method within a schema version: descriptor shape and exposure state."""
+
+    name: str
+    input_type: str = ""
+    output_type: str = ""
+    client_streaming: bool = False
+    server_streaming: bool = False
+    tool_id: Optional[str] = None
+    tool_enabled: bool = False
+    tool_deprecated: bool = False
+    tool_reachable: bool = False
+    exposed: bool = Field(default=False, description="A live, enabled, non-deprecated tool backs this method")
+
+
+class GrpcRegistrySchemaViewRead(BaseModel):
+    """Schema versions for one service with per-method exposure details."""
+
+    version: int
+    artifact_id: str
+    source_type: Literal["reflection", "proto", "zip", "protoset", "legacy"]
+    content_hash: str
+    is_active: bool
+    created_by: Optional[str] = None
+    created_at: datetime
+    activated_at: Optional[datetime] = None
+    methods: List[GrpcRegistryMethodRead] = Field(default_factory=list)
+
+
+class GrpcRegistryServiceRead(BaseModel):
+    """Service-level registry summary with nested schema versions and tools."""
+
+    id: str
+    name: str
+    slug: str
+    target: str
+    description: Optional[str] = None
+    enabled: bool
+    reachable: bool
+    health_status: str = Field(default="unknown")
+    service_count: int = Field(default=0)
+    method_count: int = Field(default=0)
+    active_schema_hash: Optional[str] = None
+    schema_drift: bool = False
+    team_id: Optional[str] = None
+    owner_email: Optional[str] = None
+    visibility: Literal["private", "team", "public"] = Field(default="public")
+    schema_versions: List[GrpcRegistrySchemaVersionRead] = Field(default_factory=list)
+    tool_count: int = Field(default=0, description="Total tool rows bound to this service")
+    exposed_tool_count: int = Field(default=0, description="Live enabled, non-deprecated tool rows")
+
+
+class GrpcRegistryViewRead(BaseModel):
+    """Top-level registry view: services with their schema/method/tool state."""
+
+    services: List[GrpcRegistryServiceRead] = Field(default_factory=list)
+    total_services: int = Field(default=0)
+    total_schema_versions: int = Field(default=0)
+    total_methods: int = Field(default=0)
+    total_exposed_tools: int = Field(default=0)
+
+
 class SQLDataSourceCreate(BaseModel):
     """Create an encrypted external SQL data source."""
 

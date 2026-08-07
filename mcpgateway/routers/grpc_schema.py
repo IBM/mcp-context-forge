@@ -23,7 +23,8 @@ from mcpgateway.db import GrpcService as DbGrpcService
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import ToolMetric
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
-from mcpgateway.schemas import GrpcSchemaArtifactRead, GrpcSchemaDiff
+from mcpgateway.schemas import GrpcRegistrySchemaViewRead, GrpcRegistryServiceRead, GrpcRegistryViewRead, GrpcSchemaArtifactRead, GrpcSchemaDiff
+from mcpgateway.services.grpc_registry_service import GrpcRegistryService
 from mcpgateway.services.grpc_service import GrpcService, GrpcServiceError, GrpcServiceNotFoundError
 from mcpgateway.services.grpc_monitoring_service import get_grpc_monitoring_service
 from mcpgateway.services.proto_scan_service import get_proto_scan_service
@@ -57,6 +58,18 @@ def _require_service_access(request: Request, user: Any, db: Session, service_id
     if service is None:
         raise HTTPException(status_code=404, detail="gRPC service not found")
     return service
+
+
+def _visible_services(request: Request, user: Any, db: Session) -> list[DbGrpcService]:
+    """Resolve the services visible to the caller under their token scope."""
+    statement = select(DbGrpcService).order_by(DbGrpcService.name)
+    token_teams = get_token_teams_from_request(request)
+    if token_teams is not None:
+        clauses = [DbGrpcService.visibility == "public", DbGrpcService.owner_email == get_user_email(user)]
+        if token_teams:
+            clauses.append(DbGrpcService.team_id.in_(token_teams))
+        statement = statement.where(or_(*clauses))
+    return list(db.execute(statement).scalars().all())
 
 
 @router.post("/{service_id}/schemas/import", response_model=GrpcSchemaArtifactRead, status_code=201)
@@ -94,6 +107,39 @@ async def list_schemas(service_id: str, request: Request, db: Session = Depends(
         return await grpc_service.list_schemas(db, service_id)
     except GrpcServiceError as exc:
         raise _http_error(exc) from exc
+
+
+@router.get("/registry", response_model=GrpcRegistryViewRead)
+@require_permission("admin.grpc", allow_admin_bypass=False)
+async def registry_overview(request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)):
+    """Read-only registry summary: services with schema versions, methods, and tool exposure."""
+    _require_grpc_enabled()
+    visible = _visible_services(request, user, db)
+    return GrpcRegistryService.build_registry_view(db, [service.id for service in visible])
+
+
+@router.get("/{service_id}/registry", response_model=GrpcRegistryServiceRead)
+@require_permission("admin.grpc", allow_admin_bypass=False)
+async def registry_service_detail(service_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)):
+    """Read-only detail for one service: schema versions and per-method tool status."""
+    _require_grpc_enabled()
+    _require_service_access(request, user, db, service_id)
+    view = GrpcRegistryService.build_service_detail(db, service_id)
+    if view is None:
+        raise HTTPException(status_code=404, detail="gRPC service not found")
+    return view
+
+
+@router.get("/{service_id}/schemas/{artifact_id}/registry", response_model=GrpcRegistrySchemaViewRead)
+@require_permission("admin.grpc", allow_admin_bypass=False)
+async def registry_schema_detail(service_id: str, artifact_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)):
+    """Read-only detail for one schema version: methods with exposure and tool state."""
+    _require_grpc_enabled()
+    _require_service_access(request, user, db, service_id)
+    view = GrpcRegistryService.build_schema_detail(db, artifact_id)
+    if view is None:
+        raise HTTPException(status_code=404, detail="Schema artifact not found")
+    return view
 
 
 @router.post("/{service_id}/schemas/{artifact_id}/activate", response_model=GrpcSchemaArtifactRead)
