@@ -25,7 +25,7 @@ const createResourceFormSchema = (intl: ReturnType<typeof useIntl>) =>
       .max(500, intl.formatMessage({ id: "resources.form.error.descriptionMax" }))
       .optional(),
     mimeType: z.string().optional(),
-    tags: z.string().optional(),
+    tags: z.array(z.string().transform((t) => sanitizeString(t, 200))).optional(),
   });
 
 export type ResourceFormData = z.infer<ReturnType<typeof createResourceFormSchema>>;
@@ -46,7 +46,7 @@ export interface ResourceFormInitialValues {
   content?: string;
   description?: string;
   mimeType?: MimeType | "";
-  tags?: string;
+  tags?: string[];
   visibility?: Visibility;
 }
 
@@ -63,7 +63,7 @@ export interface UseResourceFormReturn {
   content: string;
   description: string;
   mimeType: MimeType | "";
-  tags: string;
+  tags: string[];
   visibility: Visibility;
   errors: ResourceFormErrors;
   isSubmitting: boolean;
@@ -72,7 +72,7 @@ export interface UseResourceFormReturn {
   setContent: (value: string) => void;
   setDescription: (value: string) => void;
   setMimeType: (value: MimeType | "") => void;
-  setTags: (value: string) => void;
+  setTags: (value: string[]) => void;
   setVisibility: (value: Visibility) => void;
   validateForm: () => boolean;
   handleSubmit: (
@@ -104,7 +104,7 @@ export function useResourceForm(options: ResourceFormOptions = {}): UseResourceF
   const [content, setContent] = useState(initialValues?.content ?? "");
   const [description, setDescription] = useState(initialValues?.description ?? "");
   const [mimeType, setMimeType] = useState<MimeType | "">(initialValues?.mimeType ?? "");
-  const [tags, setTags] = useState(initialValues?.tags ?? "");
+  const [tags, setTags] = useState<string[]>(initialValues?.tags ?? []);
   const [visibility, setVisibility] = useState<Visibility>(initialValues?.visibility ?? "public");
   const [errors, setErrors] = useState<ResourceFormErrors>({});
   const [isUpdating, setIsUpdating] = useState(false);
@@ -117,6 +117,7 @@ export function useResourceForm(options: ResourceFormOptions = {}): UseResourceF
   const isSubmitting = isCreating || isUpdating;
 
   const getFormData = useCallback((): BodyCreateResourceV1ResourcesPost => {
+    const cleanTags = tags.map((t) => sanitizeString(t, 200)).filter(Boolean);
     return {
       resource: {
         uri: sanitizeString(uri, 2000),
@@ -124,12 +125,7 @@ export function useResourceForm(options: ResourceFormOptions = {}): UseResourceF
         content,
         description: description ? sanitizeString(description, 500) : undefined,
         mimeType: mimeType ? sanitizeString(mimeType, 200) : undefined,
-        tags: tags
-          ? tags
-              .split(",")
-              .map((t) => sanitizeString(t.trim(), 200))
-              .filter(Boolean)
-          : undefined,
+        tags: cleanTags.length > 0 ? cleanTags : undefined,
         visibility,
       },
     };
@@ -143,7 +139,7 @@ export function useResourceForm(options: ResourceFormOptions = {}): UseResourceF
         content,
         description: description || undefined,
         mimeType: mimeType || undefined,
-        tags: tags || undefined,
+        tags: tags.length > 0 ? tags : undefined,
       });
       setErrors({});
       return true;

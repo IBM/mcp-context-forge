@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
+import { TagInput } from "@/components/ui/tag-input";
 import {
   Select,
   SelectContent,
@@ -14,6 +15,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { usePromptForm, type PromptFormInitialValues } from "@/hooks/usePromptForm";
+import { useTagSuggestions } from "@/hooks/useTagSuggestions";
+import { MAX_TAGS } from "@/utils/tags";
 import { getTagDisplay } from "@/components/gateways/utils";
 import type { PromptRead } from "@/generated/types";
 import type { Visibility } from "@/types/server";
@@ -40,7 +43,7 @@ function promptToInitialValues(
     template: prompt.template ?? "",
     arguments: args.length > 0 ? JSON.stringify(args, null, 2) : "",
     description: prompt.description ?? "",
-    tags: tagLabels.join(", "),
+    tags: tagLabels,
     teamId: prompt.teamId,
   };
 }
@@ -59,6 +62,7 @@ export function PromptForm({ isOpen, onToggle, onSuccess, prompt }: PromptFormPr
     federated: isFederated,
   });
   const nameInputRef = useRef<HTMLInputElement>(null);
+  const tagSuggestions = useTagSuggestions();
 
   useEffect(() => {
     if (isOpen) {
@@ -268,12 +272,13 @@ export function PromptForm({ isOpen, onToggle, onSuccess, prompt }: PromptFormPr
               <Label htmlFor="tags" className="mb-2.5 block text-sm font-medium text-foreground">
                 {intl.formatMessage({ id: "prompts.add.field.tags" })}
               </Label>
-              <Input
+              <TagInput
                 id="tags"
                 value={form.tags}
-                onChange={(e) => form.setTags(e.target.value)}
+                onChange={form.setTags}
+                suggestions={tagSuggestions}
+                maxTags={MAX_TAGS}
                 placeholder={intl.formatMessage({ id: "prompts.add.placeholder.tags" })}
-                className="h-10 rounded-md border-neutral-300 px-4 text-sm text-neutral-900 shadow-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-0 placeholder:text-neutral-400 dark:border-neutral-700 dark:text-neutral-100 dark:placeholder:text-neutral-500"
               />
             </div>
 
