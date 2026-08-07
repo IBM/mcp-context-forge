@@ -712,14 +712,17 @@ class TestManualRefreshAuthCodeReporting:
         mock_helper.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_oauth_header_wins_over_passthrough_authorization(self, gateway_service):
-        """Passthrough headers survive the merge, but the OAuth token must take precedence."""
+    async def test_passthrough_authorization_wins_over_oauth_lookup(self, gateway_service):
+        """An explicit caller-supplied Authorization header (e.g. renamed from
+        X-Upstream-Authorization by get_passthrough_headers()) must take precedence over
+        OAuth token resolution: it is a documented escape hatch for supplying the upstream
+        token directly, and must not be clobbered -- nor should it require a stored OAuth
+        token to exist -- just because the gateway is configured for authorization_code."""
         gateway = _make_auth_code_gateway()
 
         with (
             patch("mcpgateway.services.gateway_service.fresh_db_session") as mock_fresh,
-            _patch_token_storage("tok-abc"),
-            _patch_claim_validation(),
+            patch.object(gateway_service, "_resolve_auth_code_refresh_headers", new_callable=AsyncMock) as mock_helper,
             patch.object(gateway_service, "_initialize_gateway", new_callable=AsyncMock) as mock_init,
         ):
             mock_fresh.return_value.__enter__.return_value = self._session_for(gateway)
@@ -729,10 +732,11 @@ class TestManualRefreshAuthCodeReporting:
                 user_email="user@example.com",
                 created_via="manual_refresh",
                 gateway=gateway,
-                pre_auth_headers={"Authorization": "Bearer passthrough", "X-Tenant": "acme"},
+                pre_auth_headers={"Authorization": "Bearer caller-supplied-token", "X-Tenant": "acme"},
             )
 
-        assert mock_init.call_args.kwargs["pre_auth_headers"] == {"Authorization": "Bearer tok-abc", "X-Tenant": "acme"}
+        mock_helper.assert_not_called()
+        assert mock_init.call_args.kwargs["pre_auth_headers"] == {"Authorization": "Bearer caller-supplied-token", "X-Tenant": "acme"}
 
     @pytest.mark.asyncio
     async def test_error_never_contains_the_access_token(self, gateway_service):
