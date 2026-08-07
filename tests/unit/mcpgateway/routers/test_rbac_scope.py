@@ -145,3 +145,100 @@ async def test_get_global_role_returns_404_for_narrowed_admin(monkeypatch):
 
     assert exc.value.status_code == 404
     assert exc.value.detail == "Role not found"
+
+
+@pytest.mark.asyncio
+async def test_narrowed_admin_cannot_authorize_global_assignment(monkeypatch):
+    """The escalation path: a narrowed admin minting themselves a global '*' role."""
+    monkeypatch.setattr("mcpgateway.auth_context.is_unrestricted_platform_admin", AsyncMock(return_value=False))
+
+    with pytest.raises(HTTPException) as exc:
+        await rbac_router._authorize_assignment_scope(
+            scoped_request(["team-a"]), admin_user_context(["team-a"]), MagicMock(), "global", None, "victim@example.com"
+        )
+
+    assert exc.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_unrestricted_admin_may_authorize_global_assignment(monkeypatch):
+    monkeypatch.setattr("mcpgateway.auth_context.is_unrestricted_platform_admin", AsyncMock(return_value=True))
+
+    assert (
+        await rbac_router._authorize_assignment_scope(
+            scoped_request(None), admin_user_context(None), MagicMock(), "global", None, "victim@example.com"
+        )
+        is None
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "scope,scope_id,target,expected_denied",
+    [
+        ("team", "team-b", "victim@example.com", True),   # team not covered by the token
+        ("team", None, "victim@example.com", True),        # team scope with no scope_id fails closed
+        ("team", "team-a", "member@example.com", False),   # covered team
+        ("personal", None, "victim@example.com", True),    # someone else's personal scope
+        ("personal", None, "admin@example.com", False),    # self
+        ("nonsense", None, "victim@example.com", True),    # unknown scope fails closed
+    ],
+)
+async def test_assignment_scope_matrix(scope, scope_id, target, expected_denied):
+    # `_authorize_assignment_scope`'s team/personal branches call
+    # `get_scoped_resource_access_context`, which — unlike
+    # `require_unrestricted_platform_admin` — falls back to unconditional
+    # non-JWT admin bypass unless a verified JWT payload is cached on
+    # `request.state`. A bare `scoped_request()` doesn't set that, so every
+    # "should be denied" case below would silently bypass narrowing and the
+    # test would falsely pass by never raising. Use `_jwt_scoped_request` so
+    # this exercises the real verified-token narrowing path. See the
+    # docstring on `_jwt_scoped_request` above for the full explanation.
+    request = _jwt_scoped_request(["team-a"], path="/rbac/users/x/roles")
+    user = admin_user_context(["team-a"])
+
+    if expected_denied:
+        with pytest.raises(HTTPException) as exc:
+            await rbac_router._authorize_assignment_scope(request, user, MagicMock(), scope, scope_id, target)
+        assert exc.value.status_code == 403
+    else:
+        assert await rbac_router._authorize_assignment_scope(request, user, MagicMock(), scope, scope_id, target) is None
+
+
+@pytest.mark.asyncio
+async def test_revoke_reads_scope_from_the_stored_row_not_the_request(monkeypatch):
+    """A client must not be able to relabel a global assignment to get it revoked."""
+    monkeypatch.setattr("mcpgateway.auth_context.is_unrestricted_platform_admin", AsyncMock(return_value=False))
+    monkeypatch.setattr(rbac_router, "_load_assignment", lambda db, email, role_id: SimpleNamespace(scope="global", scope_id=None))
+
+    with pytest.raises(HTTPException) as exc:
+        # Caller claims team scope; the stored row says global, so this must be denied.
+        await rbac_router.revoke_user_role(
+            request=scoped_request(["team-a"]),
+            user_email="victim@example.com",
+            role_id="r",
+            scope="team",
+            scope_id="team-a",
+            user=admin_user_context(["team-a"]),
+            db=MagicMock(),
+        )
+
+    assert exc.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_revoke_returns_404_when_assignment_absent(monkeypatch):
+    monkeypatch.setattr(rbac_router, "_load_assignment", lambda db, email, role_id: None)
+
+    with pytest.raises(HTTPException) as exc:
+        await rbac_router.revoke_user_role(
+            request=scoped_request(None),
+            user_email="nobody@example.com",
+            role_id="r",
+            scope="team",
+            scope_id="team-a",
+            user=admin_user_context(None),
+            db=MagicMock(),
+        )
+
+    assert exc.value.status_code == 404
