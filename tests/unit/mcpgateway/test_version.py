@@ -18,6 +18,7 @@ import runpy
 import sys
 import types
 from typing import Any, Dict
+from unittest.mock import AsyncMock
 
 # Third-Party
 from fastapi import FastAPI, HTTPException
@@ -102,7 +103,17 @@ def _build_app(monkeypatch: pytest.MonkeyPatch, auth_ok: bool = True) -> FastAPI
 
 @pytest.fixture()
 def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
-    """Authenticated *TestClient* fixture."""
+    """Authenticated *TestClient* fixture.
+
+    require_admin_auth returns a bare email string and never consults
+    token_teams, so the Layer-1 narrowing check now runs against
+    is_unrestricted_platform_admin() inside the handler. The TestClient
+    request here carries no JWT-verified payload, so without this patch
+    get_rpc_filter_context() would fall back to token_teams=[] (secure
+    default) and every happy-path assertion below would see 403 instead
+    of 200. Patch the predicate rather than weakening the guard.
+    """
+    monkeypatch.setattr("mcpgateway.auth_context.is_unrestricted_platform_admin", AsyncMock(return_value=True))
     return TestClient(_build_app(monkeypatch, auth_ok=True))
 
 
@@ -493,6 +504,8 @@ def test_version_partial_html_fragment(monkeypatch: pytest.MonkeyPatch) -> None:
     from mcpgateway import version as ver_mod
 
     app = _build_app(monkeypatch, auth_ok=True)
+    # See the `client` fixture above for why this patch is required.
+    monkeypatch.setattr("mcpgateway.auth_context.is_unrestricted_platform_admin", AsyncMock(return_value=True))
     # The partial template expects a few system metric keys for formatting.
     monkeypatch.setattr(
         ver_mod,
@@ -525,6 +538,8 @@ def test_version_partial_html_uses_existing_app_templates(monkeypatch: pytest.Mo
     from mcpgateway import version as ver_mod
 
     app = _build_app(monkeypatch, auth_ok=True)
+    # See the `client` fixture above for why this patch is required.
+    monkeypatch.setattr("mcpgateway.auth_context.is_unrestricted_platform_admin", AsyncMock(return_value=True))
 
     # Ensure payload build doesn't fail due to missing system keys in the template context.
     monkeypatch.setattr(
@@ -560,6 +575,8 @@ def test_version_redis_client_not_available(monkeypatch: pytest.MonkeyPatch) -> 
     from mcpgateway import version as ver_mod
 
     app = _build_app(monkeypatch, auth_ok=True)
+    # See the `client` fixture above for why this patch is required.
+    monkeypatch.setattr("mcpgateway.auth_context.is_unrestricted_platform_admin", AsyncMock(return_value=True))
     client = TestClient(app)
 
     monkeypatch.setattr(ver_mod, "REDIS_AVAILABLE", True, raising=False)
@@ -588,6 +605,8 @@ def test_version_redis_not_reachable(monkeypatch: pytest.MonkeyPatch) -> None:
     from mcpgateway import version as ver_mod
 
     app = _build_app(monkeypatch, auth_ok=True)
+    # See the `client` fixture above for why this patch is required.
+    monkeypatch.setattr("mcpgateway.auth_context.is_unrestricted_platform_admin", AsyncMock(return_value=True))
     client = TestClient(app)
 
     monkeypatch.setattr(ver_mod, "REDIS_AVAILABLE", True, raising=False)
@@ -612,6 +631,8 @@ def test_version_redis_availability_check_exception(monkeypatch: pytest.MonkeyPa
     from mcpgateway import version as ver_mod
 
     app = _build_app(monkeypatch, auth_ok=True)
+    # See the `client` fixture above for why this patch is required.
+    monkeypatch.setattr("mcpgateway.auth_context.is_unrestricted_platform_admin", AsyncMock(return_value=True))
     client = TestClient(app)
 
     monkeypatch.setattr(ver_mod, "REDIS_AVAILABLE", True, raising=False)

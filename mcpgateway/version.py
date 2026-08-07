@@ -69,7 +69,6 @@ import orjson
 from sqlalchemy import text
 
 # First-Party
-from mcpgateway.auth import normalize_token_teams
 from mcpgateway.config import settings
 from mcpgateway.db import engine
 from mcpgateway.utils.orjson_response import ORJSONResponse
@@ -1225,36 +1224,6 @@ button{{margin-top:1rem;padding:.5rem 1rem;}}
 </body></html>"""
 
 
-def _has_version_admin_access(user: Any) -> bool:
-    """Return True when diagnostics access is permitted for the authenticated user.
-
-    Admin diagnostics access requires unrestricted admin scope when the caller is a JWT payload.
-    When ``require_admin_auth`` is the upstream dependency it returns a plain email string
-    after having already verified admin status, so strings are accepted as authorized.
-
-    Args:
-        user: Authenticated user payload from the auth dependency.
-
-    Returns:
-        bool: ``True`` when unrestricted admin diagnostics access is allowed.
-    """
-    if isinstance(user, str):
-        # require_admin_auth already verified admin status and returns the email string
-        return True
-    if not isinstance(user, dict):
-        return False
-
-    is_admin = bool(user.get("is_admin", False))
-    if not is_admin:
-        nested_user = user.get("user", {})
-        if isinstance(nested_user, dict):
-            is_admin = bool(nested_user.get("is_admin", False))
-    if not is_admin:
-        return False
-
-    return normalize_token_teams(user) is None
-
-
 # Endpoint
 @router.get("/version", summary="Diagnostics (admin only)")
 async def version_endpoint(
@@ -1283,7 +1252,8 @@ async def version_endpoint(
         Response: JSONResponse with diagnostic data, or HTMLResponse with formatted page.
 
     Raises:
-        HTTPException: If the caller does not have required admin diagnostics access.
+        HTTPException: If the caller does not present an unrestricted platform-admin
+            token (Layer-1 scope narrowed to a team or to public-only is rejected).
 
     Examples:
         >>> import asyncio
@@ -1296,6 +1266,12 @@ async def version_endpoint(
         >>> mock_request.headers = {"accept": "application/json"}
         >>>
         >>> admin_user = {"email": "admin@example.com", "is_admin": True, "teams": None}
+        >>>
+        >>> # The handler resolves Layer-1 scope from the request rather than from
+        >>> # admin_user directly, so the mock request needs an unrestricted-admin
+        >>> # stand-in for that check.
+        >>> _scope_patcher = patch('mcpgateway.auth_context.is_unrestricted_platform_admin', AsyncMock(return_value=True))
+        >>> _ = _scope_patcher.start()
         >>>
         >>> # Test JSON response (default)
         >>> async def test_json():
@@ -1355,9 +1331,20 @@ async def version_endpoint(
         >>> response = asyncio.run(test_with_redis())
         >>> isinstance(response, JSONResponse)
         True
+        >>> _ = _scope_patcher.stop()
     """
-    if not _has_version_admin_access(_user):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin permissions required")
+    # First-Party
+    from mcpgateway.auth_context import is_unrestricted_platform_admin  # pylint: disable=import-outside-toplevel
+    from mcpgateway.db import fresh_db_session  # pylint: disable=import-outside-toplevel
+    from mcpgateway.middleware.rbac import _GLOBAL_SCOPE_DENIED_MSG  # pylint: disable=import-outside-toplevel
+
+    # require_admin_auth is kept as the dependency because it supports HTTP Basic
+    # and the browser login redirect; get_current_user_with_permissions supports
+    # neither. It returns a bare email string and never consults token_teams, so
+    # the Layer-1 check happens here instead.
+    with fresh_db_session() as _db:
+        if not await is_unrestricted_platform_admin(request, _user, _db):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_GLOBAL_SCOPE_DENIED_MSG)
 
     # Redis health check - use shared client from factory
     redis_ok = False
