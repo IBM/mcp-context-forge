@@ -5957,6 +5957,13 @@ async def update_tool(
         if isinstance(ex, IntegrityError):
             logger.error(f"Integrity error while updating tool: {ex}")
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=ErrorFormatter.format_database_error(ex))
+        if isinstance(ex, ToolNameConflictError):
+            if not ex.enabled and ex.tool_id:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=f"Tool name already exists but is inactive. Consider activating it with ID: {ex.tool_id}",
+                )
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(ex))
         if isinstance(ex, ToolError):
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(ex))
         logger.error(f"Unexpected error while updating tool: {ex}")
