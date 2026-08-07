@@ -1,4 +1,9 @@
-"""Minimal real MCP server over SSE, used as the e2e 'authorized upstream' for issue #5247.
+# -*- coding: utf-8 -*-
+"""Location: ./tests/e2e/issue_5247/manual/mock_upstream_mcp.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
+SPDX-License-Identifier: Apache-2.0
+
+Minimal real MCP server over SSE, used as the e2e 'authorized upstream' for issue #5247.
 
 Requires a Bearer token matching E2E_EXPECTED_TOKEN on every request (mimicking an
 OAuth-protected MCP server) so the e2e script can prove the gateway forwards the

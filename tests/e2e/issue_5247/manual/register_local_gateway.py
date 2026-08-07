@@ -1,4 +1,9 @@
-"""Register a gateway pointed at a local mock MCP server for e2e scenarios 2 and 3a (#5247).
+# -*- coding: utf-8 -*-
+"""Location: ./tests/e2e/issue_5247/manual/register_local_gateway.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
+SPDX-License-Identifier: Apache-2.0
+
+Register a gateway pointed at a local mock MCP server for e2e scenarios 2 and 3a (#5247).
 
 The real HTTP registration endpoint correctly enforces SSRF protection and rejects any
 localhost/private-network URL (verified directly against SecurityValidator.validate_url --
@@ -18,7 +23,7 @@ import json
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[3]))  # tests/e2e/issue_5247/ -> repo root
+sys.path.insert(0, str(Path(__file__).resolve().parents[4]))  # tests/e2e/issue_5247/manual/ -> repo root
 
 from mcpgateway.db import SessionLocal  # noqa: E402
 from mcpgateway.schemas import GatewayCreate  # noqa: E402
