@@ -88,7 +88,7 @@ describe("useResourceForm", () => {
   });
 
   describe("getFormData", () => {
-    it("keeps tags array as-is in getFormData", () => {
+    it("passes clean tags through unchanged", () => {
       const { result } = renderHook(() => useResourceForm());
 
       act(() => {
@@ -129,6 +129,20 @@ describe("useResourceForm", () => {
       expect(data.resource.uri).toBe("resource://example/path");
       expect(data.resource.name).toBe("MyResource");
       expect(data.resource.description).toBe("description");
+    });
+
+    it("sanitizes tags in getFormData", () => {
+      const { result } = renderHook(() => useResourceForm());
+
+      act(() => {
+        result.current.setUri("resource://example/path");
+        result.current.setName("My Resource");
+        result.current.setContent("content");
+        result.current.setTags(["  clean  ", "evil\r\ninject", "x".repeat(250), "\x00\x07"]);
+      });
+
+      const data = result.current.getFormData();
+      expect(data.resource.tags).toEqual(["clean", "evilinject", "x".repeat(200)]);
     });
 
     it("omits optional fields when empty", () => {

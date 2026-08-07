@@ -108,6 +108,14 @@ describe("TagInput", () => {
     expect(screen.getByText("Maximum 2 tags reached.")).toBeInTheDocument();
   });
 
+  it("restores focus to the input after removing a chip at maxTags", async () => {
+    const user = userEvent.setup();
+    render(<Harness initial={["only"]} maxTags={1} />);
+    await user.click(screen.getByRole("button", { name: "Remove only" }));
+    expect(screen.getByRole("combobox")).toBeEnabled();
+    expect(screen.getByRole("combobox")).toHaveFocus();
+  });
+
   it("disables interaction when disabled", () => {
     render(<Harness initial={["a"]} disabled />);
     expect(screen.getByRole("combobox")).toBeDisabled();

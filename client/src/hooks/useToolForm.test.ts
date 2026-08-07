@@ -377,6 +377,19 @@ describe("useToolForm", () => {
       expect(payload.tool.description?.length).toBe(500);
     });
 
+    it("sanitizes tags in getFormData", () => {
+      const { result } = renderHook(() => useToolForm());
+
+      act(() => {
+        result.current.setName("my-tool");
+        result.current.setUrl("https://api.example.com");
+        result.current.setTags(["  clean  ", "evil\r\ninject", "x".repeat(250), "\x00\x07"]);
+      });
+
+      const payload = result.current.getFormData();
+      expect(payload.tool.tags).toEqual(["clean", "evilinject", "x".repeat(200)]);
+    });
+
     it("is true with valid name, url, and valid schema JSON", () => {
       const { result } = renderHook(() => useToolForm());
 
