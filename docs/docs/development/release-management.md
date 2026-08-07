@@ -385,7 +385,7 @@ make test-mcp-rbac test-mcp-protocol-e2e
 | Target | What it tests |
 |--------|---------------|
 | `test-mcp-rbac` | RBAC enforcement and multi-transport MCP protocol compliance |
-| `test-mcp-protocol-e2e` | MCP protocol via FastMCP client against the gateway |
+| `test-mcp-protocol-e2e` | MCP protocol via the official mcp SDK client against the gateway |
 
 ### 5.5 Load testing
 
