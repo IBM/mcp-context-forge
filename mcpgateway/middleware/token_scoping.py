@@ -79,6 +79,8 @@ _TARGETED_MISSING_DELETE_PATTERN = re.compile(r"^/(?:servers|gateways)/(?:[a-f0-
 # Permission map with precompiled patterns
 # Maps (HTTP method, path pattern) to required permission
 _PERMISSION_PATTERNS: List[Tuple[str, Pattern[str], str]] = [
+    # Plugin discovery permissions
+    ("GET", re.compile(r"^/plugins(?:$|/)"), Permissions.PLUGINS_READ),
     # Tools permissions
     ("GET", re.compile(r"^/tools(?:$|/)"), Permissions.TOOLS_READ),
     ("POST", re.compile(r"^/tools/?$"), Permissions.TOOLS_CREATE),  # Only exact /tools or /tools/

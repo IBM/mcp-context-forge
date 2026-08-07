@@ -250,6 +250,12 @@ class TestTokenScopingMiddleware:
         result = middleware._check_permission_restrictions("/tools", "POST", ["tools.write"])
         assert result == False, "Should reject non-canonical 'tools.write' permission"
 
+    def test_plugin_discovery_requires_plugins_read(self, middleware):
+        """Versioned plugin discovery uses explicit least-privilege permission."""
+        assert middleware._check_permission_restrictions("/v1/plugins", "GET", [Permissions.PLUGINS_READ]) is True
+        assert middleware._check_permission_restrictions("/plugins", "GET", [Permissions.PLUGINS_READ]) is True
+        assert middleware._check_permission_restrictions("/v1/plugins", "GET", [Permissions.TOOLS_READ]) is False
+
     @pytest.mark.asyncio
     async def test_rpc_endpoint_allowed_with_servers_use_permission(self, middleware):
         """POST /rpc must be reachable for tokens that carry servers.use.
