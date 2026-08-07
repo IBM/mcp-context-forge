@@ -53,6 +53,7 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timezone
 import importlib.util
+import logging
 import os
 import platform
 import socket
@@ -75,6 +76,8 @@ from mcpgateway.utils.orjson_response import ORJSONResponse
 from mcpgateway.utils.redis_client import get_redis_client, is_redis_available
 from mcpgateway.utils.verify_credentials import require_admin_auth
 
+logger = logging.getLogger(__name__)
+
 # Optional runtime dependencies
 try:
     # Third-Party
@@ -87,10 +90,7 @@ try:
 except (ModuleNotFoundError, AttributeError) as e:
     # ModuleNotFoundError: redis package not installed
     # AttributeError: 'redis' exists but isn't a proper package (e.g., shadowed by a file)
-    # Standard
-    import logging
-
-    logging.getLogger(__name__).warning(f"Redis module check failed ({type(e).__name__}: {e}), Redis support disabled")
+    logger.warning(f"Redis module check failed ({type(e).__name__}: {e}), Redis support disabled")
     REDIS_AVAILABLE = False
 
 # Globals
@@ -1342,9 +1342,24 @@ async def version_endpoint(
     # and the browser login redirect; get_current_user_with_permissions supports
     # neither. It returns a bare email string and never consults token_teams, so
     # the Layer-1 check happens here instead.
-    with fresh_db_session() as _db:
-        if not await is_unrestricted_platform_admin(request, _user, _db):
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_GLOBAL_SCOPE_DENIED_MSG)
+    #
+    # This is a diagnostics endpoint: _database_version() below already reports
+    # DB connectivity failures gracefully instead of crashing, so a DB hiccup
+    # during *this* scope check must not surface as an unhandled 500 either.
+    # But it must never grant access just because we couldn't verify it -
+    # fail closed on any error. 503 (not 403) so an operator can tell "couldn't
+    # verify, DB unavailable" apart from "verified, and you're not admin".
+    try:
+        with fresh_db_session() as _db:
+            is_admin_unrestricted = await is_unrestricted_platform_admin(request, _user, _db)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.warning("version diagnostics: admin scope check failed (%s: %s)", type(exc).__name__, exc)
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Unable to verify admin authorization; try again shortly") from exc
+
+    if not is_admin_unrestricted:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_GLOBAL_SCOPE_DENIED_MSG)
 
     # Redis health check - use shared client from factory
     redis_ok = False
