@@ -1085,10 +1085,12 @@ class TestTeamManagementService:
             svc = TeamManagementService(db)
             scoped, _ = await svc.list_teams(team_ids=["id-b"])
             scoped_names = {t.name for t in scoped}
+            empty, _ = await svc.list_teams(team_ids=[])
             unfiltered, _ = await svc.list_teams(team_ids=None)
             unfiltered_names = {t.name for t in unfiltered}
 
         assert scoped_names == {"Beta"}  # restricted to the given id
+        assert empty == []  # explicit empty scope matches no teams
         assert {"Alpha", "Beta"} <= unfiltered_names  # None = no filter
 
     @pytest.mark.asyncio
@@ -1165,6 +1167,34 @@ class TestTeamManagementService:
 
         assert result == 4
         mock_db.commit.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_get_teams_count_team_ids_filters_count(self):
+        """team_ids restricts the count; an explicit empty list matches no teams."""
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import Session as OrmSession
+
+        from mcpgateway.db import Base
+
+        engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
+        Base.metadata.create_all(engine)
+        with OrmSession(engine) as db:
+            db.add_all(
+                [
+                    EmailTeam(id="id-a", name="Alpha", slug="alpha-count", created_by="o@example.com", is_personal=False),
+                    EmailTeam(id="id-b", name="Beta", slug="beta-count", created_by="o@example.com", is_personal=False),
+                ]
+            )
+            db.commit()
+
+            svc = TeamManagementService(db)
+            scoped_count = await svc.get_teams_count(team_ids=["id-b"])
+            empty_count = await svc.get_teams_count(team_ids=[])
+            unfiltered_count = await svc.get_teams_count(team_ids=None)
+
+        assert scoped_count == 1
+        assert empty_count == 0
+        assert unfiltered_count >= 2
 
     # =========================================================================
     # Discovery and Join Request Tests

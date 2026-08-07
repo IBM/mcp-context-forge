@@ -71,6 +71,7 @@ The names below are the **module's public API**. Callers in ``main.py``,
         has_valid_internal_mcp_runtime_auth_header(request) -> bool
 
     Per-request JWT / scope resolution (the Layer-1 surface)
+        extract_token_team_ids(user_context) -> list[str] | None
         get_token_teams_from_request(request) -> list[str] | None
         get_rpc_filter_context(request, user) -> (email, teams, is_admin)
         get_request_identity(request, user) -> (email, is_admin)
@@ -114,7 +115,7 @@ policy. The key invariants that this module enforces:
 
 # Standard
 import base64
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from functools import lru_cache
 import hashlib
 import hmac
@@ -282,6 +283,52 @@ def normalize_token_teams(payload: Dict[str, Any]) -> Optional[List[str]]:
         elif isinstance(team, str):
             normalized.append(team)
     return normalized
+
+
+def extract_token_team_ids(user_context: Any) -> Optional[List[str]]:
+    """Extract explicit token team IDs from an authenticated user context.
+
+    This helper consumes the already-normalized ``token_teams`` value placed in
+    request/user context by auth middleware. It intentionally preserves context
+    key-presence semantics: a missing key is not the same thing as a JWT missing
+    its ``teams`` claim, because JWT normalization has already happened before
+    these endpoint helpers run.
+
+    Args:
+        user_context: Authenticated user context, normally a dict.
+
+    Returns:
+        ``None`` when no explicit endpoint-level narrowing should be applied,
+        or a list of normalized team IDs. An explicit empty list remains
+        ``[]`` and should match no teams.
+
+    Examples:
+        >>> extract_token_team_ids({})
+        >>> extract_token_team_ids({"token_teams": None})
+        >>> extract_token_team_ids({"token_teams": []})
+        []
+        >>> extract_token_team_ids({"token_teams": ["team-a", {"id": "team-b"}, {"id": ""}, 1]})
+        ['team-a', 'team-b']
+    """
+    if not isinstance(user_context, Mapping) or "token_teams" not in user_context:
+        return None
+
+    token_teams = user_context.get("token_teams")
+    if token_teams is None:
+        return None
+
+    if not isinstance(token_teams, list):
+        return []
+
+    team_ids: List[str] = []
+    for team in token_teams:
+        if isinstance(team, Mapping):
+            team_id = team.get("id")
+            if isinstance(team_id, str) and team_id:
+                team_ids.append(team_id)
+        elif isinstance(team, str) and team:
+            team_ids.append(team)
+    return team_ids
 
 
 def get_jwt_user_email_from_payload(payload: dict[str, Any]) -> str | None:

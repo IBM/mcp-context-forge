@@ -8849,10 +8849,60 @@ async def test_admin_list_teams_unified(monkeypatch, mock_request, mock_db, allo
     auth_service = MagicMock()
     auth_service.get_user_by_email = AsyncMock(return_value=current_user)
     monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
-    monkeypatch.setattr("mcpgateway.admin._generate_unified_teams_view", AsyncMock(return_value=HTMLResponse("ok")))
+    generate_view = AsyncMock(return_value=HTMLResponse("ok"))
+    monkeypatch.setattr("mcpgateway.admin._generate_unified_teams_view", generate_view)
     response = await admin_list_teams(request=mock_request, page=1, per_page=5, q=None, db=mock_db, user={"email": "u@example.com", "db": mock_db}, unified=True)
     assert isinstance(response, HTMLResponse)
     assert response.body.decode() == "ok"
+    generate_view.assert_awaited_once()
+    assert generate_view.await_args.kwargs["scoped_team_ids"] is None
+
+
+@pytest.mark.asyncio
+async def test_admin_list_teams_unified_forwards_scoped_team_ids(monkeypatch, mock_request, mock_db, allow_permission):
+    monkeypatch.setattr(settings, "email_auth_enabled", True)
+    current_user = SimpleNamespace(email="u@example.com", is_admin=True)
+    auth_service = MagicMock()
+    auth_service.get_user_by_email = AsyncMock(return_value=current_user)
+    monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
+    generate_view = AsyncMock(return_value=HTMLResponse("ok"))
+    monkeypatch.setattr("mcpgateway.admin._generate_unified_teams_view", generate_view)
+
+    response = await admin_list_teams(
+        request=mock_request,
+        page=1,
+        per_page=5,
+        q=None,
+        db=mock_db,
+        user={"email": "u@example.com", "db": mock_db, "token_teams": ["team-1", {"id": "team-2"}]},
+        unified=True,
+    )
+
+    assert isinstance(response, HTMLResponse)
+    assert generate_view.await_args.kwargs["scoped_team_ids"] == ["team-1", "team-2"]
+
+
+@pytest.mark.asyncio
+async def test_generate_unified_teams_view_filters_scoped_team_ids():
+    current_user = SimpleNamespace(email="u@example.com")
+    alpha = SimpleNamespace(id="team-1", name="Alpha", is_personal=False, visibility="private", created_by="u@example.com", description="")
+    beta = SimpleNamespace(id="team-2", name="Beta", is_personal=False, visibility="private", created_by="u@example.com", description="")
+    gamma_public = SimpleNamespace(id="team-3", name="Gamma", is_personal=False, visibility="public", created_by="other@example.com", description="")
+
+    team_service = MagicMock()
+    team_service.get_user_teams = AsyncMock(return_value=[alpha, beta])
+    team_service.discover_public_teams = AsyncMock(return_value=[gamma_public])
+    team_service.get_member_counts_batch_cached = AsyncMock(return_value={"team-2": 1})
+    team_service.get_user_roles_batch.return_value = {"team-2": "member"}
+    team_service.get_pending_join_requests_batch.return_value = {}
+
+    response = await _generate_unified_teams_view(team_service, current_user, root_path="", scoped_team_ids=["team-2"])
+    body = response.body.decode()
+
+    assert "Beta" in body
+    assert "Alpha" not in body
+    assert "Gamma" not in body
+    team_service.get_member_counts_batch_cached.assert_awaited_once_with(["team-2"])
 
 
 @pytest.mark.asyncio
@@ -8878,6 +8928,72 @@ async def test_admin_list_teams_admin_view(monkeypatch, mock_request, mock_db, a
     response = await admin_list_teams(request=mock_request, page=1, per_page=5, q="t", db=mock_db, user={"email": "u@example.com", "db": mock_db})
     assert isinstance(response, HTMLResponse)
     assert team.member_count == 3
+    assert team_service.list_teams.await_args.kwargs["team_ids"] is None
+
+
+@pytest.mark.asyncio
+async def test_admin_list_teams_admin_view_forwards_scoped_team_ids(monkeypatch, mock_request, mock_db, allow_permission):
+    monkeypatch.setattr(settings, "email_auth_enabled", True)
+    current_user = SimpleNamespace(email="u@example.com", is_admin=True)
+    auth_service = MagicMock()
+    auth_service.get_user_by_email = AsyncMock(return_value=current_user)
+    monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
+
+    team = SimpleNamespace(id="team-2", name="Team Two")
+    pagination = MagicMock()
+    pagination.model_dump.return_value = {"page": 1}
+    links = MagicMock()
+    links.model_dump.return_value = {"self": "/admin/teams?page=1"}
+
+    team_service = MagicMock()
+    team_service.list_teams = AsyncMock(return_value={"data": [team], "pagination": pagination, "links": links})
+    team_service.get_member_counts_batch_cached = AsyncMock(return_value={"team-2": 1})
+    monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+
+    response = await admin_list_teams(
+        request=mock_request,
+        page=1,
+        per_page=5,
+        q=None,
+        db=mock_db,
+        user={"email": "u@example.com", "db": mock_db, "token_teams": ["team-2"]},
+    )
+
+    assert isinstance(response, HTMLResponse)
+    assert team_service.list_teams.await_args.kwargs["team_ids"] == ["team-2"]
+
+
+@pytest.mark.asyncio
+async def test_admin_list_teams_admin_view_public_only_token_lists_no_teams(monkeypatch, mock_request, mock_db, allow_permission):
+    monkeypatch.setattr(settings, "email_auth_enabled", True)
+    current_user = SimpleNamespace(email="u@example.com", is_admin=True)
+    auth_service = MagicMock()
+    auth_service.get_user_by_email = AsyncMock(return_value=current_user)
+    monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
+
+    pagination = MagicMock()
+    pagination.model_dump.return_value = {"page": 1, "total_items": 0}
+    links = MagicMock()
+    links.model_dump.return_value = {"self": "/admin/teams?page=1"}
+
+    team_service = MagicMock()
+    team_service.list_teams = AsyncMock(return_value={"data": [], "pagination": pagination, "links": links})
+    team_service.get_member_counts_batch_cached = AsyncMock(return_value={})
+    monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+
+    response = await admin_list_teams(
+        request=mock_request,
+        page=1,
+        per_page=5,
+        q=None,
+        db=mock_db,
+        user={"email": "u@example.com", "db": mock_db, "token_teams": []},
+    )
+
+    assert isinstance(response, HTMLResponse)
+    assert team_service.list_teams.await_args.kwargs["team_ids"] == []
+    template_call = mock_request.app.state.templates.TemplateResponse.call_args
+    assert template_call[0][2]["data"] == []
 
 
 @pytest.mark.asyncio
@@ -10281,6 +10397,87 @@ async def test_admin_teams_partial_html_controls_admin(monkeypatch, mock_request
         user={"email": "u@example.com", "db": mock_db},
     )
     assert isinstance(response, HTMLResponse)
+    assert team_service.list_teams.await_args.kwargs["team_ids"] is None
+
+
+@pytest.mark.asyncio
+async def test_admin_teams_partial_html_admin_forwards_scoped_team_ids(monkeypatch, mock_request, mock_db, allow_permission):
+    monkeypatch.setattr(settings, "email_auth_enabled", True)
+    current_user = SimpleNamespace(email="u@example.com", is_admin=True)
+    auth_service = MagicMock()
+    auth_service.get_user_by_email = AsyncMock(return_value=current_user)
+    monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
+
+    team = SimpleNamespace(id="team-2", name="Team Two", slug="team-two", description="Desc", visibility="private", is_active=True)
+    pagination = MagicMock()
+    pagination.model_dump.return_value = {"page": 1}
+    links = MagicMock()
+    links.model_dump.return_value = {"self": "/admin/teams/partial?page=1"}
+
+    team_service = MagicMock()
+    team_service.get_user_teams = AsyncMock(return_value=[])
+    team_service.get_user_roles_batch.return_value = {}
+    team_service.discover_public_teams = AsyncMock(return_value=[])
+    team_service.get_pending_join_requests_batch.return_value = {}
+    team_service.list_teams = AsyncMock(return_value={"data": [team], "pagination": pagination, "links": links})
+    monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+
+    response = await admin_teams_partial_html(
+        request=mock_request,
+        page=1,
+        per_page=5,
+        include_inactive=False,
+        visibility=None,
+        render="controls",
+        q=None,
+        relationship=None,
+        db=mock_db,
+        user={"email": "u@example.com", "db": mock_db, "token_teams": ["team-2"]},
+    )
+
+    assert isinstance(response, HTMLResponse)
+    assert team_service.list_teams.await_args.kwargs["team_ids"] == ["team-2"]
+
+
+@pytest.mark.asyncio
+async def test_admin_teams_partial_html_admin_public_only_token_lists_no_teams(monkeypatch, mock_request, mock_db, allow_permission):
+    monkeypatch.setattr(settings, "email_auth_enabled", True)
+    current_user = SimpleNamespace(email="u@example.com", is_admin=True)
+    auth_service = MagicMock()
+    auth_service.get_user_by_email = AsyncMock(return_value=current_user)
+    monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
+
+    pagination = MagicMock()
+    pagination.model_dump.return_value = {"page": 1, "total_items": 0}
+    links = MagicMock()
+    links.model_dump.return_value = {"self": "/admin/teams/partial?page=1"}
+
+    team_service = MagicMock()
+    team_service.get_user_teams = AsyncMock(return_value=[])
+    team_service.get_user_roles_batch.return_value = {}
+    team_service.discover_public_teams = AsyncMock(return_value=[])
+    team_service.get_pending_join_requests_batch.return_value = {}
+    team_service.list_teams = AsyncMock(return_value={"data": [], "pagination": pagination, "links": links})
+    team_service.get_member_counts_batch_cached = AsyncMock(return_value={})
+    monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+
+    response = await admin_teams_partial_html(
+        request=mock_request,
+        page=1,
+        per_page=5,
+        include_inactive=False,
+        visibility=None,
+        render=None,
+        q=None,
+        relationship=None,
+        db=mock_db,
+        user={"email": "u@example.com", "db": mock_db, "token_teams": []},
+    )
+
+    assert isinstance(response, HTMLResponse)
+    assert team_service.list_teams.await_args.kwargs["team_ids"] == []
+    template_call = mock_request.app.state.templates.TemplateResponse.call_args
+    assert template_call[0][2]["data"] == []
 
 
 @pytest.mark.asyncio
@@ -10407,6 +10604,48 @@ async def test_admin_teams_partial_html_admin_relationship_none(monkeypatch, moc
     template_call = mock_request.app.state.templates.TemplateResponse.call_args
     data = template_call[0][2]["data"]
     assert data[0].relationship == "none"
+
+
+@pytest.mark.asyncio
+async def test_admin_teams_partial_html_relationship_branch_applies_token_scope(monkeypatch, mock_request, mock_db, allow_permission):
+    """A relationship filter skips the admin query branch, so the manual list must still be scoped."""
+    monkeypatch.setattr(settings, "email_auth_enabled", True)
+
+    current_user = SimpleNamespace(email="u@example.com", is_admin=True)
+    auth_service = MagicMock()
+    auth_service.get_user_by_email = AsyncMock(return_value=current_user)
+    monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
+
+    alpha = SimpleNamespace(id="team-1", name="Alpha", slug="alpha", description="", visibility="private", is_active=True, is_personal=False)
+    beta = SimpleNamespace(id="team-2", name="Beta", slug="beta", description="", visibility="private", is_active=True, is_personal=False)
+
+    team_service = MagicMock()
+    team_service.get_user_teams = AsyncMock(return_value=[alpha, beta])
+    team_service.get_user_roles_batch.return_value = {"team-1": "member", "team-2": "member"}
+    team_service.discover_public_teams = AsyncMock(return_value=[])
+    team_service.get_pending_join_requests_batch.return_value = {}
+    team_service.get_member_counts_batch_cached = AsyncMock(return_value={"team-2": 1})
+    team_service.list_teams = AsyncMock()
+    monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+
+    response = await admin_teams_partial_html(
+        request=mock_request,
+        page=1,
+        per_page=5,
+        include_inactive=False,
+        visibility=None,
+        render=None,
+        q=None,
+        relationship="member",
+        db=mock_db,
+        user={"email": "u@example.com", "db": mock_db, "token_teams": ["team-2"]},
+    )
+
+    assert isinstance(response, HTMLResponse)
+    template_call = mock_request.app.state.templates.TemplateResponse.call_args
+    data = template_call[0][2]["data"]
+    assert [team.id for team in data] == ["team-2"]
+    team_service.list_teams.assert_not_called()
 
 
 @pytest.mark.asyncio
