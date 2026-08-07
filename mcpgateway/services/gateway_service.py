@@ -4632,10 +4632,10 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
             def get_httpx_client_factory(
                 headers: dict[str, str] | None = None,
-                timeout: httpx.Timeout | None = None,
-                auth: httpx.Auth | None = None,
-            ) -> httpx.AsyncClient:
-                """Factory function to create httpx.AsyncClient with optional CA certificate.
+                timeout: httpx2.Timeout | None = None,
+                auth: httpx2.Auth | None = None,
+            ) -> httpx2.AsyncClient:
+                """Factory function to create httpx2.AsyncClient with optional CA certificate.
 
                 Args:
                     headers: Optional headers for the client
@@ -4643,7 +4643,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     auth: Optional auth for the client
 
                 Returns:
-                    httpx.AsyncClient: Configured HTTPX async client
+                    httpx2.AsyncClient: Configured HTTPX async client
                 """
                 return httpx2.AsyncClient(
                     verify=ssl_context if ssl_context else get_default_verify(),
@@ -6811,10 +6811,10 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
         def get_httpx_client_factory(
             headers: dict[str, str] | None = None,
-            timeout: httpx.Timeout | None = None,
-            auth: httpx.Auth | None = None,
-        ) -> httpx.AsyncClient:
-            """Factory function to create httpx.AsyncClient with optional CA certificate.
+            timeout: httpx2.Timeout | None = None,
+            auth: httpx2.Auth | None = None,
+        ) -> httpx2.AsyncClient:
+            """Factory function to create httpx2.AsyncClient with optional CA certificate.
 
             Args:
                 headers: Optional headers for the client
@@ -6822,7 +6822,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 auth: Optional auth for the client
 
             Returns:
-                httpx.AsyncClient: Configured HTTPX async client
+                httpx2.AsyncClient: Configured HTTPX async client
             """
             if server_url and server_url.lower().startswith("http://"):
                 ctx = None
@@ -6831,13 +6831,13 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             else:
                 ctx = None
 
-            return httpx.AsyncClient(
+            return httpx2.AsyncClient(
                 verify=ctx if ctx else get_default_verify(),
                 follow_redirects=False,
                 headers=headers,
                 timeout=timeout if timeout else get_http_timeout(),
                 auth=auth,
-                limits=httpx.Limits(
+                limits=httpx2.Limits(
                     max_connections=settings.httpx_max_connections,
                     max_keepalive_connections=settings.httpx_max_keepalive_connections,
                     keepalive_expiry=settings.httpx_keepalive_expiry,
@@ -6979,10 +6979,10 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         # Use authentication directly instead
         def get_httpx_client_factory(
             headers: dict[str, str] | None = None,
-            timeout: httpx.Timeout | None = None,
-            auth: httpx.Auth | None = None,
-        ) -> httpx.AsyncClient:
-            """Factory function to create httpx.AsyncClient with optional CA certificate.
+            timeout: httpx2.Timeout | None = None,
+            auth: httpx2.Auth | None = None,
+        ) -> httpx2.AsyncClient:
+            """Factory function to create httpx2.AsyncClient with optional CA certificate.
 
             Args:
                 headers: Optional headers for the client
@@ -6990,7 +6990,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 auth: Optional auth for the client
 
             Returns:
-                httpx.AsyncClient: Configured HTTPX async client
+                httpx2.AsyncClient: Configured HTTPX async client
             """
             if server_url and server_url.lower().startswith("http://"):
                 ctx = None
