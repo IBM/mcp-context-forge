@@ -103,7 +103,7 @@ from mcpgateway.db import A2APushNotificationConfig
 from mcpgateway.db import A2ATask as DbA2ATask
 from mcpgateway.db import refresh_slugs_on_startup, SessionLocal
 from mcpgateway.db import Tool as DbTool
-from mcpgateway.deprecations import RUST_MCP_RUNTIME_DEPRECATION_MESSAGE, VALIDATION_MIDDLEWARE_DEPRECATION_MESSAGE
+from mcpgateway.deprecations import RUST_MCP_RUNTIME_DEPRECATION_MESSAGE
 from mcpgateway.handlers.sampling import SamplingError, SamplingHandler
 from mcpgateway.middleware.auth_context_stack import register_auth_context_middleware
 from mcpgateway.middleware.client_disconnect import ClientDisconnectMiddleware
@@ -118,7 +118,6 @@ from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG, get_current_user_with
 from mcpgateway.middleware.request_logging_middleware import RequestLoggingMiddleware
 from mcpgateway.middleware.security_headers import SecurityHeadersMiddleware
 from mcpgateway.middleware.token_scoping import ResourceOwnershipResult, token_scoping_middleware
-from mcpgateway.middleware.validation_middleware import ValidationMiddleware
 from mcpgateway.observability import configure_baggage_span_attribute_policy, extract_baggage_span_attribute_policy, init_telemetry, OpenTelemetryRequestMiddleware, otel_tracing_enabled
 from mcpgateway.plugins import (
     enable_plugins,
@@ -3317,13 +3316,6 @@ if settings.rate_limiting_enabled:
         f"MEDIUM={settings.rate_limit_medium_rpm}, "
         f"LOW={settings.rate_limit_low_rpm}]"
     )
-
-# Add validation middleware if explicitly enabled
-if settings.validation_middleware_enabled:
-    app.add_middleware(ValidationMiddleware)
-    logger.warning("🔒 Input validation and output sanitization middleware enabled. %s", VALIDATION_MIDDLEWARE_DEPRECATION_MESSAGE)
-else:
-    logger.info("🔒 Input validation and output sanitization middleware disabled")
 
 # Add MCP Protocol Version validation middleware (validates MCP-Protocol-Version header)
 app.add_middleware(MCPProtocolVersionMiddleware)

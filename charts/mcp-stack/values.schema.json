@@ -683,9 +683,6 @@
             "MAX_PARAM_LENGTH": {
               "type": "string"
             },
-            "MAX_PATH_DEPTH": {
-              "type": "string"
-            },
             "MAX_PROMPT_SIZE": {
               "type": "string",
               "description": "Maximum prompt size in bytes",
@@ -1157,9 +1154,6 @@
             "RETRY_MAX_DELAY": {
               "type": "string"
             },
-            "SANITIZE_OUTPUT": {
-              "type": "string"
-            },
             "SECURE_COOKIES": {
               "type": "string",
               "description": "Force secure cookie flags",
@@ -1320,9 +1314,6 @@
               "type": "string"
             },
             "TOOL_DESCRIPTION_FORBIDDEN_PATTERNS": {
-              "type": "string"
-            },
-            "VALIDATION_MIDDLEWARE_ENABLED": {
               "type": "string"
             },
             "VALIDATION_STRICT": {

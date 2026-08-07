@@ -12645,7 +12645,6 @@ class TestRemainingCoverageGaps:
             "environment": "production",
             "allowed_origins": [],
             "compression_enabled": False,
-            "validation_middleware_enabled": False,
             "email_auth_enabled": False,
             "security_logging_enabled": True,
             "observability_enabled": True,
