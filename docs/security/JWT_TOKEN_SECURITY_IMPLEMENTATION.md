@@ -121,7 +121,7 @@ if last_activity_ts and settings.token_idle_timeout > 0:
     idle_duration = current_time - last_activity
     if idle_duration > max_idle:
         # Revoke token and reject request
-        blocklist_service.revoke_token(jti, email, "idle_timeout", ...)
+        await blocklist_service.revoke_token(jti, email, "idle_timeout", ...)
         raise HTTPException(401, "Token exceeded idle timeout")
 
     # Update activity for valid tokens
