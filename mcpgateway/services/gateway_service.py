@@ -4810,7 +4810,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                                     async with lock:
                                         await self._refresh_gateway_tools_resources_prompts(
                                             gateway_id=gateway_id,
-                                            _user_email=user_email,
+                                            user_email=user_email,
                                             created_via="health_check",
                                             pre_auth_headers=headers if headers else None,
                                             gateway=gateway,
@@ -6088,28 +6088,90 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             prompts_removed=prompts_removed,
         )
 
+    async def _resolve_auth_code_refresh_headers(
+        self,
+        gateway_id: str,
+        gateway_name: str,
+        gateway_url: str,
+        oauth_config: Dict[str, Any],
+        user_email: Optional[str],
+    ) -> Dict[str, str]:
+        """Build the Authorization header for refreshing an authorization_code OAuth gateway.
+
+        Args:
+            gateway_id: Gateway identifier used for the per-user token lookup.
+            gateway_name: Gateway name, used in error and log messages.
+            gateway_url: Gateway URL (before any auth mutation), used as the fallback audience.
+            oauth_config: The gateway's OAuth configuration dict.
+            user_email: Authenticated caller's email; required to locate the stored token.
+
+        Returns:
+            Mapping with a single ``Authorization`` bearer header.
+
+        Raises:
+            GatewayConnectionError: If no caller identity is available, no token is stored for
+                this caller, or the stored token's claims are definitively mismatched.
+        """
+        # First-Party
+        from mcpgateway.services.token_storage_service import TokenStorageService  # pylint: disable=import-outside-toplevel
+        from mcpgateway.services.token_validation_service import validate_oauth_token_claims  # pylint: disable=import-outside-toplevel
+
+        if not user_email:
+            raise GatewayConnectionError(f"User authentication required for OAuth gateway {gateway_name}")
+
+        with fresh_db_session() as token_db:
+            token_storage = TokenStorageService(token_db)
+            access_token = await token_storage.get_user_token(gateway_id, user_email)
+            if not access_token:
+                raise GatewayConnectionError(
+                    f"No OAuth tokens found for user {user_email} on gateway {gateway_name}. Please complete the OAuth authorization flow first at /oauth/authorize/{gateway_id}"
+                )
+            learned_aud, _learned_iss = await token_storage.get_user_learned_audience(gateway_id, user_email)
+
+        token_validation = validate_oauth_token_claims(
+            access_token=access_token,
+            oauth_config=oauth_config,
+            gateway_url=gateway_url,
+            gateway_name=gateway_name,
+            learned_aud=learned_aud,
+        )
+        for warning in token_validation.warnings:
+            logger.warning("OAuth token validation for gateway %s: %s", gateway_name, warning)
+
+        blocking = token_validation.blocking_errors
+        if blocking:
+            detail = "; ".join(blocking)
+            raise GatewayConnectionError(f"Refusing to forward OAuth token for gateway '{gateway_name}': {detail}. Fix oauth_config (resource/scopes/issuer) or the IdP token request.")
+
+        return {"Authorization": f"Bearer {access_token}"}
+
     async def _refresh_gateway_tools_resources_prompts(
         self,
         gateway_id: str,
-        _user_email: Optional[str] = None,
+        user_email: Optional[str] = None,
         created_via: str = "health_check",
         pre_auth_headers: Optional[Dict[str, str]] = None,
         gateway: Optional[DbGateway] = None,
         include_resources: bool = True,
         include_prompts: bool = True,
     ) -> Dict[str, int]:
-        """Refresh tools, resources, and prompts for a gateway during health checks.
+        """Refresh tools, resources, and prompts for a gateway from the background health
+        check, a manual API-triggered refresh, or the notification service.
 
         Fetches the latest tools/resources/prompts from the MCP server and syncs
         with the database (add new, update changed, remove stale). Only performs
-        DB operations if actual changes are detected.
+        DB operations if actual changes are detected. For an authorization_code OAuth
+        gateway, a `created_via="manual_refresh"` call additionally resolves the calling
+        user's stored OAuth token (via `_resolve_auth_code_refresh_headers`) so the refresh
+        can actually reach the MCP server, unless the caller already supplied an explicit
+        Authorization header via passthrough.
 
         This method uses fresh_db_session() internally to avoid holding
         connections during HTTP calls to MCP servers.
 
         Args:
             gateway_id: ID of the gateway to refresh
-            _user_email: Optional user email for OAuth token lookup (unused currently)
+            user_email: Optional user email for OAuth token lookup on authorization_code gateways
             created_via: String indicating creation source (default: "health_check")
             pre_auth_headers: Pre-authenticated headers from health check to avoid duplicate OAuth token fetch
             gateway: Optional DbGateway object to avoid redundant DB lookup
@@ -6118,7 +6180,11 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
         Returns:
             Dict with counts: {tools_added, tools_removed, resources_added,
-                              resources_removed, prompts_added, prompts_removed}
+                              resources_removed, prompts_added, prompts_removed,
+                              success, error}. ``success`` is False and ``error``
+                              names the failure (e.g. pointing the caller at
+                              /oauth/authorize/{gateway_id}) when the refresh could
+                              not reach the MCP server.
 
         Examples:
             >>> from mcpgateway.services.gateway_service import GatewayService
@@ -6252,8 +6318,33 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             if auth_query_params_decrypted:
                 gateway_url = apply_query_param_auth(gateway_url, auth_query_params_decrypted)
 
+        # For authorization_code OAuth gateways, empty responses may indicate incomplete auth flow
+        is_auth_code_gateway = gateway_auth_type == "oauth" and gateway_oauth_config and isinstance(gateway_oauth_config, dict) and gateway_oauth_config.get("grant_type") == "authorization_code"
+
+        # If the caller already supplied an explicit Authorization header via passthrough
+        # (e.g. X-Upstream-Authorization, renamed by get_passthrough_headers()), that
+        # caller-supplied credential takes precedence and OAuth token resolution is skipped
+        # entirely -- it is a documented escape hatch letting the caller directly supply the
+        # upstream token, independent of gateway.auth_type.
+        has_passthrough_authorization = pre_auth_headers and any(k.lower() == "authorization" for k in pre_auth_headers)
+
         # Fetch tools/resources/prompts from MCP server (no DB connection held)
         try:
+            if created_via == "manual_refresh" and is_auth_code_gateway and not has_passthrough_authorization:
+                # A manual refresh has an authenticated caller, so resolve their stored OAuth
+                # token. Supplying pre_auth_headers also bypasses the authorization_code early
+                # return in _initialize_gateway, so the refresh reaches the MCP server instead
+                # of silently returning empty lists. An explicit caller-supplied Authorization
+                # header (checked above) always takes precedence over this OAuth lookup.
+                oauth_headers = await self._resolve_auth_code_refresh_headers(
+                    gateway_id=gateway_id,
+                    gateway_name=gateway_name,
+                    gateway_url=gateway_base_url,
+                    oauth_config=gateway_oauth_config,
+                    user_email=user_email,
+                )
+                pre_auth_headers = {**(pre_auth_headers or {}), **oauth_headers}
+
             # Decrypt client_key for refresh initialization
             _refresh_key = refresh_client_key
             if _refresh_key:
@@ -6284,9 +6375,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
         result["validation_errors"] = validation_errors
 
-        # For authorization_code OAuth gateways, empty responses may indicate incomplete auth flow
         # Skip only if it's an auth_code gateway with no data (user may not have completed authorization)
-        is_auth_code_gateway = gateway_oauth_config and isinstance(gateway_oauth_config, dict) and gateway_oauth_config.get("grant_type") == "authorization_code"
         if not tools and not resources and not prompts and is_auth_code_gateway:
             logger.debug("No tools/resources/prompts returned from auth_code gateway %s (user may not have authorized)", gateway_name)
             return result
@@ -6540,7 +6629,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
             result = await self._refresh_gateway_tools_resources_prompts(
                 gateway_id=gateway_id,
-                _user_email=user_email,
+                user_email=user_email,
                 created_via="manual_refresh",
                 pre_auth_headers=pre_auth_headers,
                 gateway=gateway,

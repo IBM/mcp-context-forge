@@ -164,11 +164,15 @@ temp/
 # Database
 # ========================================
 *.db
-mcp.db-journal
-mcp.db-shm
-mcp.db-wal
+*.db-journal
+*.db-shm
+*.db-wal
 db.sqlite3
 db_path/
+
+# tests/e2e/issue_5247: generated at run time from e2e.env.example
+tests/e2e/issue_5247/manual/e2e.env
+tests/e2e/issue_5247/manual/e2e_results.json
 pdm.lock
 .pdm-python
 
