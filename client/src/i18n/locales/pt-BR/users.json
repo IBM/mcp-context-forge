@@ -60,7 +60,6 @@
   "users.delete.dialog.description": "Tem certeza que deseja excluir {name} ({email})? Esta ação não pode ser desfeita.",
   "users.delete.dialog.cancel": "Cancelar",
   "users.delete.dialog.confirm": "Excluir Usuário",
-  "users.delete.dialog.deleting": "Excluindo...",
   "users.delete.success": "Usuário {email} excluído com sucesso",
   "users.delete.error.self": "Você não pode excluir sua própria conta",
   "users.delete.error.lastAdmin": "Não é possível excluir o último administrador",

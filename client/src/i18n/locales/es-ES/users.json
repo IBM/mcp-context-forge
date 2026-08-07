@@ -60,7 +60,6 @@
   "users.delete.dialog.description": "¿Está seguro de que desea eliminar a {name} ({email})? Esta acción no se puede deshacer.",
   "users.delete.dialog.cancel": "Cancelar",
   "users.delete.dialog.confirm": "Eliminar Usuario",
-  "users.delete.dialog.deleting": "Eliminando...",
   "users.delete.success": "Usuario {email} eliminado correctamente",
   "users.delete.error.self": "No puede eliminar su propia cuenta",
   "users.delete.error.lastAdmin": "No se puede eliminar al último administrador",
