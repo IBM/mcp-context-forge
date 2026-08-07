@@ -9,7 +9,7 @@ gateway virtual server endpoint: /servers/{server_id}/mcp
 It exists to isolate MCP protocol overhead from REST API / admin UI / other
 endpoints so we can get a clean RPS number for just the MCP path.
 Test scenarios (selectable via --class-picker):
-  MCPAgentUser        (weight 10) - Realistic agent: init once, then call 6 tools
+  MCPAgentUser        (weight 10) - Realistic agent: init once, then call from the discovered tool pool
   MCPToolCallerUser   (weight  5) - Heavy tool caller: tools/call in a tight loop
   MCPDiscoveryUser    (weight  3) - Discovery heavy: tools/list, resources/list, prompts/list
   MCPSessionChurnUser (weight  2) - Session churn: new session per request cycle
@@ -108,9 +108,8 @@ MCP_TOOL_NAMES_STR = _cfg("MCP_TOOL_NAMES", "")
 # Tools excluded from the benchmark pool. Defaults cover the fast-time-server's
 # deliberate failure fixtures: schema_error always returns isError, and flaky
 # injects failures by design. Set MCP_BENCHMARK_TOOL_DENYLIST="" to include them.
-MCP_TOOL_DENYLIST: set[str] = {
-    entry.strip().lower().replace("-", "_") for entry in _cfg("MCP_BENCHMARK_TOOL_DENYLIST", "schema_error,flaky").split(",") if entry.strip()
-}
+_denylist_raw = os.environ.get("MCP_BENCHMARK_TOOL_DENYLIST", _ENV.get("MCP_BENCHMARK_TOOL_DENYLIST", "schema_error,flaky"))
+MCP_TOOL_DENYLIST: set[str] = {entry.strip().lower().replace("-", "_") for entry in _denylist_raw.split(",") if entry.strip()}
 # Maximum number of discovered tools each user may call. 0 = no cap (default).
 # Set MCP_BENCHMARK_TOOL_POOL_SIZE=6 to reproduce the original 6-tool agent scenario.
 try:
@@ -820,7 +819,7 @@ class BaseMCPUser(FastHttpUser):
 
 
 # =============================================================================
-# User 1: MCPAgentUser — Realistic agent with 6 tools (customer scenario)
+# User 1: MCPAgentUser — Realistic agent over the discovered tool pool (customer scenario)
 # =============================================================================
 
 
@@ -1021,8 +1020,9 @@ class MCPSessionChurnUser(BaseMCPUser):
     wait_time = between(0.1, 0.3)
 
     def on_start(self):
-        # Do NOT call _ensure_initialized — each task cycle initializes fresh
-        pass
+        # Assign server target (need server_id and tool_names) but do NOT call
+        # _ensure_initialized — each task cycle initializes a fresh session
+        self._assign_target()
 
     @task(10)
     @tag("churn", "lifecycle")

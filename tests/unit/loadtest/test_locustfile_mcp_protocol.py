@@ -249,6 +249,41 @@ def test_is_denied_empty_denylist_allows_everything(monkeypatch):
     assert lf._is_denied("fast-time-schema-error") is False
 
 
+def test_empty_denylist_env_var_disables_filtering(monkeypatch):
+    """MCP_BENCHMARK_TOOL_DENYLIST="" must actually disable filtering, not fall through to the default.
+
+    Regression for the final review of #6082: ``_cfg()`` resolves via
+    ``os.environ.get(key) or default``, so an explicitly empty env var is falsy and
+    silently loses to the default. The other denylist tests in this file only
+    monkeypatch the already-parsed ``MCP_TOOL_DENYLIST`` set, which can't catch a bug
+    in the parsing itself — this test reloads the module so the env var is actually
+    re-parsed.
+    """
+    # Standard
+    import importlib
+
+    monkeypatch.setenv("MCP_BENCHMARK_TOOL_DENYLIST", "")
+    try:
+        importlib.reload(lf)
+        assert lf.MCP_TOOL_DENYLIST == set()
+    finally:
+        monkeypatch.delenv("MCP_BENCHMARK_TOOL_DENYLIST", raising=False)
+        importlib.reload(lf)  # restore default state for subsequent tests
+
+
+def test_missing_denylist_env_var_keeps_default(monkeypatch):
+    """Without the env var set at all, the default schema_error,flaky denylist still applies."""
+    # Standard
+    import importlib
+
+    monkeypatch.delenv("MCP_BENCHMARK_TOOL_DENYLIST", raising=False)
+    try:
+        importlib.reload(lf)
+        assert lf.MCP_TOOL_DENYLIST == {"schema_error", "flaky"}
+    finally:
+        importlib.reload(lf)  # restore default state for subsequent tests
+
+
 def test_auto_detect_drops_denylisted_tools(fake_gateway, monkeypatch, caplog):
     """Discovery removes denylisted tools from the pool and logs the exclusion once."""
     # Standard
