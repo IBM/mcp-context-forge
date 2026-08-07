@@ -1,4 +1,4 @@
-import { Check, Laptop, Lock, User as UserIcon } from "lucide-react";
+import { Check, Laptop, Lock, Monitor, User as UserIcon } from "lucide-react";
 import type { IntlShape } from "react-intl";
 import { useIntl } from "react-intl";
 
@@ -37,7 +37,7 @@ export function UsersTable({ users, onDeleteClick, onEditClick }: UsersTableProp
         <TableCaption className="sr-only">
           {intl.formatMessage({ id: "users.table.caption" })}
         </TableCaption>
-        <TableHeader>
+        <TableHeader className="bg-main">
           <TableRow className="hover:bg-transparent data-[state=selected]:bg-transparent">
             <TableHead className="border-b border-border h-[52px] px-2 pl-3 text-[13px] font-normal leading-4 text-muted-foreground">
               {intl.formatMessage({ id: "users.table.user" })}
@@ -76,6 +76,8 @@ export function UsersTable({ users, onDeleteClick, onEditClick }: UsersTableProp
             });
             const providerLabel =
               user.auth_provider.charAt(0).toUpperCase() + user.auth_provider.slice(1);
+            const isLocalProvider = user.auth_provider.toLowerCase() === "local";
+            const ProviderIcon = isLocalProvider ? Monitor : Laptop;
 
             let securityLabel = intl.formatMessage({ id: "users.security.noFlags" });
             let securityIconClass = "text-muted-foreground";
@@ -94,15 +96,12 @@ export function UsersTable({ users, onDeleteClick, onEditClick }: UsersTableProp
             return (
               <TableRow
                 key={user.email}
-                className="overflow-hidden border-0 bg-card hover:bg-muted data-[state=selected]:bg-muted"
+                className="overflow-hidden border-0 bg-white dark:bg-neutral-800 hover:bg-neutral-100 dark:hover:bg-neutral-700/60 data-[state=selected]:bg-neutral-100 dark:data-[state=selected]:bg-neutral-700/60"
               >
                 <TableCell className="rounded-l-lg px-3 py-2.5">
                   <div className="flex items-center gap-2">
-                    <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded bg-accent">
-                      <UserIcon
-                        className="h-[18px] w-[18px] text-accent-foreground"
-                        strokeWidth={1.5}
-                      />
+                    <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded bg-emerald-500">
+                      <UserIcon className="h-[18px] w-[18px] text-white" strokeWidth={1.5} />
                     </div>
                     <div className="min-w-0">
                       <div className="truncate text-sm leading-5 text-card-foreground">
@@ -121,7 +120,7 @@ export function UsersTable({ users, onDeleteClick, onEditClick }: UsersTableProp
                   <div className="flex items-center gap-1.5 text-[13px] leading-4 text-muted-foreground">
                     <Check
                       className={
-                        user.is_active ? "h-3 w-3 text-accent-foreground" : "h-3 w-3 text-muted"
+                        user.is_active ? "h-3 w-3 text-emerald-400" : "h-3 w-3 text-neutral-500"
                       }
                       strokeWidth={1.5}
                       aria-hidden="true"
@@ -131,7 +130,11 @@ export function UsersTable({ users, onDeleteClick, onEditClick }: UsersTableProp
                 </TableCell>
                 <TableCell className="px-3 py-2.5">
                   <div className="flex items-center gap-2 text-xs leading-4 text-muted-foreground">
-                    <Laptop className="h-3 w-3 shrink-0" strokeWidth={1.5} aria-hidden="true" />
+                    <ProviderIcon
+                      className="h-3 w-3 shrink-0"
+                      strokeWidth={1.5}
+                      aria-hidden="true"
+                    />
                     <span>{providerLabel}</span>
                   </div>
                 </TableCell>

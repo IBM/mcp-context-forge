@@ -59,7 +59,7 @@ test.describe("Users page", () => {
     await page.waitForLoadState("networkidle");
 
     const main = page.getByRole("main");
-    await expect(page.getByRole("heading", { name: "Users" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Users", exact: true })).toBeVisible();
     await expect(main.getByText("John Doe")).toBeVisible();
     await expect(main.getByText("john@example.com")).toBeVisible();
     await expect(page.getByRole("cell", { name: "User" })).toBeVisible();
@@ -78,7 +78,23 @@ test.describe("Users page", () => {
     await page.goto("/app/users");
 
     await expect(page).toHaveURL(/\/app\/settings\/users/);
-    await expect(page.getByRole("heading", { name: "Users" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Users", exact: true })).toBeVisible();
+  });
+
+  test("preserves the query string when redirecting the legacy /app/users route", async ({
+    page,
+  }) => {
+    await page.route("**/auth/email/admin/users?*", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ users: [MOCK_USER] }),
+      });
+    });
+
+    await page.goto("/app/users?selected=john%40example.com");
+
+    await expect(page).toHaveURL(/\/app\/settings\/users\?selected=john%40example\.com/);
   });
 
   test("loads more users when pagination cursor is present", async ({ page }) => {
@@ -155,7 +171,7 @@ test.describe("Users page", () => {
     await page.getByRole("button", { name: "Create User" }).click();
 
     await expect.poll(() => createCount).toBe(1);
-    await expect(page.getByRole("heading", { name: "Users" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Users", exact: true })).toBeVisible();
     await expect(page.getByText("newuser@example.com")).toBeVisible();
   });
 
@@ -175,17 +191,24 @@ test.describe("Users page", () => {
       await expect(page.getByRole("heading", { name: "Create User" })).toBeVisible();
     });
 
-    test("email is required", async ({ page }) => {
+    test("keeps Create User disabled until required fields are filled", async ({ page }) => {
+      const submit = page.getByRole("button", { name: "Create User" });
+      await expect(submit).toBeDisabled();
+
+      await page.locator("#user-email").fill("user@example.com");
+      await expect(submit).toBeDisabled();
+
       await page.locator("#user-password").fill("securepassword");
+      await expect(submit).toBeDisabled();
+
       await page.locator("#user-confirm-password").fill("securepassword");
-
-      await page.getByRole("button", { name: "Create User" }).click();
-
-      await expect(page.getByText("Invalid email address")).toBeVisible();
+      await expect(submit).toBeEnabled();
     });
 
-    test("password is required", async ({ page }) => {
+    test("shows an error for a too-short password", async ({ page }) => {
       await page.locator("#user-email").fill("user@example.com");
+      await page.locator("#user-password").fill("short");
+      await page.locator("#user-confirm-password").fill("short");
 
       await page.getByRole("button", { name: "Create User" }).click();
 
@@ -268,7 +291,7 @@ test.describe("Users page", () => {
     await page.getByRole("button", { name: "Save Changes" }).click();
 
     await expect.poll(() => patchCount).toBe(1);
-    await expect(page.getByRole("heading", { name: "Users" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Users", exact: true })).toBeVisible();
     await expect(page.getByText("John Updated")).toBeVisible();
     await expect(
       page.locator("[data-sonner-toast]").filter({ hasText: /updated successfully/ }),
