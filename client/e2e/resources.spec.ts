@@ -30,7 +30,7 @@ const RESOURCE_B1 = makeResource("readme-md", "slack-server");
 test.describe("Resources page", () => {
   test.beforeEach(async ({ page, apiMock }) => {
     // Mock authentication
-    await apiMock.mockMe();
+    await apiMock.mockSession();
 
     // Set auth token in sessionStorage
     await page.addInitScript(() => {

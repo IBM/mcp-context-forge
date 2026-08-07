@@ -52,7 +52,7 @@ describe("Prompts", () => {
   });
 
   it("renders the add prompts card", async () => {
-    server.use(http.get("/prompts", () => HttpResponse.json([])));
+    server.use(http.get("/api/prompts", () => HttpResponse.json([])));
 
     renderWithProviders(<Prompts />);
 
@@ -67,7 +67,7 @@ describe("Prompts", () => {
   });
 
   it("renders the add prompts card when the response object has no prompts", async () => {
-    server.use(http.get("/prompts", () => HttpResponse.json({})));
+    server.use(http.get("/api/prompts", () => HttpResponse.json({})));
 
     renderWithProviders(<Prompts />);
 
@@ -77,7 +77,7 @@ describe("Prompts", () => {
 
   it("shows the prompt form when the add card is clicked", async () => {
     const user = userEvent.setup();
-    server.use(http.get("/prompts", () => HttpResponse.json([])));
+    server.use(http.get("/api/prompts", () => HttpResponse.json([])));
 
     renderWithProviders(<Prompts />);
 
@@ -92,7 +92,7 @@ describe("Prompts", () => {
 
   it("shows the prompt form when the add card is activated by keyboard", async () => {
     const user = userEvent.setup();
-    server.use(http.get("/prompts", () => HttpResponse.json([])));
+    server.use(http.get("/api/prompts", () => HttpResponse.json([])));
 
     renderWithProviders(<Prompts />);
 
@@ -108,7 +108,7 @@ describe("Prompts", () => {
 
   it("ignores non-activation keys on the add prompts card", async () => {
     const user = userEvent.setup();
-    server.use(http.get("/prompts", () => HttpResponse.json([])));
+    server.use(http.get("/api/prompts", () => HttpResponse.json([])));
 
     renderWithProviders(<Prompts />);
 
@@ -122,7 +122,7 @@ describe("Prompts", () => {
 
   it("returns to the prompt grid when the form is canceled", async () => {
     const user = userEvent.setup();
-    server.use(http.get("/prompts", () => HttpResponse.json([])));
+    server.use(http.get("/api/prompts", () => HttpResponse.json([])));
 
     renderWithProviders(<Prompts />);
 
@@ -140,11 +140,11 @@ describe("Prompts", () => {
     const user = userEvent.setup();
     let promptListRequests = 0;
     server.use(
-      http.get("/prompts", () => {
+      http.get("/api/prompts", () => {
         promptListRequests += 1;
         return HttpResponse.json([]);
       }),
-      http.post("/prompts", () =>
+      http.post("/api/prompts", () =>
         HttpResponse.json({
           id: "prompt-1",
           name: "Greeting prompt",
@@ -175,7 +175,7 @@ describe("Prompts", () => {
 
   it("renders array prompt responses as REST prompt badges with description tooltips", async () => {
     server.use(
-      http.get("/prompts", () =>
+      http.get("/api/prompts", () =>
         HttpResponse.json([
           {
             id: "prompt-1",
@@ -209,7 +209,7 @@ describe("Prompts", () => {
 
   it("renders loading state", () => {
     server.use(
-      http.get("/prompts", async () => {
+      http.get("/api/prompts", async () => {
         await new Promise(() => {});
         return HttpResponse.json([]);
       }),
@@ -242,7 +242,7 @@ describe("Prompts", () => {
       }),
     ];
 
-    server.use(http.get("/prompts", () => HttpResponse.json(prompts)));
+    server.use(http.get("/api/prompts", () => HttpResponse.json(prompts)));
 
     renderWithProviders(<Prompts />);
 
@@ -274,7 +274,7 @@ describe("Prompts", () => {
       }),
     ];
 
-    server.use(http.get("/prompts", () => HttpResponse.json(prompts)));
+    server.use(http.get("/api/prompts", () => HttpResponse.json(prompts)));
 
     renderWithProviders(<Prompts />);
 
@@ -312,8 +312,8 @@ describe("Prompts", () => {
       return HttpResponse.json({ status: "success" });
     });
     server.use(
-      http.get("/prompts", () => HttpResponse.json(remaining)),
-      http.delete("/prompts/prompt-1", deleteSpy),
+      http.get("/api/prompts", () => HttpResponse.json(remaining)),
+      http.delete("/api/prompts/prompt-1", deleteSpy),
     );
 
     renderWithProviders(<Prompts />);
@@ -373,8 +373,8 @@ describe("Prompts", () => {
     ];
 
     server.use(
-      http.get("/prompts", () => HttpResponse.json(remaining)),
-      http.delete("/prompts/prompt-1", () => {
+      http.get("/api/prompts", () => HttpResponse.json(remaining)),
+      http.delete("/api/prompts/prompt-1", () => {
         remaining = remaining.filter((p) => p.id !== "prompt-1");
         return HttpResponse.json({ status: "success" });
       }),
@@ -428,8 +428,8 @@ describe("Prompts", () => {
     // failure), so the post-failure refetch still returns it and the row
     // reappears.
     server.use(
-      http.get("/prompts", () => HttpResponse.json(prompts)),
-      http.delete("/prompts/prompt-1", () =>
+      http.get("/api/prompts", () => HttpResponse.json(prompts)),
+      http.delete("/api/prompts/prompt-1", () =>
         HttpResponse.json({ detail: "Prompt is in use" }, { status: 409 }),
       ),
     );
@@ -483,8 +483,8 @@ describe("Prompts", () => {
     ];
 
     server.use(
-      http.get("/prompts", () => HttpResponse.json(remaining)),
-      http.delete("/prompts/prompt-1", () => {
+      http.get("/api/prompts", () => HttpResponse.json(remaining)),
+      http.delete("/api/prompts/prompt-1", () => {
         // Row is committed as deleted, but the request still errors out.
         remaining = remaining.filter((p) => p.id !== "prompt-1");
         return HttpResponse.json({ detail: "Post-commit hook failed" }, { status: 500 });
@@ -531,7 +531,7 @@ describe("Prompts", () => {
       }),
     ];
 
-    server.use(http.get("/prompts", () => HttpResponse.json(prompts)));
+    server.use(http.get("/api/prompts", () => HttpResponse.json(prompts)));
 
     renderWithProviders(<Prompts />);
 
@@ -582,7 +582,7 @@ describe("Prompts", () => {
       }),
     ];
 
-    server.use(http.get("/prompts", () => HttpResponse.json(prompts)));
+    server.use(http.get("/api/prompts", () => HttpResponse.json(prompts)));
 
     renderWithProviders(<Prompts />);
 
@@ -613,7 +613,7 @@ describe("Prompts", () => {
       }),
     );
 
-    server.use(http.get("/prompts", () => HttpResponse.json(prompts)));
+    server.use(http.get("/api/prompts", () => HttpResponse.json(prompts)));
 
     renderWithProviders(<Prompts />);
 
@@ -644,7 +644,9 @@ describe("Prompts", () => {
   });
 
   it("renders error state when prompts fail to load", async () => {
-    server.use(http.get("/prompts", () => HttpResponse.json({ detail: "Nope" }, { status: 500 })));
+    server.use(
+      http.get("/api/prompts", () => HttpResponse.json({ detail: "Nope" }, { status: 500 })),
+    );
 
     renderWithProviders(<Prompts />);
 
@@ -666,11 +668,11 @@ describe("Prompts", () => {
 
     let promptsListCalls = 0;
     server.use(
-      http.get("/prompts", () => {
+      http.get("/api/prompts", () => {
         promptsListCalls += 1;
         return HttpResponse.json([prompt]);
       }),
-      http.put("/prompts/:id", () =>
+      http.put("/api/prompts/:id", () =>
         HttpResponse.json({
           ...prompt,
           tags: [
@@ -717,8 +719,8 @@ describe("Prompts", () => {
     });
     // Object-shaped response ({ prompts: [...] }) exercises the non-array cache patch.
     server.use(
-      http.get("/prompts", () => HttpResponse.json({ prompts: [prompt] })),
-      http.put("/prompts/:id", () =>
+      http.get("/api/prompts", () => HttpResponse.json({ prompts: [prompt] })),
+      http.put("/api/prompts/:id", () =>
         HttpResponse.json({
           ...prompt,
           tags: [
@@ -754,8 +756,8 @@ describe("Prompts", () => {
       tags: [{ id: "summary", label: "summary" }],
     });
     server.use(
-      http.get("/prompts", () => HttpResponse.json([prompt])),
-      http.put("/prompts/:id", () => HttpResponse.json({ detail: "nope" }, { status: 500 })),
+      http.get("/api/prompts", () => HttpResponse.json([prompt])),
+      http.put("/api/prompts/:id", () => HttpResponse.json({ detail: "nope" }, { status: 500 })),
     );
 
     renderWithProviders(<Prompts />);
@@ -787,8 +789,8 @@ describe("Prompts", () => {
       tags: [{ id: "summary", label: "summary" }],
     });
     server.use(
-      http.get("/prompts", () => HttpResponse.json([prompt])),
-      http.put("/prompts/:id", () => HttpResponse.json(null)),
+      http.get("/api/prompts", () => HttpResponse.json([prompt])),
+      http.put("/api/prompts/:id", () => HttpResponse.json(null)),
     );
 
     renderWithProviders(<Prompts />);
@@ -815,7 +817,7 @@ describe("Prompts", () => {
   it("closes the details drawer when the close button is clicked", async () => {
     const user = userEvent.setup();
     const prompt = createMockPrompt({ id: "prompt-1", gatewaySlug: "gh-repo-tasks" });
-    server.use(http.get("/prompts", () => HttpResponse.json([prompt])));
+    server.use(http.get("/api/prompts", () => HttpResponse.json([prompt])));
 
     renderWithProviders(<Prompts />);
     await waitFor(() => expect(screen.getByText("Summarize document")).toBeInTheDocument());

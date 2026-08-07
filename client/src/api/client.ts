@@ -1,15 +1,29 @@
 /**
- * API client — typed fetch wrapper.
+ * API client — typed fetch wrapper for the BFF (client/server).
  *
  * Security guarantees:
- *  - Authentication uses same-origin httpOnly cookies; JWTs are never stored in web storage.
- *  - CSRF tokens are read from the non-httpOnly CSRF cookie and sent on mutating requests.
+ *  - Authentication uses a same-origin HttpOnly session cookie set by the BFF;
+ *    the API JWT never reaches the browser.
+ *  - The BFF's CSRF cookie is HttpOnly (it holds a secret, not the token) —
+ *    the token itself is handed to us in the JSON body of /auth/login and
+ *    /auth/session and kept in memory here (setCsrfToken), then echoed back
+ *    via X-CSRF-Token on mutating requests. See client/server/src/plugins/csrf.ts.
+ *  - Every path except the three BFF-owned auth routes is routed through the
+ *    BFF's /api/* proxy — resolveApiPath prepends /api automatically, so
+ *    callers keep writing bare paths like "/tools" or "/servers/:id". This
+ *    must be an exact-match set, not a "/auth/*" prefix check: FastAPI's own
+ *    user-management endpoints live under /auth/email/admin/users and need
+ *    the /api prefix like everything else — only login/logout/session are
+ *    the BFF's own routes.
  *  - Content-Type and X-Requested-With are always set on JSON requests.
  *  - Non-2xx responses throw a typed ApiError; callers never handle raw text.
  *  - Protected 401 responses redirect to /app/login.
  */
 
 const LOGIN_PATH = "/app/login";
+const API_PREFIX = "/api";
+const SESSION_CHECK_PATH = "/auth/session";
+const BFF_OWNED_AUTH_PATHS = new Set(["/auth/login", "/auth/logout", SESSION_CHECK_PATH]);
 
 export class ApiError extends Error {
   constructor(
@@ -31,22 +45,32 @@ export function setToken(): void {
 }
 
 export function clearToken(): void {
-  // Kept for backward-compatible imports; cookies are cleared by /app/auth/logout.
+  // Kept for backward-compatible imports; cookies are cleared by /auth/logout.
 }
 
-function getCookie(name: string): string | null {
-  const prefix = `${encodeURIComponent(name)}=`;
-  const cookie = document.cookie
-    .split(";")
-    .map((part) => part.trim())
-    .find((part) => part.startsWith(prefix));
+// In-memory CSRF token, set by AuthContext after login/session-check succeeds
+// and cleared on logout. Not persisted anywhere — a full page reload always
+// re-derives it from a fresh /auth/session call.
+let currentCsrfToken: string | null = null;
 
-  if (!cookie) return null;
-  return decodeURIComponent(cookie.slice(prefix.length));
+export function setCsrfToken(token: string | null): void {
+  currentCsrfToken = token;
+}
+
+function isAbsoluteUrl(path: string): boolean {
+  return /^https?:\/\//i.test(path);
+}
+
+/** Bare paths get /api/* (BFF proxy to the API); the BFF's own auth routes and absolute URLs pass through untouched. */
+function resolveApiPath(path: string): string {
+  if (isAbsoluteUrl(path)) return path;
+  if (BFF_OWNED_AUTH_PATHS.has(path)) return path;
+  if (path === API_PREFIX || path.startsWith(`${API_PREFIX}/`)) return path;
+  return path.startsWith("/") ? `${API_PREFIX}${path}` : `${API_PREFIX}/${path}`;
 }
 
 function getRequestUrl(path: string): string {
-  if (/^https?:\/\//i.test(path)) {
+  if (isAbsoluteUrl(path)) {
     return path;
   }
 
@@ -110,14 +134,12 @@ async function requestWithMeta<T>(
     ...extraHeaders,
   };
 
-  if (method !== "GET" && authenticated) {
-    const csrfToken = getCookie("mcpgateway_csrf_token");
-    if (csrfToken) {
-      headers["X-CSRF-Token"] = csrfToken;
-    }
+  if (method !== "GET" && authenticated && currentCsrfToken) {
+    headers["X-CSRF-Token"] = currentCsrfToken;
   }
 
-  const requestUrl = getRequestUrl(path);
+  const resolvedPath = resolveApiPath(path);
+  const requestUrl = getRequestUrl(resolvedPath);
   const requestOptions: RequestInit = {
     method,
     headers,
@@ -132,7 +154,7 @@ async function requestWithMeta<T>(
   const response = await fetch(requestUrl, requestOptions);
 
   if (response.status === 401) {
-    if (authenticated && path !== "/app/auth/me") {
+    if (authenticated && resolvedPath !== SESSION_CHECK_PATH) {
       // replace() rather than href= so the failed page is not added to history
       // (the user can't hit Back into an unauthenticated state).
       // Preserve the current page so login can return the user to it; built

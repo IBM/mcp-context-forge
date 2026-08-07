@@ -8,6 +8,7 @@
     "dev:e2e": "vite --base=/ --port 5173 --strictPort",
     "build": "npm run generate && tsc -b && vite build",
     "build:watch": "vite build --watch",
+    "build:bff": "npm run generate && tsc -b && vite build --config vite.bff.config.ts",
     "preview": "vite preview",
     "lint": "eslint src e2e",
     "lint:fix": "eslint src e2e --fix",

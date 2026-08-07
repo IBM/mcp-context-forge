@@ -73,7 +73,7 @@ describe("Tools", () => {
   it("renders loading state initially", () => {
     // Mock a delayed response
     server.use(
-      http.get("/tools", async () => {
+      http.get("/api/tools", async () => {
         await new Promise(() => {}); // Never resolves
         return HttpResponse.json([]);
       }),
@@ -92,7 +92,7 @@ describe("Tools", () => {
       createMockTool(3, "server-2"),
     ];
 
-    server.use(http.get("/tools", () => HttpResponse.json(mockTools)));
+    server.use(http.get("/api/tools", () => HttpResponse.json(mockTools)));
 
     renderWithRouter(<Tools />);
 
@@ -117,7 +117,7 @@ describe("Tools", () => {
   it("requests the tool list with include_inactive=true so deactivated tools stay listed", async () => {
     let requestUrl: URL | null = null;
     server.use(
-      http.get("/tools", ({ request }) => {
+      http.get("/api/tools", ({ request }) => {
         requestUrl = new URL(request.url);
         return HttpResponse.json([]);
       }),
@@ -136,7 +136,7 @@ describe("Tools", () => {
   it("lists inactive tools and shows their 'Inactive' status in the details panel", async () => {
     // A gateway whose only tool is deactivated — it must still appear so it can be re-activated.
     const mockTools: Tool[] = [createMockTool(1, "inactive-gateway", false, true)];
-    server.use(http.get("/tools", () => HttpResponse.json(mockTools)));
+    server.use(http.get("/api/tools", () => HttpResponse.json(mockTools)));
 
     const user = userEvent.setup();
     renderWithRouter(<Tools />);
@@ -161,8 +161,8 @@ describe("Tools", () => {
   it("shows the gateway description in the tool details panel", async () => {
     const mockTools: Tool[] = [createMockTool(1, "described-gateway")];
     server.use(
-      http.get("/tools", () => HttpResponse.json(mockTools)),
-      http.get("/gateways", () =>
+      http.get("/api/tools", () => HttpResponse.json(mockTools)),
+      http.get("/api/gateways", () =>
         HttpResponse.json({
           gateways: [
             {
@@ -188,7 +188,7 @@ describe("Tools", () => {
   });
 
   it("renders Add tools card", async () => {
-    server.use(http.get("/tools", () => HttpResponse.json([])));
+    server.use(http.get("/api/tools", () => HttpResponse.json([])));
 
     renderWithRouter(<Tools />);
 
@@ -203,7 +203,7 @@ describe("Tools", () => {
 
   it("handles Add tools card click", async () => {
     const user = userEvent.setup();
-    server.use(http.get("/tools", () => HttpResponse.json([])));
+    server.use(http.get("/api/tools", () => HttpResponse.json([])));
 
     renderWithRouter(<Tools />);
 
@@ -222,7 +222,7 @@ describe("Tools", () => {
 
   it("handles Add tools card keyboard activation", async () => {
     const user = userEvent.setup();
-    server.use(http.get("/tools", () => HttpResponse.json([])));
+    server.use(http.get("/api/tools", () => HttpResponse.json([])));
 
     renderWithRouter(<Tools />);
 
@@ -242,7 +242,7 @@ describe("Tools", () => {
 
   it("clicking Add tools card opens the ToolForm", async () => {
     const user = userEvent.setup();
-    server.use(http.get("/tools", () => HttpResponse.json([])));
+    server.use(http.get("/api/tools", () => HttpResponse.json([])));
 
     renderWithRouter(<Tools />);
 
@@ -262,7 +262,7 @@ describe("Tools", () => {
 
   it("ToolForm Cancel button closes the form and shows the tools list again", async () => {
     const user = userEvent.setup();
-    server.use(http.get("/tools", () => HttpResponse.json([])));
+    server.use(http.get("/api/tools", () => HttpResponse.json([])));
 
     renderWithRouter(<Tools />);
 
@@ -286,7 +286,7 @@ describe("Tools", () => {
 
   it("displays error message when API call fails", async () => {
     server.use(
-      http.get("/tools", () => {
+      http.get("/api/tools", () => {
         return HttpResponse.json({ detail: "Failed to fetch tools" }, { status: 500 });
       }),
     );
@@ -309,7 +309,7 @@ describe("Tools", () => {
       createMockTool(5, "gateway-b"),
     ];
 
-    server.use(http.get("/tools", () => HttpResponse.json(mockTools)));
+    server.use(http.get("/api/tools", () => HttpResponse.json(mockTools)));
 
     renderWithRouter(<Tools />);
 
@@ -328,7 +328,7 @@ describe("Tools", () => {
       createMockTool(2, "inactive-gateway", false, false),
     ];
 
-    server.use(http.get("/tools", () => HttpResponse.json(mockTools)));
+    server.use(http.get("/api/tools", () => HttpResponse.json(mockTools)));
 
     renderWithRouter(<Tools />);
 
@@ -349,7 +349,7 @@ describe("Tools", () => {
   it("displays tool descriptions as tooltips", async () => {
     const mockTools: Tool[] = [createMockTool(1, "server-1")];
 
-    server.use(http.get("/tools", () => HttpResponse.json(mockTools)));
+    server.use(http.get("/api/tools", () => HttpResponse.json(mockTools)));
 
     renderWithRouter(<Tools />);
 
@@ -367,7 +367,7 @@ describe("Tools", () => {
   it("renders more options button for each tool group", async () => {
     const mockTools: Tool[] = [createMockTool(1, "server-1"), createMockTool(2, "server-2")];
 
-    server.use(http.get("/tools", () => HttpResponse.json(mockTools)));
+    server.use(http.get("/api/tools", () => HttpResponse.json(mockTools)));
 
     renderWithRouter(<Tools />);
 
@@ -382,7 +382,7 @@ describe("Tools", () => {
   });
 
   it("handles empty tools list", async () => {
-    server.use(http.get("/tools", () => HttpResponse.json([])));
+    server.use(http.get("/api/tools", () => HttpResponse.json([])));
 
     renderWithRouter(<Tools />);
 
@@ -396,7 +396,7 @@ describe("Tools", () => {
   });
 
   it("uses correct grid layout classes", async () => {
-    server.use(http.get("/tools", () => HttpResponse.json([])));
+    server.use(http.get("/api/tools", () => HttpResponse.json([])));
 
     renderWithRouter(<Tools />);
 
@@ -425,7 +425,7 @@ describe("Tools", () => {
       },
     ];
 
-    server.use(http.get("/tools", () => HttpResponse.json(mockTools)));
+    server.use(http.get("/api/tools", () => HttpResponse.json(mockTools)));
 
     renderWithRouter(<Tools />);
 
@@ -443,7 +443,7 @@ describe("Tools", () => {
       createMockTool(3, "multi-tool-gateway"),
     ];
 
-    server.use(http.get("/tools", () => HttpResponse.json(mockTools)));
+    server.use(http.get("/api/tools", () => HttpResponse.json(mockTools)));
 
     renderWithRouter(<Tools />);
 
@@ -465,7 +465,7 @@ describe("Tools", () => {
       createMockTool(7, "gateway-3"),
     ];
 
-    server.use(http.get("/tools", () => HttpResponse.json(mockTools)));
+    server.use(http.get("/api/tools", () => HttpResponse.json(mockTools)));
 
     renderWithRouter(<Tools />);
 
@@ -485,7 +485,7 @@ describe("Tools", () => {
       createMockTool(3, "mixed-gateway", true, false), // Inactive (unreachable)
     ];
 
-    server.use(http.get("/tools", () => HttpResponse.json(mockTools)));
+    server.use(http.get("/api/tools", () => HttpResponse.json(mockTools)));
 
     renderWithRouter(<Tools />);
 
@@ -499,7 +499,7 @@ describe("Tools", () => {
 
   it("handles network errors gracefully", async () => {
     server.use(
-      http.get("/tools", () => {
+      http.get("/api/tools", () => {
         return HttpResponse.error();
       }),
     );
@@ -519,7 +519,7 @@ describe("Tools", () => {
       createMockTool(i + 1, "gateway-with-many-tools"),
     );
 
-    server.use(http.get("/tools", () => HttpResponse.json(mockTools)));
+    server.use(http.get("/api/tools", () => HttpResponse.json(mockTools)));
 
     renderWithRouter(<Tools />);
 
@@ -555,7 +555,7 @@ describe("Tools", () => {
       createMockTool(i + 1, "gateway-with-eight-tools"),
     );
 
-    server.use(http.get("/tools", () => HttpResponse.json(mockTools)));
+    server.use(http.get("/api/tools", () => HttpResponse.json(mockTools)));
 
     renderWithRouter(<Tools />);
 
@@ -576,7 +576,7 @@ describe("Tools", () => {
       createMockTool(i + 1, "gateway-with-nine-tools"),
     );
 
-    server.use(http.get("/tools", () => HttpResponse.json(mockTools)));
+    server.use(http.get("/api/tools", () => HttpResponse.json(mockTools)));
 
     renderWithRouter(<Tools />);
 
@@ -601,7 +601,7 @@ describe("Tools", () => {
       ...Array.from({ length: 20 }, (_, i) => createMockTool(i + 16, "gateway-large")),
     ];
 
-    server.use(http.get("/tools", () => HttpResponse.json(mockTools)));
+    server.use(http.get("/api/tools", () => HttpResponse.json(mockTools)));
 
     renderWithRouter(<Tools />);
 
@@ -634,7 +634,7 @@ describe("Tools", () => {
       const user = userEvent.setup();
       const mockTools: Tool[] = [createMockTool(1, "test-gateway")];
 
-      server.use(http.get("/tools", () => HttpResponse.json(mockTools)));
+      server.use(http.get("/api/tools", () => HttpResponse.json(mockTools)));
 
       renderWithRouter(<Tools />);
 
@@ -658,7 +658,7 @@ describe("Tools", () => {
         createMockTool(2, "test-gateway"),
       ];
 
-      server.use(http.get("/tools", () => HttpResponse.json(mockTools)));
+      server.use(http.get("/api/tools", () => HttpResponse.json(mockTools)));
 
       renderWithRouter(<Tools />);
 
@@ -687,7 +687,7 @@ describe("Tools", () => {
       const user = userEvent.setup();
       const mockTools: Tool[] = [createMockTool(1, "test-gateway")];
 
-      server.use(http.get("/tools", () => HttpResponse.json(mockTools)));
+      server.use(http.get("/api/tools", () => HttpResponse.json(mockTools)));
 
       renderWithRouter(<Tools />);
 
@@ -722,7 +722,7 @@ describe("Tools", () => {
       const user = userEvent.setup();
       const mockTools: Tool[] = [createMockTool(1, "test-gateway")];
 
-      server.use(http.get("/tools", () => HttpResponse.json(mockTools)));
+      server.use(http.get("/api/tools", () => HttpResponse.json(mockTools)));
 
       renderWithRouter(<Tools />);
 
@@ -760,7 +760,7 @@ describe("Tools", () => {
         createMockTool(3, "multi-tool-gateway"),
       ];
 
-      server.use(http.get("/tools", () => HttpResponse.json(mockTools)));
+      server.use(http.get("/api/tools", () => HttpResponse.json(mockTools)));
 
       renderWithRouter(<Tools />);
 
@@ -797,7 +797,7 @@ describe("Tools", () => {
         },
       ];
 
-      server.use(http.get("/tools", () => HttpResponse.json(mockTools)));
+      server.use(http.get("/api/tools", () => HttpResponse.json(mockTools)));
 
       renderWithRouter(<Tools />);
 
@@ -821,7 +821,7 @@ describe("Tools", () => {
       const user = userEvent.setup();
       const mockTools: Tool[] = [createMockTool(1, "gateway-a"), createMockTool(2, "gateway-b")];
 
-      server.use(http.get("/tools", () => HttpResponse.json(mockTools)));
+      server.use(http.get("/api/tools", () => HttpResponse.json(mockTools)));
 
       renderWithRouter(<Tools />);
 
@@ -878,8 +878,8 @@ describe("Tools", () => {
     it("shows Edit option in the tool row dropdown when panel is open", async () => {
       const mockTools: Tool[] = [createMockTool(1, "test-gateway", true, true)];
       server.use(
-        http.get("/tools", () => HttpResponse.json(mockTools)),
-        http.get("/tools/tool-1", () => HttpResponse.json(mockTools[0])),
+        http.get("/api/tools", () => HttpResponse.json(mockTools)),
+        http.get("/api/tools/tool-1", () => HttpResponse.json(mockTools[0])),
       );
       renderWithRouter(<Tools />);
       await waitFor(() => expect(screen.getByText("test-gateway")).toBeInTheDocument());
@@ -893,8 +893,8 @@ describe("Tools", () => {
     it("opens the edit form when Edit is clicked", async () => {
       const mockTools: Tool[] = [createMockTool(1, "test-gateway")];
       server.use(
-        http.get("/tools", () => HttpResponse.json(mockTools)),
-        http.get("/tools/tool-1", () => HttpResponse.json(mockTools[0])),
+        http.get("/api/tools", () => HttpResponse.json(mockTools)),
+        http.get("/api/tools/tool-1", () => HttpResponse.json(mockTools[0])),
       );
       renderWithRouter(<Tools />);
       await waitFor(() => expect(screen.getByText("test-gateway")).toBeInTheDocument());
@@ -911,8 +911,8 @@ describe("Tools", () => {
     it("pre-populates the form with the tool's URL", async () => {
       const mockTool = createMockTool(1, "test-gateway");
       server.use(
-        http.get("/tools", () => HttpResponse.json([mockTool])),
-        http.get("/tools/tool-1", () => HttpResponse.json(mockTool)),
+        http.get("/api/tools", () => HttpResponse.json([mockTool])),
+        http.get("/api/tools/tool-1", () => HttpResponse.json(mockTool)),
       );
       renderWithRouter(<Tools />);
       await waitFor(() => expect(screen.getByText("test-gateway")).toBeInTheDocument());
@@ -940,9 +940,9 @@ describe("Tools", () => {
 
       let putCalled = false;
       server.use(
-        http.get("/tools", () => HttpResponse.json([putCalled ? updatedTool : originalTool])),
-        http.get("/tools/tool-1", () => HttpResponse.json(originalTool)),
-        http.put("/tools/tool-1", () => {
+        http.get("/api/tools", () => HttpResponse.json([putCalled ? updatedTool : originalTool])),
+        http.get("/api/tools/tool-1", () => HttpResponse.json(originalTool)),
+        http.put("/api/tools/tool-1", () => {
           putCalled = true;
           return HttpResponse.json(updatedTool);
         }),
@@ -981,8 +981,8 @@ describe("Tools", () => {
     it("shows Edit above Delete in the dropdown when both are available", async () => {
       const mockTools: Tool[] = [createMockTool(1, "test-gateway")];
       server.use(
-        http.get("/tools", () => HttpResponse.json(mockTools)),
-        http.get("/tools/tool-1", () => HttpResponse.json(mockTools[0])),
+        http.get("/api/tools", () => HttpResponse.json(mockTools)),
+        http.get("/api/tools/tool-1", () => HttpResponse.json(mockTools[0])),
       );
       renderWithRouter(<Tools />);
       await waitFor(() => expect(screen.getByText("test-gateway")).toBeInTheDocument());
@@ -1019,7 +1019,7 @@ describe("Tools", () => {
 
     it("shows Delete option in the tool row dropdown when panel is open", async () => {
       const mockTools: Tool[] = [createMockTool(1, "test-gateway")];
-      server.use(http.get("/tools", () => HttpResponse.json(mockTools)));
+      server.use(http.get("/api/tools", () => HttpResponse.json(mockTools)));
       renderWithRouter(<Tools />);
       await waitFor(() => expect(screen.getByText("test-gateway")).toBeInTheDocument());
 
@@ -1034,7 +1034,7 @@ describe("Tools", () => {
 
     it("opens a confirm dialog with the tool name when Delete is clicked", async () => {
       const mockTools: Tool[] = [createMockTool(1, "test-gateway")];
-      server.use(http.get("/tools", () => HttpResponse.json(mockTools)));
+      server.use(http.get("/api/tools", () => HttpResponse.json(mockTools)));
       renderWithRouter(<Tools />);
       await waitFor(() => expect(screen.getByText("test-gateway")).toBeInTheDocument());
 
@@ -1056,9 +1056,9 @@ describe("Tools", () => {
 
     it("does not call the API when the confirm dialog is cancelled", async () => {
       const mockTools: Tool[] = [createMockTool(1, "test-gateway")];
-      server.use(http.get("/tools", () => HttpResponse.json(mockTools)));
+      server.use(http.get("/api/tools", () => HttpResponse.json(mockTools)));
       const deleteSpy = vi.fn(() => HttpResponse.json(null, { status: 204 }));
-      server.use(http.delete("/tools/:id", deleteSpy));
+      server.use(http.delete("/api/tools/:id", deleteSpy));
 
       renderWithRouter(<Tools />);
       await waitFor(() => expect(screen.getByText("test-gateway")).toBeInTheDocument());
@@ -1079,8 +1079,8 @@ describe("Tools", () => {
     it("calls the delete API, shows success toast, and closes the panel on confirm", async () => {
       const mockTools: Tool[] = [createMockTool(1, "test-gateway")];
       server.use(
-        http.get("/tools", () => HttpResponse.json(mockTools)),
-        http.delete("/tools/tool-1", () => new HttpResponse(null, { status: 204 })),
+        http.get("/api/tools", () => HttpResponse.json(mockTools)),
+        http.delete("/api/tools/tool-1", () => new HttpResponse(null, { status: 204 })),
       );
 
       renderWithRouter(<Tools />);
@@ -1108,8 +1108,8 @@ describe("Tools", () => {
     it("shows an error toast when the delete API returns a string detail", async () => {
       const mockTools: Tool[] = [createMockTool(1, "test-gateway")];
       server.use(
-        http.get("/tools", () => HttpResponse.json(mockTools)),
-        http.delete("/tools/tool-1", () =>
+        http.get("/api/tools", () => HttpResponse.json(mockTools)),
+        http.delete("/api/tools/tool-1", () =>
           HttpResponse.json({ detail: "Cannot delete: tool is in use" }, { status: 409 }),
         ),
       );
@@ -1132,8 +1132,8 @@ describe("Tools", () => {
     it("shows a generic error toast when the delete API returns no detail", async () => {
       const mockTools: Tool[] = [createMockTool(1, "test-gateway")];
       server.use(
-        http.get("/tools", () => HttpResponse.json(mockTools)),
-        http.delete("/tools/tool-1", () =>
+        http.get("/api/tools", () => HttpResponse.json(mockTools)),
+        http.delete("/api/tools/tool-1", () =>
           HttpResponse.json({ message: "Something went wrong" }, { status: 500 }),
         ),
       );
@@ -1156,8 +1156,8 @@ describe("Tools", () => {
     it("shows an error toast when the delete API throws a standard Error", async () => {
       const mockTools: Tool[] = [createMockTool(1, "test-gateway")];
       server.use(
-        http.get("/tools", () => HttpResponse.json(mockTools)),
-        http.delete("/tools/tool-1", () => {
+        http.get("/api/tools", () => HttpResponse.json(mockTools)),
+        http.delete("/api/tools/tool-1", () => {
           return HttpResponse.error();
         }),
       );
@@ -1181,7 +1181,7 @@ describe("Tools", () => {
       const mockTools: Tool[] = [
         { ...createMockTool(1, "test-gateway"), displayName: "My Custom Tool" },
       ];
-      server.use(http.get("/tools", () => HttpResponse.json(mockTools)));
+      server.use(http.get("/api/tools", () => HttpResponse.json(mockTools)));
 
       renderWithRouter(<Tools />);
       await waitFor(() => expect(screen.getByText("test-gateway")).toBeInTheDocument());
@@ -1196,7 +1196,7 @@ describe("Tools", () => {
 
     it("falls back to name in the dialog description when displayName is absent", async () => {
       const mockTools: Tool[] = [{ ...createMockTool(1, "test-gateway"), displayName: undefined }];
-      server.use(http.get("/tools", () => HttpResponse.json(mockTools)));
+      server.use(http.get("/api/tools", () => HttpResponse.json(mockTools)));
 
       renderWithRouter(<Tools />);
       await waitFor(() => expect(screen.getByText("test-gateway")).toBeInTheDocument());
@@ -1233,7 +1233,7 @@ describe("Tools", () => {
 
     it("shows Deactivate for an enabled tool and Edit, Deactivate, Delete in order", async () => {
       const mockTools: Tool[] = [createMockTool(1, "test-gateway", true, true)];
-      server.use(http.get("/tools", () => HttpResponse.json(mockTools)));
+      server.use(http.get("/api/tools", () => HttpResponse.json(mockTools)));
       renderWithRouter(<Tools />);
       await waitFor(() => expect(screen.getByText("test-gateway")).toBeInTheDocument());
 
@@ -1251,16 +1251,16 @@ describe("Tools", () => {
       let listFetches = 0;
       server.use(
         // The list is fetched once on mount; the toggle must NOT trigger another list fetch.
-        http.get("/tools", () => {
+        http.get("/api/tools", () => {
           listFetches += 1;
           return HttpResponse.json([activeTool]);
         }),
-        http.post("/tools/tool-1/state", ({ request }) => {
+        http.post("/api/tools/tool-1/state", ({ request }) => {
           expect(new URL(request.url).searchParams.get("activate")).toBe("false");
           return HttpResponse.json({ status: "success", tool: inactiveTool });
         }),
         // Only the affected tool is re-fetched and patched into the list.
-        http.get("/tools/tool-1", () => HttpResponse.json(inactiveTool)),
+        http.get("/api/tools/tool-1", () => HttpResponse.json(inactiveTool)),
       );
 
       renderWithRouter(<Tools />);
@@ -1289,9 +1289,9 @@ describe("Tools", () => {
     it("shows an error toast when a toggle fails with a network error", async () => {
       const activeTool = createMockTool(1, "test-gateway", true, true);
       server.use(
-        http.get("/tools", () => HttpResponse.json([activeTool])),
+        http.get("/api/tools", () => HttpResponse.json([activeTool])),
         // A network-level failure surfaces as a non-ApiError Error in the catch.
-        http.post("/tools/tool-1/state", () => HttpResponse.error()),
+        http.post("/api/tools/tool-1/state", () => HttpResponse.error()),
       );
 
       renderWithRouter(<Tools />);
@@ -1309,12 +1309,12 @@ describe("Tools", () => {
       const activeTool = { ...inactiveTool, enabled: true };
 
       server.use(
-        http.get("/tools", () => HttpResponse.json([inactiveTool])),
-        http.post("/tools/tool-1/state", ({ request }) => {
+        http.get("/api/tools", () => HttpResponse.json([inactiveTool])),
+        http.post("/api/tools/tool-1/state", ({ request }) => {
           expect(new URL(request.url).searchParams.get("activate")).toBe("true");
           return HttpResponse.json({ status: "success", tool: activeTool });
         }),
-        http.get("/tools/tool-1", () => HttpResponse.json(activeTool)),
+        http.get("/api/tools/tool-1", () => HttpResponse.json(activeTool)),
       );
 
       renderWithRouter(<Tools />);
@@ -1338,8 +1338,8 @@ describe("Tools", () => {
     it("shows an error toast and leaves status unchanged when the request fails", async () => {
       const activeTool = createMockTool(1, "test-gateway", true, true);
       server.use(
-        http.get("/tools", () => HttpResponse.json([activeTool])),
-        http.post("/tools/tool-1/state", () =>
+        http.get("/api/tools", () => HttpResponse.json([activeTool])),
+        http.post("/api/tools/tool-1/state", () =>
           HttpResponse.json({ detail: "Permission denied" }, { status: 403 }),
         ),
       );
@@ -1370,7 +1370,7 @@ describe("Tools", () => {
         },
       ];
 
-      server.use(http.get("/tools", () => HttpResponse.json(mockTools)));
+      server.use(http.get("/api/tools", () => HttpResponse.json(mockTools)));
 
       renderWithRouter(<Tools />);
 
@@ -1393,7 +1393,7 @@ describe("Tools", () => {
         },
       ];
 
-      server.use(http.get("/tools", () => HttpResponse.json(mockTools)));
+      server.use(http.get("/api/tools", () => HttpResponse.json(mockTools)));
 
       renderWithRouter(<Tools />);
 
@@ -1421,7 +1421,7 @@ describe("Tools", () => {
         },
       ];
 
-      server.use(http.get("/tools", () => HttpResponse.json(mockTools)));
+      server.use(http.get("/api/tools", () => HttpResponse.json(mockTools)));
 
       renderWithRouter(<Tools />);
 
@@ -1449,7 +1449,7 @@ describe("Tools", () => {
         },
       ];
 
-      server.use(http.get("/tools", () => HttpResponse.json(mockTools)));
+      server.use(http.get("/api/tools", () => HttpResponse.json(mockTools)));
 
       renderWithRouter(<Tools />);
 
@@ -1482,7 +1482,7 @@ describe("Tools", () => {
         },
       ];
 
-      server.use(http.get("/tools", () => HttpResponse.json(mockTools)));
+      server.use(http.get("/api/tools", () => HttpResponse.json(mockTools)));
 
       renderWithRouter(<Tools />);
 
@@ -1505,7 +1505,7 @@ describe("Tools", () => {
         },
       ];
 
-      server.use(http.get("/tools", () => HttpResponse.json(mockTools)));
+      server.use(http.get("/api/tools", () => HttpResponse.json(mockTools)));
 
       renderWithRouter(<Tools />);
 
@@ -1536,7 +1536,7 @@ describe("Tools", () => {
         },
       ];
 
-      server.use(http.get("/tools", () => HttpResponse.json(mockTools)));
+      server.use(http.get("/api/tools", () => HttpResponse.json(mockTools)));
 
       renderWithRouter(<Tools />);
 
@@ -1553,7 +1553,7 @@ describe("Tools", () => {
 
   describe("Optimistic delete", () => {
     async function setup(mockTools: Tool[], gatewaySlug: string) {
-      server.use(http.get("/tools", () => HttpResponse.json(mockTools)));
+      server.use(http.get("/api/tools", () => HttpResponse.json(mockTools)));
       renderWithRouter(<Tools />);
       await waitFor(() => expect(screen.getByText(gatewaySlug)).toBeInTheDocument());
 
@@ -1579,9 +1579,9 @@ describe("Tools", () => {
 
       let resolveDelete!: () => void;
       server.use(
-        http.get("/tools", () => HttpResponse.json(mockTools)),
+        http.get("/api/tools", () => HttpResponse.json(mockTools)),
         http.delete(
-          "/tools/tool-1",
+          "/api/tools/tool-1",
           () =>
             new Promise<Response>((resolve) => {
               resolveDelete = () => resolve(new Response(null, { status: 204 }));
@@ -1619,8 +1619,8 @@ describe("Tools", () => {
     it("rolls back: tool badge reappears in card grid when delete API fails", async () => {
       const mockTools = [createMockTool(1, "rollback-gateway")];
       server.use(
-        http.get("/tools", () => HttpResponse.json(mockTools)),
-        http.delete("/tools/tool-1", () =>
+        http.get("/api/tools", () => HttpResponse.json(mockTools)),
+        http.delete("/api/tools/tool-1", () =>
           HttpResponse.json({ detail: "Server error" }, { status: 500 }),
         ),
       );
@@ -1654,8 +1654,8 @@ describe("Tools", () => {
     it("details panel closes immediately when the only tool in a group is deleted", async () => {
       const mockTools = [createMockTool(1, "solo-gateway")];
       server.use(
-        http.get("/tools", () => HttpResponse.json(mockTools)),
-        http.delete("/tools/tool-1", () => new HttpResponse(null, { status: 204 })),
+        http.get("/api/tools", () => HttpResponse.json(mockTools)),
+        http.delete("/api/tools/tool-1", () => new HttpResponse(null, { status: 204 })),
       );
 
       const { user } = await setup(mockTools, "solo-gateway");
@@ -1675,8 +1675,8 @@ describe("Tools", () => {
     it("details panel stays open when one tool is deleted from a multi-tool group", async () => {
       const mockTools = [createMockTool(1, "multi-gateway"), createMockTool(2, "multi-gateway")];
       server.use(
-        http.get("/tools", () => HttpResponse.json(mockTools)),
-        http.delete("/tools/tool-1", () => new HttpResponse(null, { status: 204 })),
+        http.get("/api/tools", () => HttpResponse.json(mockTools)),
+        http.delete("/api/tools/tool-1", () => new HttpResponse(null, { status: 204 })),
       );
 
       const { user } = await setup(mockTools, "multi-gateway");
@@ -1703,9 +1703,9 @@ describe("Tools", () => {
 
       let resolveDelete!: () => void;
       server.use(
-        http.get("/tools", () => HttpResponse.json(mockTools)),
+        http.get("/api/tools", () => HttpResponse.json(mockTools)),
         http.delete(
-          "/tools/tool-1",
+          "/api/tools/tool-1",
           () =>
             new Promise<Response>((resolve) => {
               resolveDelete = () => resolve(new Response(null, { status: 204 }));
@@ -1740,8 +1740,8 @@ describe("Tools", () => {
     it("details panel re-opens after rollback when group had multiple tools", async () => {
       const mockTools = [createMockTool(1, "reopen-gateway"), createMockTool(2, "reopen-gateway")];
       server.use(
-        http.get("/tools", () => HttpResponse.json(mockTools)),
-        http.delete("/tools/tool-1", () =>
+        http.get("/api/tools", () => HttpResponse.json(mockTools)),
+        http.delete("/api/tools/tool-1", () =>
           HttpResponse.json({ detail: "Forbidden" }, { status: 403 }),
         ),
       );
@@ -1770,8 +1770,8 @@ describe("Tools", () => {
     it("shows generic error toast when delete returns no detail field", async () => {
       const mockTools = [createMockTool(1, "err-gateway")];
       server.use(
-        http.get("/tools", () => HttpResponse.json(mockTools)),
-        http.delete("/tools/tool-1", () =>
+        http.get("/api/tools", () => HttpResponse.json(mockTools)),
+        http.delete("/api/tools/tool-1", () =>
           HttpResponse.json({ message: "Unexpected error" }, { status: 500 }),
         ),
       );
@@ -1795,8 +1795,8 @@ describe("Tools", () => {
         createMockTool(3, "snapshot-gateway"),
       ];
       server.use(
-        http.get("/tools", () => HttpResponse.json(mockTools)),
-        http.delete("/tools/tool-1", () =>
+        http.get("/api/tools", () => HttpResponse.json(mockTools)),
+        http.delete("/api/tools/tool-1", () =>
           HttpResponse.json({ detail: "Conflict" }, { status: 409 }),
         ),
       );
@@ -1831,9 +1831,9 @@ describe("Tools", () => {
 
       let resolveDelete!: () => void;
       server.use(
-        http.get("/tools", () => HttpResponse.json(mockTools)),
+        http.get("/api/tools", () => HttpResponse.json(mockTools)),
         http.delete(
-          "/tools/tool-10",
+          "/api/tools/tool-10",
           () =>
             new Promise<Response>((resolve) => {
               resolveDelete = () => resolve(new Response(null, { status: 204 }));
@@ -1874,11 +1874,11 @@ describe("Tools", () => {
 
       let toolsListCalls = 0;
       server.use(
-        http.get("/tools", () => {
+        http.get("/api/tools", () => {
           toolsListCalls += 1;
           return HttpResponse.json([tool]);
         }),
-        http.put("/tools/:id", () => HttpResponse.json({ ...tool, tags: ["tag1", "alerts"] })),
+        http.put("/api/tools/:id", () => HttpResponse.json({ ...tool, tags: ["tag1", "alerts"] })),
       );
 
       renderWithRouter(<Tools />);
@@ -1907,8 +1907,8 @@ describe("Tools", () => {
       const user = userEvent.setup();
       const tool: Tool = { ...createMockTool(1, "test-gateway"), tags: [{ label: "tag1" }] };
       server.use(
-        http.get("/tools", () => HttpResponse.json([tool])),
-        http.put("/tools/:id", () => HttpResponse.json({ detail: "nope" }, { status: 500 })),
+        http.get("/api/tools", () => HttpResponse.json([tool])),
+        http.put("/api/tools/:id", () => HttpResponse.json({ detail: "nope" }, { status: 500 })),
       );
 
       renderWithRouter(<Tools />);
@@ -1933,7 +1933,7 @@ describe("Tools", () => {
   describe("opening from global search", () => {
     it("opens the details panel for a tool referenced by the ?selected= query param", async () => {
       const tool = createMockTool(1, "test-gateway");
-      server.use(http.get("/tools", () => HttpResponse.json([tool])));
+      server.use(http.get("/api/tools", () => HttpResponse.json([tool])));
 
       renderWithRouter(<Tools />, "/app/tools?selected=tool-1");
 

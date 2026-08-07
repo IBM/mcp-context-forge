@@ -38,7 +38,7 @@ const MOCK_SERVER_2: MCPServer = {
 
 test.describe("MCP Servers page", () => {
   test.beforeEach(async ({ page, apiMock }) => {
-    await apiMock.mockMe();
+    await apiMock.mockSession();
 
     await page.addInitScript(() => {
       sessionStorage.setItem("mcpgateway_token", "mock-token-12345");

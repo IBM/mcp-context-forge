@@ -32,12 +32,14 @@ export const APP = {
 } as const;
 
 /**
- * API endpoints consumed by the client. Patterns use Playwright's glob syntax
- * so they match regardless of origin (dev vs. reverse-proxied gateway).
+ * BFF-owned auth endpoints consumed by the client (client/server/src/routes/auth/).
+ * Patterns use Playwright's glob syntax so they match regardless of origin
+ * (dev vs. reverse-proxied gateway) — everything else the client calls goes
+ * through the BFF's /api/* proxy instead (see client/src/api/client.ts).
  */
 export const API = {
-  LOGIN: "**/app/auth/login",
-  ME: "**/app/auth/me",
+  LOGIN: "**/auth/login",
+  SESSION: "**/auth/session",
 } as const;
 
 /**

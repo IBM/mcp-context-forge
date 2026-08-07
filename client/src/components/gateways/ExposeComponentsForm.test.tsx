@@ -28,7 +28,7 @@ const mockPrompts = [
 
 // MSW server setup
 const server = setupServer(
-  http.get("/tools", ({ request }) => {
+  http.get("/api/tools", ({ request }) => {
     const url = new URL(request.url);
     const gatewayId = url.searchParams.get("gateway_id");
     if (gatewayId === "test-gateway-123") {
@@ -36,7 +36,7 @@ const server = setupServer(
     }
     return HttpResponse.json([]);
   }),
-  http.get("/resources", ({ request }) => {
+  http.get("/api/resources", ({ request }) => {
     const url = new URL(request.url);
     const gatewayId = url.searchParams.get("gateway_id");
     if (gatewayId === "test-gateway-123") {
@@ -44,7 +44,7 @@ const server = setupServer(
     }
     return HttpResponse.json([]);
   }),
-  http.get("/prompts", ({ request }) => {
+  http.get("/api/prompts", ({ request }) => {
     const url = new URL(request.url);
     const gatewayId = url.searchParams.get("gateway_id");
     if (gatewayId === "test-gateway-123") {
@@ -52,7 +52,7 @@ const server = setupServer(
     }
     return HttpResponse.json([]);
   }),
-  http.post("/servers", () => {
+  http.post("/api/servers", () => {
     return HttpResponse.json({ id: "virtual-server-456" });
   }),
 );
@@ -380,7 +380,7 @@ describe("ExposeComponentsForm", () => {
     it("should disable submit button while creating", async () => {
       // Delay the server response to test the loading state
       server.use(
-        http.post("/servers", async () => {
+        http.post("/api/servers", async () => {
           await new Promise((resolve) => setTimeout(resolve, 100));
           return HttpResponse.json({ id: "virtual-server-456" });
         }),
@@ -404,7 +404,7 @@ describe("ExposeComponentsForm", () => {
 
     it("should show error message on creation failure", async () => {
       server.use(
-        http.post("/servers", () => {
+        http.post("/api/servers", () => {
           return HttpResponse.json({ error: "Failed to create server" }, { status: 500 });
         }),
       );
@@ -553,7 +553,7 @@ describe("ExposeComponentsForm", () => {
   describe("Empty State", () => {
     it("should handle empty tools list", async () => {
       server.use(
-        http.get("/tools", () => {
+        http.get("/api/tools", () => {
           return HttpResponse.json([]);
         }),
       );
@@ -567,7 +567,7 @@ describe("ExposeComponentsForm", () => {
 
     it("should handle empty resources list", async () => {
       server.use(
-        http.get("/resources", () => {
+        http.get("/api/resources", () => {
           return HttpResponse.json([]);
         }),
       );
@@ -581,7 +581,7 @@ describe("ExposeComponentsForm", () => {
 
     it("should handle empty prompts list", async () => {
       server.use(
-        http.get("/prompts", () => {
+        http.get("/api/prompts", () => {
           return HttpResponse.json([]);
         }),
       );

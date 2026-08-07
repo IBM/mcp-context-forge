@@ -58,7 +58,7 @@ Import the `test` and `expect` helpers from the fixture that matches your needs:
 // Unauthenticated / public flows
 import { test, expect } from "../fixtures/api-mock";
 
-// Authenticated flows (/app/auth/me mocked as a valid cookie session)
+// Authenticated flows (/auth/session mocked as a valid BFF session)
 import { test, expect } from "../fixtures/auth";
 ```
 
@@ -95,5 +95,7 @@ PRs and pushes to `main` / `epic/ui-rewrite` that touch `client/**`.
 - **Tests that pass locally but flake in CI** — add a `page.waitForLoadState`,
   tighten the mock's payload, or widen the retry count in the config for the
   specific test. Do not add arbitrary `waitForTimeout` calls.
-- **Mock not firing** — `page.route()` patterns use glob syntax. `"**/app/auth/me"`
-  is the supported form; a leading `/` anchors to the origin only.
+- **Mock not firing** — `page.route()` patterns use glob syntax. `"**/auth/session"`
+  is the supported form; a leading `/` anchors to the origin only. `**` spans
+  path segments, so it matches regardless of the `/api/*` prefix the BFF
+  proxy adds to non-auth calls (see `client/src/api/client.ts`).

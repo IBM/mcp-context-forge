@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useState, useEffect, useRef } from "react";
 import type { ReactNode } from "react";
-import { api, ApiError } from "../api/client";
+import { api, ApiError, setCsrfToken } from "../api/client";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -16,9 +16,16 @@ export interface User {
   password_change_required: boolean;
 }
 
+// BFF's GET /auth/session — always 200, never 401 (see client/server/src/routes/auth/session.ts).
+interface SessionResponse {
+  authenticated: boolean;
+  user?: User;
+  csrfToken?: string;
+}
+
 interface LoginResponse {
   user: User;
-  mcpgateway_csrf_token: string;
+  csrfToken: string;
 }
 
 interface AuthState {
@@ -58,23 +65,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const version = authVersion.current;
 
     api
-      .get<User>("/app/auth/me")
-      .then((user) => {
-        if (!cancelled && version === authVersion.current) {
-          setState({ user, isAuthenticated: true, isLoading: false, selectedTeamId: null });
+      .get<SessionResponse>("/auth/session")
+      .then((data) => {
+        if (cancelled || version !== authVersion.current) return;
+        setCsrfToken(data.csrfToken ?? null);
+        if (data.authenticated && data.user) {
+          setState({
+            user: data.user,
+            isAuthenticated: true,
+            isLoading: false,
+            selectedTeamId: null,
+          });
+        } else {
+          setState({ user: null, isAuthenticated: false, isLoading: false, selectedTeamId: null });
         }
       })
-      .catch((err) => {
+      .catch(() => {
         if (!cancelled && version === authVersion.current) {
-          if (err instanceof ApiError && err.status === 401) {
-            setState({
-              user: null,
-              isAuthenticated: false,
-              isLoading: false,
-              selectedTeamId: null,
-            });
-            return;
-          }
           setState({ user: null, isAuthenticated: false, isLoading: false, selectedTeamId: null });
         }
       });
@@ -90,11 +97,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       password: string, // pragma: allowlist secret
     ): Promise<void> => {
       const data = await api.post<LoginResponse>(
-        "/app/auth/login",
+        "/auth/login",
         { email, password },
         { authenticated: false },
       );
 
+      setCsrfToken(data.csrfToken);
       authVersion.current += 1;
       setState({ user: data.user, isAuthenticated: true, isLoading: false, selectedTeamId: null });
     },
@@ -103,11 +111,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = useCallback(async (): Promise<void> => {
     try {
-      await api.post<{ message: string }>("/app/auth/logout");
+      await api.post<{ ok: boolean }>("/auth/logout");
     } catch {
       // Client-side logout should still complete if the server-side session is already gone
-      // or the CSRF cookie has expired.
+      // or the CSRF token has expired.
     } finally {
+      setCsrfToken(null);
       authVersion.current += 1;
       setState({ user: null, isAuthenticated: false, isLoading: false, selectedTeamId: null });
       window.location.href = "/app/login";
