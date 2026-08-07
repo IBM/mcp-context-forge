@@ -3,12 +3,12 @@
 End-to-end tests that exercise ContextForge across component boundaries,
 often requiring running services.
 
-## MCP Protocol E2E (FastMCP client)
+## MCP Protocol E2E (mcp SDK client)
 
 **File:** `test_mcp_protocol_e2e.py`
 
 Exercises the MCP protocol against a live ContextForge instance using the
-`fastmcp.client.Client` — no `mcp-cli` binary, no `mcpgateway.wrapper`
+official `mcp` SDK (`ClientSession` over Streamable HTTP) — no `mcp-cli` binary, no `mcpgateway.wrapper`
 subprocess. All tests are async and run in-pytest. No LLM provider or API key
 is required.
 
@@ -19,7 +19,7 @@ is required.
 docker compose up -d          # gateway on :8080 via nginx
 ```
 
-(The `fastmcp` package is already installed via the dev dependency group.)
+(The `mcp` package is a core dependency of the gateway.)
 
 ### Running
 
@@ -67,10 +67,10 @@ Organized into five classes — `TestConnectivity`, `TestTools`, `TestDiscovery`
 
 ```
 pytest
-  └── FastMCP Client (async)
+  └── MCP SDK ClientSession (async, Streamable HTTP)
         └── Authorization: Bearer <jwt>
               └── HTTP → ContextForge gateway /mcp (MCP_CLI_BASE_URL)
 ```
 
 No subprocess, no settle delays, no stdin-close plumbing. Sessions are
-established by the Client's `__aenter__` and torn down on `__aexit__`.
+established by the `streamablehttp_client` / `ClientSession` async context managers.
