@@ -263,3 +263,117 @@ def test_auto_detect_drops_denylisted_tools(fake_gateway, monkeypatch, caplog):
     assert "fast-time-schema-error" not in target.tool_names
     assert "fast-time-verify-protocol" in target.tool_names
     assert "excluded 2 denylisted" in caplog.text
+
+
+SEVEN_TOOLS = [
+    "fast-time-echo",
+    "fast-time-get-system-time",
+    "fast-time-convert-time",
+    "fast-time-get-stats",
+    "fast-time-schema-success",
+    "fast-time-tool-six",
+    "fast-time-tool-seven",
+]
+
+
+def test_limit_pool_returns_every_tool_by_default(monkeypatch):
+    """Regression for #6082: no tool is excluded by position."""
+    monkeypatch.setattr(lf, "MCP_TOOL_POOL_SIZE", 0)
+    assert lf._limit_pool(SEVEN_TOOLS) == SEVEN_TOOLS
+
+
+def test_limit_pool_applies_configured_ceiling(monkeypatch):
+    """MCP_BENCHMARK_TOOL_POOL_SIZE=6 reproduces the 6-tool agent scenario."""
+    monkeypatch.setattr(lf, "MCP_TOOL_POOL_SIZE", 6)
+    assert lf._limit_pool(SEVEN_TOOLS) == SEVEN_TOOLS[:6]
+
+
+def test_limit_pool_ceiling_larger_than_pool_is_a_noop(monkeypatch):
+    """A ceiling above the tool count returns the full pool."""
+    monkeypatch.setattr(lf, "MCP_TOOL_POOL_SIZE", 50)
+    assert lf._limit_pool(SEVEN_TOOLS) == SEVEN_TOOLS
+
+
+def test_user_tool_pool_uses_all_assigned_tools(monkeypatch):
+    """BaseMCPUser._tool_pool exposes every tool on the assigned target."""
+    monkeypatch.setattr(lf, "MCP_TOOL_POOL_SIZE", 0)
+    user = lf.MCPToolCallerUser.__new__(lf.MCPToolCallerUser)
+    user._tool_names = list(SEVEN_TOOLS)
+    assert user._tool_pool() == SEVEN_TOOLS
+
+
+def test_source_has_no_hardcoded_six_tool_cap():
+    """Guard: the literal [:6] slice must not reappear in the benchmark script."""
+    # Standard
+    from pathlib import Path
+
+    source = Path(lf.__file__).read_text(encoding="utf-8")
+    assert "[:6]" not in source
+
+
+def _make_user(cls, tool_names, monkeypatch):
+    """Build a user instance without Locust's environment, recording MCP calls."""
+    monkeypatch.setattr(lf, "MCP_TOOL_POOL_SIZE", 0)
+    user = cls.__new__(cls)
+    user._tool_names = list(tool_names)
+    user._tool_schemas = {"fast-time-echo": ECHO_SCHEMA, "fast-time-flaky": FLAKY_SCHEMA}
+    user._mcp_session_id = "session-1"
+    user._initialized = True
+    user.calls = []
+    user._mcp_request = lambda method, params, name: user.calls.append((method, params, name))
+    return user
+
+
+def test_tool_caller_calls_a_tool_from_the_full_pool(monkeypatch):
+    """MCPToolCallerUser can select any discovered tool, not just the first six."""
+    user = _make_user(lf.MCPToolCallerUser, SEVEN_TOOLS + ["fast-time-verify-protocol"], monkeypatch)
+    for _ in range(200):
+        user.call_tool()
+    selected = {params["name"] for method, params, _ in user.calls if method == "tools/call"}
+    assert "fast-time-verify-protocol" in selected
+
+
+def test_stress_user_calls_a_tool_from_the_full_pool(monkeypatch):
+    """MCPStressUser uses the same unbounded pool."""
+    user = _make_user(lf.MCPStressUser, SEVEN_TOOLS + ["fast-time-verify-protocol"], monkeypatch)
+    for _ in range(200):
+        user.stress_call_tool()
+    selected = {params["name"] for method, params, _ in user.calls if method == "tools/call"}
+    assert "fast-time-verify-protocol" in selected
+
+
+def test_churn_user_runs_full_lifecycle_and_calls_a_tool(monkeypatch):
+    """MCPSessionChurnUser re-initializes and then calls a tool from the full pool."""
+    user = _make_user(lf.MCPSessionChurnUser, SEVEN_TOOLS, monkeypatch)
+    user.full_lifecycle()
+    methods = [method for method, _, _ in user.calls]
+    assert methods == ["initialize", "tools/list", "tools/call"]
+
+
+def test_agent_user_calls_tools_with_schema_derived_args(monkeypatch):
+    """MCPAgentUser sends schema-derived arguments, not name-guessed ones."""
+    user = _make_user(lf.MCPAgentUser, ["fast-time-echo"], monkeypatch)
+    user.agent_call_tool()
+    user.agent_multi_tool_turn()
+    for method, params, _ in user.calls:
+        assert method == "tools/call"
+        assert set(params["arguments"]) == {"message"}
+
+
+def test_call_sites_no_op_when_no_tools_discovered(monkeypatch):
+    """Every tool-calling task exits quietly when discovery returned nothing."""
+    for cls, method_name in (
+        (lf.MCPToolCallerUser, "call_tool"),
+        (lf.MCPStressUser, "stress_call_tool"),
+        (lf.MCPAgentUser, "agent_call_tool"),
+    ):
+        user = _make_user(cls, [], monkeypatch)
+        getattr(user, method_name)()
+        assert user.calls == []
+
+
+def test_rest_baseline_uses_module_level_pool(monkeypatch):
+    """RESTBaselineUser reads the module-level pool through _limit_pool."""
+    monkeypatch.setattr(lf, "MCP_TOOL_POOL_SIZE", 0)
+    monkeypatch.setattr(lf, "_tool_names", SEVEN_TOOLS + ["fast-time-verify-protocol"])
+    assert "fast-time-verify-protocol" in lf._limit_pool(lf._tool_names)
