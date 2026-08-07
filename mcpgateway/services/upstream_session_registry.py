@@ -37,12 +37,12 @@ import httpx
 from mcp import Client, ClientSession
 from mcp import MCPError as McpError
 from mcp.client.sse import sse_client
-from mcp.shared.session import RequestResponder
 import mcp_types
 
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.transports.context import request_headers_var
+from mcpgateway.utils.session_compat import RequestResponder
 from mcpgateway.utils.streamable_http_compat import streamable_http_client
 from mcpgateway.utils.url_auth import sanitize_url_for_logging
 
@@ -540,15 +540,16 @@ async def _default_session_factory(req: SessionCreateRequest) -> tuple[ClientSes
                         sanitize_url_for_logging(req.url),
                         exc,
                     )
-            # cache=False is load-bearing: the SDK default (cache=None) builds
-            # a ClientResponseCache that WRAPS message_handler in an evicting
-            # layer, which would change ADR-052 notification/RequestResponder
-            # behaviour. False passes the handler through unwrapped.
+            # cache=None is load-bearing: the SDK default (a CacheConfig
+            # instance) builds a ClientResponseCache that WRAPS message_handler
+            # in an evicting layer, which would change ADR-052
+            # notification/RequestResponder behaviour. None disables the cache
+            # and passes the handler through unwrapped.
             client = Client(
                 transport_ctx,
                 mode=settings.mcp_client_connect_mode,
                 message_handler=message_handler,
-                cache=False,
+                cache=None,
             )
             # __aenter__ enters the transport and performs the mode-driven
             # handshake; no explicit session.initialize() here.
