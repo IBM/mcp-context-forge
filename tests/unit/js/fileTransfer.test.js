@@ -28,7 +28,6 @@ import {
 } from "../../../mcpgateway/admin_ui/fileTransfer.js";
 
 import { showNotification } from "../../../mcpgateway/admin_ui/utils.js";
-import { getAuthToken } from "../../../mcpgateway/admin_ui/tokens.js";
 import { displayImportPreview } from "../../../mcpgateway/admin_ui/selectiveImport.js";
 import { loadTools } from "../../../mcpgateway/admin_ui/tools.js";
 
@@ -758,13 +757,13 @@ describe("previewImport", () => {
     vi.clearAllMocks();
     document.body.innerHTML = "";
     window.ROOT_PATH = "";
-    window.currentImportData = null;
+    window.Admin = { currentImportData: null };
   });
 
   afterEach(() => {
     document.body.innerHTML = "";
     delete window.ROOT_PATH;
-    delete window.currentImportData;
+    delete window.Admin;
   });
 
   test("shows error when no import data is loaded", async () => {
@@ -777,7 +776,7 @@ describe("previewImport", () => {
   });
 
   test("fetches and displays preview successfully", async () => {
-    window.currentImportData = { version: "1.0", entities: {} };
+    window.Admin.currentImportData = { version: "1.0", entities: {} };
 
     const previewBtn = document.createElement("button");
     previewBtn.id = "import-preview-btn";
@@ -820,7 +819,7 @@ describe("previewImport", () => {
   });
 
   test("handles preview error", async () => {
-    window.currentImportData = { version: "1.0", entities: {} };
+    window.Admin.currentImportData = { version: "1.0", entities: {} };
 
     const previewBtn = document.createElement("button");
     previewBtn.id = "import-preview-btn";
@@ -856,13 +855,13 @@ describe("handleImport", () => {
     vi.clearAllMocks();
     document.body.innerHTML = "";
     window.ROOT_PATH = "";
-    window.currentImportData = null;
+    window.Admin = { currentImportData: null };
   });
 
   afterEach(() => {
     document.body.innerHTML = "";
     delete window.ROOT_PATH;
-    delete window.currentImportData;
+    delete window.Admin;
   });
 
   test("shows error when no import data is loaded", async () => {
@@ -875,7 +874,7 @@ describe("handleImport", () => {
   });
 
   test("performs dry run validation successfully", async () => {
-    window.currentImportData = { version: "1.0", entities: {} };
+    window.Admin.currentImportData = { version: "1.0", entities: {} };
 
     const conflictStrategy = document.createElement("select");
     conflictStrategy.id = "import-conflict-strategy";
@@ -958,7 +957,7 @@ describe("handleImport", () => {
   });
 
   test("performs actual import and refreshes data", async () => {
-    window.currentImportData = { version: "1.0", entities: {} };
+    window.Admin.currentImportData = { version: "1.0", entities: {} };
 
     const conflictStrategy = document.createElement("select");
     conflictStrategy.id = "import-conflict-strategy";
@@ -1046,7 +1045,7 @@ describe("handleImport", () => {
   });
 
   test("handles import error", async () => {
-    window.currentImportData = { version: "1.0", entities: {} };
+    window.Admin.currentImportData = { version: "1.0", entities: {} };
 
     const previewBtn = document.createElement("button");
     previewBtn.id = "import-preview-btn";
