@@ -461,7 +461,12 @@ class TestAppBridgeEndpoints:
 
     @pytest.mark.asyncio
     async def test_create_session_uses_admin_bypass_scope_and_returns_payload(self, monkeypatch, mock_db):
-        """Admin app sessions should use unrestricted resource lookup and return session metadata."""
+        """Admin app sessions should use unrestricted resource lookup and return session metadata.
+
+        Admin bypass keeps the caller's email so the resource service can still owner-match the
+        admin's own private ``ui://`` resource; nulling it excluded every private row and turned
+        an owned resource into a 404.
+        """
         # First-Party
         from mcpgateway import main as main_mod
 
@@ -475,14 +480,14 @@ class TestAppBridgeEndpoints:
 
         with (
             patch.object(main_mod, "_assert_session_owner_or_admin", new=AsyncMock()),
-            patch.object(main_mod, "get_rpc_filter_context", return_value=("admin@example.com", None, True)),
+            patch.object(main_mod, "get_scoped_resource_access_context", return_value=("admin@example.com", None)),
             patch.object(main_mod.resource_service, "read_resource", new=AsyncMock(return_value=SimpleNamespace())) as read_mock,
             patch.object(main_mod.mcp_app_session_service, "create_session", return_value=app_session) as create_mock,
         ):
             response = await main_mod.create_mcp_app_session.__wrapped__(request=request, db=mock_db, user={"email": "admin@example.com", "is_admin": True})
 
         read_mock.assert_awaited_once()
-        assert read_mock.await_args.kwargs["user"] is None
+        assert read_mock.await_args.kwargs["user"] == "admin@example.com"
         assert read_mock.await_args.kwargs["token_teams"] is None
         create_mock.assert_called_once()
         assert create_mock.call_args.kwargs["token_teams"] is None
@@ -553,7 +558,7 @@ class TestAppBridgeEndpoints:
 
         with (
             patch.object(main_mod, "_assert_session_owner_or_admin", new=AsyncMock()),
-            patch.object(main_mod, "get_rpc_filter_context", return_value=("user@example.com", ["team-b"], False)),
+            patch.object(main_mod, "get_scoped_resource_access_context", return_value=("user@example.com", ["team-b"])),
             patch.object(main_mod.resource_service, "read_resource", new=AsyncMock(side_effect=ResourceNotFoundError("Resource not found"))) as read_mock,
             patch.object(main_mod.mcp_app_session_service, "create_session") as create_mock,
         ):

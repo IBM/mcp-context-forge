@@ -103,11 +103,14 @@ policy. The key invariants that this module enforces:
 2. ``get_rpc_filter_context`` derives ``is_admin`` from the verified JWT
    payload or the trusted internal MCP auth context - NOT from the DB user -
    so a scoped token (``teams=[]``) cannot inherit admin bypass.
-3. ``get_scoped_resource_access_context`` returns ``(None, None)`` *only* for
-   genuine admin bypass (verified JWT ``is_admin=true`` + ``teams=null``, or
-   non-JWT dev-mode admin). Public-only tokens get ``(email, [])``.
-   Downstream services MUST treat ``(None, None)`` as "admin bypass; still
-   deny private resources" per PR #4341.
+3. ``get_scoped_resource_access_context`` signals admin bypass with
+   ``token_teams=None``, and *only* for genuine admin bypass (verified JWT
+   ``is_admin=true`` + ``teams=null``, or non-JWT dev-mode admin). It keeps
+   ``user_email`` set on that path so the service can owner-match the admin's
+   own private rows; ``(None, None)`` therefore means bypass for a caller with
+   no resolvable email. Public-only tokens get ``(email, [])``. Downstream
+   services MUST treat ``token_teams=None`` as "admin bypass; still deny other
+   users' private resources" per PR #4341.
 4. Non-JWT admin callers (basic-auth / dev mode) keep unrestricted visibility
    via the fallback-admin branch; this carve-out is intentional and documented
    in ``AGENTS.md``.
@@ -720,6 +723,62 @@ def get_token_teams_from_request(request: Request) -> Optional[List[str]]:
     return []
 
 
+# Attribute used to memoize the derived filter context for the life of one request.
+# Handlers that need both the visibility scope and the requester identity call
+# get_scoped_resource_access_context() and get_request_identity() back to back, and
+# both derive via get_rpc_filter_context(); for session tokens that derivation can
+# issue a live EmailUser lookup, so without memoization those handlers pay the query
+# twice per request.
+_RPC_FILTER_CONTEXT_CACHE_ATTR = "_rpc_filter_context_cache"
+
+
+def _get_cached_rpc_filter_context(request: Request, user) -> Optional[tuple[Optional[str], Optional[List[str]], bool]]:
+    """Return the memoized filter context for ``user`` on ``request``, if present.
+
+    The entry is keyed on the identity of the ``user`` object, not just the request:
+    a single request may derive context for more than one principal (for example the
+    synthetic forwarded user built for trusted internal A2A calls), and those must not
+    read each other's cached result.
+
+    Args:
+        request: Incoming request context.
+        user: Authenticated user context the caller is deriving for.
+
+    Returns:
+        The cached ``(user_email, token_teams, is_admin)`` triple, or ``None`` on miss.
+    """
+    state = getattr(request, "state", None)
+    if state is None:
+        return None
+    entry = getattr(state, _RPC_FILTER_CONTEXT_CACHE_ATTR, None)
+    # Guard the shape explicitly: request.state is frequently a MagicMock in tests,
+    # where a plain truthiness check would return a mock instead of missing.
+    if isinstance(entry, tuple) and len(entry) == 2 and entry[0] is user and isinstance(entry[1], tuple) and len(entry[1]) == 3:
+        return entry[1]
+    return None
+
+
+def _cache_rpc_filter_context(request: Request, user, context: tuple[Optional[str], Optional[List[str]], bool]) -> tuple[Optional[str], Optional[List[str]], bool]:
+    """Memoize ``context`` for ``user`` on ``request`` and return it unchanged.
+
+    Args:
+        request: Incoming request context.
+        user: Authenticated user context the result was derived for.
+        context: The ``(user_email, token_teams, is_admin)`` triple to cache.
+
+    Returns:
+        ``context``, so callers can ``return _cache_rpc_filter_context(...)`` directly.
+    """
+    state = getattr(request, "state", None)
+    if state is not None:
+        try:
+            setattr(state, _RPC_FILTER_CONTEXT_CACHE_ATTR, (user, context))
+        except (AttributeError, TypeError):
+            # A read-only or exotic state object is not fatal; skip memoization.
+            pass
+    return context
+
+
 def get_rpc_filter_context(request: Request, user) -> tuple[Optional[str], Optional[List[str]], bool]:
     """Extract ``(user_email, token_teams, is_admin)`` for RPC filtering.
 
@@ -751,6 +810,10 @@ def get_rpc_filter_context(request: Request, user) -> tuple[Optional[str], Optio
         >>> is_admin
         True
     """
+    cached_context = _get_cached_rpc_filter_context(request, user)
+    if cached_context is not None:
+        return cached_context
+
     # Use existing get_user_email() helper for consistent email extraction
     user_email = get_user_email(user)
     # get_user_email() guarantees a string return, but may return "unknown"
@@ -779,12 +842,20 @@ def get_rpc_filter_context(request: Request, user) -> tuple[Optional[str], Optio
         is_admin = bool(internal_auth_context.get("is_admin", False))
         if token_teams is not None and len(token_teams) == 0:
             is_admin = False
-        return user_email, token_teams, is_admin
+        return _cache_rpc_filter_context(request, user, (user_email, token_teams, is_admin))
 
     cached = getattr(request.state, "_jwt_verified_payload", None)
     if cached and isinstance(cached, tuple) and len(cached) == 2:
         _, payload = cached
-        if payload:
+        # A malformed (non-dict) cached payload carries no usable admin claim; fall through
+        # with is_admin unchanged so the caller defers to RBAC instead of raising.
+        if payload is not None and not isinstance(payload, dict):
+            logger.warning(
+                "get_rpc_filter_context: verified JWT payload non-dict type=%s path=%s; treating caller as non-admin",
+                type(payload).__name__,
+                getattr(getattr(request, "url", None), "path", "unknown"),
+            )
+        if isinstance(payload, dict):
             # Session tokens ignore JWT is_admin claim — DB is the authority.
             # An old/stale session JWT carrying is_admin=true must not influence
             # the boolean admin decision; only DB-resolved token_teams=None can
@@ -829,7 +900,7 @@ def get_rpc_filter_context(request: Request, user) -> tuple[Optional[str], Optio
                 db_user_is_admin,
             )
 
-    return user_email, token_teams, is_admin
+    return _cache_rpc_filter_context(request, user, (user_email, token_teams, is_admin))
 
 
 async def is_unrestricted_platform_admin(request: Request, user: Any, db: Session) -> bool:
@@ -929,9 +1000,13 @@ def get_scoped_resource_access_context(request: Request, user) -> tuple[Optional
     the canonical ``(user_email, token_teams)`` input shape for service-layer
     visibility checks:
 
-    - ``(None, None)``: admin bypass. The service still applies the post-PR
-      #4341 rule "admin bypass may see public + team, never another user's
-      private".
+    - ``(email, None)``: admin bypass. ``user_email`` is deliberately preserved
+      so the service can still owner-match the admin's own private rows. The
+      service applies the rule "admin bypass may see public + team + own
+      private, never another user's private".
+    - ``(None, None)``: admin bypass for a caller with no resolvable email
+      (anonymous / dev-mode). The service returns public + team and no private
+      rows at all, since there is no owner to match against.
     - ``(email, [])``: public-only token. Service returns public rows only.
     - ``(email, ["team-a", ...])``: team-scoped token. Service returns
       public rows + team-scoped rows for the listed teams + the caller's own
