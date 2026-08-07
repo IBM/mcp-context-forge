@@ -6158,8 +6158,72 @@ class TestRestToolQueryParamHandling:
             assert params == {"q": "test"}
 
 
-class TestRestToolNonJsonResponses:
-    """Tests for handling non-JSON responses from REST tools (#3855)."""
+class TestRestToolErrorResponses:
+    """Tests for preserving error details from REST tool responses (#3855, #6027)."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("body", "expected"),
+        [
+            ({"error": "Invalid zone identifier"}, "Invalid zone identifier"),
+            ({"errors": [{"code": 6003, "message": "Invalid zone identifier"}]}, '[{"code":6003,"message":"Invalid zone identifier"}]'),
+            ({"message": "Invalid zone identifier"}, "Invalid zone identifier"),
+            ({"detail": "Invalid zone identifier"}, "Invalid zone identifier"),
+            ({"reason": "Invalid zone identifier"}, 'HTTP 403: {"reason":"Invalid zone identifier"}'),
+            ([{"code": 6003, "message": "Invalid zone identifier"}], 'HTTP 403: [{"code":6003,"message":"Invalid zone identifier"}]'),
+            ("forbidden", "HTTP 403: forbidden"),
+            (None, "HTTP 403: null"),
+            (403, "HTTP 403: 403"),
+        ],
+    )
+    async def test_rest_tool_preserves_json_error_details(self, tool_service, mock_tool, mock_global_config_obj, test_db, body, expected):
+        """REST errors retain common vendor envelopes and arbitrary JSON bodies (#6027)."""
+        # Third-Party
+        import httpx
+
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "GET"
+        mock_tool.jsonpath_filter = ""
+        mock_tool.auth_value = None
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        response = Mock()
+        response.status_code = 403
+        response.text = orjson.dumps(body).decode()
+        response.json = Mock(return_value=body)
+        request = httpx.Request("GET", "https://api.example.com/test")
+        response.raise_for_status = Mock(side_effect=httpx.HTTPStatusError("Forbidden", request=request, response=response))
+        tool_service._http_client.get = AsyncMock(return_value=response)
+
+        with patch("mcpgateway.services.tool_service.metrics_buffer", Mock()):
+            result = await tool_service.invoke_tool(test_db, "test_tool", {}, request_headers=None)
+
+        assert result.is_error is True
+        assert result.structured_content == {"status_code": 403}
+        assert result.content[0].text == expected
+
+    @pytest.mark.asyncio
+    async def test_rest_tool_preserves_nonstandard_2xx_error_details(self, tool_service, mock_tool, mock_global_config_obj, test_db):
+        """Non-standard 2xx errors use the same vendor error extraction (#6027)."""
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "GET"
+        mock_tool.jsonpath_filter = ""
+        mock_tool.auth_value = None
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        body = {"errors": [{"code": "partial_failure", "message": "One operation failed"}]}
+        response = Mock()
+        response.status_code = 207
+        response.text = orjson.dumps(body).decode()
+        response.json = Mock(return_value=body)
+        response.raise_for_status = Mock()
+        tool_service._http_client.get = AsyncMock(return_value=response)
+
+        with patch("mcpgateway.services.tool_service.metrics_buffer", Mock()):
+            result = await tool_service.invoke_tool(test_db, "test_tool", {}, request_headers=None)
+
+        assert result.is_error is True
+        assert result.content[0].text == '[{"code":"partial_failure","message":"One operation failed"}]'
 
     @pytest.mark.asyncio
     async def test_rest_tool_handles_html_error_response(self, tool_service, mock_tool, mock_global_config_obj, test_db, caplog):
