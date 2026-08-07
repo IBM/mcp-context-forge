@@ -68,6 +68,7 @@ from mcpgateway.auth import get_current_user, get_user_team_roles
 # Re-export canonical get_user_email from auth_context for backward compatibility.
 from mcpgateway.auth_context import (
     configuration_export_includes_roots,
+    extract_token_team_ids,
     get_scoped_resource_access_context,
     get_token_teams_from_request,
     get_user_email,
@@ -1948,18 +1949,9 @@ async def _get_user_team_ids(user: dict, db: Session) -> list:
     if cached is not None:
         return cached
 
-    if "token_teams" in user:
-        token_teams = user.get("token_teams")
-        if token_teams is not None:
-            team_ids: list[str] = []
-            for team in token_teams:
-                if isinstance(team, dict):
-                    team_id = team.get("id")
-                    if isinstance(team_id, str) and team_id:
-                        team_ids.append(team_id)
-                elif isinstance(team, str) and team:
-                    team_ids.append(team)
-            return team_ids
+    team_ids = extract_token_team_ids(user)
+    if team_ids is not None:
+        return team_ids
 
     user_email = get_user_email(user)
     team_service = TeamManagementService(db)
@@ -1999,9 +1991,7 @@ def _is_explicit_token_team_scope(user: Any) -> bool:
     Returns:
         bool: True when ``token_teams`` is present and not ``None``.
     """
-    if not isinstance(user, dict):
-        return False
-    return "token_teams" in user and user.get("token_teams") is not None
+    return extract_token_team_ids(user) is not None
 
 
 def _owner_access_condition(owner_column, team_column, *, user_email: str, team_ids: list[str], user: Any):
@@ -5346,13 +5336,14 @@ async def change_password_required_handler(request: Request, db: Session = Depen
 # ============================================================================ #
 
 
-async def _generate_unified_teams_view(team_service, current_user, root_path):  # pylint: disable=unused-argument
+async def _generate_unified_teams_view(team_service, current_user, root_path, scoped_team_ids: Optional[list[str]] = None):  # pylint: disable=unused-argument
     """Generate unified team view with relationship badges.
 
     Args:
         team_service: Service for team operations
         current_user: Current authenticated user
         root_path: Application root path
+        scoped_team_ids: Explicit token team scope to apply to the generated list
 
     Returns:
         HTML string containing the unified teams view
@@ -5362,6 +5353,11 @@ async def _generate_unified_teams_view(team_service, current_user, root_path):  
 
     # Get public teams user can join
     public_teams = await team_service.discover_public_teams(current_user.email)
+
+    if scoped_team_ids is not None:
+        allowed_team_ids = set(scoped_team_ids)
+        user_teams = [team for team in user_teams if str(team.id) in allowed_team_ids]
+        public_teams = [team for team in public_teams if str(team.id) in allowed_team_ids]
 
     # Batch fetch ALL data upfront - 3 queries instead of 3N queries (N+1 elimination)
     user_team_ids = [str(t.id) for t in user_teams]
@@ -5646,10 +5642,7 @@ async def admin_search_teams(
         # the result. The scope is pushed into the query so it applies before
         # pagination (an allowed team must not be dropped for sorting past the
         # first page) and so an explicit scope no longer surfaces the personal team.
-        raw_token_teams = user.get("token_teams")
-        admin_scoped_team_ids: Optional[list[str]] = None
-        if raw_token_teams is not None:
-            admin_scoped_team_ids = [team["id"] if isinstance(team, dict) else team for team in raw_token_teams]
+        admin_scoped_team_ids = extract_token_team_ids(user)
         result = await team_service.list_teams(
             page=1,
             per_page=limit,
@@ -5749,6 +5742,8 @@ async def admin_teams_partial_html(
     if not current_user:
         return HTMLResponse(content='<div class="text-center py-8"><p class="text-red-500">User not found</p></div>', status_code=404)
 
+    scoped_team_ids = extract_token_team_ids(user)
+
     # Get user's teams and public teams for relationship info
     user_teams = await team_service.get_user_teams(user_email, include_personal=True)
     user_team_ids = {str(t.id) for t in user_teams}
@@ -5768,7 +5763,15 @@ async def admin_teams_partial_html(
     if current_user.is_admin and not relationship:
         # Admin sees all non-personal teams plus their own personal team (single query, correct pagination)
         paginated_result = await team_service.list_teams(
-            page=page, per_page=per_page, include_inactive=include_inactive, visibility_filter=visibility, base_url=base_url, include_personal=False, search_query=q, personal_owner_email=user_email
+            page=page,
+            per_page=per_page,
+            include_inactive=include_inactive,
+            visibility_filter=visibility,
+            base_url=base_url,
+            include_personal=False,
+            search_query=q,
+            personal_owner_email=user_email,
+            team_ids=scoped_team_ids,
         )
         data = paginated_result["data"]
         pagination = paginated_result["pagination"]
@@ -5789,6 +5792,10 @@ async def admin_teams_partial_html(
         else:
             # All teams: user's teams + public teams they can join
             all_teams = list(user_teams) + list(public_teams)
+
+        if scoped_team_ids is not None:
+            allowed_team_ids = set(scoped_team_ids)
+            all_teams = [t for t in all_teams if str(t.id) in allowed_team_ids]
 
         # Apply search filter
         if q:
@@ -5968,10 +5975,11 @@ async def admin_list_teams(
             return HTMLResponse(content='<div class="text-center py-8"><p class="text-red-500">User not found</p></div>', status_code=200)
 
         root_path = _resolve_root_path(request)
+        scoped_team_ids = extract_token_team_ids(user)
 
         if unified:
             # Generate unified team view
-            return await _generate_unified_teams_view(team_service, current_user, root_path)
+            return await _generate_unified_teams_view(team_service, current_user, root_path, scoped_team_ids=scoped_team_ids)
 
         # Traditional admin view refactored to use partial logic
         # We can reuse the logic by calling the service directly or redirecting?
@@ -5986,12 +5994,23 @@ async def admin_list_teams(
                 base_url += f"?q={urllib.parse.quote(q, safe='')}"
 
             # Admin sees all non-personal teams plus their own personal team (single query, correct pagination)
-            paginated_result = await team_service.list_teams(page=page, per_page=per_page, base_url=base_url, include_personal=False, search_query=q, personal_owner_email=user_email)
+            paginated_result = await team_service.list_teams(
+                page=page,
+                per_page=per_page,
+                base_url=base_url,
+                include_personal=False,
+                search_query=q,
+                personal_owner_email=user_email,
+                team_ids=scoped_team_ids,
+            )
             data = paginated_result["data"]
             pagination = paginated_result["pagination"]
             links = paginated_result["links"]
         else:
             all_teams = await team_service.get_user_teams(current_user.email, include_personal=True)
+            if scoped_team_ids is not None:
+                allowed_team_ids = set(scoped_team_ids)
+                all_teams = [team for team in all_teams if str(team.id) in allowed_team_ids]
             # Basic pagination for user view
             total = len(all_teams)
             start = (page - 1) * per_page
