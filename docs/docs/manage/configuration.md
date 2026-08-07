@@ -185,7 +185,7 @@ appropriate secure-cookie, SameSite, credential, and CSRF configuration.
 !!! tip "JWT Token Generation"
     `JWT_SECRET_KEY` is used to sign JSON Web Tokens. Generate tokens via:
     ```bash
-    export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key-but-now-longer-than-32-bytes)
+    export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --admin --exp 10080 --secret my-test-key-but-now-longer-than-32-bytes)
     ```
 
 ### UI Features

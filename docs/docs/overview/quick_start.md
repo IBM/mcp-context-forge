@@ -92,7 +92,7 @@ Pick an install method below, generate an auth token, then walk through a real t
 
         ```bash
         export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
-            --username admin@example.com --exp 10080 --secret my-test-key-but-now-longer-than-32-bytes)
+            --username admin@example.com --admin --exp 10080 --secret my-test-key-but-now-longer-than-32-bytes)
         ```
 
         !!! tip "Non-expiring tokens require `REQUIRE_TOKEN_EXPIRATION=false`"
@@ -167,7 +167,7 @@ Pick an install method below, generate an auth token, then walk through a real t
 
         ```bash
         docker exec mcpgateway python3 -m mcpgateway.utils.create_jwt_token \
-          --username admin@example.com --exp 10080 --secret my-test-key-but-now-longer-than-32-bytes
+          --username admin@example.com --admin --exp 10080 --secret my-test-key-but-now-longer-than-32-bytes
         ```
 
     4. **Smoke-test**
