@@ -159,6 +159,7 @@ PLATFORM_VIEWER_PERMISSIONS = sorted(
         "prompts.read",
         "llm.read",
         "a2a.read",
+        "metrics:read",
         "tokens.create",
         "tokens.read",
         "tokens.update",
