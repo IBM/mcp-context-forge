@@ -1216,6 +1216,83 @@ export function resetEditSelections() {
   });
 }
 
+// Maps a selector container id to the data-* attribute that holds its server's
+// currently-associated items, and to how each checkbox in that container is
+// matched against that attribute.  For tools the attribute holds tool *names*
+// (matched against the checkbox's data-tool-name); for resources and prompts it
+// holds ids (matched against the checkbox value).  This is the authoritative,
+// churn-proof source of association: unlike the selection store, it is only
+// mutated by an explicit user check/uncheck, never by the paginated re-render.
+const SERVER_ITEMS_ATTR = {
+  "edit-server-tools": { attr: "data-server-tools", by: "data-tool-name" },
+  "edit-server-resources": { attr: "data-server-resources", by: "value" },
+  "edit-server-prompts": { attr: "data-server-prompts", by: "value" },
+};
+
+/**
+ * Re-apply checked state to all checkboxes currently in the given selector
+ * container.  Called after any DOM change (search result render or HTMX
+ * scroll-paginated append) that may have added new, unchecked checkboxes.
+ *
+ * A checkbox is (re-)checked when its id is in the persistent selection store
+ * OR its identity is in the container's data-server-* association attribute.
+ *
+ * The dual match is what fixes #3358.  As the infinite-scroll pages stream in,
+ * tools.js's pill-count update() syncs DOM->store and *deletes* the id of every
+ * checkbox that is currently rendered unchecked.  A server's associated items
+ * on page 2+ always render unchecked, so their seeded ids are stripped from the
+ * store before any re-check runs — a store-only match then restores nothing and
+ * the associated items appear unchecked despite being associated.  The
+ * data-server-* attribute survives that churn (it is only edited on a real user
+ * toggle), so it is the reliable signal for "was this associated when the modal
+ * opened" and lets the item be re-checked even after its store id was dropped.
+ *
+ * When a box is (re-)checked we dispatch a bubbling change event so the store
+ * listener re-adds the id, repairing the store that update() depleted and
+ * keeping the pill count and the save payload correct.
+ *
+ * @param {string} containerId - The id of the selector container.
+ */
+export function restoreCheckedStateFromStore(containerId) {
+  const container = document.getElementById(containerId);
+  if (!container) return;
+
+  const sel = getEditSelections(containerId);
+
+  // Association identities from the data-server-* attribute (names for tools,
+  // ids for resources/prompts).  Kept as strings for comparison.
+  const mapping = SERVER_ITEMS_ATTR[containerId];
+  let serverItems = null;
+  if (mapping) {
+    const raw = container.getAttribute(mapping.attr);
+    if (raw) {
+      try {
+        serverItems = new Set(JSON.parse(raw).map(String));
+      } catch (e) {
+        console.error(`Failed to parse ${mapping.attr}:`, e);
+      }
+    }
+  }
+
+  if (sel.size === 0 && !(serverItems && serverItems.size > 0)) return;
+
+  container.querySelectorAll('input[type="checkbox"]').forEach((cb) => {
+    if (cb.checked) return;
+    const id = String(cb.value);
+    let shouldCheck = sel.has(id);
+    if (!shouldCheck && serverItems) {
+      const key =
+        mapping.by === "value" ? id : String(cb.getAttribute(mapping.by));
+      shouldCheck = serverItems.has(key);
+    }
+    if (shouldCheck) {
+      cb.checked = true;
+      // Re-seed the store (update() may have deleted this id) and refresh pills.
+      cb.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+  });
+}
+
 export function ensureEditStoreListeners() {
   if (window._editStoreListenersAttached) return;
   window._editStoreListenersAttached = true;
@@ -1224,6 +1301,8 @@ export function ensureEditStoreListeners() {
     (containerId) => {
       const container = document.getElementById(containerId);
       if (!container) return;
+
+      // Track checkbox check/uncheck into the persistent selection store.
       container.addEventListener("change", function (e) {
         const target = e.target;
         if (
@@ -1241,6 +1320,23 @@ export function ensureEditStoreListeners() {
           }
         }
       });
+
+      // Re-apply checked state after HTMX scroll-paginates new items into this
+      // container.  The infinite-scroll sentinel uses hx-swap="outerHTML" and is
+      // a child of the container, so both events bubble up here.
+      //
+      // We listen on afterSettle (not just afterSwap): tools.js's pill-count
+      // update() runs on the settle phase and syncs DOM->store, deleting the
+      // ids of any checkbox rendered unchecked.  Restoring on afterSwap alone
+      // would be undone by that later update().  afterSettle runs after it, so
+      // the re-check (and its change-driven store repair) is the final word.
+      // afterSwap is kept for search-result re-renders, which do not always
+      // settle identically.
+      const reapply = function () {
+        restoreCheckedStateFromStore(containerId);
+      };
+      container.addEventListener("htmx:afterSwap", reapply);
+      container.addEventListener("htmx:afterSettle", reapply);
     }
   );
 }
