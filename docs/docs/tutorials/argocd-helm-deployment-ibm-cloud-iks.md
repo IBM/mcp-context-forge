@@ -630,7 +630,7 @@ kubectl get pv,pvc -n mcp
 source ~/mcp-credentials.env
 export MCPGATEWAY_BEARER_TOKEN=$(kubectl exec -n mcp deployment/mcp-stack-mcpcontextforge -- \
   python3 -m mcpgateway.utils.create_jwt_token \
-  --username admin@example.com --exp 10080 --secret "$JWT_SECRET")
+  --username admin@example.com --admin --exp 10080 --secret "$JWT_SECRET")
 
 echo "Bearer token: $MCPGATEWAY_BEARER_TOKEN"
 ```
