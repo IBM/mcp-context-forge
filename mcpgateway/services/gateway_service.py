@@ -2442,6 +2442,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
         query = await self._apply_access_control(query, db, user_email, token_teams, team_id)
 
+        if team_id:
+            query = query.where(DbGateway.team_id == team_id)
+
         if visibility:
             query = query.where(DbGateway.visibility == visibility)
 
