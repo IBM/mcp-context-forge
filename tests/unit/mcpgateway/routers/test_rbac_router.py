@@ -8,6 +8,8 @@ Tests for RBAC router endpoints.
 
 # Standard
 from datetime import datetime, timezone
+import importlib
+import sys
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -18,9 +20,27 @@ import pytest
 from tests.helpers.scope import scoped_request
 from tests.utils.rbac_mocks import patch_rbac_decorators, restore_rbac_decorators
 
+# See tests/unit/mcpgateway/routers/test_rbac_scope.py for the mirror-image half of
+# this fix: xdist runs test files in non-deterministic per-worker order, and Python
+# caches modules in sys.modules, so if that file's real-decorator import happened
+# first in this worker, mcpgateway.routers.rbac would already be cached with real
+# decorators baked in — this file's own patch_rbac_decorators() below would then
+# have nothing to affect, and every test here would hit the real 403 guard. Popping
+# first guarantees this file's own import always starts fresh. Popping alone is not
+# enough, though: `from mcpgateway.routers import rbac` resolves via getattr() on
+# the already-imported `mcpgateway.routers` package before falling back to a
+# submodule import, so if that package object still has a stale `.rbac` attribute
+# from an earlier real import, the getattr shortcut returns the stale real-decorated
+# module even though sys.modules no longer has an entry for the dotted name. Use
+# importlib.import_module() instead, which always resolves via sys.modules for the
+# exact dotted name and, since we already removed that entry, is guaranteed to
+# execute the module fresh under the patched decorators below (and to overwrite the
+# package's `.rbac` attribute with this fresh module in the process).
+sys.modules.pop("mcpgateway.routers.rbac", None)
+
 _originals = patch_rbac_decorators()
 # First-Party
-from mcpgateway.routers import rbac as rbac_router  # noqa: E402
+rbac_router = importlib.import_module("mcpgateway.routers.rbac")
 from mcpgateway.schemas import PermissionCheckRequest, RoleCreateRequest, RoleUpdateRequest, UserRoleAssignRequest  # noqa: E402
 
 restore_rbac_decorators(_originals)
