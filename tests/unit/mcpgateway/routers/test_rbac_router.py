@@ -247,12 +247,13 @@ async def test_assign_and_revoke_role(monkeypatch):
     service.assign_role_to_user = AsyncMock(return_value=user_role)
     service.revoke_role_from_user = AsyncMock(return_value=True)
     monkeypatch.setattr(rbac_router, "RoleService", lambda db: service)
+    monkeypatch.setattr(rbac_router, "_load_assignment", lambda db, email, role_id: SimpleNamespace(scope="global", scope_id=None))
 
     assign_request = UserRoleAssignRequest(role_id="r1", scope="global", scope_id=None)
-    result = await rbac_router.assign_role_to_user("user@example.com", assign_request, user={"email": "admin@example.com"}, db=MagicMock())
+    result = await rbac_router.assign_role_to_user("user@example.com", assign_request, user={"email": "admin@example.com"}, db=MagicMock(), request=scoped_request(None))
     assert result.user_email == "user@example.com"
 
-    result = await rbac_router.revoke_user_role("user@example.com", "r1", scope="global", scope_id=None, user={"email": "admin@example.com"}, db=MagicMock())
+    result = await rbac_router.revoke_user_role("user@example.com", "r1", scope="global", scope_id=None, user={"email": "admin@example.com"}, db=MagicMock(), request=scoped_request(None))
     assert result["message"] == "Role revoked successfully"
 
 
@@ -264,7 +265,7 @@ async def test_assign_role_generic_error(monkeypatch):
 
     assign_request = UserRoleAssignRequest(role_id="r1", scope="global", scope_id=None)
     with pytest.raises(rbac_router.HTTPException) as excinfo:
-        await rbac_router.assign_role_to_user("user@example.com", assign_request, user={"email": "admin@example.com"}, db=MagicMock())
+        await rbac_router.assign_role_to_user("user@example.com", assign_request, user={"email": "admin@example.com"}, db=MagicMock(), request=scoped_request(None))
     assert excinfo.value.status_code == 500
 
 
@@ -286,9 +287,10 @@ async def test_revoke_role_generic_error(monkeypatch):
     service = MagicMock()
     service.revoke_role_from_user = AsyncMock(side_effect=RuntimeError("boom"))
     monkeypatch.setattr(rbac_router, "RoleService", lambda db: service)
+    monkeypatch.setattr(rbac_router, "_load_assignment", lambda db, email, role_id: SimpleNamespace(scope="global", scope_id=None))
 
     with pytest.raises(rbac_router.HTTPException) as excinfo:
-        await rbac_router.revoke_user_role("user@example.com", "r1", scope=None, scope_id=None, user={"email": "admin@example.com"}, db=MagicMock())
+        await rbac_router.revoke_user_role("user@example.com", "r1", scope=None, scope_id=None, user={"email": "admin@example.com"}, db=MagicMock(), request=scoped_request(None))
     assert excinfo.value.status_code == 500
 
 
@@ -367,7 +369,7 @@ async def test_assign_role_public_validation_error(monkeypatch):
 
     assign_request = UserRoleAssignRequest(role_id="r1", scope="global", scope_id=None)
     with pytest.raises(rbac_router.HTTPException) as excinfo:
-        await rbac_router.assign_role_to_user("user@example.com", assign_request, user={"email": "admin@example.com"}, db=MagicMock())
+        await rbac_router.assign_role_to_user("user@example.com", assign_request, user={"email": "admin@example.com"}, db=MagicMock(), request=scoped_request(None))
     assert excinfo.value.status_code == 400
     assert "Role assignment limit exceeded" in excinfo.value.detail
 
@@ -458,7 +460,7 @@ async def test_assign_role_validation_error(monkeypatch):
 
     assign_request = UserRoleAssignRequest(role_id="r1", scope="global", scope_id=None)
     with pytest.raises(rbac_router.HTTPException) as excinfo:
-        await rbac_router.assign_role_to_user("user@example.com", assign_request, user={"email": "admin@example.com"}, db=MagicMock())
+        await rbac_router.assign_role_to_user("user@example.com", assign_request, user={"email": "admin@example.com"}, db=MagicMock(), request=scoped_request(None))
     assert excinfo.value.status_code == 400
 
 
@@ -467,9 +469,10 @@ async def test_revoke_role_not_found(monkeypatch):
     service = MagicMock()
     service.revoke_role_from_user = AsyncMock(return_value=False)
     monkeypatch.setattr(rbac_router, "RoleService", lambda db: service)
+    monkeypatch.setattr(rbac_router, "_load_assignment", lambda db, email, role_id: SimpleNamespace(scope="global", scope_id=None))
 
     with pytest.raises(rbac_router.HTTPException) as excinfo:
-        await rbac_router.revoke_user_role("user@example.com", "r1", scope=None, scope_id=None, user={"email": "admin@example.com"}, db=MagicMock())
+        await rbac_router.revoke_user_role("user@example.com", "r1", scope=None, scope_id=None, user={"email": "admin@example.com"}, db=MagicMock(), request=scoped_request(None))
     assert excinfo.value.status_code == 404
 
 
