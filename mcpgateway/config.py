@@ -618,6 +618,30 @@ class Settings(BaseSettings):
             "set true to require a valid Bearer token for all /mcp requests."
         ),
     )
+    # MCP Transport Security (DNS Rebinding Protection — MCP 2025-11-25 §Security Warning)
+    mcp_allowed_origins: Annotated[Optional[Set[str]], NoDecode] = Field(
+        default=None,
+        description=(
+            "Explicit Origin allowlist for MCP Streamable HTTP endpoints (/mcp, /servers/*/mcp). "
+            "When set, only requests whose Origin header matches this list are accepted; "
+            "absent Origin is always accepted (native/CLI clients). "
+            "All other Origins receive HTTP 403. "
+            "When unset (default), falls back to ALLOWED_ORIGINS. "
+            "Set to an empty JSON array ('[]') to block every browser-sourced request. "
+            "Env var: MCP_ALLOWED_ORIGINS (JSON array or comma-separated)."
+        ),
+    )
+    mcp_allowed_hosts: Annotated[List[str], NoDecode] = Field(
+        default_factory=list,
+        description=(
+            "Explicit Host header allowlist for MCP Streamable HTTP endpoints. "
+            "Must include the Host value clients send (e.g. 'localhost:4444', 'mcp.example.com'). "
+            "Supports wildcard ports via 'host:*' patterns. "
+            "When empty (default), derived from APP_DOMAIN and PORT at startup. "
+            "Env var: MCP_ALLOWED_HOSTS (comma-separated or JSON array)."
+        ),
+    )
+
     trust_proxy_auth: bool = Field(
         default=False,
         description="Trust proxy authentication headers (required when mcp_client_auth_enabled=false)",
@@ -1906,6 +1930,80 @@ class Settings(BaseSettings):
                 parsed = {s.strip() for s in v.split(",") if s.strip()}
             return parsed
         return set(v)
+
+    @field_validator("mcp_allowed_origins", mode="before")
+    @classmethod
+    def _parse_mcp_allowed_origins(cls, v: Any) -> Optional[Set[str]]:
+        """Parse MCP-specific Origin allowlist from environment variable or config value.
+
+        Accepts the same input formats as _parse_allowed_origins.
+        Returns None when the value is absent (i.e. the field was not supplied),
+        which causes the gateway to fall back to ALLOWED_ORIGINS at runtime.
+
+        Args:
+            v: The input value to parse.  May be None, a string (JSON or CSV), set, or list.
+
+        Returns:
+            Optional[Set[str]]: Parsed set of origin strings, or None when not supplied.
+
+        Examples:
+            >>> Settings._parse_mcp_allowed_origins(None) is None
+            True
+            >>> sorted(Settings._parse_mcp_allowed_origins('["http://localhost:4444"]'))
+            ['http://localhost:4444']
+            >>> Settings._parse_mcp_allowed_origins('[]')
+            set()
+            >>> sorted(Settings._parse_mcp_allowed_origins('http://a.com, http://b.com'))
+            ['http://a.com', 'http://b.com']
+        """
+        if v is None:
+            return None
+        if isinstance(v, str):
+            v = v.strip()
+            if v[:1] in "\"'" and v[-1:] == v[:1]:
+                v = v[1:-1]
+            try:
+                parsed = set(orjson.loads(v))
+            except orjson.JSONDecodeError:
+                parsed = {s.strip() for s in v.split(",") if s.strip()}
+            return parsed
+        return set(v)
+
+    @field_validator("mcp_allowed_hosts", mode="before")
+    @classmethod
+    def _parse_mcp_allowed_hosts(cls, v: Any) -> List[str]:
+        """Parse MCP-specific Host allowlist from environment variable or config value.
+
+        Accepts a JSON array string, a comma-separated string, or an already-parsed list.
+
+        Args:
+            v: The input value to parse.
+
+        Returns:
+            List[str]: Parsed list of host strings.
+
+        Examples:
+            >>> Settings._parse_mcp_allowed_hosts([])
+            []
+            >>> Settings._parse_mcp_allowed_hosts('["localhost:4444"]')
+            ['localhost:4444']
+            >>> Settings._parse_mcp_allowed_hosts('localhost:4444, mcp.example.com')
+            ['localhost:4444', 'mcp.example.com']
+        """
+        if isinstance(v, str):
+            v = v.strip()
+            if v[:1] in "\"'" and v[-1:] == v[:1]:
+                v = v[1:-1]
+            try:
+                parsed = orjson.loads(v)
+                if not isinstance(parsed, list):
+                    raise orjson.JSONDecodeError  # type: ignore[call-arg]
+                return [str(h).strip() for h in parsed if str(h).strip()]
+            except orjson.JSONDecodeError:
+                return [h.strip() for h in v.split(",") if h.strip()]
+        if isinstance(v, (list, tuple)):
+            return [str(h).strip() for h in v if str(h).strip()]
+        return []
 
     # Logging
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = Field(default="ERROR")
@@ -3483,6 +3581,74 @@ Disallow: /
             }
             if self.cors_enabled
             else {}
+        )
+
+    @property
+    def mcp_transport_security_settings(self) -> Any:
+        """Build SDK TransportSecuritySettings for MCP Streamable HTTP endpoints.
+
+        Constructs the DNS-rebinding protection settings passed to
+        ``StreamableHTTPSessionManager``.  When ``mcp_allowed_origins`` is
+        explicitly set that list is used; otherwise the gateway falls back to
+        ``allowed_origins`` (the existing CORS list).  When ``mcp_allowed_hosts``
+        is explicitly set that list is used; otherwise sensible defaults are
+        derived from ``app_domain`` and ``port``.
+
+        DNS-rebinding protection is always enabled — an absent ``Origin`` header
+        is accepted (native/CLI clients), but a present ``Origin`` that is not in
+        the allowlist returns HTTP 403.
+
+        Returns:
+            TransportSecuritySettings: SDK settings object ready to pass to
+            ``StreamableHTTPSessionManager(security_settings=...)``.
+
+        Examples:
+            >>> s = Settings(allowed_origins={'http://localhost:4444'})
+            >>> ts = s.mcp_transport_security_settings
+            >>> ts.enable_dns_rebinding_protection
+            True
+            >>> 'http://localhost:4444' in ts.allowed_origins
+            True
+            >>> s2 = Settings(mcp_allowed_origins={'https://custom.example.com'})
+            >>> ts2 = s2.mcp_transport_security_settings
+            >>> ts2.allowed_origins
+            ['https://custom.example.com']
+            >>> s3 = Settings(mcp_allowed_origins=set())
+            >>> s3.mcp_transport_security_settings.allowed_origins
+            []
+        """
+        # Avoid a hard import at module level so that config.py does not pull in
+        # the MCP SDK during early startup before the venv is fully resolved.
+        from mcp.server.transport_security import TransportSecuritySettings  # pylint: disable=import-outside-toplevel
+
+        # Origin allowlist: prefer dedicated mcp_allowed_origins, fall back to allowed_origins.
+        origins: List[str] = sorted(self.mcp_allowed_origins if self.mcp_allowed_origins is not None else self.allowed_origins)
+
+        # Host allowlist: prefer dedicated mcp_allowed_hosts, fall back to app_domain + port.
+        if self.mcp_allowed_hosts:
+            hosts: List[str] = list(self.mcp_allowed_hosts)
+        else:
+            app_host = urlparse(str(self.app_domain)).hostname or "localhost"
+            port = self.port
+            # Include both with-port and bare forms plus loopback equivalents so
+            # local dev and containerised deployments work without extra config.
+            hosts = list(
+                dict.fromkeys(  # preserves insertion order, removes duplicates
+                    [
+                        f"{app_host}:{port}",
+                        app_host,
+                        f"localhost:{port}",
+                        "localhost",
+                        f"127.0.0.1:{port}",
+                        "127.0.0.1",
+                    ]
+                )
+            )
+
+        return TransportSecuritySettings(
+            enable_dns_rebinding_protection=True,
+            allowed_origins=origins,
+            allowed_hosts=hosts,
         )
 
     def validate_transport(self) -> None:
