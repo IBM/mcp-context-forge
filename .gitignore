@@ -48,6 +48,7 @@ eggs/
 lib/
 lib64/
 !client/src/lib/
+!client/server/src/lib/
 parts/
 sdist/
 var/
