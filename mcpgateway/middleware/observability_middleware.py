@@ -99,7 +99,8 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
             service: Optional ObservabilityService instance
         """
         super().__init__(app)
-        self.enabled = enabled if enabled is not None else getattr(settings, "observability_enabled", False)
+        observability_enabled = enabled if enabled is not None else settings.observability_enabled
+        self.enabled = observability_enabled and settings.observability_trace_http_requests
         self.service = service or ObservabilityService()
         logger.info(f"Observability middleware initialized (enabled={self.enabled})")
 

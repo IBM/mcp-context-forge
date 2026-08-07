@@ -63,6 +63,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import joinedload, Session
 
 # First-Party
+from mcpgateway.config import settings
 from mcpgateway.db import ObservabilityEvent, ObservabilityMetric, ObservabilitySpan, ObservabilityTrace, SessionLocal
 
 logger = logging.getLogger(__name__)
@@ -885,6 +886,9 @@ class ObservabilityService:
             ...     message="Failed to connect to database"  # doctest: +SKIP
             ... )  # doctest: +SKIP
         """
+        if not settings.observability_events_enabled:
+            return 0
+
         # Use provided session or create new one
         obs_db, owned = (obs_db, False) if obs_db else _get_or_create_observability_session()
         try:
@@ -1351,6 +1355,9 @@ class ObservabilityService:
             ...     trace_id=trace_id  # doctest: +SKIP
             ... )  # doctest: +SKIP
         """
+        if not settings.observability_metrics_enabled:
+            return 0
+
         obs_db = None
         owned = False
         try:

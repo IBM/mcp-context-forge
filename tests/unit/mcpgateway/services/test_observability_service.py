@@ -92,6 +92,17 @@ def test_add_event_commits(mock_session_factory):
     assert eid is not None
 
 
+def test_add_event_skips_storage_when_events_disabled(mock_session_factory):
+    mock_factory, _mock_session = mock_session_factory
+    service = ObservabilityService()
+
+    with patch("mcpgateway.services.observability_service.settings") as mock_settings:
+        mock_settings.observability_events_enabled = False
+        assert service.add_event("span123", "evt") == 0
+
+    mock_factory.assert_not_called()
+
+
 @patch("mcpgateway.services.observability_service.current_trace_id")
 def test_record_token_usage_missing_trace(mock_ctid, mock_db):
     # Test that record_token_usage returns early when no trace is active
@@ -506,6 +517,17 @@ def test_record_metric_commit_failure_returns_zero(mock_session_factory):
     with patch.object(service, "_safe_commit", return_value=False):
         metric_id = service.record_metric(name="m", value=1.0, metric_type="counter", trace_id="tid")
     assert metric_id == 0
+
+
+def test_record_metric_skips_storage_when_metrics_disabled(mock_session_factory):
+    mock_factory, _mock_session = mock_session_factory
+    service = ObservabilityService()
+
+    with patch("mcpgateway.services.observability_service.settings") as mock_settings:
+        mock_settings.observability_metrics_enabled = False
+        assert service.record_metric(name="m", value=1.0) == 0
+
+    mock_factory.assert_not_called()
 
 
 def test_query_traces_applies_filters(mock_db):
