@@ -3,7 +3,7 @@
 **Issue:** [IBM/mcp-context-forge#5982](https://github.com/IBM/mcp-context-forge/issues/5982)
 **Follow-up to:** internal issue 460 / GHSA-gj7g-7r6g-jc8v
 **Date:** 2026-08-06
-**Status:** Design approved, ready for implementation planning
+**Status:** Implemented — see [PR #6132](https://github.com/IBM/mcp-context-forge/pull/6132); follow-up [#6134](https://github.com/IBM/mcp-context-forge/issues/6134) outstanding
 
 ## Problem
 
