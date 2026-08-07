@@ -35,24 +35,38 @@ The `jti` (JWT ID) claim is a unique identifier for each JWT token, defined in [
 
 **Token Generation Examples**:
 
+New session tokens and token-catalog API tokens issued through normal user-backed flows use an opaque user identifier in
+`sub` (`EmailUser.id`). This applies to API tokens platform-wide, not only tokens used with the Rust dataplane.
+Human-readable email identity is retained in signed metadata where needed, such as `user.email` on API tokens. Legacy
+tokens with `sub=<email>` continue to authenticate for backward compatibility.
+
 ```python
-# Email auth tokens (always include JTI)
+# Email-auth session tokens (always include JTI; teams/admin are resolved server-side)
 # Location: mcpgateway/routers/email_auth.py
 payload = {
-    "sub": user.email,
+    "sub": str(user.id),
     "jti": str(uuid.uuid4()),  # Unique per token
+    "token_use": "session",
     ...
 }
 
-# Load test tokens (configurable)
-# Location: tests/loadtest/locustfile.py
+# Token-catalog API tokens
+# Location: mcpgateway/services/token_catalog_service.py
 payload = {
-    "sub": JWT_USERNAME,
-    "jti": str(uuid.uuid4()),  # Added for proper cache keying
-    "exp": datetime.now(timezone.utc) + timedelta(hours=JWT_TOKEN_EXPIRY_HOURS),
+    "sub": str(user.id),
+    "jti": str(uuid.uuid4()),
+    "token_use": "api",
+    "user": {
+        "email": user.email,
+        "auth_provider": "api_token",
+        ...
+    },
     ...
 }
 ```
+
+Hand-minted, no-user-record fallback, and legacy tokens may still use `sub=<email>`, but new integrations should treat
+`sub` as opaque and read the human identity from signed email metadata when it is present.
 
 **Cache Behavior**:
 
@@ -147,7 +161,7 @@ The default allowlist includes common text, data, and media formats: `text/plain
 - **Startup enforcement.** `validate_security_configuration()` blocks boot when critical issues remain and `REQUIRE_STRONG_SECRETS=true`, and otherwise prints actionable warnings (default secrets, disabled auth, SSL verification overrides).
 - **Security event logging.** `SECURITY_LOGGING_ENABLED` persists authentication attempts, authorization failures, and security-relevant events to the `security_events` table for audit and investigation. `SECURITY_LOGGING_LEVEL` controls verbosity: `all` (every event, high DB load), `failures_only` (default, authentication/authorization failures), or `high_severity` (critical events only). Disabled by default for performance.
 - **Continuous telemetry.** Permission checks, OAuth flows, and token usage log structured events with timestamps, IP addresses, user-agent strings, span attributes, and success/failure flags for downstream monitoring.
-- **Security tooling baked into the build.** The `Makefile` exposes `make security-all`, `make security-scan`, `make security-report`, `make bandit`, `make semgrep`, `make dodgy`, `make detect-secrets-scan`, `make snyk-all`, and `make fuzz-security`, providing repeatable security automation for CI/CD.
+- **Security tooling baked into the build.** The `Makefile` exposes `make security-all`, `make security-scan`, `make security-report`, `make bandit`, `make semgrep`, `make dodgy`, `make detect-secrets-scan`, `make snyk-all`, and `make fuzz-security`, providing repeatable security automation for CI/CD. `make detect-secrets-scan` scans files changed vs `main`, merges results into `.secrets.baseline` while preserving audited entries for out-of-scope tracked files, and exits non-zero on live, unaudited, or audited-as-real findings; whole-tree enforcement runs in CI via `make detect-secrets-hook` over `git ls-files` with `--fail-on-unaudited`.
 - **Observability hooks.** OpenTelemetry exports (when configured) tag spans with error flags, latency, and success status, supporting tracing-based detection of anomalies.
 - **Support bundle hygiene.** Operators can gather diagnostics without leaking credentials thanks to sanitisation routines and configurable size/time limits.
 
@@ -200,4 +214,5 @@ These features remain aspirational until the associated PRs merge. Expect the do
 - **Configuration reference:** `.env.example` and `README.md` cover every toggle in more depth.
 - **Security policy:** `SECURITY.md` documents vulnerability disclosure expectations.
 - **Multi-tenancy details:** `docs/docs/architecture/multitenancy.md` digs deeper into RBAC and team scoping.
+- **Middleware ordering:** `docs/docs/architecture/middleware-ordering.md` explains the ASGI middleware execution order and the CSRF-vs-auth constraint that prevents Admin UI failures.
 - **Deployment guidance:** `docs/docs/deployment/helm.md` and `Containerfile` showcase hardened deployment patterns.

@@ -99,6 +99,53 @@ The gateway configuration form maps user inputs to the OAuth configuration struc
 8.  **Storage**: OAuth Manager stores access and refresh tokens via Token Store into the Database.
 9.  **Completion**: Gateway shows a success page to the Admin.
 
+### Audience handling and RFC 8707
+
+The gateway implements [RFC 8707](https://datatools.ietf.org/doc/html/rfc8707) (Resource Indicators for OAuth 2.0) to ensure that access tokens are correctly scoped for the target MCP server.
+
+#### The `resource` parameter
+
+RFC 8707 introduces the `resource` parameter, which allows the client to specify the target resource (the MCP server) during the authorization request. This ensures the Identity Provider (IdP) mints a token with the correct `aud` (audience) claim.
+
+#### Non-compliant IdPs
+
+Some IdPs (ServiceNow, Authentik, Salesforce, Azure AD in multi-tenant configurations) do not strictly honor RFC 8707. They may map the requested `resource` to a different `aud` claim (typically the `client_id` or another abstract identifier). RFC 8707 §2 explicitly permits this mapping.
+
+#### Three-stage audience handling (per-user)
+
+The gateway resolves the expected audience via a three-level precedence, with per-user isolation on stage 2 to prevent cross-tenant DoS and RBAC bypass:
+
+1.  **Explicit admin configuration** — the admin sets `oauth_config.resource` explicitly via the Admin UI or API. Authoritative and blocking. Global to the gateway.
+2.  **Per-user auto-learning** — on each user's OAuth callback, the gateway decodes the access token's `aud` and `iss` claims (best-effort, unverified) and persists them on **the user's own `OAuthToken` row** (columns `learned_aud`, `learned_iss`). Subsequent validation for THAT USER checks their token against their own learned value. Authoritative and blocking for that user only. Not shared across users.
+3.  **Auto-derived origin fallback** — if no resource is configured *and* no learned value exists for this user (e.g. first authentication), the gateway derives the origin (`scheme://netloc`, not the full path) from the gateway's URL. Real-world providers (Salesforce, Azure AD, Okta) typically issue origin-level audiences.
+
+#### Why per-user (and not per-gateway)?
+
+The earlier design persisted learned audience on shared `gateway.oauth_config.resource`, which created two problems:
+
+-   **Cross-tenant DoS**: a single gateway serving multiple IdP tenants (each returning different `aud` values) would have its `resource` pinned by whichever user authenticated first; other tenants' tokens then failed validation until an admin manually cleared the field.
+-   **RBAC bypass**: the OAuth callback path only enforces gateway *access* (visibility/team membership), not `gateways.update`. Allowing every authenticated callback to mutate shared config let users without the update permission alter global state on behalf of all users.
+
+Per-user storage eliminates both: each user's callback only writes to their own row (permission-scoped by construction), and each user's validation only reads their own learned value (no cross-tenant interference).
+
+#### Authoritative vs. advisory validation
+
+The gateway performs local validation of the token's audience before forwarding it to the upstream MCP server:
+
+-   **Authoritative (blocking)** — mismatch raises `GatewayConnectionError` and the token is not forwarded. This is the case when either (a) `oauth_config.resource` is admin-configured, or (b) the user has a `learned_aud` from a prior successful callback.
+-   **Advisory (non-blocking, default)** — mismatch is logged as a warning and the token is still forwarded so the upstream MCP server can act as the authority. Only applies when the user has neither of the above and the validator falls back to the gateway URL origin. Set `OAUTH_REQUIRE_CONFIGURED_RESOURCE=true` to make this case authoritative too.
+
+#### Implementation references
+
+-   Origin extraction (outbound `resource` parameter fallback): `_derive_resource_origin` in `mcpgateway/routers/oauth_router.py`.
+-   Single-decode claim extraction (aud + iss): `_extract_aud_and_iss` in `mcpgateway/services/oauth_manager.py`.
+-   Per-user learned-audience storage: `OAuthToken.learned_aud` / `learned_iss` in `mcpgateway/db.py`; write via `TokenStorageService.store_tokens` (called from `OAuthManager.complete_authorization_code_flow`); read via `TokenStorageService.get_user_learned_audience`.
+-   Precedence + advisory / authoritative split: `_validate_audience` in `mcpgateway/services/token_validation_service.py`.
+-   Trust model for the unverified JWT decode used at learning time: `_decode_token_claims_unverified` in `mcpgateway/services/oauth_manager.py`.
+
+!!! warning "Security: unverified JWT decode trust boundary"
+    Audience extraction during auto-learning uses `_decode_token_claims_unverified`, which decodes the JWT **without cryptographic verification**. The extracted audience is used only for routing and learning — it is **not a security gate**. The immediate trust boundary is the TLS connection to the admin-configured token endpoint in response to a callback the gateway itself initiated. Authorization-relevant validation remains the upstream MCP server's responsibility (or, when configured, the gateway's own authoritative audience check).
+
 ### Tool Invocation using Stored Tokens
 
 1.  **Invocation**: A Client (authenticated user) invokes a tool on the Gateway.
@@ -220,10 +267,7 @@ OAuth tokens obtained through the Authorization Code flow are used to authentica
 1. **Stored encrypted**: Using `AUTH_ENCRYPTION_SECRET`
 2. **Scoped per user**: Each user's token is stored separately per gateway
 3. **Automatically refreshed**: When access tokens expire and refresh tokens are available
-4. **Forwarded as-is**: The stored token is sent directly to the upstream MCP server as a `Bearer` header. The MCP server is responsible for validating the token's audience, scopes, and issuer.
-
-!!! note "Known Gap: No local audience/scope pre-validation"
-    The gateway does not currently inspect the token's `aud` or `scope` claims before forwarding it to the MCP server. In multi-tenant Entra ID setups with multiple app registrations, a misconfigured resource parameter could produce a token scoped for the wrong audience; the MCP server will return a 401 but the error message will not identify the root cause. Tracked for a future hardening pass.
+4. **Forwarded with pre-validation**: Before forwarding, the gateway validates the token's `aud`, `scope`/`scp`, and `iss` claims against `oauth_config` (see [Audience handling and RFC 8707](#audience-handling-and-rfc-8707) above). Authoritative mismatches block forwarding with `GatewayConnectionError`; advisory mismatches (auto-derived audience only) are logged and the token is still forwarded so the upstream MCP server remains the final authority.
 
 ### Relationship to Gateway Authentication
 

@@ -1155,6 +1155,17 @@ class Role(Base):
     """Role model for RBAC system."""
 
     __tablename__ = "roles"
+    __table_args__ = (
+        # Partial unique index: only one active role per (name, scope) combination
+        # This prevents race conditions when multiple processes try to create the same role
+        #
+        # NOTE: This constraint is defined in BOTH db.py and alembic migration d21698ae4a19:
+        # - db.py (__table_args__): Creates indexes for FRESH databases (CREATE TABLE)
+        # - Alembic migration: Creates indexes for EXISTING databases (ALTER TABLE)
+        # The migration is idempotent and checks if indexes exist before creating them.
+        # This dual-definition ensures indexes exist regardless of database initialization path.
+        Index("uq_roles_name_scope_active", "name", "scope", unique=True, postgresql_where=text("is_active = true"), sqlite_where=text("is_active = 1")),
+    )
 
     # Primary key
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -1197,6 +1208,40 @@ class UserRole(Base):
     """User role assignment model."""
 
     __tablename__ = "user_roles"
+    __table_args__ = (
+        # Partial unique indexes: only one active assignment per (user, role, scope, scope_id) combination
+        # Need two separate indexes to handle NULL vs non-NULL scope_id cases (SQL NULL != NULL semantics)
+        #
+        # Note: We only check is_active here (not expires_at) because SQLite forbids non-deterministic
+        # functions like datetime('now') in partial index WHERE clauses. Expiration filtering happens
+        # in the application layer: assign_role_to_user() soft-deletes expired assignments before creating
+        # new ones, and the IntegrityError refetch path checks expiration.
+        #
+        # NOTE: These constraints are defined in BOTH db.py and alembic migration d21698ae4a19:
+        # - db.py (__table_args__): Creates indexes for FRESH databases (CREATE TABLE)
+        # - Alembic migration: Creates indexes for EXISTING databases (ALTER TABLE)
+        # The migration is idempotent and checks if indexes exist before creating them.
+        # This dual-definition ensures indexes exist regardless of database initialization path.
+        Index(
+            "uq_user_roles_email_role_scope_null_active",
+            "user_email",
+            "role_id",
+            "scope",
+            unique=True,
+            postgresql_where=text("scope_id IS NULL AND is_active = true"),
+            sqlite_where=text("scope_id IS NULL AND is_active = 1"),
+        ),
+        Index(
+            "uq_user_roles_email_role_scope_id_active",
+            "user_email",
+            "role_id",
+            "scope",
+            "scope_id",
+            unique=True,
+            postgresql_where=text("scope_id IS NOT NULL AND is_active = true"),
+            sqlite_where=text("scope_id IS NOT NULL AND is_active = 1"),
+        ),
+    )
 
     # Primary key
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -1285,6 +1330,9 @@ class Permissions:
     TOOLS_DELETE = "tools.delete"
     TOOLS_EXECUTE = "tools.execute"
     TOOLS_MANAGE_PLUGINS = "tools.manage_plugins"
+
+    # Plugin permissions
+    PLUGINS_READ = "plugins.read"
 
     # Resource permissions
     RESOURCES_CREATE = "resources.create"
@@ -4682,6 +4730,8 @@ class Gateway(Base):
 
     # Header passthrough configuration
     passthrough_headers: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True)  # Store list of strings as JSON array
+    add_headers: Mapped[Optional[Dict[str, str]]] = mapped_column(JSON, nullable=True, default=None)  # Static headers injected onto upstream connection
+    remove_headers: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True, default=None)  # Header names stripped from upstream connection
 
     # CA certificate
     ca_certificate: Mapped[Optional[bytes]] = mapped_column(Text, nullable=True)
@@ -5294,6 +5344,14 @@ class OAuthToken(Base):
     token_type: Mapped[str] = mapped_column(String(50), default="Bearer")
     expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     scopes: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True)
+    # Per-user learned OAuth audience/issuer (RFC 7519 §4.1.3 aud is string OR list).
+    # Populated from the token's unverified aud/iss claims on the OAuth callback; used
+    # by the token_validation_service to authoritatively validate THIS USER'S subsequent
+    # tokens. Kept per-user (rather than on gateway.oauth_config) so multi-tenant IdPs
+    # with per-tenant aud values do not create cross-tenant DoS, and so a user without
+    # gateways.update cannot mutate shared gateway config via the callback path.
+    learned_aud: Mapped[Optional[Any]] = mapped_column(JSON, nullable=True)
+    learned_iss: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
 

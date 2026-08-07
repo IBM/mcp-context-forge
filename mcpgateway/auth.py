@@ -80,6 +80,7 @@ from sqlalchemy.orm import Session
 from starlette.requests import Request
 
 # First-Party
+from mcpgateway.auth_context import normalize_token_teams
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import EmailUser, fresh_db_session, SessionLocal
@@ -567,59 +568,6 @@ async def resolve_session_teams(
     return _narrow_by_jwt_teams(payload, db_teams)
 
 
-def normalize_token_teams(payload: Dict[str, Any]) -> Optional[List[str]]:
-    """
-    Normalize token teams to a canonical form for consistent security checks.
-
-    SECURITY: This is the single source of truth for token team normalization.
-    All code paths that read token teams should use this function.
-
-    Rules:
-    - "teams" key missing → [] (public-only, secure default)
-    - "teams" is null + is_admin=true → None (admin bypass, sees all)
-    - "teams" is null + is_admin=false → [] (public-only, no bypass for non-admins)
-    - "teams" is [] → [] (explicit public-only)
-    - "teams" is [...] → normalized list of string IDs
-
-    Args:
-        payload: The JWT payload dict
-
-    Returns:
-        None for admin bypass, [] for public-only, or list of normalized team ID strings
-    """
-    # Check if "teams" key exists (distinguishes missing from explicit null)
-    if "teams" not in payload:
-        # Missing teams key → public-only (secure default)
-        return []
-
-    teams = payload.get("teams")
-
-    if teams is None:
-        # Explicit null - only allow admin bypass if is_admin is true
-        # Check BOTH top-level is_admin AND nested user.is_admin
-        is_admin = payload.get("is_admin", False)
-        if not is_admin:
-            user_info = payload.get("user", {})
-            is_admin = user_info.get("is_admin", False) if isinstance(user_info, dict) else False
-        if is_admin:
-            # Admin with explicit null teams → admin bypass (sees all)
-            return None
-        # Non-admin with null teams → public-only (no bypass)
-        return []
-
-    # teams is a list - normalize to string IDs
-    # Handle both dict format [{"id": "team1"}] and string format ["team1"]
-    normalized: List[str] = []
-    for team in teams:
-        if isinstance(team, dict):
-            team_id = team.get("id")
-            if team_id:
-                normalized.append(str(team_id))
-        elif isinstance(team, str):
-            normalized.append(team)
-    return normalized
-
-
 async def get_team_from_token(payload: Dict[str, Any]) -> Optional[str]:
     """
     Extract the team ID from an authentication token payload.
@@ -635,7 +583,8 @@ async def get_team_from_token(payload: Dict[str, Any]) -> Optional[str]:
     Args:
         payload (Dict[str, Any]):
             The token payload. Expected fields:
-            - "sub" (str): The user's unique identifier (email).
+            - "sub" (str): Opaque user subject. New service-issued tokens use
+              ``EmailUser.id``; legacy tokens may contain the user email.
             - "teams" (List[str], optional): List containing team ID.
 
     Returns:
@@ -645,17 +594,17 @@ async def get_team_from_token(payload: Dict[str, Any]) -> Optional[str]:
     Examples:
         >>> import asyncio
         >>> # --- Case 1: Token has team ---
-        >>> payload = {"sub": "user@example.com", "teams": ["team_456"]}
+        >>> payload = {"sub": "550e8400-e29b-41d4-a716-446655440000", "teams": ["team_456"]}
         >>> asyncio.run(get_team_from_token(payload))
         'team_456'
 
         >>> # --- Case 2: Token has explicit empty teams (public-only) ---
-        >>> payload = {"sub": "user@example.com", "teams": []}
+        >>> payload = {"sub": "550e8400-e29b-41d4-a716-446655440000", "teams": []}
         >>> asyncio.run(get_team_from_token(payload))  # Returns None
         >>> # None
 
         >>> # --- Case 3: Token has no teams key (secure default) ---
-        >>> payload = {"sub": "user@example.com"}
+        >>> payload = {"sub": "550e8400-e29b-41d4-a716-446655440000"}
         >>> asyncio.run(get_team_from_token(payload))  # Returns None
         >>> # None
     """
@@ -744,6 +693,7 @@ def _lookup_api_token_sync(token_hash: str) -> Optional[Dict[str, Any]]:
         return {
             "user_email": api_token.user_email,
             "jti": api_token.jti,
+            "resource_scopes": api_token.resource_scopes or [],
         }
 
 
@@ -1336,8 +1286,67 @@ async def get_current_user(
     """
     clear_trace_context()
 
+    def _store_jwt_token_scopes(payload: dict) -> None:
+        """Store a JWT API token's permission scopes on request.state for Layer 1 enforcement.
+
+        Called from every branch of ``_set_auth_method_from_payload()`` that classifies the
+        caller as an API token, so scope extraction happens on all three JWT authentication
+        paths (auth-cache hit, batched query, and individual-query fallback).
+
+        NAMING NOTE: JWT tokens carry permissions under the nested ``scopes.permissions``
+        claim, while database API tokens use the ``resource_scopes`` column. Both converge
+        on ``request.state.token_scopes`` so enforcement has a single input.
+
+        Semantics (kept aligned with TokenScopingMiddleware._check_permission_restrictions()
+        and TokenCatalogService._generate_token()):
+          * ``scopes`` claim absent -> legacy token predating the claim; no Layer 1
+            restriction is recorded and RBAC (Layer 2) alone applies.
+          * ``permissions`` empty -> "inherit from RBAC at runtime", not deny-all.
+          * ``permissions`` malformed (not a list) or ``scopes`` malformed (not an object)
+            -> reject the token, since a scope claim we cannot parse must not fail open.
+
+        Args:
+            payload: Decoded JWT payload
+
+        Raises:
+            HTTPException: If the ``scopes`` claim is present but structurally invalid.
+        """
+        if not request:
+            return
+
+        scopes = payload.get("scopes")
+        if scopes is None:
+            # Legacy API tokens issued before the scopes claim existed. Absent scopes
+            # means "no Layer 1 restriction"; RBAC still gates every operation.
+            return
+
+        if not isinstance(scopes, dict):
+            logger.warning(f"JWT API token rejected: scopes claim is {type(scopes).__name__}, expected an object. Regenerate the token with the correct structure.")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token: malformed scopes field",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        permissions = scopes.get("permissions")
+        if permissions is None:
+            permissions = []
+        if not isinstance(permissions, list):
+            logger.warning(f"JWT API token rejected: scopes.permissions is {type(permissions).__name__}, expected a list.")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token: malformed scopes field",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        request.state.token_scopes = permissions
+
     async def _set_auth_method_from_payload(payload: dict) -> None:
         """Set request.state.auth_method based on JWT payload.
+
+        Also extracts API token permission scopes into request.state.token_scopes so that
+        Layer 1 enforcement in the RBAC decorators sees them regardless of which
+        authentication path served the request.
 
         Args:
             payload: Decoded JWT payload
@@ -1352,6 +1361,7 @@ async def get_current_user(
 
         if auth_provider == "api_token":
             request.state.auth_method = "api_token"
+            _store_jwt_token_scopes(payload)
             jti = payload.get("jti")
             if jti:
                 request.state.jti = jti
@@ -1375,6 +1385,7 @@ async def get_current_user(
             if is_legacy_api_token:
                 request.state.auth_method = "api_token"
                 request.state.jti = jti_for_check
+                _store_jwt_token_scopes(payload)
                 logger.debug(f"Legacy API token detected via DB lookup (JTI: ...{jti_for_check[-8:]})")
                 try:
                     await asyncio.to_thread(_update_api_token_last_used_sync, jti_for_check)
@@ -1564,11 +1575,16 @@ async def get_current_user(
         payload = await verify_jwt_token_cached(credentials.credentials, request)
 
         logger.debug("JWT token validated successfully")
-        # Extract user identifier (support both new and legacy token formats)
-        email = payload.get("sub")
-        if email is None:
-            # Try legacy format
-            email = payload.get("email")
+
+        # Extract user identifier (support new UUID-sub and legacy email-sub formats).
+        # Signed email metadata wins; only UUID-only tokens need DB resolution.
+        from mcpgateway.auth_context import resolve_jwt_user_email_from_payload  # pylint: disable=import-outside-toplevel
+
+        async def resolve_uuid_subject(user_id: str) -> str | None:
+            """Resolve a UUID subject to the owning user's email."""
+            return await asyncio.to_thread(_get_email_by_id_sync, user_id)
+
+        email = await resolve_jwt_user_email_from_payload(payload, uuid_email_resolver=resolve_uuid_subject)
 
         if email is None:
             logger.debug("No email/sub found in JWT payload")
@@ -1577,16 +1593,6 @@ async def get_current_user(
                 detail="Invalid token",
                 headers={"WWW-Authenticate": "Bearer"},
             )
-
-        # If sub is a UUID (new token format), resolve to email via DB lookup
-        if email is not None:
-            try:
-                uuid.UUID(email)
-                resolved = await asyncio.to_thread(_get_email_by_id_sync, email)
-                if resolved is not None:
-                    email = resolved
-            except ValueError:
-                pass  # sub is an email (legacy format), keep as-is
 
         logger.debug("JWT authentication successful for email: %s", email)
 
@@ -1914,6 +1920,9 @@ async def get_current_user(
             # Store JTI for use in middleware (e.g., token usage logging)
             if jti:
                 request.state.jti = jti
+
+            # Sets auth_method and, for API tokens, request.state.token_scopes.
+            # Session tokens leave token_scopes unset so Layer 1 is skipped and RBAC alone applies.
             await _set_auth_method_from_payload(payload)
 
     except HTTPException:
@@ -1957,6 +1966,12 @@ async def get_current_user(
                     # Store JTI for use in middleware
                     if "jti" in api_token_info:
                         request.state.jti = api_token_info["jti"]
+                    # Store token scopes for permission checking (database API tokens).
+                    # NAMING NOTE: database API tokens carry permissions in the "resource_scopes"
+                    # column while JWT tokens use the nested "scopes.permissions" claim; both
+                    # converge on "token_scopes" here so enforcement has a single input.
+                    # See _store_jwt_token_scopes() above for the JWT-side extraction.
+                    request.state.token_scopes = api_token_info.get("resource_scopes") or []
             else:
                 logger.debug("API token not found in database")
                 logger.debug("No valid authentication method found")
@@ -2112,21 +2127,28 @@ def _inject_userinfo_instate(request: Optional[object] = None, user: Optional[Em
 
 
 async def get_user_email_from_token(payload: dict, db: Session) -> Optional[str]:
-    """Resolve user email from JWT payload (supports both UUID and email in sub).
+    """Resolve user email from JWT payload.
 
     This helper enables backward-compatible token migration from email-based
-    to user-ID-based tokens. It checks if the 'sub' claim contains a UUID
-    (new format) or an email address (legacy format).
+    to user-ID-based tokens. Signed email metadata is used first, then UUID
+    subjects are resolved through the database, and legacy email-sub tokens are
+    returned as-is.
 
     Args:
-        payload: JWT payload dictionary containing 'sub' claim
+        payload: JWT payload dictionary.
         db: Database session for user lookup
 
     Returns:
         User email string if found, None otherwise
 
     Examples:
-        >>> # New format: sub contains UUID
+        >>> # New API-token format: sub contains UUID, signed metadata carries email
+        >>> payload = {"sub": "550e8400-e29b-41d4-a716-446655440000", "user": {"email": "user@example.com"}}
+        >>> email = await get_user_email_from_token(payload, db)  # doctest: +SKIP
+        >>> email  # doctest: +SKIP
+        'user@example.com'
+
+        >>> # UUID-only format: resolve sub through the DB
         >>> payload = {"sub": "550e8400-e29b-41d4-a716-446655440000"}
         >>> email = await get_user_email_from_token(payload, db)  # doctest: +SKIP
         >>> email  # doctest: +SKIP
@@ -2144,6 +2166,11 @@ async def get_user_email_from_token(payload: dict, db: Session) -> Optional[str]
         >>> email is None  # doctest: +SKIP
         True
     """
+    from mcpgateway.auth_context import get_jwt_user_email_from_payload  # pylint: disable=import-outside-toplevel
+
+    user_email = get_jwt_user_email_from_payload(payload)
+    if user_email is not None:
+        return user_email
 
     sub = payload.get("sub")
     if not sub:

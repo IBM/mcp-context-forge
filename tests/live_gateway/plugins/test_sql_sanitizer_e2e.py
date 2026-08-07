@@ -3,11 +3,11 @@
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
 
-End-to-end gateway test for the native SQL Sanitizer plugin.
+End-to-end gateway test for the SQL Sanitizer plugin.
 
-Unlike the other suites in this directory, SQL Sanitizer is **not** a cpex wheel
-- it ships in the gateway repo at ``plugins/sql_sanitizer/`` and is loaded as a
-native plugin. With the committed config (``block_on_violation: true``,
+Like the other suites in this directory, SQL Sanitizer ships as a cpex wheel
+(``cpex-sql-sanitizer``, installed via the ``[plugins]`` extra). With the
+committed config (``block_on_violation: true``,
 ``strip_comments: true``) it scans configured fields for risky SQL and:
 
 * **blocks** dangerous statements (DROP/TRUNCATE/ALTER/GRANT/REVOKE and

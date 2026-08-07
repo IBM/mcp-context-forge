@@ -310,7 +310,6 @@ plugins:
       # separate container, ensure that host is reachable from within it.
       redis_url: '{{ env.RATELIMITER_REDIS_URL | default(env.REDIS_URL | default("redis://redis:6379/0")) }}'
       redis_key_prefix: "rl"
-      redis_fallback: true
       algorithm: "fixed_window"
       by_user: "30/m"
       by_tenant: "3000/m"
@@ -799,7 +798,7 @@ plugins:
 
   # SQL Sanitizer - detect dangerous SQL patterns in inputs
   - name: "SQLSanitizer"
-    kind: "plugins.sql_sanitizer.sql_sanitizer.SQLSanitizerPlugin"
+    kind: "cpex_sql_sanitizer.sql_sanitizer.SQLSanitizerPlugin"
     description: "Detects risky SQL and optionally strips comments or blocks"
     version: "0.1.0"
     author: "ContextForge"

@@ -1,6 +1,6 @@
 # 🔐 Security Policy
 
-**Current Version: 1.0.6**
+**Current Version: 1.0.7**
 
 
 ### Admin UI is Development-Only
@@ -114,7 +114,7 @@ Our security toolchain includes **40+ different security and quality tools**, ea
 - **Rust Security**: cargo audit for Rust dependency vulnerability scanning, cargo clippy for Rust linting
 - **Shell Security**: shellcheck for shell script security and correctness linting
 - **Web & Frontend Security**: ESLint, HTMLHint, Stylelint, retire.js for known-vulnerable JS library detection, nodejsscan for JavaScript/Node.js security vulnerability scanning, npm audit for package vulnerabilities
-- **Code Quality & Best Practices**: Prospector comprehensive analysis, Interrogate for docstring coverage
+- **Code Quality & Best Practices**: Interrogate for docstring coverage
 - **Code Modernization**: pyupgrade for syntax modernization to latest Python versions
 - **AI Content Integrity**: Pre-commit hooks preventing AI-generated artifacts (hallucinated citations, stock phrases, placeholder references, malformed code fences)
 - **Unicode & Trojan-Source Prevention**: texthooks for fixing smart quotes and ligatures, forbidding BiDi control characters to prevent [trojan-source attacks](https://trojansource.codes/)
@@ -138,11 +138,10 @@ We believe that security should enhance rather than hinder the development proce
 - `make semgrep` - Advanced semantic code analysis for security patterns
 - `make dodgy` - Detect hardcoded passwords, API keys, and secrets
 - `make devskim` - DevSkim security anti-pattern detection (Microsoft)
-- `make detect-secrets-scan` - Scan tracked files for accidentally committed secrets against `.secrets.baseline` allowlist
+- `make detect-secrets-scan` - Regenerate `.secrets.baseline` by scanning files changed vs `main` (override with `GIT_DIFF_TARGET` or `DETECT_SECRETS_PATH`); a jq merge preserves audited entries for out-of-scope tracked files, and the target exits non-zero if the audit report shows any live, unaudited, or audited-as-real findings
 - `make detect-secrets-audit` - Manually attest to detected secrets being or not being actual secrets
 - `make detect-secrets-hook` - Locally execute the equivalent command that the pre-commit hook will run
 - `make interrogate` - Ensure comprehensive docstring coverage
-- `make prospector` - Comprehensive code analysis combining multiple tools
 - `make pyupgrade` - Modernize Python syntax for security improvements
 - `make pip-audit` - Python dependency vulnerability scanning
 - `make security-scan` - Show current local container review guidance
@@ -665,8 +664,7 @@ flowchart TD
     W --> W6[make dodgy - Secret Detection]
     W --> W7[make detect-secrets-scan - Baseline-Audited Secret Scan]
     W --> W9[make interrogate - Docstring Coverage]
-    W --> W10[make prospector - Comprehensive Analysis]
-    W --> W11[make pyupgrade - Modernize Syntax]
+    W --> W10[make pyupgrade - Modernize Syntax]
     W --> W12[make pip-audit - Dependency Scanning]
     W --> W13[make osv-scan - Vulnerability Check]
     W --> W14[make security-scan - Container Review]
@@ -724,7 +722,7 @@ flowchart TD
     classDef success fill:#55a3ff,stroke:#2d3436,stroke-width:2px
 
     class G,G1,G2,G3,G4,G5,M,N,O,W,W1,W2,W3,W4,W5,W6,W7,W8,W12,W13,W18,W19,W20,W21,W22,W23,W24,Z1,Z2,AA,N1,N2,N3,N4,N5,N6,N7,N8,N9,O4,O5,O6,IA,IA1,IA2,IA3,IA4,ML,ML1,ML2,ML3,ML1A,ML1B,ML1C,ML2A,ML2B,ML3A,Y6 security
-    class C,D,E,F,Q,Q1,Q1A,Q1B,Q1C,Q1D,Q1E,Q1F,Q1G,Q1H,V,W9,W10,W11,Q2I linting
+    class C,D,E,F,Q,Q1,Q1A,Q1B,Q1C,Q1D,Q1E,Q1F,Q1G,Q1H,V,W9,W10,Q2I linting
     class R,S,S1,S2,S3,S4,S5,AA,AA1,AA2,AA3,AA4,W14,W15,W16,W17 container
     class B,H,K,L,P,T,U,V,W,X,Y,Z process
     class L1,L2,M1,M2,M3,P1,P2,P3,P4,P5 success

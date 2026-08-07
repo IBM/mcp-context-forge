@@ -235,6 +235,21 @@ def _validated_resource_extension_metadata(resource_uri: str, mime_type: Optiona
     return extension_metadata
 
 
+def gateway_capability_loaders() -> tuple:
+    """Eager-load options for GatewayRead capability counts (id-only, no BLOBs/credentials).
+
+    Loads only the primary key of each child collection so len() works without
+    materializing full rows (tool input_schema/auth_value, resource binary/text content, etc).
+    The returned objects must only be counted, never have other attributes touched -
+    unloaded columns trigger a per-row lazy-load SELECT (N+1) if accessed.
+    """
+    return (
+        selectinload(DbGateway.tools).load_only(DbTool.id),
+        selectinload(DbGateway.prompts).load_only(DbPrompt.id),
+        selectinload(DbGateway.resources).load_only(DbResource.id),
+    )
+
+
 # Initialize logging service first
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
@@ -2227,6 +2242,11 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             else:
                 logger.info("Using decrypted OAuth token for gateway %s", gateway.name)
 
+            # Retrieve this user's learned audience for authoritative per-user validation.
+            # See token_validation_service._validate_audience for the precedence rule
+            # (admin-configured resource > per-user learned aud > gateway URL fallback).
+            learned_aud, _learned_iss = await token_storage.get_user_learned_audience(gateway.id, app_user_email)
+
             # Validate JWT claims (audience, scopes, issuer) before forwarding token
             # First-Party
             from mcpgateway.services.token_validation_service import validate_oauth_token_claims  # pylint: disable=import-outside-toplevel
@@ -2236,6 +2256,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 oauth_config=gateway.oauth_config,
                 gateway_url=gateway.url,
                 gateway_name=gateway.name,
+                learned_aud=learned_aud,
             )
             for warning in token_validation.warnings:
                 logger.warning("OAuth token validation for gateway %s: %s", gateway.name, warning)
@@ -2405,8 +2426,15 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 cached_gateways = [GatewayRead.model_validate(g).masked() for g in cached["gateways"]]
                 return (cached_gateways, cached.get("next_cursor"))
 
-        # Build base query with ordering
-        query = select(DbGateway).options(joinedload(DbGateway.email_team)).order_by(desc(DbGateway.created_at), desc(DbGateway.id))
+        # Build base query with ordering and eager load relationships for capability counts
+        query = (
+            select(DbGateway)
+            .options(
+                joinedload(DbGateway.email_team),
+                *gateway_capability_loaders(),
+            )
+            .order_by(desc(DbGateway.created_at), desc(DbGateway.id))
+        )
 
         # Apply active/inactive filter
         if not include_inactive:
@@ -2441,7 +2469,10 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             # Cursor-based: pag_result is a tuple
             gateways_db, next_cursor = pag_result
 
-        db.commit()  # Release transaction to avoid idle-in-transaction
+        # Release transaction to avoid idle-in-transaction. Capability counts below survive this
+        # commit only because SessionLocal sets expire_on_commit=False (db.py) - with the SQLAlchemy
+        # default, commit would expire gateways_db and every count would silently read back as 0.
+        db.commit()
 
         # Convert to GatewayRead (common for both pagination types)
         result = []
@@ -2502,8 +2533,11 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         user_teams = await team_service.get_user_teams(user_email)
         team_ids = [team.id for team in user_teams]
 
-        # Use joinedload to eager load email_team relationship (avoids N+1 queries)
-        query = select(DbGateway).options(joinedload(DbGateway.email_team))
+        # Use joinedload/selectinload to eager load relationships for capability counts (avoids N+1 queries)
+        query = select(DbGateway).options(
+            joinedload(DbGateway.email_team),
+            *gateway_capability_loaders(),
+        )
 
         # Apply active/inactive filter
         if not include_inactive:
@@ -2548,7 +2582,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
         gateways = db.execute(query).scalars().all()
 
-        db.commit()  # Release transaction to avoid idle-in-transaction
+        # Release transaction to avoid idle-in-transaction. Relies on SessionLocal's
+        # expire_on_commit=False so capability counts below don't read back as 0.
+        db.commit()
 
         # Team names are loaded via joinedload(DbGateway.email_team)
         result = []
@@ -3427,9 +3463,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             >>> asyncio.run(service._http_client.aclose())
         """
         lookup_query = select(DbGateway).options(
-            selectinload(DbGateway.tools),
-            selectinload(DbGateway.resources),
-            selectinload(DbGateway.prompts),
+            *gateway_capability_loaders(),
             joinedload(DbGateway.email_team),
         )
 
@@ -4721,6 +4755,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                             async with ClientSession(read_stream, write_stream) as session:
                                 response = await session.initialize()
 
+                    # Reset failure counter on any successful health check
+                    self._gateway_failure_counts[gateway_id] = 0
+
                     # Reactivate / update last_seen (success path)
                     await self._mark_gateway_reachable(gateway_id, gateway_name, gateway_enabled, gateway_reachable)
 
@@ -5535,9 +5572,10 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         gateway_dict["version"] = getattr(gateway, "version", None)
         gateway_dict["team"] = getattr(gateway, "team", None)
 
-        # Populate tool count from the eagerly-loaded tools relationship when available
-        tools_rel = gateway.__dict__.get("tools")
-        gateway_dict["tool_count"] = len(tools_rel) if tools_rel is not None else 0
+        # Populate from eagerly-loaded relationships; falls back to 0 if not loaded.
+        gateway_dict["tool_count"] = len(gateway.__dict__.get("tools") or [])
+        gateway_dict["prompt_count"] = len(gateway.__dict__.get("prompts") or [])
+        gateway_dict["resource_count"] = len(gateway.__dict__.get("resources") or [])
 
         return GatewayRead.model_validate(gateway_dict).masked()
 

@@ -57,6 +57,23 @@ Navigate to `Admin -> Users` (`/admin/#users`):
 
 ## API-Based Admin Reset & Unlock
 
+The user-management endpoints require the `admin.user_management` permission.
+
+### Demote or deactivate an administrator
+
+Use `PATCH /auth/email/admin/users/{email}` for administrator status changes. The service applies the same rules to API and Admin UI requests:
+
+- An administrator can demote or deactivate another administrator while at least one other active administrator remains.
+- Administrators cannot demote or deactivate their own account; the request returns `400 Bad Request`.
+- A request that would remove the last active administrator returns `400 Bad Request`.
+
+```bash
+curl -X PATCH "http://localhost:4444/auth/email/admin/users/admin-b%40example.com" \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"is_admin": false}'
+```
+
 ### Reset user password
 
 ```bash

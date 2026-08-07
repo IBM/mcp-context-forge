@@ -45,13 +45,13 @@ mcpContextForge:
   secret:
     # Dev credentials (match previous deployment)
     BASIC_AUTH_USER: admin
-    BASIC_AUTH_PASSWORD: changeme
-    JWT_SECRET_KEY: my-test-key-but-now-longer-than-32-bytes
-    AUTH_ENCRYPTION_SECRET: my-test-salt
+    BASIC_AUTH_PASSWORD: changeme  # CHANGE THIS before deploy  # pragma: allowlist secret
+    JWT_SECRET_KEY: ""  # must be set to a strong value before deploy (run make init-secrets-patch-env)
+    AUTH_ENCRYPTION_SECRET: ""  # must be set to a strong value before deploy (run make init-secrets-patch-env)
     AUTH_REQUIRED: "true"
     MCP_REQUIRE_AUTH: "true"
     PLATFORM_ADMIN_EMAIL: admin@example.com
-    PLATFORM_ADMIN_PASSWORD: changeme
+    PLATFORM_ADMIN_PASSWORD: changeme  # CHANGE THIS before deploy  # pragma: allowlist secret
     # Relax password policy for local dev bootstrap
     PASSWORD_REQUIRE_UPPERCASE: "false"
     PASSWORD_REQUIRE_LOWERCASE: "false"
@@ -121,7 +121,7 @@ testing:
       tag: "1.0.0-RC-3"
       pullPolicy: Never
     jwt:
-      secret: my-test-key-but-now-longer-than-32-bytes  # pragma: allowlist secret
+      secret: ""  # must be set to a strong value before deploy (run make init-secrets-patch-env)
   fastTime:
     register:
       enabled: true

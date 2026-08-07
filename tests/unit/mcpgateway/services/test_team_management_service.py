@@ -1064,6 +1064,34 @@ class TestTeamManagementService:
         assert "other-personal" not in names
 
     @pytest.mark.asyncio
+    async def test_list_teams_team_ids_filters_before_pagination(self):
+        """team_ids restricts results in the query; None applies no filter."""
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import Session as OrmSession
+
+        from mcpgateway.db import Base
+
+        engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
+        Base.metadata.create_all(engine)
+        with OrmSession(engine) as db:
+            db.add_all(
+                [
+                    EmailTeam(id="id-a", name="Alpha", slug="alpha-x", created_by="o@example.com", is_personal=False),
+                    EmailTeam(id="id-b", name="Beta", slug="beta-x", created_by="o@example.com", is_personal=False),
+                ]
+            )
+            db.commit()
+
+            svc = TeamManagementService(db)
+            scoped, _ = await svc.list_teams(team_ids=["id-b"])
+            scoped_names = {t.name for t in scoped}
+            unfiltered, _ = await svc.list_teams(team_ids=None)
+            unfiltered_names = {t.name for t in unfiltered}
+
+        assert scoped_names == {"Beta"}  # restricted to the given id
+        assert {"Alpha", "Beta"} <= unfiltered_names  # None = no filter
+
+    @pytest.mark.asyncio
     async def test_list_teams_with_search_query_page(self, service, mock_db):
         """Test list_teams applies search_query and page-based ordering."""
         mock_page = {"data": [], "pagination": {}, "links": {}}
