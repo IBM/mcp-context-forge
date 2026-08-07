@@ -44,6 +44,7 @@ export interface PromptDetailsPanelProps {
   onAddTag?: (promptId: string, tags: string[]) => Promise<void>;
   onEdit?: (prompt: NonNullable<PromptRead>) => void;
   onDelete?: (prompt: NonNullable<PromptRead>) => void;
+  onTogglePrompt?: (id: string, currentState: boolean) => void;
 }
 
 /**
@@ -66,6 +67,7 @@ export function PromptDetailsPanel({
   onAddTag,
   onEdit,
   onDelete,
+  onTogglePrompt,
 }: PromptDetailsPanelProps) {
   const intl = useIntl();
   const closeButtonRef = useRef<HTMLButtonElement>(null);
@@ -240,6 +242,7 @@ export function PromptDetailsPanel({
                   onSelectPrompt={(p) => setSelectedId(p.id)}
                   onEdit={onEdit}
                   onDelete={onDelete}
+                  onTogglePrompt={onTogglePrompt}
                 />
               </TabsContent>
             </Tabs>

@@ -140,4 +140,14 @@ export const promptsApi = {
     const validId = validatePromptId(id);
     return api.delete(`/prompts/${encodeURIComponent(validId)}`);
   },
+
+  /**
+   * Set prompt state (activate or deactivate)
+   * @param id - The prompt ID
+   * @param activate - True to activate, false to deactivate
+   */
+  setState: (id: string, activate: boolean): Promise<void> => {
+    const validId = validatePromptId(id);
+    return api.post(`/prompts/${encodeURIComponent(validId)}/state?activate=${activate}`);
+  },
 };
