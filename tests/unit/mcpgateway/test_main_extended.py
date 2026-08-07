@@ -4611,7 +4611,10 @@ class TestRootEndpointsCoverage:
 
     @pytest.fixture(autouse=True)
     def _allow_root_admin(self, monkeypatch):
-        monkeypatch.setattr("mcpgateway.main.is_unrestricted_platform_admin", AsyncMock(return_value=True))
+        # require_unrestricted_platform_admin() (shared rbac.py helper used by roots routes)
+        # resolves is_unrestricted_platform_admin via its own deferred import from
+        # mcpgateway.auth_context, not main.py's module-level name, so patch it there.
+        monkeypatch.setattr("mcpgateway.auth_context.is_unrestricted_platform_admin", AsyncMock(return_value=True))
 
     @pytest.mark.asyncio
     async def test_export_root_success_and_username_extraction(self, monkeypatch):
@@ -10633,6 +10636,7 @@ class TestExportImportEndpoints:
     async def test_export_configuration_preserves_root_authorization_denial(self, monkeypatch):
         # First-Party
         import mcpgateway.main as main_mod
+        from mcpgateway.middleware.rbac import _GLOBAL_SCOPE_DENIED_MSG
 
         export_service = MagicMock()
         export_service.export_configuration = AsyncMock()
@@ -10643,7 +10647,7 @@ class TestExportImportEndpoints:
             await main_mod.export_configuration.__wrapped__(MagicMock(spec=Request), types="roots", db=MagicMock(), user={"email": "admin@example.com"})
 
         assert excinfo.value.status_code == 403
-        assert excinfo.value.detail == main_mod._ACCESS_DENIED_MSG
+        assert excinfo.value.detail == _GLOBAL_SCOPE_DENIED_MSG
         export_service.export_configuration.assert_not_awaited()
 
     async def test_unfiltered_export_preserves_root_authorization_denial(self, monkeypatch):
@@ -10707,6 +10711,7 @@ class TestExportImportEndpoints:
     async def test_export_selective_configuration_preserves_root_authorization_denial(self, monkeypatch):
         # First-Party
         import mcpgateway.main as main_mod
+        from mcpgateway.middleware.rbac import _GLOBAL_SCOPE_DENIED_MSG
 
         export_service = MagicMock()
         export_service.export_selective = AsyncMock()
@@ -10719,7 +10724,7 @@ class TestExportImportEndpoints:
             )
 
         assert excinfo.value.status_code == 403
-        assert excinfo.value.detail == main_mod._ACCESS_DENIED_MSG
+        assert excinfo.value.detail == _GLOBAL_SCOPE_DENIED_MSG
         export_service.export_selective.assert_not_awaited()
 
     async def test_import_configuration_missing_import_data(self):
@@ -10754,6 +10759,7 @@ class TestExportImportEndpoints:
     async def test_import_configuration_denies_root_payload_before_service(self, monkeypatch, dry_run):
         # First-Party
         import mcpgateway.main as main_mod
+        from mcpgateway.middleware.rbac import _GLOBAL_SCOPE_DENIED_MSG
 
         import_service = MagicMock(import_configuration=AsyncMock())
         monkeypatch.setattr(main_mod, "import_service", import_service)
@@ -10764,7 +10770,7 @@ class TestExportImportEndpoints:
             await main_mod.import_configuration.__wrapped__(import_data=import_data, conflict_strategy="update", dry_run=dry_run, selected_entities=None, db=MagicMock(), user={"email": "admin@example.com"})
 
         assert excinfo.value.status_code == 403
-        assert excinfo.value.detail == main_mod._ACCESS_DENIED_MSG
+        assert excinfo.value.detail == _GLOBAL_SCOPE_DENIED_MSG
         import_service.import_configuration.assert_not_awaited()
 
     @pytest.mark.parametrize("dry_run", [True, False])
