@@ -49,6 +49,7 @@ from mcpgateway.db import ToolMetric
 from mcpgateway.observability import create_child_span
 from mcpgateway.schemas import GrpcSchemaDiff, GrpcServiceCreate, GrpcServiceRead, GrpcServiceUpdate
 from mcpgateway.services.encryption_service import get_encryption_service
+from mcpgateway.services.grpc_runtime_cache import runtime_cache
 from mcpgateway.services.grpc_schema_service import GrpcSchemaService
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.metrics import grpc_client_calls_counter, grpc_client_duration_histogram, grpc_reflection_counter
@@ -1080,15 +1081,6 @@ class GrpcService:
         stored_descriptors = GrpcSchemaService.descriptors_for_service(db, service)
         has_stored_descriptors = bool(stored_descriptors)
 
-        endpoint = translate_grpc.GrpcEndpoint(
-            target=service.target,
-            reflection_enabled=not has_stored_descriptors,
-            tls_enabled=service.tls_enabled,
-            tls_cert_path=service.tls_cert_path,
-            tls_key_path=service.tls_key_path,
-            metadata={**_decrypt_metadata(service.grpc_metadata or {}), **(metadata_override or {})},
-        )
-
         effective_timeout = timeout if timeout is not None else float(settings.tool_timeout)
         call_started = time.monotonic()
         grpc_status = "ERROR"
@@ -1104,7 +1096,56 @@ class GrpcService:
         )
         span_context.__enter__()  # noqa  # Explicit lifecycle preserves the active exception for __exit__.
 
+        cache_enabled = bool(getattr(settings, "grpc_runtime_cache_enabled", True)) and GRPC_AVAILABLE
+        cache_entry = None
+        cache_key = None
+        endpoint = None
         try:
+            if cache_enabled and has_stored_descriptors:
+                # Reuse a cached channel + descriptor pool when the schema and
+                # connection configuration are unchanged; otherwise build a fresh
+                # bundle on a miss. Reflection-only services (no stored schema)
+                # keep the original per-call path because their descriptors come
+                # from the live server each time.
+                metadata_decrypted = _decrypt_metadata(service.grpc_metadata or {})
+                cache_key = runtime_cache.key_for(
+                    service.id,
+                    getattr(service, "active_schema_hash", None),
+                    service.target,
+                    service.tls_enabled,
+                    service.tls_cert_path,
+                    service.tls_key_path,
+                    metadata_decrypted,
+                )
+                cache_entry = runtime_cache.acquire(
+                    cache_key,
+                    service.target,
+                    service.tls_enabled,
+                    service.tls_cert_path,
+                    service.tls_key_path,
+                )
+                endpoint = translate_grpc.GrpcEndpoint(
+                    target=service.target,
+                    reflection_enabled=False,
+                    tls_enabled=service.tls_enabled,
+                    tls_cert_path=service.tls_cert_path,
+                    tls_key_path=service.tls_key_path,
+                    metadata={**metadata_decrypted, **(metadata_override or {})},
+                    channel=cache_entry.channel,
+                    pool=cache_entry.pool,
+                    method_class_cache=cache_entry.method_classes,
+                    owns_channel=False,
+                )
+            else:
+                endpoint = translate_grpc.GrpcEndpoint(
+                    target=service.target,
+                    reflection_enabled=not has_stored_descriptors,
+                    tls_enabled=service.tls_enabled,
+                    tls_cert_path=service.tls_cert_path,
+                    tls_key_path=service.tls_key_path,
+                    metadata={**_decrypt_metadata(service.grpc_metadata or {}), **(metadata_override or {})},
+                )
+
             # Both the asyncio wrapper AND the underlying gRPC call get the deadline so a slow
             # upstream cannot keep an executor thread alive after the coroutine is cancelled.
             await asyncio.wait_for(endpoint.start(timeout=effective_timeout, trusted_local=True), timeout=effective_timeout)
@@ -1162,7 +1203,12 @@ class GrpcService:
 
         finally:
             grpc_status_context.set(grpc_status)
-            await endpoint.close()
+            if cache_entry is not None and cache_key is not None:
+                # Injected channels are owned by the cache; balance the acquire
+                # so an evicted entry can be closed once idle.
+                runtime_cache.release(cache_key, cache_entry)
+            elif endpoint is not None:
+                await endpoint.close()
             grpc_client_calls_counter.labels(service=service.slug, method=method_name, status=grpc_status).inc()
             grpc_client_duration_histogram.labels(service=service.slug, method=method_name).observe(time.monotonic() - call_started)
             span_context.__exit__(*sys.exc_info())

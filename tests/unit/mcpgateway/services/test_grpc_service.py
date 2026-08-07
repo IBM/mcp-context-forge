@@ -967,10 +967,18 @@ class TestGrpcService:
         assert result[0]["method"] == "Hello"
 
     @patch("mcpgateway.translate_grpc.GrpcEndpoint")
-    async def test_invoke_method_with_stored_descriptors(self, mock_endpoint_cls, service, mock_db, sample_db_service):
+    @patch("mcpgateway.services.grpc_service.runtime_cache")
+    async def test_invoke_method_with_stored_descriptors(self, mock_cache, mock_endpoint_cls, service, mock_db, sample_db_service):
         """Test invoke_method uses stored descriptors instead of reflection."""
         from google.protobuf.descriptor_pb2 import FileDescriptorProto, FileDescriptorSet
         from mcpgateway.db import GrpcSchemaArtifact
+
+        mock_entry = MagicMock()
+        mock_entry.channel = MagicMock()
+        mock_entry.pool = None
+        mock_entry.method_classes = {}
+        mock_cache.key_for.return_value = "svc-key"
+        mock_cache.acquire.return_value = mock_entry
 
         file_proto = FileDescriptorProto(name="legacy.proto", package="test", syntax="proto3")
         descriptor_set = FileDescriptorSet()
@@ -1015,9 +1023,14 @@ class TestGrpcService:
         mock_endpoint_cls.assert_called_once()
         call_kwargs = mock_endpoint_cls.call_args[1]
         assert call_kwargs["reflection_enabled"] is False
+        # Store-descriptor services go through the runtime cache: the endpoint
+        # borrows a shared channel (owns_channel=False) instead of owning one, so
+        # close() is a no-op and the cache balances the reference in its finally.
+        assert call_kwargs["owns_channel"] is False
+        assert call_kwargs["channel"] is not None
         mock_ep_instance.load_file_descriptors.assert_called_once()
         assert "_file_descriptors" not in mock_ep_instance._services
-        mock_ep_instance.close.assert_called_once()
+        mock_ep_instance.close.assert_not_called()
     @patch("mcpgateway.translate_grpc.GrpcEndpoint")
     async def test_invoke_method_without_stored_descriptors(self, mock_endpoint_cls, service, mock_db, sample_db_service):
         """Test invoke_method falls back to reflection when no stored descriptors."""
