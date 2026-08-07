@@ -125,6 +125,20 @@ def test_build_tool_args_falls_back_to_name_heuristic_without_schema(monkeypatch
     assert set(lf._build_tool_args("fast-time-convert-time")) == {"time", "source_timezone", "target_timezone"}
 
 
+def test_build_tool_args_respects_empty_schema_over_name_heuristic():
+    """A genuinely zero-argument schema must win even when the tool name matches a heuristic.
+
+    Regression for a narrower #6082 variant: a schema with `properties: {}` and no
+    `required` list is falsy on both counts, so a truthiness check on its contents
+    would mistake it for "no schema" and fall through to the name heuristic. A
+    heuristic-matching name (contains "timezone") must not override an explicitly
+    declared empty schema.
+    """
+    schema = {"type": "object", "properties": {}}
+    args = lf._build_tool_args("fast-time-timezone-lookup", schema)
+    assert args == {}
+
+
 class _FakeResponse:
     """Minimal stand-in for a requests.Response."""
 
