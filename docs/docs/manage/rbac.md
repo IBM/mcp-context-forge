@@ -473,6 +473,50 @@ python3 -m mcpgateway.utils.create_jwt_token \
 
 ---
 
+## Scope Rules for Global Records
+
+Admin-only routes that manage records with no team association are classified into four categories, each with distinct authorization rules. These rules are the canonical reference for all global-record endpoints and are enforced through shared helpers to prevent divergence.
+
+### Route Classes
+
+**global-only** — The record has no team association. Requires *unrestricted platform admin*: `token_teams is None` AND `check_platform_admin_permission()`. A narrowed admin token (`teams: ["t1"]`) or public-only token (`teams: []`) receives 403.
+
+**filtered-read** — The record is global-only, but the route is a read operation whose narrowing is expressed as result filtering rather than a hard deny. Permitted only where a hard deny would break a legitimate caller; each instance must document why filtering is correct. Used for endpoints like `GET /rbac/roles` where visible data is filtered to exclude global-scope records for narrowed admins.
+
+**team-scopable** — The record carries a team association (typically via a `scope_id` column). A narrowed admin is permitted when their token covers that team; the global variant of the same operation requires unrestricted platform admin. Example: `UserRole` entries, which have `scope_id` binding them to specific teams.
+
+**exempt** — Documented non-admin surfaces (login pages, health probes, self-scoped endpoints). Recorded with a stated reason, never left implicit.
+
+### Classification Summary
+
+The definitive, up-to-date manifest of all admin routes and their classifications is maintained in `tests/unit/mcpgateway/test_global_record_scope.py`. This test file contains five manifests (`GLOBAL_ONLY`, `GLOBAL_ONLY_DEFERRED`, `FILTERED_READ`, `TEAM_SCOPABLE`, `EXEMPT`) that drift-guard every admin endpoint — a new unclassified route causes CI to fail with a pointer to this documentation.
+
+| Class | Migrated (A.1) | Deferred (A.2/A.4) | Exempt (A.3) | Total |
+|-------|---|---|---|---|
+| **global-only** | 13 routes (+ 26 root call sites) | 64 routes | — | 103 |
+| **filtered-read** | 2 routes | — | — | 2 |
+| **team-scopable** | 3 routes | — | — | 3 |
+| **exempt** | — | — | 7 surfaces | 7 |
+
+**Migrated routes** (A.1) use the canonical shared helpers and are covered by per-context deny tests. **Deferred routes** (A.2/A.4) are identified and classified but keep their own guards pending follow-up issue 1 — the drift guard ensures none regress unclassified. **Exempt surfaces** (A.3) are documented with a rationale.
+
+### Implementation Helpers
+
+Do not re-implement the global-record admin scope check. Shared helpers in `mcpgateway/middleware/rbac.py` are the single policy point:
+
+- `require_global_admin_permission()` — Decorator for whole-endpoint guards. Rejects narrowed and public-only tokens with 403 and structured logging.
+- `require_unrestricted_platform_admin()` — Callable for conditional guards inside handlers (e.g., `export_includes_roots()` conditions). Checks the same rule; intended for callers that must guard only specific code paths.
+
+Both helpers read Layer-1 narrowing from `request.state.token_teams`, so decorated endpoints need a `request` parameter.
+
+### Related Tests and Docs
+
+- **Test manifest**: `tests/unit/mcpgateway/test_global_record_scope.py` — the authoritative, living source of truth
+- **Design spec**: `docs/superpowers/specs/2026-08-06-global-record-admin-scope-design.md` — rationale and full classification details
+- **Invariant**: See Security Invariants (Required) in `CLAUDE.md` for the do-not-reimplement rule
+
+---
+
 ## Permission System
 
 ### Permission Categories
