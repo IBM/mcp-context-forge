@@ -2299,11 +2299,21 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 prompts=prompts,
                 created_via="oauth",
             )
+
+            skip_stale_cleanup = not tools and not resources and not prompts
+            if skip_stale_cleanup:
+                logger.warning("Empty catalog from auth_code gateway %s during OAuth fetch, preserving existing items", gateway.name)
+
+            # Only prune entries that came from MCP discovery. API/UI and legacy
+            # entries can share the gateway but are not authoritative upstream data.
+            mcp_created_via_values = {"MCP", "federation", "health_check", "manual_refresh", "oauth", "update"}
             reconcile_result = self._reconcile_gateway_catalog(
                 db,
                 gateway=gateway,
                 catalog_sync=catalog_sync,
                 log_context="gateway OAuth fetch",
+                stale_created_via_values=mcp_created_via_values,
+                skip_stale_cleanup=skip_stale_cleanup,
             )
 
             # Update gateway capabilities and last_seen
