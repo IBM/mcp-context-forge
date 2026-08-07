@@ -6,6 +6,7 @@ interface TagInfoName {
 }
 
 let cache: string[] | null = null;
+let fetched = false;
 
 /**
  * Tag names from `GET /tags`, for autocomplete. Cached module-wide so the
@@ -16,7 +17,8 @@ export function useTagSuggestions(enabled = true): string[] {
   const [tags, setTags] = useState<string[]>(cache ?? []);
 
   useEffect(() => {
-    if (!enabled || cache) return;
+    if (!enabled || fetched) return;
+    fetched = true;
     let cancelled = false;
     api
       .get<TagInfoName[]>("/tags")
@@ -25,7 +27,7 @@ export function useTagSuggestions(enabled = true): string[] {
         if (!cancelled) setTags(cache);
       })
       .catch(() => {
-        // ponytail: suggestions are best-effort; a failed /tags fetch just means no autocomplete.
+        // Suggestions are best-effort: a failed /tags fetch just means no autocomplete.
       });
     return () => {
       cancelled = true;

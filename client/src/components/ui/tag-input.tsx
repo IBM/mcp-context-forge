@@ -1,5 +1,6 @@
 import { useId, useMemo, useRef, useState } from "react";
 import type { ClipboardEvent, KeyboardEvent } from "react";
+import { useIntl } from "react-intl";
 import { X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { CardTag } from "@/components/ui/card-tag";
@@ -35,6 +36,7 @@ export function TagInput({
   "aria-describedby": ariaDescribedBy,
   "aria-labelledby": ariaLabelledBy,
 }: TagInputProps) {
+  const intl = useIntl();
   const [text, setText] = useState("");
   const [activeIndex, setActiveIndex] = useState(-1);
   const [focused, setFocused] = useState(false);
@@ -156,7 +158,7 @@ export function TagInput({
           {tag}
           <button
             type="button"
-            aria-label={`Remove ${tag}`}
+            aria-label={intl.formatMessage({ id: "common.tagInput.remove" }, { tag })}
             disabled={disabled}
             onClick={(event) => {
               event.stopPropagation();
@@ -217,7 +219,9 @@ export function TagInput({
                   index === activeIndex && "bg-accent text-accent-foreground",
                 )}
               >
-                {option.kind === "create" ? `Create "${option.value}"` : option.value}
+                {option.kind === "create"
+                  ? intl.formatMessage({ id: "common.tagInput.create" }, { value: option.value })
+                  : option.value}
               </li>
             ))}
           </ul>
@@ -225,7 +229,7 @@ export function TagInput({
       </div>
       {atMax && (
         <p role="status" className="basis-full text-xs text-muted-foreground">
-          Maximum {maxTags} tags reached.
+          {intl.formatMessage({ id: "common.tagInput.maxReached" }, { max: maxTags })}
         </p>
       )}
     </div>

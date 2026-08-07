@@ -10,6 +10,10 @@ describe("getTagLabels", () => {
     expect(getTagLabels([{ label: "auth" }, "api"])).toEqual(["auth", "api"]);
   });
 
+  it("drops object tags with a missing or null label", () => {
+    expect(getTagLabels([{ label: "auth" }, {}, { label: null }, "api"])).toEqual(["auth", "api"]);
+  });
+
   it("returns an empty array for no tags", () => {
     expect(getTagLabels([])).toEqual([]);
   });

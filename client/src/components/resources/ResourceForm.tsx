@@ -294,7 +294,7 @@ export function ResourceForm({
                 onChange={setTags}
                 suggestions={tagSuggestions}
                 maxTags={MAX_TAGS}
-                placeholder="tag1, tag2, tag3"
+                placeholder={intl.formatMessage({ id: "common.tagInput.placeholder" })}
               />
             </div>
 

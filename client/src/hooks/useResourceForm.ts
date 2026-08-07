@@ -25,7 +25,7 @@ const createResourceFormSchema = (intl: ReturnType<typeof useIntl>) =>
       .max(500, intl.formatMessage({ id: "resources.form.error.descriptionMax" }))
       .optional(),
     mimeType: z.string().optional(),
-    tags: z.array(z.string()).optional(),
+    tags: z.array(z.string().transform((t) => sanitizeString(t, 200))).optional(),
   });
 
 export type ResourceFormData = z.infer<ReturnType<typeof createResourceFormSchema>>;
