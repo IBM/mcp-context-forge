@@ -86,6 +86,7 @@ ROUTER_PERMISSIONS = [
     ("mcpgateway/routers/log_search.py", "metrics:read"),
     ("mcpgateway/routers/toolops_router.py", "admin.system_config"),
     ("mcpgateway/routers/cancellation_router.py", "admin.system_config"),
+    ("mcpgateway/routers/app.py", "metrics:read"),
 ]
 
 

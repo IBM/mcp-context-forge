@@ -15,16 +15,18 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 # Third-Party
-from fastapi import HTTPException
+from fastapi import FastAPI, HTTPException
+from fastapi.testclient import TestClient
 import pytest
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.db import Base, ObservabilityTrace
+from mcpgateway.db import Base, get_db, ObservabilityTrace
 from mcpgateway.middleware import rbac as rbac_module
+from mcpgateway.middleware.rbac import get_current_user_with_permissions
 from mcpgateway.routers import app as app_module
 from mcpgateway.services.observability_service import _execution_timeseries_postgresql, _latency_percentiles_postgresql
 
@@ -222,6 +224,22 @@ def test_routes_registered_under_app_prefix():
     """The endpoints are served by the durable /app router, not the admin router."""
     paths = {route.path for route in app_module.app_router.routes}
     assert {"/app/observability/metrics/timeseries", "/app/observability/metrics/percentiles"} <= paths
+
+
+def test_metrics_unauthenticated_returns_401():
+    """No auth context -> 401 over HTTP, before any aggregation runs."""
+    api = FastAPI()
+    api.include_router(app_module.app_router)
+
+    async def deny_auth():
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    api.dependency_overrides[get_current_user_with_permissions] = deny_auth
+    api.dependency_overrides[get_db] = lambda: MagicMock(spec=Session)
+
+    client = TestClient(api)
+    assert client.get("/app/observability/metrics/timeseries").status_code == 401
+    assert client.get("/app/observability/metrics/percentiles").status_code == 401
 
 
 def test_postgres_buckets_normalized_to_utc():

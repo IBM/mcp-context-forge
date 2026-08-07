@@ -245,7 +245,7 @@ async def logout(
 
 
 @app_router.get("/observability/metrics/timeseries", response_model=TimeseriesResponse)
-@require_permission("metrics:read")
+@require_permission("metrics:read", allow_admin_bypass=False)
 async def get_metrics_timeseries(
     request: Request,  # pylint: disable=unused-argument
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
@@ -282,7 +282,7 @@ async def get_metrics_timeseries(
 
 
 @app_router.get("/observability/metrics/percentiles", response_model=PercentilesResponse)
-@require_permission("metrics:read")
+@require_permission("metrics:read", allow_admin_bypass=False)
 async def get_metrics_percentiles(
     request: Request,  # pylint: disable=unused-argument
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),

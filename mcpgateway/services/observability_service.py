@@ -1849,7 +1849,7 @@ def _execution_timeseries_postgresql(db: Session, cutoff_time: datetime, interva
     values = []
     for row in results:
         buckets.append(row.bucket.astimezone(timezone.utc).isoformat() if row.bucket else "")
-        values.append(row.total or 0)
+        values.append(row.total if row.total is not None else 0)
 
     return {"buckets": buckets, "values": values}
 
@@ -1921,9 +1921,9 @@ def _latency_percentiles_postgresql(db: Session, cutoff_time: datetime, interval
 
     for row in results:
         buckets.append(row.bucket.astimezone(timezone.utc).isoformat() if row.bucket else "")
-        p50_values.append(round(float(row.p50), 2) if row.p50 else 0)
-        p95_values.append(round(float(row.p95), 2) if row.p95 else 0)
-        p99_values.append(round(float(row.p99), 2) if row.p99 else 0)
+        p50_values.append(round(float(row.p50), 2) if row.p50 is not None else 0)
+        p95_values.append(round(float(row.p95), 2) if row.p95 is not None else 0)
+        p99_values.append(round(float(row.p99), 2) if row.p99 is not None else 0)
 
     return {"buckets": buckets, "p50": p50_values, "p95": p95_values, "p99": p99_values}
 
