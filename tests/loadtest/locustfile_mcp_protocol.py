@@ -51,7 +51,7 @@ import warnings
 # Third-Party
 from locust import between, constant_throughput, events, tag, task
 from locust.contrib.fasthttp import FastHttpUser
-from locust.runners import MasterRunner, WorkerRunner
+from locust.runners import WorkerRunner
 
 # =============================================================================
 # Configuration
@@ -135,6 +135,7 @@ class ServerTarget:
     tool_names: list[str]
     resource_uris: list[str]
     prompt_targets: list["PromptTarget"]
+    tool_schemas: dict[str, dict]
 
 
 @dataclass(frozen=True)
@@ -149,6 +150,7 @@ _tool_names: list[str] = []
 _resource_uris: list[str] = []
 _prompt_targets: list[PromptTarget] = []
 _server_targets: list[ServerTarget] = []
+_tool_schemas: dict[str, dict] = {}
 _jwt_token: str | None = None
 _server_target_index = 0
 
@@ -250,7 +252,7 @@ def _get_token() -> str:
 
 def _auto_detect(host: str) -> None:
     """Discover MCP server targets and per-target inventories from the gateway REST API."""
-    global _server_id, _tool_names, _resource_uris, _prompt_targets, _server_targets  # pylint: disable=global-statement
+    global _server_id, _tool_names, _resource_uris, _prompt_targets, _server_targets, _tool_schemas  # pylint: disable=global-statement
 
     # Third-Party
     import requests  # pylint: disable=import-outside-toplevel
@@ -327,11 +329,18 @@ def _auto_detect(host: str) -> None:
         if init_result:
             server_name = init_result.get("serverInfo", {}).get("name") or server_name
 
+        tool_schemas: dict[str, dict] = {}
         if MCP_TOOL_NAMES_STR:
             tool_names = [t.strip() for t in MCP_TOOL_NAMES_STR.split(",") if t.strip()]
         else:
             result = _mcp_call("tools/list")
-            tool_names = [t["name"] for t in result.get("tools", []) if "name" in t] if result else []
+            tools = result.get("tools", []) if result else []
+            tool_names = [t["name"] for t in tools if "name" in t]
+            for tool in tools:
+                name = tool.get("name")
+                schema = tool.get("inputSchema")
+                if isinstance(name, str) and isinstance(schema, dict):
+                    tool_schemas[name] = schema
 
         result = _mcp_call("resources/list")
         resource_uris = [r["uri"] for r in result.get("resources", []) if "uri" in r] if result else []
@@ -357,6 +366,7 @@ def _auto_detect(host: str) -> None:
                 tool_names=tool_names,
                 resource_uris=resource_uris,
                 prompt_targets=prompt_targets,
+                tool_schemas=tool_schemas,
             )
         )
 
@@ -370,6 +380,7 @@ def _auto_detect(host: str) -> None:
     _tool_names = primary.tool_names
     _resource_uris = primary.resource_uris
     _prompt_targets = primary.prompt_targets
+    _tool_schemas = dict(primary.tool_schemas)
 
     logger.info("Using %d MCP server target(s)", len(_server_targets))
     for target in _server_targets:
@@ -381,6 +392,16 @@ def _auto_detect(host: str) -> None:
             len(target.resource_uris),
             len(target.prompt_targets),
         )
+
+    for target in _server_targets:
+        unschematized = [name for name in target.tool_names if not target.tool_schemas.get(name)]
+        if unschematized:
+            logger.warning(
+                "server=%s: %d tool(s) have no inputSchema; falling back to name heuristics: %s",
+                target.server_id,
+                len(unschematized),
+                ", ".join(unschematized),
+            )
 
 
 # =============================================================================
@@ -491,18 +512,112 @@ def _jsonrpc(method: str, params: dict | None = None) -> dict:
     return payload
 
 
-def _build_tool_args(tool_name: str) -> dict:
-    """Build plausible arguments for a tool based on its name."""
-    name_lower = tool_name.lower()
-    if "convert" in name_lower:
+def _synth_value(prop_name: str, spec: dict) -> Any:
+    """Synthesize one benchmark-safe value for a JSON Schema property.
+
+    Args:
+        prop_name: Property name, used to pick realistic string values.
+        spec: JSON Schema fragment describing the property.
+
+    Returns:
+        A value matching the declared type, enum, or default.
+    """
+    if isinstance(spec.get("enum"), list) and spec["enum"]:
+        return spec["enum"][0]
+    if "default" in spec:
+        return spec["default"]
+
+    prop_type = spec.get("type")
+    if isinstance(prop_type, list):
+        prop_type = next((t for t in prop_type if t != "null"), "string")
+
+    if prop_type == "integer":
+        return 1
+    if prop_type == "number":
+        return 1.0
+    if prop_type == "boolean":
+        return True
+    if prop_type == "array":
+        items = spec.get("items")
+        return [_synth_value(prop_name, items)] if isinstance(items, dict) and items else []
+    if prop_type == "object":
+        return _args_from_schema(spec)
+
+    # Default to string, with name-aware values so time tools get real timezones.
+    name = prop_name.lower()
+    if "timezone" in name or name in {"tz", "zone"}:
+        return random.choice(TIMEZONES)
+    if "time" in name or "date" in name:
+        return "2025-06-15T14:30:00Z"
+    if "message" in name or "text" in name or "query" in name or "input" in name:
+        return f"load-test-{random.randint(1, 10000)}"
+    return f"load-test-{prop_name}"
+
+
+def _args_from_schema(schema: dict) -> dict:
+    """Build a minimal valid argument dict from a tool's JSON Schema.
+
+    Only required properties are populated; optional properties are skipped so
+    benchmark payloads stay small and deterministic in shape.
+
+    Args:
+        schema: The tool's ``inputSchema`` from ``tools/list``.
+
+    Returns:
+        Mapping of argument name to synthesized value.
+    """
+    properties = schema.get("properties") or {}
+    required = schema.get("required") or []
+    args: dict[str, Any] = {}
+    for name in required:
+        if not isinstance(name, str):
+            continue
+        spec = properties.get(name)
+        args[name] = _synth_value(name, spec if isinstance(spec, dict) else {})
+    return args
+
+
+def _legacy_name_args(tool_name: str) -> dict:
+    """Guess arguments from a tool name when no schema is available.
+
+    Only used for the ``MCP_TOOL_NAMES`` override path, where tools are supplied
+    by name and ``tools/list`` schemas were never fetched. Checks are ordered
+    most-specific first, because gateway-prefixed names (``fast-time-echo``)
+    contain the substring ``time``.
+
+    Args:
+        tool_name: Tool name, possibly gateway-prefixed.
+
+    Returns:
+        Best-effort argument mapping, or an empty dict when nothing matches.
+    """
+    name = tool_name.lower().replace("-", "_")
+    if "echo" in name:
+        return {"message": f"load-test-{random.randint(1, 10000)}"}
+    if "convert" in name:
         src = random.choice(TIMEZONES)
         dst = random.choice([t for t in TIMEZONES if t != src])
         return {"time": "2025-06-15T14:30:00Z", "source_timezone": src, "target_timezone": dst}
-    if "time" in name_lower or "timezone" in name_lower:
+    if "system_time" in name or "current_time" in name or name.endswith("_time") or "timezone" in name:
         return {"timezone": random.choice(TIMEZONES)}
-    if "echo" in name_lower:
-        return {"message": f"load-test-{random.randint(1, 10000)}"}
     return {}
+
+
+def _build_tool_args(tool_name: str, schema: dict | None = None) -> dict:
+    """Build arguments for a tool, preferring its declared input schema.
+
+    Args:
+        tool_name: Tool name as returned by ``tools/list``.
+        schema: Optional explicit schema; falls back to the discovery registry.
+
+    Returns:
+        Argument mapping to send as ``params.arguments`` for ``tools/call``.
+    """
+    if schema is None:
+        schema = _tool_schemas.get(tool_name)
+    if isinstance(schema, dict) and (schema.get("required") or schema.get("properties")):
+        return _args_from_schema(schema)
+    return _legacy_name_args(tool_name)
 
 
 # =============================================================================
@@ -531,6 +646,7 @@ class BaseMCPUser(FastHttpUser):
         self._tool_names: list[str] = []
         self._resource_uris: list[str] = []
         self._prompt_targets: list[PromptTarget] = []
+        self._tool_schemas: dict[str, dict] = {}
 
     def _mcp_path(self) -> str:
         return f"/servers/{self._server_id}/mcp"
@@ -607,6 +723,7 @@ class BaseMCPUser(FastHttpUser):
         self._tool_names = list(target.tool_names)
         self._resource_uris = list(target.resource_uris)
         self._prompt_targets = list(target.prompt_targets)
+        self._tool_schemas = dict(target.tool_schemas)
 
     def _ensure_initialized(self):
         """Initialize the MCP session (once per user lifecycle)."""
@@ -631,8 +748,15 @@ class BaseMCPUser(FastHttpUser):
         self._ensure_initialized()
 
     def _build_tool_args(self, tool_name: str) -> dict:
-        """Build plausible arguments for a tool based on its name."""
-        return _build_tool_args(tool_name)
+        """Build arguments for a tool using the schema discovered for this user's target.
+
+        Args:
+            tool_name: Tool name as returned by ``tools/list``.
+
+        Returns:
+            Argument mapping for ``tools/call``.
+        """
+        return _build_tool_args(tool_name, self._tool_schemas.get(tool_name))
 
 
 # =============================================================================
