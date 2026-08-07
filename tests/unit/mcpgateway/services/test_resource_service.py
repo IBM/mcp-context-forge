@@ -7931,6 +7931,116 @@ class TestReadResourceDirectProxy:
         session_mock.read_resource.assert_awaited_once_with(uri="http://example.com/dp-resource")
 
     @pytest.mark.asyncio
+    async def test_read_resource_direct_proxy_client_factory_default_verify(self, resource_service, mock_direct_proxy_resource):
+        """The httpx client factory builds a default-verify client when the gateway has no CA certificate."""
+        # Standard
+        from contextlib import asynccontextmanager
+
+        # First-Party
+        import httpx
+
+        mock_direct_proxy_resource.gateway.ca_certificate = None
+        db = self._make_mock_db(mock_direct_proxy_resource)
+
+        first_content = MagicMock()
+        first_content.text = "hello from remote"
+        first_content.mimeType = "text/plain"
+        result_mock = MagicMock()
+        result_mock.contents = [first_content]
+
+        client_session_cm, _session_mock = self._make_session_mock(result_mock)
+
+        captured = {}
+
+        @asynccontextmanager
+        async def mock_streamable_client(*_args, **kwargs):
+            captured["factory"] = kwargs.get("httpx_client_factory")
+            yield ("read", "write", None)
+
+        with (
+            patch("mcpgateway.services.resource_service.settings") as mock_settings,
+            patch("mcpgateway.services.resource_service.check_gateway_access", new_callable=AsyncMock, return_value=True),
+            patch("mcpgateway.services.resource_service.build_gateway_auth_headers", return_value={"Authorization": "Bearer remote-token"}),
+            patch("mcpgateway.services.resource_service.streamablehttp_client", mock_streamable_client),
+            patch("mcpgateway.services.resource_service.ClientSession", return_value=client_session_cm),
+            self._common_patches(resource_service),
+        ):
+            mock_settings.mcpgateway_direct_proxy_enabled = True
+            mock_settings.mcpgateway_direct_proxy_timeout = 30
+            mock_settings.experimental_validate_io = False
+            mock_settings.httpx_max_connections = 10
+            mock_settings.httpx_max_keepalive_connections = 5
+            mock_settings.httpx_keepalive_expiry = 30
+
+            await resource_service.read_resource(
+                db,
+                resource_uri="http://example.com/dp-resource",
+                user="user@example.com",
+                token_teams=["team-1"],
+            )
+
+            client = captured["factory"]()
+            assert isinstance(client, httpx.AsyncClient)
+            await client.aclose()
+
+    @pytest.mark.asyncio
+    async def test_read_resource_direct_proxy_client_factory_with_ca_certificate(self, resource_service, mock_direct_proxy_resource):
+        """The httpx client factory uses the gateway CA certificate through the SSL context cache when present."""
+        # Standard
+        from contextlib import asynccontextmanager
+
+        # First-Party
+        import httpx
+
+        mock_direct_proxy_resource.gateway.ca_certificate = "CA-PEM"
+        mock_direct_proxy_resource.gateway.client_cert = None
+        mock_direct_proxy_resource.gateway.client_key = None
+        db = self._make_mock_db(mock_direct_proxy_resource)
+
+        first_content = MagicMock()
+        first_content.text = "hello from remote"
+        first_content.mimeType = "text/plain"
+        result_mock = MagicMock()
+        result_mock.contents = [first_content]
+
+        client_session_cm, _session_mock = self._make_session_mock(result_mock)
+
+        captured = {}
+
+        @asynccontextmanager
+        async def mock_streamable_client(*_args, **kwargs):
+            captured["factory"] = kwargs.get("httpx_client_factory")
+            yield ("read", "write", None)
+
+        with (
+            patch("mcpgateway.services.resource_service.settings") as mock_settings,
+            patch("mcpgateway.services.resource_service.check_gateway_access", new_callable=AsyncMock, return_value=True),
+            patch("mcpgateway.services.resource_service.build_gateway_auth_headers", return_value={"Authorization": "Bearer remote-token"}),
+            patch("mcpgateway.services.resource_service.streamablehttp_client", mock_streamable_client),
+            patch("mcpgateway.services.resource_service.ClientSession", return_value=client_session_cm),
+            patch("mcpgateway.services.resource_service.get_cached_ssl_context", return_value=MagicMock()) as mock_ssl_cache,
+            self._common_patches(resource_service),
+        ):
+            mock_settings.mcpgateway_direct_proxy_enabled = True
+            mock_settings.mcpgateway_direct_proxy_timeout = 30
+            mock_settings.experimental_validate_io = False
+            mock_settings.httpx_max_connections = 10
+            mock_settings.httpx_max_keepalive_connections = 5
+            mock_settings.httpx_keepalive_expiry = 30
+
+            await resource_service.read_resource(
+                db,
+                resource_uri="http://example.com/dp-resource",
+                user="user@example.com",
+                token_teams=["team-1"],
+            )
+
+            client = captured["factory"]()
+            mock_ssl_cache.assert_called_once_with("CA-PEM", client_cert=None, client_key=None)
+            assert isinstance(client, httpx.AsyncClient)
+            await client.aclose()
+
+    @pytest.mark.asyncio
     async def test_read_resource_direct_proxy_blob_content(self, resource_service, mock_direct_proxy_resource):
         """Happy path: resource gateway in direct_proxy mode returns blob content."""
         # Standard

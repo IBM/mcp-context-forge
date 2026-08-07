@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import ssl
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import httpx
 import pytest
@@ -342,3 +342,117 @@ async def test_get_isolated_http_client_with_explicit_verify():
 
         async with get_isolated_http_client(verify=False, http2=True) as client:
             assert isinstance(client, httpx.AsyncClient)
+
+
+# --- SSL_CERT_FILE support ---
+
+
+def _generate_ca_pem(tmp_path):
+    """Generate a minimal self-signed CA certificate PEM for SSL_CERT_FILE tests."""
+    # Standard
+    import datetime
+
+    # Third-Party
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.x509.oid import NameOID
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "test-ca")])
+    now = datetime.datetime.now(datetime.timezone.utc)
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now)
+        .not_valid_after(now + datetime.timedelta(days=1))
+        .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
+        .sign(key, hashes.SHA256())
+    )
+    pem_path = tmp_path / "custom-ca.pem"
+    pem_path.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
+    return str(pem_path)
+
+
+def test_get_default_verify_with_ssl_cert_file(tmp_path, monkeypatch):
+    """get_default_verify() returns an SSL context combining system + custom CAs when SSL_CERT_FILE is set."""
+    ca_path = _generate_ca_pem(tmp_path)
+    monkeypatch.setenv("SSL_CERT_FILE", ca_path)
+    with patch("mcpgateway.config.settings") as mock_settings:
+        mock_settings.skip_ssl_verify = False
+        result = get_default_verify()
+    assert isinstance(result, ssl.SSLContext)
+
+
+def test_get_default_verify_ssl_cert_file_missing_raises(monkeypatch):
+    """SSL_CERT_FILE pointing at a nonexistent path fails with a clear error (no silent fallback)."""
+    monkeypatch.setenv("SSL_CERT_FILE", "/nonexistent/path/to/ca.pem")
+    with patch("mcpgateway.config.settings") as mock_settings:
+        mock_settings.skip_ssl_verify = False
+        with pytest.raises(ValueError, match="SSL_CERT_FILE"):
+            get_default_verify()
+
+
+@pytest.mark.asyncio
+async def test_shared_http_client_ssl_cert_file_missing_fails_fast(monkeypatch):
+    """SharedHttpClient initialization fails fast with a clear error when SSL_CERT_FILE does not exist."""
+    monkeypatch.setenv("SSL_CERT_FILE", "/nonexistent/path/to/ca.pem")
+    with patch("mcpgateway.config.settings") as mock_settings:
+        mock_settings.httpx_max_connections = 10
+        mock_settings.httpx_max_keepalive_connections = 5
+        mock_settings.httpx_keepalive_expiry = 30
+        mock_settings.httpx_connect_timeout = 5
+        mock_settings.httpx_read_timeout = 120
+        mock_settings.httpx_write_timeout = 30
+        mock_settings.httpx_pool_timeout = 10
+        mock_settings.httpx_http2_enabled = False
+        mock_settings.skip_ssl_verify = False
+
+        client = SharedHttpClient()
+        with pytest.raises(ValueError, match="SSL_CERT_FILE"):
+            await client._initialize()
+
+
+@pytest.mark.asyncio
+async def test_shared_http_client_skip_ssl_verify_disables_verification():
+    """SharedHttpClient passes verify=False to httpx when skip_ssl_verify is enabled."""
+    with patch("mcpgateway.config.settings") as mock_settings:
+        mock_settings.httpx_max_connections = 10
+        mock_settings.httpx_max_keepalive_connections = 5
+        mock_settings.httpx_keepalive_expiry = 30
+        mock_settings.httpx_connect_timeout = 5
+        mock_settings.httpx_read_timeout = 120
+        mock_settings.httpx_write_timeout = 30
+        mock_settings.httpx_pool_timeout = 10
+        mock_settings.httpx_http2_enabled = False
+        mock_settings.skip_ssl_verify = True
+
+        with patch("mcpgateway.services.http_client_service.httpx.AsyncClient") as mock_client_cls:
+            client = SharedHttpClient()
+            await client._initialize()
+            assert mock_client_cls.call_args.kwargs["verify"] is False
+
+
+@pytest.mark.asyncio
+async def test_shared_http_client_with_ssl_cert_file(tmp_path, monkeypatch):
+    """SharedHttpClient builds an SSL context from SSL_CERT_FILE when set."""
+    ca_path = _generate_ca_pem(tmp_path)
+    monkeypatch.setenv("SSL_CERT_FILE", ca_path)
+    with patch("mcpgateway.config.settings") as mock_settings:
+        mock_settings.httpx_max_connections = 10
+        mock_settings.httpx_max_keepalive_connections = 5
+        mock_settings.httpx_keepalive_expiry = 30
+        mock_settings.httpx_connect_timeout = 5
+        mock_settings.httpx_read_timeout = 120
+        mock_settings.httpx_write_timeout = 30
+        mock_settings.httpx_pool_timeout = 10
+        mock_settings.httpx_http2_enabled = False
+        mock_settings.skip_ssl_verify = False
+
+        with patch("mcpgateway.services.http_client_service.httpx.AsyncClient") as mock_client_cls:
+            client = SharedHttpClient()
+            await client._initialize()
+            assert isinstance(mock_client_cls.call_args.kwargs["verify"], ssl.SSLContext)
