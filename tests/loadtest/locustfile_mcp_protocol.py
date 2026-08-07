@@ -28,6 +28,9 @@ Environment Variables:
     LOADTEST_HOST:             Gateway URL           (default: http://localhost:4444)
     MCP_SERVER_ID:             Virtual server UUID   (auto-detected from /servers if empty)
     MCP_TOOL_NAMES:            Comma-sep tool names  (auto-detected from tools/list if empty)
+    MCP_BENCHMARK_TOOL_DENYLIST: Comma-sep tool names to exclude
+                               (default: schema_error,flaky — deliberate
+                                failure fixtures; set to "" to include them)
     JWT_SECRET_KEY:            JWT signing secret     (default: my-test-key-but-now-longer-than-32-bytes)
     JWT_ALGORITHM:             JWT algorithm          (default: HS256)
     JWT_AUDIENCE:              JWT audience           (default: mcpgateway-api)
@@ -100,6 +103,12 @@ BEARER_TOKEN = _cfg("MCPGATEWAY_BEARER_TOKEN", "")
 MCP_SERVER_ID = _cfg("MCP_SERVER_ID", "")
 MCP_SERVER_IDS_STR = _cfg("MCP_SERVER_IDS", "")
 MCP_TOOL_NAMES_STR = _cfg("MCP_TOOL_NAMES", "")
+# Tools excluded from the benchmark pool. Defaults cover the fast-time-server's
+# deliberate failure fixtures: schema_error always returns isError, and flaky
+# injects failures by design. Set MCP_BENCHMARK_TOOL_DENYLIST="" to include them.
+MCP_TOOL_DENYLIST: set[str] = {
+    entry.strip().lower().replace("-", "_") for entry in _cfg("MCP_BENCHMARK_TOOL_DENYLIST", "schema_error,flaky").split(",") if entry.strip()
+}
 LOCUST_LOG_LEVEL = os.environ.get("LOCUST_LOG_LEVEL", _ENV.get("LOCUST_LOG_LEVEL", "INFO")).upper()
 
 logging.basicConfig(level=getattr(logging, LOCUST_LOG_LEVEL, logging.INFO))
@@ -358,6 +367,11 @@ def _auto_detect(host: str) -> None:
                     if argument.get("required") and isinstance(arg_name, str) and arg_name:
                         required_arguments[arg_name] = _default_prompt_argument_value(prompt_name, arg_name)
                 prompt_targets.append(PromptTarget(name=prompt_name, required_arguments=required_arguments))
+
+        denied = [name for name in tool_names if _is_denied(name)]
+        if denied:
+            tool_names = [name for name in tool_names if not _is_denied(name)]
+            logger.info("server=%s: excluded %d denylisted tool(s): %s", server_id, len(denied), ", ".join(denied))
 
         discovered_targets.append(
             ServerTarget(
@@ -618,6 +632,22 @@ def _build_tool_args(tool_name: str, schema: dict | None = None) -> dict:
     if isinstance(schema, dict) and ("required" in schema or "properties" in schema):
         return _args_from_schema(schema)
     return _legacy_name_args(tool_name)
+
+
+def _is_denied(tool_name: str) -> bool:
+    """Report whether a tool is excluded from the benchmark pool.
+
+    Matching is on the normalized full name or its trailing segment, so a
+    denylist entry of ``schema_error`` also excludes ``fast-time-schema-error``.
+
+    Args:
+        tool_name: Tool name as returned by ``tools/list``.
+
+    Returns:
+        True when the tool should be skipped.
+    """
+    normalized = tool_name.lower().replace("-", "_")
+    return any(normalized == denied or normalized.endswith(f"_{denied}") for denied in MCP_TOOL_DENYLIST)
 
 
 # =============================================================================
