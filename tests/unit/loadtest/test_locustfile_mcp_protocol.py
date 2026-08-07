@@ -224,3 +224,42 @@ def test_server_target_carries_tool_schemas():
         tool_schemas={"fast-time-echo": ECHO_SCHEMA},
     )
     assert target.tool_schemas["fast-time-echo"]["required"] == ["message"]
+
+
+def test_is_denied_matches_gateway_prefixed_names(monkeypatch):
+    """Denylist entries match the trailing segment of a gateway-prefixed name."""
+    monkeypatch.setattr(lf, "MCP_TOOL_DENYLIST", {"schema_error", "flaky"})
+    assert lf._is_denied("fast-time-schema-error") is True
+    assert lf._is_denied("fast-time-flaky") is True
+    assert lf._is_denied("flaky") is True
+
+
+def test_is_denied_does_not_match_unrelated_tools(monkeypatch):
+    """Tools that merely contain a denied substring are not excluded."""
+    monkeypatch.setattr(lf, "MCP_TOOL_DENYLIST", {"schema_error", "flaky"})
+    assert lf._is_denied("fast-time-echo") is False
+    assert lf._is_denied("fast-time-get-system-time") is False
+    assert lf._is_denied("fast-time-schema-success") is False
+    assert lf._is_denied("flakiness-report") is False
+
+
+def test_is_denied_empty_denylist_allows_everything(monkeypatch):
+    """An empty MCP_BENCHMARK_TOOL_DENYLIST disables filtering."""
+    monkeypatch.setattr(lf, "MCP_TOOL_DENYLIST", set())
+    assert lf._is_denied("fast-time-schema-error") is False
+
+
+def test_auto_detect_drops_denylisted_tools(fake_gateway, monkeypatch, caplog):
+    """Discovery removes denylisted tools from the pool and logs the exclusion once."""
+    # Standard
+    import logging
+
+    monkeypatch.setattr(lf, "MCP_TOOL_DENYLIST", {"schema_error", "flaky"})
+    with caplog.at_level(logging.INFO, logger=lf.logger.name):
+        lf._auto_detect("http://gateway.test")
+
+    target = lf._server_targets[0]
+    assert "fast-time-flaky" not in target.tool_names
+    assert "fast-time-schema-error" not in target.tool_names
+    assert "fast-time-verify-protocol" in target.tool_names
+    assert "excluded 2 denylisted" in caplog.text
