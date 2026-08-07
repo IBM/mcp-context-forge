@@ -4,12 +4,14 @@ import {
   buildCreateVirtualServerPayload,
   buildUpdateVirtualServerPayload,
   deleteVirtualServer,
+  setVirtualServerState,
   updateVirtualServerTags,
 } from "./virtualServers";
 
 vi.mock("./client", () => ({
   api: {
     delete: vi.fn(),
+    post: vi.fn(),
     put: vi.fn(),
   },
 }));
@@ -17,6 +19,7 @@ vi.mock("./client", () => ({
 describe("virtualServers API", () => {
   beforeEach(() => {
     vi.mocked(api.delete).mockReset();
+    vi.mocked(api.post).mockReset();
     vi.mocked(api.put).mockReset();
   });
 
@@ -238,6 +241,16 @@ describe("virtualServers API", () => {
     await deleteVirtualServer("gateway/1?mode=delete");
 
     expect(api.delete).toHaveBeenCalledWith("/servers/gateway%2F1%3Fmode%3Ddelete");
+  });
+
+  it("sets a virtual server state using an encoded id and explicit target state", async () => {
+    const updated = { id: "gateway/1", enabled: false };
+    vi.mocked(api.post).mockResolvedValue(updated);
+
+    const result = await setVirtualServerState("gateway/1", false);
+
+    expect(api.post).toHaveBeenCalledWith("/servers/gateway%2F1/state?activate=false");
+    expect(result).toBe(updated);
   });
 
   it("builds the update payload expected by PUT /servers/{id}", () => {

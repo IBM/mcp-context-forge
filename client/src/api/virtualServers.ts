@@ -67,6 +67,10 @@ export function deleteVirtualServer(id: string): Promise<void> {
   return api.delete<void>(`/servers/${encodeURIComponent(id)}`);
 }
 
+export function setVirtualServerState(id: string, activate: boolean): Promise<VirtualServer> {
+  return api.post<VirtualServer>(`/servers/${encodeURIComponent(id)}/state?activate=${activate}`);
+}
+
 export function buildUpdateVirtualServerPayload(
   details: CreateServerDetails,
 ): UpdateVirtualServerPayload {
