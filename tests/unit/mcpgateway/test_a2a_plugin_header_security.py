@@ -388,4 +388,3 @@ class TestPluginHeaderSecurityRefiltering:
         assert "x-custom-header" in prepared.headers
         assert "x-request-id" in prepared.headers
         assert len(prepared.headers) == 2
-
