@@ -1422,7 +1422,7 @@ COMPOSE_CMD_MONITOR := $(shell \
 
 NGINX_PORT_SPECS := nginx:NGINX_PORT:8080
 LANGFUSE_PORT_SPECS := langfuse-web:LANGFUSE_PORT:3100 langfuse-worker:LANGFUSE_WORKER_PORT:3130
-MONITORING_PORT_SPECS := postgres_exporter:POSTGRES_EXPORTER_PORT:9187 redis_exporter:REDIS_EXPORTER_PORT:9121 pgbouncer_exporter:PGBOUNCER_EXPORTER_PORT:9127 nginx_exporter:NGINX_EXPORTER_PORT:9113 cadvisor:CADVISOR_PORT:8085 prometheus:PROMETHEUS_PORT:9090 loki:LOKI_PORT:3101 tempo:TEMPO_PORT:3200 tempo:TEMPO_OTLP_GRPC_PORT:4317 tempo:TEMPO_OTLP_HTTP_PORT:4318 grafana:GRAFANA_PORT:3000 pgadmin:PGADMIN_PORT:5050 redis_commander:REDIS_COMMANDER_PORT:8081
+MONITORING_PORT_SPECS := portal:PORTAL_PORT:9200 tempo:TEMPO_OTLP_GRPC_PORT:4317 tempo:TEMPO_OTLP_HTTP_PORT:4318
 
 define CHECK_PORT_SPECS
 	@PORT_SPECS='$(1)'; \
@@ -1472,19 +1472,20 @@ monitoring-up:                             ## Start monitoring stack (Prometheus
 	$(COMPOSE_CMD_MONITOR) up -d --no-deps --force-recreate nginx
 	@echo "⏳ Waiting for Grafana to be ready..."
 	@for i in 1 2 3 4 5 6 7 8 9 10; do \
-		if curl -s -o /dev/null -w '' http://localhost:$${GRAFANA_PORT:-3000}/api/health 2>/dev/null; then break; fi; \
+		if curl -s -o /dev/null -w '' -H "Host: grafana.localhost" http://localhost:$${PORTAL_PORT:-9200}/api/health 2>/dev/null; then break; fi; \
 		sleep 2; \
 	done
-	@# Configure Grafana: star dashboard and set as home
-	@curl -s -X POST -u admin:changeme "http://localhost:$${GRAFANA_PORT:-3000}/api/user/stars/dashboard/uid/mcp-gateway-overview" >/dev/null 2>&1 || true
-	@curl -s -X PUT -u admin:changeme -H "Content-Type: application/json" -d '{"homeDashboardUID": "mcp-gateway-overview"}' "http://localhost:$${GRAFANA_PORT:-3000}/api/org/preferences" >/dev/null 2>&1 || true
-	@curl -s -X PUT -u admin:changeme -H "Content-Type: application/json" -d '{"homeDashboardUID": "mcp-gateway-overview"}' "http://localhost:$${GRAFANA_PORT:-3000}/api/user/preferences" >/dev/null 2>&1 || true
+	@# Configure Grafana: star dashboard and set as home (via portal vhost)
+	@curl -s -X POST -u admin:changeme -H "Host: grafana.localhost" "http://localhost:$${PORTAL_PORT:-9200}/api/user/stars/dashboard/uid/mcp-gateway-overview" >/dev/null 2>&1 || true
+	@curl -s -X PUT -u admin:changeme -H "Host: grafana.localhost" -H "Content-Type: application/json" -d '{"homeDashboardUID": "mcp-gateway-overview"}' "http://localhost:$${PORTAL_PORT:-9200}/api/org/preferences" >/dev/null 2>&1 || true
+	@curl -s -X PUT -u admin:changeme -H "Host: grafana.localhost" -H "Content-Type: application/json" -d '{"homeDashboardUID": "mcp-gateway-overview"}' "http://localhost:$${PORTAL_PORT:-9200}/api/user/preferences" >/dev/null 2>&1 || true
 	@echo ""
 	@echo "✅ Monitoring stack started!"
 	@echo ""
-	@echo "   🌐 Grafana:    http://localhost:$${GRAFANA_PORT:-3000} (admin/changeme)"
-	@echo "   🔥 Prometheus: http://localhost:$${PROMETHEUS_PORT:-9090}"
-	@echo "   🧵 Tempo:      http://localhost:$${TEMPO_PORT:-3200} (OTLP: $${TEMPO_OTLP_GRPC_PORT:-4317} gRPC, $${TEMPO_OTLP_HTTP_PORT:-4318} HTTP)"
+	@echo "   🌐 Portal:       http://localhost:$${PORTAL_PORT:-9200} (all services, auto-linked)"
+	@echo "   🌐 Grafana:    http://grafana.localhost:$${PORTAL_PORT:-9200} (admin/changeme)"
+	@echo "   🔥 Prometheus: http://prometheus.localhost:$${PORTAL_PORT:-9200}"
+	@echo "   🧵 Tempo:      http://tempo.localhost:$${PORTAL_PORT:-9200} (OTLP: $${TEMPO_OTLP_GRPC_PORT:-4317} gRPC, $${TEMPO_OTLP_HTTP_PORT:-4318} HTTP)"
 	@echo ""
 	@echo "   ★ ContextForge Overview (home dashboard):"
 	@echo "      • Gateway replicas, Nginx, PostgreSQL, Redis status"
@@ -1703,11 +1704,20 @@ langfuse-monitoring-down:                  ## Stop Langfuse + monitoring stack
 # =============================================================================
 # help: 🧪 TESTING STACK (Locust + A2A echo + fast_test_server)
 # help: testing-up            - Start testing stack (Locust + A2A echo + fast_test_server)
+# help:                         TESTING_MONITORING=1 also starts the monitoring stack (Prometheus/Grafana/Tempo)
+# help:                         TESTING_QUERY_LOG=1 enables gateway DB query logging to ./logs (N+1 detection)
 # help: testing-down          - Stop testing stack
 # help: testing-status        - Show status of testing services
 # help: testing-logs          - Show testing stack logs
 
 TESTING_LOCUST_WORKERS ?= 1
+# Set TESTING_MONITORING=1 to also activate the monitoring profile (Prometheus,
+# Grafana, Loki, Tempo) and enable OTEL trace export from the gateway to Tempo.
+TESTING_MONITORING ?= 0
+# Set TESTING_QUERY_LOG=1 to layer docker-compose.with-querylog.yml onto the stack:
+# enables per-request SQL query logging on the gateway (N+1 detection) and
+# bind-mounts ./logs so 'make query-log-tail/query-log-analyze' work as usual.
+TESTING_QUERY_LOG ?= 0
 # Used by docker-compose testing profile to run Locust as the host user so it
 # can write reports to ./reports on bind mounts without EACCES.
 HOST_UID ?= $(shell id -u 2>/dev/null || echo 1000)
@@ -1723,23 +1733,59 @@ testing-up:                                ## Start testing stack (Locust + A2A 
 		echo "   Run: lsof -i :8080   to find the process, then stop it."; \
 		exit 1; \
 	fi
+ifneq ($(filter 1 true yes on,$(TESTING_MONITORING)),)
+	$(call CHECK_PORT_SPECS,$(MONITORING_PORT_SPECS))
+endif
+ifneq ($(filter 1 true yes on,$(TESTING_QUERY_LOG)),)
+	@mkdir -p logs
+	@chmod 777 logs 2>/dev/null || true  # Gateway container runs as UID 10001 and must write here (Linux; harmless on Docker Desktop)
+endif
 	@mkdir -p reports
 	@echo "   Using image $(IMAGE_LOCAL)"
-	HOST_UID=$(HOST_UID) HOST_GID=$(HOST_GID) \
-	LOCUST_EXPECT_WORKERS=$(TESTING_LOCUST_WORKERS) \
-	$(COMPOSE_CMD_MONITOR) --profile testing --profile inspector --profile sso up -d --scale locust_worker=$(TESTING_LOCUST_WORKERS)
+	@# TESTING_MONITORING=1 activates the monitoring profile and wires the gateway's
+	@# OTEL exporter to Tempo directly. Otherwise, if the monitoring stack (Tempo) is
+	@# already running, pass the same OTEL env as monitoring-up so the shared gateway
+	@# container is not recreated with tracing off.
+	@PROFILES="--profile testing --profile inspector --profile sso"; \
+		OTEL_ENV=""; \
+		QUERYLOG_FILES=""; \
+		if [ "$(TESTING_MONITORING)" = "1" ]; then \
+			echo "   📊 TESTING_MONITORING=1 - activating monitoring profile (Prometheus, Grafana, Loki, Tempo)"; \
+			echo "   🔭 Enabling OTEL trace export to http://tempo:4317"; \
+			PROFILES="$$PROFILES --profile monitoring"; \
+			OTEL_ENV="LOG_FORMAT=json OTEL_ENABLE_OBSERVABILITY=true OTEL_TRACES_EXPORTER=otlp OTEL_EXPORTER_OTLP_ENDPOINT=http://tempo:4317"; \
+		elif $(COMPOSE_CMD_MONITOR) ps --services --status running 2>/dev/null | grep -qx "tempo"; then \
+			echo "   🔭 Tempo detected (monitoring stack running) - enabling OTEL trace export to http://tempo:4317"; \
+			OTEL_ENV="LOG_FORMAT=json OTEL_ENABLE_OBSERVABILITY=true OTEL_TRACES_EXPORTER=otlp OTEL_EXPORTER_OTLP_ENDPOINT=http://tempo:4317"; \
+		fi; \
+		if [ -n "$(filter 1 true yes on,$(TESTING_QUERY_LOG))" ]; then \
+			echo "   📊 TESTING_QUERY_LOG=1 - enabling gateway DB query logging (docker-compose.with-querylog.yml)"; \
+			QUERYLOG_FILES="-f docker-compose.yml -f docker-compose.with-querylog.yml"; \
+		fi; \
+		env HOST_UID=$(HOST_UID) HOST_GID=$(HOST_GID) \
+		LOCUST_EXPECT_WORKERS=$(TESTING_LOCUST_WORKERS) \
+		$$OTEL_ENV \
+		$(COMPOSE_CMD_MONITOR) $$QUERYLOG_FILES $$PROFILES up -d --scale locust_worker=$(TESTING_LOCUST_WORKERS)
 	@echo ""
 	@echo "✅ Testing stack started!"
 	@echo ""
-	@echo "Service              URL                           Purpose"
-	@echo "──────────────────────────────────────────────────────────────────────────"
-	@echo "Gateway (nginx)      http://localhost:8080         API proxy"
-	@echo "Locust Web UI        http://localhost:8089         Load testing (master+workers)"
-	@echo "Fast Test Server     http://localhost:8880         MCP benchmark target"
-	@echo "Fast Time 2026       http://localhost:8887         Strict MCP 2026-07-28 conformance probe"
-	@echo "A2A Echo Agent       http://localhost:9100         A2A protocol target"
-	@echo "MCP Inspector        http://localhost:6274         Interactive MCP client"
-	@echo "Keycloak             http://localhost:8180         SSO / OAuth 2.1 provider (realm: mcp-gateway)"
+	@echo "Service              URL                                       Purpose"
+	@echo "──────────────────────────────────────────────────────────────────────────────────"
+	@echo "Gateway (nginx)      http://localhost:8080                       API proxy"
+	@echo "Portal               http://localhost:$${PORTAL_PORT:-9200}      Single entry to all services below"
+	@echo "Locust Web UI        http://locust.localhost:$${PORTAL_PORT:-9200}  Load testing (master+workers)"
+	@echo "Fast Test Server     http://fasttest.localhost:$${PORTAL_PORT:-9200}  MCP benchmark target"
+	@echo "A2A Echo Agent       http://a2aecho.localhost:$${PORTAL_PORT:-9200}  A2A protocol target"
+	@echo "MCP Inspector        http://localhost:6274                       Interactive MCP client (direct; dual-port app)"
+	@echo "Keycloak             http://localhost:8180                       SSO / OAuth 2.1 provider (realm: mcp-gateway)"
+	@if [ "$(TESTING_MONITORING)" = "1" ]; then \
+		echo "Grafana              http://grafana.localhost:$${PORTAL_PORT:-9200}  Dashboards + Tempo trace viewer (TraceQL)"; \
+		echo "Tempo API            http://tempo.localhost:$${PORTAL_PORT:-9200}  OTLP trace backend (gRPC :4317, HTTP :4318)"; \
+		echo "Prometheus           http://prometheus.localhost:$${PORTAL_PORT:-9200}  Metrics"; \
+	fi
+	@if [ -n "$(filter 1 true yes on,$(TESTING_QUERY_LOG))" ]; then \
+		echo "   📊 Query logging: ./logs/db-queries.log (+ .jsonl) - tail: make query-log-tail, analyze: make query-log-analyze"; \
+	fi
 	@echo ""
 	@echo "   🔒 For DAST security scanning, also start ZAP: make testing-zap-up"
 	@echo ""
@@ -1748,7 +1794,7 @@ testing-up:                                ## Start testing stack (Locust + A2A 
 	@echo "      • A2A agent:    a2a-echo-agent"
 	@echo ""
 	@echo "   Next:"
-	@echo "      • Open Locust: http://localhost:8089 (default host is http://nginx:80)"
+	@echo "      • Open the Portal: http://localhost:$${PORTAL_PORT:-9200} (live links to everything)"
 
 .PHONY: testing-up-rust
 testing-up-rust:                           ## Start testing stack with RUST_MCP_MODE=edge
@@ -1808,8 +1854,8 @@ testing-zap-up:                            ## Start OWASP ZAP DAST daemon (requi
 	@echo ""
 	@echo "✅ ZAP DAST daemon started!"
 	@echo ""
-	@echo "   OWASP ZAP API:    http://localhost:8090"
-	@echo "   OWASP ZAP API UI: http://localhost:8090/UI"
+	@echo "   OWASP ZAP API:    http://zap.localhost:$${PORTAL_PORT:-9200} (via portal; start it with the testing/monitoring stack)"
+	@echo "   OWASP ZAP API UI: http://zap.localhost:$${PORTAL_PORT:-9200}/UI"
 	@echo ""
 	@echo "   Run security tests: make test-zap"
 
@@ -1969,12 +2015,12 @@ demo-a2a-apikey:                           ## Start only X-API-Key demo agent
 # help: test-secrets-detection-plugin - Validate the secrets detection plugin end to end
 # help: test-pii-filter-plugin        - Validate the PII filter plugin changes
 
-RESILIENCE_HOST ?= http://localhost:8889
+RESILIENCE_HOST ?= http://slowtime.localhost:9200
 RESILIENCE_LOCUSTFILE := tests/loadtest/locustfile_slow_time_server.py
 
 .PHONY: resilience-up
 resilience-up:                             ## Start slow-time-server for resilience testing
-	@echo "Starting resilience testing stack (slow-time-server on port 8889)..."
+	@echo "Starting resilience testing stack (slow-time-server, via portal at $(RESILIENCE_HOST))..."
 	$(COMPOSE_CMD_MONITOR) --profile resilience up -d
 	@echo ""
 	@echo "Resilience stack started!"
@@ -2592,7 +2638,7 @@ with open('$(LOADTEST_CSV_PREFIX)_stats.csv') as f: \
 # help: load-test-baseline-ui  - Baseline test with Locust Web UI
 # help: load-test-baseline-stress - Baseline stress test (2000 users, 3min)
 
-BASELINE_HOST ?= http://localhost:8888
+BASELINE_HOST ?= http://fasttime.localhost:9200
 
 load-test-baseline:                        ## Baseline test: Fast Time Server REST API (1000 users, 3min)
 	@echo "📊 Running BASELINE load test (Fast Time Server REST API)..."
@@ -5657,6 +5703,7 @@ compose-sso-monitoring: compose-validate
 	IMAGE_LOCAL=$(call get_image_name) \
 	$(COMPOSE_CMD) -f docker-compose.yml -f docker-compose.sso.yml --profile sso --profile monitoring up -d
 	@echo "✅ SSO + monitoring stack started."
+	@echo "   🌐 Portal:  http://localhost:$${PORTAL_PORT:-9200} (Grafana: http://grafana.localhost:$${PORTAL_PORT:-9200})"
 
 compose-sso-testing: compose-validate
 	@if [ ! -f "docker-compose.sso.yml" ]; then \
@@ -5671,6 +5718,7 @@ compose-sso-testing: compose-validate
 	IMAGE_LOCAL=$(call get_image_name) \
 	$(COMPOSE_CMD) -f docker-compose.yml -f docker-compose.sso.yml --profile sso --profile testing --profile inspector up -d --scale locust_worker=$(TESTING_LOCUST_WORKERS)
 	@echo "✅ SSO + testing stack started."
+	@echo "   🌐 Portal:  http://localhost:$${PORTAL_PORT:-9200} (Locust: http://locust.localhost:$${PORTAL_PORT:-9200})"
 
 compose-sso-down: compose-validate
 	@if [ ! -f "docker-compose.sso.yml" ]; then \
@@ -5758,6 +5806,7 @@ compose-logs:
 compose-ps:
 	$(COMPOSE) ps
 
+
 .PHONY: compose-shell
 compose-shell:
 	$(COMPOSE) exec gateway /bin/sh
@@ -5787,17 +5836,18 @@ monitoring-lite-up: ## 📊 Start lite monitoring (essential only: Prometheus, G
 	$(COMPOSE_CMD_MONITOR) -f docker-compose.yml -f docker-compose.override.lite.yml --profile monitoring-lite up -d
 	@echo "⏳ Waiting for Grafana to be ready..."
 	@for i in 1 2 3 4 5 6 7 8 9 10; do \
-		if curl -s -o /dev/null -w '' http://localhost:3000/api/health 2>/dev/null; then echo "✅ Grafana ready"; break; fi; \
+		if curl -s -o /dev/null -w '' -H "Host: grafana.localhost" http://localhost:$${PORTAL_PORT:-9200}/api/health 2>/dev/null; then echo "✅ Grafana ready"; break; fi; \
 		echo "  Attempt $$i: Grafana not ready yet..."; \
 		sleep 2; \
 	done
-	@curl -s -X POST -u admin:changeme 'http://localhost:3000/api/user/stars/dashboard/uid/mcp-gateway-overview' >/dev/null 2>&1 || true
-	@curl -s -X PUT -u admin:changeme -H "Content-Type: application/json" -d '{"homeDashboardUID": "mcp-gateway-overview"}' 'http://localhost:3000/api/org/preferences' >/dev/null 2>&1 || true
-	@curl -s -X PUT -u admin:changeme -H "Content-Type: application/json" -d '{"homeDashboardUID": "mcp-gateway-overview"}' 'http://localhost:3000/api/user/preferences' >/dev/null 2>&1 || true
+	@curl -s -X POST -u admin:changeme -H "Host: grafana.localhost" 'http://localhost:$${PORTAL_PORT:-9200}/api/user/stars/dashboard/uid/mcp-gateway-overview' >/dev/null 2>&1 || true
+	@curl -s -X PUT -u admin:changeme -H "Host: grafana.localhost" -H "Content-Type: application/json" -d '{"homeDashboardUID": "mcp-gateway-overview"}' 'http://localhost:$${PORTAL_PORT:-9200}/api/org/preferences' >/dev/null 2>&1 || true
+	@curl -s -X PUT -u admin:changeme -H "Host: grafana.localhost" -H "Content-Type: application/json" -d '{"homeDashboardUID": "mcp-gateway-overview"}' 'http://localhost:$${PORTAL_PORT:-9200}/api/user/preferences' >/dev/null 2>&1 || true
 	@echo ""
 	@echo "✅ Lite monitoring stack started!"
-	@echo "📊 Grafana:    http://localhost:3000 (admin/changeme)"
-	@echo "📈 Prometheus: http://localhost:9090"
+	@echo "🌐 Portal:     http://localhost:$${PORTAL_PORT:-9200}"
+	@echo "📊 Grafana:    http://grafana.localhost:$${PORTAL_PORT:-9200} (admin/changeme)"
+	@echo "📈 Prometheus: http://prometheus.localhost:$${PORTAL_PORT:-9200}"
 
 .PHONY: monitoring-lite-down
 monitoring-lite-down: ## 📊 Stop lite monitoring stack
@@ -7154,7 +7204,7 @@ PLAYWRIGHT_SCREENSHOTS := $(PLAYWRIGHT_DIR)/screenshots
 PLAYWRIGHT_VIDEOS := $(PLAYWRIGHT_DIR)/videos
 PLAYWRIGHT_SLOWMO ?= 750
 TEST_BASE_URL ?= http://localhost:8080
-ZAP_BASE_URL   ?= http://localhost:8090
+ZAP_BASE_URL   ?= http://zap.localhost:9200
 ZAP_API_KEY    ?= changeme
 # URL ZAP uses internally to spider the app. nginx exposes port 80 on mcpnet
 # (host sees it as 8080 via port mapping), so ZAP inside Docker must use port 80.
