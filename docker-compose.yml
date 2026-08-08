@@ -531,7 +531,12 @@ services:
       - DB_POOL_SIZE=20                # Pool size per worker
       - DB_MAX_OVERFLOW=10             # Extra connections under load
       - DB_POOL_TIMEOUT=60             # Time to wait for connection before failing
-      - DB_POOL_RECYCLE=60             # Recycle before PgBouncer CLIENT_IDLE_TIMEOUT (half of 120s)
+      # pre_ping already replaces connections PgBouncer closed at CLIENT_IDLE_TIMEOUT,
+      # so a short recycle is redundant and causes connect churn: with 51 workers'
+      # pools, most connections idle >60s between uses and get recycled on EVERY
+      # checkout. -1 disables time-based recycling; stale connections are still
+      # detected and replaced transparently by the pre-ping.
+      - DB_POOL_RECYCLE=${DB_POOL_RECYCLE:--1}  # Disable; pre_ping covers pgbouncer idle closes
       # ═══════════════════════════════════════════════════════════════════════════
       # Database Startup Resilience (prevents crash-loop on DB outage)
       # ═══════════════════════════════════════════════════════════════════════════
@@ -1022,7 +1027,7 @@ services:
       - SERVER_IDLE_TIMEOUT=600        # Close unused server connections after 10 min
       # Timeout settings
       - QUERY_WAIT_TIMEOUT=60          # Max wait for available connection before failing request
-      - CLIENT_IDLE_TIMEOUT=120        # Close idle client connections (4x IDLE_TRANSACTION_TIMEOUT; DB_POOL_RECYCLE=60 is half this, ensuring proactive recycle before PgBouncer closes them)
+      - CLIENT_IDLE_TIMEOUT=${CLIENT_IDLE_TIMEOUT:-600}  # Close idle client connections after 10min (matches SERVER_IDLE_TIMEOUT; with DB_POOL_RECYCLE=-1 + pre_ping, idle-close at 120s caused connect churn in every trace)
       - SERVER_CONNECT_TIMEOUT=5       # Timeout for new connections to PostgreSQL
       # Transaction cleanup - critical for avoiding idle-in-transaction buildup
       # NOTE: In transaction pooling, session-level advisory locks (used by migrations)
