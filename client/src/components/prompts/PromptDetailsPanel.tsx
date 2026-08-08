@@ -1,8 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { Activity, Building2, MessageSquareCode, PanelRightClose } from "lucide-react";
+import { Activity, MessageSquareCode, PanelRightClose } from "lucide-react";
 import { useIntl } from "react-intl";
-import { VisibilityInfoPopover } from "@/components/common/VisibilityInfoPopover";
+import {
+  VisibilityInfoPopover,
+  getVisibilityIcon,
+} from "@/components/common/VisibilityInfoPopover";
 import type { PromptRead } from "@/generated/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -94,6 +97,8 @@ export function PromptDetailsPanel({
     () => prompts.find((p) => p.id === selectedId) ?? prompts[0] ?? null,
     [prompts, selectedId],
   );
+
+  const VisibilityIcon = getVisibilityIcon(selected?.visibility);
 
   const headingId = useMemo(
     () => `prompt-details-heading-${selected?.id ?? "none"}`,
@@ -283,7 +288,7 @@ export function PromptDetailsPanel({
                       label={intl.formatMessage({ id: "prompts.details.label.visibility" })}
                     >
                       <span className="flex items-center gap-2">
-                        <Building2 className="size-3.5 text-muted-foreground" />
+                        <VisibilityIcon className="size-3.5 text-muted-foreground" />
                         {selected.visibility === "team"
                           ? intl.formatMessage({ id: "prompts.details.visibility.team" })
                           : selected.visibility === "public"
@@ -291,7 +296,7 @@ export function PromptDetailsPanel({
                             : selected.visibility === "private"
                               ? intl.formatMessage({ id: "prompts.details.visibility.private" })
                               : intl.formatMessage({ id: "prompts.details.notAvailable" })}
-                        <VisibilityInfoPopover side="left" />
+                        <VisibilityInfoPopover side="left" visibility={selected.visibility} />
                       </span>
                     </DetailRow>
                     <DetailRow

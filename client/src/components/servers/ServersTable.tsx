@@ -3,7 +3,7 @@ import {
   Copy,
   Building2,
   Lock,
-  Shield,
+  Users,
   TriangleAlert,
   Check,
   Activity,
@@ -58,7 +58,7 @@ function getVisibilityConfig(visibility: MCPServer["visibility"]) {
     case "private":
       return { labelId: "common.visibility.private", Icon: Lock };
     case "team":
-      return { labelId: "common.visibility.team", Icon: Shield };
+      return { labelId: "common.visibility.team", Icon: Users };
     default:
       return { labelId: "common.visibility.internal", Icon: Building2 };
   }

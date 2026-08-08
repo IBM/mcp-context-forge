@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { useIntl } from "react-intl";
-import { Activity, Building2, PanelRightClose, Wrench } from "lucide-react";
-import { VisibilityInfoPopover } from "@/components/common/VisibilityInfoPopover";
+import { Activity, PanelRightClose, Wrench } from "lucide-react";
+import {
+  VisibilityInfoPopover,
+  getVisibilityIcon,
+} from "@/components/common/VisibilityInfoPopover";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { CopyValue } from "@/components/ui/copy-value";
@@ -122,6 +125,7 @@ export function ToolDetailsPanel({
     },
     [intl],
   );
+  const VisibilityIcon = getVisibilityIcon(selectedTool?.visibility);
 
   const getIntegrationTypeLabel = useCallback(
     (type?: string) => {
@@ -231,9 +235,9 @@ export function ToolDetailsPanel({
                         label={intl.formatMessage({ id: "tools.details.label.visibility" })}
                       >
                         <span className="flex items-center gap-2">
-                          <Building2 className="size-3.5 text-muted-foreground" />
+                          <VisibilityIcon className="size-3.5 text-muted-foreground" />
                           {getVisibilityLabel(selectedTool.visibility)}
-                          <VisibilityInfoPopover side="left" />
+                          <VisibilityInfoPopover side="left" visibility={selectedTool.visibility} />
                         </span>
                       </DetailRow>
                       <DetailRow label={intl.formatMessage({ id: "tools.details.label.type" })}>

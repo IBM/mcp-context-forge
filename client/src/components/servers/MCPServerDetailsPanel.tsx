@@ -11,11 +11,13 @@ import {
   PanelRightClose,
   Search,
   Server,
-  Users,
   Wrench,
 } from "lucide-react";
 import { MCPIcon } from "@/components/icons/MCPIcon";
-import { VisibilityInfoPopover } from "@/components/common/VisibilityInfoPopover";
+import {
+  VisibilityInfoPopover,
+  getVisibilityIcon,
+} from "@/components/common/VisibilityInfoPopover";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { InlineTagAdd } from "@/components/ui/inline-tag-add";
@@ -273,6 +275,7 @@ export function MCPServerDetailsPanel({
     },
     [intl],
   );
+  const VisibilityIcon = getVisibilityIcon(server?.visibility);
 
   const getTransportLabel = useCallback((transport?: string) => {
     if (transport === "SSE") return "Server-Sent Events (SSE)";
@@ -557,9 +560,9 @@ export function MCPServerDetailsPanel({
                   </DetailRow>
                   <DetailRow label="Visibility">
                     <span className="flex items-center gap-2">
-                      <Users className="size-3.5 text-muted-foreground" />
+                      <VisibilityIcon className="size-3.5 text-muted-foreground" />
                       {getVisibilityLabel(server.visibility)}
-                      <VisibilityInfoPopover side="left" />
+                      <VisibilityInfoPopover side="left" visibility={server.visibility} />
                     </span>
                   </DetailRow>
                   <DetailRow label="Transport">

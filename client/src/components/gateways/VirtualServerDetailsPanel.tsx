@@ -11,10 +11,12 @@ import {
   PanelRightClose,
   Plus,
   Search,
-  Users,
   Wrench,
 } from "lucide-react";
-import { VisibilityInfoPopover } from "@/components/common/VisibilityInfoPopover";
+import {
+  VisibilityInfoPopover,
+  getVisibilityIcon,
+} from "@/components/common/VisibilityInfoPopover";
 import { MCPIcon } from "@/components/icons/MCPIcon";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -167,6 +169,7 @@ export function VirtualServerDetailsPanel({
     },
     [intl],
   );
+  const VisibilityIcon = getVisibilityIcon(server?.visibility);
 
   const handleTabKeyDown = useCallback(
     (e: KeyboardEvent<HTMLButtonElement>, currentValue: ComponentFilter) => {
@@ -666,9 +669,9 @@ export function VirtualServerDetailsPanel({
                   </DetailRow>
                   <DetailRow label={intl.formatMessage({ id: "gateways.details.visibility" })}>
                     <span className="flex items-center gap-2">
-                      <Users className="size-3.5 text-muted-foreground" />
+                      <VisibilityIcon className="size-3.5 text-muted-foreground" />
                       {getVisibilityLabel(server.visibility)}
-                      <VisibilityInfoPopover side="left" />
+                      <VisibilityInfoPopover side="left" visibility={server.visibility} />
                     </span>
                   </DetailRow>
                   <DetailRow label={intl.formatMessage({ id: "gateways.details.version" })}>

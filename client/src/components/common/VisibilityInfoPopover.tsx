@@ -1,12 +1,37 @@
-import { Info } from "lucide-react";
+import { Building2, Info, Lock, Users } from "lucide-react";
 import { useIntl } from "react-intl";
 
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 
+const INFO_IDS = {
+  private: "common.visibility.info.private",
+  team: "common.visibility.info.team",
+  public: "common.visibility.info.internal",
+} as const;
+
+const LABEL_IDS = {
+  private: "common.visibility.private",
+  team: "common.visibility.team",
+  public: "common.visibility.internal",
+} as const;
+
+const VISIBILITY_ICONS = { private: Lock, team: Users, public: Building2 };
+
+/** Per-level icon for visibility rows; unknown/absent values fall back to Building2. */
+export function getVisibilityIcon(visibility?: string | null) {
+  return VISIBILITY_ICONS[visibility as keyof typeof VISIBILITY_ICONS] ?? Building2;
+}
+
 interface VisibilityInfoPopoverProps {
   className?: string;
   side?: "top" | "right" | "bottom" | "left";
+  /**
+   * Selected level. When it is a known level the popover shows only that
+   * level's description; unknown or absent shows all three (forms, where the
+   * user is still choosing).
+   */
+  visibility?: string | null;
 }
 
 /**
@@ -17,8 +42,13 @@ interface VisibilityInfoPopoverProps {
  * A popover (not a tooltip) so the explanation is reachable on touch devices
  * and its content stays hoverable/dismissible per WCAG 1.4.13.
  */
-export function VisibilityInfoPopover({ className, side = "right" }: VisibilityInfoPopoverProps) {
+export function VisibilityInfoPopover({
+  className,
+  side = "right",
+  visibility,
+}: VisibilityInfoPopoverProps) {
   const intl = useIntl();
+  const selectedInfoId = INFO_IDS[visibility as keyof typeof INFO_IDS];
 
   return (
     <Popover>
@@ -33,9 +63,17 @@ export function VisibilityInfoPopover({ className, side = "right" }: VisibilityI
         <Info className="size-3.5" aria-hidden="true" />
       </PopoverTrigger>
       <PopoverContent side={side} className="w-auto max-w-xs space-y-1 p-3 text-sm">
-        <p>{intl.formatMessage({ id: "common.visibility.info.private" })}</p>
-        <p>{intl.formatMessage({ id: "common.visibility.info.team" })}</p>
-        <p>{intl.formatMessage({ id: "common.visibility.info.internal" })}</p>
+        {selectedInfoId ? (
+          <p>{intl.formatMessage({ id: selectedInfoId })}</p>
+        ) : (
+          (["private", "team", "public"] as const).map((level) => (
+            <p key={level}>
+              {intl.formatMessage({ id: LABEL_IDS[level] })}
+              {": "}
+              {intl.formatMessage({ id: INFO_IDS[level] })}
+            </p>
+          ))
+        )}
       </PopoverContent>
     </Popover>
   );

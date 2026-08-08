@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { useIntl } from "react-intl";
-import { Activity, Building2, FileText, PanelRightClose } from "lucide-react";
-import { VisibilityInfoPopover } from "@/components/common/VisibilityInfoPopover";
+import { Activity, FileText, PanelRightClose } from "lucide-react";
+import {
+  VisibilityInfoPopover,
+  getVisibilityIcon,
+} from "@/components/common/VisibilityInfoPopover";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { CopyValue } from "@/components/ui/copy-value";
@@ -116,6 +119,7 @@ export function ResourceDetailsPanel({
     },
     [intl],
   );
+  const VisibilityIcon = getVisibilityIcon(selectedResource?.visibility);
 
   return (
     <>
@@ -212,9 +216,12 @@ export function ResourceDetailsPanel({
                         label={intl.formatMessage({ id: "resources.details.label.visibility" })}
                       >
                         <span className="flex items-center gap-2">
-                          <Building2 className="size-3.5 text-muted-foreground" />
+                          <VisibilityIcon className="size-3.5 text-muted-foreground" />
                           {getVisibilityLabel(selectedResource.visibility)}
-                          <VisibilityInfoPopover side="left" />
+                          <VisibilityInfoPopover
+                            side="left"
+                            visibility={selectedResource.visibility}
+                          />
                         </span>
                       </DetailRow>
                       {selectedResource.mimeType && (
