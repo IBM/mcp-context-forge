@@ -7,7 +7,12 @@
 
 import { api } from "./client";
 import type { ServersResponse, MCPServer } from "../types/server";
-import type { GatewayTestRequest, GatewayTestResponse } from "@/generated/types";
+import type {
+  GatewayHandshakeRequest,
+  GatewayHandshakeResponse,
+  GatewayTestRequest,
+  GatewayTestResponse,
+} from "@/generated/types";
 
 const serverByIdRequestCache = new Map<string, Promise<MCPServer>>();
 
@@ -128,6 +133,19 @@ export const serversApi = {
     signal?: AbortSignal,
   ): Promise<GatewayTestResponse> => {
     return api.post("/v1/mcp-servers/test", request, { signal });
+  },
+
+  /**
+   * Test whether an MCP server URL speaks MCP via a protocol handshake.
+   *
+   * Tries the stateless server/discover method (MCP 2026-07-28+) first and
+   * falls back to a stateful initialize round-trip for earlier specs.
+   */
+  testHandshake: (
+    request: GatewayHandshakeRequest,
+    signal?: AbortSignal,
+  ): Promise<GatewayHandshakeResponse> => {
+    return api.post("/v1/mcp-servers/test-handshake", request, { signal });
   },
 
   /**
