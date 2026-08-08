@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { renderWithProviders as render, screen } from "@/test/test-utils";
 import userEvent from "@testing-library/user-event";
 import * as AuthContextModule from "@/auth/AuthContext";
 import { AdvancedSettings } from "./AdvancedSettings";
@@ -82,6 +82,12 @@ describe("AdvancedSettings", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockUseAuthContext.mockReturnValue(makeAuthContext());
+  });
+
+  it("renders the visibility info popover trigger", () => {
+    render(<AdvancedSettings {...makeProps()} />);
+
+    expect(screen.getByRole("button", { name: "About visibility levels" })).toBeInTheDocument();
   });
 
   describe("team visibility — teamId sync (issue #5077)", () => {

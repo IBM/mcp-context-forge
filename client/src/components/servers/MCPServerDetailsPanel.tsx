@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import type { ReactNode } from "react";
+import { useIntl } from "react-intl";
 import {
   Activity,
   Box,
@@ -10,10 +11,13 @@ import {
   PanelRightClose,
   Search,
   Server,
-  Users,
   Wrench,
 } from "lucide-react";
 import { MCPIcon } from "@/components/icons/MCPIcon";
+import {
+  VisibilityInfoPopover,
+  getVisibilityIcon,
+} from "@/components/common/VisibilityInfoPopover";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { InlineTagAdd } from "@/components/ui/inline-tag-add";
@@ -260,12 +264,18 @@ export function MCPServerDetailsPanel({
     return filtered;
   }, [toolsData, resourcesData, promptsData, activeTab, searchQuery]);
 
-  const getVisibilityLabel = useCallback((value?: string) => {
-    if (value === "team") return "Team";
-    if (value === "public") return "Public";
-    if (value === "private") return "Private";
-    return "Not available";
-  }, []);
+  const intl = useIntl();
+
+  const getVisibilityLabel = useCallback(
+    (value?: string) => {
+      if (value === "team") return intl.formatMessage({ id: "common.visibility.team" });
+      if (value === "public") return intl.formatMessage({ id: "common.visibility.internal" });
+      if (value === "private") return intl.formatMessage({ id: "common.visibility.private" });
+      return "Not available";
+    },
+    [intl],
+  );
+  const VisibilityIcon = getVisibilityIcon(server?.visibility);
 
   const getTransportLabel = useCallback((transport?: string) => {
     if (transport === "SSE") return "Server-Sent Events (SSE)";
@@ -550,8 +560,9 @@ export function MCPServerDetailsPanel({
                   </DetailRow>
                   <DetailRow label="Visibility">
                     <span className="flex items-center gap-2">
-                      <Users className="size-3.5 text-muted-foreground" />
+                      <VisibilityIcon className="size-3.5 text-muted-foreground" />
                       {getVisibilityLabel(server.visibility)}
+                      <VisibilityInfoPopover side="left" visibility={server.visibility} />
                     </span>
                   </DetailRow>
                   <DetailRow label="Transport">

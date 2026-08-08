@@ -255,7 +255,7 @@ describe("VirtualServerDetailsPanel render variants", () => {
     );
   });
 
-  it("shows the public visibility label", async () => {
+  it("shows the internal visibility label", async () => {
     render(
       <VirtualServerDetailsPanel
         server={makeServer({ visibility: "public" })}
@@ -265,7 +265,28 @@ describe("VirtualServerDetailsPanel render variants", () => {
         onAddSources={vi.fn()}
       />,
     );
-    expect(await screen.findByText("Public")).toBeInTheDocument();
+    expect(await screen.findByText("Internal")).toBeInTheDocument();
+  });
+
+  it("renders the visibility info popover trigger showing only the selected level", async () => {
+    const user = userEvent.setup();
+    render(
+      <VirtualServerDetailsPanel
+        server={makeServer({ visibility: "public" })}
+        error={null}
+        open
+        onClose={vi.fn()}
+        onAddSources={vi.fn()}
+      />,
+    );
+    await user.click(await screen.findByRole("button", { name: "About visibility levels" }));
+
+    expect(
+      await screen.findByText(
+        "Visible to everyone signed into this platform. Not on the public internet.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Only you can see this/)).not.toBeInTheDocument();
   });
 
   it("shows the private visibility label", async () => {

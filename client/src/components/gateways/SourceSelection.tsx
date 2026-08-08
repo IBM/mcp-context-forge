@@ -4,15 +4,15 @@ import {
   Activity,
   ArrowLeft,
   Box,
+  Building2,
   ChevronDown,
   ChevronRight,
   CircleSlash,
-  Globe,
   Lock,
   MessageSquareCode,
   Plus,
-  Shield,
   TriangleAlert,
+  Users,
   Wrench,
 } from "lucide-react";
 import { MainNavIcon } from "@/components/icons/MainNavIcon";
@@ -99,9 +99,9 @@ function getVisibilityConfig(visibility: ListedMCPServer["visibility"]) {
     case "private":
       return { Icon: Lock, labelId: "gateways.createServer.visibility.private" };
     case "team":
-      return { Icon: Shield, labelId: "gateways.createServer.visibility.team" };
+      return { Icon: Users, labelId: "gateways.createServer.visibility.team" };
     default:
-      return { Icon: Globe, labelId: "gateways.createServer.visibility.public" };
+      return { Icon: Building2, labelId: "gateways.createServer.visibility.public" };
   }
 }
 

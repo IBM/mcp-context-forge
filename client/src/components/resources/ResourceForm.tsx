@@ -23,6 +23,7 @@ import {
 import { useTagSuggestions } from "@/hooks/useTagSuggestions";
 import { MAX_TAGS } from "@/utils/tags";
 import type { Visibility } from "@/types/server";
+import { VisibilityInfoPopover } from "@/components/common/VisibilityInfoPopover";
 import type { ResourceRead } from "@/generated/types";
 
 interface ResourceFormProps extends Omit<ResourceFormOptions, "resourceId" | "initialValues"> {
@@ -252,13 +253,16 @@ export function ResourceForm({
 
             {/* Visibility — required select */}
             <div className="space-y-1">
-              <label
-                htmlFor="resource-visibility"
-                className="inline-flex items-center gap-0.5 text-sm font-medium text-neutral-900 dark:text-neutral-100"
-              >
-                {intl.formatMessage({ id: "resources.form.visibility.label" })}
-                <span className="text-red-500">*</span>
-              </label>
+              <div className="flex items-center gap-1.5">
+                <label
+                  htmlFor="resource-visibility"
+                  className="inline-flex items-center gap-0.5 text-sm font-medium text-neutral-900 dark:text-neutral-100"
+                >
+                  {intl.formatMessage({ id: "resources.form.visibility.label" })}
+                  <span className="text-red-500">*</span>
+                </label>
+                <VisibilityInfoPopover />
+              </div>
               <Select value={visibility} onValueChange={(v) => setVisibility(v as Visibility)}>
                 <SelectTrigger
                   id="resource-visibility"

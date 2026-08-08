@@ -937,7 +937,7 @@ test.describe("Virtual Servers page", () => {
     await expect(detailsPanel.getByText("Status")).toBeVisible();
     await expect(detailsPanel.getByText("Active")).toBeVisible();
     await expect(detailsPanel.getByText("Visibility")).toBeVisible();
-    await expect(detailsPanel.getByText("Public")).toBeVisible();
+    await expect(detailsPanel.getByText("Internal")).toBeVisible();
     await expect(detailsPanel.getByText("development")).toBeVisible();
     await expect(detailsPanel.getByText("Get Repo Issues")).toBeVisible();
     await expect(detailsPanel.getByText("GITHUB_GET_REPO_ISSUES")).toBeVisible();
@@ -1309,7 +1309,7 @@ test.describe("Virtual Servers page", () => {
     await page.goto("/app/gateways/create-server");
     await page.waitForLoadState("networkidle");
 
-    await expect(page.getByRole("radio", { name: "Public" })).toBeChecked();
+    await expect(page.getByRole("radio", { name: "Internal" })).toBeChecked();
     await page.getByLabel("Name").fill("MCP backed server");
     await page.getByRole("button", { name: "Continue" }).click();
     await page
