@@ -202,6 +202,7 @@ from mcpgateway.utils.orjson_response import ORJSONResponse
 from mcpgateway.utils.pagination import paginate_query
 from mcpgateway.utils.passthrough_headers import PassthroughHeadersError
 from mcpgateway.utils.paths import resolve_root_path as _resolve_root_path
+from mcpgateway.utils.redis_client import is_redis_available
 from mcpgateway.utils.security_cookies import clear_auth_cookie, CookieTooLargeError, set_auth_cookie
 from mcpgateway.utils.services_auth import encode_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
@@ -2326,9 +2327,6 @@ async def get_overview_partial(
         redis_reachable = False
         if redis_available and cache_type.lower() == "redis" and settings.redis_url:
             try:
-                # First-Party
-                from mcpgateway.utils.redis_client import is_redis_available  # pylint: disable=import-outside-toplevel
-
                 redis_reachable = await is_redis_available()
             except Exception:
                 redis_reachable = False
@@ -18295,7 +18293,7 @@ async def admin_generate_support_bundle(
 async def get_maintenance_partial(
     request: Request,
     _user=Depends(get_current_user_with_permissions),
-    _db: Session = Depends(get_db),
+    db: Session = Depends(get_db),
 ):
     """Render the maintenance dashboard partial (platform admin only).
 
@@ -18309,7 +18307,7 @@ async def get_maintenance_partial(
     Args:
         request: FastAPI request object
         _user: Authenticated user with admin permissions
-        _db: Database session for permission checks.
+        db: Database session for permission checks and the health probe.
 
     Returns:
         HTMLResponse: Rendered maintenance dashboard template
@@ -18319,13 +18317,34 @@ async def get_maintenance_partial(
     """
     root_path = _resolve_root_path(request)
 
+    try:
+        db.execute(text("SELECT 1"))
+        database_healthy = True
+    except Exception:  # nosec B110 - a failed probe is the answer, not an error
+        database_healthy = False
+
+    # Only redis exposes a remote liveness check; the other backends are either
+    # in-process or the database we already probed, so they get a plain label.
+    cache_backend = getattr(settings, "cache_type", "database")
+    cache_healthy = None
+    if cache_backend == "redis" and getattr(settings, "redis_url", None):
+        try:
+            cache_healthy = await is_redis_available()
+        except Exception:  # nosec B110 - a failed probe is the answer, not an error
+            cache_healthy = False
+
     # Build payload with settings for the template
     payload = {
         "settings": {
             "metrics_cleanup_enabled": getattr(settings, "metrics_cleanup_enabled", False),
             "metrics_rollup_enabled": getattr(settings, "metrics_rollup_enabled", False),
             "metrics_retention_days": getattr(settings, "metrics_retention_days", 30),
-        }
+        },
+        "health": {
+            "database_healthy": database_healthy,
+            "cache_backend": cache_backend,
+            "cache_healthy": cache_healthy,
+        },
     }
 
     return request.app.state.templates.TemplateResponse(
