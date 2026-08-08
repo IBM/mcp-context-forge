@@ -1,7 +1,7 @@
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Check, Copy } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -43,6 +43,7 @@ interface OAuth2AuthProps {
 export function OAuth2Auth({
   grantType,
   issuerUrl,
+  redirectUri,
   clientId,
   clientSecret,
   tokenUrl,
@@ -54,6 +55,7 @@ export function OAuth2Auth({
   password,
   onGrantTypeChange,
   onIssuerUrlChange,
+  onRedirectUriChange,
   onClientIdChange,
   onClientSecretChange,
   onTokenUrlChange,
@@ -66,12 +68,22 @@ export function OAuth2Auth({
   errors,
 }: OAuth2AuthProps) {
   const derivedRedirectUri = `${window.location.origin}/oauth/callback`;
+  const displayRedirectUri = redirectUri || derivedRedirectUri;
   const isLocalRedirect = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:|\/|$)/i.test(
-    window.location.origin,
+    displayRedirectUri,
   );
   const [copied, setCopied] = useState(false);
+
+  // The displayed URI is what the OAuth app is registered with, so it has to be the value we
+  // store and send to the IdP — a display-only derivation submits no redirect_uri at all.
+  useEffect(() => {
+    if (grantType === "authorization_code" && !redirectUri) {
+      onRedirectUriChange(derivedRedirectUri);
+    }
+  }, [grantType, redirectUri, derivedRedirectUri, onRedirectUriChange]);
+
   const handleCopyRedirect = () => {
-    void navigator.clipboard?.writeText(derivedRedirectUri);
+    void navigator.clipboard?.writeText(displayRedirectUri);
     setCopied(true);
     window.setTimeout(() => setCopied(false), 2000);
   };
@@ -147,7 +159,7 @@ export function OAuth2Auth({
               id="oauth-redirect-uri"
               type="text"
               readOnly
-              value={derivedRedirectUri}
+              value={displayRedirectUri}
               className="rounded-md border-neutral-300 px-4 text-sm text-neutral-900 shadow-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-0 dark:border-neutral-700 dark:text-neutral-100"
             />
             <Button
