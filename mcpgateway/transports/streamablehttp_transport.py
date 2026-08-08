@@ -73,7 +73,7 @@ from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import Server as DbServer
 from mcpgateway.db import SessionLocal
 from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG
-from mcpgateway.observability import create_span
+from mcpgateway.observability import create_span, inject_trace_context_headers
 from mcpgateway.services.completion_service import CompletionService
 from mcpgateway.services.http_client_service import get_http_client, get_http_limits
 from mcpgateway.services.logging_service import LoggingService
@@ -1895,15 +1895,17 @@ async def call_tool(
 
             # First-Party
             from mcpgateway.auth_context import encode_internal_mcp_auth_context  # pylint: disable=import-outside-toplevel
+            from mcpgateway.observability import create_span  # pylint: disable=import-outside-toplevel
 
             # Carry the verified edge identity so the owner dispatches to the trusted internal
             # endpoint without re-authenticating (OAuth / public-only survive the rpc forward).
             encoded_auth_context = encode_internal_mcp_auth_context(get_streamable_http_auth_context())
-            forwarded_response = await pool.forward_request_to_owner(
-                mcp_session_id,
-                {"method": "tools/call", "params": {"name": name, "arguments": arguments, "_meta": meta_data}, "headers": dict(request_headers) if request_headers else {}},
-                encoded_auth_context,
-            )
+            with create_span("mcp.affinity.forward_rpc", {"mcp.session_id": mcp_session_id[:8], "mcp.tool.name": name}):
+                forwarded_response = await pool.forward_request_to_owner(
+                    mcp_session_id,
+                    {"method": "tools/call", "params": {"name": name, "arguments": arguments, "_meta": meta_data}, "headers": dict(request_headers) if request_headers else {}},
+                    encoded_auth_context,
+                )
             if forwarded_response is not None:
                 # Request was handled by another worker - convert response to expected format
                 if "error" in forwarded_response:
@@ -4209,6 +4211,13 @@ class SessionManagerWrapper:
             >>> list(sig.parameters.keys())
             ['scope', 'receive', 'send']
         """
+        # Entry marker: zero-duration span so traces reveal how much time passed
+        # between the request root span and the transport handler actually
+        # beginning execution (event-loop / middleware scheduling delay).
+        from mcpgateway.observability import create_span  # pylint: disable=import-outside-toplevel
+
+        with create_span("mcp.transport.enter", {"http.route": scope.get("path", "")}):
+            pass
 
         path = scope["modified_path"]
         # Uses precompiled regex for server ID extraction
@@ -4509,9 +4518,15 @@ class SessionManagerWrapper:
             try:
                 # First-Party - lazy import to avoid circular dependencies
                 # First-Party
+                from mcpgateway.observability import create_span, set_span_attribute  # pylint: disable=import-outside-toplevel
                 from mcpgateway.services.session_affinity import get_session_affinity, WORKER_ID  # pylint: disable=import-outside-toplevel
 
                 pool = get_session_affinity()
+                with create_span("mcp.affinity.check", {"mcp.session_id": mcp_session_id[:8], "mcp.affinity.worker_id": WORKER_ID}) as affinity_span:
+                    owner = await pool.get_session_owner(mcp_session_id)
+                    if affinity_span is not None:
+                        set_span_attribute(affinity_span, "mcp.affinity.owner", owner or "none")
+                        set_span_attribute(affinity_span, "mcp.affinity.decision", "forward" if (owner and owner != WORKER_ID) else "local")
                 owner = await pool.get_session_owner(mcp_session_id)
                 logger.debug("[HTTP_AFFINITY_CHECK] Worker %s | Session %s... | Owner from Redis: %s", WORKER_ID, mcp_session_id[:8], owner)
 
@@ -4540,16 +4555,17 @@ class SessionManagerWrapper:
                     body = b"".join(body_parts)
 
                     # Forward to owner worker
-                    response = await pool.forward_to_owner(
-                        owner_worker_id=owner,
-                        mcp_session_id=mcp_session_id,
-                        method=method,
-                        path=path,
-                        headers=headers,
-                        body=body,
-                        query_string=query_string,
-                        auth_context=encoded_auth_context,
-                    )
+                    with create_span("mcp.affinity.forward_http", {"mcp.session_id": mcp_session_id[:8], "mcp.affinity.owner": owner}):
+                        response = await pool.forward_to_owner(
+                            owner_worker_id=owner,
+                            mcp_session_id=mcp_session_id,
+                            method=method,
+                            path=path,
+                            headers=inject_trace_context_headers(headers),
+                            body=body,
+                            query_string=query_string,
+                            auth_context=encoded_auth_context,
+                        )
 
                     if response:
                         # Send forwarded response back to client
