@@ -60,6 +60,16 @@ vi.mock("../../../mcpgateway/admin_ui/utils", () => ({
   }),
   decodeHtml: vi.fn((s) => s || ""),
   fetchWithTimeout: vi.fn(),
+  // Real cookie-reading implementation (mirrors utils.getCookie) so the CSRF
+  // spread in refreshGatewayTools is exercised against jsdom's document.cookie.
+  getCookie: vi.fn((name) => {
+    const value = `; ${document.cookie}`;
+    const parts = value.split(`; ${name}=`);
+    if (parts.length === 2) {
+      return parts.pop().split(";").shift();
+    }
+    return "";
+  }),
   getCurrentTeamId: vi.fn(() => null),
   handleFetchError: vi.fn((e) => e.message),
   isInactiveChecked: vi.fn(() => false),
@@ -2061,5 +2071,91 @@ describe("refreshToolsForSelectedGateways", () => {
     expect(showErrorMessage).toHaveBeenCalledWith(
       "1 gateway(s) failed. No changes detected"
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// refreshGatewayTools — CSRF header (#6071)
+//
+// Regression guard: the POST to /gateways/{id}/tools/refresh must attach
+// X-CSRF-Token from the mcpgateway_csrf_token cookie so it survives admin CSRF
+// validation, following the canonical utils.js:150-158 spread pattern. Without
+// the cookie the header must be absent (the spread yields nothing), never an
+// empty string.
+// ---------------------------------------------------------------------------
+describe("refreshGatewayTools CSRF header", () => {
+  const CSRF_COOKIE_VALUE = "gw-refresh-csrf-token";
+
+  afterEach(() => {
+    document.cookie =
+      "mcpgateway_csrf_token=; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+  });
+
+  test("POST /tools/refresh includes X-CSRF-Token from the cookie", async () => {
+    window.ROOT_PATH = "";
+    document.cookie = `mcpgateway_csrf_token=${CSRF_COOKIE_VALUE}`;
+    document.body.innerHTML = `
+      <button id="btn">Refresh</button>
+      <div id="gateways-table"></div>
+    `;
+
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          success: true,
+          toolsAdded: 0,
+          toolsUpdated: 0,
+          toolsRemoved: 0,
+        }),
+    });
+    window.htmx = { ajax: vi.fn() };
+
+    const button = document.getElementById("btn");
+    const { refreshGatewayTools } = await import(
+      "../../../mcpgateway/admin_ui/gateways.js"
+    );
+
+    await refreshGatewayTools("gw-csrf", "GW", button);
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      "/gateways/gw-csrf/tools/refresh",
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({
+          "X-CSRF-Token": CSRF_COOKIE_VALUE,
+        }),
+      })
+    );
+  });
+
+  test("omits X-CSRF-Token when no cookie is set", async () => {
+    window.ROOT_PATH = "";
+    document.body.innerHTML = `
+      <button id="btn">Refresh</button>
+      <div id="gateways-table"></div>
+    `;
+
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          success: true,
+          toolsAdded: 0,
+          toolsUpdated: 0,
+          toolsRemoved: 0,
+        }),
+    });
+    window.htmx = { ajax: vi.fn() };
+
+    const button = document.getElementById("btn");
+    const { refreshGatewayTools } = await import(
+      "../../../mcpgateway/admin_ui/gateways.js"
+    );
+
+    await refreshGatewayTools("gw-no-csrf", "GW", button);
+
+    const [, options] = global.fetch.mock.calls[0];
+    expect(options.headers).not.toHaveProperty("X-CSRF-Token");
   });
 });

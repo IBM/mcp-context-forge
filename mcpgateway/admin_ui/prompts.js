@@ -7,6 +7,7 @@ import { applyVisibilityRestrictions, isTeamScopedView } from "./teams.js";
 import {
   decodeHtml,
   fetchWithTimeout,
+  getCookie,
   getCurrentTeamId,
   handleFetchError,
   isInactiveChecked,
@@ -1185,6 +1186,9 @@ export const runPromptTest = async function () {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          ...(getCookie("mcpgateway_csrf_token")
+            ? { "X-CSRF-Token": getCookie("mcpgateway_csrf_token") }
+            : {}),
         },
         credentials: "include", // pragma: allowlist secret
         body: JSON.stringify(args),

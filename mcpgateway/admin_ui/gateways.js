@@ -20,6 +20,7 @@ import {
   buildTableUrl,
   decodeHtml,
   fetchWithTimeout,
+  getCookie,
   getCurrentTeamId,
   handleFetchError,
   isInactiveChecked,
@@ -1817,7 +1818,12 @@ export const refreshGatewayTools = async function (gatewayId, gatewayName, butto
       {
         method: "POST",
         credentials: "include", // pragma: allowlist secret
-        headers: { Accept: "application/json" },
+        headers: {
+          Accept: "application/json",
+          ...(getCookie("mcpgateway_csrf_token")
+            ? { "X-CSRF-Token": getCookie("mcpgateway_csrf_token") }
+            : {}),
+        },
       }
     );
 
