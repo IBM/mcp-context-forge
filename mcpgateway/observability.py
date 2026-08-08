@@ -886,6 +886,16 @@ class OpenTelemetryRequestMiddleware:
                 parent_context = otel_extract(carrier=carrier)
             except Exception as exc:
                 logger.debug("Failed to extract W3C trace context for %s %s: %s", method, path, exc)
+        # Determine whether the inbound request carried a valid W3C trace envelope.
+        # otel_extract returns a context even when no traceparent is present, so
+        # check for a valid REMOTE span context explicitly.
+        has_remote_parent = False
+        if parent_context is not None and OTEL_AVAILABLE and trace is not None:
+            try:
+                remote_span_context = trace.get_span_context(parent_context)
+                has_remote_parent = bool(remote_span_context and remote_span_context.is_valid and remote_span_context.is_remote)
+            except Exception:  # pylint: disable=broad-exception-caught
+                has_remote_parent = False
 
         server = scope.get("server") or ("", None)
         client = scope.get("client") or ("", None)
@@ -945,6 +955,24 @@ class OpenTelemetryRequestMiddleware:
             await send(message)
 
         with _TRACER.start_as_current_span(span_name, **start_span_kwargs) as span:
+            # No valid inbound envelope: publish this new root span's context into
+            # the ASGI headers so downstream raw-header copies (session-task handoff,
+            # affinity envelopes, trusted-internal dispatch) carry the trace and
+            # internal spans nest under it instead of rooting detached traces.
+            if not has_remote_parent and otel_inject is not None:
+                try:
+                    envelope_carrier: Dict[str, str] = {}
+                    otel_inject(carrier=envelope_carrier)
+                    envelope_traceparent = envelope_carrier.get("traceparent")
+                    if envelope_traceparent:
+                        new_scope_headers = list(scope.get("headers", []) or [])
+                        new_scope_headers.append((b"traceparent", envelope_traceparent.encode("latin-1")))
+                        envelope_tracestate = envelope_carrier.get("tracestate")
+                        if envelope_tracestate:
+                            new_scope_headers.append((b"tracestate", envelope_tracestate.encode("latin-1")))
+                        scope["headers"] = new_scope_headers
+                except Exception as exc:  # pylint: disable=broad-exception-caught
+                    logger.debug("Failed to publish trace envelope into ASGI scope: %s", exc)
             if span is not None:
                 for key, value in span_attributes.items():
                     if value is not None:
