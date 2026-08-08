@@ -243,7 +243,7 @@
       "gridPos": {"h": 4, "w": 3, "x": 3, "y": 19},
       "id": 31,
       "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
-      "targets": [{"expr": "pg_stat_database_blks_hit{datname=\"mcp\"} / (pg_stat_database_blks_hit{datname=\"mcp\"} + pg_stat_database_blks_read{datname=\"mcp\"})", "refId": "A"}],
+      "targets": [{"expr": "sum(rate(pg_stat_database_blks_hit{datname=\"mcp\"}[5m])) / (sum(rate(pg_stat_database_blks_hit{datname=\"mcp\"}[5m])) + sum(rate(pg_stat_database_blks_read{datname=\"mcp\"}[5m])))", "refId": "A"}],
       "title": "PG Cache Hit",
       "type": "stat"
     },
