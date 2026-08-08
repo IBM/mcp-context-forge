@@ -69,6 +69,50 @@ WORKER_ID = f"{socket.gethostname()}:{os.getpid()}"
 logger = logging.getLogger(__name__)
 
 
+def _attach_envelope_trace_context(headers: Optional[Dict[str, str]]) -> Any:
+    """Attach the W3C trace context carried by a forwarded envelope, if any.
+
+    Listener tasks have no request context of their own; attaching the
+    envelope's context lets owner-side spans nest in the caller's trace.
+
+    Args:
+        headers: Envelope headers, possibly containing traceparent/tracestate.
+
+    Returns:
+        The context token to pass to ``_detach_envelope_trace_context``, or None.
+    """
+    try:
+        # Third-Party
+        from opentelemetry import context as otel_context  # pylint: disable=import-outside-toplevel
+        from opentelemetry.propagate import extract as otel_extract  # pylint: disable=import-outside-toplevel
+    except ImportError:
+        return None
+    carrier = {str(k).lower(): str(v) for k, v in (headers or {}).items() if k and v}
+    if "traceparent" not in carrier:
+        return None
+    try:
+        return otel_context.attach(otel_extract(carrier=carrier))
+    except Exception:  # pylint: disable=broad-exception-caught
+        return None
+
+
+def _detach_envelope_trace_context(token: Any) -> None:
+    """Detach a token returned by ``_attach_envelope_trace_context``.
+
+    Args:
+        token: The context token, or None (no-op).
+    """
+    if token is None:
+        return
+    try:
+        # Third-Party
+        from opentelemetry import context as otel_context  # pylint: disable=import-outside-toplevel
+
+        otel_context.detach(token)
+    except Exception:  # pylint: disable=broad-exception-caught
+        pass
+
+
 class SessionAffinityNotInitializedError(RuntimeError):
     """Raised when ``get_session_affinity()`` is called before ``init_session_affinity()``.
 
@@ -1005,20 +1049,28 @@ class SessionAffinity:
 
             # Dispatch IN-PROCESS to the trusted internal endpoint so it resolves the bound
             # upstream session from this worker's registry instead of scattering over the
-            # shared socket. The verified edge identity rides in auth_context.
-            response = await post_rpc_in_process(
-                content=orjson.dumps(
-                    {
-                        "jsonrpc": "2.0",
-                        "method": method,
-                        "params": params,
-                        "id": req_id,
-                    }
-                ),
-                auth_context=auth_context,
-                headers=internal_headers,
-                timeout=settings.mcpgateway_pool_rpc_forward_timeout,
-            )
+            # shared socket. The verified edge identity rides in auth_context. Attach the
+            # envelope's trace context so the dispatch nests in the caller's trace.
+            from mcpgateway.observability import create_span  # pylint: disable=import-outside-toplevel
+
+            trace_token = _attach_envelope_trace_context(headers)
+            try:
+                with create_span("mcp.affinity.execute_forwarded", {"mcp.session_id": session_short, "mcp.affinity.forward_type": "rpc", "mcp.method": str(method)}):
+                    response = await post_rpc_in_process(
+                        content=orjson.dumps(
+                            {
+                                "jsonrpc": "2.0",
+                                "method": method,
+                                "params": params,
+                                "id": req_id,
+                            }
+                        ),
+                        auth_context=auth_context,
+                        headers=internal_headers,
+                        timeout=settings.mcpgateway_pool_rpc_forward_timeout,
+                    )
+            finally:
+                _detach_envelope_trace_context(trace_token)
 
             # Gate on HTTP status first: non-2xx responses are errors
             # even if the body parses as JSON.
@@ -1187,12 +1239,20 @@ class SessionAffinity:
             rpc_headers.update(safe_extract_and_filter_for_loopback(headers))
 
             # Dispatch IN-PROCESS to the trusted internal endpoint via the shared helper.
-            response = await post_rpc_in_process(
-                content=body,
-                headers=rpc_headers,
-                timeout=settings.mcpgateway_pool_rpc_forward_timeout,
-                auth_context=auth_context_header,
-            )
+            # Attach the envelope's trace context so the dispatch nests in the caller's trace.
+            from mcpgateway.observability import create_span  # pylint: disable=import-outside-toplevel
+
+            trace_token = _attach_envelope_trace_context(headers)
+            try:
+                with create_span("mcp.affinity.execute_forwarded", {"mcp.session_id": session_short, "mcp.affinity.forward_type": "http", "mcp.method": str(method)}):
+                    response = await post_rpc_in_process(
+                        content=body,
+                        headers=rpc_headers,
+                        timeout=settings.mcpgateway_pool_rpc_forward_timeout,
+                        auth_context=auth_context_header,
+                    )
+            finally:
+                _detach_envelope_trace_context(trace_token)
 
             logger.debug("[HTTP_AFFINITY] Worker %s | Session %s... | Executed in-process via /_internal/mcp/rpc: %s", WORKER_ID, session_short, response.status_code)
 

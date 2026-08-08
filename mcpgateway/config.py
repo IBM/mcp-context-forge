@@ -3028,8 +3028,9 @@ class Settings(BaseSettings):
     otel_bsp_max_queue_size: int = Field(default=2048, description="Max queue size for batch span processor")
     otel_bsp_max_export_batch_size: int = Field(default=512, description="Max export batch size")
     otel_bsp_schedule_delay: int = Field(default=5000, description="Schedule delay in milliseconds")
-    otel_httpx_instrumentation_enabled: bool = Field(default=True, description="Auto-instrument outbound httpx clients (HTTP client spans + W3C trace header injection)")
+    otel_httpx_instrumentation_enabled: bool = Field(default=False, description="Auto-instrument outbound httpx clients (HTTP client spans + W3C trace header injection)")
     otel_sqlalchemy_instrumentation_enabled: bool = Field(default=False, description="Emit OTel spans for SQLAlchemy queries (high span volume; enable for debugging)")
+    otel_redis_instrumentation_enabled: bool = Field(default=False, description="Auto-instrument redis/redis.asyncio clients (per-command CLIENT spans)")
 
     # ===================================
     # OpenTelemetry Baggage Configuration

@@ -292,6 +292,7 @@ observability = [
     "opentelemetry-sdk>=1.44.0",
     "opentelemetry-instrumentation-httpx>=0.65b0",
     "opentelemetry-instrumentation-sqlalchemy>=0.65b0",
+    "opentelemetry-instrumentation-redis>=0.65b0",
 ]
 
 # Async SQLite Driver (optional)

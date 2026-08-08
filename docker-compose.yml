@@ -699,6 +699,8 @@ services:
       - OTEL_HTTPX_INSTRUMENTATION_ENABLED=${OTEL_HTTPX_INSTRUMENTATION_ENABLED:-true}
       # SQL query spans (high volume under load; enabled here for the observability stack)
       - OTEL_SQLALCHEMY_INSTRUMENTATION_ENABLED=${OTEL_SQLALCHEMY_INSTRUMENTATION_ENABLED:-true}
+      # Redis command spans (owner lookups, envelope publishes; pub/sub listeners not instrumented)
+      - OTEL_REDIS_INSTRUMENTATION_ENABLED=${OTEL_REDIS_INSTRUMENTATION_ENABLED:-true}
 
     # TCP kernel tuning for high-concurrency MCP tool invocations
     # Each tool call creates a new connection → many TIME_WAIT sockets

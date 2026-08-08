@@ -257,7 +257,7 @@ if settings.otel_enable_observability and settings.otel_sqlalchemy_instrumentati
         SQLAlchemyInstrumentor().instrument(engine=engine)
         logger.info("SQLAlchemy OTel instrumentation enabled")
     except ImportError:
-        logger.warning("opentelemetry-instrumentation-sqlalchemy not installed; SQL OTel spans disabled")
+        logger.warning("SQLAlchemy instrumentation enabled but package unavailable (install opentelemetry-instrumentation-sqlalchemy); SQL OTel spans disabled")
 
 
 # ---------------------------------------------------------------------------
