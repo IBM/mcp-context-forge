@@ -320,6 +320,7 @@ export function TestConnectionPanel({ serverUrl }: TestConnectionPanelProps) {
           setResponse(null);
           setHandshakeResponse(null);
           setError("");
+          setErrors({});
         }}
       >
         <TabsList className="inline-flex h-9 w-fit items-center gap-1 rounded-lg bg-muted p-1">
@@ -631,12 +632,19 @@ export function TestConnectionPanel({ serverUrl }: TestConnectionPanelProps) {
 
                     {handshakeResponse?.success && handshakeCountChips.length > 0 && (
                       <div className="flex flex-wrap gap-1.5 pl-6">
-                        {handshakeCountChips.map((key) => (
-                          <Badge key={key} variant="secondary">
-                            {handshakeResponse.componentCounts?.[key]}
-                            {handshakeResponse.countsPartial ? "+" : ""} {key}
-                          </Badge>
-                        ))}
+                        {handshakeCountChips.map((key) => {
+                          const count = handshakeResponse.componentCounts?.[key];
+                          const label =
+                            count === 1 && !handshakeResponse.countsPartial
+                              ? key.slice(0, -1)
+                              : key;
+                          return (
+                            <Badge key={key} variant="secondary">
+                              {count}
+                              {handshakeResponse.countsPartial ? "+" : ""} {label}
+                            </Badge>
+                          );
+                        })}
                       </div>
                     )}
 

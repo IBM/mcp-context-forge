@@ -451,8 +451,49 @@ describe("TestConnectionPanel", () => {
       expect(screen.getByText("2026-07-28")).toBeInTheDocument();
       expect(screen.getByText("server/discover")).toBeInTheDocument();
       expect(screen.getByText("3 tools")).toBeInTheDocument();
-      expect(screen.getByText("1 resources")).toBeInTheDocument();
+      expect(screen.getByText("1 resource")).toBeInTheDocument();
       expect(requestBody).toEqual(expect.objectContaining({ baseUrl: "https://example.com" }));
+    });
+
+    it("keeps the plural label when counts are partial", async () => {
+      const user = userEvent.setup();
+      server.use(
+        http.post(HANDSHAKE_ENDPOINT, () =>
+          HttpResponse.json({
+            success: true,
+            latencyMs: 12,
+            negotiationPath: "server_discover",
+            protocolVersion: "2026-07-28",
+            serverName: "git-server",
+            serverVersion: "1.2.3",
+            capabilities: { tools: {} },
+            componentCounts: { tools: 1 },
+            countsPartial: true,
+            credentialSource: "none",
+          }),
+        ),
+      );
+      render(<TestConnectionPanel {...defaultProps} />);
+
+      await user.click(screen.getByRole("tab", { name: /mcp handshake/i }));
+      await user.click(screen.getByRole("button", { name: /^test connection$/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText("1+ tools")).toBeInTheDocument();
+      });
+    });
+
+    it("clears field errors when switching modes", async () => {
+      const user = userEvent.setup();
+      render(<TestConnectionPanel {...defaultProps} />);
+
+      await user.clear(screen.getByLabelText(/^url/i));
+      await user.click(screen.getByRole("button", { name: /^test connection$/i }));
+      await waitFor(() => expect(screen.getByText(/url is required/i)).toBeInTheDocument());
+
+      await user.click(screen.getByRole("tab", { name: /mcp handshake/i }));
+
+      expect(screen.queryByText(/url is required/i)).not.toBeInTheDocument();
     });
 
     it.each([

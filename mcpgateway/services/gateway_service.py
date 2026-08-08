@@ -7691,7 +7691,9 @@ async def test_gateway_handshake(
                 )
 
             try:
-                # ponytail: hostname connect after validation, same TOCTOU window as gateway health checks
+                # SECURITY: SDK transports connect by hostname and re-resolve at connect time,
+                # so we can't IP-pin here like the server/discover path. Matches the existing
+                # health-check probe; the allowlist validation above still gates reachable hosts.
                 if gateway and str(gateway.transport).lower() == "sse":
                     async with sse_client(url=hostname_url, headers=headers, httpx_client_factory=get_httpx_client_factory) as (read_stream, write_stream):
                         async with ClientSession(read_stream, write_stream) as session:
