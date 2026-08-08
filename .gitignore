@@ -348,6 +348,8 @@ docs/docs/test/license-check-report.json
 
 # Generated performance test files
 nginx.conf
+# ...but the portal's reverse-proxy config is source, not generated
+!infra/portal/nginx.conf
 docker-compose.perf.yml
 
 # Rust MCP runtime profiling artifacts
