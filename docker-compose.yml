@@ -1386,12 +1386,43 @@ services:
     environment:
       - PGADMIN_DEFAULT_EMAIL=admin@example.com
       - PGADMIN_DEFAULT_PASSWORD=changeme
+      # Pre-configured server connections (infra/pgadmin/servers.json) and no
+      # master-password prompt so the stored dev credentials are used transparently
+      - PGADMIN_SERVER_JSON_FILE=/pgadmin4/servers.json
+      - PGADMIN_MASTER_PASSWORD_REQUIRED=false
+      - PGADMIN_DEFAULT_EMAIL=admin@example.com
+      - PGADMIN_DEFAULT_PASSWORD=changeme
     volumes:
       - pgadmindata:/var/lib/pgadmin
+      - ./infra/pgadmin/servers.json:/pgadmin4/servers.json:ro
     networks: [mcpnet]
     depends_on:
       postgres:
         condition: service_healthy
+    profiles: ["monitoring"]
+
+  # ──────────────────────────────────────────────────────────────────────
+  # pgAdmin seed - one-shot: registers ContextForge server connections and
+  # stores the dev DB password (encrypted with the pgAdmin login password),
+  # so pgAdmin opens a working connection with zero manual setup.
+  # ──────────────────────────────────────────────────────────────────────
+  pgadmin_seed:
+    image: dpage/pgadmin4:9.11.0
+    user: "0"
+    networks: [mcpnet]
+    restart: "no"
+    environment:
+      - PGADMIN_DEFAULT_EMAIL=admin@example.com
+      - PGADMIN_DEFAULT_PASSWORD=changeme
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-mysecretpassword}
+    volumes:
+      - pgadmindata:/var/lib/pgadmin
+      - ./infra/pgadmin/servers.json:/pgadmin4/servers.json:ro
+      - ./infra/pgadmin/seed.sh:/seed.sh:ro
+    entrypoint: ["/bin/sh", "/seed.sh"]
+    depends_on:
+      pgadmin:
+        condition: service_started
     profiles: ["monitoring"]
 
   # ──────────────────────────────────────────────────────────────────────
