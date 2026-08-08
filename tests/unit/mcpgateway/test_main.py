@@ -6174,3 +6174,30 @@ class TestA2AInvokeBodyEndpoint:
         response = test_client.post("/a2a/agent-1/invoke", json={"parameters": {}, "interaction_type": "query"}, headers=auth_headers)
         assert response.status_code in [200, 404]
         assert mock_context.called
+
+
+class TestAdminLoggingServiceWiring:
+    """The admin module must share main's lifespan-initialized LoggingService."""
+
+    def test_admin_uses_main_logging_service(self):
+        """Only the instance lifespan initializes has log storage (#6068).
+
+        When admin observed a different instance, ``logging_service.get_storage()``
+        returned None forever: the Logs tab stayed empty and log export 503'd.
+
+        conftest imports main with the admin API disabled, so this asserts the
+        wiring in a subprocess that imports main the way production does.
+        """
+        # Standard
+        import subprocess  # pylint: disable=import-outside-toplevel
+        import sys  # pylint: disable=import-outside-toplevel
+
+        env = {**os.environ, "MCPGATEWAY_ADMIN_API_ENABLED": "true"}
+        result = subprocess.run(
+            [sys.executable, "-c", "import mcpgateway.admin as a, mcpgateway.main as m; print(a.logging_service is m.logging_service)"],
+            capture_output=True,
+            text=True,
+            check=True,
+            env=env,
+        )
+        assert result.stdout.strip().splitlines()[-1] == "True", result.stderr
