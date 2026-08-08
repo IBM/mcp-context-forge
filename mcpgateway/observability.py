@@ -152,6 +152,15 @@ try:
     HTTP_EXPORTER = getattr(_im("opentelemetry.exporter.otlp.proto.http.trace_exporter"), "OTLPSpanExporter")
 except Exception:
     HTTP_EXPORTER = None
+try:
+    HTTPX_INSTRUMENTOR = getattr(_im("opentelemetry.instrumentation.httpx"), "HTTPXClientInstrumentor")
+except Exception:
+    HTTPX_INSTRUMENTOR = None
+try:
+    HTTPX2_INSTRUMENTOR = getattr(_im("opentelemetry.instrumentation.httpx"), "HTTPX2ClientInstrumentor")
+except Exception:
+    HTTPX2_INSTRUMENTOR = None
+
 
 logger = logging.getLogger(__name__)
 
@@ -1187,6 +1196,20 @@ def init_telemetry() -> Optional[Any]:
             logger.info(f"   Endpoint: {cfg.otel_exporter_jaeger_endpoint or 'default'}")
         elif exporter_type == "zipkin":
             logger.info(f"   Endpoint: {cfg.otel_exporter_zipkin_endpoint or 'default'}")
+
+        # Auto-instrument outbound httpx/httpx2 clients so downstream hops (federation,
+        # upstream MCP calls, internal loopbacks) appear as nested client spans
+        # with W3C trace context injected automatically.
+        if cfg.otel_httpx_instrumentation_enabled:
+            for _instrumentor_cls, _label in ((HTTPX_INSTRUMENTOR, "httpx"), (HTTPX2_INSTRUMENTOR, "httpx2")):
+                if _instrumentor_cls is not None:
+                    try:
+                        _instrumentor_cls().instrument()
+                        logger.info("   %s client auto-instrumentation enabled", _label)
+                    except Exception as exc:  # pylint: disable=broad-exception-caught
+                        logger.warning("Failed to instrument %s clients: %s", _label, exc)
+                else:
+                    logger.info("   %s instrumentation unavailable (install opentelemetry-instrumentation-httpx)", _label)
 
         return _TRACER
 
