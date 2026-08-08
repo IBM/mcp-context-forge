@@ -2003,8 +2003,14 @@ async def test_start_rpc_listener_dispatches_rpc_forward_and_http_forward_messag
         patch("mcpgateway.utils.redis_client.get_redis_client", AsyncMock(return_value=redis)),
     ):
         mock_settings.mcpgateway_session_affinity_enabled = True
+        mock_settings.mcpgateway_affinity_forward_concurrency = 8
+        mock_settings.mcpgateway_affinity_session_lock_timeout = 5
         # Bound the test in case of any hang.
         await asyncio.wait_for(affinity.start_rpc_listener(), timeout=3.0)
+
+    # Dispatches run as concurrent tasks now — let them finish before asserting.
+    if affinity._forward_tasks:  # pylint: disable=protected-access
+        await asyncio.wait_for(asyncio.gather(*affinity._forward_tasks, return_exceptions=True), timeout=3.0)
 
     assert set(dispatched) == {"rpc", "http"}
     # The RPC response was published back on the caller's channel.
@@ -2056,6 +2062,7 @@ async def test_start_rpc_listener_tolerates_unknown_forward_type(caplog):
         caplog.at_level("WARNING", logger="mcpgateway.services.session_affinity"),
     ):
         mock_settings.mcpgateway_session_affinity_enabled = True
+        mock_settings.mcpgateway_affinity_forward_concurrency = 8
         await asyncio.wait_for(affinity.start_rpc_listener(), timeout=3.0)
 
     assert any("Unknown forward type" in rec.getMessage() for rec in caplog.records if rec.levelname == "WARNING")
@@ -2099,9 +2106,115 @@ async def test_start_rpc_listener_swallows_exception_in_message_loop(caplog):
         caplog.at_level("WARNING", logger="mcpgateway.services.session_affinity"),
     ):
         mock_settings.mcpgateway_session_affinity_enabled = True
+        mock_settings.mcpgateway_affinity_forward_concurrency = 8
         await asyncio.wait_for(affinity.start_rpc_listener(), timeout=3.0)
 
     assert any("Error processing forwarded request" in rec.getMessage() for rec in caplog.records if rec.levelname == "WARNING")
+
+
+# ---------------------------------------------------------------------------
+# Per-session forward ordering (listener dispatch locks)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_dispatch_forwarded_serializes_same_session_and_parallelizes_sessions():
+    """Same-session forwards never overlap; different sessions may run concurrently."""
+    # Third-Party
+    import asyncio
+
+    # First-Party
+    from mcpgateway.services.session_affinity import SessionAffinity
+
+    affinity = SessionAffinity()
+    affinity._forward_semaphore = asyncio.Semaphore(8)  # pylint: disable=protected-access
+
+    current: dict[str, int] = {}
+    max_overlap: dict[str, int] = {}
+    completed: list[str] = []
+
+    class _RedisSink:
+        async def publish(self, *_a, **_k):
+            return 1
+
+    async def _fake_http(request, _redis):
+        sid = request.get("mcp_session_id")
+        current[sid] = current.get(sid, 0) + 1
+        max_overlap[sid] = max(max_overlap.get(sid, 0), current[sid])
+        await asyncio.sleep(0.02)
+        current[sid] -= 1
+        completed.append(sid)
+
+    affinity._execute_forwarded_http_request = _fake_http  # type: ignore[method-assign]
+
+    sessions = ("sess-a", "sess-b", "sess-a", "sess-a", "sess-b")
+    tasks = []
+    for i, sid in enumerate(sessions):
+        lock = affinity._claim_session_lock(sid)  # pylint: disable=protected-access
+        task = asyncio.create_task(
+            affinity._dispatch_forwarded(_RedisSink(), "http_forward", {"mcp_session_id": sid}, f"resp-{i}", lock)  # pylint: disable=protected-access
+        )
+        tasks.append(task)
+    await asyncio.gather(*tasks)
+
+    assert len(completed) == 5
+    assert max_overlap["sess-a"] == 1, "same-session forwards overlapped"
+    assert max_overlap["sess-b"] == 1, "same-session forwards overlapped"
+
+
+@pytest.mark.asyncio
+async def test_dispatch_forwarded_session_lock_timeout_executes_without_ordering(caplog):
+    """A stuck predecessor must not deadlock the session: after the lock timeout the forward runs unlocked."""
+    # Third-Party
+    import asyncio
+
+    # First-Party
+    from mcpgateway.services.session_affinity import SessionAffinity
+
+    affinity = SessionAffinity()
+    affinity._forward_semaphore = asyncio.Semaphore(8)  # pylint: disable=protected-access
+
+    ran: list[str] = []
+
+    class _RedisSink:
+        async def publish(self, *_a, **_k):
+            return 1
+
+    async def _fake_http(request, _redis):
+        ran.append(request.get("mcp_session_id"))
+
+    affinity._execute_forwarded_http_request = _fake_http  # type: ignore[method-assign]
+
+    lock = affinity._claim_session_lock("sess-stuck")  # pylint: disable=protected-access
+    await lock.acquire()  # simulate a stuck predecessor holding the session lock
+
+    with (
+        patch("mcpgateway.services.session_affinity.settings") as mock_settings,
+        caplog.at_level("WARNING", logger="mcpgateway.services.session_affinity"),
+    ):
+        mock_settings.mcpgateway_affinity_session_lock_timeout = 0.1
+        await affinity._dispatch_forwarded(_RedisSink(), "http_forward", {"mcp_session_id": "sess-stuck"}, "resp-x", lock)  # pylint: disable=protected-access
+
+    lock.release()
+    assert ran == ["sess-stuck"]
+    assert any("executing without per-session ordering" in rec.getMessage() for rec in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_session_locks_garbage_collected_when_unreferenced():
+    """WeakValueDictionary evicts a session lock once no dispatch task references it."""
+    # Standard
+    import gc
+
+    # First-Party
+    from mcpgateway.services.session_affinity import SessionAffinity
+
+    affinity = SessionAffinity()
+    lock = affinity._claim_session_lock("sess-gc")  # pylint: disable=protected-access
+    assert "sess-gc" in affinity._session_locks  # pylint: disable=protected-access
+    del lock
+    gc.collect()
+    assert "sess-gc" not in affinity._session_locks  # pylint: disable=protected-access
 
 
 # ---------------------------------------------------------------------------
