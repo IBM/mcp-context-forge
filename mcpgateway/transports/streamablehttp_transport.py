@@ -4484,6 +4484,7 @@ class SessionManagerWrapper:
                     # re-authenticating, letting OAuth and public-only sessions survive.
                     # First-Party
                     from mcpgateway.auth_context import encode_internal_mcp_auth_context  # pylint: disable=import-outside-toplevel
+                    from mcpgateway.observability import inject_trace_context_headers  # pylint: disable=import-outside-toplevel
 
                     encoded_auth_context = encode_internal_mcp_auth_context(get_streamable_http_auth_context())
 
@@ -4505,7 +4506,7 @@ class SessionManagerWrapper:
                         mcp_session_id=mcp_session_id,
                         method=method,
                         path=path,
-                        headers=headers,
+                        headers=inject_trace_context_headers(headers),
                         body=body,
                         query_string=query_string,
                         auth_context=encoded_auth_context,
@@ -4596,21 +4597,17 @@ class SessionManagerWrapper:
                             logger.debug("[HTTP_AFFINITY_LOCAL] Injected server_id %s into /rpc params", server_id)
 
                         # Owner-direct path: dispatch to the trusted internal
-                        # /_internal/mcp/rpc endpoint carrying the edge-validated auth
-                        # context, so OAuth and public-only sessions are honored without
+                        # /_internal/mcp/rpc endpoint via the shared helper (carries trust
+                        # headers, edge auth context, and the active W3C trace context),
+                        # so OAuth and public-only sessions are honored without
                         # re-authenticating against public /rpc (JWTs/cookies only).
                         # First-Party
-                        from mcpgateway.auth_context import _expected_internal_mcp_runtime_auth_header, encode_internal_mcp_auth_context  # pylint: disable=import-outside-toplevel,protected-access
-                        from mcpgateway.main import app  # pylint: disable=import-outside-toplevel,cyclic-import
-                        from mcpgateway.utils.internal_http import internal_loopback_base_url  # pylint: disable=import-outside-toplevel
+                        from mcpgateway.auth_context import encode_internal_mcp_auth_context  # pylint: disable=import-outside-toplevel
                         from mcpgateway.utils.passthrough_headers import safe_extract_and_filter_for_loopback  # pylint: disable=import-outside-toplevel
 
                         rpc_headers = {
                             "content-type": "application/json",
                             "x-mcp-session-id": mcp_session_id,
-                            "x-contextforge-mcp-runtime": "affinity",
-                            "x-contextforge-mcp-runtime-auth": _expected_internal_mcp_runtime_auth_header(),
-                            "x-contextforge-auth-context": encode_internal_mcp_auth_context(get_streamable_http_auth_context()),
                         }
                         # Preserve the bearer under the configured auth header (AUTH_HEADER_NAME),
                         # not a hardcoded "authorization": the CSRF bearer short-circuit keys on
@@ -4626,14 +4623,12 @@ class SessionManagerWrapper:
                         # Dispatch in-process so the request runs on this worker, the
                         # session owner that holds the bound upstream session, instead of
                         # looping back over the shared socket to a random worker.
-                        transport = httpx.ASGITransport(app=app, client=("127.0.0.1", 0))
-                        async with httpx.AsyncClient(transport=transport, base_url=internal_loopback_base_url()) as client:
-                            response = await client.post(
-                                "/_internal/mcp/rpc",
-                                content=body,
-                                headers=rpc_headers,
-                                timeout=settings.mcpgateway_pool_rpc_forward_timeout,
-                            )
+                        response = await post_rpc_in_process(
+                            content=body,
+                            headers=rpc_headers,
+                            timeout=settings.mcpgateway_pool_rpc_forward_timeout,
+                            auth_context=encode_internal_mcp_auth_context(get_streamable_http_auth_context()),
+                        )
 
                         # Note: Content-Length is NOT manually set to allow compression
                         # middleware to set it correctly after compression (issue #5457)
@@ -4671,6 +4666,14 @@ class SessionManagerWrapper:
         # Enrich with session ID BEFORE SDK handling so tool invocations can access it
         # Set request_headers_var BEFORE server_id_var to ensure ContextVars are captured together
         enriched_headers = dict(headers)
+        # First-Party
+        from mcpgateway.observability import inject_trace_context_headers  # pylint: disable=import-outside-toplevel
+
+        # Carry the active W3C trace context across the SDK task boundary: the
+        # session task group was created at startup, so handler tasks never see
+        # this request's contextvars. Everything downstream (tool handler,
+        # affinity forward envelope, trusted-internal dispatch) reads these headers.
+        enriched_headers = inject_trace_context_headers(enriched_headers)
         request_headers_var.set(enriched_headers)
 
         server_id_var.set(validated)
