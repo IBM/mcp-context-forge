@@ -564,7 +564,7 @@ services:
       # ═══════════════════════════════════════════════════════════════════════════
       # Gunicorn Configuration
       # ═══════════════════════════════════════════════════════════════════════════
-      - GUNICORN_WORKERS=${GUNICORN_WORKERS:-24}                    # Worker processes (match CPU cores)
+      - GUNICORN_WORKERS=${GUNICORN_WORKERS:-17}                    # Worker processes (match CPU cores)
       - GUNICORN_TIMEOUT=${GUNICORN_TIMEOUT:-120}                   # Worker timeout in seconds
       - GUNICORN_GRACEFUL_TIMEOUT=${GUNICORN_GRACEFUL_TIMEOUT:-60}           # Grace period for worker shutdown
       - GUNICORN_KEEP_ALIVE=${GUNICORN_KEEP_ALIVE:-30}                 # Keep-alive timeout (matches SSE keepalive)

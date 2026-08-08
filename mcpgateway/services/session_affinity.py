@@ -36,6 +36,7 @@ import socket
 import time
 from typing import Any, Dict, Optional
 import uuid
+import weakref
 
 # Third-Party
 import httpx
@@ -179,6 +180,14 @@ class SessionAffinity:
         # Background tasks owned by this instance
         self._rpc_listener_task: Optional[asyncio.Task[None]] = None
         self._heartbeat_task: Optional[asyncio.Task[None]] = None
+        # Bounded-concurrent forwarded-request dispatch (listener spawns, never awaits inline)
+        self._forward_tasks: set[asyncio.Task[None]] = set()
+        self._forward_semaphore: Optional[asyncio.Semaphore] = None
+        # Per-session in-memory FIFO for forwarded executions: same-session forwards
+        # serialize on these locks; different sessions run concurrently. The
+        # WeakValueDictionary is the garbage collector: entries evaporate once the
+        # last dispatch task holding the lock object finishes (no manual refcounting).
+        self._session_locks: "weakref.WeakValueDictionary[str, asyncio.Lock]" = weakref.WeakValueDictionary()
 
         # Affinity metrics
         self._session_affinity_local_hits = 0
@@ -703,6 +712,9 @@ class SessionAffinity:
         "there is no worker-local affinity state to blow away on reload."
         """
         logger.info("Session-affinity drain requested; no worker-local state to clear")
+        # Cancel any in-flight forwarded-request dispatches spawned by the listener.
+        for task in self._forward_tasks:
+            task.cancel()
 
     async def register_session_owner(self, mcp_session_id: str) -> None:
         """Claim this worker as the owner of a downstream MCP session, or refresh the existing lease.
@@ -962,6 +974,10 @@ class SessionAffinity:
 
             rpc_channel = f"mcpgw:pool_rpc:{WORKER_ID}"
             http_channel = f"mcpgw:pool_http:{WORKER_ID}"
+            # Bounded concurrency for forwarded-request dispatch (created here,
+            # inside the running loop, rather than __init__).
+            self._forward_semaphore = asyncio.Semaphore(settings.mcpgateway_affinity_forward_concurrency)
+            http_channel = f"mcpgw:pool_http:{WORKER_ID}"
             async with redis.pubsub() as pubsub:
                 await pubsub.subscribe(rpc_channel, http_channel)
                 logger.info("RPC/HTTP listener started for worker %s on channels: %s, %s", WORKER_ID, rpc_channel, http_channel)
@@ -976,14 +992,16 @@ class SessionAffinity:
                                 response_channel = request.get("response_channel")
 
                                 if response_channel:
-                                    if forward_type == "rpc_forward":
-                                        # Execute forwarded RPC request for SSE transport
-                                        response = await self._execute_forwarded_request(request)
-                                        await redis.publish(response_channel, orjson.dumps(response))
-                                        logger.debug("Processed forwarded RPC request, response sent to %s", response_channel)
-                                    elif forward_type == "http_forward":
-                                        # Execute forwarded HTTP request for Streamable HTTP transport
-                                        await self._execute_forwarded_http_request(request, redis)
+                                    if forward_type in ("rpc_forward", "http_forward"):
+                                        # Per-session FIFO, cross-session concurrency: claim the
+                                        # session's in-memory lock synchronously (arrival order),
+                                        # then dispatch on a task so the mailbox never stalls
+                                        # behind an execution. Global concurrency is bounded
+                                        # inside the task, AFTER session ordering.
+                                        session_lock = self._claim_session_lock(request.get("mcp_session_id") or "")
+                                        task = asyncio.create_task(self._dispatch_forwarded(redis, forward_type, request, response_channel, session_lock))
+                                        self._forward_tasks.add(task)
+                                        task.add_done_callback(self._on_forward_task_done)
                                     else:
                                         logger.warning("Unknown forward type: %s", forward_type)
                         except Exception as e:
@@ -994,6 +1012,97 @@ class SessionAffinity:
 
         except Exception as e:
             logger.warning("RPC/HTTP listener failed: %s", e)
+
+    def _claim_session_lock(self, session_id: str) -> Optional[asyncio.Lock]:
+        """Fetch (creating if needed) a session's in-memory execution lock.
+
+        Must be called synchronously from the listener so same-session claims
+        are ordered by arrival. Returns None for session-less envelopes (no
+        ordering requirement). Entries are garbage-collected by the
+        WeakValueDictionary once no dispatch task references the lock.
+
+        Args:
+            session_id: The downstream MCP session id (empty/None = no ordering).
+
+        Returns:
+            The session's lock, or None.
+        """
+        if not session_id:
+            return None
+        lock = self._session_locks.get(session_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._session_locks[session_id] = lock
+        return lock
+
+    async def _execute_bounded(self, redis: Any, forward_type: str, request: Dict[str, Any], response_channel: str) -> None:
+        """Execute one forward under the global concurrency bound.
+
+        Args:
+            redis: Active Redis client from the listener connection.
+            forward_type: ``rpc_forward`` (SSE) or ``http_forward`` (Streamable HTTP).
+            request: The forwarded envelope.
+            response_channel: Per-request reply channel for the rpc_forward result.
+        """
+        assert self._forward_semaphore is not None  # set in start_rpc_listener
+        async with self._forward_semaphore:
+            if forward_type == "rpc_forward":
+                response = await self._execute_forwarded_request(request)
+                await redis.publish(response_channel, orjson.dumps(response))
+                logger.debug("Processed forwarded RPC request, response sent to %s", response_channel)
+            else:
+                await self._execute_forwarded_http_request(request, redis)
+
+    async def _dispatch_forwarded(self, redis: Any, forward_type: str, request: Dict[str, Any], response_channel: str, session_lock: Optional[asyncio.Lock]) -> None:
+        """Run one forwarded request: per-session FIFO first, then the global bound.
+
+        The session-lock wait is bounded by ``mcpgateway_affinity_session_lock_timeout``
+        so a stuck predecessor cannot deadlock the session; on timeout the forward
+        executes without the ordering guarantee (logged). The lock object is
+        garbage-collected once this task drops its reference.
+
+        Args:
+            redis: Active Redis client from the listener connection.
+            forward_type: ``rpc_forward`` (SSE) or ``http_forward`` (Streamable HTTP).
+            request: The forwarded envelope.
+            response_channel: Per-request reply channel for the rpc_forward result.
+            session_lock: The session's ordering lock (claimed by the listener), or None.
+        """
+        try:
+            if session_lock is not None:
+                acquired = False
+                try:
+                    async with asyncio.timeout(settings.mcpgateway_affinity_session_lock_timeout):
+                        await session_lock.acquire()
+                        acquired = True
+                except TimeoutError:
+                    logger.warning(
+                        "Session-lock wait exceeded %ds for session %s...; executing without per-session ordering",
+                        settings.mcpgateway_affinity_session_lock_timeout,
+                        (request.get("mcp_session_id") or "unknown")[:8],
+                    )
+                try:
+                    await self._execute_bounded(redis, forward_type, request, response_channel)
+                finally:
+                    if acquired:
+                        session_lock.release()
+            else:
+                await self._execute_bounded(redis, forward_type, request, response_channel)
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            logger.warning("Forwarded %s execution failed: %s", forward_type, e)
+
+    def _on_forward_task_done(self, task: "asyncio.Task[None]") -> None:
+        """Drop completed forward tasks and surface unexpected failures.
+
+        Args:
+            task: The completed dispatch task.
+        """
+        self._forward_tasks.discard(task)
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc:
+            logger.warning("Forwarded request task failed: %s", exc)
 
     async def _execute_forwarded_request(self, request: Dict[str, Any]) -> Dict[str, Any]:
         """Execute a forwarded RPC request locally via internal HTTP call.
