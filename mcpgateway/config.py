@@ -2718,6 +2718,8 @@ class Settings(BaseSettings):
     mcpgateway_session_affinity_enabled: bool = False  # Global session affinity toggle
     mcpgateway_session_affinity_ttl: int = 300  # Session affinity binding TTL
     mcpgateway_pool_rpc_forward_timeout: int = 30  # Timeout for forwarding RPC requests to owner worker
+    mcpgateway_affinity_forward_concurrency: int = 32  # Max concurrent forwarded-request dispatches per worker listener
+    mcpgateway_affinity_session_lock_timeout: int = 30  # Max seconds to wait for a same-session forward lock before executing without ordering
 
     # Prompts
     prompt_cache_size: int = 100
@@ -3020,6 +3022,9 @@ class Settings(BaseSettings):
     otel_bsp_max_queue_size: int = Field(default=2048, description="Max queue size for batch span processor")
     otel_bsp_max_export_batch_size: int = Field(default=512, description="Max export batch size")
     otel_bsp_schedule_delay: int = Field(default=5000, description="Schedule delay in milliseconds")
+    otel_httpx_instrumentation_enabled: bool = Field(default=False, description="Auto-instrument outbound httpx clients (HTTP client spans + W3C trace header injection)")
+    otel_sqlalchemy_instrumentation_enabled: bool = Field(default=False, description="Emit OTel spans for SQLAlchemy queries (high span volume; enable for debugging)")
+    otel_redis_instrumentation_enabled: bool = Field(default=False, description="Auto-instrument redis/redis.asyncio clients (per-command CLIENT spans)")
 
     # ===================================
     # OpenTelemetry Baggage Configuration

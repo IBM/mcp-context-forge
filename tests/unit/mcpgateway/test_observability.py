@@ -252,7 +252,7 @@ class TestObservability:
             exporter_cls,
             endpoint="https://collector.example.com/v1/traces",
             headers=None,
-            protocol="http",
+            _protocol="http",
             insecure=True,
         )
 

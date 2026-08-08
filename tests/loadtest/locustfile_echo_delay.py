@@ -18,6 +18,7 @@ Usage (local):
 Environment Variables:
     MCPGATEWAY_BEARER_TOKEN:   JWT token (auto-loaded from /tokens/gateway.jwt in container)
     ECHO_DELAY_MS:             Delay in milliseconds for each echo call (default: 500)
+    ECHO_DELAY_STDDEV_MS:      Per-call delay fuzz stddev in ms (default: 25% of ECHO_DELAY_MS; 0 = exact delay)
     ECHO_DELAY_SERVER_ID:      Virtual server ID (default: matches register_fast_test in docker-compose)
     JWT_SECRET_KEY:            Secret for auto-generating JWT if token not provided
     NUM_TENANTS:               Number of discrete tenants to simulate (default: 10)
@@ -87,6 +88,9 @@ WXO_AUTH_ENABLED = _cfg("LOCUST_WXO_AUTH_ENABLED", "true").lower() in ("true", "
 
 # Echo delay settings
 ECHO_DELAY_MS = int(_cfg("ECHO_DELAY_MS", "500"))
+# Delay fuzz: standard deviation applied by fast_test_server (delay_stddev tool arg).
+# Defaults to 25% of the base delay; set ECHO_DELAY_STDDEV_MS=0 for exact fixed delays.
+ECHO_DELAY_STDDEV_MS = float(_cfg("ECHO_DELAY_STDDEV_MS", str(ECHO_DELAY_MS / 4)))
 
 # Multi-tenant settings
 NUM_TENANTS = int(_cfg("NUM_TENANTS", "10"))
@@ -106,7 +110,7 @@ FAST_TEST_DIRECT_URL = _cfg("FAST_TEST_DIRECT_URL", "http://fast_test_server:888
 # MCP protocol version (must match gateway config)
 MCP_PROTOCOL_VERSION = "2025-11-25"
 
-logger.info(f"Echo delay: {ECHO_DELAY_MS}ms")
+logger.info(f"Echo delay: {ECHO_DELAY_MS}ms (fuzz stddev: {ECHO_DELAY_STDDEV_MS}ms)")
 logger.info(f"Virtual server ID: {FAST_TEST_SERVER_ID}")
 logger.info(f"Tenants: {NUM_TENANTS} ({TENANT_IDS[0]} .. {TENANT_IDS[-1]})")
 
@@ -205,7 +209,7 @@ def on_test_start(environment, **_kwargs):
     logger.info("ECHO DELAY STREAMABLE HTTP LOAD TEST")
     logger.info("=" * 60)
     logger.info(f"  Gateway:    {host}")
-    logger.info(f"  Echo delay: {ECHO_DELAY_MS}ms")
+    logger.info(f"  Echo delay: {ECHO_DELAY_MS}ms (fuzz stddev: {ECHO_DELAY_STDDEV_MS}ms)")
     logger.info(f"  Tenants:    {NUM_TENANTS}")
     logger.info(f"  MCP path:   /servers/{FAST_TEST_SERVER_ID}/mcp")
     logger.info("=" * 60)
@@ -444,7 +448,7 @@ class EchoDelayUser(User):
             "tools/call",
             {
                 "name": "fast-test-echo",
-                "arguments": {"message": message, "delay": ECHO_DELAY_MS},
+                "arguments": {"message": message, "delay": ECHO_DELAY_MS, **({"delay_stddev": ECHO_DELAY_STDDEV_MS} if ECHO_DELAY_STDDEV_MS > 0 else {})},
             },
             f"echo (delay={ECHO_DELAY_MS}ms)",
         )
@@ -471,7 +475,7 @@ class EchoDelayUser(User):
         If this also fails, the fast_test_server itself is overloaded.
         """
         message = random.choice(self._messages)
-        payload = {"message": message, "delay": ECHO_DELAY_MS}
+        payload = {"message": message, "delay": ECHO_DELAY_MS, **({"delay_stddev": ECHO_DELAY_STDDEV_MS} if ECHO_DELAY_STDDEV_MS > 0 else {})}
         start = time.perf_counter()
         try:
             resp = self._session.post(
